@@ -43,6 +43,19 @@ struct RegionalInputTests {
         #expect(replay.concentrationFactor == 2.5)
     }
 
+    @Test func seedingInputsCacheCanonicalDepthAndRates() throws {
+        let formatter = RegionFormatter(settings: OrganizationRegionSettings(countryCode: "US", areaUnit: AreaUnit.acres.rawValue, distanceUnit: DistanceSystem.imperial.rawValue))
+        let rate = RegionalInput(canonical: 20.123456789, forward: formatter.perAreaValue)
+        let depth = RegionalInput(canonical: 2.54123456789, forward: formatter.smallLengthValue)
+        #expect(rate.resolve(rate.text, inverse: formatter.perAreaToCanonical) == 20.123456789)
+        #expect(depth.resolve(depth.text, inverse: formatter.smallLengthToCanonical) == 2.54123456789)
+        let details = SeedingDetails(frontBox: SeedingBox(ratePerHa: rate.resolve("10", inverse: formatter.perAreaToCanonical), seedVolumeKg: 40), sowingDepthCm: depth.resolve("2", inverse: formatter.smallLengthToCanonical))
+        let restored = try JSONDecoder().decode(SeedingDetails.self, from: JSONEncoder().encode(details))
+        #expect(abs((restored.frontBox?.ratePerHa ?? 0) - 24.71053814672) < 1e-9)
+        #expect(restored.frontBox?.seedVolumeKg == 40)
+        #expect(abs((restored.sowingDepthCm ?? 0) - 5.08) < 1e-9)
+    }
+
     @Test func emptyAndInvalidInputsRemainUnavailable() {
         let input = RegionalInput(canonical: nil, forward: { $0 })
         #expect(input.resolve("", inverse: { $0 }) == nil)

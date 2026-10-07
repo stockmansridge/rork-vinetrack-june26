@@ -354,6 +354,13 @@ class RegionFormatter(val settings: RegionSettings = RegionSettings.defaults) {
     fun volumePerAreaValue(litresPerHectare: Double): Double = sprayRateValue(volumeValue(litresPerHectare))
     fun volumePerAreaToCanonical(value: Double): Double = volumeToCanonical(sprayRateToCanonical(value))
 
+    /** Carrier only: canonical L/100 m, displayed per 100 m or 100 ft. Never use for registered chemical rates. */
+    val volumePer100LengthUnit: String get() = "$volumeUnitAbbreviation/100 $lengthUnitAbbreviation"
+    fun volumePer100LengthValue(litresPer100Metres: Double): Double = volumeValue(litresPer100Metres) / lengthValue(1.0)
+    fun volumePer100LengthToCanonical(value: Double): Double = volumeToCanonical(value * lengthValue(1.0))
+    fun formatVolumePer100Length(litresPer100Metres: Double, fractionDigits: Int = 2): String =
+        "${number(volumePer100LengthValue(litresPer100Metres), fractionDigits)} $volumePer100LengthUnit"
+
     /** As [formatVolumePerArea] but per hour, e.g. "1,200 L/ha/h" → "128 gal/ac/h". */
     fun formatVolumePerAreaPerHour(litresPerHectarePerHour: Double): String {
         val v = sprayRateValue(volumeValue(litresPerHectarePerHour))

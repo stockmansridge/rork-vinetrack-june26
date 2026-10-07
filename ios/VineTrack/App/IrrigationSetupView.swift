@@ -154,7 +154,7 @@ struct IrrigationSetupView: View {
                         }
                         Spacer()
                         if let flow = valve.configuredFlowLitresPerHour {
-                            Text(String(format: "%.0f L/h", flow))
+                            Text(IrrigationFormat.flow(flow, formatter: formatter))
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.cyan)
                         } else {
@@ -422,6 +422,9 @@ private struct IrrigationSystemForm: View {
 // MARK: - Valve form
 
 private struct IrrigationValveForm: View {
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+    @State private var configuredSeed: RegionalInput = RegionalInput(canonical: nil, forward: { $0 })
+    @State private var measuredSeed: RegionalInput = RegionalInput(canonical: nil, forward: { $0 })
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
 
@@ -457,9 +460,9 @@ private struct IrrigationValveForm: View {
                     TextField("Valve number (optional)", text: $valveNumber)
                 }
                 Section("Flow") {
-                    TextField("Configured flow (L/h)", text: $configuredFlow)
+                    TextField("Configured flow (\(fmt.volumeUnitAbbreviation)/h)", text: $configuredFlow)
                         .keyboardType(.decimalPad)
-                    TextField("Measured flow (L/h, optional)", text: $measuredFlow)
+                    TextField("Measured flow (\(fmt.volumeUnitAbbreviation)/h, optional)", text: $measuredFlow)
                         .keyboardType(.decimalPad)
                     Text("The configured flow is used for duration-based water calculations. A measured flow is informational until you save it as the configured value.")
                         .font(.caption)
@@ -500,10 +503,12 @@ private struct IrrigationValveForm: View {
                     name = valve.name
                     valveNumber = valve.valveNumber ?? ""
                     if let flow = valve.configuredFlowLitresPerHour {
-                        configuredFlow = String(format: "%g", flow)
+                        configuredSeed = RegionalInput(canonical: flow, forward: { fmt.volumeValue(litres: $0) })
+                        configuredFlow = configuredSeed.text
                     }
                     if let flow = valve.measuredFlowLitresPerHour {
-                        measuredFlow = String(format: "%g", flow)
+                        measuredSeed = RegionalInput(canonical: flow, forward: { fmt.volumeValue(litres: $0) })
+                        measuredFlow = measuredSeed.text
                     }
                     notes = valve.notes ?? ""
                     isActive = valve.isActive
@@ -519,8 +524,8 @@ private struct IrrigationValveForm: View {
         isSaving = true
         errorMessage = nil
         defer { isSaving = false }
-        let configured = Double(configuredFlow.replacingOccurrences(of: ",", with: "."))
-        let measured = Double(measuredFlow.replacingOccurrences(of: ",", with: "."))
+        let configured = configuredSeed.resolve(configuredFlow, inverse: fmt.volumeToCanonical)
+        let measured = measuredSeed.resolve(measuredFlow, inverse: fmt.volumeToCanonical)
         do {
             if let valve {
                 _ = try await repository.updateValve(
@@ -807,7 +812,7 @@ struct IrrigationValveBlocksEditor: View {
     /// never calculated on-device. Missing values are explained, never blank.
     private func rowDetail(_ row: IrrigationAvailableRow) -> String {
         var parts: [String] = []
-        parts.append(row.rowLengthMetres.map { String(format: "%.2f m", $0) } ?? "Length unavailable")
+        parts.append(row.rowLengthMetres.map { store.settings.regionFormatter.formatLength(metres: $0, fractionDigits: 2) } ?? "Length unavailable")
         if let vines = row.vineCount {
             parts.append("\(row.vineCountIsEstimated == true ? "≈" : "")\(vines) vines")
         } else {
@@ -1181,6 +1186,10 @@ private struct IrrigationDetailsSection: View {
 }
 
 private struct IrrigationBlockDetailEditor: View {
+    @Environment(MigratedDataStore.self) private var store
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+    @State private var outputSeed: RegionalInput = RegionalInput(canonical: nil, forward: { $0 })
+    @State private var spacingSeed: RegionalInput = RegionalInput(canonical: nil, forward: { $0 })
     @Environment(\.dismiss) private var dismiss
 
     let paddockId: UUID
@@ -1208,12 +1217,12 @@ private struct IrrigationBlockDetailEditor: View {
         Form {
             Section("Irrigation details") {
                 LabeledContent("Dripper output") {
-                    TextField("L/h", text: $dripperOutput)
+                    TextField("\(fmt.volumeUnitAbbreviation)/h", text: $dripperOutput)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
                 LabeledContent("Dripper spacing") {
-                    TextField("m", text: $dripperSpacing)
+                    TextField(fmt.lengthUnitAbbreviation, text: $dripperSpacing)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                 }
@@ -1254,8 +1263,10 @@ private struct IrrigationBlockDetailEditor: View {
                 .eq("id", value: paddockId.uuidString)
                 .execute().value
             if let row = rows.first {
-                if let v = row.flowPerEmitter { dripperOutput = String(format: "%g", v) }
-                if let v = row.emitterSpacing { dripperSpacing = String(format: "%g", v) }
+                outputSeed = RegionalInput(canonical: row.flowPerEmitter, forward: { fmt.volumeValue(litres: $0) })
+                dripperOutput = outputSeed.text
+                spacingSeed = RegionalInput(canonical: row.emitterSpacing, forward: { fmt.lengthValue(metres: $0) })
+                dripperSpacing = spacingSeed.text
                 if let v = row.irrigationEfficiencyPercent { efficiency = String(format: "%g", v) }
             }
         } catch {
@@ -1281,8 +1292,8 @@ private struct IrrigationBlockDetailEditor: View {
             let provider = SupabaseClientProvider.shared
             guard provider.isConfigured else { return }
             let patch = Patch(
-                flowPerEmitter: Double(dripperOutput.replacingOccurrences(of: ",", with: ".")),
-                emitterSpacing: Double(dripperSpacing.replacingOccurrences(of: ",", with: ".")),
+                flowPerEmitter: outputSeed.resolve(dripperOutput, inverse: fmt.volumeToCanonical),
+                emitterSpacing: spacingSeed.resolve(dripperSpacing, inverse: fmt.lengthToCanonical),
                 irrigationEfficiencyPercent: Double(efficiency.replacingOccurrences(of: ",", with: ".")))
             try await provider.client
                 .from("paddocks")

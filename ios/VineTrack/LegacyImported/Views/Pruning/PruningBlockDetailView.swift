@@ -223,7 +223,7 @@ struct PruningBlockDetailView: View {
                 .font(.title3)
                 .foregroundStyle(.blue)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Editing \(editingEntry?.date.formatted(date: .abbreviated, time: .omitted) ?? "") entry")
+                Text("Editing \(editingEntry.map { store.settings.regionFormatter.formatDate($0.date) } ?? "") entry")
                     .font(.footnote.weight(.semibold))
                 Text("Tap quarters to adjust the selection, then Save Changes.")
                     .font(.caption2)
@@ -300,10 +300,10 @@ struct PruningBlockDetailView: View {
                     )
                 }
                 if let due = setup?.dueDate {
-                    detailRow(label: "Due date", value: due.formatted(date: .abbreviated, time: .omitted))
+                    detailRow(label: "Due date", value: store.settings.regionFormatter.formatDate(due))
                 }
                 if let projected = metrics.projectedFinish {
-                    detailRow(label: "Estimated finish", value: projected.formatted(date: .abbreviated, time: .omitted))
+                    detailRow(label: "Estimated finish", value: store.settings.regionFormatter.formatDate(projected))
                 }
                 if let crew = setup?.crew, !crew.isEmpty {
                     detailRow(label: "Crew", value: crew)
@@ -774,7 +774,7 @@ struct PruningBlockDetailView: View {
                     HStack(alignment: .top, spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
-                                Text(entry.date.formatted(date: .abbreviated, time: .omitted))
+                                Text(store.settings.regionFormatter.formatDate(entry.date))
                                     .font(.footnote.weight(.semibold))
                                 if entry.isSkipped {
                                     Text("Skipped")

@@ -537,7 +537,7 @@ struct PruningTrackerView: View {
                 Image(systemName: "calendar")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(Self.forecastLine(summary.forecast))
+                Text(Self.forecastLine(summary.forecast, formatter: store.settings.regionFormatter))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -552,14 +552,14 @@ struct PruningTrackerView: View {
     /// Vineyard-wide completion line. Identical wording and date format to the
     /// Android dashboard — never a block-specific projection, and never an
     /// arbitrary date when the data cannot support a forecast.
-    static func forecastLine(_ forecast: PruningVineyardForecast) -> String {
+    static func forecastLine(_ forecast: PruningVineyardForecast, formatter: RegionFormatter? = nil) -> String {
         switch forecast.outcome {
         case .notEnoughData:
             return "Projected vineyard completion: Not enough data"
         case .completed(let date):
-            return "Vineyard completed: \(forecastDateFormatter.string(from: date))"
+            return "Vineyard completed: \(formatter?.formatDate(date) ?? forecastDateFormatter.string(from: date))"
         case .projected(let date):
-            return "Projected vineyard completion: \(forecastDateFormatter.string(from: date))"
+            return "Projected vineyard completion: \(formatter?.formatDate(date) ?? forecastDateFormatter.string(from: date))"
         }
     }
 
@@ -809,6 +809,7 @@ struct PruningBlockPickerSheet: View {
 // MARK: - Block card
 
 struct PruningBlockCard: View {
+    @Environment(MigratedDataStore.self) private var store
     let paddock: Paddock
     let metrics: PruningBlockMetrics
     let setup: PruningBlockSetup?
@@ -876,10 +877,10 @@ struct PruningBlockCard: View {
 
             HStack(spacing: 14) {
                 if let due = setup?.dueDate {
-                    labelledDate(icon: "flag.checkered", text: "Due \(due.formatted(date: .abbreviated, time: .omitted))")
+                    labelledDate(icon: "flag.checkered", text: "Due \(store.settings.regionFormatter.formatDate(due))")
                 }
                 if let projected = metrics.projectedFinish {
-                    labelledDate(icon: "calendar.badge.clock", text: "Est. \(projected.formatted(date: .abbreviated, time: .omitted))")
+                    labelledDate(icon: "calendar.badge.clock", text: "Est. \(store.settings.regionFormatter.formatDate(projected))")
                 }
             }
         }

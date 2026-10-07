@@ -44,11 +44,11 @@ nonisolated enum SeasonYieldFormat {
     }
 
     /// Short label for the vine-count basis recorded in `source_inputs`.
-    static func vineCountBasisLabel(_ basis: String?) -> String {
+    static func vineCountBasisLabel(_ basis: String?, areaUnit: String = "ha") -> String {
         switch basis {
         case "block_vine_count_override": return "Block vine count override"
         case "row_effective_vine_count": return "Row-effective vine count"
-        case "block_area_x_vines_per_ha": return "Block area × vines/ha"
+        case "block_area_x_vines_per_ha": return "Block area × vines/\(areaUnit)"
         case .some(let other) where !other.isEmpty:
             return other.replacingOccurrences(of: "_", with: " ").capitalized
         default: return "—"

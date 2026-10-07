@@ -6,6 +6,10 @@ import SwiftUI
 ///
 /// Backend-neutral: uses `MigratedDataStore` and `TripTrackingService` only.
 struct StartTripSheet: View {
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+    @State private var frontRateSeed: RegionalInput = RegionalInput(canonical: nil, forward: { $0 })
+    @State private var backRateSeed: RegionalInput = RegionalInput(canonical: nil, forward: { $0 })
+    @State private var depthSeed: RegionalInput = RegionalInput(canonical: nil, forward: { $0 })
     @Environment(MigratedDataStore.self) private var store
     @Environment(TripTrackingService.self) private var tracking
     @Environment(NewBackendAuthService.self) private var auth
@@ -1441,7 +1445,8 @@ struct StartTripSheet: View {
         if let f = details.frontBox {
             useFrontBox = true
             seedFrontMix = f.mixName ?? ""
-            seedFrontRate = f.ratePerHa.map { trimNumber($0) } ?? ""
+            frontRateSeed = RegionalInput(canonical: f.ratePerHa, forward: fmt.perAreaValue)
+            seedFrontRate = frontRateSeed.text
             if let s = f.shutterSlide, !s.isEmpty { seedFrontShutter = s }
             if let b = f.bottomFlap, !b.isEmpty { seedFrontFlap = b }
             if let w = f.meteringWheel, !w.isEmpty { seedFrontWheel = w }
@@ -1454,7 +1459,8 @@ struct StartTripSheet: View {
         if let b = details.backBox {
             useBackBox = true
             seedBackMix = b.mixName ?? ""
-            seedBackRate = b.ratePerHa.map { trimNumber($0) } ?? ""
+            backRateSeed = RegionalInput(canonical: b.ratePerHa, forward: fmt.perAreaValue)
+            seedBackRate = backRateSeed.text
             if let s = b.shutterSlide, !s.isEmpty { seedBackShutter = s }
             if let f = b.bottomFlap, !f.isEmpty { seedBackFlap = f }
             if let w = b.meteringWheel, !w.isEmpty { seedBackWheel = w }
@@ -1471,7 +1477,8 @@ struct StartTripSheet: View {
             useFrontBox = true
         }
 
-        sowingDepth = details.sowingDepthCm.map { trimNumber($0) } ?? ""
+        depthSeed = RegionalInput(canonical: details.sowingDepthCm, forward: fmt.smallLengthValue)
+        sowingDepth = depthSeed.text
         // Re-id copied mix lines so SwiftUI ForEach identity stays stable
         // and edits don't bleed into the source trip.
         mixLines = (details.mixLines ?? []).map { line in
@@ -1674,13 +1681,13 @@ struct StartTripSheet: View {
         VStack(spacing: 10) {
             if useFrontBox {
                 seedingTextField(label: "Seed/Fert mix — Front Box", text: $seedFrontMix, placeholder: "e.g. Ryecorn + Vetch")
-                seedingNumericField(label: "Rate/ha — Front Box", text: $seedFrontRate, suffix: "kg/ha")
+                seedingNumericField(label: "Rate/\(fmt.areaUnitAbbreviation) — Front Box", text: $seedFrontRate, suffix: fmt.yieldPerAreaUnit(unitLabel: "kg"))
             }
             if useBackBox {
                 seedingTextField(label: "Seed/Fert mix — Rear Box", text: $seedBackMix, placeholder: "e.g. Tic Beans")
-                seedingNumericField(label: "Rate/ha — Rear Box", text: $seedBackRate, suffix: "kg/ha")
+                seedingNumericField(label: "Rate/\(fmt.areaUnitAbbreviation) — Rear Box", text: $seedBackRate, suffix: fmt.yieldPerAreaUnit(unitLabel: "kg"))
             }
-            seedingNumericField(label: "Sowing depth", text: $sowingDepth, suffix: "cm")
+            seedingNumericField(label: "Sowing depth", text: $sowingDepth, suffix: fmt.smallLengthUnitAbbreviation)
         }
     }
 
@@ -1812,8 +1819,11 @@ struct StartTripSheet: View {
             set: { mixLines[index].seedBox = $0 }
         )
         let bindingKgHa = Binding<String>(
-            get: { mixLines[index].kgPerHa.map { trimNumber($0) } ?? "" },
-            set: { mixLines[index].kgPerHa = Double($0) }
+            get: { mixLines[index].kgPerHa.map { String(fmt.perAreaValue(perHectare: $0)) } ?? "" },
+            set: { text in
+                let seed = RegionalInput(canonical: mixLines[index].kgPerHa, forward: fmt.perAreaValue)
+                mixLines[index].kgPerHa = seed.resolve(text, inverse: fmt.perAreaToCanonical)
+            }
         )
         let bindingSupplier = Binding<String>(
             get: { mixLines[index].supplierManufacturer ?? "" },
@@ -1838,7 +1848,7 @@ struct StartTripSheet: View {
             seedingTextField(label: "Name", text: bindingName, placeholder: "e.g. Ryecorn")
             seedingNumericField(label: "% of Mix", text: bindingPercent, suffix: "%")
             seedingPicker(label: "Seed Box", selection: bindingBox, options: ["Front", "Back"])
-            seedingNumericField(label: "Kg/ha", text: bindingKgHa, suffix: "kg/ha")
+            seedingNumericField(label: "Seed rate", text: bindingKgHa, suffix: fmt.yieldPerAreaUnit(unitLabel: "kg"))
             seedingTextField(label: "Supplier", text: bindingSupplier, placeholder: "Manufacturer")
         }
         .padding(10)
@@ -1979,13 +1989,19 @@ struct StartTripSheet: View {
                 .filter { $0.isNumber || $0 == "." || $0 == "-" }
             return Double(cleaned)
         }
+        func regional(_ text: String, seed: RegionalInput, inverse: (Double) -> Double) -> Double? {
+            if text == seed.text { return seed.canonical }
+            guard let value = parseNumber(text), value.isFinite else { return nil }
+            let canonical = inverse(value)
+            return canonical.isFinite ? canonical : nil
+        }
         // Only persist box settings for boxes the operator actually used.
         // Disabled boxes are saved as nil so unused defaults don't pollute
         // the trip record. Enabled boxes are always saved (even if empty)
         // so the toggle state survives for "Copy from previous seeding job".
         let front: SeedingBox? = useFrontBox ? SeedingBox(
             mixName: trimmed(seedFrontMix),
-            ratePerHa: parseNumber(seedFrontRate),
+            ratePerHa: regional(seedFrontRate, seed: frontRateSeed, inverse: fmt.perAreaToCanonical),
             shutterSlide: trimmed(seedFrontShutter),
             bottomFlap: trimmed(seedFrontFlap),
             meteringWheel: trimmed(seedFrontWheel),
@@ -1994,7 +2010,7 @@ struct StartTripSheet: View {
         ) : nil
         let back: SeedingBox? = useBackBox ? SeedingBox(
             mixName: trimmed(seedBackMix),
-            ratePerHa: parseNumber(seedBackRate),
+            ratePerHa: regional(seedBackRate, seed: backRateSeed, inverse: fmt.perAreaToCanonical),
             shutterSlide: trimmed(seedBackShutter),
             bottomFlap: trimmed(seedBackFlap),
             meteringWheel: trimmed(seedBackWheel),
@@ -2011,7 +2027,7 @@ struct StartTripSheet: View {
         return SeedingDetails(
             frontBox: front,
             backBox: back,
-            sowingDepthCm: parseNumber(sowingDepth),
+            sowingDepthCm: regional(sowingDepth, seed: depthSeed, inverse: fmt.smallLengthToCanonical),
             mixLines: calculated.isEmpty ? nil : calculated
         )
     }

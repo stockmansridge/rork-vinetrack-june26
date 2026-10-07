@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import PDFKit
 @testable import VineTrack
 
 /// SHARED EXPORT FIXTURE — the same cases and the same numbers exist as
@@ -1120,6 +1121,33 @@ struct PruningActivityExportTests {
         )
         #expect(!agreeing.hasConflicts)
         #expect(agreeing.parent(Self.activityEId)?.resolvedFromCanonicalParent == true)
+    }
+
+    @MainActor
+    @Test func regionalCSVAndPDFUseVineyardCalendarWithoutChangingAmounts() throws {
+        let rows = Self.sorted(Self.activityA)
+        let first = try #require(rows.first)
+        let regions = [
+            RegionFormatter.australian,
+            RegionFormatter(settings: OrganizationRegionSettings(countryCode: "US", currencyCode: "USD", timezone: "America/Los_Angeles", dateFormat: RegionDateFormat.monthDayYear.rawValue)),
+            RegionFormatter(settings: OrganizationRegionSettings(countryCode: "GB", currencyCode: "GBP", timezone: "Europe/London", dateFormat: RegionDateFormat.dayMonthYear.rawValue))
+        ]
+        for formatter in regions {
+            let csv = PruningActivityExport.csv(rows, includeCost: true, formatter: formatter)
+            #expect(csv.contains(formatter.formatDate(first.date)))
+            #expect(csv.contains("(\(formatter.currencyCode))"))
+            #expect(csv.contains("630.00"))
+            if let start = first.startTime { #expect(csv.contains(formatter.formatTime(start))) }
+            let url = try PruningActivityExportService.pdfURL(rows: rows, vineyardName: "Regional fixture", seasonLabel: "2026", includeCost: true, formatter: formatter)
+            defer { try? FileManager.default.removeItem(at: url) }
+            let pdf = try #require(PDFDocument(url: url))
+            let text = try #require(pdf.string)
+            #expect(text.contains(formatter.formatDate(first.date)))
+            #expect(text.contains(formatter.formatCurrency(630)))
+            if let start = first.startTime { #expect(text.contains(formatter.formatTime(start))) }
+        }
+        #expect(first.date == Self.date(3))
+        #expect(Self.close(first.labourCost, 630))
     }
 
     // MARK: 25. Cross-platform parity fixture — Android must produce this exactly

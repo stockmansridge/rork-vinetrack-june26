@@ -259,7 +259,7 @@ fun FuelLogScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Modi
         AlertDialog(
             onDismissRequest = { pendingDeletePurchase = null },
             title = { Text("Delete fuel purchase?") },
-            text = { Text("This removes the purchase for everyone and updates the average cost per litre.") },
+            text = { Text("This removes the purchase for everyone and updates the average cost per ${fmt.fuelUnitAbbreviation}.") },
             confirmButton = {
                 TextButton(onClick = { vm.deleteFuelPurchase(p.id) {}; pendingDeletePurchase = null }) {
                     Text("Delete", color = VineColors.Destructive)
@@ -413,7 +413,7 @@ private fun FuelPurchaseList(
                 EmptyState(
                     icon = Icons.Filled.LocalGasStation,
                     title = "No fuel purchases yet",
-                    message = if (canManage) "Record fuel purchases to calculate the weighted cost per litre used in trip and machine costing."
+                    message = if (canManage) "Record fuel purchases to calculate the weighted cost per ${fmt.fuelUnitAbbreviation} used in trip and machine costing."
                     else "No fuel purchases have been recorded yet.",
                     actionLabel = if (canManage) "Add fuel purchase" else null,
                     onAction = if (canManage) onAdd else null,
@@ -437,7 +437,7 @@ private fun FuelPurchaseList(
                 }
                 item {
                     Text(
-                        "Purchases drive the weighted average fuel cost per litre used by trip and machine costing.",
+                        "Purchases drive the weighted average fuel cost per ${fmt.fuelUnitAbbreviation} used by trip and machine costing.",
                         color = LocalVineColors.current.textSecondary,
                         fontSize = 12.sp,
                     )
@@ -473,7 +473,7 @@ private fun FuelPurchaseRow(
                     Text(fmt.formatFuel(purchase.volumeLitres), color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(formatPurchaseDate(purchase.date), color = vine.textSecondary, fontSize = 12.sp)
+                    Text(purchase.date?.let { date -> purchaseEpochMs(date)?.let(fmt::formatDate) } ?: "Not specified", color = vine.textSecondary, fontSize = 12.sp)
                     if (canViewFinancials && costPerLitre != null) {
                         Text(fmt.formatFuelCostPerUnit(costPerLitre), color = VineColors.LeafGreen, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     }
@@ -546,7 +546,7 @@ private fun FuelPurchaseFormSheet(
     val suspiciousNote: String? = existing
         ?.takeIf { it.volumeLitres >= 20 && it.totalCost > 0 && it.totalCost <= 10 }
         ?.let {
-            "The saved total (${fmt.formatCurrency(it.totalCost)}) looks unusually low for ${fmt.formatFuel(it.volumeLitres)} — it may have been entered as a price per litre. Nothing was changed automatically; correct the Total Purchase Cost and save if needed."
+            "The saved total (${fmt.formatCurrency(it.totalCost)}) looks unusually low for ${fmt.formatFuel(it.volumeLitres)} — it may have been entered as a price per ${fmt.fuelUnitAbbreviation}. Nothing was changed automatically; correct the Total Purchase Cost and save if needed."
         }
 
     fun save() {
@@ -611,7 +611,7 @@ private fun FuelPurchaseFormSheet(
             )
             OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.CalendarMonth, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text("  " + formatPurchaseDate(Instant.ofEpochMilli(dateMs).toString()))
+                Text("  " + fmt.formatDate(dateMs))
             }
             if (vol > 0 && resolvedTotal != null && resolvedTotal > 0) {
                 Text(
@@ -733,7 +733,7 @@ private fun FuelLogList(
                 EmptyState(
                     icon = Icons.Filled.LocalGasStation,
                     title = "No fuel fills yet",
-                    message = "No fuel fills recorded yet. Tap + to record litres added and engine hours when you fill a vineyard machine.",
+                    message = "No fuel fills recorded yet. Tap + to record fuel added (${state.regionFormatter.fuelUnitAbbreviation}) and engine hours when you fill a vineyard machine.",
                     actionLabel = "Record fuel fill",
                     onAction = onAdd,
                 )
@@ -780,6 +780,7 @@ private fun FuelRow(
     onClick: (() -> Unit)?,
 ) {
     val vine = LocalVineColors.current
+    val fmt = LocalRegionFormatter.current
     val rowModifier = if (onClick != null) Modifier.clickable { onClick() } else Modifier
     VineyardCard(modifier = rowModifier) {
         Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -791,27 +792,27 @@ private fun FuelRow(
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("${trimNum(log.litresAdded)} L", fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 16.sp)
+                    Text(fmt.formatFuel(log.litresAdded), fontWeight = FontWeight.SemiBold, color = vine.textPrimary, fontSize = 16.sp)
                     if (log.filledToFull == true) {
                         Icon(Icons.Filled.WaterDrop, contentDescription = "Filled to full", tint = VineColors.LeafGreen, modifier = Modifier.size(14.dp))
                         Text("Full", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = VineColors.LeafGreen)
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    FuelMeta(Icons.Filled.CalendarMonth, formatFuelDate(log.fillEpochMs) ?: "—")
+                    FuelMeta(Icons.Filled.CalendarMonth, log.fillEpochMs?.let(fmt::formatDateTime) ?: "—")
                     log.engineHours?.let { FuelMeta(Icons.Filled.Speed, "${trimNum(it)} hrs") }
                 }
                 log.operatorName?.takeIf { it.isNotBlank() }?.let { FuelMeta(Icons.Filled.Person, it) }
                 if (canViewFinancials) {
                     log.costPerLitre?.takeIf { it > 0 }?.let {
-                        Text("$${"%.2f".format(it)}/L", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = VineColors.DarkGreen)
+                        Text(fmt.formatFuelCostPerUnit(it), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = VineColors.DarkGreen)
                     }
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
                 if (litresPerHour != null) {
                     Text(
-                        "${trimNum(litresPerHour)} L/h",
+                        fmt.formatFuelRatePerHour(litresPerHour),
                         fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
                         color = if (reliable) VineColors.LeafGreen else VineColors.Warning,
                     )
@@ -853,6 +854,7 @@ private fun FuelSavedSummary(
     onDone: () -> Unit,
 ) {
     val vine = LocalVineColors.current
+    val fmt = LocalRegionFormatter.current
     var applying by remember { mutableStateOf(false) }
     var applied by remember { mutableStateOf(false) }
     var applyError by remember { mutableStateOf<String?>(null) }
@@ -871,7 +873,7 @@ private fun FuelSavedSummary(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Fuel rate", color = vine.textPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                     Text(
-                        "${trimNum(lph)} L/hr",
+                        fmt.formatFuelRatePerHour(lph),
                         fontSize = 17.sp, fontWeight = FontWeight.Bold,
                         color = if (rate.isReliable) VineColors.LeafGreen else VineColors.Warning,
                     )
@@ -891,7 +893,7 @@ private fun FuelSavedSummary(
                 )
             } else {
                 Text(
-                    "Litres per hour could not be calculated for this fill. Add engine hours on consecutive fills for the same machine to track fuel use.",
+                    "${fmt.fuelUnitAbbreviation}/hr could not be calculated for this fill. Add engine hours on consecutive fills for the same machine to track fuel use.",
                     color = vine.textSecondary, fontSize = 13.sp,
                 )
             }
@@ -905,7 +907,7 @@ private fun FuelSavedSummary(
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = VineColors.LeafGreen, modifier = Modifier.size(18.dp))
                             Text(
-                                "Updated ${machine.displayName} default to ${trimNum(lph)} L/hr",
+                                "Updated ${machine.displayName} default to ${fmt.formatFuelRatePerHour(lph)}",
                                 color = VineColors.LeafGreen, fontSize = 13.sp, fontWeight = FontWeight.Medium,
                             )
                         }
@@ -938,7 +940,7 @@ private fun FuelSavedSummary(
                                 Spacer(Modifier.size(8.dp))
                                 Text("Updating…")
                             } else {
-                                Text("Use ${trimNum(lph)} L/hr as machine default")
+                                Text("Use ${fmt.formatFuelRatePerHour(lph)} as machine default")
                             }
                         }
                         applyError?.let { Text(it, color = VineColors.Destructive, fontSize = 12.sp) }
@@ -1103,7 +1105,7 @@ private fun FuelSheet(
 
             OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Schedule, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text("  " + (formatFuelDate(dateMs) ?: "Pick date"))
+                Text("  " + (region.formatDateTime(dateMs) ?: "Pick date"))
             }
 
             OutlinedTextField(
@@ -1117,7 +1119,7 @@ private fun FuelSheet(
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Filled to full", color = vine.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                    Text("Most accurate L/h when both fills are full.", color = vine.textSecondary, fontSize = 12.sp)
+                    Text("Most accurate ${region.fuelUnitAbbreviation}/hr when both fills are full.", color = vine.textSecondary, fontSize = 12.sp)
                 }
                 Switch(checked = filledToFull, onCheckedChange = { filledToFull = it })
             }

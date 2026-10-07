@@ -9,8 +9,7 @@ struct SprayProgramExportService {
     /// - Route dates, the spray-rate area denominator, water volume and currency
     ///   through `formatter`. Records are never mutated.
     /// - Chemical product amounts keep their native manufacturer unit (L/Kg/g/mL).
-    /// - Temperature (°C) and wind speed (km/h) stay as-is, matching the
-    ///   reference implementation.
+    /// - Weather and carrier water use regional dimensions; registered chemical-rate bases remain authoritative.
     static func generateProgramPDF(
         records: [SprayRecord],
         trips: [Trip],
@@ -92,8 +91,9 @@ struct SprayProgramExportService {
             )
 
             let genAttrs: [NSAttributedString.Key: Any] = [.font: captionFont, .foregroundColor: UIColor.gray]
-            let tzAbbrev = timeZone.abbreviation() ?? timeZone.identifier
-            let genText = "Generated: \(formatter.formatDate(Date())) \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short)) (\(tzAbbrev)) \u{2022} \(records.count) record\(records.count == 1 ? "" : "s")"
+            let reportZone = formatter.settings.resolvedTimeZone
+            let tzAbbrev = reportZone.abbreviation() ?? reportZone.identifier
+            let genText = "Generated: \(formatter.formatDate(Date())) \(formatter.formatTime(Date())) (\(tzAbbrev)) \u{2022} \(records.count) record\(records.count == 1 ? "" : "s")"
             (genText as NSString).draw(at: CGPoint(x: margin, y: y), withAttributes: genAttrs)
             y += 14
 
@@ -103,7 +103,7 @@ struct SprayProgramExportService {
                 ("BLOCK", margin + 148, 80),
                 ("CHEMICALS", margin + 228, 160),
                 ("TANKS", margin + 388, 40),
-                ("RATE (L/\(formatter.sprayRateAreaAbbreviation.uppercased()))", margin + 428, 60),
+                ("RATE (\(formatter.volumePerAreaUnit))", margin + 428, 60),
                 ("TEMP", margin + 488, 42),
                 ("WIND", margin + 530, 50),
                 ("EQUIP.", margin + 580, 60),
@@ -177,14 +177,14 @@ struct SprayProgramExportService {
                 ("\(record.tanks.count)" as NSString).draw(at: CGPoint(x: columns[4].1 + 3, y: rowY), withAttributes: rowAttrs)
 
                 let avgRate = record.tanks.isEmpty ? 0.0 : record.tanks.map(\.sprayRatePerHa).reduce(0, +) / Double(record.tanks.count)
-                let rateStr = avgRate > 0 ? String(format: "%.0f", formatter.sprayRateValue(perHectare: avgRate)) : "–"
+                let rateStr = avgRate > 0 ? String(format: "%.0f", formatter.volumePerAreaValue(litresPerHectare: avgRate)) : "–"
                 (rateStr as NSString).draw(at: CGPoint(x: columns[5].1 + 3, y: rowY), withAttributes: rowAttrs)
 
                 let canonicalWeather = canonical?.weather.first(where: { $0.sourceKind == "observed" || $0.sourceKind == "manual" })
-                let tempStr = (canonicalWeather?.temperatureC ?? record.temperature).map { String(format: "%.0f°C", $0) } ?? "–"
+                let tempStr = (canonicalWeather?.temperatureC ?? record.temperature).map { formatter.formatTemperature(celsius: $0, fractionDigits: 0) } ?? "–"
                 (tempStr as NSString).draw(at: CGPoint(x: columns[6].1 + 3, y: rowY), withAttributes: rowAttrs)
 
-                let windStr = (canonicalWeather?.windSpeedKmh ?? record.windSpeed).map { String(format: "%.0f km/h", $0) } ?? "–"
+                let windStr = (canonicalWeather?.windSpeedKmh ?? record.windSpeed).map { formatter.formatSpeed(kmh: $0, fractionDigits: 0) } ?? "–"
                 (windStr as NSString).draw(at: CGPoint(x: columns[7].1 + 3, y: rowY), withAttributes: rowAttrs)
 
                 let equipName = resolvedEquipmentName(record)
@@ -246,7 +246,7 @@ struct SprayProgramExportService {
             let actualCount = tankActuals.filter { actual in records.contains { $0.id == actual.sprayRecordId } }.count
             let actualWater = tankActuals.filter { actual in records.contains { $0.id == actual.sprayRecordId } }.compactMap(\.waterVolumeL).reduce(0, +)
             let actualSummaryAttrs: [NSAttributedString.Key: Any] = [.font: bodyBoldFont, .foregroundColor: UIColor.black]
-            ("Actual tanks recorded: \(actualCount) • Actual water used: \(String(format: "%.2f", actualWater)) L" as NSString).draw(at: CGPoint(x: margin, y: y), withAttributes: actualSummaryAttrs)
+            ("Actual tanks recorded: \(actualCount) • Actual water used: \(formatter.formatVolume(litres: actualWater, fractionDigits: 2))" as NSString).draw(at: CGPoint(x: margin, y: y), withAttributes: actualSummaryAttrs)
             y += 16
 
             let allActualsComplete = !records.isEmpty && records.allSatisfy { record in
@@ -382,7 +382,7 @@ struct SprayProgramExportService {
 
     /// Human-readable spray program CSV (a report, not the re-importable
     /// template). Region-aware via `formatter` following the reference pattern;
-    /// product/chemical units stay native and temperature/wind keep °C / km/h.
+    /// Chemical-rate bases stay native; carrier volume and weather are regional. The import template is separate and canonical.
     static func generateProgramCSV(
         records: [SprayRecord],
         trips: [Trip],
@@ -395,9 +395,8 @@ struct SprayProgramExportService {
         timeZone: TimeZone = .current,
         formatter: RegionFormatter = .australian
     ) -> URL {
-        let rateUnit = formatter.sprayRateAreaAbbreviation
         let volumeUnit = formatter.volumeUnitAbbreviation
-        var csv = "Date,Name,Block,Chemicals,Tanks,Avg Rate (L/\(rateUnit)),Water Vol (\(volumeUnit)),CF,Temp (°C),Wind (km/h),Wind Dir,Humidity (%),Equipment,Tractor,Gear,Operator,Notes,Status\n"
+        var csv = "Date,Name,Block,Chemicals,Tanks,Avg Rate (\(formatter.volumePerAreaUnit)),Water Vol (\(volumeUnit)),CF,Temp (\(formatter.temperatureUnitAbbreviation)),Wind (\(formatter.speedUnitAbbreviation)),Wind Dir,Humidity (%),Equipment,Tractor,Gear,Operator,Notes,Status\n"
 
         for record in records {
             let trip = trips.first { $0.id == record.canonicalTripId }
@@ -415,19 +414,20 @@ struct SprayProgramExportService {
             // Each line states its rate on the basis it was RECORDED on. The
             // old form hard-coded the per-area denominator, so a per-100 L line
             // exported as "0.00 L/ha".
+            // Registered chemical bases are not carrier units: keep the recorded /ha or /100 L basis.
             let chemicals = escapeCSV(
                 record.tanks
                     .flatMap { $0.chemicals }
-                    .map { "\($0.name) (\($0.reportedRateText(formatter: formatter)))" }
+                    .map { "\($0.name) (\($0.reportedRateText(formatter: .australian)))" }
                     .filter { !$0.isEmpty }
                     .joined(separator: "; ")
             )
             let tanks = "\(record.tanks.count)"
-            let avgRate = record.tanks.isEmpty ? "" : String(format: "%.1f", formatter.sprayRateValue(perHectare: record.tanks.map(\.sprayRatePerHa).reduce(0, +) / Double(record.tanks.count)))
+            let avgRate = record.tanks.isEmpty ? "" : String(format: "%.1f", formatter.volumePerAreaValue(litresPerHectare: record.tanks.map(\.sprayRatePerHa).reduce(0, +) / Double(record.tanks.count)))
             let avgWater = record.tanks.isEmpty ? "" : String(format: "%.0f", formatter.volumeValue(litres: record.tanks.map(\.waterVolume).reduce(0, +) / Double(record.tanks.count)))
             let avgCF = record.tanks.isEmpty ? "" : String(format: "%.2f", record.tanks.map(\.concentrationFactor).reduce(0, +) / Double(record.tanks.count))
-            let temp = record.temperature.map { String(format: "%.1f", $0) } ?? ""
-            let wind = record.windSpeed.map { String(format: "%.1f", $0) } ?? ""
+            let temp = record.temperature.map { String(format: "%.1f", formatter.temperatureValue(celsius: $0)) } ?? ""
+            let wind = record.windSpeed.map { String(format: "%.1f", formatter.speedValue(kmh: $0)) } ?? ""
             let windDir = record.windDirection
             let humidity = record.humidity.map { String(format: "%.0f", $0) } ?? ""
             let equipment = escapeCSV(record.equipmentType)

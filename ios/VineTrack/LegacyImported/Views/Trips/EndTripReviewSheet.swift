@@ -541,7 +541,7 @@ struct EndTripReviewSheet: View {
     private func seedingSummary(_ seeding: SeedingDetails) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             if let depth = seeding.sowingDepthCm {
-                Text(String(format: "Sowing depth: %.1f cm", depth))
+                Text("Sowing depth: \(String(format: "%.1f", store.settings.regionFormatter.smallLengthValue(centimetres: depth))) \(store.settings.regionFormatter.smallLengthUnitAbbreviation)")
                     .font(.subheadline)
             }
             if let lines = seeding.mixLines, !lines.isEmpty {

@@ -189,6 +189,7 @@ object TripPdfExporter {
         regionFormatter: RegionFormatter,
         chemicalPrices: com.rork.vinetrack.data.chemical.ChemicalSeasonPriceBatch?,
     ) {
+        fun money(value: Double): String = regionFormatter.formatCurrency(value)
         // Header
         val textX = PdfHeaderUtil.drawLogo(s.canvas, logo, MARGIN, s.y)
         s.canvas.drawText(vineyardName.ifBlank { "Vineyard" }, textX, s.y + 18f, titlePaint)
@@ -208,9 +209,9 @@ object TripPdfExporter {
         }
         operatorName?.takeIf { it.isNotBlank() }?.let { row(s, "Operator", it) }
             ?: trip.personName?.takeIf { it.isNotBlank() }?.let { row(s, "Operator", it) }
-        formatDate(trip.startEpochMs)?.let { row(s, "Date", it) }
-        timeOfDay(trip.startTime)?.let { row(s, "Start time", it) }
-        timeOfDay(trip.endTime)?.let { row(s, "Finish time", it) }
+        trip.startEpochMs?.let(regionFormatter::formatDate)?.let { row(s, "Date", it) }
+        parseIsoToEpochMs(trip.startTime)?.let(regionFormatter::formatTime)?.let { row(s, "Start time", it) }
+        parseIsoToEpochMs(trip.endTime)?.let(regionFormatter::formatTime)?.let { row(s, "Finish time", it) }
         row(s, "Duration", formatTripDuration(trip.activeDurationSeconds ?: 0L))
         trip.totalDistance?.takeIf { it > 0 }?.let { row(s, "Distance", regionFormatter.formatDistance(it)) }
         averageSpeedKmh(trip)?.let { row(s, "Average speed", regionFormatter.formatSpeed(it)) }
@@ -221,7 +222,7 @@ object TripPdfExporter {
         val seeding = trip.seedingDetails
         if (seeding?.hasAnyValue == true) {
             sectionHeader(s, "Seeding Details")
-            seeding.sowingDepthCm?.let { row(s, "Sowing depth", "${fmt(it)} cm") }
+            seeding.sowingDepthCm?.let { row(s, "Sowing depth", "${fmt(regionFormatter.smallLengthValue(it))} ${regionFormatter.smallLengthUnitAbbreviation}") }
             val lines = seeding.mixLines.orEmpty().filter { it.hasAnyValue }
             lines.forEachIndexed { index, line ->
                 val title = line.name?.takeIf { it.isNotBlank() }
@@ -230,7 +231,7 @@ object TripPdfExporter {
                 subHeader(s, title)
                 line.percentOfMix?.let { rowIndented(s, "% of mix", "${fmt(it)}%") }
                 line.seedBox?.takeIf { it.isNotBlank() }?.let { rowIndented(s, "Seed box", it) }
-                line.kgPerHa?.let { rowIndented(s, "Kg/ha", "${fmt(it)} kg/ha") }
+                line.kgPerHa?.let { rowIndented(s, "Seed rate", regionFormatter.formatYieldPerArea(it, "kg")) }
             }
         }
 
@@ -278,14 +279,14 @@ object TripPdfExporter {
                     )
                 }
                 if (planned != null) {
-                    rowIndented(s, "Planned water", "${fmt(planned.waterVolume)} L")
+                    rowIndented(s, "Planned water", regionFormatter.formatVolume(planned.waterVolume))
                     if (actual == null) {
                         rowIndented(s, "Actual amounts", "Not recorded")
                     } else {
-                        rowIndented(s, "Actual water", actual.waterVolumeL?.let { "${fmt(it)} L" } ?: "Not recorded")
+                        rowIndented(s, "Actual water", actual.waterVolumeL?.let(regionFormatter::formatVolume) ?: "Not recorded")
                         actual.waterVolumeL?.let { actualWater ->
                             val waterDifference = actualWater - planned.waterVolume
-                            if (kotlin.math.abs(waterDifference) > 0.000_001) rowIndented(s, "Water difference", "${if (waterDifference > 0) "+" else ""}${fmt(waterDifference)} L")
+                            if (kotlin.math.abs(waterDifference) > 0.000_001) rowIndented(s, "Water difference", "${if (waterDifference > 0) "+" else ""}${regionFormatter.formatVolume(waterDifference)}")
                         }
                         planned.chemicals.forEach { chemical ->
                             val confirmed = actual.chemicals.firstOrNull { it.plannedChemicalId == chemical.id }
@@ -343,8 +344,8 @@ object TripPdfExporter {
                 row(s, "Fuel", "—")
                 rowIndented(s, "Note", fuel.warning)
             } else {
-                fuel.litres?.let { row(s, "Fuel used (est.)", "${fmt(it)} L") }
-                fuel.costPerLitre?.let { row(s, "Fuel cost per L", "${money(it)}/L") }
+                fuel.litres?.let { row(s, "Fuel used (est.)", regionFormatter.formatFuel(it)) }
+                fuel.costPerLitre?.let { row(s, "Fuel cost per ${regionFormatter.fuelUnitAbbreviation}", regionFormatter.formatFuelCostPerUnit(it)) }
                 fuel.fuelCost?.let { row(s, "Fuel cost", money(it)) }
             }
 
@@ -367,11 +368,11 @@ object TripPdfExporter {
             s.y += 4f
             row(s, "Total estimated cost", money(cost.totalCost))
             row(s, "Costing status", cost.completeness.name)
-            row(s, "Treated area", cost.treatedAreaHa?.let { "${fmt(it)} ha" } ?: "—")
+            row(s, "Treated area", cost.treatedAreaHa?.let(regionFormatter::formatArea) ?: "—")
             if (cost.costPerHa != null) {
-                row(s, "Cost per ha", "${money(cost.costPerHa)}/ha")
+                row(s, "Cost per ${regionFormatter.areaUnitAbbreviation}", regionFormatter.formatCostPerArea(cost.costPerHa))
             } else {
-                row(s, "Cost per ha", "—")
+                row(s, "Cost per ${regionFormatter.areaUnitAbbreviation}", "—")
                 cost.areaWarning?.let { rowIndented(s, "Note", it) }
             }
             row(s, "Yield", cost.yieldTonnes?.let { "${fmt(it)} t" } ?: "—")
@@ -397,7 +398,7 @@ object TripPdfExporter {
         drawDivider(s)
         s.y += 4f
         val generated = "Generated by VineTrack \u2022 " +
-            SimpleDateFormat("dd/MM/yyyy h:mm a", Locale.getDefault()).format(Date())
+            regionFormatter.formatDateTime(System.currentTimeMillis())
         text(s, generated, captionPaint)
     }
 

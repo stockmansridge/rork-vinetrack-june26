@@ -147,7 +147,7 @@ struct SeasonYieldOverviewView: View {
                     systemImage: "function"
                 )
             }
-            Text("Calculated \(SeasonYieldFormat.calculatedAt(projection.calculatedAt))")
+            Text("Calculated \(projection.calculatedAt.map { fmt.formatDateTime($0) } ?? "Never")")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -381,7 +381,7 @@ struct SeasonYieldBlockInfoView: View {
         List {
             Section("Estimate") {
                 infoRow("Source", SeasonYieldFormat.sourceLabel(block.estimateSource))
-                infoRow("Calculated", SeasonYieldFormat.calculatedAt(block.calculatedAt))
+                infoRow("Calculated", block.calculatedAt.map { fmt.formatDateTime($0) } ?? "Never")
                 infoRow("Block area", fmt.formatArea(hectares: block.areaHectares))
                 infoRow("Base estimate", SeasonYieldFormat.tonnes(block.baseTonnes))
                 if block.baseTonnes == nil {
@@ -428,7 +428,7 @@ struct SeasonYieldBlockInfoView: View {
                     infoRow("Bunch weight", inputs.bunchWeightGrams.map { String(format: "%.0f g", $0) } ?? "—")
                     infoRow("Vines per \(fmt.areaUnitAbbreviation)", inputs.vinesPerHa.map { SeasonYieldFormat.number(fmt.perAreaValue(perHectare: $0)) } ?? "—")
                     infoRow("Vine count", SeasonYieldFormat.number(inputs.vineCount))
-                    infoRow("Vine count basis", SeasonYieldFormat.vineCountBasisLabel(inputs.vineCountBasis))
+                    infoRow("Vine count basis", SeasonYieldFormat.vineCountBasisLabel(inputs.vineCountBasis, areaUnit: fmt.areaUnitAbbreviation))
                     if let formula = inputs.formula {
                         Text(formula)
                             .font(.caption2)

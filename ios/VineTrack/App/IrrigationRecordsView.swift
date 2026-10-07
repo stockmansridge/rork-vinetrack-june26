@@ -517,6 +517,7 @@ struct IrrigationSessionRow: View {
 // MARK: - Setup wizard
 
 struct IrrigationSetupWizardView: View {
+    @Environment(MigratedDataStore.self) private var store
     let status: IrrigationSetupStatus
     @Binding var showWizard: Bool
     let onRefresh: () async -> Void
@@ -591,7 +592,7 @@ struct IrrigationSetupWizardView: View {
             Section("Recommended for full reporting") {
                 recommendedRow("Block area", status.recommended.blocksWithArea,
                                of: status.recommended.totalActiveBlocks,
-                               usedFor: "Water per hectare & irrigation depth") { BlocksHubView() }
+                               usedFor: "Water per \(store.settings.regionFormatter.areaUnitAbbreviation) & irrigation depth") { BlocksHubView() }
                 recommendedRow("Vine count", status.recommended.blocksWithVineCount,
                                of: status.recommended.totalActiveBlocks,
                                usedFor: "Water per vine") { BlocksHubView() }

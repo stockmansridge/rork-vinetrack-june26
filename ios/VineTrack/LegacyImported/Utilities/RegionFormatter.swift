@@ -402,6 +402,21 @@ nonisolated struct RegionFormatter: Sendable {
         return formatDate(date)
     }
 
+    /// Calendar for customer-facing day filtering and reports; audit/persistence timestamps remain unchanged.
+    var vineyardCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = settings.resolvedTimeZone
+        return calendar
+    }
+
+    func formatTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = settings.resolvedTimeZone
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+
     // MARK: - Date / DateTime
 
     func formatDate(_ date: Date) -> String {

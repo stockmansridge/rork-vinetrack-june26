@@ -62,9 +62,10 @@ nonisolated enum PruningActivityExportService {
         includeCost: Bool,
         canonicalRows: [PruningActivityRow]? = nil,
         canonicalParents: [UUID: PruningActivityParentSource] = [:],
-        calendar: Calendar = .current,
+        calendar: Calendar? = nil,
         formatter: RegionFormatter = .australian
     ) throws -> URL {
+        let calendar = calendar ?? formatter.vineyardCalendar
         logConflicts(
             PruningActivityAllocationModel.build(
                 canonicalRows ?? rows,
@@ -99,9 +100,10 @@ nonisolated enum PruningActivityExportService {
         canonicalRows: [PruningActivityRow]? = nil,
         canonicalParents: [UUID: PruningActivityParentSource] = [:],
         includeTechnicalReferences: Bool = false,
-        calendar: Calendar = .current,
+        calendar: Calendar? = nil,
         formatter: RegionFormatter = .australian
     ) throws -> URL {
+        let calendar = calendar ?? formatter.vineyardCalendar
         let model = PruningActivityAllocationModel.build(
             canonicalRows ?? rows,
             includeCost: includeCost,

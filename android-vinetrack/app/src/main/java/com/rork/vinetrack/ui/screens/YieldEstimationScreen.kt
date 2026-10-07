@@ -550,7 +550,7 @@ private fun TripSetupScreen(
                     )
                     EstimationStat(
                         "Density",
-                        "${session.samplesPerHectare}/ha",
+                        "${String.format(java.util.Locale.US, "%.2f", blockAreaFmt.perAreaValue(session.samplesPerHectare.toDouble()))}/${blockAreaFmt.areaUnitAbbreviation}",
                         VineColors.LeafGreen,
                         Modifier.weight(1f),
                     )
@@ -598,10 +598,11 @@ private fun TripSetupScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("Number of samples", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                                Text("Sample sites per hectare — saved as the default for the next trip", color = vine.textSecondary, fontSize = 12.sp)
+                                Text("Sample sites per ${blockAreaFmt.areaUnitAbbreviation} — saved as the default for the next trip", color = vine.textSecondary, fontSize = 12.sp)
                             }
                             Stepper(
                                 value = session.samplesPerHectare,
+                                displayValue = String.format(java.util.Locale.US, "%.2f", blockAreaFmt.perAreaValue(session.samplesPerHectare.toDouble())),
                                 onChange = {
                                     onApply(session.copy(samplesPerHectare = it))
                                     // A changed count becomes the shared vineyard default (sql/187).
@@ -1042,7 +1043,7 @@ private fun CompletedTripScreen(
             ) {
                 Icon(Icons.Filled.Lock, contentDescription = null, tint = VineColors.DarkGreen, modifier = Modifier.size(20.dp))
                 Text(
-                    "Completed ${(session.completedAt ?: session.createdAt).take(10)} · Vintage $vintage",
+                    "Completed ${com.rork.vinetrack.data.model.parseIsoToEpochMs(session.completedAt ?: session.createdAt)?.let { state.regionFormatter.formatDate(it) } ?: "Not recorded"} · Vintage $vintage",
                     color = vine.textPrimary,
                     fontWeight = FontWeight.Medium,
                 )
@@ -1122,14 +1123,14 @@ private fun EstimationStat(label: String, value: String, color: Color, modifier:
 }
 
 @Composable
-private fun Stepper(value: Int, onChange: (Int) -> Unit) {
+private fun Stepper(value: Int, displayValue: String, onChange: (Int) -> Unit) {
     val vine = LocalVineColors.current
     Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = { if (value > 1) onChange(value - 1) }) {
             Icon(Icons.Filled.Remove, contentDescription = "Fewer", tint = vine.textPrimary)
         }
         Text(
-            "$value",
+            displayValue,
             color = vine.textPrimary,
             fontWeight = FontWeight.Bold,
             fontSize = 16.sp,

@@ -510,9 +510,10 @@ nonisolated enum PruningActivityExport {
         includeCost: Bool,
         canonicalRows: [PruningActivityRow]? = nil,
         canonicalParents: [UUID: PruningActivityParentSource] = [:],
-        calendar: Calendar = .current,
+        calendar: Calendar? = nil,
         formatter: RegionFormatter? = nil
     ) -> String {
+        let calendar = calendar ?? formatter?.vineyardCalendar ?? .current
         let exported = rows(
             reportRows,
             includeCost: includeCost,

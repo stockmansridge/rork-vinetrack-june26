@@ -525,7 +525,7 @@ fun PruningActivityEditorScreen(
 
         if (showDatePicker) {
             val initialMillis = runCatching {
-                LocalDate.parse(draft.date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                LocalDate.parse(draft.date).atStartOfDay(ZoneId.of("UTC")).toInstant().toEpochMilli()
             }.getOrDefault(System.currentTimeMillis())
             val pickerState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
             DatePickerDialog(
@@ -634,11 +634,8 @@ private fun PruningActivityFieldsCard(
 ) {
     val vine = LocalVineColors.current
     var methodOpen by remember { mutableStateOf(false) }
-    val dateLabel = remember(draft.date) {
-        runCatching {
-            LocalDate.parse(draft.date).format(DateTimeFormatter.ofPattern("d MMM yyyy"))
-        }.getOrDefault(draft.date)
-    }
+    val region = LocalRegionFormatter.current
+    val dateLabel = remember(draft.date, region) { region.formatDate(draft.date) }
     PruningCard {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("This activity", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)

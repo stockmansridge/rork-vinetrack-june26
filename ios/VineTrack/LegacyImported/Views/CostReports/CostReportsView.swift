@@ -357,7 +357,7 @@ struct CostReportsView: View {
                     Text("\(fmt.formatCurrency(fmt.perAreaValue(perHectare: agg.total / agg.area)))/\(fmt.areaUnitAbbreviation)")
                 }
                 if agg.yieldT > 0 {
-                    Text(String(format: "$%.0f/t", agg.total / agg.yieldT))
+                    Text("\(fmt.formatCurrency(agg.total / agg.yieldT))/t")
                 }
             }
             .font(.caption2.monospacedDigit())

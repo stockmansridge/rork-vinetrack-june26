@@ -361,8 +361,9 @@ struct ActiveTripView: View {
 
     private var speedDisplayText: String {
         let v = displayedSpeedKmh
-        guard v > 0 else { return "— km/h" }
-        return String(format: "%.1f km/h", min(v, 99.9))
+        let formatter = store.settings.regionFormatter
+        guard v > 0 else { return "— \(formatter.speedUnitAbbreviation)" }
+        return formatter.formatSpeed(kmh: min(v, 99.9))
     }
 
     // MARK: - GPS quality
@@ -2150,8 +2151,7 @@ struct ActiveTripView: View {
     }
 
     private func formatDistance(_ meters: Double) -> String {
-        if meters < 1000 { return "\(Int(meters))m" }
-        return String(format: "%.1fkm", meters / 1000)
+        store.settings.regionFormatter.formatShortDistance(metres: meters)
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {

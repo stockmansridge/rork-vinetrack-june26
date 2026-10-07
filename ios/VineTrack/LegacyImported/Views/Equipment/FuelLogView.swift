@@ -294,7 +294,7 @@ struct FuelFillFormSheet: View {
         Section {
             Toggle("Filled to full", isOn: $filledToFull)
         } footer: {
-            Text("L/hr is most accurate when both this fill and the previous fill were to the same tank level (full).")
+            Text("\(fmt.fuelUnitAbbreviation)/hr is most accurate when both this fill and the previous fill were to the same tank level (full).")
         }
 
         Section {
@@ -349,7 +349,7 @@ struct FuelFillFormSheet: View {
                     }
                 }
             } else {
-                Text("Litres per hour could not be calculated for this fill.")
+                Text("\(fmt.fuelUnitAbbreviation)/hr could not be calculated for this fill.")
                     .foregroundStyle(.secondary)
             }
         } header: {
@@ -410,15 +410,15 @@ struct FuelFillFormSheet: View {
     private func warningText(_ w: TractorFuelRateResult.Warning) -> String {
         switch w {
         case .missingEngineHours:
-            return "Fuel log saved, but L/hr cannot be calculated without engine hours."
+            return "Fuel log saved, but \(fmt.fuelUnitAbbreviation)/hr cannot be calculated without engine hours."
         case .engineHoursWentBackwards:
             return "Engine hours are lower than the previous fill — check the reading."
         case .engineHoursDeltaZero:
-            return "Engine hours match the previous fill, so L/hr cannot be calculated."
+            return "Engine hours match the previous fill, so \(fmt.fuelUnitAbbreviation)/hr cannot be calculated."
         case .unrealisticRate:
-            return "Calculated L/hr looks unusually high or low — double-check litres and engine hours."
+            return "Calculated \(fmt.fuelUnitAbbreviation)/hr looks unusually high or low — double-check fuel volume and engine hours."
         case .notFilledToFull:
-            return "L/hr may be inaccurate unless both fills were to the same level."
+            return "\(fmt.fuelUnitAbbreviation)/hr may be inaccurate unless both fills were to the same level."
         }
     }
 

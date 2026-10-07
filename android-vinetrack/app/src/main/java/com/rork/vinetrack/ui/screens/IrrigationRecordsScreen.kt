@@ -746,6 +746,7 @@ private fun WizardContent(
     onRefresh: () -> Unit,
 ) {
     val s = status ?: return
+    val fmt = com.rork.vinetrack.ui.LocalRegionFormatter.current
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -811,7 +812,7 @@ private fun WizardContent(
         item { Text("Recommended for full reporting", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                CoverageRow("Block area — water per hectare & depth", s.recommended.blocksWithArea, s.recommended.totalActiveBlocks)
+                CoverageRow("Block area — water per ${fmt.areaUnitAbbreviation} & depth", s.recommended.blocksWithArea, s.recommended.totalActiveBlocks)
                 CoverageRow("Vine count — water per vine", s.recommended.blocksWithVineCount, s.recommended.totalActiveBlocks)
                 CoverageRow("Dripper output — expected delivery", s.recommended.blocksWithDripperOutput, s.recommended.totalActiveBlocks)
                 CoverageRow("Dripper spacing — emitters per vine", s.recommended.blocksWithDripperSpacing, s.recommended.totalActiveBlocks)
@@ -2785,7 +2786,7 @@ private fun ReportsContent(
                             DetailLine("Valves / blocks", "${o.valvesUsed ?: 0} / ${o.blocksIrrigated ?: 0}")
                             DetailLine("Serviced area", o.servicedAreaHectares?.let { fmt.formatArea(it) } ?: "—")
                             DetailLine("Serviced vines", o.servicedVines?.toString() ?: "—")
-                            DetailLine("Per hectare", o.litresPerHectare?.let { IrrigationUnits.perHectare(it, fmt) } ?: "—")
+                            DetailLine("Per ${fmt.areaUnitAbbreviation}", o.litresPerHectare?.let { IrrigationUnits.perHectare(it, fmt) } ?: "—")
                             DetailLine("Per vine", o.litresPerVine?.let { IrrigationUnits.perVine(it, fmt) } ?: "—")
                             DetailLine("Depth", o.irrigationDepthMm?.let { IrrigationUnits.depth(it, fmt) } ?: "—")
                             DetailLine("Effective depth", o.effectiveIrrigationDepthMm?.let { IrrigationUnits.depth(it, fmt) } ?: "—")

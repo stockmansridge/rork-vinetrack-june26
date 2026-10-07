@@ -367,8 +367,8 @@ struct IrrigationRecommendationView: View {
         }
         if settings.irrigationApplicationRateMmPerHour <= 0 {
             items.append(useWholeVineyard
-                         ? "Vineyard irrigation application rate (mm/hr)"
-                         : "Irrigation application rate (mm/hr)")
+                         ? "Vineyard irrigation application rate (\(fmt.rainfallUnitAbbreviation)/hr)"
+                         : "Irrigation application rate (\(fmt.rainfallUnitAbbreviation)/hr)")
         }
         if (effectiveSoilProfile?.availableWaterCapacityMmPerM ?? 0) <= 0 {
             items.append(useWholeVineyard
@@ -1131,7 +1131,7 @@ struct IrrigationRecommendationView: View {
                 }
 
                 if recentRainNoDataDays > 0 {
-                    Text("\(recentRainNoDataDays) day\(recentRainNoDataDays == 1 ? "" : "s") in this window have no recorded rainfall (treated as 0 mm in the deficit calculation).")
+                    Text("\(recentRainNoDataDays) day\(recentRainNoDataDays == 1 ? "" : "s") in this window have no recorded rainfall (treated as \(fmt.formatRainfall(mm: 0)) in the deficit calculation).")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     missingRainHelperPrompt
@@ -1607,6 +1607,15 @@ struct IrrigationRecommendationView: View {
 
     // MARK: - Info popover button
 
+    private func infoTitle(_ term: InfoTerm) -> String {
+        switch term {
+        case .applicationRate: return "Application rate (\(fmt.rainfallUnitAbbreviation)/hr)"
+        case .soilBuffer: return "Soil moisture buffer (\(fmt.rainfallUnitAbbreviation))"
+        case .recentRain: return "Recent actual rain (\(fmt.rainfallUnitAbbreviation))"
+        default: return term.title
+        }
+    }
+
     private func infoButton(for term: InfoTerm) -> some View {
         Button {
             activeInfoTerm = term
@@ -1616,15 +1625,15 @@ struct IrrigationRecommendationView: View {
                 .foregroundStyle(.tint)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("About \(term.title)")
+        .accessibilityLabel("About \(infoTitle(term))")
         .popover(isPresented: Binding(
             get: { activeInfoTerm == term },
             set: { if !$0 { activeInfoTerm = nil } }
         )) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(term.title)
+                Text(infoTitle(term))
                     .font(.headline)
-                Text(term.body)
+                Text(term == .applicationRate ? "Application rate is the water depth (\(fmt.rainfallUnitAbbreviation)) your irrigation system applies per hour. It converts the required irrigation depth into an irrigation duration." : term.body)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

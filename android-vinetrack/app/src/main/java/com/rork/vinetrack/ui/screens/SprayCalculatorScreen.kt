@@ -97,6 +97,8 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.CanopyWaterRates
 import com.rork.vinetrack.data.CanopyWaterRatesStore
 import com.rork.vinetrack.data.RegionFormatter
+import com.rork.vinetrack.data.RegionalInput
+import com.rork.vinetrack.data.spray.SprayCarrierRegionalFormat
 import com.rork.vinetrack.data.SprayCalculator
 import com.rork.vinetrack.data.SprayRecordRepository
 import com.rork.vinetrack.data.SprayJobTemplateRepository
@@ -430,6 +432,8 @@ fun SprayCalculatorScreen(
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
+    val fmt = LocalRegionFormatter.current
+    val carrierFormat = remember(fmt) { SprayCarrierRegionalFormat(fmt) }
     val canopyRates = remember { CanopyWaterRatesStore(context).load() }
     val canopyReferenceFiles by vm.canopyReferenceImageFiles.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refreshCanopyReferenceImagesOncePerSession() }
@@ -467,6 +471,8 @@ fun SprayCalculatorScreen(
     var canopySelection by remember { mutableStateOf(SprayCanopySelection.unconfirmed) }
     var sprayRateText by remember { mutableStateOf("") }
     var hasEditedSprayRate by remember { mutableStateOf(false) }
+    var sprayRateSeed by remember { mutableStateOf(carrierFormat.rateInput(null, SprayCarrierBasis.LITRES_PER_HECTARE)) }
+    var bandWidthSeed by remember { mutableStateOf(RegionalInput.seed(null, fmt::lengthValue)) }
 
     // Chemicals & notes
     val chemLines = remember { mutableStateListOf<CalcChemLine>() }
@@ -571,9 +577,9 @@ fun SprayCalculatorScreen(
     }
     val chosenRate = if (isGroundSpray) {
         // No fallback: an unanswered ground application rate stays unresolved.
-        sprayRateText.toDoubleOrNull() ?: 0.0
+        carrierFormat.resolveRate(sprayRateText, SprayCarrierBasis.LITRES_PER_HECTARE, sprayRateSeed) ?: 0.0
     } else if (hasEditedSprayRate) {
-        sprayRateText.toDoubleOrNull() ?: (legacyRecommendedRate ?: 0.0)
+        carrierFormat.resolveRate(sprayRateText, SprayCarrierBasis.LITRES_PER_HECTARE, sprayRateSeed) ?: (legacyRecommendedRate ?: 0.0)
     } else {
         legacyRecommendedRate ?: 0.0
     }
@@ -705,7 +711,7 @@ fun SprayCalculatorScreen(
             customTargets = customSprayTargets.toList(),
             sprayHeadTarget = sprayHeadTarget,
             groundTarget = groundTarget,
-            bandWidthTotalMetres = bandWidthText.toDoubleOrNull(),
+            bandWidthTotalMetres = bandWidthSeed.resolve(bandWidthText, fmt::lengthToCanonical),
             isGrowthStageAssigned = if (growthModeSame) {
                 sharedStageDecision.isResolved && selectedPaddockIds.isNotEmpty()
             } else {
@@ -718,23 +724,23 @@ fun SprayCalculatorScreen(
             tankCapacityLitres = tankCapacity,
             carrierBasis = carrierBasisChoice,
             carrierAreaBasis = carrierAreaBasis,
-            manualTotalLitres = manualTotalLitresText.toDoubleOrNull(),
+            manualTotalLitres = carrierFormat.resolveRate(manualTotalLitresText, SprayCarrierBasis.MANUAL_TOTAL_VOLUME),
             isCanopyConfirmed = isCanopyConfirmed,
             canopy = canopySelection,
             canopyWaterRates = canopyRates,
             sprayVolumeChoice = sprayVolumeChoice,
-            customSprayerRate = customSprayerRateText.toDoubleOrNull(),
+            customSprayerRate = carrierFormat.resolveRate(customSprayerRateText, customSprayerBasis),
             customSprayerBasis = customSprayerBasis,
             // Ground carrier is direct operator input only. No canopy-derived
             // fallback may enter a banded plan.
             litresPerHectare = if (isGroundSpray) {
-                sprayRateText.toDoubleOrNull()
+                carrierFormat.resolveRate(sprayRateText, SprayCarrierBasis.LITRES_PER_HECTARE, sprayRateSeed)
             } else {
                 chosenRate.takeIf { it > 0 }
             },
             diluteLitresPerHectare = if (isGroundSpray) null else legacyRecommendedRate,
-            diluteLitresPer100Metres = if (isGroundSpray) null else diluteLitresPer100mText.toDoubleOrNull(),
-            appliedLitresPer100Metres = if (isGroundSpray) null else appliedLitresPer100mText.toDoubleOrNull(),
+            diluteLitresPer100Metres = if (isGroundSpray) null else carrierFormat.resolveRate(diluteLitresPer100mText, SprayCarrierBasis.LITRES_PER_100_METRES),
+            appliedLitresPer100Metres = if (isGroundSpray) null else carrierFormat.resolveRate(appliedLitresPer100mText, SprayCarrierBasis.LITRES_PER_100_METRES),
             products = guidedProducts,
             notes = notes,
         ),
@@ -773,7 +779,7 @@ fun SprayCalculatorScreen(
         "No blocks selected"
     } else {
         selectedPaddocks.joinToString(", ") { it.name } +
-            " \u2014 ${SprayGuidedFormat.hectares(guidedPlan.grossAreaHectares)} gross"
+            " \u2014 ${carrierFormat.hectares(guidedPlan.grossAreaHectares)} gross"
     }
     val targetSummary = when {
         sprayTargets.isEmpty() -> "Not set"
@@ -782,7 +788,7 @@ fun SprayCalculatorScreen(
             val treated = guidedPlan.treatedAreaHectares
             when {
                 guidedFlow.requiresBandWidth && treated != null ->
-                    "$names \u2014 ${SprayGuidedFormat.hectares(treated)} treated"
+                    "$names \u2014 ${carrierFormat.hectares(treated)} treated"
                 sprayHeadTarget != null -> "$names \u2014 ${sprayHeadTarget?.label}"
                 else -> names
             }
@@ -811,13 +817,13 @@ fun SprayCalculatorScreen(
         val carrier = guidedPlan.carrier
         val entered = when (carrier.basis) {
             SprayCarrierBasis.LITRES_PER_HECTARE ->
-                SprayGuidedFormat.litresPerHectare(carrier.litresPerHectare)
+                carrierFormat.litresPerHectare(carrier.litresPerHectare)
             SprayCarrierBasis.LITRES_PER_100_METRES ->
-                SprayGuidedFormat.litresPer100m(carrier.appliedLitresPer100Metres)
+                carrierFormat.litresPer100m(carrier.appliedLitresPer100Metres)
             SprayCarrierBasis.MANUAL_TOTAL_VOLUME ->
                 "Manual"
         }
-        "$entered \u2014 ${SprayGuidedFormat.litres(carrier.totalLitres)} total"
+        "$entered \u2014 ${carrierFormat.litres(carrier.totalLitres)} total"
     }
     val productsSummary = when {
         guidedPlan.productLines.isEmpty() -> "No products added"
@@ -928,11 +934,13 @@ fun SprayCalculatorScreen(
         // so reopening the job reproduces the SAME treated area it was saved
         // with instead of silently reverting to a whole-block calculation.
         r.applicationGeometry?.bandWidthTotalMetres?.takeIf { it > 0 }?.let { metres ->
-            bandWidthText = fmtRate(metres)
+            bandWidthSeed = RegionalInput.seed(metres, fmt::lengthValue)
+            bandWidthText = bandWidthSeed.text
         }
         r.tanks?.firstOrNull()?.let { tank ->
             if (tank.sprayRatePerHa > 0) {
-                sprayRateText = fmtNum(tank.sprayRatePerHa, 0)
+                sprayRateSeed = carrierFormat.rateInput(tank.sprayRatePerHa, SprayCarrierBasis.LITRES_PER_HECTARE)
+                sprayRateText = sprayRateSeed.text
                 hasEditedSprayRate = true
             }
             tank.chemicals.forEach { chem ->
@@ -1460,7 +1468,7 @@ fun SprayCalculatorScreen(
                                 bandWidthText = it.filter { c -> c.isDigit() || c == '.' }
                                 result = null
                             },
-                            label = { Text("Band width (m)") },
+                            label = { Text("Band width (${fmt.lengthUnitAbbreviation})") },
                             placeholder = { Text("0.80") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -1481,12 +1489,12 @@ fun SprayCalculatorScreen(
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     GuidedCalculatedRow(
                                         label = "Gross area",
-                                        value = SprayGuidedFormat.hectares(guidedPlan.grossAreaHectares),
+                                        value = carrierFormat.hectares(guidedPlan.grossAreaHectares),
                                         accent = VineColors.Olive,
                                     )
                                     GuidedCalculatedRow(
                                         label = "Treated area",
-                                        value = SprayGuidedFormat.hectares(guidedPlan.treatedAreaHectares),
+                                        value = carrierFormat.hectares(guidedPlan.treatedAreaHectares),
                                         accent = VineColors.Olive,
                                         emphasis = true,
                                     )
@@ -1620,7 +1628,7 @@ fun SprayCalculatorScreen(
                                     )
                                     Text(eq.displayName, fontSize = 14.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
                                     eq.tankCapacityLitres?.takeIf { it > 0 }?.let {
-                                        Text("${fmtNum(it, 0)} L", fontSize = 12.sp, color = vine.textSecondary)
+                                        Text(fmt.formatVolume(it), fontSize = 12.sp, color = vine.textSecondary)
                                     }
                                 }
                             }
@@ -1679,7 +1687,7 @@ fun SprayCalculatorScreen(
                                 selected = guidedFlow.effectiveCarrierBasis == basis,
                                 onClick = { carrierBasisChoice = basis; result = null },
                                 shape = SegmentedButtonDefaults.itemShape(index, bases.size),
-                            ) { Text(if (basis == SprayCarrierBasis.LITRES_PER_HECTARE) "L/ha" else "Manual total water", fontSize = 12.sp) }
+                            ) { Text(if (basis == SprayCarrierBasis.LITRES_PER_HECTARE) fmt.volumePerAreaUnit else "Manual total water", fontSize = 12.sp) }
                         }
                     }
                 }
@@ -1690,7 +1698,7 @@ fun SprayCalculatorScreen(
                 if (!guidedFlow.requiresBandWidth && guidedFlow.isCarrierBasisLocked) {
                     Text(
                         "This vineyard records carrier volume in " +
-                            "${SprayGuidedFormat.carrierBasisLabel(guidedFlow.effectiveCarrierBasis)}.",
+                            "${carrierFormat.carrierBasisLabel(guidedFlow.effectiveCarrierBasis)}.",
                         fontSize = 12.sp,
                         color = vine.textSecondary,
                     )
@@ -1711,7 +1719,7 @@ fun SprayCalculatorScreen(
                                 selected = guidedFlow.effectiveCarrierBasis == basis,
                                 onClick = { carrierBasisChoice = basis; result = null },
                                 shape = SegmentedButtonDefaults.itemShape(i, bases.size),
-                            ) { Text(SprayGuidedFormat.carrierBasisLabel(basis), fontSize = 13.sp) }
+                            ) { Text(carrierFormat.carrierBasisLabel(basis), fontSize = 13.sp) }
                         }
                     }
                 }
@@ -1740,10 +1748,10 @@ fun SprayCalculatorScreen(
                     decision?.recommendation?.let { recommendation ->
                         GuidedCalculatedPanel(title = "Recommended spray volume — CF 1.00", accent = VineColors.LeafGreen) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                GuidedCalculatedRow(label = "L/100 m", value = "${fmtNum(recommendation.diluteLitresPer100Metres, 2)} L/100 m", accent = VineColors.LeafGreen, emphasis = true)
+                                GuidedCalculatedRow(label = fmt.volumePer100LengthUnit, value = carrierFormat.litresPer100m(recommendation.diluteLitresPer100Metres), accent = VineColors.LeafGreen, emphasis = true)
                                 GuidedCalculatedRow(
-                                    label = "Equivalent L/ha",
-                                    value = recommendation.diluteLitresPerHectare?.let { "${fmtNum(it, 2)} L/ha" } ?: "Unavailable",
+                                    label = "Equivalent ${fmt.volumePerAreaUnit}",
+                                    value = recommendation.diluteLitresPerHectare?.let { fmt.formatVolumePerArea(it, 2) } ?: "Unavailable",
                                     accent = VineColors.LeafGreen,
                                     caption = if (recommendation.diluteLitresPerHectare == null) SprayVolumeHelp.ROW_SPACING_REQUIRED else null,
                                 )
@@ -1772,13 +1780,13 @@ fun SprayCalculatorScreen(
                                         selected = customSprayerBasis == basis,
                                         onClick = { customSprayerBasis = basis; result = null },
                                         shape = SegmentedButtonDefaults.itemShape(index, 2),
-                                    ) { Text(SprayGuidedFormat.carrierBasisLabel(basis), fontSize = 13.sp) }
+                                    ) { Text(carrierFormat.carrierBasisLabel(basis), fontSize = 13.sp) }
                                 }
                             }
                             OutlinedTextField(
                                 value = customSprayerRateText,
                                 onValueChange = { customSprayerRateText = it.filter { c -> c.isDigit() || c == '.' }; result = null },
-                                label = { Text("Custom sprayer rate (${SprayGuidedFormat.carrierBasisLabel(customSprayerBasis)})") },
+                                label = { Text("Custom sprayer rate (${carrierFormat.carrierBasisLabel(customSprayerBasis)})") },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 supportingText = { Text(SprayVolumeHelp.ACTUAL_SPRAYER_OUTPUT) },
@@ -1791,8 +1799,8 @@ fun SprayCalculatorScreen(
                                     GuidedCalculatedRow(
                                         label = "Actual sprayer output",
                                         value = when (guidedFlow.effectiveCarrierBasis) {
-                                            SprayCarrierBasis.LITRES_PER_HECTARE -> decision.actualLitresPerHectare?.let { "${fmtNum(it, 2)} L/ha" } ?: "Unavailable"
-                                            SprayCarrierBasis.LITRES_PER_100_METRES -> decision.actualLitresPer100Metres?.let { "${fmtNum(it, 2)} L/100 m" } ?: "Unavailable"
+                                            SprayCarrierBasis.LITRES_PER_HECTARE -> decision.actualLitresPerHectare?.let { fmt.formatVolumePerArea(it, 2) } ?: "Unavailable"
+                                            SprayCarrierBasis.LITRES_PER_100_METRES -> decision.actualLitresPer100Metres?.let { fmt.formatVolumePer100Length(it) } ?: "Unavailable"
                                             SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> "Unavailable"
                                         },
                                         accent = VineColors.Olive,
@@ -1801,8 +1809,8 @@ fun SprayCalculatorScreen(
                                     GuidedCalculatedRow(
                                         label = "Equivalent rate",
                                         value = when (guidedFlow.effectiveCarrierBasis) {
-                                            SprayCarrierBasis.LITRES_PER_HECTARE -> decision.actualLitresPer100Metres?.let { "${fmtNum(it, 2)} L/100 m" } ?: "Unavailable"
-                                            SprayCarrierBasis.LITRES_PER_100_METRES -> decision.actualLitresPerHectare?.let { "${fmtNum(it, 2)} L/ha" } ?: "Unavailable"
+                                            SprayCarrierBasis.LITRES_PER_HECTARE -> decision.actualLitresPer100Metres?.let { fmt.formatVolumePer100Length(it) } ?: "Unavailable"
+                                            SprayCarrierBasis.LITRES_PER_100_METRES -> decision.actualLitresPerHectare?.let { fmt.formatVolumePerArea(it, 2) } ?: "Unavailable"
                                             SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> "Unavailable"
                                         },
                                         accent = VineColors.Olive,
@@ -1811,7 +1819,7 @@ fun SprayCalculatorScreen(
                                     GuidedCalculatedRow(label = "Concentration factor", value = SprayGuidedFormat.factor(decision.concentrationFactor), accent = VineColors.Olive)
                                     GuidedCalculatedRow(
                                         label = "Total carrier volume",
-                                        value = if (guidedFlow.isCarrierResolved) SprayGuidedFormat.litres(guidedPlan.carrier.totalLitres) else "Unavailable",
+                                        value = if (guidedFlow.isCarrierResolved) carrierFormat.litres(guidedPlan.carrier.totalLitres) else "Unavailable",
                                         accent = VineColors.Olive,
                                         emphasis = true,
                                     )
@@ -1823,7 +1831,7 @@ fun SprayCalculatorScreen(
                     OutlinedTextField(
                         value = manualTotalLitresText,
                         onValueChange = { manualTotalLitresText = it.filter { c -> c.isDigit() || c == '.' }; result = null },
-                        label = { Text("Total spray water (L)") },
+                        label = { Text("Total spray water (${fmt.volumeUnitAbbreviation})") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth(),
@@ -1831,11 +1839,11 @@ fun SprayCalculatorScreen(
                     if (guidedFlow.isCarrierResolved) {
                         GuidedCalculatedPanel(title = "Spray volume", accent = VineColors.Olive) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                GuidedCalculatedRow(label = "Total spray water", value = SprayGuidedFormat.litres(guidedPlan.carrier.totalLitres), accent = VineColors.Olive, emphasis = true)
+                                GuidedCalculatedRow(label = "Total spray water", value = carrierFormat.litres(guidedPlan.carrier.totalLitres), accent = VineColors.Olive, emphasis = true)
                                 GuidedCalculatedRow(
                                     label = "Sprayer application rate",
                                     value = guidedPlan.carrier.litresPerHectare?.let { rate ->
-                                        if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "${fmtNum(rate, 2)} L/treated ha" else "${fmtNum(rate, 2)} L/gross ha"
+                                        "${fmt.formatVolumePerArea(rate, 2)} (${if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "treated" else "gross"} area)"
                                     } ?: "Unavailable",
                                     accent = VineColors.Olive,
                                 )
@@ -1847,7 +1855,7 @@ fun SprayCalculatorScreen(
                     OutlinedTextField(
                         value = sprayRateText,
                         onValueChange = { sprayRateText = it.filter { c -> c.isDigit() || c == '.' }; hasEditedSprayRate = true; result = null },
-                        label = { Text(if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "Application rate (L/treated ha)" else "Application rate (L/gross ha)") },
+                        label = { Text("Application rate (${fmt.volumePerAreaUnit}, ${if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "treated" else "gross"} area)") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         modifier = Modifier.fillMaxWidth(),
@@ -1855,9 +1863,9 @@ fun SprayCalculatorScreen(
                     if (guidedFlow.isCarrierResolved) {
                         GuidedCalculatedPanel(title = "Calculated spray water", accent = VineColors.Olive) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                GuidedCalculatedRow(label = "Application rate", value = "${fmtNum(guidedPlan.carrier.litresPerHectare ?: 0.0, 2)} L/${if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "treated" else "gross"} ha", accent = VineColors.Olive)
-                                GuidedCalculatedRow(label = "Calculation area", value = SprayGuidedFormat.hectares(guidedPlan.carrier.areaHectaresUsed), accent = VineColors.Olive)
-                                GuidedCalculatedRow(label = "Total spray water", value = SprayGuidedFormat.litres(guidedPlan.carrier.totalLitres), accent = VineColors.Olive, emphasis = true)
+                                GuidedCalculatedRow(label = "Application rate", value = "${carrierFormat.litresPerHectare(guidedPlan.carrier.litresPerHectare)} (${if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "treated" else "gross"} area)", accent = VineColors.Olive)
+                                GuidedCalculatedRow(label = "Calculation area", value = carrierFormat.hectares(guidedPlan.carrier.areaHectaresUsed), accent = VineColors.Olive)
+                                GuidedCalculatedRow(label = "Total spray water", value = carrierFormat.litres(guidedPlan.carrier.totalLitres), accent = VineColors.Olive, emphasis = true)
                                 GuidedCalculatedRow(label = "Concentration factor", value = "Not used", accent = VineColors.Olive)
                             }
                         }
@@ -1872,7 +1880,7 @@ fun SprayCalculatorScreen(
                             diluteLitresPer100mText = it.filter { c -> c.isDigit() || c == '.' }
                             result = null
                         },
-                        label = { Text("Dilute / Runoff Volume (L/100 m)") },
+                        label = { Text("Dilute / Runoff Volume (${fmt.volumePer100LengthUnit})") },
                         placeholder = { Text("40") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -1884,7 +1892,7 @@ fun SprayCalculatorScreen(
                             appliedLitresPer100mText = it.filter { c -> c.isDigit() || c == '.' }
                             result = null
                         },
-                        label = { Text("Actual Applied Volume (L/100 m)") },
+                        label = { Text("Actual Applied Volume (${fmt.volumePer100LengthUnit})") },
                         placeholder = { Text("20") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -1904,13 +1912,13 @@ fun SprayCalculatorScreen(
                                 )
                                 GuidedCalculatedRow(
                                     label = "Total carrier",
-                                    value = SprayGuidedFormat.litres(carrier.totalLitres),
+                                    value = carrierFormat.litres(carrier.totalLitres),
                                     accent = VineColors.Olive,
                                     emphasis = true,
                                 )
                                 GuidedCalculatedRow(
                                     label = "Equivalent applied volume",
-                                    value = SprayGuidedFormat.litresPerHectare(carrier.litresPerHectare),
+                                    value = carrierFormat.litresPerHectare(carrier.litresPerHectare),
                                     accent = VineColors.Olive,
                                     caption = if (carrier.litresPerHectare != null) {
                                         "Derived from row spacing \u2014 not entered"
@@ -1937,8 +1945,8 @@ fun SprayCalculatorScreen(
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {
-                            Text("Per 100m row", fontSize = 12.sp, color = vine.textSecondary)
-                            Text(legacyPer100m?.let { "${fmtNum(it, 0)} L" } ?: "—", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                            Text("Per 100 ${fmt.lengthUnitAbbreviation} row", fontSize = 12.sp, color = vine.textSecondary)
+                            Text(legacyPer100m?.let { fmt.formatVolume(it / fmt.lengthValue(1.0)) } ?: "—", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                         }
                     }
 
@@ -1946,7 +1954,7 @@ fun SprayCalculatorScreen(
                     // resolved we say so instead of showing an assumed 2.5 m.
                     if (resolvedRowSpacing != null) {
                         Text(
-                            "Row spacing: ${fmtNum(resolvedRowSpacing, 1)}m",
+                            "Row spacing: ${fmt.formatLength(resolvedRowSpacing, 1)}",
                             fontSize = 12.sp,
                             color = vine.textSecondary,
                             modifier = Modifier.padding(top = 8.dp),
@@ -1954,9 +1962,9 @@ fun SprayCalculatorScreen(
                     } else {
                         Text(
                             if (selectedPaddocks.size > 1) {
-                                "Selected blocks have missing or differing row spacing — set a matching row spacing in block details to calculate L/ha."
+                                "Selected blocks have missing or differing row spacing — set a matching row spacing in block details to calculate ${fmt.volumePerAreaUnit}."
                             } else {
-                                "Set row spacing in block details to calculate L/ha."
+                                "Set row spacing in block details to calculate ${fmt.volumePerAreaUnit}."
                             },
                             fontSize = 12.sp,
                             color = VineColors.Warning,
@@ -1970,9 +1978,9 @@ fun SprayCalculatorScreen(
                         Spacer8()
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             OutlinedTextField(
-                                value = if (hasEditedSprayRate) sprayRateText else legacyRecommendedRate?.let { fmtNum(it, 0) } ?: "",
+                                value = if (hasEditedSprayRate) sprayRateText else legacyRecommendedRate?.let { fmt.volumePerAreaValue(it).toString() } ?: "",
                                 onValueChange = { sprayRateText = it.filter { c -> c.isDigit() || c == '.' }; hasEditedSprayRate = true; result = null },
-                                label = { Text("Chosen Spray Rate (L/ha)") },
+                                label = { Text("Chosen Spray Rate (${fmt.volumePerAreaUnit})") },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f),
@@ -2179,12 +2187,12 @@ fun SprayCalculatorScreen(
                             )
                             GuidedReviewRow(
                                 "Gross area",
-                                SprayGuidedFormat.hectares(guidedPlan.grossAreaHectares),
+                                carrierFormat.hectares(guidedPlan.grossAreaHectares),
                             )
                             guidedPlan.geometry.totalRowLengthMetres?.let { metres ->
                                 GuidedReviewRow(
                                     "Canonical row length",
-                                    SprayGuidedFormat.metres(metres),
+                                    carrierFormat.metres(metres),
                                 )
                             }
                         }
@@ -2206,14 +2214,14 @@ fun SprayCalculatorScreen(
                             if (guidedFlow.requiresBandWidth) {
                                 GuidedReviewRow(
                                     "Band width",
-                                    SprayGuidedFormat.metres(
+                                    carrierFormat.metres(
                                         guidedPlan.treatedArea.bandWidth?.totalMetres,
                                         decimals = 2,
                                     ),
                                 )
                                 GuidedReviewRow(
                                     "Treated area",
-                                    SprayGuidedFormat.hectares(guidedPlan.treatedAreaHectares),
+                                    carrierFormat.hectares(guidedPlan.treatedAreaHectares),
                                 )
                             }
                         }
@@ -2256,16 +2264,16 @@ fun SprayCalculatorScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             GuidedReviewRow(
                                 "Basis",
-                                SprayGuidedFormat.carrierBasisLabel(carrier.basis),
+                                carrierFormat.carrierBasisLabel(carrier.basis),
                             )
                             if (carrier.basis == SprayCarrierBasis.LITRES_PER_100_METRES) {
                                 GuidedReviewRow(
                                     "Dilute / runoff",
-                                    SprayGuidedFormat.litresPer100m(carrier.diluteLitresPer100Metres),
+                                    carrierFormat.litresPer100m(carrier.diluteLitresPer100Metres),
                                 )
                                 GuidedReviewRow(
                                     "Actual applied",
-                                    SprayGuidedFormat.litresPer100m(carrier.appliedLitresPer100Metres),
+                                    carrierFormat.litresPer100m(carrier.appliedLitresPer100Metres),
                                 )
                             }
                             GuidedReviewRow(
@@ -2274,16 +2282,16 @@ fun SprayCalculatorScreen(
                             )
                             GuidedReviewRow(
                                 "Total carrier",
-                                SprayGuidedFormat.litres(carrier.totalLitres),
+                                carrierFormat.litres(carrier.totalLitres),
                             )
                             GuidedReviewRow(
-                                "Equivalent L/ha",
-                                SprayGuidedFormat.litresPerHectare(carrier.litresPerHectare),
+                                "Equivalent ${fmt.volumePerAreaUnit}",
+                                carrierFormat.litresPerHectare(carrier.litresPerHectare),
                             )
                             GuidedReviewRow(
                                 "Tanks",
                                 "${guidedPlan.tankSplit.totalTanks} \u00D7 " +
-                                    SprayGuidedFormat.litres(guidedPlan.tankSplit.tankCapacityLitres),
+                                    carrierFormat.litres(guidedPlan.tankSplit.tankCapacityLitres),
                             )
                         }
                     }
@@ -3073,7 +3081,7 @@ private fun EquipmentSummaryCard(
             if (equipmentName != null) {
                 Text(equipmentName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, maxLines = 1)
                 Text(
-                    tankCapacity?.takeIf { it > 0 }?.let { "${fmtNum(it, 0)} L tank" } ?: "No tank capacity set",
+                    tankCapacity?.takeIf { it > 0 }?.let { "${LocalRegionFormatter.current.formatVolume(it)} tank" } ?: "No tank capacity set",
                     fontSize = 12.sp,
                     color = vine.textSecondary,
                 )
@@ -4038,11 +4046,11 @@ private fun SprayTankMixReview(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         MixStatTile("Total Area", LocalRegionFormatter.current.formatArea(result.totalAreaHectares), VineColors.Olive, Modifier.weight(1f))
-                        MixStatTile("Total Water", "${fmtNum(result.totalWaterLitres, 0)} L", VineColors.Indigo, Modifier.weight(1f))
+                        MixStatTile("Total Water", LocalRegionFormatter.current.formatVolume(result.totalWaterLitres), VineColors.Indigo, Modifier.weight(1f))
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         MixStatTile("Full Tanks", "${result.fullTankCount}", VineColors.DarkGreen, Modifier.weight(1f))
-                        MixStatTile("Last Tank", "${fmtNum(result.lastTankLitres, 0)} L", VineColors.Orange, Modifier.weight(1f))
+                        MixStatTile("Last Tank", LocalRegionFormatter.current.formatVolume(result.lastTankLitres), VineColors.Orange, Modifier.weight(1f))
                     }
                 }
             }
@@ -4384,6 +4392,7 @@ private fun TankByTankMixCard(
     modifier: Modifier = Modifier,
 ) {
     val vine = LocalVineColors.current
+    val carrierFormat = SprayCarrierRegionalFormat(LocalRegionFormatter.current)
     VineyardCard(modifier = modifier) {
         Text("Tank-by-Tank Mix", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
         Spacer8()
@@ -4392,7 +4401,7 @@ private fun TankByTankMixCard(
             val water = if (isLastTank) result.lastTankLitres else result.tankCapacityLitres
             Text("Tank $tankNumber", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
             Spacer(Modifier.height(4.dp))
-            TankMixQuantityRow("Water", SprayGuidedFormat.litres(water))
+            TankMixQuantityRow("Water", carrierFormat.litres(water))
             result.chemicalResults.forEach { chemical ->
                 val amount = if (isLastTank) chemical.amountInLastTank else chemical.amountPerFullTank
                 TankMixQuantityRow(

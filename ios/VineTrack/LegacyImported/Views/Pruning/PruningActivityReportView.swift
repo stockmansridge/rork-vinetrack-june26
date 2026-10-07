@@ -172,7 +172,7 @@ struct PruningActivityReportView: View {
 
     private var rows: [PruningActivityRow] {
         PruningActivityReport.sorted(
-            PruningActivityReport.filtered(allRows, with: activeFilter),
+            PruningActivityReport.filtered(allRows, with: activeFilter, calendar: fmt.vineyardCalendar),
             by: sort
         )
     }
@@ -257,6 +257,7 @@ struct PruningActivityReportView: View {
                     seasonLabel: seasonLabel,
                     includeCost: canViewCosting,
                     canonicalRows: allRows,
+                    calendar: fmt.vineyardCalendar,
                     formatter: fmt
                 )
             case .pdf:
@@ -267,6 +268,7 @@ struct PruningActivityReportView: View {
                     includeCost: canViewCosting,
                     canonicalRows: allRows,
                     includeTechnicalReferences: includeTechnicalReferences,
+                    calendar: fmt.vineyardCalendar,
                     formatter: fmt
                 )
             }
@@ -557,7 +559,7 @@ struct PruningActivityReportView: View {
     }
 
     private func rowAccessibilityLabel(_ row: PruningActivityRow) -> String {
-        var parts: [String] = [Self.dayFormatter.string(from: row.date)]
+        var parts: [String] = [fmt.formatDate(row.date)]
         if let worker = row.worker { parts.append(worker) }
         parts.append(row.blockName)
         if let vines = row.vines { parts.append("\(Int(vines.rounded())) vines") }
@@ -611,7 +613,7 @@ struct PruningActivityReportView: View {
 
     private func value(_ row: PruningActivityRow, _ column: PruningActivityColumn) -> String {
         switch column {
-        case .date: return Self.dayFormatter.string(from: row.date)
+        case .date: return fmt.formatDate(row.date)
         case .worker: return row.worker ?? "—"
         case .block: return row.blockName
         case .variety: return row.variety ?? "—"
@@ -619,8 +621,8 @@ struct PruningActivityReportView: View {
         case .quarters: return row.quartersLabel ?? "—"
         case .vines: return row.vines.map { $0.rounded().formatted(.number.precision(.fractionLength(0))) } ?? "—"
         case .hours: return row.labourHours.map { $0.formatted(.number.precision(.fractionLength(0...1))) } ?? "—"
-        case .start: return row.startTime.map { Self.timeFormatter.string(from: $0) } ?? "—"
-        case .finish: return row.finishTime.map { Self.timeFormatter.string(from: $0) } ?? "—"
+        case .start: return row.startTime.map { fmt.formatTime($0) } ?? "—"
+        case .finish: return row.finishTime.map { fmt.formatTime($0) } ?? "—"
         case .duration: return row.durationHours.map { $0.formatted(.number.precision(.fractionLength(0...1))) + " h" } ?? "—"
         case .vinesPerHour: return row.vinesPerHour.map { $0.formatted(.number.precision(.fractionLength(0))) } ?? "—"
         case .labourCost: return row.labourCost.map { fmt.formatCurrency($0) } ?? "—"
@@ -818,8 +820,8 @@ private struct PruningActivityDetailSheet: View {
 
                 Section("Labour") {
                     detail("Labour hours", row.labourHours.map { $0.formatted(.number.precision(.fractionLength(0...1))) })
-                    detail("Start time", row.startTime.map { PruningActivityReportView.timeFormatter.string(from: $0) })
-                    detail("Finish time", row.finishTime.map { PruningActivityReportView.timeFormatter.string(from: $0) })
+                    detail("Start time", row.startTime.map { fmt.formatTime($0) })
+                    detail("Finish time", row.finishTime.map { fmt.formatTime($0) })
                     detail("Duration", row.durationHours.map { $0.formatted(.number.precision(.fractionLength(0...1))) + " h" })
                     detail("Vines per hour", row.vinesPerHour.map { $0.formatted(.number.precision(.fractionLength(0))) })
                     if canViewCosting {

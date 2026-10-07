@@ -870,7 +870,7 @@ struct TripDetailView: View {
     private func seedingDetailsBody(_ details: SeedingDetails) -> some View {
         Group {
             if let depth = details.sowingDepthCm {
-                statRow("Sowing depth", value: "\(formatNumber(depth)) cm", icon: "ruler")
+                statRow("Sowing depth", value: "\(formatNumber(fmt.smallLengthValue(centimetres: depth))) \(fmt.smallLengthUnitAbbreviation)", icon: "ruler")
             }
             if let front = details.frontBox, front.hasAnyValue {
                 seedingBoxRows(title: "Front Box", box: front)
