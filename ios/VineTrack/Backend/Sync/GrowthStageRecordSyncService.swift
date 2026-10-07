@@ -44,6 +44,7 @@ final class GrowthStageRecordSyncService {
     private var isConfigured: Bool = false
     private var eagerPushTask: Task<Void, Never>?
     private var isSyncInFlight: Bool = false
+    private let acknowledgedPinIds: ((UUID) async throws -> Set<UUID>)?
 
     /// Debounced eager-push. Multiple quick edits coalesce into a single sync.
     private func scheduleEagerPush() {
@@ -61,14 +62,16 @@ final class GrowthStageRecordSyncService {
         photoStorage: (any PinPhotoStorageProtocol)? = nil,
         metadata: GrowthStageRecordSyncMetadata? = nil,
         persistence: PersistenceStore = .shared,
-        deletionStore: LinkedPinGrowthDeletionStore? = nil
+        deletionStore: LinkedPinGrowthDeletionStore? = nil,
+        acknowledgedPinIds: ((UUID) async throws -> Set<UUID>)? = nil
     ) {
         self.repository = repository ?? SupabaseGrowthStageRecordSyncRepository()
         self.pinRepository = pinRepository ?? SupabasePinSyncRepository()
         self.photoStorage = photoStorage ?? PinPhotoStorageService()
-        self.metadata = metadata ?? GrowthStageRecordSyncMetadata()
+        self.metadata = metadata ?? GrowthStageRecordSyncMetadata(persistence: persistence)
         self.persistence = persistence
         self.deletionStore = deletionStore ?? .shared
+        self.acknowledgedPinIds = acknowledgedPinIds
         self.records = persistence.load(key: persistenceKey) ?? []
         self.pendingPhotos = persistence.load(key: pendingPhotosKey) ?? [:]
     }
@@ -375,7 +378,15 @@ final class GrowthStageRecordSyncService {
 
     // MARK: - Push
 
-    private func pushLocal(vineyardId: UUID) async throws {
+    /// A server read is affirmative acknowledgement, including after restart or a duplicate Pin create.
+    private func confirmedPins(_ ids: Set<UUID>, vineyardId: UUID) async -> Set<UUID> {
+        do {
+            if let acknowledgedPinIds { return try await acknowledgedPinIds(vineyardId) }
+            return try await pinRepository.persistedPinIds(ids, vineyardId: vineyardId)
+        } catch { return [] }
+    }
+
+    func pushQueuedGrowthRecords(vineyardId: UUID) async throws {
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
@@ -383,10 +394,15 @@ final class GrowthStageRecordSyncService {
             var payloads: [BackendGrowthStageRecordUpsert] = []
             var pushedIds: [UUID] = []
             var orphans: [UUID] = []
+            let linkedIds = Set(records.filter { dirty[$0.id] != nil && $0.vineyardId == vineyardId }.compactMap { $0.pinId })
+            let confirmed: Set<UUID> = linkedIds.isEmpty ? [] : await confirmedPins(linkedIds, vineyardId: vineyardId)
             for (recordId, ts) in dirty {
                 // Reclaim queue entries with no local record — they can never
                 // upload and used to sit in the queue forever.
                 guard let record = byId[recordId] else { orphans.append(recordId); continue }
+                guard record.vineyardId == vineyardId,
+                      !deletionStore.growthRecordIds.contains(recordId),
+                      record.pinId.map({ confirmed.contains($0) && !deletionStore.pinIds.contains($0) }) ?? true else { continue }
                 payloads.append(BackendGrowthStageRecord.upsert(
                     from: record,
                     createdBy: createdBy,
@@ -410,6 +426,10 @@ final class GrowthStageRecordSyncService {
             if let error = result.firstRetryableError { throw error }
         }
 
+    }
+
+    private func pushLocal(vineyardId: UUID) async throws {
+        try await pushQueuedGrowthRecords(vineyardId: vineyardId)
         // Attachment failures must not prevent independent linked deletions.
         var independentPhotoError: Error?
         do { try await pushPendingPhotos(vineyardId: vineyardId) }
@@ -592,7 +612,7 @@ final class GrowthStageRecordSyncService {
 
     // MARK: - Pull
 
-    private func pullRemote(vineyardId: UUID) async throws {
+    func pullRemote(vineyardId: UUID) async throws {
         let lastSync = metadata.lastSync(for: vineyardId)
         let remote = try await repository.fetchGrowthStageRecords(vineyardId: vineyardId, since: lastSync)
 
@@ -601,11 +621,11 @@ final class GrowthStageRecordSyncService {
             let local = records.filter { $0.vineyardId == vineyardId }
             if !local.isEmpty {
                 let now = Date()
-                let createdBy = auth?.userId
-                let payloads = local.map {
-                    BackendGrowthStageRecord.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now)
+                for record in local where metadata.pendingUpserts[record.id] == nil &&
+                    !deletionStore.growthRecordIds.contains(record.id) && metadata.pendingDeletes[record.id] == nil {
+                    metadata.markDirty(record.id, at: now)
                 }
-                try await repository.upsertGrowthStageRecords(payloads)
+                try await pushQueuedGrowthRecords(vineyardId: vineyardId)
             }
             return
         }

@@ -155,6 +155,12 @@ struct NewMainTabView: View {
             vineyardMachineSync.configure(store: store, auth: auth)
             fuelPurchaseSync.configure(store: store, auth: auth)
             tractorFuelLogSync.configure(store: store, auth: auth)
+            store.canDeleteWorkerType = { [weak accessControl, weak auth] vineyardId in
+                guard let accessControl, let auth, auth.isSignedIn,
+                      !accessControl.isLoading, accessControl.loadedVineyardId == vineyardId,
+                      accessControl.loadedUserId == auth.userId else { return false }
+                return OwnerManagerRequestGate.allows(accessControl.currentRole)
+            }
             operatorCategorySync.configure(store: store, auth: auth)
             workTaskTypeSync.configure(store: store, auth: auth)
             equipmentItemSync.configure(store: store, auth: auth)

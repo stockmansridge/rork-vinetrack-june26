@@ -96,18 +96,27 @@ class OperatorCategoryRepository(private val session: SessionStore) {
         }
 
     /** Archive (soft-delete) via the owner/manager-gated server RPC. */
-    suspend fun softDelete(id: String) = withContext(Dispatchers.IO) {
+    suspend fun softDelete(id: String, vineyardId: String) = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
+        val members = VineyardRepository(session).listTeamMembers(vineyardId)
+        val role = OwnerManagerRequestGate.role(members, vineyardId, session.userId)
+        OwnerManagerRequestGate.deleteWorkerType(role) { softDeleteAuthorized(id, token) }
+    }
+
+    private suspend fun softDeleteAuthorized(id: String, token: String) {
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_worker_type")) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
             setBody(SoftDeleteArgs(id))
         }
+        val body = if (response.status.isSuccess()) "" else response.bodyAsText()
         when {
             response.status.isSuccess() -> Unit
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
-            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            response.status.value == 401 -> throw BackendError.Unauthorized
+            response.status.value == 403 || body.contains("42501") -> throw BackendError.Server(403, "Owner or manager role required")
+            OwnerManagerRequestGate.isConvergedDelete(response.status.value, body) -> Unit
+            else -> throw BackendError.Server(response.status.value, body)
         }
     }
 

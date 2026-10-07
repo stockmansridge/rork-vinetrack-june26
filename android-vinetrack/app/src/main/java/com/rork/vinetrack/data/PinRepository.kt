@@ -33,6 +33,19 @@ import kotlinx.serialization.Serializable
  */
 class PinRepository(private val session: SessionStore) : PinPhotoReferenceGateway, PinDeleteGateway {
 
+    /** Affirmative server acknowledgement; a local Pin/outbox absence is not proof. */
+    internal suspend fun isPersisted(id: String, vineyardId: String): Boolean = withContext(Dispatchers.IO) {
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl("pins?select=id&id=eq.$id&vineyard_id=eq.$vineyardId&deleted_at=is.null")) {
+            headers {
+                append("apikey", SupabaseClient.anonKey)
+                append("Authorization", "Bearer $token")
+            }
+        }
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, "Pin acknowledgement unavailable")
+        response.body<List<kotlinx.serialization.json.JsonObject>>().any { it["id"]?.toString()?.trim('"').equals(id, true) }
+    }
+
     /** Mutable fields the Android pin editor exposes. */
     @Serializable
     data class PinInput(

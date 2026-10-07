@@ -488,6 +488,7 @@ extension MigratedDataStore {
     }
 
     func deleteOperatorCategory(_ category: OperatorCategory) {
+        guard canDeleteWorkerType(category.vineyardId) else { return }
         operatorCategories.removeAll { $0.id == category.id }
         saveOperatorCategoriesToDisk()
         onOperatorCategoryDeleted?(category.id)
@@ -678,7 +679,7 @@ extension MigratedDataStore {
 
     @discardableResult
     func deduplicateOperatorCategories() -> Int {
-        guard let vineyardId = selectedVineyardId else { return 0 }
+        guard let vineyardId = selectedVineyardId, canDeleteWorkerType(vineyardId) else { return 0 }
         var seen: [String: OperatorCategory] = [:]
         var keptOrder: [OperatorCategory] = []
         var duplicateIdToKeptId: [UUID: UUID] = [:]

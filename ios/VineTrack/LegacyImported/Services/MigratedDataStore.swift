@@ -15,6 +15,7 @@ final class MigratedDataStore {
 
     var vineyards: [Vineyard] = []
     var selectedVineyardId: UUID?
+    @ObservationIgnored var canDeleteWorkerType: (UUID) -> Bool = { _ in false }
 
     var pins: [VinePin] = []
     var paddocks: [Paddock] = []

@@ -204,6 +204,9 @@ class PickingRecordRepository(private val session: SessionStore) {
         withContext(Dispatchers.IO) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
+            val members = VineyardRepository(session).listTeamMembers(vineyardId)
+            val role = OwnerManagerRequestGate.role(members, vineyardId, session.userId)
+            if (!OwnerManagerRequestGate.allows(role)) return@withContext emptyList()
             val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("get_picking_record_financials")) {
                 authHeaders(token)
                 contentType(ContentType.Application.Json)

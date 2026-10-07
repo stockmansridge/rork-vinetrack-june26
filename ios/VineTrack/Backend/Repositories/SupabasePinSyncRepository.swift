@@ -1,6 +1,8 @@
 import Foundation
 import Supabase
 
+private nonisolated struct PersistedPinIdentity: Decodable { let id: UUID }
+
 final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
     private let provider: SupabaseClientProvider
 
@@ -33,6 +35,21 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
 
     func fetchAllPins(vineyardId: UUID) async throws -> [BackendPin] {
         try await fetchPins(vineyardId: vineyardId, since: nil)
+    }
+
+    /// Target only referenced IDs so server response limits cannot strand an acknowledged Pin.
+    func persistedPinIds(_ ids: Set<UUID>, vineyardId: UUID) async throws -> Set<UUID> {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let values = ids.map { $0.uuidString }
+        var confirmed: Set<UUID> = []
+        for start in stride(from: 0, to: values.count, by: 100) {
+            let chunk = Array(values[start..<min(start + 100, values.count)])
+            let rows: [PersistedPinIdentity] = try await provider.client.from("pins")
+                .select("id").eq("vineyard_id", value: vineyardId.uuidString)
+                .in("id", values: chunk).is("deleted_at", value: nil).execute().value
+            confirmed.formUnion(rows.map { $0.id })
+        }
+        return confirmed.intersection(ids)
     }
 
     func upsertPin(_ pin: BackendPinUpsert) async throws {

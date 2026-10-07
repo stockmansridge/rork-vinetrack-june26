@@ -34,10 +34,16 @@ import kotlinx.serialization.json.Json
  * carried through replay. Side/photo are populated only by their own paths.
  * No auth/session/tokens are stored.
  */
-class GrowthRecordCreateSync(
-    private val growthRepo: GrowthStageRecordRepository,
+class GrowthRecordCreateSync internal constructor(
     private val pending: PendingWriteRepository,
+    private val createRemote: suspend (Payload) -> GrowthStageRecord,
+    private val pinAcknowledged: suspend (String, String) -> Boolean,
 ) {
+    constructor(growthRepo: GrowthStageRecordRepository, pending: PendingWriteRepository) : this(
+        pending,
+        { payload -> growthRepo.createGrowthStageRecord(payload.vineyardId, payload.toInput(), payload.id, payload.clientUpdatedAt) },
+        growthRepo::isLinkedPinPersisted,
+    )
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** Serialises replay so overlapping connectivity events can't double-fire. */
@@ -67,7 +73,8 @@ class GrowthRecordCreateSync(
         val clientUpdatedAt: String,
     )
 
-    private fun Payload.toInput(): GrowthStageRecordRepository.GrowthInput =
+    private companion object InputMapping {
+    fun Payload.toInput(): GrowthStageRecordRepository.GrowthInput =
         GrowthStageRecordRepository.GrowthInput(
             paddockId = paddockId,
             stageCode = stageCode,
@@ -81,6 +88,8 @@ class GrowthRecordCreateSync(
             longitude = longitude,
             pinId = pinId,
         )
+        const val MAX_ATTEMPTS = 8
+    }
 
     /**
      * Queue (or replace) a growth-record create for later replay. Coalesces by
@@ -167,7 +176,6 @@ class GrowthRecordCreateSync(
                     (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
             }
             for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
@@ -175,15 +183,23 @@ class GrowthRecordCreateSync(
                     pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved observation.")
                     continue
                 }
+                if (payload.pinId != null) {
+                    val parentPending = pending.list().any {
+                        it.entityType == PendingEntityType.PIN && it.clientId.equals(payload.pinId, true) &&
+                            it.opType in setOf(PendingOpType.CREATE, PendingOpType.DELETE) && it.status in PendingWriteStatus.unresolved
+                    }
+                    val acknowledged = !parentPending && try {
+                        pinAcknowledged(payload.pinId, payload.vineyardId)
+                    } catch (_: Exception) { false }
+                    if (!acknowledged) continue
+                }
+                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
                 try {
-                    val created = growthRepo.createGrowthStageRecord(
-                        vineyardId = payload.vineyardId,
-                        input = payload.toInput(),
-                        id = payload.id,
-                        clientUpdatedAt = payload.clientUpdatedAt,
-                    )
+                    val created = createRemote(payload)
                     pending.remove(write.id)
                     onSynced(created)
+                } catch (_: LinkedGrowthPinNotAcknowledged) {
+                    pending.updateStatus(write.id, PendingWriteStatus.PENDING, "Waiting for the Growth Stage pin to sync.")
                 } catch (e: BackendError.Unauthorized) {
                     // Session expired mid-replay — retry after re-auth (bounded by the cap).
                     retryOrBlock(write, "Sign-in needed to sync this observation.")
@@ -191,7 +207,7 @@ class GrowthRecordCreateSync(
                     when {
                         // The independent pin outbox has not landed yet. Keep the
                         // exact same record payload queued and retry after it does.
-                        com.rork.vinetrack.data.insights.GrowthCaptureServerOrdering.isMissingPinForeignKey(e.body) -> retryOrBlock(write, "Waiting for the Growth Stage pin to sync.")
+                        com.rork.vinetrack.data.insights.GrowthCaptureServerOrdering.isMissingPinForeignKey(e.body) -> pending.updateStatus(write.id, PendingWriteStatus.PENDING, "Waiting for the Growth Stage pin to sync.")
                         // Duplicate primary key — the client id is already on the
                         // server, so the record exists. Idempotent success; the
                         // optimistic row stays as-is.
@@ -221,8 +237,4 @@ class GrowthRecordCreateSync(
         pending.updateStatus(write.id, status, error)
     }
 
-    private companion object {
-        /** Cap retries so a persistently-failing observation can't loop indefinitely. */
-        const val MAX_ATTEMPTS = 8
-    }
 }

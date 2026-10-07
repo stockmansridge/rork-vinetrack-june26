@@ -106,6 +106,9 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
         val varietyId: String? = null,
     )
 
+    internal suspend fun isLinkedPinPersisted(pinId: String, vineyardId: String): Boolean =
+        PinRepository(session).isPersisted(pinId, vineyardId)
+
     private fun nowIso(): String = Instant.now().toString()
 
     internal companion object {
@@ -172,6 +175,9 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
         withContext(Dispatchers.IO) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
+            if (input.pinId != null && !isLinkedPinPersisted(input.pinId, vineyardId)) {
+                throw LinkedGrowthPinNotAcknowledged()
+            }
             val body = insertPayload(
                 vineyardId, input, id ?: UUID.randomUUID().toString(), clientUpdatedAt ?: nowIso(),
                 createdBy = session.userId, recordedByName = session.userName,

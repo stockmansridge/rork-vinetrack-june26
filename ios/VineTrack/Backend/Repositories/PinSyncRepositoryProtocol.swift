@@ -24,6 +24,7 @@ nonisolated struct AttachmentReferenceConfirmation: Equatable, Sendable {
 protocol PinSyncRepositoryProtocol: Sendable {
     func fetchPins(vineyardId: UUID, since: Date?) async throws -> [BackendPin]
     func fetchAllPins(vineyardId: UUID) async throws -> [BackendPin]
+    func persistedPinIds(_ ids: Set<UUID>, vineyardId: UUID) async throws -> Set<UUID>
     func upsertPin(_ pin: BackendPinUpsert) async throws
     func upsertPins(_ pins: [BackendPinUpsert]) async throws
     func upsertPinCaptureEvidence(_ evidence: PinCaptureEvidenceUpload) async throws
@@ -33,6 +34,10 @@ protocol PinSyncRepositoryProtocol: Sendable {
 }
 
 extension PinSyncRepositoryProtocol {
+    func persistedPinIds(_ ids: Set<UUID>, vineyardId: UUID) async throws -> Set<UUID> {
+        let rows = try await fetchAllPins(vineyardId: vineyardId)
+        return Set(rows.filter { ids.contains($0.id) && $0.vineyardId == vineyardId && $0.deletedAt == nil }.map { $0.id })
+    }
     func upsertPinCaptureEvidence(_ evidence: PinCaptureEvidenceUpload) async throws {}
     func confirmSavedPinLocation(_ operation: PendingPinLocationConfirmation) async throws -> String { "confirmed" }
 }

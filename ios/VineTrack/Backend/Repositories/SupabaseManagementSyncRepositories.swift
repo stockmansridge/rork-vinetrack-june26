@@ -317,7 +317,16 @@ final class SupabaseOperatorCategorySyncRepository: OperatorCategorySyncReposito
 
     func softDelete(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client.rpc("soft_delete_worker_type", params: SoftDeleteByIdRequest(id: id)).execute()
+        guard let userId = provider.client.auth.currentUser?.id else { throw BackendRepositoryError.missingAuthenticatedUser }
+        // Resolve the queued row's own vineyard, never borrow the selected vineyard's role.
+        let rows: [BackendOperatorCategory] = try await provider.client.from("worker_types")
+            .select().eq("id", value: id.uuidString).execute().value
+        guard let row = rows.first, row.deletedAt == nil else { return }
+        let members = try await SupabaseTeamRepository(provider: provider).listMembers(vineyardId: row.vineyardId)
+        let role = members.first { $0.userId == userId && $0.vineyardId == row.vineyardId }?.role
+        try await OwnerManagerRequestGate.deleteWorkerType(role: role) {
+            try await provider.client.rpc("soft_delete_worker_type", params: SoftDeleteByIdRequest(id: id)).execute()
+        }
     }
 }
 

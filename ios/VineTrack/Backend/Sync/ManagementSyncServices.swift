@@ -1410,9 +1410,9 @@ final class OperatorCategorySyncService {
         }
     }
 
-    init(repository: (any OperatorCategorySyncRepositoryProtocol)? = nil) {
+    init(repository: (any OperatorCategorySyncRepositoryProtocol)? = nil, metadata: ManagementSyncMetadata? = nil) {
         self.repository = repository ?? SupabaseOperatorCategorySyncRepository()
-        self.metadata = ManagementSyncMetadata(key: "vinetrack_operator_category_sync_metadata")
+        self.metadata = metadata ?? ManagementSyncMetadata(key: "vinetrack_operator_category_sync_metadata")
 
         // Earlier per-row decoding silently skipped valid timestamped records while
         // still advancing the cursor. Re-fetch only this catalogue; pending writes remain.
@@ -1431,7 +1431,9 @@ final class OperatorCategorySyncService {
         store.onOperatorCategoryChanged = { [weak self] id in
             self?.metadata.markDirty(id, at: Date()); self?.scheduleEagerPush()
         }
-        store.onOperatorCategoryDeleted = { [weak self] id in
+        store.onOperatorCategoryDeleted = { [weak self, weak store] id in
+            guard let store, let vineyardId = store.selectedVineyardId,
+                  store.canDeleteWorkerType(vineyardId) else { return }
             self?.metadata.markDeleted(id, at: Date()); self?.scheduleEagerPush()
         }
     }
@@ -1490,38 +1492,7 @@ final class OperatorCategorySyncService {
         guard let store else { return }
         let createdBy = auth?.userId
 
-        // Deletes run FIRST: a queued soft-delete can be holding the same
-        // (name, cost) slot on the server's `uniq_worker_types_active_name_cost`
-        // index. Freeing it before the upserts prevents a permanent
-        // duplicate-key wedge when the local de-dupe kept a different id.
-        let pendingDeletes = metadata.pendingDeletes
-        if !pendingDeletes.isEmpty {
-            #if DEBUG
-            print("[OperatorCategorySync] push: \(pendingDeletes.count) pending delete(s) for vineyard \(vineyardId.uuidString)")
-            #endif
-        }
-        var firstDeleteError: Error?
-        for (id, _) in pendingDeletes {
-            do {
-                try await repository.softDelete(id: id)
-                metadata.clearDeleted([id])
-                #if DEBUG
-                print("[OperatorCategorySync] push: soft-deleted id=\(id) on server")
-                #endif
-            } catch {
-                if isMissingRowError(error) {
-                    metadata.clearDeleted([id])
-                    #if DEBUG
-                    print("[OperatorCategorySync] push: id=\(id) missing on server — clearing pending delete")
-                    #endif
-                } else {
-                    #if DEBUG
-                    print("[OperatorCategorySync] push: soft-delete FAILED id=\(id) error=\(error.localizedDescription) raw=\(String(describing: error))")
-                    #endif
-                    if firstDeleteError == nil { firstDeleteError = error }
-                }
-            }
-        }
+        try await replayWorkerTypeDeletes(vineyardId: vineyardId)
 
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
@@ -1566,7 +1537,28 @@ final class OperatorCategorySyncService {
             }
             SyncIssueCenter.shared.notePending(entity: "Worker Types", count: metadata.pendingUpserts.count)
         }
-        if let firstDeleteError { throw firstDeleteError }
+    }
+
+    /// Repository revalidates membership in each queued row's own vineyard before the RPC.
+    func replayWorkerTypeDeletes(vineyardId: UUID) async throws {
+        var firstRetryableError: Error?
+        for (id, _) in metadata.pendingDeletes {
+            do {
+                try await repository.softDelete(id: id)
+                metadata.clearDeleted([id])
+                SyncIssueCenter.shared.clearIssues([id])
+            } catch {
+                if isMissingRowError(error) || OwnerManagerRequestGate.isTerminalDeleteError(error) {
+                    metadata.clearDeleted([id])
+                    SyncIssueCenter.shared.clearIssues([id])
+                    // Restore authoritative catalogue rows after a denied optimistic delete.
+                    metadata.resetAllLastSync()
+                } else if firstRetryableError == nil {
+                    firstRetryableError = error
+                }
+            }
+        }
+        if let firstRetryableError { throw firstRetryableError }
     }
 
     /// A push collided with the server's `uniq_worker_types_active_name_cost`

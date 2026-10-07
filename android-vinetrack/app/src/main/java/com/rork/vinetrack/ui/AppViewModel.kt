@@ -5020,12 +5020,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun fetchPickingRecordsWithFinancials(vineyardId: String): List<PickingRecord> {
         val records = pickingRepo.listPickingRecords(vineyardId)
+        // Repository resolves fresh, vineyard-scoped membership before the RPC.
         val financials = try {
             pickingRepo.listPickingFinancials(vineyardId)
         } catch (e: Exception) {
             emptyList<PickingFinancialRow>()
         }
-        return mergePickingFinancials(records, financials)
+        return mergePickingFinancials(records.map { it.copy(soldTo = null, pricePerTonne = null, grapeValue = null) }, financials)
     }
 
     /**
@@ -12639,13 +12640,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Archive (soft-delete) an operator category via the server RPC, optimistically removing it. */
     fun deleteOperatorCategory(id: String, onResult: (Boolean) -> Unit) {
+        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        val role = com.rork.vinetrack.data.OwnerManagerRequestGate.role(_ui.value.members, vineyardId, _ui.value.currentUserId)
+        if (!com.rork.vinetrack.data.OwnerManagerRequestGate.allows(role) ||
+            _ui.value.operatorCategories.none { it.id == id && it.vineyardId == vineyardId }) {
+            onResult(false); return
+        }
         val previous = _ui.value.operatorCategories
         _ui.update { st -> st.copy(operatorCategories = st.operatorCategories.filterNot { it.id == id }) }
         viewModelScope.launch {
             try {
-                operatorCategoryRepo.softDelete(id)
+                operatorCategoryRepo.softDelete(id, vineyardId)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
+                _ui.update { it.copy(operatorCategories = previous) }
                 onUnauthorized("deleteOperatorCategory"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(operatorCategories = previous, sprayError = friendlyWriteError(e.code)) }

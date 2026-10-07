@@ -110,7 +110,7 @@ final class PickingRecordSyncService {
         let remote = try await repository.fetch(vineyardId: vineyardId, since: nil)
         // Owner/manager commercial projection (sql/187): the base columns read
         // back NULL for every role, so money is merged from the gated RPC.
-        // Lower roles fail the RPC (42501) — swallowed, masked NULLs kept.
+        // Repository checks current vineyard membership BEFORE issuing the RPC.
         let financials = (try? await repository.fetchFinancials(vineyardId: vineyardId)) ?? []
         let financialsById = Dictionary(financials.map { ($0.pickingRecordId, $0) }, uniquingKeysWith: { a, _ in a })
         if lastSync == nil {
@@ -144,6 +144,8 @@ final class PickingRecordSyncService {
                 if pendingAt > remoteAt { continue }
             }
             var record = item.toPickingRecord()
+            record.soldTo = nil
+            record.pricePerTonne = nil
             if let row = financialsById[record.id] {
                 record.soldTo = row.soldTo
                 record.pricePerTonne = row.pricePerTonne

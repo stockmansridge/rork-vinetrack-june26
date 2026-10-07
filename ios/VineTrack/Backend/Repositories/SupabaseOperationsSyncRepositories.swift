@@ -418,10 +418,14 @@ final class SupabasePickingRecordSyncRepository: PickingRecordSyncRepositoryProt
 
     func fetchFinancials(vineyardId: UUID) async throws -> [PickingFinancialRow] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        return try await provider.client
-            .rpc("get_picking_record_financials", params: OpsVineyardIdRequest(vineyardId: vineyardId))
-            .execute()
-            .value
+        guard let userId = provider.client.auth.currentUser?.id else { return [] }
+        let members = try await SupabaseTeamRepository(provider: provider).listMembers(vineyardId: vineyardId)
+        let role = members.first { $0.userId == userId && $0.vineyardId == vineyardId }?.role
+        return try await OwnerManagerRequestGate.financials(role: role) {
+            try await provider.client
+                .rpc("get_picking_record_financials", params: OpsVineyardIdRequest(vineyardId: vineyardId))
+                .execute().value
+        }
     }
 
     func upsertMany(_ items: [BackendPickingRecordUpsert]) async throws {
