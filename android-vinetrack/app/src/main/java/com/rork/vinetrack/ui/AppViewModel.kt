@@ -1355,6 +1355,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             com.rork.vinetrack.data.insights.ScoutWeatherRepository(session).current(vineyardId, capturedAt)
         },
         onMutation = ::scheduleVineyardInsightsSync,
+        scoutDeletionAccess = { vineyardId ->
+            val current = _ui.value
+            val role = com.rork.vinetrack.data.model.TeamRole.from(current.currentRole)
+            current.selectedVineyardId == vineyardId && role.canManageTeam &&
+                com.rork.vinetrack.data.insights.VineyardInsightsAccess.resolve(
+                    sessionPhase = current.sessionPhase,
+                    isSystemAdmin = current.isSystemAdmin,
+                    selectedVineyardId = current.selectedVineyardId,
+                    isMemberOfSelectedVineyard = current.currentRole != null,
+                ).isAllowed
+        },
     )
 
     /**

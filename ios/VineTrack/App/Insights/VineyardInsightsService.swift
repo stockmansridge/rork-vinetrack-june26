@@ -58,6 +58,18 @@ final class VineyardInsightsService {
     private let photoFiles: ScoutPhotoFileStore
     private let repository: VineyardInsightsSyncRepository
     private let now: () -> Date
+    private var scoutDeletionAccess: (UUID) -> Bool = { _ in false }
+
+    /// Installed by the app shell; evaluates current scoped membership, not a saved admin flag.
+    func configureScoutDeletionAccess(_ access: @escaping (UUID) -> Bool) {
+        scoutDeletionAccess = access
+    }
+
+    func canDeleteVisit(vineyardID: UUID) -> Bool { scoutDeletionAccess(vineyardID) }
+
+    func deletionPending(visitID: UUID) -> Bool {
+        store.loadQueue().contains { $0.entity == .scoutVisit && $0.recordID == visitID && $0.operation == .delete }
+    }
     private let logger = Logger(subsystem: "com.vinetrack.app", category: "vineyard-insights")
 
     init(
@@ -206,6 +218,10 @@ final class VineyardInsightsService {
         let failed = store.loadQueue().first {
             $0.entity == .scoutVisit && $0.recordID == visit.id && $0.attemptCount > 0
         }
+        if deletionPending(visitID: visit.id) {
+            if let failed { return "Deletion failed — local Scout retained: \(failed.lastError ?? "Retry required")" }
+            return "Deletion pending — local Scout retained until confirmed"
+        }
         if let failed { return "Sync failed: \(failed.lastError ?? "Retry required")" }
         if store.isSyncOwed(visitID: visit.id) || isQueued || hasQueuedPhoto || hasUnacknowledgedPhoto {
             return "Sync pending"
@@ -297,7 +313,7 @@ final class VineyardInsightsService {
         locationFix: ScoutPhotoFix?,
         capturedByUserID: UUID?
     ) -> ScoutPhoto? {
-        guard let visit = visit(visitID), visit.isEditable else { return nil }
+        guard let visit = visit(visitID), visit.isEditable, !deletionPending(visitID: visitID) else { return nil }
         guard var assessment = visit.assessments.first(where: { $0.id == assessmentID }) else { return nil }
 
         // The observation must exist before the photo can reference it, because
@@ -381,7 +397,7 @@ final class VineyardInsightsService {
     /// for server-side lifecycle rather than hard-deleted from the client.
     @discardableResult
     func deletePhoto(visitID: UUID, assessmentID: UUID, item: ScoutItem, photoID: UUID) -> Bool {
-        guard let visit = visit(visitID), visit.isEditable else { return false }
+        guard let visit = visit(visitID), visit.isEditable, !deletionPending(visitID: visitID) else { return false }
         guard var assessment = visit.assessments.first(where: { $0.id == assessmentID }),
               var observation = assessment.observation(item),
               let photo = observation.photos.first(where: { $0.id == photoID }) else { return false }
@@ -494,7 +510,7 @@ final class VineyardInsightsService {
     /// Complete a visit, refusing when the review rule is not satisfied.
     @discardableResult
     func completeVisit(_ visitID: UUID) -> Bool {
-        guard var visit = visit(visitID), ScoutReview.of(visit).canComplete else { return false }
+        guard var visit = visit(visitID), !deletionPending(visitID: visitID), ScoutReview.of(visit).canComplete else { return false }
         if visit.status == .completed {
             guard store.repairMissingObligations() else { return record(false) }
             let durable = store.loadQueue().contains {
@@ -525,40 +541,20 @@ final class VineyardInsightsService {
     @discardableResult
     func deleteVisit(_ visitID: UUID) -> [ScoutGrowthStageLink] {
         guard let visit = visit(visitID) else { return [] }
+        guard canDeleteVisit(vineyardID: visit.vineyardID) else {
+            lastSyncError = "Delete denied: only this vineyard’s Owner or Manager may delete Scouts. Local information has been retained."
+            return []
+        }
         let retained = ScoutGrowthStageLink.onScoutDeleted(visit)
-        let deletedAt = now()
-        let localPaths = visit.assessments.flatMap(\.observations).flatMap(\.photos).compactMap(\.localPath)
-        let queued = store.loadPhotoQueue().filter {
-            $0.visitID == visitID && $0.vineyardID == visit.vineyardID
+        // Never discard the only copy or queue cleanup before server acknowledgement.
+        // An existing delete retains its operation identity and failure information.
+        if deletionPending(visitID: visitID) {
+            scheduleSync(vineyardID: visit.vineyardID)
+            return retained
         }
-        let cleanupPaths = Set(queued.filter { $0.rowCommitted != true }.map { entry in
-            entry.uploadedStoragePath ?? ScoutPhotoFileStore.storagePath(
-                vineyardID: entry.vineyardID,
-                observationID: entry.observationID,
-                photoID: entry.id
-            )
-        })
-        let pathsToRemove = Array(Set(localPaths + queued.map(\.localPath)))
-        let localCleanupPersisted = store.queueLocalFileCleanup(
-            vineyardID: visit.vineyardID,
-            relativePaths: pathsToRemove
-        )
-        let cleanupPersisted = localCleanupPersisted && cleanupPaths.allSatisfy {
-            store.queueObjectCleanup(vineyardID: visit.vineyardID, storagePath: $0)
-        }
-        let deleteQueued = cleanupPersisted && store.enqueue(
-            recordID: visit.id,
-            vineyardID: visit.vineyardID,
-            entity: .scoutVisit,
-            operation: .delete,
-            clientUpdatedAt: deletedAt
-        )
-        let visitDeleted = deleteQueued && store.deleteVisit(id: visitID)
-        let uploadsInvalidated = visitDeleted && queued.allSatisfy { store.dequeuePhoto(photoID: $0.id) }
-        if record(uploadsInvalidated) {
-            processLocalFileCleanup(vineyardID: visit.vineyardID)
+        if record(store.enqueue(recordID: visit.id, vineyardID: visit.vineyardID,
+            entity: .scoutVisit, operation: .delete, clientUpdatedAt: now())) {
             visits = store.loadVisits()
-            pendingPhotoCount = store.loadPhotoQueue().count
             if openVisitID == visitID { openVisitID = nil }
             scheduleSync(vineyardID: visit.vineyardID)
         }
@@ -567,6 +563,7 @@ final class VineyardInsightsService {
 
     @discardableResult
     private func persist(_ visit: ScoutVisit) -> Bool {
+        guard !deletionPending(visitID: visit.id) else { return false }
         var stamped = visit
         let candidate = now()
         stamped.clientUpdatedAt = candidate > visit.clientUpdatedAt
@@ -833,12 +830,28 @@ final class VineyardInsightsService {
 
     private func pushVisit(entry: VineyardInsightsStore.QueuedOperation) async throws -> Int? {
         if entry.operation == .delete {
+            let generation = syncGeneration
             try await repository.hardDeleteVisit(
                 id: entry.recordID,
                 vineyardID: entry.vineyardID,
                 operationID: entry.id,
                 at: entry.clientUpdatedAt
             )
+            guard generation == syncGeneration else { throw CancellationError() }
+            let localPaths = store.loadVisits().first { $0.id == entry.recordID && $0.vineyardID == entry.vineyardID }?
+                .assessments.flatMap(\.observations).flatMap(\.photos).compactMap(\.localPath) ?? []
+            let queued = store.loadPhotoQueue().filter { $0.visitID == entry.recordID && $0.vineyardID == entry.vineyardID }
+            let orphanPaths = queued.filter { $0.rowCommitted != true }.map {
+                $0.uploadedStoragePath ?? ScoutPhotoFileStore.storagePath(vineyardID: $0.vineyardID, observationID: $0.observationID, photoID: $0.id)
+            }
+            guard store.queueLocalFileCleanup(vineyardID: entry.vineyardID, relativePaths: Array(Set(localPaths + queued.map(\.localPath)))),
+                  orphanPaths.allSatisfy({ store.queueObjectCleanup(vineyardID: entry.vineyardID, storagePath: $0) }),
+                  store.consumeDeletion(vineyardID: entry.vineyardID, entity: .scoutVisit, entityID: entry.recordID)
+            else { throw VineyardInsightsReconciliationError.localWriteFailed }
+            processLocalFileCleanup(vineyardID: entry.vineyardID)
+            visits = store.loadVisits()
+            pendingPhotoCount = store.loadPhotoQueue().count
+            if openVisitID == entry.recordID { openVisitID = nil }
             return nil
         }
         if store.isDeleted(vineyardID: entry.vineyardID, entity: .scoutVisit, entityID: entry.recordID) {
@@ -975,6 +988,7 @@ final class VineyardInsightsService {
     /// already left the queue and is skipped entirely.
     func syncPhotos(vineyardID: UUID) async {
         for entry in store.loadPhotoQueue() where entry.vineyardID == vineyardID {
+            if deletionPending(visitID: entry.visitID) { continue }
             guard let photo = photo(id: entry.id) else {
                 // Deleted locally while queued — drop the obligation.
                 store.dequeuePhoto(photoID: entry.id)

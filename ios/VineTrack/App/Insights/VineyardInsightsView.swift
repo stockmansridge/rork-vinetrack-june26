@@ -254,6 +254,7 @@ struct ScoutWorkspaceView: View {
 
             if let visit = openVisit {
                 visitSections(visit)
+                    .disabled(insights.deletionPending(visitID: visit.id))
             } else {
                 listSections
             }
@@ -288,12 +289,17 @@ struct ScoutWorkspaceView: View {
             titleVisibility: .visible
         ) {
             Button("Delete permanently", role: .destructive) {
-                if let visitPendingDeletion { _ = insights.deleteVisit(visitPendingDeletion.id) }
+                if let visitPendingDeletion,
+                   store.selectedVineyardId == visitPendingDeletion.vineyardID {
+                    _ = insights.deleteVisit(visitPendingDeletion.id)
+                }
                 visitPendingDeletion = nil
             }
             Button("Cancel", role: .cancel) { visitPendingDeletion = nil }
         } message: {
-            Text("The visit, assessments, observations and Scout photos will be permanently removed.")
+            if let visit = visitPendingDeletion {
+                Text("Scout \(visit.scoutDate.formatted(date: .abbreviated, time: .omitted)) • \(visit.scoutNameSnapshot ?? "Unknown scout") • \(visit.status.label) • \(visit.id.uuidString). The visit, assessments, observations and Scout photos will be permanently removed. This cannot be undone. Offline deletion stays pending until server confirmation; local information is retained if deletion fails. Canonical Growth Stage pins and records are kept.")
+            }
         }
         .sheet(item: $cameraRequest) { request in
             CameraImagePicker { data in
@@ -405,7 +411,7 @@ struct ScoutWorkspaceView: View {
                             let syncState = insights.syncStatus(for: visit)
                             Text(syncState)
                                 .font(.caption)
-                                .foregroundStyle(syncState == "Synced" ? .green : (syncState.hasPrefix("Sync failed") ? .red : .orange))
+                                .foregroundStyle(syncState == "Synced" ? .green : ((syncState.hasPrefix("Sync failed") || syncState.hasPrefix("Deletion failed")) ? .red : .orange))
                             Text(blockNames(visit))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -429,9 +435,11 @@ struct ScoutWorkspaceView: View {
                         if !visit.isEditable { _ = insights.reopenVisit(visit.id) }
                         insights.openVisit(visit.id)
                     }.buttonStyle(.bordered)
+                    .disabled(insights.deletionPending(visitID: visit.id))
                 }
-                .swipeActions {
-                    Button("Delete", role: .destructive) { visitPendingDeletion = visit }
+                if insights.canDeleteVisit(vineyardID: visit.vineyardID), store.selectedVineyardId == visit.vineyardID {
+                    Button("Delete Scout", role: .destructive) { visitPendingDeletion = visit }
+                        .disabled(insights.deletionPending(visitID: visit.id))
                 }
             }
         }

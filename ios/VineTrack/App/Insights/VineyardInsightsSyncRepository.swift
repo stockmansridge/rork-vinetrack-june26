@@ -373,12 +373,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let client_revision_id: String
     }
 
-    /// Soft-delete a visit and its children.
-    ///
-    /// No client hard delete exists anywhere in SQL 236 (every table has a
-    /// `for delete using (false)` policy), so this is the only shape a deletion
-    /// can take. Children are tombstoned explicitly rather than relying on the
-    /// cascade, because the cascade only fires on a real DELETE.
+    /// Canonical permanent deletion with ledger, cascading child cleanup and durable Storage cleanup.
     struct HardDeleteVisitParams: Encodable, Sendable {
         let p_vineyard_id: String
         let p_visit_id: String
@@ -393,7 +388,21 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         at date: Date
     ) async throws {
         try requireConfigured()
-        try await provider.client.rpc(
+        guard let userID = provider.client.auth.currentUser?.id else {
+            throw BackendRepositoryError.missingAuthenticatedUser
+        }
+        let preview: Bool = try await provider.client.rpc(
+            "can_use_vineyard_insights", params: ["p_vineyard_id": vineyardID.uuidString]
+        ).execute().value
+        let role: Bool = try await provider.client.rpc(
+            "has_vineyard_role", params: ScoutDeleteRoleParams(p_vineyard_id: vineyardID.uuidString)
+        ).execute().value
+        guard provider.client.auth.currentUser?.id == userID else { throw CancellationError() }
+        guard preview && role else {
+            throw NSError(domain: "VineyardInsights", code: 403, userInfo: [NSLocalizedDescriptionKey:
+                "Delete denied: only this vineyard’s Owner or Manager may delete Scouts. Local information has been retained."])
+        }
+        let acknowledged: Bool = try await provider.client.rpc(
             "hard_delete_scout_visit",
             params: HardDeleteVisitParams(
                 p_vineyard_id: vineyardID.uuidString,
@@ -401,7 +410,16 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
                 p_operation_id: operationID.uuidString,
                 p_deleted_at: Self.timestamp(date)
             )
-        ).execute()
+        ).execute().value
+        guard provider.client.auth.currentUser?.id == userID else { throw CancellationError() }
+        guard acknowledged else {
+            throw NSError(domain: "VineyardInsights", code: 409, userInfo: [NSLocalizedDescriptionKey: "Scout deletion was not acknowledged. Local information has been retained."])
+        }
+    }
+
+    private struct ScoutDeleteRoleParams: Encodable, Sendable {
+        let p_vineyard_id: String
+        let allowed_roles: [String] = ["owner", "manager"]
     }
 
     func softDeletePhoto(_ revision: VineyardInsightsStore.PhotoDeletionRevision) async throws {

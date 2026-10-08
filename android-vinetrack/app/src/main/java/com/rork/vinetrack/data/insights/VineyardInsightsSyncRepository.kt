@@ -171,27 +171,47 @@ class VineyardInsightsSyncRepository(
         }
     }
 
-    /**
-     * Soft-delete a visit and its assessments.
-     *
-     * No client hard delete exists anywhere in SQL 236 (every table carries a
-     * `for delete using (false)` policy), so this is the only shape a deletion
-     * can take. Children are tombstoned explicitly rather than relying on the
-     * cascade, which only fires on a real DELETE.
-     */
+    /** Canonical permanent deletion with ledger, child cascades and durable Storage cleanup. */
     override suspend fun hardDeleteVisit(
         id: String,
         vineyardId: String,
         operationId: String,
         atIso: String,
-    ) = postRpc(
-        rpc = "hard_delete_scout_visit",
-        args = VineyardInsightsSyncApi.HardDeleteVisitArgs(
-            vineyardId = vineyardId,
-            visitId = id,
-            operationId = operationId,
-            deletedAt = atIso,
-        ),
+    ) = withContext(Dispatchers.IO) {
+        requireConfig()
+        val userId = session.userId ?: throw BackendError.Unauthorized
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        suspend fun checkBoolean(rpc: String, body: String): Boolean {
+            val response = SupabaseClient.http.post(SupabaseClient.rpcUrl(rpc)) {
+                authHeaders(token)
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            checkWrite(response.status.value) { response.bodyAsText() }
+            check(session.userId == userId) { "Account changed; local Scout retained." }
+            return response.body<Boolean>()
+        }
+        val preview = checkBoolean("can_use_vineyard_insights",
+            SupabaseClient.json.encodeToString(ScoutPreviewArgs.serializer(), ScoutPreviewArgs(vineyardId)))
+        val role = checkBoolean("has_vineyard_role",
+            SupabaseClient.json.encodeToString(ScoutDeleteRoleArgs.serializer(), ScoutDeleteRoleArgs(vineyardId, listOf("owner", "manager"))))
+        check(preview && role) {
+            "Delete denied: only this vineyard’s Owner or Manager may delete Scouts. Local information has been retained."
+        }
+        val args = VineyardInsightsSyncApi.HardDeleteVisitArgs(
+            vineyardId = vineyardId, visitId = id, operationId = operationId, deletedAt = atIso)
+        val acknowledged = checkBoolean("hard_delete_scout_visit",
+            SupabaseClient.json.encodeToString(VineyardInsightsSyncApi.HardDeleteVisitArgs.serializer(), args))
+        check(acknowledged) { "Scout deletion was not acknowledged. Local information has been retained." }
+    }
+
+    @Serializable
+    private data class ScoutPreviewArgs(@SerialName("p_vineyard_id") val vineyardId: String)
+
+    @Serializable
+    private data class ScoutDeleteRoleArgs(
+        @SerialName("p_vineyard_id") val vineyardId: String,
+        @SerialName("allowed_roles") val roles: List<String>,
     )
 
     override suspend fun softDeletePhoto(

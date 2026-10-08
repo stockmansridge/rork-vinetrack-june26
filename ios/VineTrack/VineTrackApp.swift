@@ -173,6 +173,24 @@ struct VineTrackApp: App {
                     ContentView()
                 }
             }
+            .task {
+                vineyardInsightsService.configureScoutDeletionAccess { vineyardID in
+                    guard auth.isSignedIn, let userID = auth.userId,
+                          migratedStore.selectedVineyardId == vineyardID,
+                          !backendAccessControl.isLoading,
+                          backendAccessControl.loadedVineyardId == vineyardID,
+                          backendAccessControl.loadedUserId == userID,
+                          backendAccessControl.currentRole == .owner || backendAccessControl.currentRole == .manager
+                    else { return false }
+                    return VineyardInsightsAccess.resolve(
+                        isAuthenticated: auth.isSignedIn,
+                        isResolving: systemAdminService.isLoading || systemAdminService.lastLoadedAt == nil,
+                        isSystemAdmin: systemAdminService.isSystemAdmin,
+                        selectedVineyardID: vineyardID,
+                        isMemberOfSelectedVineyard: true
+                    ).isAllowed
+                }
+            }
             .tint(VineyardTheme.olive)
             .preferredColorScheme(migratedStore.settings.appearance.colorScheme)
         }

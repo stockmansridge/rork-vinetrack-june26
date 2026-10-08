@@ -503,6 +503,8 @@ private fun ScoutWorkspace(
                             if (!visit.isEditable) insights.reopenVisit(visit.id)
                             insights.openVisit(visit.id)
                         },
+                        canDelete = { it.vineyardId == state.selectedVineyardId && insights.canDeleteVisit(it.vineyardId) && !insights.deletionPending(it.id) },
+                        deletionPending = { insights.deletionPending(it.id) },
                         onDelete = { visitPendingDeletion = it },
                         syncStatus = insights::syncStatus,
                     )
@@ -583,10 +585,10 @@ private fun ScoutWorkspace(
         AlertDialog(
             onDismissRequest = { visitPendingDeletion = null },
             title = { Text("Permanently delete this Scout?") },
-            text = { Text("The visit, assessments, observations and Scout photos will be permanently removed.") },
+            text = { Text("Scout ${visit.scoutDateIso} • ${visit.scoutNameSnapshot ?: "Unknown scout"} • ${visit.status.label} • ${visit.id}. The visit, assessments, observations and Scout photos will be permanently removed. This cannot be undone. Offline deletion stays pending until server confirmation; local information is retained if deletion fails. Canonical Growth Stage pins and records are kept.") },
             confirmButton = {
                 TextButton(onClick = {
-                    insights.deleteVisit(visit.id)
+                    if (visit.vineyardId == state.selectedVineyardId) insights.deleteVisit(visit.id)
                     visitPendingDeletion = null
                 }) { Text("Delete permanently", color = VineColors.Destructive) }
             },
@@ -626,6 +628,8 @@ private fun ScoutList(
     onReport: (ScoutVisit) -> Unit,
     onEdit: (ScoutVisit) -> Unit,
     onDelete: (ScoutVisit) -> Unit,
+    canDelete: (ScoutVisit) -> Boolean,
+    deletionPending: (ScoutVisit) -> Boolean,
     syncStatus: (ScoutVisit) -> String,
 ) {
     val vine = LocalVineColors.current
@@ -674,11 +678,13 @@ private fun ScoutList(
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 TextButton(onClick = { onReport(visit) }) { Text("View Report") }
-                TextButton(onClick = { onEdit(visit) }) {
+                TextButton(onClick = { onEdit(visit) }, enabled = !deletionPending(visit)) {
                     Text(if (visit.isEditable) "Edit" else "Reopen and edit")
                 }
-                TextButton(onClick = { onDelete(visit) }) {
-                    Text("Delete", color = VineColors.Destructive)
+                if (canDelete(visit)) {
+                    TextButton(onClick = { onDelete(visit) }) {
+                        Text("Delete Scout", color = VineColors.Destructive)
+                    }
                 }
             }
             HorizontalDivider(color = vine.cardBorder)

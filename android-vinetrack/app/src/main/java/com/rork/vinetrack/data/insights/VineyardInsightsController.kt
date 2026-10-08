@@ -35,6 +35,7 @@ class VineyardInsightsController(
     private val weatherLoader: (suspend (String, String) -> ScoutWeatherSnapshot)? = null,
     private val clock: () -> Instant = { Instant.now() },
     private val onMutation: (String) -> Unit = {},
+    private val scoutDeletionAccess: (String) -> Boolean = { false },
 ) {
 
     private val _visits = MutableStateFlow(store.loadVisits())
@@ -103,6 +104,13 @@ class VineyardInsightsController(
         _visits.value.filter { it.status == status }
             .sortedByDescending { it.scoutDateIso }
 
+    fun canDeleteVisit(vineyardId: String): Boolean = scoutDeletionAccess(vineyardId)
+
+    fun deletionPending(visitId: String): Boolean = store.loadQueue().any {
+        it.entity == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT &&
+            it.recordId == visitId && it.operation == VineyardInsightsStore.QueuedOperation.Operation.DELETE
+    }
+
     fun syncStatus(visit: ScoutVisit): String {
         val queued = store.loadQueue().any {
             it.entity == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT && it.recordId == visit.id
@@ -113,6 +121,10 @@ class VineyardInsightsController(
         val failed = store.loadQueue().firstOrNull {
             it.entity == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT &&
                 it.recordId == visit.id && it.attemptCount > 0
+        }
+        if (deletionPending(visit.id)) {
+            return if (failed != null) "Deletion failed — local Scout retained: ${failed.lastError ?: "Retry required"}"
+                else "Deletion pending — local Scout retained until confirmed"
         }
         if (failed != null) return "Sync failed: ${failed.lastError ?: "Retry required"}"
         if (store.isSyncOwedForVisit(visit.id) || queued || queuedPhoto || unacknowledgedPhoto) return "Sync pending"
@@ -148,7 +160,7 @@ class VineyardInsightsController(
 
     fun toggleBlock(visitId: String, paddockId: String) {
         val visit = visit(visitId) ?: return
-        if (!visit.isEditable) return
+        if (!visit.isEditable || deletionPending(visitId)) return
         val existing = visit.assessment(paddockId)
         // Removing a block that already holds observations would discard field
         // work, so only an untouched block may be removed by a toggle.
@@ -162,20 +174,20 @@ class VineyardInsightsController(
 
     fun setSummary(visitId: String, summary: String) {
         val visit = visit(visitId) ?: return
-        if (!visit.isEditable) return
+        if (!visit.isEditable || deletionPending(visitId)) return
         persist(visit.copy(visitSummary = summary.takeIf { it.isNotBlank() }))
     }
 
     fun setWeather(visitId: String, weather: ScoutWeatherSnapshot) {
         val visit = visit(visitId) ?: return
-        if (!visit.isEditable) return
+        if (!visit.isEditable || deletionPending(visitId)) return
         persist(visit.copy(weather = weather))
     }
 
     /** Capture current configured-source weather only for a visit dated today. */
     suspend fun captureWeather(visitId: String) {
         val visit = visit(visitId) ?: return
-        if (!visit.isEditable) return
+        if (!visit.isEditable || deletionPending(visitId)) return
         val capturedAt = nowIso()
         val today = clock().atZone(java.time.ZoneId.systemDefault()).toLocalDate()
         val visitDate = runCatching { LocalDate.parse(visit.scoutDateIso) }.getOrNull()
@@ -211,7 +223,7 @@ class VineyardInsightsController(
     ): Boolean {
         if (fix == null) return false
         val visit = visit(visitId) ?: return false
-        if (!visit.isEditable) return false
+        if (!visit.isEditable || deletionPending(visitId)) return false
         val assessment = visit.assessments.firstOrNull { it.id == assessmentId } ?: return false
         val previousSyncOwed = store.isSyncOwedForVisit(visitId)
         val observation = assessment.observation(item) ?: ScoutObservation.empty(assessmentId, item)
@@ -268,7 +280,7 @@ class VineyardInsightsController(
         capturedByUserId: String?,
     ): ScoutPhoto? {
         val visit = visit(visitId) ?: return null
-        if (!visit.isEditable) return null
+        if (!visit.isEditable || deletionPending(visitId)) return null
         val assessment = visit.assessments.firstOrNull { it.id == assessmentId } ?: return null
         val files = photoFiles ?: run { record(false); return null }
 
@@ -363,7 +375,7 @@ class VineyardInsightsController(
         photoId: String,
     ): ScoutPhoto? {
         val visit = visit(visitId) ?: return null
-        if (!visit.isEditable) return null
+        if (!visit.isEditable || deletionPending(visitId)) return null
         val assessment = visit.assessments.firstOrNull { it.id == assessmentId } ?: return null
         val observation = assessment.observation(item) ?: return null
         val photo = observation.photos.firstOrNull { it.id == photoId } ?: return null
@@ -461,7 +473,7 @@ class VineyardInsightsController(
         transform: (ScoutObservation) -> ScoutObservation,
     ): Boolean {
         val visit = visit(visitId) ?: return false
-        if (!visit.isEditable) return false
+        if (!visit.isEditable || deletionPending(visitId)) return false
         val assessment = visit.assessments.firstOrNull { it.id == assessmentId } ?: return false
         val existing = assessment.observation(item) ?: ScoutObservation.empty(assessmentId, item)
         val updated = transform(existing)
@@ -512,33 +524,22 @@ class VineyardInsightsController(
      */
     fun deleteVisit(visitId: String): List<ScoutGrowthStageLink.Unlink> {
         val visit = visit(visitId) ?: return emptyList()
-        val retained = ScoutGrowthStageLink.onScoutDeleted(visit)
-        val deletedAt = nowIso()
-        val localPaths = visit.assessments.flatMap { it.observations }.flatMap { it.photos }.mapNotNull { it.localPath }
-        val queued = store.loadPhotoQueue().filter { it.visitId == visitId && it.vineyardId == visit.vineyardId }
-        val cleanupPaths = queued.filterNot { it.rowCommitted }.map { entry ->
-            entry.uploadedStoragePath
-                ?: photoFiles?.storagePath(entry.vineyardId, entry.observationId, entry.id)
-                ?: "${entry.vineyardId.lowercase()}/${entry.observationId.lowercase()}/${entry.id.lowercase()}.jpg"
-        }.distinct()
-        val pathsToRemove = (localPaths + queued.map { it.localPath }).distinct()
-        val localCleanupPersisted = store.queueLocalFileCleanup(visit.vineyardId, pathsToRemove)
-        val cleanupPersisted = localCleanupPersisted && cleanupPaths.all {
-            store.queueObjectCleanup(visit.vineyardId, it)
+        if (!canDeleteVisit(visit.vineyardId)) {
+            _lastSyncError.value = "Delete denied: only this vineyard’s Owner or Manager may delete Scouts. Local information has been retained."
+            return emptyList()
         }
-        val deleteQueued = cleanupPersisted && store.enqueue(
-            recordId = visit.id,
-            vineyardId = visit.vineyardId,
-            entity = VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT,
-            operation = VineyardInsightsStore.QueuedOperation.Operation.DELETE,
-            clientUpdatedAtIso = deletedAt,
-        )
-        val visitDeleted = deleteQueued && store.deleteVisit(visitId)
-        val uploadsInvalidated = visitDeleted && queued.all { store.dequeuePhoto(it.id) }
-        if (record(uploadsInvalidated)) {
-            processLocalFileCleanup(visit.vineyardId)
-            _visits.value = store.loadVisits()
-            _pendingPhotoCount.value = store.loadPhotoQueue().size
+        val retained = ScoutGrowthStageLink.onScoutDeleted(visit)
+        // Keep the complete graph and photo bytes until an authoritative acknowledgement.
+        if (deletionPending(visitId)) {
+            onMutation(visit.vineyardId)
+            return retained
+        }
+        if (record(store.enqueue(
+                recordId = visit.id, vineyardId = visit.vineyardId,
+                entity = VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT,
+                operation = VineyardInsightsStore.QueuedOperation.Operation.DELETE,
+                clientUpdatedAtIso = nowIso(),
+            ))) {
             if (_openVisitId.value == visitId) _openVisitId.value = null
             onMutation(visit.vineyardId)
         }
@@ -546,6 +547,7 @@ class VineyardInsightsController(
     }
 
     private fun persist(visit: ScoutVisit): Boolean {
+        if (deletionPending(visit.id)) return false
         val stamped = visit.copy(clientUpdatedAtIso = nextRevisionIso(visit.clientUpdatedAtIso))
         val saved = store.saveVisit(stamped)
         if (saved) {
@@ -696,6 +698,7 @@ class VineyardInsightsController(
             flushPhotoDeletions(worker)
             val outcome = worker.sync(vineyardId)
             if (requestGeneration != syncGeneration) return@request
+            processLocalFileCleanup(vineyardId)
             _visits.value = store.loadVisits()
             _notes.value = store.loadNotes()
             _noteTypesByVineyard.value = _noteTypesByVineyard.value + (vineyardId to store.noteTypes(vineyardId))

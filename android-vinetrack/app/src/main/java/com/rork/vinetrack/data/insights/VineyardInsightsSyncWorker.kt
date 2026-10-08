@@ -212,12 +212,27 @@ class VineyardInsightsSyncWorker(
 
     private suspend fun pushVisit(entry: VineyardInsightsStore.QueuedOperation): Long? {
         if (entry.operation == VineyardInsightsStore.QueuedOperation.Operation.DELETE) {
+            check(canApplyServerResults()) { "Session changed; local Scout retained." }
             repository.hardDeleteVisit(
                 entry.recordId,
                 entry.vineyardId,
                 entry.id,
                 entry.clientUpdatedAtIso,
             )
+            check(canApplyServerResults()) { "Session changed; local Scout retained." }
+            // Cleanup is durable and eligible only AFTER the canonical RPC succeeds.
+            val visitPaths = store.loadVisits().firstOrNull { it.id == entry.recordId && it.vineyardId == entry.vineyardId }
+                ?.assessments?.flatMap { it.observations }?.flatMap { it.photos }?.mapNotNull { it.localPath }.orEmpty()
+            val queuedPhotos = store.loadPhotoQueue().filter { it.visitId == entry.recordId && it.vineyardId == entry.vineyardId }
+            val orphanPaths = queuedPhotos.filterNot { it.rowCommitted }.map {
+                it.uploadedStoragePath ?: photoFiles?.storagePath(it.vineyardId, it.observationId, it.id)
+                    ?: "${it.vineyardId.lowercase()}/${it.observationId.lowercase()}/${it.id.lowercase()}.jpg"
+            }
+            check(store.queueLocalFileCleanup(entry.vineyardId, (visitPaths + queuedPhotos.map { it.localPath }).distinct()) &&
+                orphanPaths.all { store.queueObjectCleanup(entry.vineyardId, it) } &&
+                store.consumeDeletion(entry.vineyardId, entry.entity.code, entry.recordId)) {
+                "Server deletion acknowledged; local cleanup is still pending."
+            }
             return null
         }
         if (store.isDeleted(entry.vineyardId, entry.entity.code, entry.recordId)) {
@@ -364,6 +379,9 @@ class VineyardInsightsSyncWorker(
         var uploaded = 0
         var error: String? = null
         for (entry in store.loadPhotoQueue().filter { it.vineyardId == vineyardId }) {
+            if (store.loadQueue().any { it.recordId == entry.visitId &&
+                    it.entity == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT &&
+                    it.operation == VineyardInsightsStore.QueuedOperation.Operation.DELETE }) continue
             val photo = findPhoto(entry.id)
             val step = ScoutPhotoUpload.nextStep(
                 photoId = entry.id,
