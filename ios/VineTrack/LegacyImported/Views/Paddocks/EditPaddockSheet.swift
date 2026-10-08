@@ -29,7 +29,21 @@ struct EditPaddockSheet: View {
     @State private var rowVineCountOverrides: [Int: Int] = [:]
     /// The row currently open in the per-row vine-count editor.
     @State private var rowVineCountEditorTarget: RowVineCountTarget?
-    private var fmt: RegionFormatter { store.settings.regionFormatter }
+    @State private var inputFormatter: RegionFormatter?
+    private var fmt: RegionFormatter { inputFormatter ?? store.settings.regionFormatter }
+    @State private var rowLengthSeed: RegionalInput?
+    @State private var postSpacingSeed: RegionalInput?
+    private var rowLengthOverrideValue: Double? {
+        rowLengthSeed?.resolve(rowLengthOverride, inverse: fmt.lengthToCanonical)
+            ?? Double(rowLengthOverride).map(fmt.lengthToCanonical)
+    }
+    private var geometryInputsValid: Bool {
+        let lengthValid = rowLengthOverride.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || rowLengthOverrideValue.map { $0.isFinite && $0 > 0 } == true
+        let postValid = intermediatePostSpacingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || intermediatePostSpacingValue != nil
+        return lengthValid && postValid
+    }
     @State private var flowSeed: RegionalInput?
     @State private var spacingSeed: RegionalInput?
     @State private var flowPerEmitterText: String = ""
@@ -122,7 +136,7 @@ struct EditPaddockSheet: View {
                             dismiss()
                         }
                     }
-                    .disabled(name.isEmpty || !irrigationInputsValid)
+                    .disabled(name.isEmpty || !irrigationInputsValid || !geometryInputsValid)
                 }
             }
             .sheet(isPresented: $showAddVariety) {
@@ -188,6 +202,7 @@ struct EditPaddockSheet: View {
                 )
             }
             .onAppear {
+                inputFormatter = inputFormatter ?? store.settings.regionFormatter
                 if let paddock {
                     name = paddock.name
                     polygonPoints = paddock.polygonPoints
@@ -199,18 +214,19 @@ struct EditPaddockSheet: View {
                     if let override = paddock.vineCountOverride {
                         vineCountOverride = "\(override)"
                     }
-                    if let rlOverride = paddock.rowLengthOverride {
-                        rowLengthOverride = String(format: "%.0f", rlOverride)
-                    }
+                    inputFormatter = store.settings.regionFormatter
+                    let length = RegionalInput(canonical: paddock.rowLengthOverride, forward: fmt.lengthValue)
+                    rowLengthSeed = length
+                    rowLengthOverride = length.text
                     let flow = RegionalInput(canonical: paddock.flowPerEmitter, forward: fmt.volumeValue)
                     let spacing = RegionalInput(canonical: paddock.emitterSpacing, forward: fmt.lengthValue)
                     flowSeed = flow
                     spacingSeed = spacing
                     flowPerEmitterText = flow.text
                     emitterSpacingText = spacing.text
-                    if let postSpacing = paddock.intermediatePostSpacing {
-                        intermediatePostSpacingText = String(format: "%.2f", postSpacing)
-                    }
+                    let post = RegionalInput(canonical: paddock.intermediatePostSpacing, forward: fmt.lengthValue)
+                    postSpacingSeed = post
+                    intermediatePostSpacingText = post.text
                     varietyAllocations = paddock.varietyAllocations
                     if let bd = paddock.budburstDate {
                         budburstDate = bd
@@ -668,14 +684,14 @@ struct EditPaddockSheet: View {
             Stepper("Number of Rows: \(rowCount)", value: $rowCount, in: 0...500)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Row Width: \(rowWidth, specifier: "%.1f") m")
+                Text("Row Width: \(fmt.formatLength(metres: rowWidth))")
                     .font(.subheadline)
                 Slider(value: $rowWidth, in: 0.0...4.0, step: 0.1)
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("Shift Rows: \(rowOffset, specifier: "%.1f") m")
+                    Text("Shift Rows: \(fmt.formatLength(metres: rowOffset))")
                         .font(.subheadline)
                     Spacer()
                     Button("Reset") { rowOffset = 0 }
@@ -783,7 +799,9 @@ struct EditPaddockSheet: View {
     }
 
     private var intermediatePostSpacingValue: Double? {
-        guard let val = Double(intermediatePostSpacingText), val > 0 else { return nil }
+        let value = postSpacingSeed?.resolve(intermediatePostSpacingText, inverse: fmt.lengthToCanonical)
+            ?? Double(intermediatePostSpacingText).map(fmt.lengthToCanonical)
+        guard let val = value, val.isFinite, val > 0 else { return nil }
         return val
     }
 
@@ -1499,7 +1517,7 @@ struct EditPaddockSheet: View {
     private var vineSpacingSection: some View {
         Section {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Vine Spacing: \(vineSpacing, specifier: "%.2f") m")
+                Text("Vine Spacing: \(fmt.formatLength(metres: vineSpacing))")
                     .font(.subheadline)
                 Slider(value: $vineSpacing, in: 0.5...3.0, step: 0.05)
             }
@@ -1513,7 +1531,7 @@ struct EditPaddockSheet: View {
                     .multilineTextAlignment(.trailing)
                     .frame(width: 80)
                     .font(.system(.subheadline, design: .monospaced).weight(.semibold))
-                Text("m")
+                Text(fmt.lengthUnitAbbreviation)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1538,7 +1556,7 @@ struct EditPaddockSheet: View {
         } header: {
             Text("Vine & Trellis Spacing")
         } footer: {
-            Text("Vine Spacing is used to estimate vine count. Intermediate Post Spacing is the distance (m) between trellis posts inside a row, excluding the two end posts per row.")
+            Text("Vine Spacing is used to estimate vine count. Intermediate Post Spacing is the distance between trellis posts inside a row, excluding the two end posts per row.")
         }
     }
 
@@ -1559,7 +1577,7 @@ struct EditPaddockSheet: View {
             let dLon = (line.end.longitude - line.start.longitude) * mPerDegLon
             return total + sqrt(dLat * dLat + dLon * dLon)
         }
-        let effectiveRowLength = Double(rowLengthOverride) ?? totalLength
+        let effectiveRowLength = rowLengthOverrideValue ?? totalLength
         let estimatedVines = vineSpacing > 0 ? Int(effectiveRowLength / vineSpacing) : 0
         let displayVines = Int(vineCountOverride) ?? estimatedVines
 
@@ -1568,7 +1586,7 @@ struct EditPaddockSheet: View {
                 Text("Calculated Row Length")
                     .font(.subheadline)
                 Spacer()
-                Text("\(String(format: "%.0f", totalLength)) m")
+                Text(fmt.formatLength(metres: totalLength))
                     .font(.system(.subheadline, design: .monospaced).weight(.semibold))
                     .foregroundStyle(.secondary)
             }
@@ -1594,12 +1612,12 @@ struct EditPaddockSheet: View {
                     Text("Total row length override")
                         .font(.subheadline)
                     Spacer()
-                    TextField("\(String(format: "%.0f", totalLength))", text: $rowLengthOverride)
+                    TextField(String(fmt.lengthValue(metres: totalLength)), text: $rowLengthOverride)
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                         .frame(width: 100)
                         .font(.system(.subheadline, design: .monospaced).weight(.semibold))
-                    Text("m")
+                    Text(fmt.lengthUnitAbbreviation)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1819,7 +1837,7 @@ struct EditPaddockSheet: View {
     }
 
     private func savePaddock() {
-        guard irrigationInputsValid else { return }
+        guard irrigationInputsValid && geometryInputsValid else { return }
         let polygonCoords = polygonPoints.map { $0.coordinate }
         let lines = calculateRowLines(
             polygonCoords: polygonCoords,
@@ -1885,7 +1903,7 @@ struct EditPaddockSheet: View {
             existing.rowOffset = rowOffset
             existing.vineSpacing = vineSpacing
             existing.vineCountOverride = Int(vineCountOverride)
-            existing.rowLengthOverride = Double(rowLengthOverride)
+            existing.rowLengthOverride = rowLengthOverrideValue
             existing.flowPerEmitter = irrigationFlowPerEmitter
             existing.emitterSpacing = irrigationEmitterSpacing
             existing.intermediatePostSpacing = intermediatePostSpacingValue
@@ -1908,7 +1926,7 @@ struct EditPaddockSheet: View {
                 rowOffset: rowOffset,
                 vineSpacing: vineSpacing,
                 vineCountOverride: Int(vineCountOverride),
-                rowLengthOverride: Double(rowLengthOverride),
+                rowLengthOverride: rowLengthOverrideValue,
                 flowPerEmitter: irrigationFlowPerEmitter,
                 emitterSpacing: irrigationEmitterSpacing,
                 intermediatePostSpacing: intermediatePostSpacingValue,

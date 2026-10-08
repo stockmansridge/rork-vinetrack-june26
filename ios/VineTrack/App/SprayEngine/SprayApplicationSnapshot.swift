@@ -298,6 +298,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
     /// record continues to have exactly one persistence face.
     init(
         plan: SprayApplicationPlan,
+        carrierVolumeBasis: SprayCarrierBasis? = nil,
         targets: [SprayTarget]? = nil,
         customTargets: [String]? = nil,
         sprayHeadTarget: SprayHeadTarget? = nil,
@@ -328,7 +329,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         // selected blocks to fall out of step with the calculation.
         self.blocks = SprayApplicationBlockSnapshot.project(plan.geometry.blocks)
 
-        self.carrierVolumeBasis = plan.carrier.basis
+        self.carrierVolumeBasis = carrierVolumeBasis ?? plan.carrier.basis
         self.totalCarrierLitres = Self.nonNegative(plan.carrier.totalLitres)
         self.carrierLitresPerHectare = Self.nonNegative(plan.carrier.litresPerHectare)
         self.diluteLitresPer100m = Self.positive(plan.carrier.diluteLitresPer100Metres)

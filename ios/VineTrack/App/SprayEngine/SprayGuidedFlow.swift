@@ -618,6 +618,7 @@ nonisolated struct SprayGuidedFlow: Sendable {
         guard let plan = persistablePlan else { return nil }
         let snapshot = SprayApplicationSnapshot(
             plan: plan,
+            carrierVolumeBasis: effectiveCarrierBasis,
             targets: orderedTargets,
             customTargets: inputs.customTargets,
             sprayHeadTarget: effectiveSprayHeadTarget,

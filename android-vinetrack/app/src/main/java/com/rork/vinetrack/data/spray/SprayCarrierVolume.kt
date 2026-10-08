@@ -28,9 +28,15 @@ enum class SprayCarrierBasis(val raw: String) {
     MANUAL_TOTAL_VOLUME("manual"),
     ;
 
+    /** Server provenance vocabulary; local cache enum values remain unchanged. */
+    val serverValue: String get() = if (this == MANUAL_TOTAL_VOLUME) "manual_actual_total" else raw
+
     companion object {
-        fun from(raw: String?): SprayCarrierBasis? =
-            entries.firstOrNull { it.raw == raw?.trim()?.lowercase() }
+        fun from(raw: String?): SprayCarrierBasis? {
+            val value = raw?.trim()?.lowercase()
+            return if (value == "manual_actual_total") MANUAL_TOTAL_VOLUME
+                else entries.firstOrNull { it.raw == value }
+        }
     }
 }
 

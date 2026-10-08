@@ -2932,7 +2932,7 @@ struct SprayCalculatorView: View {
     private var carrierSummary: String {
         guard flow.isCarrierResolved else { return "Not set" }
         let carrier = flow.plan.carrier
-        switch carrier.basis {
+        switch flow.effectiveCarrierBasis {
         case .litresPerHectare:
             return "\(guidedFormat.litresPerHectare(carrier.litresPerHectare)) — \(guidedFormat.litres(carrier.totalLitres)) total"
         case .litresPer100Metres:
@@ -3771,9 +3771,9 @@ struct SprayCalculatorView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     GuidedReviewRow(
                         label: "Basis",
-                        value: guidedFormat.carrierBasisLabel(carrier.basis)
+                        value: guidedFormat.carrierBasisLabel(flow.effectiveCarrierBasis)
                     )
-                    if carrier.basis == .litresPer100Metres {
+                    if flow.effectiveCarrierBasis == .litresPer100Metres {
                         GuidedReviewRow(
                             label: "Dilute / runoff",
                             value: guidedFormat.litresPer100m(carrier.diluteLitresPer100Metres)
@@ -3785,7 +3785,7 @@ struct SprayCalculatorView: View {
                     }
                     GuidedReviewRow(
                         label: "Concentration",
-                        value: SprayGuidedFormat.factor(carrier.concentrationFactor)
+                        value: flow.effectiveCarrierBasis == .manualTotalVolume ? "Not used" : SprayGuidedFormat.factor(carrier.concentrationFactor)
                     )
                     GuidedReviewRow(
                         label: "Total carrier",

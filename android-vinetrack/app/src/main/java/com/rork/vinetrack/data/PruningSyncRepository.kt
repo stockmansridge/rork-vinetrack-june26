@@ -60,9 +60,7 @@ class PruningSyncRepository(
     }
 
     fun prepareActivity(draft: PruningActivityDraft): PruningActivityDraft {
-        val zone = vineyardZone(draft.vineyardId)
-        return draft.copy(workTiming = draft.workTiming?.resolve(draft.date, draft.startTime, draft.finishTime, zone)
-            ?: com.rork.vinetrack.data.model.PruningWorkTiming.capture(draft.date, draft.startTime, draft.finishTime, zone))
+        return com.rork.vinetrack.data.model.PruningActivityTimingPreflight.prepare(draft, vineyardZone(draft.vineyardId))
     }
 
     /**

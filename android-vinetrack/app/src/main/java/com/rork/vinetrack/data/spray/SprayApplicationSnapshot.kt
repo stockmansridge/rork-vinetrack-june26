@@ -309,6 +309,7 @@ data class SprayApplicationSnapshot(
             customTargets: List<String>? = null,
             groundTarget: SprayGroundTarget? = null,
             carrierAreaBasis: SprayCarrierAreaBasis? = null,
+            carrierVolumeBasis: SprayCarrierBasis? = null,
         ): SprayApplicationSnapshot =
             SprayApplicationSnapshot(
                 targets = targets?.let(::normalisedTargets),
@@ -330,7 +331,7 @@ data class SprayApplicationSnapshot(
                 rowSpacingMetres = positive(plan.geometry.uniformRowSpacingMetres),
                 geometrySource = plan.geometry.source,
                 geometryQuality = plan.geometry.quality,
-                carrierVolumeBasis = plan.carrier.basis,
+                carrierVolumeBasis = carrierVolumeBasis ?: plan.carrier.basis,
                 totalCarrierLitres = nonNegative(plan.carrier.totalLitres),
                 carrierLitresPerHectare = nonNegative(plan.carrier.litresPerHectare),
                 diluteLitresPer100m = positive(plan.carrier.diluteLitresPer100Metres),

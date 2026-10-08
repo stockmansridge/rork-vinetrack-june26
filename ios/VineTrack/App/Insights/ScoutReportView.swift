@@ -12,6 +12,11 @@ struct ScoutReportView: View {
     @State private var selectedMarker: ScoutReportMarker?
     @State private var exportError: String?
 
+    private var fmt: RegionFormatter {
+        var settings = store.settings.regionSettings
+        settings.timezone = insights.calendar(vineyardID: visit.vineyardID).timeZone.identifier
+        return RegionFormatter(settings: settings)
+    }
     private var vineyard: Vineyard? { store.vineyards.first { $0.id == visit.vineyardID } }
     private var blocks: [Paddock] { visit.assessments.compactMap { assessment in store.paddocks.first { $0.id == assessment.paddockID } } }
     private var locations: ScoutReportPresentation.Locations {
@@ -55,7 +60,7 @@ struct ScoutReportView: View {
                 Text(vineyard?.name ?? "Vineyard").font(.title2.bold())
                 Text(visit.status == .draft ? "DRAFT SCOUT REPORT" : "SCOUT REPORT")
                     .font(.caption.bold()).foregroundStyle(visit.status == .draft ? .orange : VineyardTheme.leafGreen)
-                Text(insights.scoutDay(visit))
+                Text(fmt.formatDate(insights.scoutDay(visit)))
                 Text("Vintage \(VintageYearText.format(visit.vintageYear)) • \(visit.scoutNameSnapshot ?? "Observer unavailable")").foregroundStyle(.secondary)
                 if insights.deletionPending(visitID: visit.id) {
                     Text(insights.syncStatus(for: visit)).font(.caption.bold()).foregroundStyle(.orange)
@@ -69,11 +74,11 @@ struct ScoutReportView: View {
         VStack(alignment: .leading, spacing: 5) {
             Text("Weather").font(.headline)
             let value = visit.weather
-            LabeledContent("Temp", value: value?.temperatureCelsius.map { String(format: "%.1f °C", $0) } ?? "Unavailable")
+            LabeledContent("Temp", value: value?.temperatureCelsius.map { fmt.formatTemperature(celsius: $0) } ?? "Unavailable")
             LabeledContent("Humidity", value: value?.humidityPercent.map { "\(Int($0.rounded()))%" } ?? "Unavailable")
-            LabeledContent("Wind", value: value?.windSpeedKph.map { "\(Int($0.rounded())) km/h" } ?? "Unavailable")
+            LabeledContent("Wind", value: value?.windSpeedKph.map { fmt.formatSpeed(kmh: $0) } ?? "Unavailable")
             LabeledContent("Source", value: value?.source ?? "Unavailable")
-            Text(value?.observedAt.map { "Observed " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "Observation time unavailable").font(.caption).foregroundStyle(.secondary)
+            Text(value?.observedAt.map { "Observed " + fmt.formatDateTime($0) } ?? "Observation time unavailable").font(.caption).foregroundStyle(.secondary)
             if value?.isUnavailable == true { Text("Unavailable at observation time").font(.caption).foregroundStyle(.orange) }
             if value?.isStale == true { Text("Stale reading").font(.caption.bold()).foregroundStyle(.orange) }
         }
@@ -124,7 +129,7 @@ struct ScoutReportView: View {
         let images = Dictionary(uniqueKeysWithValues: visit.assessments.flatMap(\.observations).flatMap(\.photos).compactMap { photo in insights.localImage(photo).map { (photo.id, $0) } })
         guard let url = ScoutReportPDFService.export(visit: visit, vineyard: vineyard, blocks: blocks, images: images,
             growthRecords: growthSync.records, locations: locations, scoutDay: insights.scoutDay(visit),
-            deletionStatus: insights.deletionPending(visitID: visit.id) ? insights.syncStatus(for: visit) : nil) else {
+            formatter: fmt, deletionStatus: insights.deletionPending(visitID: visit.id) ? insights.syncStatus(for: visit) : nil) else {
             exportError = "The PDF could not be written to this device. Check available storage and try again."
             return
         }
@@ -247,7 +252,7 @@ private struct ScoutReportShareSheet: UIViewControllerRepresentable {
 enum ScoutReportPDFService {
     static func export(visit: ScoutVisit, vineyard: Vineyard?, blocks: [Paddock], images: [UUID: UIImage],
                        growthRecords: [GrowthStageRecord] = [], locations: ScoutReportPresentation.Locations? = nil,
-                       scoutDay: String? = nil, deletionStatus: String? = nil) -> URL? {
+                       scoutDay: String? = nil, formatter fmt: RegionFormatter = .australian, deletionStatus: String? = nil) -> URL? {
         let locations = locations ?? ScoutReportPresentation.locations(visit: visit, blocks: blocks, records: growthRecords, pins: [])
         let bounds = CGRect(x: 0, y: 0, width: 595, height: 842)
         let renderer = UIGraphicsPDFRenderer(bounds: bounds)
@@ -290,8 +295,8 @@ enum ScoutReportPDFService {
             text(vineyard?.name ?? "Vineyard", font: .boldSystemFont(ofSize: 22)); y = max(y, 108)
             text(visit.status == .draft ? "DRAFT SCOUT REPORT" : "SCOUT REPORT", font: .boldSystemFont(ofSize: 12), color: visit.status == .draft ? .systemOrange : .systemGreen)
             if let deletionStatus { text(deletionStatus, color: .systemOrange) }
-            text("Visit: \(scoutDay ?? visit.scoutDateOnly ?? VineyardInsightsSyncRepository.day(visit.scoutDate))   Vintage: \(VintageYearText.format(visit.vintageYear))   Observer: \(visit.scoutNameSnapshot ?? "Unavailable")")
-            text(weatherText(visit.weather)); text("Visit summary", font: .boldSystemFont(ofSize: 14)); text(visit.visitSummary ?? "Not assessed")
+            text("Visit: \(fmt.formatDate(scoutDay ?? visit.scoutDateOnly ?? VineyardInsightsSyncRepository.day(visit.scoutDate)))   Vintage: \(VintageYearText.format(visit.vintageYear))   Observer: \(visit.scoutNameSnapshot ?? "Unavailable")")
+            text(weatherText(visit.weather, formatter: fmt)); text("Visit summary", font: .boldSystemFont(ofSize: 14)); text(visit.visitSummary ?? "Not assessed")
             page(192); drawDiagram(blocks: blocks, markers: locations.markers, context: context.cgContext, rect: CGRect(x: 42, y: y, width: 511, height: 180)); y += 192
             text("Offline location diagram — not aerial imagery", color: .darkGray)
             text(ScoutReportPresentation.legend, color: .darkGray)
@@ -333,15 +338,15 @@ enum ScoutReportPDFService {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(name)
         do { try data.write(to: url, options: .atomic); return url } catch { return nil }
     }
-    private static func weatherText(_ weather: ScoutWeatherSnapshot?) -> String {
+    static func weatherText(_ weather: ScoutWeatherSnapshot?, formatter fmt: RegionFormatter = .australian) -> String {
         guard let weather else { return "Weather: Not captured" }
         if weather.isUnavailable { return "Weather: Unavailable at observation time (\(weather.source ?? "source unavailable"))" }
         var values = [String]()
-        values.append("Temp: " + (weather.temperatureCelsius.map { String(format: "%.1f °C", $0) } ?? "Unavailable"))
+        values.append("Temp: " + (weather.temperatureCelsius.map { fmt.formatTemperature(celsius: $0) } ?? "Unavailable"))
         values.append("Humidity: " + (weather.humidityPercent.map { "\(Int($0.rounded()))%" } ?? "Unavailable"))
-        values.append("Wind: " + (weather.windSpeedKph.map { "\(Int($0.rounded())) km/h" } ?? "Unavailable"))
+        values.append("Wind: " + (weather.windSpeedKph.map { fmt.formatSpeed(kmh: $0) } ?? "Unavailable"))
         values.append("Source: \(weather.source ?? "Unavailable")")
-        values.append(weather.observedAt.map { "observed " + $0.formatted(date: .abbreviated, time: .shortened) } ?? "observation time unavailable")
+        values.append(weather.observedAt.map { "observed " + fmt.formatDateTime($0) } ?? "observation time unavailable")
         if weather.isStale { values.append("STALE") }
         return "Weather: " + values.joined(separator: " • ")
     }

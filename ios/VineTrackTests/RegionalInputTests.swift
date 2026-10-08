@@ -56,6 +56,19 @@ struct RegionalInputTests {
         #expect(abs((restored.sowingDepthCm ?? 0) - 5.08) < 1e-9)
     }
 
+    @Test func untouchedGeometryAndIrrigationPreserveExactCanonicalPrecision() throws {
+        for fmt in [RegionFormatter.australian, RegionFormatter(settings: OrganizationRegionSettings(countryCode: "US", volumeUnit: "gallons", distanceUnit: "imperial"))] {
+            for metres in [315.75, 3.2123456789, 0.123456789, 1.23456789, 6.123456789, 0.6123456789] {
+                let seed = RegionalInput(canonical: metres, forward: fmt.lengthValue)
+                #expect(seed.resolve(seed.text, inverse: fmt.lengthToCanonical) == metres)
+                let edited = try #require(seed.resolve(String(fmt.lengthValue(metres: 2.75)), inverse: fmt.lengthToCanonical))
+                #expect(abs(edited - 2.75) < 1e-9)
+            }
+            let flow = RegionalInput(canonical: 2.123456789, forward: fmt.volumeValue)
+            #expect(flow.resolve(flow.text, inverse: fmt.volumeToCanonical) == 2.123456789)
+        }
+    }
+
     @Test func emptyAndInvalidInputsRemainUnavailable() {
         let input = RegionalInput(canonical: nil, forward: { $0 })
         #expect(input.resolve("", inverse: { $0 }) == nil)

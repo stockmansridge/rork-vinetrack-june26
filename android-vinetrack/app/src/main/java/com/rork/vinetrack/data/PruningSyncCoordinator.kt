@@ -299,7 +299,7 @@ class PruningSyncCoordinator(
         val base = local ?: PruningActivityDraft(
             id = activityId,
             vineyardId = vineyardId,
-            date = canonical.activity.entryDate?.take(10) ?: LocalDate.now().toString(),
+            date = canonical.activity.entryDate?.take(10) ?: "",
         )
         val adopted = PruningAllocationEditor.adoptCanonical(base, canonical, repo.vineyardZone(vineyardId))
         store.upsertActivity(vineyardId, adopted)
@@ -332,7 +332,7 @@ class PruningSyncCoordinator(
             val base = store.activity(vineyardId, id) ?: PruningActivityDraft(
                 id = id,
                 vineyardId = vineyardId,
-                date = canonical.activity.entryDate?.take(10) ?: LocalDate.now().toString(),
+                date = canonical.activity.entryDate?.take(10) ?: "",
             )
             val adopted = PruningAllocationEditor.adoptCanonical(base, canonical, repo.vineyardZone(vineyardId))
             store.upsertActivity(vineyardId, adopted)
@@ -356,6 +356,9 @@ class PruningSyncCoordinator(
      * existing progress, rate, forecast and report screen keeps working. Labour
      * rides on the primary allocation only, so no total double-counts it.
      */
+    /** Shared preflight for save and every editor-owned Work Task mutation. */
+    fun prepareActivity(draft: PruningActivityDraft): PruningActivityDraft = repo.prepareActivity(draft)
+
     fun saveActivity(vineyardId: String, draft: PruningActivityDraft): PruningActivityDraft {
         val previous = store.activity(vineyardId, draft.id)
         val cleaned = repo.prepareActivity(PruningAllocationEditor.pruneEmptyBlocks(draft.copy(workTiming = draft.workTiming ?: previous?.workTiming)))

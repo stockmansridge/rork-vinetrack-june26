@@ -815,7 +815,7 @@ fun SprayCalculatorScreen(
         "Not set"
     } else {
         val carrier = guidedPlan.carrier
-        val entered = when (carrier.basis) {
+        val entered = when (guidedFlow.effectiveCarrierBasis) {
             SprayCarrierBasis.LITRES_PER_HECTARE ->
                 carrierFormat.litresPerHectare(carrier.litresPerHectare)
             SprayCarrierBasis.LITRES_PER_100_METRES ->
@@ -2265,9 +2265,9 @@ fun SprayCalculatorScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             GuidedReviewRow(
                                 "Basis",
-                                carrierFormat.carrierBasisLabel(carrier.basis),
+                                carrierFormat.carrierBasisLabel(guidedFlow.effectiveCarrierBasis),
                             )
-                            if (carrier.basis == SprayCarrierBasis.LITRES_PER_100_METRES) {
+                            if (guidedFlow.effectiveCarrierBasis == SprayCarrierBasis.LITRES_PER_100_METRES) {
                                 GuidedReviewRow(
                                     "Dilute / runoff",
                                     carrierFormat.litresPer100m(carrier.diluteLitresPer100Metres),
@@ -2279,7 +2279,7 @@ fun SprayCalculatorScreen(
                             }
                             GuidedReviewRow(
                                 "Concentration",
-                                if (guidedFlow.requiresBandWidth) "Not used" else SprayGuidedFormat.factor(carrier.concentrationFactor),
+                                if (guidedFlow.requiresBandWidth || guidedFlow.effectiveCarrierBasis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) "Not used" else SprayGuidedFormat.factor(carrier.concentrationFactor),
                             )
                             GuidedReviewRow(
                                 "Total carrier",

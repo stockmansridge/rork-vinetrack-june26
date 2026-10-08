@@ -531,6 +531,7 @@ data class SprayGuidedFlow(
                 customTargets = inputs.customTargets.takeIf { it.isNotEmpty() },
                 groundTarget = inputs.groundTarget.takeIf { requiresGroundTarget },
                 carrierAreaBasis = inputs.carrierAreaBasis.takeIf { requiresGroundTarget },
+                carrierVolumeBasis = effectiveCarrierBasis,
             )
             return if (snapshot.isEmpty) null else snapshot
         }

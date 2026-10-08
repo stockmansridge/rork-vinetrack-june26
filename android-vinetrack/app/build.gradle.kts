@@ -540,7 +540,7 @@ if (providers.gradleProperty("regionResidualFocusedTests").orNull == "true") {
     afterEvaluate {
         tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
             setSource(fileTree("src/test/java") {
-                include("**/PruningVineyardTimeTest.kt", "**/RegionResidualBoundaryTest.kt", "**/RegionFormatterTest.kt", "**/PruningActivityEditorFlowTest.kt", "**/PruningSyncIntegrityTest.kt")
+                include("**/PruningVineyardTimeTest.kt", "**/RegionResidualBoundaryTest.kt", "**/RegionFormatterTest.kt", "**/PruningActivityEditorFlowTest.kt", "**/PruningSyncIntegrityTest.kt", "**/SprayCarrierProvenanceTest.kt", "**/PruningActivityTimingPreflightTest.kt")
             })
         }
     }

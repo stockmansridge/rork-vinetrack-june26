@@ -215,6 +215,7 @@ final class PruningStore {
     /// already excludes them.
     @discardableResult
     func saveActivity(_ draft: PruningActivityDraft) -> PruningActivityDraft {
+        guard draft.businessDateUnavailable != true else { return draft }
         let previous = activity(id: draft.id)
         let cleaned = PruningAllocationEditor.pruneEmptyBlocks(draft)
         let kept = Set(cleaned.activeAllocations.map { $0.allocationId(for: cleaned.id) })
@@ -288,13 +289,16 @@ final class PruningStore {
         guard let activity = canonical.activity, let id = activity.id, let vineyardId = activity.vineyardId else {
             return nil
         }
-        let base = self.activity(id: id) ?? PruningActivityDraft(
+        var base = self.activity(id: id) ?? PruningActivityDraft(
             id: id,
             vineyardId: vineyardId,
-            date: PruningSyncDate.date(fromYmd: activity.entryDate) ?? Date(),
+            date: PruningSyncDate.date(fromYmd: activity.entryDate) ?? .distantPast,
             createdAt: activity.createdAt ?? Date(),
             enteredBy: activity.createdBy
         )
+        if self.activity(id: id) == nil && PruningSyncDate.date(fromYmd: activity.entryDate) == nil {
+            base.businessDateUnavailable = true
+        }
         let scope = PruningCanonicalScope(canonical)
         let adopted = PruningAllocationEditor.adoptCanonical(
             base,

@@ -5226,6 +5226,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * `record_pruning_activity` / `update_pruning_activity` — never fanned out
      * to `record_pruning_entry` per block.
      */
+    fun preparePruningActivity(draft: PruningActivityDraft): PruningActivityDraft =
+        pruningSyncCoordinator.prepareActivity(draft)
+
     fun savePruningActivity(vineyardId: String, draft: PruningActivityDraft): PruningActivityDraft {
         _ui.update { it.copy(pruningActivityReconciliation = null) }
         return pruningSyncCoordinator.saveActivity(vineyardId, draft)

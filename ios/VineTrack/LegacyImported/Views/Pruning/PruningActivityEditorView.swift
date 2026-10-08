@@ -47,6 +47,19 @@ struct PruningActivityEditorView: View {
     @State private var rangeTo: Int = 0
     @State private var showTaskPicker: Bool = false
     @State private var taskCreateDraft: PruningWorkTaskLinkDraft?
+    @State private var timingError: String?
+    @State private var historicalDateChoice: Date = Date()
+
+    private func timingPreflight() -> Bool {
+        do {
+            draft = try PruningActivityTimingPreflight.prepare(draft, timezone: fmt.settings.timezone)
+            timingError = nil
+            return true
+        } catch {
+            timingError = error.localizedDescription
+            return false
+        }
+    }
 
     private let original: PruningActivityDraft
 
@@ -292,6 +305,7 @@ struct PruningActivityEditorView: View {
                 task: pending,
                 hectares: activityHectares,
                 onCreate: { confirmed in
+                    guard timingPreflight() else { return }
                     // The LIVE draft is passed, so the task's date, hours and
                     // blocks match what the operator is actually recording.
                     if let created = onCreateWorkTask?(draft, confirmed),
@@ -348,7 +362,19 @@ struct PruningActivityEditorView: View {
     /// shown read-only, clearly labelled as legacy.
     private var activitySection: some View {
         Section {
-            DatePicker("Date", selection: $draft.date, displayedComponents: .date)
+            if draft.businessDateUnavailable == true {
+                Text("Business date unavailable — choose the actual work date before saving or changing Work Tasks.")
+                    .foregroundStyle(.orange)
+            }
+            if draft.businessDateUnavailable == true {
+                DatePicker("Actual work date", selection: $historicalDateChoice, displayedComponents: .date)
+                Button("Confirm actual work date") {
+                    draft.date = historicalDateChoice
+                    draft.businessDateUnavailable = false
+                }
+            } else {
+                DatePicker("Date", selection: $draft.date, displayedComponents: .date)
+            }
             TextField("Worker or crew", text: $draft.worker)
             Picker("Method", selection: $draft.method) {
                 ForEach(PruningMethod.allCases) { method in
@@ -398,6 +424,7 @@ struct PruningActivityEditorView: View {
         } footer: {
             Text(activityFooter)
         }
+        .environment(\.timeZone, fmt.settings.resolvedTimeZone)
     }
 
     // MARK: Work Tasks (0..N, sql/200)
@@ -419,6 +446,7 @@ struct PruningActivityEditorView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                     Button("Unlink missing task", role: .destructive) {
+                        guard timingPreflight() else { return }
                         draft = PruningWorkTaskLink.unlink(draft)
                     }
                     .font(.subheadline)
@@ -433,13 +461,17 @@ struct PruningActivityEditorView: View {
             }
             if onCreateWorkTask != nil {
                 Button {
+                    guard timingPreflight() else { return }
                     taskCreateDraft = PruningWorkTaskLink.createDraft(draft)
                 } label: {
                     Label("Add Work Task", systemImage: "plus.circle.fill")
                         .font(.subheadline.weight(.semibold))
                 }
             }
-            Button("Link an existing task") { showTaskPicker = true }
+            Button("Link an existing task") {
+                guard timingPreflight() else { return }
+                showTaskPicker = true
+            }
                 .font(.subheadline)
         } header: {
             Text("Work Tasks")
@@ -534,6 +566,7 @@ struct PruningActivityEditorView: View {
     /// Links an EXISTING task: the task's origin link is persisted, and the
     /// legacy mirror fills only when empty. Allocations are never touched.
     private func linkExistingTask(_ task: WorkTask) {
+        guard timingPreflight() else { return }
         if task.pruningActivityId != draft.id {
             var copy = task
             copy.pruningActivityId = draft.id
@@ -549,6 +582,7 @@ struct PruningActivityEditorView: View {
     /// mirror pointed at it, the next remaining task is promoted so pre-repair
     /// readers keep resolving a task.
     private func unlinkTask(_ task: WorkTask) {
+        guard timingPreflight() else { return }
         if task.pruningActivityId == draft.id {
             var copy = task
             copy.pruningActivityId = nil
@@ -947,7 +981,9 @@ struct PruningActivityEditorView: View {
 
     private var saveSection: some View {
         Section {
+            if let timingError { Text(timingError).foregroundStyle(.red) }
             Button {
+                guard timingPreflight() else { return }
                 onSave(PruningAllocationEditor.pruneEmptyBlocks(draft))
                 dismiss()
             } label: {

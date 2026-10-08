@@ -333,6 +333,7 @@ fun PruningTrackerScreen(
             // in the field, but only owners/managers may review or change one.
             canEnterPricing = TeamRole.from(state.currentRole).canEnterPricing,
             initialDraft = openDraft,
+            timingPreflight = vm::preparePruningActivity,
             isEditing = activities.any { it.id == openDraft.id } || openDraft.serverAcknowledged,
             reconciliation = state.pruningActivityReconciliation,
             onSave = { saved ->
@@ -1016,7 +1017,7 @@ private fun PruningActivityHistoryCard(
                             )
                             Text(
                                 listOfNotNull(
-                                    fmtDate(PruningCalculator.parseDate(activity.date)),
+                                    if (activity.date.isBlank()) "Business date unavailable" else fmtDate(PruningCalculator.parseDate(activity.date)),
                                     activity.worker.takeIf { it.isNotBlank() },
                                     "${activity.totalQuarters} quarters",
                                     activity.labourHours?.takeIf { it > 0 }?.let { "${fmt(it, 1)} h" },

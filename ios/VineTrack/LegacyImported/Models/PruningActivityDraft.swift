@@ -106,6 +106,10 @@ nonisolated struct PruningActivityDraft: Codable, Identifiable, Sendable, Hashab
     var vineyardId: UUID
     /// The season of EVERY allocation derives from this date.
     var date: Date
+    /// Nil for legacy caches; true means the historical business date is unavailable.
+    var businessDateUnavailable: Bool? = nil
+    var businessDateSnapshot: String? = nil
+    var businessDateSnapshotInstant: Date? = nil
     var worker: String
     var method: PruningMethod
     var startTime: Date?
@@ -468,7 +472,14 @@ nonisolated enum PruningAllocationEditor {
             )
         }
 
-        copy.date = PruningSyncDate.date(fromYmd: activity.entryDate) ?? draft.date
+        if let day = activity.entryDate, let parsed = PruningSyncDate.date(fromYmd: day) {
+            copy.date = parsed
+            copy.businessDateSnapshot = String(day.prefix(10))
+            copy.businessDateSnapshotInstant = parsed
+            copy.businessDateUnavailable = false
+        }
+        copy.startTime = activity.startTime
+        copy.finishTime = activity.finishTime
         copy.worker = activity.workerOrCrew ?? draft.worker
         copy.method = PruningMethod(rawValue: activity.method ?? "") ?? draft.method
         copy.labourHours = activity.labourHours

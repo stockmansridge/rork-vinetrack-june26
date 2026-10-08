@@ -256,7 +256,7 @@ nonisolated struct PruningActivityPayload: Encodable, Sendable {
     }
 
     init(from draft: PruningActivityDraft) {
-        entryDate = PruningSyncDate.ymd(from: draft.date)
+        entryDate = draft.businessDateSnapshot ?? PruningSyncDate.ymd(from: draft.date)
         workerOrCrew = draft.worker
         method = draft.method.rawValue
         startTime = draft.startTime

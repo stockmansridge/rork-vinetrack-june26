@@ -68,8 +68,8 @@ nonisolated enum SprayCalculationReferenceBuilder {
         return SprayCalculationReference(
             canopy: canopyLines(decision: decision, fmt: formatter),
             volume: volumeLines(decision: decision, fmt: formatter),
-            water: waterLines(plan: plan, decision: decision, fmt: formatter),
-            products: productLines(plan: plan, decision: decision)
+            water: waterLines(plan: plan, entryBasis: flow.effectiveCarrierBasis, decision: decision, fmt: formatter),
+            products: productLines(plan: plan, entryBasis: flow.effectiveCarrierBasis, decision: decision)
         )
     }
 
@@ -148,6 +148,7 @@ nonisolated enum SprayCalculationReferenceBuilder {
 
     private static func waterLines(
         plan: SprayApplicationPlan,
+        entryBasis: SprayCarrierBasis,
         decision: SprayVolumeDecision?,
         fmt: RegionFormatter
     ) -> [SprayCalculationReference.Line] {
@@ -162,7 +163,7 @@ nonisolated enum SprayCalculationReferenceBuilder {
         // the operator typed would show them a derivation that never happened,
         // and invite them to trust a per-hectare figure as though VineTrack had
         // calibrated it.
-        if carrier.basis == .manualTotalVolume {
+        if entryBasis == .manualTotalVolume {
             lines.append(.init(
                 id: "totalWater",
                 label: "Total water",
@@ -224,10 +225,11 @@ nonisolated enum SprayCalculationReferenceBuilder {
 
     private static func productLines(
         plan: SprayApplicationPlan,
+        entryBasis: SprayCarrierBasis,
         decision: SprayVolumeDecision?
     ) -> [SprayCalculationReference.ProductReference] {
         let factor = plan.carrier.concentrationFactor
-        let isManualVolume = plan.carrier.basis == .manualTotalVolume
+        let isManualVolume = entryBasis == .manualTotalVolume
         return plan.productLines.map { line in
             var lines: [SprayCalculationReference.Line] = []
             if let labelRate = line.labelRate {

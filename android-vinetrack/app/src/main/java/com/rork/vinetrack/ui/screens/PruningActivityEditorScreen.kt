@@ -145,6 +145,7 @@ fun PruningActivityEditorScreen(
     /** Set when the last server answer refused quarters in this activity. */
     reconciliation: PruningActivityReconciliation? = null,
     onSave: (PruningActivityDraft) -> Unit,
+    timingPreflight: (PruningActivityDraft) -> PruningActivityDraft,
     onReverse: (() -> Unit)? = null,
     /**
      * Creates ONE Work Task for the whole activity and returns its canonical
@@ -176,6 +177,17 @@ fun PruningActivityEditorScreen(
     var taskCreateDraft by remember { mutableStateOf<PruningWorkTaskLinkDraft?>(null) }
     var openTaskId by rememberSaveable { mutableStateOf<String?>(null) }
     var timingSaveError by remember { mutableStateOf<String?>(null) }
+
+    fun withTimingPreflight(action: (PruningActivityDraft) -> Unit) {
+        try {
+            val prepared = timingPreflight(draft)
+            action(prepared)
+            draft = draft.copy(workTiming = prepared.workTiming)
+            timingSaveError = null
+        } catch (error: IllegalArgumentException) {
+            timingSaveError = error.message ?: "Check the vineyard timezone, business date and work times. Your draft has not been discarded."
+        }
+    }
 
     val isDirty = draft != initialDraft
     val leave: () -> Unit = { if (isDirty) showDiscardPrompt = true else onBack() }
@@ -407,11 +419,11 @@ fun PruningActivityEditorScreen(
                     labourLines = labourLines,
                     canViewCosting = canViewCosting,
                     canCreate = onCreateWorkTask != null,
-                    onLinkExisting = { showTaskPicker = true },
-                    onCreate = { taskCreateDraft = PruningActivityTaskLink.createDraft(draft) },
-                    onOpenTask = { openTaskId = it },
+                    onLinkExisting = { withTimingPreflight { showTaskPicker = true } },
+                    onCreate = { withTimingPreflight { taskCreateDraft = PruningActivityTaskLink.createDraft(draft) } },
+                    onOpenTask = { id -> withTimingPreflight { openTaskId = id } },
                     canOpen = workTaskDetail != null,
-                    onUnlinkTask = { task ->
+                    onUnlinkTask = { task -> withTimingPreflight {
                         // Both records survive an unlink: the task remains a
                         // standalone cost record; the activity stops deriving
                         // from it. The legacy mirror promotes to the next task.
@@ -422,8 +434,8 @@ fun PruningActivityEditorScreen(
                                 .filter { it.id != task.id && it.pruningActivityId == draft.id }
                             draft = draft.copy(workTaskId = remaining.firstOrNull()?.id)
                         }
-                    },
-                    onUnlinkMissing = { draft = PruningActivityTaskLink.unlink(draft) },
+                    } },
+                    onUnlinkMissing = { withTimingPreflight { draft = PruningActivityTaskLink.unlink(draft) } },
                 )
             }
 
@@ -444,11 +456,11 @@ fun PruningActivityEditorScreen(
                 Button(
                     onClick = {
                         try {
-                            onSave(PruningAllocationEditor.pruneEmptyBlocks(draft))
+                            onSave(PruningAllocationEditor.pruneEmptyBlocks(timingPreflight(draft)))
                             timingSaveError = null
                             onBack()
-                        } catch (_: IllegalArgumentException) {
-                            timingSaveError = "Check the vineyard timezone and work times. A daylight-saving clock change can make a local time unavailable. Your draft has not been discarded."
+                        } catch (error: IllegalArgumentException) {
+                            timingSaveError = error.message ?: "Check the vineyard timezone, business date and work times. Your draft has not been discarded."
                         }
                     },
                     enabled = draft.canSave,
@@ -487,7 +499,7 @@ fun PruningActivityEditorScreen(
                 tasks = workTasks,
                 linkedId = draft.workTaskId,
                 onDismiss = { showTaskPicker = false },
-                onSelect = { task ->
+                onSelect = { task -> withTimingPreflight {
                     showTaskPicker = false
                     // sql/200: persist the task-side origin link; the legacy
                     // mirror fills only when empty. Allocations are untouched.
@@ -495,7 +507,7 @@ fun PruningActivityEditorScreen(
                     if (draft.workTaskId == null) {
                         draft = PruningActivityTaskLink.link(draft, task.id)
                     }
-                },
+                } },
             )
         }
 
@@ -516,17 +528,17 @@ fun PruningActivityEditorScreen(
                 hectares = activityHectares,
                 onChange = { taskCreateDraft = it },
                 onDismiss = { taskCreateDraft = null },
-                onConfirm = {
+                onConfirm = { withTimingPreflight { prepared ->
                     // The LIVE draft is passed, so the task's date, hours and
                     // blocks match what the operator is actually recording.
-                    val created = onCreateWorkTask?.invoke(draft, pending)
+                    val created = onCreateWorkTask?.invoke(prepared, pending)
                     if (created != null && draft.workTaskId == null) {
                         // First task also fills the legacy mirror (sql/200);
                         // the task-side origin link is written by the creator.
                         draft = PruningActivityTaskLink.link(draft, created)
                     }
                     taskCreateDraft = null
-                },
+                } },
             )
         }
 
@@ -642,12 +654,14 @@ private fun PruningActivityFieldsCard(
     val vine = LocalVineColors.current
     var methodOpen by remember { mutableStateOf(false) }
     val region = LocalRegionFormatter.current
-    val dateLabel = remember(draft.date, region) { region.formatDate(draft.date) }
+    val dateLabel = remember(draft.date, region) {
+        if (draft.date.isBlank()) "Business date unavailable" else region.formatDate(draft.date)
+    }
     PruningCard {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("This activity", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
             Text(
-                "Recorded once for the whole job — season ${draft.seasonYear}" +
+                (if (draft.date.isBlank()) "Choose the activity's actual work date" else "Recorded once for the whole job — season ${draft.seasonYear}") +
                     (draft.vintageYear?.let { " · Vintage $it" } ?: ""),
                 fontSize = 11.sp,
                 color = vine.textSecondary,
