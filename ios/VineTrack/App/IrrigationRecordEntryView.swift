@@ -18,6 +18,11 @@ struct IrrigationRecordEntryView: View {
     @State private var linkedSessionId: UUID = UUID()
     @State private var applicationId: UUID = UUID()
     @State private var fertigationSteps: [FertigationDomain.ProgramStep] = []
+    @State private var fertigationCacheOwner: UUID? = nil
+    @State private var fertigationCacheVineyard: UUID? = nil
+    private var canSelectFertigation: Bool {
+        auth.userId != nil && fertigationCacheOwner == auth.userId && fertigationCacheVineyard == vineyardId
+    }
     @State private var selectedFertigationId: UUID? = nil
     @State private var fertigationProducts: [FertigationDomain.DraftProduct] = []
     @State private var fertigationNotes: String = ""
@@ -208,9 +213,9 @@ struct IrrigationRecordEntryView: View {
             }
 
             previewSection
-            if systemAdmin.isSystemAdmin && !isEditing { fertigationSection }
-            if !systemAdmin.isSystemAdmin, fertigationStepId != nil {
-                Section { Text("Fertigation is unavailable. You can still record ordinary irrigation.").foregroundStyle(.orange) }
+            if canSelectFertigation && !isEditing { fertigationSection }
+            if !canSelectFertigation, fertigationWarning != nil {
+                Section { Text(fertigationWarning ?? "Fertigation is unavailable. You can still record ordinary irrigation.").foregroundStyle(.orange) }
             }
 
             if let errorMessage {
@@ -239,7 +244,8 @@ struct IrrigationRecordEntryView: View {
         }
         .navigationTitle(isEditing ? "Edit Irrigation" : "Record Irrigation")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await load(); await loadFertigation() }
+        .task { await load() }
+        .task(id: "\(auth.userId?.uuidString ?? ""):\(vineyardId?.uuidString ?? ""):\(systemAdmin.isSystemAdmin)") { await loadFertigation() }
         .onChange(of: valveId) { _, newValue in
             preview = nil
             localPreview = nil
@@ -302,13 +308,30 @@ struct IrrigationRecordEntryView: View {
     }
 
     private func loadFertigation() async {
-        guard !isEditing, systemAdmin.isSystemAdmin, let vineyardId else {
+        fertigationCacheOwner = nil
+        fertigationCacheVineyard = nil
+        fertigationSteps = []
+        selectedFertigationId = nil
+        fertigationProducts = []
+        guard !isEditing, let vineyardId, let ownerId = auth.userId else {
             if fertigationStepId != nil { fertigationWarning = "Fertigation is unavailable. You can still record ordinary irrigation." }
             return
         }
         do {
-            try refreshLinkedEntries()
-            fertigationSteps = try await SupabaseFertigationRepository().programSteps(vineyardId: vineyardId)
+            do { try refreshLinkedEntries() } catch { linkedStatus = "Linked sync data needs attention. Do not create a replacement irrigation." }
+            let result = try await FertigationProgramStepCache().load(ownerId: ownerId, vineyardId: vineyardId,
+                adminCheck: { try await SupabaseSystemAdminRepository().isSystemAdmin() },
+                isCurrentAccount: { auth.userId == ownerId },
+                fetch: { try await SupabaseFertigationRepository().programSteps(vineyardId: vineyardId) })
+            guard !Task.isCancelled, auth.userId == ownerId, self.vineyardId == vineyardId else { return }
+            guard let result else {
+                fertigationWarning = "Fertigation unavailable offline — no previously synced Program Steps for this account and vineyard. You can still record ordinary irrigation."
+                return
+            }
+            fertigationSteps = result.steps
+            fertigationCacheOwner = ownerId
+            fertigationCacheVineyard = vineyardId
+            fertigationWarning = result.isCached ? "Cached/offline Program Steps — server validation will occur when Fertigation syncs." : nil
             if let requested = fertigationStepId {
                 guard fertigationSteps.contains(where: { $0.id == requested }) else { throw FertigationDomain.Failure.invalidStep }
                 selectedFertigationId = requested
@@ -775,7 +798,11 @@ struct IrrigationRecordEntryView: View {
             localTotalVolumeLitres: localPreview?.totalVolumeLitres ?? preview?.totalVolumeLitres,
             createdAt: Date())
 
-        if let selectedFertigationId, systemAdmin.isSystemAdmin {
+        if let selectedFertigationId {
+            guard canSelectFertigation else {
+                errorMessage = "Fertigation access changed. Reopen the form before saving."
+                return
+            }
             do {
                 guard let ownerId = auth.userId, let step = fertigationSteps.first(where: { $0.id == selectedFertigationId }), step.isSelectable(vineyardId: vineyardId, isSystemAdmin: true) else { throw FertigationDomain.Failure.invalidStep }
                 _ = try fertigationProducts.map { try $0.payload(totals: .init(allocations: []), step: step) }

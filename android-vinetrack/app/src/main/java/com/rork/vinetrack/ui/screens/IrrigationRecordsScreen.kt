@@ -1826,16 +1826,32 @@ private fun RecordContent(
     val linkedSessionId = rememberSaveable { UUID.randomUUID().toString() }
     val applicationId = rememberSaveable { UUID.randomUUID().toString() }
     var fertigationSteps by remember { mutableStateOf<List<kotlinx.serialization.json.JsonObject>>(emptyList()) }
+    var fertigationCacheOwner by remember { mutableStateOf<String?>(null) }
+    var fertigationCacheVineyard by remember { mutableStateOf<String?>(null) }
+    val canSelectFertigation = state.currentUserId != null && fertigationCacheOwner == state.currentUserId && fertigationCacheVineyard == vineyardId
     var selectedFertigation by remember { mutableStateOf<kotlinx.serialization.json.JsonObject?>(null) }
     var fertigationProducts by remember { mutableStateOf<List<com.rork.vinetrack.data.FertigationLinkedOutbox.Product>>(emptyList()) }
     var fertigationNotes by remember { mutableStateOf<String>("") }
     var fertigationWarning by remember { mutableStateOf<String?>(null) }
     var linkedEntries by remember { mutableStateOf<List<com.rork.vinetrack.data.FertigationLinkedOutbox.Entry>>(emptyList()) }
-    LaunchedEffect(vineyardId, state.isSystemAdmin) {
-        if (editSession == null && state.isSystemAdmin) {
+    LaunchedEffect(vineyardId, state.currentUserId, state.isSystemAdmin) {
+        fertigationCacheOwner = null
+        fertigationCacheVineyard = null
+        fertigationSteps = emptyList()
+        selectedFertigation = null
+        fertigationProducts = emptyList()
+        if (editSession == null && state.currentUserId != null) {
             runCatching { repo.fertigationOutbox.entries().filter { it.ownerId == state.currentUserId && it.irrigation.vineyardId == vineyardId } }.onSuccess { linkedEntries = it }.onFailure { fertigationWarning = "Linked sync data needs attention. Do not create a replacement irrigation." }
-            runCatching { repo.fertigationRepository.programSteps(vineyardId) }.onSuccess { steps ->
+            runCatching { repo.fertigationStepsForEntry(vineyardId) }.onSuccess { result ->
+                if (result == null) {
+                    fertigationWarning = "Fertigation unavailable offline — no previously synced Program Steps for this account and vineyard. You can still record ordinary irrigation."
+                    return@onSuccess
+                }
+                val steps = result.steps
                 fertigationSteps = steps
+                fertigationCacheOwner = state.currentUserId
+                fertigationCacheVineyard = vineyardId
+                fertigationWarning = if (result.isCached) "Cached/offline Program Steps — server validation will occur when Fertigation syncs." else null
                 if (fertigationStepId != null) {
                     selectedFertigation = steps.firstOrNull { com.rork.vinetrack.data.FertigationDomain.string(it, "id").equals(fertigationStepId, true) }
                     if (selectedFertigation == null) fertigationWarning = "Fertigation Program Step invalid or unavailable. You can still record ordinary irrigation."
@@ -2008,9 +2024,9 @@ private fun RecordContent(
                 localTotalVolumeLitres = localPreview?.totalVolumeLitres ?: preview?.totalVolumeLitres,
             )
             val selectedStep = selectedFertigation
-            if (selectedStep != null && state.isSystemAdmin) {
+            if (selectedStep != null) {
                 runCatching {
-                    check(com.rork.vinetrack.data.FertigationDomain.isSelectable(selectedStep, vineyardId, state.isSystemAdmin))
+                    check(com.rork.vinetrack.data.FertigationDomain.isSelectable(selectedStep, vineyardId, canSelectFertigation))
                     val owner = checkNotNull(state.currentUserId)
                     fertigationProducts.forEach { it.payload(com.rork.vinetrack.data.FertigationDomain.Totals(null, null), selectedStep) }
                     repo.fertigationOutbox.enqueue(com.rork.vinetrack.data.FertigationLinkedOutbox.Entry(applicationId, owner, pending, selectedStep, fertigationProducts, fertigationNotes.ifBlank { null }))
@@ -2044,7 +2060,10 @@ private fun RecordContent(
     }
 
     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (state.isSystemAdmin && editSession == null) {
+        if (!canSelectFertigation && editSession == null && fertigationWarning != null) {
+            item { Text(fertigationWarning.orEmpty(), color = VineColors.Warning) }
+        }
+        if (canSelectFertigation && editSession == null) {
             item {
                 Text("Fertigation", style = MaterialTheme.typography.titleMedium)
                 FilterChip(selected = selectedFertigation == null, onClick = { selectedFertigation = null; fertigationProducts = emptyList() }, label = { Text("No Fertigation") })

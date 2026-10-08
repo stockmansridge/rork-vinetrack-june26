@@ -1155,6 +1155,19 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
         .getSharedPreferences("vinetrack_irrigation", Context.MODE_PRIVATE)
     private val pendingSerializer = ListSerializer(PendingIrrigationSession.serializer())
     val fertigationRepository = FertigationRepository(session)
+    val fertigationStepCache = FertigationProgramStepCache(
+        read = { key -> prefs.getString(key, null) },
+        write = { key, raw -> check(prefs.edit().putString(key, raw).commit()) { "Could not persist Fertigation Program Steps." } },
+    )
+    suspend fun fertigationStepsForEntry(vineyardId: String): FertigationProgramStepCache.Result? {
+        val owner = session.userId ?: return null
+        val result = fertigationStepCache.load(owner, vineyardId,
+            adminCheck = { SystemAdminRepository(session).isSystemAdmin() },
+            isCurrentAccount = { session.userId == owner },
+            fetch = { fertigationRepository.programSteps(vineyardId) })
+        check(session.userId == owner) { "Account changed." }
+        return result
+    }
     val fertigationOutbox = FertigationLinkedOutbox(
         load = { prefs.getString("fertigation_linked_outbox", null) },
         store = { raw -> check(prefs.edit().putString("fertigation_linked_outbox", raw).commit()) { "Could not persist Fertigation. Please try again." } },
