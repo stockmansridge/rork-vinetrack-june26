@@ -107,6 +107,81 @@ final class GrapeAllocationHierarchyTests: XCTestCase {
         XCTAssertEqual(a.blocks[0].quantityTonnes, 7)
     }
 
+    func testPortalAliasesCapitalizationAndDistinctVarieties() {
+        for alias in ["Pinot Gris", " pinot   grigio ", "PINOT_GRIGIO", "Pinot Gris / Grigio", "PG"] {
+            XCTAssertEqual(GrapeAllocationHierarchy.varietyKey(alias), "pinot gris")
+            XCTAssertEqual(GrapeAllocationHierarchy.varietyLabel(alias), "Pinot Gris")
+        }
+        XCTAssertEqual(GrapeAllocationHierarchy.varietyLabel("sauvignon blanc"), "Sauvignon Blanc")
+        XCTAssertEqual(GrapeAllocationHierarchy.varietyLabel("grüner veltliner"), "Gruner Veltliner")
+        XCTAssertEqual(GrapeAllocationHierarchy.varietyKey("Syrah"), "shiraz")
+        XCTAssertNotEqual(GrapeAllocationHierarchy.varietyKey("Pinot Noir"), GrapeAllocationHierarchy.varietyKey("Pinot Gris"))
+        XCTAssertNotEqual(GrapeAllocationHierarchy.varietyKey("Custom-A"), GrapeAllocationHierarchy.varietyKey("Custom A"))
+        XCTAssertNotEqual(GrapeAllocationHierarchy.varietyKey("Savagnin"), GrapeAllocationHierarchy.varietyKey("Sauvignon Blanc"))
+        XCTAssertEqual(GrapeAllocationHierarchy.varietyLabel("custom variety"), "Custom Variety")
+    }
+
+    func testGroupedSupplyChildrenAndVineyardTotalsReconcileWithDamage() {
+        let varieties = ["pinot gris", "Pinot Grigio", "SAUVIGNON BLANC"].enumerated().map { index, name in
+            SeasonYieldProjection.VarietyRow(varietyIdentity: String(index), varietyKey: nil, displayName: name,
+                isUnallocated: false, isEstimateComplete: true, baseTonnes: [4.0, 6.0, 8.0][index],
+                knownBaseTonnes: [4.0, 6.0, 8.0][index], adjustedTonnes: [3.0, 5.0, 7.0][index],
+                knownAdjustedTonnes: [3.0, 5.0, 7.0][index], paddockIds: [b7])
+        }
+        let own = allocation(2, own: true, blocks: [link(b7)])
+        var external = allocation(5, blocks: [link(b7, 2), link(b49, 2)]); external.varietyName = "Pinot Grigio"
+        var sb = allocation(3, blocks: [link(b49)]); sb.varietyName = "sauvignon blanc"
+        var other = external; other.vineyardId = UUID()
+        var old = external; old.vintage = 2025
+        for damage in [false, true] {
+            let projection = SeasonYieldProjection.Result(vineyardId: vineyard, vintage: 2026, damageApplied: damage,
+                isEstimateComplete: true, totalBaseTonnes: 18, totalAdjustedTonnes: 15, knownBaseTonnes: 18,
+                knownAdjustedTonnes: 15, estimateSource: "fixture", calculatedAt: nil, blocksTotal: 2,
+                blocksAvailable: 2, blocksUnavailable: 0, blocksWithEstimates: 2, blocksMissingEstimates: 0,
+                blocks: [], varieties: varieties, warnings: [])
+            let grouped = GrapeAllocationHierarchy.varietyRows(supply: GrapeAllocationHierarchy.supply(projection),
+                allocations: [own, external, sb, other, old], vineyardId: vineyard, vintage: 2026)
+            XCTAssertEqual(grouped.count, 2)
+            let pinot = grouped.first { $0.varietyKey == "pinot gris" }!
+            XCTAssertEqual(pinot.displayName, "Pinot Gris")
+            XCTAssertEqual(pinot.estimatedTonnes, damage ? 8 : 10)
+            XCTAssertEqual(pinot.ownUseTonnes, 2)
+            XCTAssertEqual(pinot.externalTonnes, 5)
+            let children = rows([own, external], estimates: [
+                .init(paddockId: b7, varietyName: "Pinot Gris", tonnes: damage ? 3 : 4),
+                .init(paddockId: b7, varietyName: "Pinot Grigio", tonnes: damage ? 5 : 6)])
+            XCTAssertEqual(children.compactMap(\.estimatedTonnes).reduce(0, +), pinot.estimatedTonnes)
+            XCTAssertEqual(children.reduce(0) { $0 + $1.ownUseTonnes }, pinot.ownUseTonnes)
+            XCTAssertEqual(children.reduce(0) { $0 + $1.externalTonnes }, pinot.externalTonnes)
+            XCTAssertEqual(Set(children.flatMap(\.allocationIds)), Set([own.id, external.id]))
+            let summary = GrapeAllocationCalculator.canonicalSummary(projection: projection, allocations: [own, external, sb], vintage: 2026)
+            XCTAssertEqual(grouped.compactMap(\.estimatedTonnes).reduce(0, +), summary.estimatedTonnes)
+            XCTAssertEqual(grouped.reduce(0) { $0 + $1.ownUseTonnes }, summary.ownUseTonnes)
+            XCTAssertEqual(grouped.reduce(0) { $0 + $1.externalTonnes }, summary.committedTonnes)
+            XCTAssertEqual(grouped.compactMap(\.balanceTonnes).reduce(0, +), summary.balanceTonnes)
+        }
+        XCTAssertEqual(external.varietyName, "Pinot Grigio")
+        XCTAssertEqual(external.blocks.map(\.quantityTonnes), [2, 2])
+    }
+
+    func testGroupedUnknownSupplyStaysUnknownAndCustomNamesStaySeparate() {
+        let supply: [GrapeAllocationCalculator.CanonicalSupply] = [
+            .init(varietyKey: "a", displayName: "Pinot Gris", tonnes: 4, knownTonnes: 4, isEstimateComplete: true),
+            .init(varietyKey: "b", displayName: "Pinot Grigio", tonnes: nil, knownTonnes: 2, isEstimateComplete: false)]
+        var customA = allocation(); customA.varietyName = "Custom-A"
+        var customB = allocation(); customB.varietyName = "Custom A"
+        let grouped = GrapeAllocationHierarchy.varietyRows(supply: supply, allocations: [customA, customB], vineyardId: vineyard, vintage: 2026)
+        XCTAssertEqual(grouped.count, 3)
+        let pinot = grouped.first { $0.varietyKey == "pinot gris" }!
+        XCTAssertNil(pinot.estimatedTonnes)
+        XCTAssertNil(pinot.balanceTonnes)
+        XCTAssertEqual(pinot.knownEstimatedTonnes, 6)
+        XCTAssertFalse(pinot.isEstimateComplete)
+        let children = rows([], estimates: [.init(paddockId: b7, varietyName: "Pinot Gris", tonnes: 4),
+            .init(paddockId: b7, varietyName: "Pinot Grigio", tonnes: nil)])
+        XCTAssertNil(children.first?.estimatedTonnes)
+    }
+
     @MainActor
     func testEditPayloadAndReloadKeepIdentityAndExactQuantity() throws {
         let original = allocation(5.123456789, blocks: [link(b7, 2.123456789), link(b49, 3)])

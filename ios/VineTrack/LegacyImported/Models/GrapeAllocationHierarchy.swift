@@ -2,6 +2,82 @@ import Foundation
 
 /// Read-only block attribution. Deliberately separate from financial block splitting.
 nonisolated enum GrapeAllocationHierarchy {
+    // Portal src/lib/varietyResolver.ts: allocation-display aliases only, not stored identities.
+    private static let portalNames: [(String, [String])] = [
+        ("Cabernet Sauvignon", ["cab sauv", "cabernet sauv", "cab", "cabernet"]),
+        ("Cabernet Franc", ["cab franc", "cab frnc", "cab fr", "cabernet fr"]),
+        ("Merlot", ["mer"]), ("Shiraz", ["syrah"]),
+        ("Pinot Noir", ["pinot n", "p noir", "pn"]),
+        ("Pinot Gris", ["pinot grigio", "pinot gris grigio", "pinot gris / grigio", "p gris", "pg", "pinot_grigio"]),
+        ("Pinot Meunier", ["meunier"]), ("Chardonnay", ["chard"]),
+        ("Sauvignon Blanc", ["sauv blanc", "savvy b", "sb", "sauvignon b"]),
+        ("Semillon", ["sem", "sémillon"]), ("Riesling", ["ries"]),
+        ("Gruner Veltliner", ["grüner veltliner", "gruner", "grüner", "gv"]),
+        ("Tempranillo", ["temp"]), ("Primitivo", ["zinfandel", "zin"]),
+        ("Nebbiolo", ["nebb"]), ("Sangiovese", ["sangio"]), ("Grenache", ["garnacha"]),
+        ("Mourvedre", ["mourvèdre", "monastrell", "mataro"]), ("Viognier", ["vio"]),
+        ("Verdelho", []), ("Vermentino", []), ("Marsanne", []), ("Roussanne", []),
+        ("Petit Verdot", ["pv"]), ("Malbec", []), ("Barbera", []), ("Montepulciano", []),
+        ("Fiano", []), ("Arneis", []), ("Gewurztraminer", ["gewürztraminer", "gewurz"])
+    ]
+    private static func builtinKey(_ raw: String) -> String {
+        raw.decomposedStringWithCompatibilityMapping.lowercased()
+            .replacingOccurrences(of: "[\\u0300-\\u036f]", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+    }
+    private static let builtinNames: [String: String] = {
+        var names: [String: String] = [:]
+        for (name, aliases) in portalNames {
+            for raw in [name] + aliases { names[builtinKey(raw)] = name }
+        }
+        return names
+    }()
+    static func varietyKey(_ raw: String) -> String {
+        if let name = builtinNames[builtinKey(raw)] { return name.lowercased() }
+        let key = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
+        return key.isEmpty ? "__unspecified__" : key
+    }
+    static func varietyLabel(_ raw: String) -> String {
+        if let name = builtinNames[builtinKey(raw)] { return name }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "Unspecified variety" }
+        return trimmed == trimmed.lowercased() ? trimmed.capitalized : trimmed
+    }
+
+    /// Group presentation supply before legacy name normalization can erase custom punctuation.
+    static func supply(_ projection: SeasonYieldProjection.Result?) -> [GrapeAllocationCalculator.CanonicalSupply] {
+        guard let projection else { return [] }
+        return projection.varieties.map { variety in
+            .init(varietyKey: varietyKey(variety.displayName), displayName: variety.displayName,
+                  tonnes: projection.damageApplied ? variety.adjustedTonnes : variety.baseTonnes,
+                  knownTonnes: projection.damageApplied ? variety.knownAdjustedTonnes : variety.knownBaseTonnes,
+                  isEstimateComplete: variety.isEstimateComplete)
+        }
+    }
+
+    static func varietyRows(supply: [GrapeAllocationCalculator.CanonicalSupply], allocations: [GrapeAllocation],
+                            vineyardId: UUID?, vintage: Int) -> [GrapeAllocationCalculator.CanonicalVarietyRow] {
+        let estimates = Dictionary(grouping: supply, by: { varietyKey($0.displayName) })
+        let scoped = allocations.filter { $0.vineyardId == vineyardId && $0.vintage == vintage }
+        let allocated = Dictionary(grouping: scoped, by: { varietyKey($0.varietyName) })
+        return Set(estimates.keys).union(allocated.keys).map { key in
+            let sources = estimates[key] ?? []
+            let records = allocated[key] ?? []
+            let tonnes = sources.compactMap(\.tonnes)
+            return GrapeAllocationCalculator.CanonicalVarietyRow(
+                varietyKey: key, displayName: varietyLabel(sources.first?.displayName ?? records.first?.varietyName ?? ""),
+                estimatedTonnes: !sources.isEmpty && tonnes.count == sources.count ? tonnes.reduce(0, +) : nil,
+                knownEstimatedTonnes: sources.reduce(0) { $0 + $1.knownTonnes },
+                isEstimateComplete: !sources.isEmpty && sources.allSatisfy(\.isEstimateComplete),
+                ownUseTonnes: records.filter { $0.allocationType == .ownUse }.reduce(0) { $0 + $1.quantityTonnes },
+                externalTonnes: records.filter { $0.allocationType == .external }.reduce(0) { $0 + $1.quantityTonnes })
+        }.sorted {
+            if $0.estimatedTonnes != $1.estimatedTonnes { return ($0.estimatedTonnes ?? -.infinity) > ($1.estimatedTonnes ?? -.infinity) }
+            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
     struct Estimate: Sendable {
         let paddockId: UUID
         let varietyName: String
@@ -47,7 +123,7 @@ nonisolated enum GrapeAllocationHierarchy {
             return key
         }
         var seenEstimates: Set<UUID> = []
-        for estimate in estimates where PickingYieldAggregator.normalisedVariety(estimate.varietyName) == varietyKey {
+        for estimate in estimates where self.varietyKey(estimate.varietyName) == varietyKey {
             let key = ensure(estimate.paddockId)
             if seenEstimates.insert(estimate.paddockId).inserted {
                 rows[key]?.estimatedTonnes = estimate.tonnes
@@ -64,7 +140,7 @@ nonisolated enum GrapeAllocationHierarchy {
             if rows[key]?.allocationIds.contains(allocation.id) == false { rows[key]?.allocationIds.append(allocation.id) }
             if unspecified { rows[key]?.hasUnspecifiedQuantity = true }
         }
-        for allocation in allocations where allocation.vineyardId == vineyardId && allocation.vintage == vintage && PickingYieldAggregator.normalisedVariety(allocation.varietyName) == varietyKey {
+        for allocation in allocations where allocation.vineyardId == vineyardId && allocation.vintage == vintage && self.varietyKey(allocation.varietyName) == varietyKey {
             let links = Dictionary(grouping: allocation.blocks, by: \.paddockId)
             var assigned: Double = 0
             for (id, details) in links {

@@ -18,14 +18,14 @@ class GrapeAllocationHierarchyTest {
         blocks = blocks.mapIndexed { index, (block, quantity) -> GrapeAllocationBlock("$id-$index", id, vineyard, block, "Old snapshot", quantity) },
     )
     private fun rows(allocations: List<GrapeAllocation>, estimates: List<GrapeAllocationHierarchy.Estimate> = emptyList()) =
-        GrapeAllocationHierarchy.rows("pinotgris", vineyard, 2026, allocations, estimates, mapOf("b7" to "B7", "b49" to "B49"))
+        GrapeAllocationHierarchy.rows("pinot gris", vineyard, 2026, allocations, estimates, mapOf("b7" to "B7", "b49" to "B49"))
 
     @Test fun customerRelationshipsUseSetupNamesAndPersistedIDs() {
         val pinot = allocation(blocks = listOf("b7" to null))
         val sb = allocation(id = "sb", blocks = listOf("b49" to null)).copy(varietyName = "Sauvignon Blanc")
         assertEquals("B7", rows(listOf(pinot, sb)).first().name)
         assertEquals(listOf(pinot.id), rows(listOf(pinot, sb)).first().allocationIds)
-        val sauvignon = GrapeAllocationHierarchy.rows("sauvignonblanc", vineyard, 2026, listOf(pinot, sb), emptyList(), mapOf("b49" to "B49"))
+        val sauvignon = GrapeAllocationHierarchy.rows("sauvignon blanc", vineyard, 2026, listOf(pinot, sb), emptyList(), mapOf("b49" to "B49"))
         assertEquals("B49", sauvignon.first().name)
         assertEquals(5.0, sauvignon.first().externalTonnes, 0.0)
     }
@@ -93,6 +93,71 @@ class GrapeAllocationHierarchyTest {
         assertEquals(-2.0, children.first { it.paddockId == null }.allocatedTonnes, 0.0)
         assertEquals(5.0, children.sumOf { it.allocatedTonnes }, 0.0)
         assertEquals(7.0, a.blocks.first().quantityTonnes!!, 0.0)
+    }
+    @Test fun portalAliasesCapitalizationAndDistinctVarieties() {
+        listOf("Pinot Gris", " pinot   grigio ", "PINOT_GRIGIO", "Pinot Gris / Grigio", "PG").forEach { alias ->
+            assertEquals("pinot gris", GrapeAllocationHierarchy.varietyKey(alias))
+            assertEquals("Pinot Gris", GrapeAllocationHierarchy.varietyLabel(alias))
+        }
+        assertEquals("Sauvignon Blanc", GrapeAllocationHierarchy.varietyLabel("sauvignon blanc"))
+        assertEquals("Gruner Veltliner", GrapeAllocationHierarchy.varietyLabel("grüner veltliner"))
+        assertEquals("shiraz", GrapeAllocationHierarchy.varietyKey("Syrah"))
+        assertNotEquals(GrapeAllocationHierarchy.varietyKey("Pinot Noir"), GrapeAllocationHierarchy.varietyKey("Pinot Gris"))
+        assertNotEquals(GrapeAllocationHierarchy.varietyKey("Custom-A"), GrapeAllocationHierarchy.varietyKey("Custom A"))
+        assertNotEquals(GrapeAllocationHierarchy.varietyKey("Savagnin"), GrapeAllocationHierarchy.varietyKey("Sauvignon Blanc"))
+        assertEquals("Custom Variety", GrapeAllocationHierarchy.varietyLabel("custom variety"))
+    }
+    @Test fun groupedSupplyChildrenAndVineyardTotalsReconcileWithDamage() {
+        val varieties = listOf("pinot gris", "Pinot Grigio", "SAUVIGNON BLANC").mapIndexed { index, name ->
+            SeasonYieldProjection.VarietyRow(index.toString(), null, name, false, true,
+                listOf(4.0, 6.0, 8.0)[index], listOf(4.0, 6.0, 8.0)[index],
+                listOf(3.0, 5.0, 7.0)[index], listOf(3.0, 5.0, 7.0)[index], listOf("b7"))
+        }
+        val own = allocation(2.0, own = true, id = "own", blocks = listOf("b7" to null))
+        val external = allocation(5.0, blocks = listOf("b7" to 2.0, "b49" to 2.0)).copy(varietyName = "Pinot Grigio")
+        val sb = allocation(3.0, id = "sb", blocks = listOf("b49" to null)).copy(varietyName = "sauvignon blanc")
+        listOf(false, true).forEach { damage ->
+            val projection = SeasonYieldProjection.Result(vineyard, 2026, damage, true, 18.0, 15.0, 18.0, 15.0,
+                "fixture", null, 2, 2, 0, 2, 0, emptyList(), varieties, emptyList())
+            val grouped = GrapeAllocationHierarchy.varietyRows(GrapeAllocationHierarchy.supply(projection),
+                listOf(own, external, sb, external.copy(vineyardId = "other"), external.copy(vintage = 2025), external.copy(deletedAt = "deleted")), vineyard, 2026)
+            assertEquals(2, grouped.size)
+            val pinot = grouped.first { it.varietyKey == "pinot gris" }
+            assertEquals("Pinot Gris", pinot.displayName)
+            assertEquals(if (damage) 8.0 else 10.0, pinot.estimatedTonnes!!, 0.0)
+            assertEquals(2.0, pinot.ownUseTonnes, 0.0)
+            assertEquals(5.0, pinot.externalTonnes, 0.0)
+            val children = rows(listOf(own, external), listOf(
+                GrapeAllocationHierarchy.Estimate("b7", "Pinot Gris", if (damage) 3.0 else 4.0),
+                GrapeAllocationHierarchy.Estimate("b7", "Pinot Grigio", if (damage) 5.0 else 6.0)))
+            assertEquals(pinot.estimatedTonnes!!, children.sumOf { it.estimatedTonnes ?: 0.0 }, 0.0)
+            assertEquals(pinot.ownUseTonnes, children.sumOf { it.ownUseTonnes }, 0.0)
+            assertEquals(pinot.externalTonnes, children.sumOf { it.externalTonnes }, 0.0)
+            assertEquals(setOf(own.id, external.id), children.flatMap { it.allocationIds }.toSet())
+            val summary = GrapeAllocationCalculator.canonicalSummary(projection, listOf(own, external, sb), 2026)
+            assertEquals(summary.estimatedTonnes!!, grouped.sumOf { it.estimatedTonnes ?: 0.0 }, 0.0)
+            assertEquals(summary.ownUseTonnes, grouped.sumOf { it.ownUseTonnes }, 0.0)
+            assertEquals(summary.committedTonnes, grouped.sumOf { it.externalTonnes }, 0.0)
+            assertEquals(summary.balanceTonnes!!, grouped.sumOf { it.balanceTonnes ?: 0.0 }, 0.0)
+        }
+        assertEquals("Pinot Grigio", external.varietyName)
+        assertEquals(listOf(2.0, 2.0), external.blocks.map { it.quantityTonnes })
+    }
+    @Test fun groupedUnknownSupplyStaysUnknownAndCustomNamesStaySeparate() {
+        val supply = listOf(
+            GrapeAllocationCalculator.CanonicalSupply("a", "Pinot Gris", 4.0, 4.0, true),
+            GrapeAllocationCalculator.CanonicalSupply("b", "Pinot Grigio", null, 2.0, false))
+        val grouped = GrapeAllocationHierarchy.varietyRows(supply,
+            listOf(allocation(id = "custom-a").copy(varietyName = "Custom-A"), allocation(id = "custom-b").copy(varietyName = "Custom A")), vineyard, 2026)
+        assertEquals(3, grouped.size)
+        val pinot = grouped.first { it.varietyKey == "pinot gris" }
+        assertNull(pinot.estimatedTonnes)
+        assertNull(pinot.balanceTonnes)
+        assertEquals(6.0, pinot.knownEstimatedTonnes, 0.0)
+        assertFalse(pinot.isEstimateComplete)
+        val children = rows(emptyList(), listOf(GrapeAllocationHierarchy.Estimate("b7", "Pinot Gris", 4.0),
+            GrapeAllocationHierarchy.Estimate("b7", "Pinot Grigio", null)))
+        assertNull(children.first().estimatedTonnes)
     }
     @Test fun canonicalHeaderAndBlockReloadKeepIdentityAndExactQuantity() {
         val original = allocation(5.123456789, blocks = listOf("b7" to 2.123456789, "b49" to 3.0))

@@ -117,7 +117,7 @@ fun GrapeAllocationScreen(
     var editing by remember(state.selectedVineyardId) { mutableStateOf<GrapeAllocation?>(null) }
     var creating by remember(state.selectedVineyardId) { mutableStateOf(false) }
     var deleteCandidate by remember(state.selectedVineyardId) { mutableStateOf<GrapeAllocation?>(null) }
-    var collapsedVarieties by remember(state.selectedVineyardId, reportVintage) { mutableStateOf<Set<String>>(emptySet()) }
+    var expandedVarieties by remember(state.selectedVineyardId, reportVintage) { mutableStateOf<Set<String>>(emptySet()) }
     val scopedAllocations = state.grapeAllocations.filter { it.vineyardId.equals(state.selectedVineyardId, true) && it.deletedAt == null }
 
     LaunchedEffect(state.selectedVineyardId) { vm.refreshGrapeAllocations() }
@@ -156,14 +156,14 @@ fun GrapeAllocationScreen(
         }
     }
     val canonicalSupply = remember(projection) {
-        projection?.let { GrapeAllocationCalculator.canonicalSupply(it) }.orEmpty()
+        GrapeAllocationHierarchy.supply(projection)
     }
     val summary = remember(projection, scopedAllocations, reportVintage) {
         GrapeAllocationCalculator.canonicalSummary(projection, scopedAllocations, reportVintage)
     }
-    val varietyRows = remember(canonicalSupply, scopedAllocations, reportVintage) {
-        GrapeAllocationCalculator.canonicalVarietyRows(
-            canonicalSupply, scopedAllocations, reportVintage,
+    val varietyRows = remember(canonicalSupply, scopedAllocations, state.selectedVineyardId, reportVintage) {
+        GrapeAllocationHierarchy.varietyRows(
+            canonicalSupply, scopedAllocations, state.selectedVineyardId, reportVintage,
         )
     }
     val vintageAllocations = scopedAllocations.filter { it.vintage == reportVintage }
@@ -266,6 +266,11 @@ fun GrapeAllocationScreen(
                     )
                 }
             } else {
+                val allExpanded = varietyRows.all { it.varietyKey in expandedVarieties }
+                TextButton(
+                    onClick = { expandedVarieties = if (allExpanded) emptySet() else varietyRows.map { it.varietyKey }.toSet() },
+                    modifier = Modifier.align(Alignment.Start),
+                ) { Text(if (allExpanded) "Collapse all" else "Expand all") }
                 varietyRows.forEach { row ->
                     val children = remember(row.varietyKey, state.selectedVineyardId, reportVintage, scopedAllocations, blockEstimates, blockNames) {
                         GrapeAllocationHierarchy.rows(row.varietyKey, state.selectedVineyardId.orEmpty(), reportVintage,
@@ -273,8 +278,8 @@ fun GrapeAllocationScreen(
                     }
                     GrapeAllocationHierarchyCard(
                         parent = row, children = children, allocations = vintageAllocations,
-                        expanded = row.varietyKey !in collapsedVarieties,
-                        onToggle = { collapsedVarieties = if (row.varietyKey in collapsedVarieties) collapsedVarieties - row.varietyKey else collapsedVarieties + row.varietyKey },
+                        expanded = row.varietyKey in expandedVarieties,
+                        onToggle = { expandedVarieties = if (row.varietyKey in expandedVarieties) expandedVarieties - row.varietyKey else expandedVarieties + row.varietyKey },
                         onEdit = { id -> editing = vintageAllocations.firstOrNull { it.id == id } },
                     )
                 }

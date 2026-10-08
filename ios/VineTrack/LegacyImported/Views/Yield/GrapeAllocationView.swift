@@ -21,7 +21,7 @@ struct GrapeAllocationView: View {
     @State private var selectedVintage: Int?
     @State private var editorContext: EditorContext?
     @State private var deleteCandidate: GrapeAllocation?
-    @State private var collapsedVarieties: Set<String> = []
+    @State private var expandedVarieties: Set<String> = []
 
     private var scopedAllocations: [GrapeAllocation] {
         allocationService.allocations.filter { $0.vineyardId == store.selectedVineyardId }
@@ -71,9 +71,8 @@ struct GrapeAllocationView: View {
         )
     }
 
-    private var canonicalSupply: [String: GrapeAllocationCalculator.CanonicalSupply] {
-        guard let projection else { return [:] }
-        return GrapeAllocationCalculator.canonicalSupply(projection: projection)
+    private var canonicalSupply: [GrapeAllocationCalculator.CanonicalSupply] {
+        GrapeAllocationHierarchy.supply(projection)
     }
 
     private var summary: GrapeAllocationCalculator.CanonicalSummary {
@@ -85,9 +84,10 @@ struct GrapeAllocationView: View {
     }
 
     private var varietyRows: [GrapeAllocationCalculator.CanonicalVarietyRow] {
-        GrapeAllocationCalculator.canonicalVarietyRows(
+        GrapeAllocationHierarchy.varietyRows(
             supply: canonicalSupply,
             allocations: scopedAllocations,
+            vineyardId: store.selectedVineyardId,
             vintage: reportVintage
         )
     }
@@ -145,11 +145,11 @@ struct GrapeAllocationView: View {
             Button("Cancel", role: .cancel) { deleteCandidate = nil }
         }
         .onChange(of: store.selectedVineyardId) { _, _ in
-            collapsedVarieties = []
+            expandedVarieties = []
             editorContext = nil
             deleteCandidate = nil
         }
-        .onChange(of: reportVintage) { _, _ in collapsedVarieties = [] }
+        .onChange(of: reportVintage) { _, _ in expandedVarieties = [] }
         .task(id: "\(store.selectedVineyardId?.uuidString ?? "")|\(reportVintage)") {
             guard let vineyardId = store.selectedVineyardId else { return }
             await allocationService.load(vineyardId: vineyardId)
@@ -366,6 +366,14 @@ struct GrapeAllocationView: View {
                     .padding(12)
                     .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
             } else {
+                let allExpanded = varietyRows.allSatisfy { expandedVarieties.contains($0.varietyKey) }
+                Button(allExpanded ? "Collapse all" : "Expand all") {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        expandedVarieties = allExpanded ? [] : Set(varietyRows.map(\.varietyKey))
+                    }
+                }
+                .frame(minHeight: 44, alignment: .leading)
+                .accessibilityHint("Changes block visibility for all varieties")
                 ForEach(varietyRows) { row in
                     varietyCard(row)
                 }
@@ -377,19 +385,19 @@ struct GrapeAllocationView: View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
-                    if !collapsedVarieties.insert(row.varietyKey).inserted { collapsedVarieties.remove(row.varietyKey) }
+                    if !expandedVarieties.insert(row.varietyKey).inserted { expandedVarieties.remove(row.varietyKey) }
                 }
             } label: {
                 HStack {
-                    Image(systemName: collapsedVarieties.contains(row.varietyKey) ? "chevron.right" : "chevron.down")
+                    Image(systemName: expandedVarieties.contains(row.varietyKey) ? "chevron.down" : "chevron.right")
                     Text(row.displayName).font(.subheadline.weight(.semibold))
                     Spacer()
                 }
                 .frame(minHeight: 44).contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(collapsedVarieties.contains(row.varietyKey) ? "Expand" : "Collapse") \(row.displayName) blocks")
-            .accessibilityValue(collapsedVarieties.contains(row.varietyKey) ? "Collapsed" : "Expanded")
+            .accessibilityLabel("\(expandedVarieties.contains(row.varietyKey) ? "Collapse" : "Expand") \(row.displayName) blocks")
+            .accessibilityValue(expandedVarieties.contains(row.varietyKey) ? "Expanded" : "Collapsed")
             HStack {
                 Spacer()
                 if row.isShortfall {
@@ -404,7 +412,7 @@ struct GrapeAllocationView: View {
             }
             hierarchyMetrics(estimated: row.estimatedTonnes, own: row.ownUseTonnes,
                              external: row.externalTonnes, balance: row.balanceTonnes)
-            if !collapsedVarieties.contains(row.varietyKey), let vineyardId = store.selectedVineyardId {
+            if expandedVarieties.contains(row.varietyKey), let vineyardId = store.selectedVineyardId {
                 let names = Dictionary(store.paddocks.filter { $0.vineyardId == vineyardId }.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
                 let children = GrapeAllocationHierarchy.rows(varietyKey: row.varietyKey, vineyardId: vineyardId,
                     vintage: reportVintage, allocations: scopedAllocations,
