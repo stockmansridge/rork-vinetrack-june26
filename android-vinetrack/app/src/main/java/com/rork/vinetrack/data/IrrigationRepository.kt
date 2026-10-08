@@ -370,6 +370,7 @@ data class IrrigationSessionRow(
     val warnings: List<String>? = null,
     // SQL 142 — frozen controller-import metadata (null for manual sessions).
     @SerialName("import_info") val importInfo: IrrigationImportInfo? = null,
+    @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val blockNames: String get() = blocks.mapNotNull { it.blockName }.joinToString(", ")
 
@@ -1176,7 +1177,12 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
         val owner = session.userId ?: return
         if (fertigationOutbox.entries().none { it.ownerId == owner && it.irrigation.vineyardId == vineyardId && it.phase != FertigationLinkedOutbox.Phase.ACKNOWLEDGED }) return
         fertigationOutbox.flush(vineyardId, owner, record = { recordSession(it) }, upsert = { entry, products ->
-            fertigationRepository.upsert(entry.id, vineyardId, entry.irrigation.id, checkNotNull(FertigationDomain.string(entry.step, "id")), FertigationDomain.string(entry.step, "name"), FertigationDomain.string(entry.step, "growth_stage_code"), entry.notes, products)
+            check(session.userId == owner) { "Account changed." }
+            if (entry.existingSession) {
+                val existing = getSession(entry.irrigation.id)
+                if (existing.deletedAt != null || !FertigationSessionDraft.canAttach(existing.vineyardId, vineyardId, existing.status, true)) throw FertigationPermanentFailure()
+            }
+            FertigationRepository(session, expectedOwnerId = owner).upsert(entry.id, vineyardId, entry.irrigation.id, checkNotNull(FertigationDomain.string(entry.step, "id")), FertigationDomain.string(entry.step, "name"), FertigationDomain.string(entry.step, "growth_stage_code"), entry.notes, products)
         }, permanent = { it is FertigationPermanentFailure || (it is IllegalStateException && it.message == "System Admin required.") })
     }
 

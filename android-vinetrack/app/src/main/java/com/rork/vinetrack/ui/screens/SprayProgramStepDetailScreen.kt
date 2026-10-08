@@ -80,6 +80,7 @@ internal fun SprayProgramStepDetailScreen(
     record: SprayRecord,
     state: AppUiState,
     isPortalManaged: Boolean,
+    fertigationRepository: com.rork.vinetrack.data.FertigationRepository,
     onBack: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -259,6 +260,9 @@ internal fun SprayProgramStepDetailScreen(
                 ProgramStepSection("Notes", Icons.Filled.Notes) {
                     Text(notes, fontSize = 15.sp, color = vine.textSecondary)
                 }
+            }
+            if (canApply && state.selectedVineyardId == record.vineyardId) {
+                FertigationProgramHistory(fertigationRepository, record.vineyardId, record.id, state.isSystemAdmin, state.regionFormatter)
             }
             Text(if (isFertigation) "Water, allocation and actual product use are recorded through Irrigation." else "Blocks, carrier volume and quantities are set when you plan the spray.", fontSize = 12.sp, color = vine.textSecondary.copy(alpha = 0.75f))
         }

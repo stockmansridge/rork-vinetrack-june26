@@ -19,8 +19,13 @@ class FertigationRepository(
     private val adminCheck: suspend () -> Boolean,
     private val transport: suspend (String, JsonObject) -> String,
 ) {
-    constructor(session: SessionStore) : this(
-        adminCheck = { SystemAdminRepository(session).isSystemAdmin() },
+    constructor(session: SessionStore, expectedOwnerId: String? = null) : this(
+        adminCheck = {
+            check(expectedOwnerId == null || session.userId == expectedOwnerId) { "Account changed." }
+            val allowed = SystemAdminRepository(session).isSystemAdmin()
+            check(expectedOwnerId == null || session.userId == expectedOwnerId) { "Account changed." }
+            allowed
+        },
         transport = { name, params ->
             withContext(Dispatchers.IO) {
                 if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
@@ -60,6 +65,15 @@ class FertigationRepository(
             put("p_program_step_id", programStepId?.let(::JsonPrimitive) ?: JsonNull)
             put("p_include_reversed", includeReversed)
         }).jsonArray.map { it.jsonObject }
+    /** One scoped list request; no RPC per irrigation row. */
+    suspend fun historyIndex(vineyardId: String, vintageYear: Int? = null, isSystemAdmin: Boolean): Map<String, JsonObject> {
+        if (!isSystemAdmin) return emptyMap()
+        return FertigationHistory.index(applications(vineyardId, vintageYear, includeReversed = true), true)
+    }
+    suspend fun historicalSession(vineyardId: String, sessionId: String, vintageYear: Int, isSystemAdmin: Boolean): JsonObject? {
+        if (!isSystemAdmin) return null
+        return sessionApplication(vineyardId, sessionId) ?: historyIndex(vineyardId, vintageYear, true)[sessionId.lowercase()]
+    }
     suspend fun upsert(id: String, vineyardId: String, sessionId: String, stepId: String, frozenName: String?, growthStageCode: String?, notes: String?, products: List<JsonObject>): JsonObject =
         call("upsert_fertigation_application", buildJsonObject {
             put("p_id", id); put("p_vineyard_id", vineyardId); put("p_irrigation_session_id", sessionId); put("p_program_step_id", stepId)

@@ -119,6 +119,11 @@ struct SprayProgramStepDetailView: View {
                     }
                 }
 
+                if currentStep.operationType == .fertigation && systemAdmin.isSystemAdmin {
+                    NavigationLink { FertigationApplicationHistoryView(stepId: currentStep.id) } label: {
+                        Label("Application History", systemImage: "clock.arrow.circlepath")
+                    }
+                }
                 if currentStep.operationType != .fertigation { chemistrySection }
 
                 if !currentStep.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

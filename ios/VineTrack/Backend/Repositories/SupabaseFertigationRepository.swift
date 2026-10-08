@@ -8,9 +8,14 @@ final class SupabaseFertigationRepository {
     private let adminCheck: () async throws -> Bool
     private let transport: (String, Object) async throws -> Data
 
-    init(provider: SupabaseClientProvider = .shared) {
+    init(provider: SupabaseClientProvider = .shared, expectedOwnerId: UUID? = nil) {
         let admins = SupabaseSystemAdminRepository()
-        adminCheck = { try await admins.isSystemAdmin() }
+        adminCheck = {
+            if let expectedOwnerId, provider.client.auth.currentUser?.id != expectedOwnerId { throw CancellationError() }
+            let allowed = try await admins.isSystemAdmin()
+            if let expectedOwnerId, provider.client.auth.currentUser?.id != expectedOwnerId { throw CancellationError() }
+            return allowed
+        }
         transport = { name, params in
             guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
             return try await provider.client.rpc(name, params: params).execute().data
@@ -51,6 +56,17 @@ final class SupabaseFertigationRepository {
             "p_program_step_id": programStepId.map { .string($0.uuidString) } ?? .null,
             "p_include_reversed": .bool(includeReversed)
         ], as: [FertigationDomain.Application].self)
+    }
+
+    /// One list request for the loaded scope, never one request per irrigation row.
+    func historyIndex(vineyardId: UUID, vintageYear: Int? = nil, isSystemAdmin: Bool) async throws -> [UUID: FertigationDomain.Application] {
+        guard isSystemAdmin else { return [:] }
+        return FertigationHistory.index(try await applications(vineyardId: vineyardId, vintageYear: vintageYear, includeReversed: true), isSystemAdmin: true)
+    }
+    func historicalSession(vineyardId: UUID, sessionId: UUID, vintageYear: Int, isSystemAdmin: Bool) async throws -> FertigationDomain.Application? {
+        guard isSystemAdmin else { return nil }
+        if let active = try await sessionApplication(vineyardId: vineyardId, sessionId: sessionId) { return active }
+        return try await historyIndex(vineyardId: vineyardId, vintageYear: vintageYear, isSystemAdmin: true)[sessionId]
     }
 
     func upsert(id: UUID, vineyardId: UUID, sessionId: UUID, stepId: UUID, frozenName: String?, growthStageCode: String?, notes: String?, products: [Object]) async throws -> FertigationDomain.Application {

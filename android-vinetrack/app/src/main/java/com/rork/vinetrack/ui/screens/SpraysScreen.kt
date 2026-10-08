@@ -262,6 +262,7 @@ fun SpraysScreen(
                 record = record,
                 state = state,
                 isPortalManaged = isPortal,
+                fertigationRepository = vm.irrigationRepository.fertigationRepository,
                 onBack = { selectedId = null },
                 onEdit = { editingProgramStep = record to isPortal },
                 onDelete = { vm.deleteSprayRecord(record.id) { ok -> if (ok) selectedId = null } },

@@ -309,9 +309,13 @@ final class SupabaseIrrigationRepository {
     func flushFertigation(vineyardId: UUID) async throws {
         guard let ownerId = provider.client.auth.currentUser?.id else { return }
         guard try fertigationOutbox.entries().contains(where: { $0.ownerId == ownerId && $0.irrigation.vineyardId == vineyardId && $0.phase != .acknowledged }) else { return }
-        let fertigation = SupabaseFertigationRepository(provider: provider)
+        let fertigation = SupabaseFertigationRepository(provider: provider, expectedOwnerId: ownerId)
         try await fertigationOutbox.flush(vineyardId: vineyardId, ownerId: ownerId, record: { try await self.recordSession($0) }, upsert: { entry, products in
-            guard let stepId = entry.step.id else { throw FertigationDomain.Failure.invalidStep }
+            guard self.provider.client.auth.currentUser?.id == ownerId, let stepId = entry.step.id else { throw FertigationDomain.Failure.invalidStep }
+            if entry.existingSession == true {
+                let session = try await self.getSession(id: entry.irrigation.id)
+                guard session.deletedAt == nil, FertigationSessionDraft.canAttach(vineyardId: session.vineyardId, selectedVineyardId: vineyardId, status: session.status, isSystemAdmin: true) else { throw FertigationDomain.Failure.reversed }
+            }
             return try await fertigation.upsert(id: entry.id, vineyardId: vineyardId, sessionId: entry.irrigation.id, stepId: stepId, frozenName: entry.step.name, growthStageCode: entry.step.growthStageCode, notes: entry.notes, products: products)
         }, permanent: { error in
             if error is FertigationDomain.Failure { return true }

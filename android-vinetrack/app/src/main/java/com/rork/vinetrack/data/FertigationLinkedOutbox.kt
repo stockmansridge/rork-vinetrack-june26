@@ -23,6 +23,7 @@ class FertigationLinkedOutbox(private val load: () -> String?, private val store
         val acknowledgedProducts: List<JsonObject>? = null,
         val acknowledgedTotals: FertigationDomain.Totals? = null,
         val error: String? = null,
+        val existingSession: Boolean = false,
     ) {
         val message: String get() = when (phase) {
             Phase.IRRIGATION_PENDING -> "Irrigation and Fertigation saved on this device — waiting to sync."
@@ -43,10 +44,18 @@ class FertigationLinkedOutbox(private val load: () -> String?, private val store
         if (all.any { it.id == entry.id || it.irrigation.id == entry.irrigation.id }) return
         store(json.encodeToString(all + entry))
     }
+    /** Already acknowledged irrigation never enters the record phase. */
+    @Synchronized fun enqueueExisting(entry: Entry) {
+        require(entry.existingSession && entry.phase == Phase.FERTIGATION_PENDING && entry.acknowledgedTotals != null && entry.acknowledgedProducts != null)
+        val all = entries()
+        val prior = all.firstOrNull { it.ownerId == entry.ownerId && it.irrigation.id == entry.irrigation.id }
+        check(prior == null || prior.phase == Phase.ACKNOWLEDGED) { "A Fertigation write for this session is already pending. Retry it first." }
+        store(json.encodeToString(all.filterNot { it == prior } + entry))
+    }
     @Synchronized private fun replace(entry: Entry) = store(json.encodeToString(entries().map { if (it.id == entry.id) entry else it }))
     @Synchronized fun retry(id: String) {
         val entry = entries().firstOrNull { it.id == id && it.phase == Phase.PERMANENT_ERROR } ?: return
-        replace(entry.copy(phase = if (entry.acknowledgedTotals == null) Phase.IRRIGATION_PENDING else Phase.FERTIGATION_PENDING, error = null))
+        replace(entry.copy(phase = if (!entry.existingSession && entry.acknowledgedTotals == null) Phase.IRRIGATION_PENDING else Phase.FERTIGATION_PENDING, error = null))
     }
     suspend fun flush(vineyardId: String, ownerId: String,
         record: suspend (PendingIrrigationSession) -> IrrigationSessionRow,
@@ -56,6 +65,7 @@ class FertigationLinkedOutbox(private val load: () -> String?, private val store
         for (original in entries().filter { it.irrigation.vineyardId == vineyardId && it.ownerId == ownerId && it.phase != Phase.ACKNOWLEDGED && it.phase != Phase.PERMANENT_ERROR }) {
             var entry = original
             try {
+                check(!entry.existingSession || entry.phase == Phase.FERTIGATION_PENDING)
                 if (entry.phase == Phase.IRRIGATION_PENDING) {
                     val saved = record(entry.irrigation)
                     check(saved.id == entry.irrigation.id && saved.vineyardId == vineyardId && saved.status in listOf("completed", "corrected", "imported", "estimated")) { "Irrigation acknowledgement mismatch" }

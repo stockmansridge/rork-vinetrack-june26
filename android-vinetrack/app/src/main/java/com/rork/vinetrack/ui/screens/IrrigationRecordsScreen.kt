@@ -389,6 +389,7 @@ fun IrrigationRecordsScreen(
                     IrrigationNav.Detail -> DetailContent(
                         repo = repo,
                         sessionId = detailSessionId,
+                        state = state,
                         fmt = state.regionFormatter,
                         capabilities = capabilities,
                         onChanged = { scope.launch { reload() } },
@@ -2465,13 +2466,15 @@ private fun HistoryContent(
     val vineyardId = state.selectedVineyardId ?: return
     val fmt = state.regionFormatter
     var sessions by remember { mutableStateOf<List<IrrigationSessionRow>>(emptyList()) }
+    var fertigationIndex by remember { mutableStateOf<Map<String, kotlinx.serialization.json.JsonObject>>(emptyMap()) }
     var totalCount by remember { mutableIntStateOf(0) }
     var includeReversed by remember { mutableStateOf(false) }
     // SQL 142 source filter: null = all, 'manual' = any manual, 'imported' = controller imports.
     var sourceFilter by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(vineyardId, includeReversed, sourceFilter) {
+    LaunchedEffect(vineyardId, state.currentUserId, state.isSystemAdmin, includeReversed, sourceFilter) {
+        fertigationIndex = emptyMap()
         runCatching {
             val result = repo.listSessions(
                 vineyardId,
@@ -2481,6 +2484,9 @@ private fun HistoryContent(
             )
             sessions = result.sessions
             totalCount = result.totalCount
+            if (state.isSystemAdmin) {
+                fertigationIndex = repo.fertigationRepository.historyIndex(vineyardId, isSystemAdmin = state.isSystemAdmin)
+            }
         }.onFailure { error = it.message }
     }
 
@@ -2518,7 +2524,14 @@ private fun HistoryContent(
             }
         }
         sessions.forEach { session ->
-            item(key = session.id) { SessionRowCard(session, fmt) { onOpenSession(session.id) } }
+            item(key = session.id) {
+                if (state.isSystemAdmin && fertigationIndex[session.id.lowercase()] != null) {
+                    Column {
+                        SessionRowCard(session, fmt) { onOpenSession(session.id) }
+                        Text("Fertigation", style = MaterialTheme.typography.labelSmall, color = VineColors.LeafGreen)
+                    }
+                } else { SessionRowCard(session, fmt) { onOpenSession(session.id) } }
+            }
         }
     }
 }
@@ -2527,6 +2540,7 @@ private fun HistoryContent(
 private fun DetailContent(
     repo: IrrigationRepository,
     sessionId: String?,
+    state: AppUiState,
     fmt: RegionFormatter,
     capabilities: IrrigationCapabilities?,
     onChanged: () -> Unit,
@@ -2538,9 +2552,21 @@ private fun DetailContent(
     var error by remember { mutableStateOf<String?>(null) }
     var showReverseConfirm by remember { mutableStateOf(false) }
 
-    LaunchedEffect(sessionId) {
+    var fertigation by remember { mutableStateOf<kotlinx.serialization.json.JsonObject?>(null) }
+    var fertigationLoaded by remember { mutableStateOf(false) }
+    var showFertigation by remember { mutableStateOf(false) }
+    var refresh by remember { mutableIntStateOf(0) }
+    LaunchedEffect(sessionId, state.currentUserId, state.selectedVineyardId, state.isSystemAdmin, refresh) {
+        fertigation = null; fertigationLoaded = false
         val id = sessionId ?: return@LaunchedEffect
-        runCatching { session = repo.getSession(id) }.onFailure { error = it.message }
+        runCatching {
+            val loaded = repo.getSession(id)
+            session = loaded
+            if (state.isSystemAdmin && loaded.vineyardId == state.selectedVineyardId) {
+                fertigation = repo.fertigationRepository.historicalSession(loaded.vineyardId, id, loaded.vintageYear, state.isSystemAdmin)
+                fertigationLoaded = true
+            }
+        }.onFailure { error = "Session/Fertigation could not be loaded. Refresh before adding or editing." }
     }
 
     val s = session
@@ -2634,6 +2660,12 @@ private fun DetailContent(
                 item { Text("Notes", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold) }
                 item { Text(noteText, style = MaterialTheme.typography.bodySmall) }
             }
+            if (state.isSystemAdmin && s.vineyardId == state.selectedVineyardId) {
+                fertigation?.let { application -> item { FertigationApplicationContent(application, fmt) } }
+                if (s.deletedAt == null && fertigationLoaded && com.rork.vinetrack.data.FertigationSessionDraft.canAttach(s.vineyardId, state.selectedVineyardId, s.status, true) && (fertigation == null || com.rork.vinetrack.data.FertigationDomain.isEditable(checkNotNull(fertigation)))) {
+                    item { OutlinedButton(onClick = { showFertigation = true }) { Text(if (fertigation == null) "Add Fertigation" else "View / Edit Fertigation") } }
+                }
+            }
             // Public release (SQL 151): actions follow the shared role
             // capabilities. The server enforces each one independently.
             if (s.status != "reversed" && !s.isImported) {
@@ -2671,6 +2703,9 @@ private fun DetailContent(
         }
     }
 
+    if (showFertigation && s != null && state.isSystemAdmin) {
+        FertigationSessionEditor(repo, s, fertigation, state, onDone = { showFertigation = false; refresh++; onChanged() })
+    }
     if (showReverseConfirm && s != null) {
         AlertDialog(
             onDismissRequest = { showReverseConfirm = false },
@@ -2680,7 +2715,7 @@ private fun DetailContent(
                 TextButton(onClick = {
                     showReverseConfirm = false
                     scope.launch {
-                        runCatching { session = repo.reverseSession(s.id) }
+                        runCatching { com.rork.vinetrack.data.FertigationHistory.afterIrrigationReversal(reverse = { session = repo.reverseSession(s.id) }, reload = { refresh++ }) }
                             .onSuccess { onChanged() }
                             .onFailure { error = it.message }
                     }

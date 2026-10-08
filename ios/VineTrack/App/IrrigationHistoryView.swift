@@ -3,6 +3,9 @@ import SwiftUI
 // MARK: - Irrigation history (filters + rows + actions)
 
 struct IrrigationHistoryView: View {
+    @Environment(SystemAdminService.self) private var admin
+    @Environment(NewBackendAuthService.self) private var auth
+    @State private var fertigationIndex: [UUID: FertigationDomain.Application] = [:]
     @Environment(MigratedDataStore.self) private var store
 
     @State private var sessions: [IrrigationSession] = []
@@ -59,7 +62,12 @@ struct IrrigationHistoryView: View {
                                 Task { await reload() }
                             }
                         } label: {
-                            IrrigationSessionRow(session: session, formatter: formatter)
+                            if admin.isSystemAdmin && fertigationIndex[session.id] != nil {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    IrrigationSessionRow(session: session, formatter: formatter)
+                                    Label("Fertigation", systemImage: "drop.fill").font(.caption2).foregroundStyle(.green)
+                                }
+                            } else { IrrigationSessionRow(session: session, formatter: formatter) }
                         }
                         .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
                         .listRowBackground(Color.clear)
@@ -78,7 +86,7 @@ struct IrrigationHistoryView: View {
         }
         .navigationTitle("Irrigation History")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: vineyardId) { await load() }
+        .task(id: "\(vineyardId?.uuidString ?? "")-\(auth.userId?.uuidString ?? "")-\(admin.isSystemAdmin)") { fertigationIndex = [:]; await load() }
         .onChange(of: filterValveId) { _, _ in Task { await reload() } }
         .onChange(of: filterStatus) { _, _ in Task { await reload() } }
         .onChange(of: filterSource) { _, _ in Task { await reload() } }
@@ -111,6 +119,15 @@ struct IrrigationHistoryView: View {
                 limit: 100)
             sessions = result.sessions
             totalCount = result.totalCount
+            fertigationIndex = [:]
+            if admin.isSystemAdmin {
+                let owner = auth.userId
+                do {
+                    let index = try await SupabaseFertigationRepository().historyIndex(vineyardId: vineyardId, isSystemAdmin: admin.isSystemAdmin)
+                    guard vineyardId == self.vineyardId, owner == auth.userId, admin.isSystemAdmin else { return }
+                    fertigationIndex = index
+                } catch { errorMessage = "Fertigation badges unavailable. Irrigation history is unchanged." }
+            }
         } catch {
             errorMessage = "History could not be loaded. \(error.localizedDescription)"
         }
@@ -120,6 +137,10 @@ struct IrrigationHistoryView: View {
 // MARK: - Session detail (view / edit / duplicate / reverse)
 
 struct IrrigationSessionDetailView: View {
+    @Environment(SystemAdminService.self) private var admin
+    @Environment(NewBackendAuthService.self) private var auth
+    @State private var fertigation: FertigationDomain.Application?
+    @State private var fertigationLoaded: Bool = false
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
 
@@ -151,7 +172,7 @@ struct IrrigationSessionDetailView: View {
         }
         .navigationTitle("Irrigation Session")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await reload() }
+        .task(id: "\(store.selectedVineyardId?.uuidString ?? "")-\(auth.userId?.uuidString ?? "")-\(admin.isSystemAdmin)") { await reload() }
         .confirmationDialog("Reverse this irrigation record?",
                             isPresented: $showReverseConfirm, titleVisibility: .visible) {
             Button("Reverse Record", role: .destructive) {
@@ -247,6 +268,21 @@ struct IrrigationSessionDetailView: View {
             Section("Notes") {
                 Text(notes)
                     .font(.footnote)
+            }
+        }
+
+        if admin.isSystemAdmin && session.vineyardId == store.selectedVineyardId {
+            if let fertigation {
+                Section("Fertigation") { FertigationApplicationView(application: fertigation, formatter: formatter) }
+            }
+            if session.deletedAt == nil && fertigationLoaded && FertigationSessionDraft.canAttach(vineyardId: session.vineyardId, selectedVineyardId: store.selectedVineyardId, status: session.status, isSystemAdmin: true) && (fertigation == nil || fertigation?.isEditable == true) {
+                Section {
+                    NavigationLink {
+                        FertigationSessionEditView(session: session, application: fertigation) {
+                            Task { await reload() }; onChanged()
+                        }
+                    } label: { Label(fertigation == nil ? "Add Fertigation" : "View / Edit Fertigation", systemImage: "drop.fill") }
+                }
             }
         }
 
@@ -366,16 +402,31 @@ struct IrrigationSessionDetailView: View {
         defer { isLoading = false }
         do {
             session = try await repository.getSession(id: sessionId)
+            await reloadFertigation()
         } catch {
             errorMessage = "The session could not be loaded. \(error.localizedDescription)"
         }
+    }
+
+    private func reloadFertigation() async {
+        fertigation = nil; fertigationLoaded = false
+        guard admin.isSystemAdmin, let session, session.vineyardId == store.selectedVineyardId else { return }
+        let owner = auth.userId
+        do {
+            let repo = SupabaseFertigationRepository()
+            let value = try await repo.historicalSession(vineyardId: session.vineyardId, sessionId: sessionId, vintageYear: session.vintageYear, isSystemAdmin: admin.isSystemAdmin)
+            guard admin.isSystemAdmin, owner == auth.userId, session.vineyardId == store.selectedVineyardId else { return }
+            fertigation = value; fertigationLoaded = true
+        } catch { errorMessage = "Fertigation could not be loaded. Refresh before adding or editing." }
     }
 
     private func reverse() async {
         isReversing = true
         defer { isReversing = false }
         do {
-            session = try await repository.reverseSession(id: sessionId)
+            try await FertigationHistory.afterIrrigationReversal(reverse: {
+                session = try await repository.reverseSession(id: sessionId)
+            }, reload: { await reload() })
             onChanged()
         } catch {
             errorMessage = friendlyIrrigationError(error)

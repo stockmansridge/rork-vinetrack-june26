@@ -15,6 +15,7 @@ final class FertigationLinkedOutbox {
         var acknowledgedTotals: FertigationDomain.Totals? = nil
         var acknowledgedProducts: [FertigationDomain.Object]? = nil
         var error: String? = nil
+        var existingSession: Bool? = nil
         var message: String {
             switch phase {
             case .irrigationPending: "Irrigation and Fertigation saved on this device — waiting to sync."
@@ -43,6 +44,17 @@ final class FertigationLinkedOutbox {
         all.append(entry)
         try persist(all)
     }
+    /// Existing sessions enter directly at Fertigation pending; acknowledged irrigation is immutable.
+    func enqueueExisting(_ entry: Entry) throws {
+        guard entry.existingSession == true, entry.phase == .fertigationPending,
+              entry.acknowledgedTotals != nil, entry.acknowledgedProducts != nil else { throw FertigationDomain.Failure.invalidStep }
+        var all = try entries()
+        if let index = all.firstIndex(where: { $0.ownerId == entry.ownerId && $0.irrigation.id == entry.irrigation.id }) {
+            guard all[index].phase == .acknowledged else { throw FertigationDomain.Failure.invalidStep }
+            all[index] = entry
+        } else { all.append(entry) }
+        try persist(all)
+    }
     private func replace(_ entry: Entry) throws {
         var all = try entries()
         guard let index = all.firstIndex(where: { $0.id == entry.id }) else { return }
@@ -51,7 +63,7 @@ final class FertigationLinkedOutbox {
     }
     func retry(id: UUID) throws {
         guard var entry = try entries().first(where: { $0.id == id }), entry.phase == .permanentError else { return }
-        entry.phase = entry.acknowledgedTotals == nil ? .irrigationPending : .fertigationPending
+        entry.phase = entry.existingSession == true || entry.acknowledgedTotals != nil ? .fertigationPending : .irrigationPending
         entry.error = nil
         try replace(entry)
     }
@@ -65,6 +77,7 @@ final class FertigationLinkedOutbox {
         defer { isFlushing = false }
         for var entry in try entries() where entry.irrigation.vineyardId == vineyardId && entry.ownerId == ownerId && entry.phase != .acknowledged && entry.phase != .permanentError {
             do {
+                guard entry.existingSession != true || entry.phase == .fertigationPending else { throw FertigationDomain.Failure.invalidStep }
                 if entry.phase == .irrigationPending {
                     let saved = try await record(entry.irrigation)
                     guard saved.id == entry.irrigation.id, saved.vineyardId == vineyardId, ["completed", "corrected", "imported", "estimated"].contains(saved.status) else { throw FertigationDomain.Failure.invalidStep }

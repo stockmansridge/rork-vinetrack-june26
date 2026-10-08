@@ -768,6 +768,7 @@ nonisolated struct IrrigationSession: Decodable, Sendable, Identifiable, Hashabl
     let warnings: [String]?
     /// SQL 142 — frozen controller-import metadata (nil for manual sessions).
     let importInfo: IrrigationImportInfo?
+    var deletedAt: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, status, notes, blocks, duplicate, warnings
@@ -789,6 +790,7 @@ nonisolated struct IrrigationSession: Decodable, Sendable, Identifiable, Hashabl
         case systemName = "system_name"
         case valveName = "valve_name"
         case importInfo = "import_info"
+        case deletedAt = "deleted_at"
     }
 
     var blockNames: String {
