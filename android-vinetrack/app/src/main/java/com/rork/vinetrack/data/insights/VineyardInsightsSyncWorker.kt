@@ -195,6 +195,10 @@ class VineyardInsightsSyncWorker(
         var pushed = 0
         var error: String? = null
         for (entry in store.loadQueue().filter { vineyardId == null || it.vineyardId == vineyardId }) {
+            if (entry.entity == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT &&
+                entry.operation != VineyardInsightsStore.QueuedOperation.Operation.DELETE &&
+                store.loadQueue().any { it.entity == entry.entity && it.recordId == entry.recordId &&
+                    it.operation == VineyardInsightsStore.QueuedOperation.Operation.DELETE }) continue
             try {
                 val acknowledgedVersion = when (entry.entity) {
                     VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT -> pushVisit(entry)

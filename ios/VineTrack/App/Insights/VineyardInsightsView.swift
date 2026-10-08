@@ -201,6 +201,8 @@ struct ScoutWorkspaceView: View {
     @State private var completionError: String?
     @State private var cameraRequest: ScoutCameraRequest?
     @State private var reportVisit: ScoutVisit?
+    @State private var reviewReport: ScoutVisit?
+    @State private var reportReturnsToReview: Bool = false
     @State private var growthPickerRequest: ScoutGrowthPickerRequest?
     @State private var assessmentToScrollTo: UUID?
     @State private var growthStageError: String?
@@ -254,6 +256,12 @@ struct ScoutWorkspaceView: View {
             }
 
             if let visit = openVisit {
+                if insights.deletionPending(visitID: visit.id) {
+                    Section {
+                        Text(insights.syncStatus(for: visit)).font(.caption.bold()).foregroundStyle(.orange)
+                        Button("View Report") { reportVisit = visit }
+                    }
+                }
                 visitSections(visit)
                     .disabled(insights.deletionPending(visitID: visit.id))
             } else {
@@ -327,7 +335,10 @@ struct ScoutWorkspaceView: View {
             }
             .ignoresSafeArea()
         }
-        .sheet(item: $reportVisit) { visit in
+        .sheet(item: $reportVisit, onDismiss: {
+            if reportReturnsToReview, openVisit != nil { showReview = true }
+            reportReturnsToReview = false
+        }) { visit in
             ScoutReportView(visit: visit)
         }
         .onChange(of: assessmentToScrollTo) { _, target in
@@ -335,15 +346,21 @@ struct ScoutWorkspaceView: View {
             withAnimation { proxy.scrollTo(target, anchor: .top) }
             assessmentToScrollTo = nil
         }
-        .sheet(isPresented: $showReview) {
+        .sheet(isPresented: $showReview, onDismiss: {
+            if let visit = reviewReport {
+                reviewReport = nil
+                reportReturnsToReview = true
+                reportVisit = visit
+            }
+        }) {
             if let visit = openVisit {
                 ScoutReviewSheet(
                     review: ScoutReview.of(visit),
-                    completionCanRetry: visit.isEditable || insights.completionNeedsRetry(visit.id),
+                    completionCanRetry: !insights.deletionPending(visitID: visit.id) && (visit.isEditable || insights.completionNeedsRetry(visit.id)),
                     completionError: completionError,
                     onViewReport: {
+                        reviewReport = visit
                         showReview = false
-                        DispatchQueue.main.async { reportVisit = visit }
                     }
                 ) {
                     if insights.completeVisit(visit.id) {
@@ -807,7 +824,7 @@ private struct ScoutAssessmentSection: View {
             HStack(spacing: 10) {
                 GrapeLeafIcon(size: 18, color: VineyardTheme.leafGreen)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(canonical?.label ?? observation?.valueLabel ?? "Tap to select current E-L stage")
+                    Text(canonical?.label ?? observation?.valueLabel.map { $0 + " (saved snapshot — linked canonical record unavailable locally)" } ?? "Tap to select current E-L stage")
                         .font(.callout)
                         .foregroundStyle(canonical == nil && observation?.valueLabel == nil ? .secondary : .primary)
                     if linkedRecordID != nil {

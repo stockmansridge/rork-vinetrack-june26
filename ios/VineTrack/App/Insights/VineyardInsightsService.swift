@@ -858,6 +858,7 @@ final class VineyardInsightsService {
         let generation = syncGeneration
         for entry in store.loadQueue() where entry.vineyardID == vineyardID {
             guard generation == syncGeneration else { return }
+            if entry.entity == .scoutVisit && entry.operation != .delete && deletionPending(visitID: entry.recordID) { continue }
             do {
                 let acknowledgedVersion: Int?
                 switch entry.entity {

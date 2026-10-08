@@ -511,11 +511,17 @@ private fun ScoutWorkspace(
                 }
             } else {
                 item { ScoutVisitHeader(vm, state, current) }
+                if (insights.deletionPending(current.id)) item {
+                    Text(insights.syncStatus(current), color = VineColors.Warning)
+                    TextButton(onClick = { reportVisit = current }) { Text("View Report") }
+                }
                 item {
                     ScoutWorkspaceMap(
                         visit = current,
                         blocks = current.assessments.mapNotNull { assessment -> state.paddocks.firstOrNull { it.id == assessment.paddockId } },
                         pins = state.pins,
+                        growthRecords = state.growthRecords,
+                        locationBlocks = state.paddocks,
                         photoBytes = { id -> current.assessments.flatMap { it.observations }.flatMap { it.photos }.firstOrNull { it.id == id }?.let(vm.vineyardInsights::photoBytes) },
                     )
                 }
@@ -523,7 +529,7 @@ private fun ScoutWorkspace(
                     ScoutBlockPicker(
                         paddocks = state.paddocks,
                         selectedPaddockIds = current.assessments.map { it.paddockId }.toSet(),
-                        enabled = current.isEditable,
+                        enabled = current.isEditable && !insights.deletionPending(current.id),
                     ) { paddockId ->
                         val wasSelected = current.assessment(paddockId) != null
                         insights.toggleBlock(current.id, paddockId)
@@ -536,7 +542,7 @@ private fun ScoutWorkspace(
                         paddock = state.paddocks.firstOrNull { it.id == assessment.paddockId },
                         visitId = current.id,
                         assessmentId = assessment.id,
-                        enabled = current.isEditable,
+                        enabled = current.isEditable && !insights.deletionPending(current.id),
                         observations = assessment.observations,
                         onRequestGrowthStage = {
                             stageRequest = ScoutStageRequest(current.id, assessment.id, assessment.paddockId)
@@ -602,7 +608,7 @@ private fun ScoutWorkspace(
     if (showReview && reviewVisit != null) {
         ScoutReviewDialog(
             review = ScoutReview.of(reviewVisit),
-            completionCanRetry = reviewVisit.isEditable || insights.completionNeedsRetry(reviewVisit.id),
+            completionCanRetry = !insights.deletionPending(reviewVisit.id) && (reviewVisit.isEditable || insights.completionNeedsRetry(reviewVisit.id)),
             completionError = completionError,
             onDismiss = { showReview = false },
             onViewReport = { reportVisit = reviewVisit },
@@ -719,7 +725,7 @@ private fun ScoutVisitHeader(vm: AppViewModel, state: AppUiState, visit: ScoutVi
         // held the record says so rather than leaving a confident blank.
         val weather = visit.weather
         WeatherRows(weather)
-        if (visit.isEditable && visit.scoutDateIso == LocalDate.now(state.seasonZone).toString() &&
+        if (visit.isEditable && !insights.deletionPending(visit.id) && visit.scoutDateIso == LocalDate.now(state.seasonZone).toString() &&
             (weather == null || weather.isUnavailable)) {
             TextButton(onClick = { vm.captureScoutWeather(visit.id) }) { Text("Retry weather") }
         }
@@ -729,7 +735,7 @@ private fun ScoutVisitHeader(vm: AppViewModel, state: AppUiState, visit: ScoutVi
             onValueChange = { vm.vineyardInsights.setSummary(visit.id, it) },
             label = { Text("Visit summary (optional)") },
             modifier = Modifier.fillMaxWidth(),
-            enabled = visit.isEditable,
+            enabled = visit.isEditable && !insights.deletionPending(visit.id),
             minLines = 3,
         )
     }
@@ -831,7 +837,7 @@ private fun ScoutBlockAssessmentCard(
                     // Growth Stage workflow shows through rather than the Scout
                     // presenting a stale copy.
                     val linkedRecord = observation?.linkedGrowthStageRecordId?.let { id ->
-                        appState.growthRecords.firstOrNull { it.id == id }
+                        appState.growthRecords.firstOrNull { it.id == id && it.vineyardId == visit?.vineyardId && it.deletedAt == null }
                     }
                     val canonicalLabel = linkedRecord?.let { record ->
                         GrowthStage.byCode(record.stageCode)?.displayName
@@ -848,7 +854,7 @@ private fun ScoutBlockAssessmentCard(
                         Column(Modifier.weight(1f)) {
                             Text(
                                 canonicalLabel
-                                    ?: observation?.valueLabel
+                                    ?: observation?.valueLabel?.let { "$it (saved snapshot — linked canonical record unavailable locally)" }
                                     ?: "Tap to select current E-L stage",
                                 fontSize = 14.sp,
                                 color = if (canonicalLabel == null &&
