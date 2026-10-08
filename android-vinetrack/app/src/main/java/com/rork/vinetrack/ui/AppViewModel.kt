@@ -1170,6 +1170,26 @@ internal fun resolveTripPinAttribution(
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val session = SessionStore(app)
+    private val planningDrafts = com.rork.vinetrack.data.WorkTaskPlanningDraftStore(app)
+    private val externalResources = com.rork.vinetrack.data.ExternalResourceRepository(session)
+
+    fun loadWorkTaskPlanningDraft(taskId: String?): com.rork.vinetrack.data.model.WorkTaskPlanningDraft? {
+        val author = session.userId ?: return null
+        val vineyard = _ui.value.selectedVineyardId ?: return null
+        return planningDrafts.load(author, vineyard, taskId)
+    }
+
+    fun saveWorkTaskPlanningDraft(draft: com.rork.vinetrack.data.model.WorkTaskPlanningDraft) {
+        require(com.rork.vinetrack.data.model.WorkTaskPlanning.canSaveDraft(draft, session.userId, _ui.value.selectedVineyardId, _ui.value.currentRole))
+        planningDrafts.save(draft)
+    }
+
+    suspend fun listExternalResources(vineyardId: String): List<com.rork.vinetrack.data.model.VineyardExternalResource> = externalResources.list(vineyardId)
+
+    suspend fun saveExternalResource(desired: com.rork.vinetrack.data.model.VineyardExternalResource, expected: com.rork.vinetrack.data.model.VineyardExternalResource?): com.rork.vinetrack.data.model.VineyardExternalResource {
+        require(desired.vineyardId == _ui.value.selectedVineyardId && _ui.value.currentRole in listOf("owner", "manager")) { "Only vineyard owners and managers can manage resources" }
+        return externalResources.save(desired, expected)
+    }
     private val manualSprayCoordinator = com.rork.vinetrack.data.ManualSprayEntryCoordinator(
         com.rork.vinetrack.data.ManualSprayEntryRepository(session),
         com.rork.vinetrack.data.ManualSprayOperationStore(app),

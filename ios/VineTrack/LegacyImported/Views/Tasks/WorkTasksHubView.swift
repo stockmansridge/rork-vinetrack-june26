@@ -59,6 +59,8 @@ struct WorkTasksHubView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                Text("Plan and manage your vineyard work throughout the year. Record work missed during a Trip, track labour and machinery hours, and understand the costs of managing your vineyard.")
+                    .font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                 summaryCard
                 toolsSection
                 recentSection
@@ -198,7 +200,7 @@ struct WorkTasksHubView: View {
             Text("Recent Tasks")
                 .font(.headline)
 
-            let recent = Array(visibleTasks.sorted { $0.date > $1.date }.prefix(5))
+            let recent = Array(WorkTaskPlanning.ordered(visibleTasks, now: Date(), timeZone: store.settings.resolvedTimeZone).prefix(5))
 
             if recent.isEmpty {
                 VStack(spacing: 10) {
@@ -295,6 +297,7 @@ struct WorkTaskRow: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
 
+                    WorkTaskAttributionView(task: task)
                     HStack(spacing: 8) {
                         Label(String(format: "%.1fh", task.displayHours(in: store)), systemImage: "clock")
                             .font(.caption2)

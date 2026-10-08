@@ -557,6 +557,17 @@ if (providers.gradleProperty("pruningResourceCasFocusedTests").orNull == "true")
     }
 }
 
+if (providers.gradleProperty("workTaskPlanningFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach { testLogging { events("passed", "failed", "skipped") } }
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/WorkTaskPlanningParityTest.kt", "**/PruningResourceCASTest.kt", "**/WorkTaskMachineCostingTest.kt", "**/PruningActivityEditorFlowTest.kt")
+            })
+        }
+    }
+}
+
 if (providers.gradleProperty("machineCostingFocusedTests").orNull == "true") {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach { testLogging { events("passed", "failed", "skipped") } }
     afterEvaluate {

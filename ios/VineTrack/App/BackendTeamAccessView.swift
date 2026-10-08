@@ -101,6 +101,11 @@ struct BackendTeamAccessView: View {
 
             Section {
                 NavigationLink {
+                    ExternalResourceDirectoryView(vineyardId: vineyardId)
+                } label: {
+                    Label("Crew / External Contractors", systemImage: "person.2")
+                }
+                NavigationLink {
                     RolesPermissionsInfoView()
                 } label: {
                     Label("Roles & Permissions", systemImage: "person.badge.shield.checkmark.fill")

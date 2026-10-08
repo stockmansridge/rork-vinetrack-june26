@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -102,6 +103,7 @@ import com.rork.vinetrack.data.WorkTaskDeepLinkState
 import com.rork.vinetrack.data.model.PieceRateCosting
 import com.rork.vinetrack.data.model.WorkTaskCostRollup
 import com.rork.vinetrack.data.model.WorkTask
+import com.rork.vinetrack.data.model.WorkTaskPlanning
 import com.rork.vinetrack.data.model.WorkTaskEditorLifecycle
 import com.rork.vinetrack.data.model.WorkTaskEditorSaveOperation
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
@@ -351,7 +353,7 @@ private fun WorkTasksHub(
 ) {
     val vine = LocalVineColors.current
     val tasks = remember(state.workTasks) { state.workTasks.filterNot { it.isArchived } }
-    val recent = remember(tasks) { tasks.sortedByDescending { it.startEpochMs ?: 0L }.take(5) }
+    val recent = remember(tasks) { WorkTaskPlanning.ordered(tasks, Instant.now(), state.seasonZone).take(5) }
 
     // Season-to-date total uses the same component roll-up as task detail.
     val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
@@ -393,6 +395,7 @@ private fun WorkTasksHub(
             modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
+            Text("Plan and manage your vineyard work throughout the year. Record work missed during a Trip, track labour and machinery hours, and understand the costs of managing your vineyard.", style = MaterialTheme.typography.bodyMedium, color = vine.textSecondary)
             // Summary
             VineyardCard {
                 Row(verticalAlignment = Alignment.Top) {
@@ -484,6 +487,7 @@ private fun WorkTasksHub(
                     recent.forEach { task ->
                         WorkTaskListRow(
                             task = task,
+                            state = state,
                             hours = taskDisplayHours(task, state.vineyardLabourLines),
                             onClick = { onSelect(task) },
                         )
@@ -539,7 +543,7 @@ private fun taskDisplayHours(task: WorkTask, vineyardLines: List<WorkTaskLabourL
 }
 
 @Composable
-private fun WorkTaskListRow(task: WorkTask, hours: Double, onClick: () -> Unit) {
+private fun WorkTaskListRow(task: WorkTask, state: AppUiState, hours: Double, onClick: () -> Unit) {
     val vine = LocalVineColors.current
     VineyardCard(modifier = Modifier.clickable { onClick() }) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -552,6 +556,7 @@ private fun WorkTaskListRow(task: WorkTask, hours: Double, onClick: () -> Unit) 
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(task.taskType?.takeIf { it.isNotBlank() } ?: "Task", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, maxLines = 1)
                 Text(task.paddockName?.takeIf { it.isNotBlank() } ?: "No block", fontSize = 12.sp, color = vine.textSecondary, maxLines = 1)
+                com.rork.vinetrack.ui.components.WorkTaskAttribution(task, state)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Schedule, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(12.dp))
                     Text(formatHours(hours), fontSize = 12.sp, color = vine.textSecondary)
@@ -570,6 +575,7 @@ private fun WorkTaskListRow(task: WorkTask, hours: Double, onClick: () -> Unit) 
 }
 
 private enum class WTSort(val label: String) {
+    Portal("To Do / E-L / Date"),
     DateDesc("Date (newest)"),
     DateAsc("Date (oldest)"),
     Task("Task Type"),
@@ -586,7 +592,9 @@ private fun WorkTaskLogView(
 ) {
     val vine = LocalVineColors.current
     var search by remember { mutableStateOf("") }
-    var sort by remember { mutableStateOf(WTSort.DateDesc) }
+    var sort by remember { mutableStateOf(WTSort.Portal) }
+    var minimumStage by remember { mutableStateOf<Int?>(null) }
+    var maximumStage by remember { mutableStateOf<Int?>(null) }
     var taskFilter by remember { mutableStateOf<String?>(null) }
     var blockFilter by remember { mutableStateOf<String?>(null) }
 
@@ -596,7 +604,7 @@ private fun WorkTaskLogView(
     }
     val blocks = remember(all) { all.mapNotNull { it.paddockName?.takeIf { b -> b.isNotBlank() } }.distinct().sorted() }
 
-    val filtered = remember(all, search, sort, taskFilter, blockFilter) {
+    val filtered = remember(all, search, sort, taskFilter, blockFilter, minimumStage, maximumStage, state.seasonZone) {
         var items = all
         taskFilter?.let { f -> items = items.filter { it.taskType == f } }
         blockFilter?.let { f -> items = items.filter { it.paddockName == f } }
@@ -609,7 +617,9 @@ private fun WorkTaskLogView(
                     (it.stageLabel ?: "").contains(q, true)
             }
         }
+        items = items.filter { it.matchesStageRange(minimumStage, maximumStage) }
         when (sort) {
+            WTSort.Portal -> WorkTaskPlanning.ordered(items, Instant.now(), state.seasonZone)
             WTSort.DateDesc -> items.sortedByDescending { it.startEpochMs ?: 0L }
             WTSort.DateAsc -> items.sortedBy { it.startEpochMs ?: 0L }
             WTSort.Task -> items.sortedBy { (it.taskType ?: "").lowercase() }
@@ -661,6 +671,17 @@ private fun WorkTaskLogView(
                     }
                 }
             }
+            item(key = "el-range") {
+                val stages = WorkTaskPlanning.supportedStages
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        WTFilterChipMenu(Icons.Filled.Grass, minimumStage?.let { "Minimum E-L $it" } ?: "Minimum E-L", minimumStage != null, listOf("All") + stages.map { "E-L $it" }) { idx -> minimumStage = if (idx == 0) null else stages[idx - 1] }
+                        WTFilterChipMenu(Icons.Filled.Grass, maximumStage?.let { "Maximum E-L $it" } ?: "Maximum E-L", maximumStage != null, listOf("All") + stages.map { "E-L $it" }) { idx -> maximumStage = if (idx == 0) null else stages[idx - 1] }
+                    }
+                    if (minimumStage != null || maximumStage != null) TextButton(onClick = { minimumStage = null; maximumStage = null }) { Text("All E-L stages / reset") }
+                    if ((minimumStage ?: 1) > (maximumStage ?: 43)) Text("Minimum exceeds maximum. No tasks match.", color = MaterialTheme.colorScheme.error)
+                }
+            }
             item(key = "chips") {
                 Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -706,6 +727,7 @@ private fun WorkTaskLogView(
                 items(filtered, key = { it.id }) { task ->
                     WorkTaskListRow(
                         task = task,
+                        state = state,
                         hours = taskDisplayHours(task, state.vineyardLabourLines),
                         onClick = { onSelect(task) },
                     )
@@ -1025,6 +1047,8 @@ private fun WorkTaskDetailView(
 
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionHeader("Details", onLight = true)
+                com.rork.vinetrack.ui.components.WorkTaskAttribution(task, state, vm, showsAssignment = true)
+                Text("Completion attribution writes await the authenticated guarded server contract. Existing controls retain legacy behaviour.", style = MaterialTheme.typography.bodySmall)
                 VineyardCard {
                     DetailRowWT(Icons.Filled.Assignment, "Task type", task.taskType?.takeIf { it.isNotBlank() } ?: "Untitled", VineColors.Indigo)
                     DividerWT(vine.cardBorder)
@@ -1375,6 +1399,7 @@ private fun WorkTaskSheet(
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
+    val editorAuthor = remember(existing?.id) { state.currentUserId }
 
     var taskType by remember { mutableStateOf(existing?.taskType ?: builtInWorkTaskTypes.first()) }
     // Multi-block selection (sql/051). Seed from the task's join rows when present,
@@ -1396,7 +1421,7 @@ private fun WorkTaskSheet(
             ?: Instant.now().atZone(state.seasonZone).toLocalDate())
     }
     var workDateIso by remember(existing?.id) {
-        mutableStateOf(existing?.startDate ?: existing?.date
+        mutableStateOf((if (existing?.isStageScheduled == true) existing.date else existing?.startDate ?: existing?.date)
             ?: workDay.atStartOfDay(state.seasonZone).toInstant().toString())
     }
     var hoursText by remember { mutableStateOf(existing?.durationHours?.takeIf { it > 0 }?.let { trimHours(it) } ?: "") }
@@ -1412,10 +1437,59 @@ private fun WorkTaskSheet(
     var paddockMenu by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
 
+    var assignedTo by remember(existing?.id) { mutableStateOf(existing?.assignedTo) }
+    var externalId by remember(existing?.id) { mutableStateOf(existing?.assignedExternalResourceId) }
+    var assignmentName by remember(existing?.id) { mutableStateOf(existing?.assignedTo?.let { "Vineyard member (${it.take(8)})" } ?: existing?.assignedExternalResourceId?.let { "External resource (${it.take(8)}) · historical selection retained" } ?: "") }
+    var scheduleBasis by remember(existing?.id) { mutableStateOf(existing?.scheduleBasis ?: "date") }
+    var targetStage by remember(existing?.id) { mutableStateOf(existing?.targetELStage) }
+    var endDate by remember(existing?.id) { mutableStateOf(if (existing?.isFinalized == false) existing.endDate else null) }
+    var planningChanged by remember(existing?.id) { mutableStateOf(false) }
+    var draftMessage by remember(existing?.id) { mutableStateOf<String?>(null) }
+    var showAssignment by remember { mutableStateOf(false) }
+    var showQuickAdd by remember { mutableStateOf(false) }
+    var showRangePicker by remember { mutableStateOf(false) }
+
+    LaunchedEffect(existing?.id, state.currentUserId, state.selectedVineyardId) {
+        try {
+            vm.loadWorkTaskPlanningDraft(existing?.id)?.let { draft ->
+                assignedTo = draft.assignedTo; externalId = draft.externalId; assignmentName = draft.assignmentName
+                scheduleBasis = draft.scheduleBasis; targetStage = draft.targetStage; workDateIso = draft.date; endDate = draft.endDate
+                taskType = draft.taskType; selectedBlockIds = draft.blockIds; hoursText = draft.durationText; notes = draft.notes
+                runCatching { Instant.parse(draft.date).atZone(state.seasonZone).toLocalDate() }.getOrNull()?.let { workDay = it }
+                planningChanged = true
+                draftMessage = "Resumed local draft. Server task remains unchanged; synchronisation awaits guarded writes."
+            }
+        } catch (_: Exception) { draftMessage = "Stored draft could not be read. It has not been overwritten." }
+    }
+
+    fun savePlanningDraft() {
+        val author = state.currentUserId ?: return
+        val vineyard = state.selectedVineyardId ?: return
+        try {
+            require(author == editorAuthor && (existing == null || existing.vineyardId == vineyard))
+            vm.saveWorkTaskPlanningDraft(com.rork.vinetrack.data.model.WorkTaskPlanningDraft(existing?.id, vineyard, author, assignedTo, externalId, assignmentName, scheduleBasis, targetStage, workDateIso, endDate, taskType, selectedBlockIds, hoursText, notes))
+            draftMessage = "Local draft saved on this device. Reopen this form to resume. Not queued or synchronised."
+        } catch (_: Exception) { draftMessage = "Draft not saved. Check permission, assignment and supported stage; keep this form open and retry." }
+    }
+
+    if (showAssignment) state.selectedVineyardId?.let { vineyard ->
+        com.rork.vinetrack.ui.components.PruningResourcePicker(vineyard, state.members, assignmentName, vm::listExternalResources,
+            onSelect = { external, user, name -> externalId = external; assignedTo = user; assignmentName = name; planningChanged = true },
+            onDismiss = { showAssignment = false }, allowsManualName = false,
+            onQuickAdd = if (state.currentRole in listOf("owner", "manager")) ({ showQuickAdd = true }) else null)
+    }
+    if (showQuickAdd) state.selectedVineyardId?.let { vineyard ->
+        com.rork.vinetrack.ui.components.ExternalResourceEditor(vm, vineyard, onSaved = { resource ->
+            if (resource.isActive) { externalId = resource.id; assignedTo = null; assignmentName = resource.name; planningChanged = true; showAssignment = false }
+            showQuickAdd = false
+        }, onDismiss = { showQuickAdd = false })
+    }
+
     fun save() {
+        if (planningChanged) { savePlanningDraft(); return }
         if (saving || taskType.isBlank()) return
         saving = true
-        val iso = workDateIso
+        val iso = existing?.date ?: workDateIso
         val hours = hoursText.replace(',', '.').toDoubleOrNull() ?: 0.0
         val blockIds = selectedBlockIds.toList()
         val currentId = lifecycle.persistedTaskId
@@ -1545,7 +1619,14 @@ private fun WorkTaskSheet(
                 }
             }
 
-            // Date
+            OutlinedButton(onClick = { showAssignment = true }, modifier = Modifier.fillMaxWidth()) { Text("Assigned to: ${assignmentName.ifBlank { "Unassigned" }}") }
+            Text("Assignments do not create labour charges.", style = MaterialTheme.typography.bodySmall)
+            WTFilterChipMenu(Icons.Filled.Grass, if (scheduleBasis == "el_stage") "E-L Growth Stage" else "Work Date / Range", true, listOf("Work Date / Range", "E-L Growth Stage")) { idx -> scheduleBasis = if (idx == 0) "date" else "el_stage"; planningChanged = true }
+            if (scheduleBasis == "el_stage") {
+                val stages = WorkTaskPlanning.supportedStages
+                WTFilterChipMenu(Icons.Filled.Grass, targetStage?.let { com.rork.vinetrack.data.model.GrowthStage.byCode("EL$it")?.displayName ?: "E-L $it" } ?: "Select stage", true, stages.map { com.rork.vinetrack.data.model.GrowthStage.byCode("EL$it")?.displayName ?: "E-L $it" }) { idx -> targetStage = stages[idx]; planningChanged = true }
+                Text("No planned date. The legacy compatibility date is not a schedule.", style = MaterialTheme.typography.bodySmall)
+            } else {
             OutlinedButton(
                 onClick = { showDatePicker = true },
                 modifier = Modifier.fillMaxWidth(),
@@ -1553,6 +1634,13 @@ private fun WorkTaskSheet(
                 Icon(Icons.Filled.Schedule, contentDescription = null, modifier = Modifier.size(18.dp))
                 Text("  " + (formatTaskDate(workDay.atStartOfDay(state.seasonZone).toInstant().toEpochMilli()) ?: "Pick date"))
             }
+
+            OutlinedButton(onClick = { showRangePicker = true }, modifier = Modifier.fillMaxWidth()) { Text(endDate?.let { "Range through ${WorkTaskCompletion.localDate(it, state.seasonZone)}" } ?: "Add date range") }
+            if (endDate != null) TextButton(onClick = { endDate = null; planningChanged = true }) { Text("Clear range") }
+            }
+            Text("Assignment and scheduling changes are local drafts until guarded server writes are deployed. They will not synchronise yet.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { savePlanningDraft() }) { Text("Save local planning draft") }
+            draftMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
             OutlinedTextField(
                 value = hoursText,
@@ -1685,6 +1773,15 @@ private fun WorkTaskSheet(
         )
     }
 
+    if (showRangePicker) {
+        val rangeState = rememberDatePickerState(initialSelectedDateMillis = workDay.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())
+        DatePickerDialog(onDismissRequest = { showRangePicker = false }, confirmButton = {
+            TextButton(onClick = {
+                rangeState.selectedDateMillis?.let { endDate = WorkTaskCompletion.workDateFromPicker(it, state.seasonZone).toString(); planningChanged = true }
+                showRangePicker = false
+            }) { Text("OK") }
+        }, dismissButton = { TextButton(onClick = { showRangePicker = false }) { Text("Cancel") } }) { DatePicker(state = rangeState) }
+    }
     if (showDatePicker) {
         val dpState = rememberDatePickerState(
             initialSelectedDateMillis = workDay.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
@@ -1697,6 +1794,7 @@ private fun WorkTaskSheet(
                         val instant = WorkTaskCompletion.workDateFromPicker(it, state.seasonZone)
                         workDay = instant.atZone(state.seasonZone).toLocalDate()
                         workDateIso = instant.toString()
+                        planningChanged = true
                     }
                     showDatePicker = false
                 }) { Text("OK") }

@@ -5,6 +5,9 @@ struct PruningResourcePickerView: View {
     let vineyardId: UUID
     let selectedName: String
     let onSelect: (UUID?, UUID?, String) -> Void
+    var allowsManualName: Bool = true
+    @Environment(NewBackendAuthService.self) private var auth
+    @State private var showQuickAdd: Bool = false
     @Environment(\.dismiss) private var dismiss
     @State private var search: String = ""
     @State private var members: [BackendVineyardMember] = []
@@ -26,7 +29,7 @@ struct PruningResourcePickerView: View {
                 }
                 Section {
                     Button("Unassigned") { choose(nil, nil, "") }
-                    Button("Other / manual name") { choose(nil, nil, selectedName) }
+                    if allowsManualName { Button("Other / manual name") { choose(nil, nil, selectedName) } }
                 }
                 Section("Internal resources") {
                     ForEach(members.filter { $0.vineyardId == vineyardId && matches($0.fullName ?? $0.displayName ?? $0.email ?? "Vineyard member") }, id: \.userId) { member in
@@ -35,7 +38,7 @@ struct PruningResourcePickerView: View {
                     }
                 }
                 Section("Crew / External contractors") {
-                    ForEach(resources.filter { $0.vineyardId == vineyardId && $0.isActive && $0.deletedAt == nil && matches($0.name) }) { resource in
+                    ForEach(resources.filter { WorkTaskPlanning.canSelect($0, vineyard: vineyardId) && matches($0.name) }) { resource in
                         Button { choose(resource.id, nil, resource.name) } label: {
                             VStack(alignment: .leading) {
                                 Text(resource.name)
@@ -51,7 +54,17 @@ struct PruningResourcePickerView: View {
             }
             .searchable(text: $search, prompt: "Search people, crews and contractors")
             .navigationTitle("Assigned to")
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                if members.contains(where: { $0.vineyardId == vineyardId && $0.userId == auth.userId && ($0.role == .owner || $0.role == .manager) }) {
+                    ToolbarItem(placement: .primaryAction) { Button("Add resource", systemImage: "plus") { showQuickAdd = true } }
+                }
+            }
+            .sheet(isPresented: $showQuickAdd) {
+                ExternalResourceEditorView(vineyardId: vineyardId) { resource in
+                    if resource.isActive { choose(resource.id, nil, resource.name) }
+                }
+            }
             .task {
                 do {
                     async let team = SupabaseTeamRepository().listMembers(vineyardId: vineyardId)

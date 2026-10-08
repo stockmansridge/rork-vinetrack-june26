@@ -171,8 +171,10 @@ fun PruningActivityEditorScreen(
     onSetTaskLink: ((String, String?) -> Unit)? = null,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    quickAddResource: (@Composable (onSelected: (com.rork.vinetrack.data.model.VineyardExternalResource) -> Unit, onClose: () -> Unit) -> Unit)? = null,
 ) {
     val vine = LocalVineColors.current
+    var showQuickAdd by remember { mutableStateOf(false) }
     var draft by remember(initialDraft.id) { mutableStateOf(initialDraft) }
     var showBlockPicker by rememberSaveable { mutableStateOf(false) }
     var showResourcePicker by rememberSaveable { mutableStateOf(false) }
@@ -185,8 +187,16 @@ fun PruningActivityEditorScreen(
                     draft = draft.copy(worker = name, resourceLink = com.rork.vinetrack.data.model.PruningResourceLink(external, person, name, currentUserId))
                 }
             }, onDismiss = { showResourcePicker = false },
+            onQuickAdd = if (quickAddResource != null) ({ showQuickAdd = true }) else null,
         )
     }
+    if (showQuickAdd) quickAddResource?.invoke({ resource ->
+        if (resource.isActive && resource.vineyardId == draft.vineyardId && currentUserId != null) {
+            draft = draft.copy(worker = resource.name, resourceLink = com.rork.vinetrack.data.model.PruningResourceLink(resource.id, null, resource.name, currentUserId))
+            showResourcePicker = false
+        }
+        showQuickAdd = false
+    }, { showQuickAdd = false })
     var showDatePicker by rememberSaveable { mutableStateOf(false) }
     var showDiscardPrompt by rememberSaveable { mutableStateOf(false) }
     var showReversePrompt by rememberSaveable { mutableStateOf(false) }

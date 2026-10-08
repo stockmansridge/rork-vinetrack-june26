@@ -336,6 +336,9 @@ fun PruningTrackerScreen(
             currentUserId = state.currentUserId,
             resourceMembers = state.members,
             loadExternalResources = vm::listPruningExternalResources,
+            quickAddResource = if (state.currentRole in listOf("owner", "manager")) { selected, close ->
+                com.rork.vinetrack.ui.components.ExternalResourceEditor(vm, vineyardId, onSaved = selected, onDismiss = close)
+            } else null,
             currentResourceLink = state.pruningResourceLinks[openDraft.id],
             onRetryResource = vm::retryPruningResourceSync,
             timingPreflight = vm::preparePruningActivity,

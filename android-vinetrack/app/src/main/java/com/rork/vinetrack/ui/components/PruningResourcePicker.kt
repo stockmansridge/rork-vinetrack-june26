@@ -34,6 +34,8 @@ fun PruningResourcePicker(
     onSelect: (String?, String?, String) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    allowsManualName: Boolean = true,
+    onQuickAdd: (() -> Unit)? = null,
 ) {
     var search by remember { mutableStateOf("") }
     var resources by remember(vineyardId) { mutableStateOf<List<VineyardExternalResource>>(emptyList()) }
@@ -55,14 +57,15 @@ fun PruningResourcePicker(
         LazyColumn(Modifier.padding(horizontal = 16.dp)) {
             item {
                 TextButton(onClick = { choose(null, null, "") }) { Text("Unassigned") }
-                TextButton(onClick = { choose(null, null, currentName) }) { Text("Other / manual name") }
+                if (allowsManualName) TextButton(onClick = { choose(null, null, currentName) }) { Text("Other / manual name") }
+                onQuickAdd?.let { add -> TextButton(onClick = add) { Text("Add Crew / External Contractor") } }
                 Text("Internal resources", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 12.dp))
             }
             items(members.filter { it.vineyardId == vineyardId && it.name.contains(search, ignoreCase = true) }, key = { "member-${it.userId}" }) { member ->
                 TextButton(onClick = { choose(null, member.userId, member.name) }, modifier = Modifier.fillMaxWidth()) { Text(member.name) }
             }
             item { Text("Crew / External contractors", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 12.dp)) }
-            items(resources.filter { it.vineyardId == vineyardId && it.isActive && it.deletedAt == null && it.name.contains(search, ignoreCase = true) }, key = { "resource-${it.id}" }) { resource ->
+            items(resources.filter { com.rork.vinetrack.data.model.WorkTaskPlanning.canSelect(it, vineyardId) && it.name.contains(search, ignoreCase = true) }, key = { "resource-${it.id}" }) { resource ->
                 TextButton(onClick = { choose(resource.id, null, resource.name) }, modifier = Modifier.fillMaxWidth()) { Text(resource.name + if (resource.kind == "crew") " · Crew" else " · Contractor") }
             }
             item {

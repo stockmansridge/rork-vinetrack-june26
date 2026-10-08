@@ -142,6 +142,10 @@ fun TeamAccessScreen(
                 }
             }
 
+            state.selectedVineyardId?.let { vineyard ->
+                com.rork.vinetrack.ui.components.ExternalResourceDirectory(vm, vineyard, canManage)
+            }
+
             // Pending invitations
             if (state.pendingInvitations.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

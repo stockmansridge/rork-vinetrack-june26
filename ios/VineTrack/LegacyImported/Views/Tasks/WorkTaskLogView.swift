@@ -13,6 +13,7 @@ struct WorkTaskLogView: View {
     @Environment(\.accessControl) private var accessControl
 
     enum SortOption: String, CaseIterable, Identifiable {
+        case portal = "To Do / E-L / Date"
         case dateDesc = "Date (newest)"
         case dateAsc = "Date (oldest)"
         case task = "Task Type"
@@ -23,7 +24,9 @@ struct WorkTaskLogView: View {
     }
 
     @State private var searchText: String = ""
-    @State private var sort: SortOption = .dateDesc
+    @State private var sort: SortOption = .portal
+    @State private var minimumStage: Int?
+    @State private var maximumStage: Int?
     @State private var taskFilter: String = ""
     @State private var blockFilter: String = ""
     @State private var selectedTask: WorkTask?
@@ -67,7 +70,10 @@ struct WorkTaskLogView: View {
                 ($0.stageLabel?.localizedStandardContains(searchText) ?? false)
             }
         }
+        items = items.filter { $0.matchesStageRange(minimum: minimumStage, maximum: maximumStage) }
         switch sort {
+        case .portal:
+            items = WorkTaskPlanning.ordered(items, now: Date(), timeZone: store.settings.resolvedTimeZone)
         case .dateDesc:
             items.sort { $0.date > $1.date }
         case .dateAsc:
@@ -193,15 +199,24 @@ struct WorkTaskLogView: View {
                 Text("Sort & Filter")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                if !taskFilter.isEmpty || !blockFilter.isEmpty {
+                if !taskFilter.isEmpty || !blockFilter.isEmpty || minimumStage != nil || maximumStage != nil {
                     Button("Clear") {
                         taskFilter = ""
                         blockFilter = ""
+                        minimumStage = nil
+                        maximumStage = nil
                     }
                     .font(.caption)
                 }
             }
 
+            HStack {
+                stageRangeMenu("Minimum E-L", selection: $minimumStage)
+                stageRangeMenu("Maximum E-L", selection: $maximumStage)
+            }
+            if let minimumStage, let maximumStage, minimumStage > maximumStage {
+                Text("Minimum exceeds maximum. No tasks match.").font(.caption).foregroundStyle(.orange)
+            }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     Menu {
@@ -242,6 +257,17 @@ struct WorkTaskLogView: View {
                 }
             }
             .contentMargins(.horizontal, 0)
+        }
+    }
+
+    private func stageRangeMenu(_ title: String, selection: Binding<Int?>) -> some View {
+        Menu {
+            Button("All") { selection.wrappedValue = nil }
+            ForEach(WorkTaskPlanning.supportedStages, id: \.self) { stage in
+                Button("E-L \(stage)") { selection.wrappedValue = stage }
+            }
+        } label: {
+            chipLabel(icon: "leaf", text: selection.wrappedValue.map { "\(title): \($0)" } ?? title, active: selection.wrappedValue != nil)
         }
     }
 
@@ -402,6 +428,7 @@ private struct WorkTaskLogRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
+                WorkTaskAttributionView(task: task)
                 HStack(spacing: 8) {
                     Label(String(format: "%.1fh", task.displayHours(in: store)), systemImage: "clock")
                         .font(.caption2)

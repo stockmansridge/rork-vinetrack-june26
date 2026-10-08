@@ -35,6 +35,18 @@ struct AddEditWorkTaskView: View {
     @State private var childRoute: WorkTaskChildRoute?
     @State private var showsSavedFeedback: Bool = false
     @State private var showCompletion: Bool = false
+    @State private var assignedTo: UUID?
+    @State private var assignedExternalID: UUID?
+    @State private var assignmentName: String = ""
+    @State private var scheduleBasis: String = "date"
+    @State private var targetStage: Int?
+    @State private var rangeEnd: Date = Date()
+    @State private var usesRange: Bool = false
+    @State private var showAssignment: Bool = false
+    @State private var planningChanged: Bool = false
+    @State private var loadedPlanning: Bool = false
+    @State private var editorAuthor: UUID?
+    @State private var draftMessage: String?
 
     init(existingTask: WorkTask? = nil) {
         self.existingTask = existingTask
@@ -368,11 +380,26 @@ struct AddEditWorkTaskView: View {
 
     @ViewBuilder
     private var scheduleField: some View {
-        if let stage = currentTask?.stageLabel {
-            LabeledContent("Target stage", value: stage)
+        Picker("Schedule by", selection: $scheduleBasis) {
+            Text("Work Date / Range").tag("date")
+            Text("E-L Growth Stage").tag("el_stage")
+        }.onChange(of: scheduleBasis) { _, _ in planningChanged = true }
+        if scheduleBasis == "el_stage" {
+            Picker("Target E-L stage", selection: $targetStage) {
+                Text("Select stage").tag(nil as Int?)
+                ForEach(WorkTaskPlanning.supportedStages, id: \.self) { stage in
+                    Text(GrowthStage.allStages.first { $0.code == "EL\(stage)" }?.displayName ?? "E-L \(stage)").tag(Optional(stage))
+                }
+            }.onChange(of: targetStage) { _, _ in planningChanged = true }
+            Text("No planned date. The historical compatibility date is preserved but is not a schedule.").font(.footnote).foregroundStyle(.secondary)
         } else {
-            DatePicker("Work Date", selection: $date, displayedComponents: .date)
-                .environment(\.timeZone, tz)
+            DatePicker("Work Date", selection: $date, displayedComponents: .date).environment(\.timeZone, tz)
+                .onChange(of: date) { _, _ in if loadedPlanning { planningChanged = true } }
+            Toggle("Date range", isOn: $usesRange).onChange(of: usesRange) { _, _ in planningChanged = true }
+            if usesRange {
+                DatePicker("Through", selection: $rangeEnd, in: date..., displayedComponents: .date).environment(\.timeZone, tz)
+                    .onChange(of: rangeEnd) { _, _ in planningChanged = true }
+            }
         }
     }
 
@@ -380,6 +407,8 @@ struct AddEditWorkTaskView: View {
     private var completionSection: some View {
         if let task = currentTask {
             Section("Completion") {
+                WorkTaskAttributionView(task: task, showsAssignment: true)
+                Text("Completion attribution writes await the authenticated guarded server contract. Existing completion controls retain their legacy behaviour.").font(.footnote).foregroundStyle(.secondary)
                 if task.isFinalized {
                     if let completed = WorkTaskCompletion.displayedDate(task) {
                         LabeledContent("Completed", value: completionDateLabel(completed))
@@ -403,6 +432,13 @@ struct AddEditWorkTaskView: View {
                 completionSection
                 Section("Task Details") {
                     scheduleField
+                    Button { showAssignment = true } label: {
+                        LabeledContent("Assigned to", value: assignmentName.isEmpty ? "Unassigned" : assignmentName)
+                    }
+                    Text("Assignments do not create labour charges.").font(.footnote).foregroundStyle(.secondary)
+                    Text("New assignment and scheduling changes are local drafts until guarded server writes are deployed. They will not synchronise yet.").font(.footnote).foregroundStyle(.orange)
+                    Button("Save local planning draft") { savePlanningDraft() }
+                    if let draftMessage { Text(draftMessage).font(.footnote).foregroundStyle(.orange) }
 
                     Menu {
                         ForEach(mergedTaskTypeNames, id: \.self) { t in
@@ -647,7 +683,20 @@ struct AddEditWorkTaskView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             }
-            .onAppear(perform: loadIfEditing)
+            .sheet(isPresented: $showAssignment) {
+                if let vineyardID = store.selectedVineyardId {
+                    PruningResourcePickerView(vineyardId: vineyardID, selectedName: assignmentName, onSelect: { external, user, name in
+                        assignedTo = user; assignedExternalID = external; assignmentName = name; planningChanged = true
+                    }, allowsManualName: false)
+                }
+            }
+            .onAppear {
+                guard !loadedPlanning else { return }
+                editorAuthor = auth.userId
+                loadIfEditing()
+                loadPlanningDraft()
+                loadedPlanning = true
+            }
             .sheet(isPresented: $showCompletion) {
                 if let task = currentTask {
                     WorkTaskCompletionSheet(task: task, timeZone: tz) { selected in
@@ -1080,7 +1129,7 @@ struct AddEditWorkTaskView: View {
             matchedCost=\(matched.reduce(0.0) { $0 + $1.totalCost })
             """)
             #endif
-            date = t.date
+            date = t.isStageScheduled ? t.date : (t.startDate ?? t.date)
             taskType = t.taskType
             if !mergedTaskTypeNames.contains(t.taskType) && !t.taskType.isEmpty {
                 showCustomTaskField = true
@@ -1103,6 +1152,47 @@ struct AddEditWorkTaskView: View {
         }
     }
 
+    private var planningDraft: WorkTaskPlanningDraft? {
+        guard let vineyard = store.selectedVineyardId, let author = auth.userId else { return nil }
+        return WorkTaskPlanningDraft(taskID: existingTask?.id, vineyardID: vineyard, authorID: author, assignedTo: assignedTo, externalID: assignedExternalID, assignmentName: assignmentName, scheduleBasis: scheduleBasis, targetStage: targetStage, date: date, endDate: usesRange ? rangeEnd : nil, taskType: taskType, blockIDs: selectedBlockIds, durationText: durationText, notes: notes, resources: resources)
+    }
+
+    private func savePlanningDraft() {
+        guard let draft = planningDraft, editorAuthor == auth.userId, (existingTask == nil || existingTask?.vineyardId == store.selectedVineyardId), WorkTaskPlanning.canSaveDraft(draft, signedInUser: auth.userId, selectedVineyard: store.selectedVineyardId, membershipRole: backendAccessControl.currentRole?.rawValue) else {
+            draftMessage = "Sign in as a vineyard member and select a supported stage before saving a local draft."
+            return
+        }
+        do {
+            try PersistenceStore.shared.saveOrThrow(draft, key: draft.persistenceKey)
+            draftMessage = "Local draft saved on this device. Reopen this form to resume. Not queued or synchronised."
+        } catch { draftMessage = "Draft could not be saved to this device. Keep this form open and retry." }
+    }
+
+    private func loadPlanningDraft() {
+        assignedTo = existingTask?.assignedTo
+        assignedExternalID = existingTask?.assignedExternalResourceId
+        assignmentName = assignedTo.map { "Vineyard member (\($0.uuidString.prefix(8)))" } ?? assignedExternalID.map { "External resource (\($0.uuidString.prefix(8))) · historical selection retained" } ?? ""
+        scheduleBasis = existingTask?.scheduleBasis ?? "date"
+        targetStage = existingTask?.targetELStage
+        usesRange = existingTask?.endDate != nil && existingTask?.isFinalized == false
+        rangeEnd = existingTask?.endDate ?? date
+        guard let seed = planningDraft else { return }
+        let outcome: PersistenceStore.LoadOutcome<WorkTaskPlanningDraft> = PersistenceStore.shared.loadOutcome(key: seed.persistenceKey)
+        switch outcome {
+        case .decoded(let draft):
+            guard draft.authorID == seed.authorID, draft.vineyardID == seed.vineyardID, draft.taskID == seed.taskID else { return }
+            assignedTo = draft.assignedTo; assignedExternalID = draft.externalID; assignmentName = draft.assignmentName
+            scheduleBasis = draft.scheduleBasis; targetStage = draft.targetStage; date = draft.date
+            usesRange = draft.endDate != nil; rangeEnd = draft.endDate ?? draft.date
+            taskType = draft.taskType; selectedBlockIds = draft.blockIDs; durationText = draft.durationText; notes = draft.notes; resources = draft.resources
+            if !mergedTaskTypeNames.contains(taskType) { showCustomTaskField = true; customTaskType = taskType }
+            planningChanged = true
+            draftMessage = "Resumed local draft. Server task remains unchanged; synchronisation awaits guarded writes."
+        case .failed: draftMessage = "Stored draft could not be read. It has not been overwritten."
+        case .missing: break
+        }
+    }
+
     private func completionDateLabel(_ value: Date) -> String {
         let formatter = DateFormatter()
         formatter.timeZone = tz
@@ -1111,6 +1201,7 @@ struct AddEditWorkTaskView: View {
     }
 
     private func saveTask() {
+        if planningChanged { savePlanningDraft(); return }
         let trimmed = taskType.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
 
@@ -1137,7 +1228,7 @@ struct AddEditWorkTaskView: View {
         let wasPersisted = hasPersistedTask
         var task = currentTask ?? WorkTask()
         task.vineyardId = store.selectedVineyardId ?? task.vineyardId
-        if !task.isStageScheduled { task.date = date }
+        if !wasPersisted && !task.isStageScheduled { task.date = date }
         task.taskType = trimmed
         task.paddockId = primaryBlockId
         task.paddockName = blockNames
