@@ -78,6 +78,25 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
     /// each task has 0..1 originating activity. Optional so every task cached
     /// before the repair decodes unchanged.
     var pruningActivityId: UUID?
+    var assignedTo: UUID?
+    var assignedExternalResourceId: UUID?
+    var scheduleBasis: String?
+    var targetELStage: Int?
+    var completedBy: UUID?
+    var completedAt: Date?
+
+    var isStageScheduled: Bool { scheduleBasis == "el_stage" }
+    var plannedDate: Date? { isStageScheduled ? nil : (startDate ?? date) }
+    var stageLabel: String? {
+        guard isStageScheduled else { return nil }
+        guard let targetELStage else { return "E-L stage unavailable" }
+        return GrowthStage.allStages.first { $0.code == "EL\(targetELStage)" }?.displayName ?? "E-L \(targetELStage) (unsupported)"
+    }
+    func matchesStageRange(minimum: Int?, maximum: Int?) -> Bool {
+        guard minimum != nil || maximum != nil else { return true }
+        guard isStageScheduled, let stage = targetELStage else { return false }
+        return stage >= (minimum ?? 1) && stage <= (maximum ?? 43)
+    }
 
     init(
         id: UUID = UUID(),
@@ -104,7 +123,13 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         costingMethodRaw: String? = nil,
         pieceRatePerVine: Double? = nil,
         pieceVineCount: Int? = nil,
-        pruningActivityId: UUID? = nil
+        pruningActivityId: UUID? = nil,
+        assignedTo: UUID? = nil,
+        assignedExternalResourceId: UUID? = nil,
+        scheduleBasis: String? = nil,
+        targetELStage: Int? = nil,
+        completedBy: UUID? = nil,
+        completedAt: Date? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -131,6 +156,12 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         self.pieceRatePerVine = pieceRatePerVine
         self.pieceVineCount = pieceVineCount
         self.pruningActivityId = pruningActivityId
+        self.assignedTo = assignedTo
+        self.assignedExternalResourceId = assignedExternalResourceId
+        self.scheduleBasis = scheduleBasis
+        self.targetELStage = targetELStage
+        self.completedBy = completedBy
+        self.completedAt = completedAt
     }
 
     /// How this task's labour cost is calculated (sql/188). Anything missing or
@@ -170,7 +201,7 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         case isArchived, archivedAt, archivedBy, isFinalized, finalizedAt, finalizedBy
         case startDate, endDate, areaHa, taskDescription, status
         case costingMethodRaw, pieceRatePerVine, pieceVineCount
-        case pruningActivityId
+        case pruningActivityId, assignedTo, assignedExternalResourceId, scheduleBasis, targetELStage, completedBy, completedAt
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -202,6 +233,12 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         pieceRatePerVine = try c.decodeIfPresent(Double.self, forKey: .pieceRatePerVine)
         pieceVineCount = try c.decodeIfPresent(Int.self, forKey: .pieceVineCount)
         pruningActivityId = try c.decodeIfPresent(UUID.self, forKey: .pruningActivityId)
+        assignedTo = try c.decodeIfPresent(UUID.self, forKey: .assignedTo)
+        assignedExternalResourceId = try c.decodeIfPresent(UUID.self, forKey: .assignedExternalResourceId)
+        scheduleBasis = try c.decodeIfPresent(String.self, forKey: .scheduleBasis)
+        targetELStage = try c.decodeIfPresent(Int.self, forKey: .targetELStage)
+        completedBy = try c.decodeIfPresent(UUID.self, forKey: .completedBy)
+        completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
     }
 }
 

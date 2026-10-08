@@ -40,6 +40,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -141,6 +142,11 @@ fun PruningActivityEditorScreen(
     /** Supervisors and above — may agree a piece rate in the field. */
     canEnterPricing: Boolean = false,
     initialDraft: PruningActivityDraft,
+    currentUserId: String? = null,
+    resourceMembers: List<com.rork.vinetrack.data.model.VineyardMember> = emptyList(),
+    loadExternalResources: suspend (String) -> List<com.rork.vinetrack.data.model.VineyardExternalResource> = { emptyList() },
+    currentResourceLink: com.rork.vinetrack.data.model.PruningResourceLink? = null,
+    onRetryResource: () -> Unit = {},
     isEditing: Boolean,
     /** Set when the last server answer refused quarters in this activity. */
     reconciliation: PruningActivityReconciliation? = null,
@@ -169,6 +175,18 @@ fun PruningActivityEditorScreen(
     val vine = LocalVineColors.current
     var draft by remember(initialDraft.id) { mutableStateOf(initialDraft) }
     var showBlockPicker by rememberSaveable { mutableStateOf(false) }
+    var showResourcePicker by rememberSaveable { mutableStateOf(false) }
+    if (showResourcePicker) {
+        com.rork.vinetrack.ui.components.PruningResourcePicker(
+            vineyardId = draft.vineyardId, members = resourceMembers, currentName = draft.worker,
+            loadExternal = loadExternalResources,
+            onSelect = { external, person, name ->
+                if (currentUserId != null) {
+                    draft = draft.copy(worker = name, resourceLink = com.rork.vinetrack.data.model.PruningResourceLink(external, person, name, currentUserId))
+                }
+            }, onDismiss = { showResourcePicker = false },
+        )
+    }
     var showDatePicker by rememberSaveable { mutableStateOf(false) }
     var showDiscardPrompt by rememberSaveable { mutableStateOf(false) }
     var showReversePrompt by rememberSaveable { mutableStateOf(false) }
@@ -284,6 +302,10 @@ fun PruningActivityEditorScreen(
                     canViewCosting = canViewCosting,
                     onDraftChange = { draft = it },
                     onPickDate = { showDatePicker = true },
+                    onPickResource = { showResourcePicker = true },
+                    currentUserId = currentUserId,
+                    resourceLink = currentResourceLink ?: draft.resourceLink,
+                    onRetryResource = onRetryResource,
                 )
             }
 
@@ -650,6 +672,10 @@ private fun PruningActivityFieldsCard(
     canViewCosting: Boolean,
     onDraftChange: (PruningActivityDraft) -> Unit,
     onPickDate: () -> Unit,
+    onPickResource: () -> Unit,
+    currentUserId: String?,
+    resourceLink: com.rork.vinetrack.data.model.PruningResourceLink?,
+    onRetryResource: () -> Unit,
 ) {
     val vine = LocalVineColors.current
     var methodOpen by remember { mutableStateOf(false) }
@@ -682,13 +708,28 @@ private fun PruningActivityFieldsCard(
                 )
             }
 
-            OutlinedTextField(
-                value = draft.worker,
-                onValueChange = { onDraftChange(draft.copy(worker = it)) },
-                label = { Text("Worker or crew") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            OutlinedButton(onClick = onPickResource, enabled = currentUserId != null && resourceLink?.conflict == null, modifier = Modifier.fillMaxWidth()) {
+                Text("Assigned to: ${draft.worker.ifBlank { "Unassigned / Other" }}")
+            }
+            if (draft.resourceLink?.externalResourceId == null && draft.resourceLink?.workerUserId == null && draft.resourceSnapshot?.externalResourceId == null && draft.resourceSnapshot?.workerUserId == null) {
+                OutlinedTextField(
+                    value = draft.worker,
+                    onValueChange = { name ->
+                        val link = draft.resourceLink
+                        onDraftChange(draft.copy(worker = name, resourceLink = if (link != null && currentUserId != null) com.rork.vinetrack.data.model.PruningResourceLink(null, null, name, currentUserId) else link))
+                    },
+                    label = { Text("Other / manual name") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            resourceLink?.message?.let { message ->
+                Text(message, color = MaterialTheme.colorScheme.error)
+                if (resourceLink.conflict != null) {
+                    Text("Pending: ${resourceLink.name.ifBlank { "Unassigned / Other" }}")
+                    Text("Server resource: ${resourceLink.conflict.externalResourceId ?: resourceLink.conflict.workerUserId ?: "Unassigned / Other"}")
+                } else {
+                    TextButton(onClick = onRetryResource) { Text("Retry resource sync") }
+                }
+            }
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Method", fontSize = 13.sp, color = vine.textSecondary, modifier = Modifier.width(96.dp))

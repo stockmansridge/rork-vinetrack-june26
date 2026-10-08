@@ -366,32 +366,43 @@ struct AddEditWorkTaskView: View {
         }
     }
 
+    @ViewBuilder
+    private var scheduleField: some View {
+        if let stage = currentTask?.stageLabel {
+            LabeledContent("Target stage", value: stage)
+        } else {
+            DatePicker("Work Date", selection: $date, displayedComponents: .date)
+                .environment(\.timeZone, tz)
+        }
+    }
+
+    @ViewBuilder
+    private var completionSection: some View {
+        if let task = currentTask {
+            Section("Completion") {
+                if task.isFinalized {
+                    if let completed = WorkTaskCompletion.displayedDate(task) {
+                        LabeledContent("Completed", value: completionDateLabel(completed))
+                    } else { Text("Completed") }
+                    Button("Edit Completed Date") { showCompletion = true }
+                    Button("Reopen") {
+                        workTaskSync.saveCompletion(WorkTaskCompletion.reopen(task), dateOnly: false)
+                        Task { await workTaskSync.syncForSelectedVineyard() }
+                    }
+                } else {
+                    LabeledContent("Completion", value: "To do")
+                    Button("Complete") { showCompletion = true }.disabled(auth.userId == nil)
+                }
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
-                if let task = currentTask {
-                    Section("Completion") {
-                        if task.isFinalized {
-                            if let completed = WorkTaskCompletion.displayedDate(task) {
-                                LabeledContent("Completed", value: completionDateLabel(completed))
-                            } else {
-                                Text("Completed")
-                            }
-                            Button("Edit Completed Date") { showCompletion = true }
-                            Button("Reopen") {
-                                workTaskSync.saveCompletion(WorkTaskCompletion.reopen(task), dateOnly: false)
-                                Task { await workTaskSync.syncForSelectedVineyard() }
-                            }
-                        } else {
-                            LabeledContent("Completion", value: "To do")
-                            Button("Complete") { showCompletion = true }
-                                .disabled(auth.userId == nil)
-                        }
-                    }
-                }
+                completionSection
                 Section("Task Details") {
-                    DatePicker("Work Date", selection: $date, displayedComponents: .date)
-                        .environment(\.timeZone, tz)
+                    scheduleField
 
                     Menu {
                         ForEach(mergedTaskTypeNames, id: \.self) { t in
@@ -1126,7 +1137,7 @@ struct AddEditWorkTaskView: View {
         let wasPersisted = hasPersistedTask
         var task = currentTask ?? WorkTask()
         task.vineyardId = store.selectedVineyardId ?? task.vineyardId
-        task.date = date
+        if !task.isStageScheduled { task.date = date }
         task.taskType = trimmed
         task.paddockId = primaryBlockId
         task.paddockName = blockNames

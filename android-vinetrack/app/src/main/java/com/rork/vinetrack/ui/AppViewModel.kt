@@ -843,6 +843,7 @@ data class AppUiState(
      * never presented as fully successful.
      */
     val pruningActivityReconciliation: com.rork.vinetrack.data.model.PruningActivityReconciliation? = null,
+    val pruningResourceLinks: Map<String, com.rork.vinetrack.data.model.PruningResourceLink> = emptyMap(),
     /**
      * Read-cache status for launch-critical data (Stage 6A). Informational only:
      * reflects what the local [DomainCacheRepository] has written through on
@@ -2490,6 +2491,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         // Every server answer to an activity write reaches the UI, including the
         // quarters the server refused because another record already owns them.
+        pruningSyncCoordinator.onResourceStateChanged = { id, link ->
+            _ui.update { it.copy(pruningResourceLinks = it.pruningResourceLinks + (id to link)) }
+        }
         pruningSyncCoordinator.onActivityReconciled = { reconciliation ->
             _ui.update { it.copy(pruningActivityReconciliation = reconciliation) }
         }
@@ -5226,6 +5230,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * `record_pruning_activity` / `update_pruning_activity` — never fanned out
      * to `record_pruning_entry` per block.
      */
+    suspend fun listPruningExternalResources(vineyardId: String) = pruningSyncCoordinator.listExternalResources(vineyardId)
+    fun retryPruningResourceSync() = pruningSyncCoordinator.retryResourceSync()
+
     fun preparePruningActivity(draft: PruningActivityDraft): PruningActivityDraft =
         pruningSyncCoordinator.prepareActivity(draft)
 

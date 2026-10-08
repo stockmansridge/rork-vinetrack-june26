@@ -57,6 +57,11 @@ class PruningSyncCoordinator(
 
     /** Fired whenever the server answers an activity write. */
     var onActivityReconciled: ((PruningActivityReconciliation) -> Unit)? = null
+    var onResourceStateChanged: ((String, com.rork.vinetrack.data.model.PruningResourceLink) -> Unit)? = null
+
+    suspend fun listExternalResources(vineyardId: String) = repo.listExternalResources(vineyardId)
+
+    fun retryResourceSync() { scope.launch { replayAll() } }
 
     fun reconciliation(activityId: String): PruningActivityReconciliation? = reconciliations[activityId]
 
@@ -99,7 +104,7 @@ class PruningSyncCoordinator(
         // An activity whose linked Work Task has not been acknowledged is NOT
         // synced either, even with an empty pruning queue: its `work_task_id`
         // cannot resolve server-side yet. Never counted as 100%.
-        val taskBlocked = activitiesWaitingForWorkTask(vineyardId, all)
+        val taskBlocked = (activitiesWaitingForWorkTask(vineyardId, all) + store.loadActivities(vineyardId).filter { !it.isReversed && it.resourceLink?.isPending == true }.map { it.id }).distinct()
         return PruningSyncIntegrity.evaluate(
             entries = store.loadEntries(vineyardId),
             queuedEntryIds = unresolved
@@ -293,7 +298,7 @@ class PruningSyncCoordinator(
      */
     suspend fun loadActivity(vineyardId: String, activityId: String): PruningActivityDraft? {
         val local = store.activity(vineyardId, activityId)
-        if (!canSync()) return local
+        if (!canSync() || local?.resourceLink?.isPending == true || pending.list().any { it.clientId == activityId && it.entityType == PendingEntityType.PRUNING_ACTIVITY && it.status in PendingWriteStatus.unresolved }) return local
         val canonical = runCatching { repo.fetchActivity(activityId) }.getOrNull() ?: return local
         if (canonical.activity == null) return local
         val base = local ?: PruningActivityDraft(
@@ -301,7 +306,8 @@ class PruningSyncCoordinator(
             vineyardId = vineyardId,
             date = canonical.activity.entryDate?.take(10) ?: "",
         )
-        val adopted = PruningAllocationEditor.adoptCanonical(base, canonical, repo.vineyardZone(vineyardId))
+        val snapshot = runCatching { repo.fetchResourceSnapshot(activityId, vineyardId) }.getOrNull()
+        val adopted = PruningAllocationEditor.adoptCanonical(base, canonical, repo.vineyardZone(vineyardId)).copy(resourceSnapshot = snapshot ?: base.resourceSnapshot)
         store.upsertActivity(vineyardId, adopted)
         store.mergeActivityEntries(vineyardId, PruningAllocationEditor.toLegacyEntries(adopted))
         return adopted
@@ -328,7 +334,7 @@ class PruningSyncCoordinator(
             .toSet()
         for (canonical in remote) {
             val id = canonical.activity?.id ?: continue
-            if (id in queued) continue
+            if (id in queued || store.activity(vineyardId, id)?.resourceLink?.isPending == true) continue
             val base = store.activity(vineyardId, id) ?: PruningActivityDraft(
                 id = id,
                 vineyardId = vineyardId,
@@ -360,8 +366,14 @@ class PruningSyncCoordinator(
     fun prepareActivity(draft: PruningActivityDraft): PruningActivityDraft = repo.prepareActivity(draft)
 
     fun saveActivity(vineyardId: String, draft: PruningActivityDraft): PruningActivityDraft {
+        require(draft.vineyardId == vineyardId)
         val previous = store.activity(vineyardId, draft.id)
-        val cleaned = repo.prepareActivity(PruningAllocationEditor.pruneEmptyBlocks(draft.copy(workTiming = draft.workTiming ?: previous?.workTiming)))
+        var cleaned = repo.prepareActivity(PruningAllocationEditor.pruneEmptyBlocks(draft.copy(workTiming = draft.workTiming ?: previous?.workTiming)))
+        if (previous != null && previous.resourceLink?.generation == cleaned.resourceLink?.generation) {
+            cleaned = cleaned.copy(resourceLink = previous.resourceLink)
+        } else if (previous?.resourceLink?.conflict != null) {
+            cleaned = cleaned.copy(resourceLink = previous.resourceLink, resourceSnapshot = previous.resourceSnapshot, worker = previous.resourceLink.name)
+        }
         val keptIds = cleaned.activeAllocations.map { it.allocationIdFor(cleaned.id) }.toSet()
         val staleIds = previous?.activeAllocations
             ?.map { it.allocationIdFor(cleaned.id) }
@@ -457,9 +469,13 @@ class PruningSyncCoordinator(
                         retryOrBlock(write, "Waiting for the pruning activity to reach the server.")
                     result.error == "activity_reversed" -> pending.remove(write.id)
                     else -> {
-                        if (result.stale != true) adoptCanonicalActivity(draft, result)
-                        publishReconciliation(draft, result)
-                        pending.remove(write.id)
+                        if (result.stale == true || result.error != null || result.canonical?.activity?.id != draft.id) {
+                            pending.updateStatus(write.id, PendingWriteStatus.CONFLICT, "Activity changed on the server. Local changes retained; review before retrying.")
+                        } else if (pending.list().any { it.id == write.id && it.payloadJson == write.payloadJson }) {
+                            adoptCanonicalActivity(draft, result)
+                            publishReconciliation(draft, result)
+                            pending.remove(write.id)
+                        }
                     }
                 }
             } catch (_: BackendError.Unauthorized) {
@@ -589,11 +605,52 @@ class PruningSyncCoordinator(
             replayActivityPass(PendingOpType.CREATE)
             replayActivityPass(PendingOpType.UPDATE)
             replayActivityPass(PendingOpType.DELETE)
+            replayActivityResources()
             replayPass(PendingEntityType.PRUNING_SEASON, PendingOpType.DELETE) { write ->
                 repo.softDeleteSeason(write.clientId)
             }
         } finally {
             replayLock.unlock()
+        }
+    }
+
+    /** Link-only replay: persist a post-save baseline once, never rebase retries or rerun allocations. */
+    private suspend fun replayActivityResources() {
+        val vineyardId = repo.selectedVineyardId ?: return
+        val parentPending = pending.list().filter { it.entityType == PendingEntityType.PRUNING_ACTIVITY && it.status in PendingWriteStatus.unresolved }.map { it.clientId }.toSet()
+        for (draft in store.loadActivities(vineyardId)) {
+            var link = draft.resourceLink ?: continue
+            if (!link.isPending || link.conflict != null || draft.isReversed || !draft.serverAcknowledged || draft.id in parentPending || link.authoredBy != repo.currentUserId) continue
+            fun persist(snapshot: com.rork.vinetrack.data.model.PruningResourceSnapshot? = null): Boolean {
+                val current = store.activity(vineyardId, draft.id) ?: return false
+                if (current.resourceLink?.generation != link.generation) return false
+                if (!store.persistResourceState(vineyardId, draft.id, link.generation, link, snapshot)) return false
+                onResourceStateChanged?.invoke(draft.id, link)
+                return true
+            }
+            try {
+                if (link.expected == null) {
+                    val snapshot = repo.fetchResourceSnapshot(draft.id, vineyardId)
+                    val observed = draft.resourceSnapshot
+                    link = link.copy(expected = snapshot, conflict = if (observed != null && (observed.externalResourceId != snapshot.externalResourceId || observed.workerUserId != snapshot.workerUserId)) snapshot else null)
+                    if (!persist(snapshot)) continue
+                    if (link.conflict != null) continue
+                }
+                val result = repo.setActivityResourceCAS(link.request(draft.id, vineyardId), link.authoredBy)
+                link = link.accepting(result, draft.id)
+                if (!persist(result.canonical)) continue
+                if (link.conflict != null) {
+                    val fresh = runCatching { repo.fetchResourceSnapshot(draft.id, vineyardId) }.getOrNull()
+                    if (fresh != null) { link = link.copy(conflict = fresh); persist(fresh) }
+                    runCatching { repo.fetchActivity(draft.id) }
+                } else {
+                    val fresh = runCatching { repo.fetchResourceSnapshot(draft.id, vineyardId) }.getOrNull()
+                    if (fresh != null) persist(fresh)
+                }
+            } catch (_: Exception) {
+                link = link.copy(failure = "Activity saved; resource selection is pending. Retry when connected.")
+                persist()
+            }
         }
     }
 

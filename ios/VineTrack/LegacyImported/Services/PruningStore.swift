@@ -217,7 +217,14 @@ final class PruningStore {
     func saveActivity(_ draft: PruningActivityDraft) -> PruningActivityDraft {
         guard draft.businessDateUnavailable != true else { return draft }
         let previous = activity(id: draft.id)
-        let cleaned = PruningAllocationEditor.pruneEmptyBlocks(draft)
+        var cleaned = PruningAllocationEditor.pruneEmptyBlocks(draft)
+        if let previous, previous.resourceLink?.generation == cleaned.resourceLink?.generation {
+            cleaned.resourceLink = previous.resourceLink
+        } else if previous?.resourceLink?.conflict != nil {
+            cleaned.resourceLink = previous?.resourceLink
+            cleaned.resourceSnapshot = previous?.resourceSnapshot
+            cleaned.worker = previous?.resourceLink?.name ?? cleaned.worker
+        }
         let kept = Set(cleaned.activeAllocations.map { $0.allocationId(for: cleaned.id) })
         let stale = Set((previous?.activeAllocations ?? []).map { $0.allocationId(for: cleaned.id) })
             .subtracting(kept)
@@ -234,6 +241,20 @@ final class PruningStore {
         // the record RPC: its payload carries the FULL desired state.
         onActivitySaved?(cleaned.id, previous == nil || !(previous?.serverAcknowledged ?? false))
         return cleaned
+    }
+
+    /// Persist only identity state without re-enqueuing the authoritative allocation save.
+    @discardableResult
+    func persistResourceState(id: UUID, generation: UUID?, link: PruningResourceLink?, snapshot: PruningResourceSnapshot?) throws -> Bool {
+        guard let index = activities.firstIndex(where: { $0.id == id }),
+              activities[index].resourceLink?.generation == generation else { return false }
+        var updated = activities
+        updated[index].resourceLink = link
+        if let snapshot { updated[index].resourceSnapshot = snapshot }
+        if let link, link.isPending { updated[index].worker = link.name }
+        try persistence.saveOrThrow(updated, key: Self.activitiesKey)
+        activities = updated
+        return true
     }
 
     /// Reverses the whole activity — one operation, every allocation inherits it.

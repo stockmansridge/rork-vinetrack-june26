@@ -16,7 +16,7 @@ struct WorkTaskCompletionSheet: View {
     }
 
     private var today: Date { WorkTaskCompletion.calendar(timeZone).startOfDay(for: Date()) }
-    private var firstDay: Date { WorkTaskCompletion.calendar(timeZone).startOfDay(for: WorkTaskCompletion.workDate(task)) }
+    private var firstDay: Date { task.isStageScheduled ? .distantPast : WorkTaskCompletion.calendar(timeZone).startOfDay(for: WorkTaskCompletion.workDate(task)) }
     private var valid: Bool { WorkTaskCompletion.isValid(selectedDate, task: task, timeZone: timeZone, now: Date()) }
 
     private var workDateLabel: String {
@@ -30,8 +30,10 @@ struct WorkTaskCompletionSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("Work Date") {
-                        Text(workDateLabel)
+                    if let stage = task.stageLabel {
+                        LabeledContent("Target stage", value: stage)
+                    } else {
+                        LabeledContent("Work Date") { Text(workDateLabel) }
                     }
                     if firstDay <= today {
                         DatePicker("Completed Date", selection: $selectedDate, in: firstDay...today, displayedComponents: .date)

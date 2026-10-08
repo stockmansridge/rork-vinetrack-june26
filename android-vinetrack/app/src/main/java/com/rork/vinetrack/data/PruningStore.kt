@@ -85,6 +85,16 @@ class PruningStore(context: Context) {
         prefs.edit { putString("activities_v1_$vineyardId", json.encodeToString(activities)) }
     }
 
+    /** Confirm the captured CAS baseline is on disk before allowing any network mutation. */
+    fun persistResourceState(vineyardId: String, activityId: String, generation: String, link: com.rork.vinetrack.data.model.PruningResourceLink, snapshot: com.rork.vinetrack.data.model.PruningResourceSnapshot?): Boolean {
+        val current = loadActivities(vineyardId)
+        val row = current.firstOrNull { it.id == activityId } ?: return false
+        if (row.resourceLink?.generation != generation) return false
+        val updated = current.map { if (it.id == activityId) it.copy(resourceLink = link, resourceSnapshot = snapshot ?: it.resourceSnapshot, worker = link.name) else it }
+        check(prefs.edit().putString("activities_v1_$vineyardId", json.encodeToString(updated)).commit()) { "Resource selection could not be saved on this device." }
+        return true
+    }
+
     fun activity(vineyardId: String, activityId: String): PruningActivityDraft? =
         loadActivities(vineyardId).firstOrNull { it.id == activityId }
 

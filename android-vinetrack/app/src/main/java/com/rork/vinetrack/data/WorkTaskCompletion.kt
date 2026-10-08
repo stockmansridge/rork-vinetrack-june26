@@ -26,11 +26,11 @@ object WorkTaskCompletion {
         } else runCatching { LocalDate.parse(it.take(10)) }.getOrNull()
     }
 
-    fun workDate(task: WorkTask, zone: ZoneId): LocalDate? = localDate(task.startDate ?: task.date, zone)
+    fun workDate(task: WorkTask, zone: ZoneId): LocalDate? = if (task.isStageScheduled) null else localDate(task.startDate ?: task.date, zone)
 
     fun completedDate(task: WorkTask, zone: ZoneId): LocalDate? =
         if (task.isFinalized) localDate(task.endDate, zone)
-            ?: task.finalizedAt?.let { parseInstant(it)?.atZone(zone)?.toLocalDate() } else null
+            ?: (task.completedAt ?: task.finalizedAt)?.let { parseInstant(it)?.atZone(zone)?.toLocalDate() } else null
 
     fun isValid(task: WorkTask, selected: LocalDate, zone: ZoneId, now: Instant): Boolean =
         !selected.isAfter(now.atZone(zone).toLocalDate()) &&

@@ -63,7 +63,8 @@ struct WorkTaskLogView: View {
             items = items.filter {
                 $0.taskType.localizedStandardContains(searchText) ||
                 $0.paddockName.localizedStandardContains(searchText) ||
-                $0.notes.localizedStandardContains(searchText)
+                $0.notes.localizedStandardContains(searchText) ||
+                ($0.stageLabel?.localizedStandardContains(searchText) ?? false)
             }
         }
         switch sort {
@@ -430,7 +431,7 @@ private struct WorkTaskLogRow: View {
                         .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(VineyardTheme.leafGreen)
                 }
-                Text(fmt.formatDate(task.date))
+                Text(task.stageLabel ?? fmt.formatDate(task.date))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 RecordSyncBadge(

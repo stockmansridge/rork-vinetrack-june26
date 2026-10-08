@@ -63,6 +63,7 @@ final class PruningSyncService {
             + editMetadata.pendingUpserts.count + activityMetadata.pendingUpserts.count
             + activityEditMetadata.pendingUpserts.count
             + activityLabourMetadata.pendingUpserts.count
+            + pruningStore.activities.filter { $0.resourceLink?.isPending == true && !$0.isReversed }.count
     }
     var pendingDeleteCount: Int {
         seasonMetadata.pendingDeletes.count + entryMetadata.pendingDeletes.count
@@ -98,6 +99,7 @@ final class PruningSyncService {
     /// device afterwards.
     private let activityLabourMetadata: ManagementSyncMetadata
     private var isConfigured: Bool = false
+    private var isSyncing: Bool = false
     private var eagerPushTask: Task<Void, Never>?
     /// Resolves whether a Work Task still has an unacknowledged local write.
     ///
@@ -224,6 +226,9 @@ final class PruningSyncService {
     /// season row after the season pull so they can never collide with the
     /// server's active-season unique index.
     func sync(vineyardId: UUID) async {
+        guard !isSyncing else { return }
+        isSyncing = true
+        defer { isSyncing = false }
         guard SupabaseClientProvider.shared.isConfigured else {
             errorMessage = "Supabase not configured"
             syncStatus = .failure("Supabase not configured")
@@ -286,6 +291,12 @@ final class PruningSyncService {
         } catch {
             if pushError == nil { pushError = error }
             print("[PruningSync] activity push failed: \(error)")
+        }
+
+        do {
+            try await pushActivityResources(vineyardId: vineyardId)
+        } catch {
+            if pushError == nil { pushError = error }
         }
 
         // Labour lines push AFTER the activities: `save_pruning_activity_labour_lines`
@@ -650,8 +661,13 @@ final class PruningSyncService {
             do {
                 let params = RecordPruningActivityParams(from: draft, clientUpdatedAt: ts)
                 let result = try await repository.recordActivity(params)
-                adoptCanonicalActivity(id: id, result: result)
-                activityMetadata.clearDirty([id])
+                guard result.error == nil, result.stale != true, result.canonical?.activity?.id == id else {
+                    throw PruningResourceLinkError.invalidAcknowledgement
+                }
+                if activityMetadata.pendingUpserts[id] == ts {
+                    adoptCanonicalActivity(id: id, result: result)
+                    activityMetadata.clearDirty([id])
+                }
             } catch {
                 print("[PruningSync] record_pruning_activity failed for \(id): \(error)")
                 if firstError == nil { firstError = error }
@@ -688,8 +704,13 @@ final class PruningSyncService {
                     activityEditMetadata.clearDirty([id])
                     continue
                 }
-                if result.stale != true { adoptCanonicalActivity(id: id, result: result) }
-                activityEditMetadata.clearDirty([id])
+                guard result.error == nil, result.stale != true, result.canonical?.activity?.id == id else {
+                    throw PruningResourceLinkError.invalidAcknowledgement
+                }
+                if activityEditMetadata.pendingUpserts[id] == ts {
+                    adoptCanonicalActivity(id: id, result: result)
+                    activityEditMetadata.clearDirty([id])
+                }
             } catch {
                 print("[PruningSync] update_pruning_activity failed for \(id): \(error)")
                 if firstError == nil { firstError = error }
@@ -713,6 +734,59 @@ final class PruningSyncService {
         if let firstError { throw firstError }
     }
 
+    /// Link-only retries never replay the parent/allocation mutation or refresh a captured baseline.
+    private func pushActivityResources(vineyardId: UUID) async throws {
+        var firstError: Error?
+        for draft in pruningStore.activities(forVineyard: vineyardId) where !draft.isReversed {
+            guard var link = draft.resourceLink, link.isPending,
+                  link.authoredBy == auth?.userId else { continue }
+            guard draft.serverAcknowledged,
+                  activityMetadata.pendingUpserts[draft.id] == nil,
+                  activityEditMetadata.pendingUpserts[draft.id] == nil,
+                  activityMetadata.pendingDeletes[draft.id] == nil else { continue }
+            if link.conflict != nil {
+                if firstError == nil { firstError = NSError(domain: "PruningResource", code: 409, userInfo: [NSLocalizedDescriptionKey: link.message ?? "Resource conflict"] ) }
+                continue
+            }
+            do {
+                if link.expected == nil {
+                    let snapshot = try await repository.fetchResourceSnapshot(id: draft.id, vineyardId: vineyardId)
+                    link.expected = snapshot
+                    // A resource changed since the editor opened is not a fresh baseline to overwrite.
+                    if let observed = draft.resourceSnapshot,
+                       observed.externalResourceId != snapshot.externalResourceId || observed.workerUserId != snapshot.workerUserId {
+                        link.conflict = snapshot
+                    }
+                    guard try pruningStore.persistResourceState(id: draft.id, generation: link.generation, link: link, snapshot: snapshot) else { continue }
+                    if link.conflict != nil { throw PruningResourceLinkError.invalidBaseline }
+                }
+                guard auth?.userId == link.authoredBy, store?.selectedVineyardId == vineyardId else { continue }
+                let params = try link.request(activityId: draft.id, vineyardId: vineyardId)
+                let result = try await repository.setActivityResourceCAS(params)
+                link = try link.accepting(result, activityId: draft.id)
+                // Persist the conflict before any subsequent read can fail.
+                guard try pruningStore.persistResourceState(id: draft.id, generation: link.generation, link: link, snapshot: result.canonical) else { continue }
+                if link.conflict != nil {
+                    if let fresh = try? await repository.fetchResourceSnapshot(id: draft.id, vineyardId: vineyardId) {
+                        link.conflict = fresh
+                        _ = try pruningStore.persistResourceState(id: draft.id, generation: link.generation, link: link, snapshot: fresh)
+                    }
+                    _ = try? await repository.fetchActivity(id: draft.id)
+                    throw NSError(domain: "PruningResource", code: 409, userInfo: [NSLocalizedDescriptionKey: link.message ?? "Resource conflict"])
+                }
+                // Refresh history identity without changing the successful generation's expected values.
+                if let snapshot = try? await repository.fetchResourceSnapshot(id: draft.id, vineyardId: vineyardId) {
+                    _ = try pruningStore.persistResourceState(id: draft.id, generation: link.generation, link: link, snapshot: snapshot)
+                }
+            } catch {
+                link.failure = "Activity saved; resource selection is pending. Retry when connected."
+                _ = try? pruningStore.persistResourceState(id: draft.id, generation: link.generation, link: link, snapshot: nil)
+                if firstError == nil { firstError = error }
+            }
+        }
+        if let firstError { throw firstError }
+    }
+
     /// Canonical read-back of ONE activity through `get_pruning_activity` — the
     /// edit path, so reopening an activity restores the real server state (every
     /// block, every quarter, the shared labour and both resolved years) instead
@@ -721,10 +795,16 @@ final class PruningSyncService {
     func loadActivity(id: UUID) async -> PruningActivityDraft? {
         let local = pruningStore.activity(id: id)
         guard let auth, auth.isSignedIn else { return local }
+        if local?.resourceLink?.isPending == true || activityMetadata.pendingUpserts[id] != nil || activityEditMetadata.pendingUpserts[id] != nil { return local }
         guard let canonical = try? await repository.fetchActivity(id: id), canonical.activity != nil else {
             return local
         }
-        return pruningStore.applyRemoteActivity(canonical) ?? local
+        let adopted = pruningStore.applyRemoteActivity(canonical) ?? local
+        if let vineyardId = adopted?.vineyardId,
+           let snapshot = try? await repository.fetchResourceSnapshot(id: id, vineyardId: vineyardId) {
+            _ = try? pruningStore.persistResourceState(id: id, generation: adopted?.resourceLink?.generation, link: adopted?.resourceLink, snapshot: snapshot)
+        }
+        return pruningStore.activity(id: id) ?? adopted
     }
 
     /// Pulls every activity of the vineyard through `list_pruning_activities` and
@@ -746,6 +826,7 @@ final class PruningSyncService {
         let queued = Set(activityMetadata.pendingUpserts.keys)
             .union(activityEditMetadata.pendingUpserts.keys)
             .union(activityMetadata.pendingDeletes.keys)
+            .union(pruningStore.activities.filter { $0.resourceLink?.isPending == true }.map(\.id))
         var summaryOnly = 0
         for canonical in remote {
             guard let id = canonical.activity?.id, !queued.contains(id) else { continue }
@@ -777,6 +858,7 @@ final class PruningSyncService {
         let queued = Set(activityMetadata.pendingUpserts.keys)
             .union(activityEditMetadata.pendingUpserts.keys)
             .union(activityMetadata.pendingDeletes.keys)
+            .union(pruningStore.activities.filter { $0.resourceLink?.isPending == true }.map(\.id))
         let candidates = pruningStore.activitiesNeedingCanonicalDetail(vineyardId: vineyardId)
             .filter { !queued.contains($0.id) }
             .prefix(limit)

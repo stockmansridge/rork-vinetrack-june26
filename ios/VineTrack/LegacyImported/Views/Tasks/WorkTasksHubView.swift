@@ -319,12 +319,11 @@ struct WorkTaskRow: View {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(task.date, format: .dateTime.day().month(.abbreviated))
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    Text(task.date, format: .dateTime.year())
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    if let stage = task.stageLabel {
+                        Text(stage).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    } else {
+                        Text(fmt.formatDate(task.date)).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    }
                     RecordSyncBadge(
                         state: .forWorkTask(task.id, taskSync: workTaskSync),
                         showsLabel: false

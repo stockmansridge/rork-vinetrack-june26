@@ -1133,9 +1133,19 @@ data class WorkTask(
      * before the repair decodes unchanged.
      */
     @SerialName("pruning_activity_id") val pruningActivityId: String? = null,
+    @SerialName("assigned_to") val assignedTo: String? = null,
+    @SerialName("assigned_external_resource_id") val assignedExternalResourceId: String? = null,
+    @SerialName("schedule_basis") val scheduleBasis: String? = null,
+    @SerialName("target_el_stage") val targetELStage: Int? = null,
+    @SerialName("completed_by") val completedBy: String? = null,
+    @SerialName("completed_at") val completedAt: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
-    val startEpochMs: Long? get() = parseIsoToEpochMs(date)
+    val isStageScheduled: Boolean get() = scheduleBasis == "el_stage"
+    val stageLabel: String? get() = if (!isStageScheduled) null else GrowthStage.byCode("EL$targetELStage")?.displayName ?: "E-L ${targetELStage ?: "unavailable"}"
+    fun matchesStageRange(minimum: Int?, maximum: Int?): Boolean =
+        if (minimum == null && maximum == null) true else isStageScheduled && targetELStage != null && targetELStage >= (minimum ?: 1) && targetELStage <= (maximum ?: 43)
+    val startEpochMs: Long? get() = if (isStageScheduled) null else parseIsoToEpochMs(date)
     val finalizedEpochMs: Long? get() = parseIsoToEpochMs(finalizedAt)
 
     /**

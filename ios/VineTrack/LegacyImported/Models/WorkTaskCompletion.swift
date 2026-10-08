@@ -11,13 +11,13 @@ nonisolated enum WorkTaskCompletion {
     static func workDate(_ task: WorkTask) -> Date { task.startDate ?? task.date }
 
     static func displayedDate(_ task: WorkTask) -> Date? {
-        task.isFinalized ? (task.endDate ?? task.finalizedAt) : nil
+        task.isFinalized ? (task.endDate ?? task.completedAt ?? task.finalizedAt) : nil
     }
 
     static func isValid(_ selected: Date, task: WorkTask, timeZone: TimeZone, now: Date) -> Bool {
         let calendar = calendar(timeZone)
         let day = calendar.startOfDay(for: selected)
-        return day >= calendar.startOfDay(for: workDate(task)) && day <= calendar.startOfDay(for: now)
+        return (task.isStageScheduled || day >= calendar.startOfDay(for: workDate(task))) && day <= calendar.startOfDay(for: now)
     }
 
     static func complete(_ task: WorkTask, selected: Date, timeZone: TimeZone, now: Date, userId: String) -> WorkTask? {

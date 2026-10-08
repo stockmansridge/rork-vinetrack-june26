@@ -34,11 +34,14 @@ struct PruningActivityEditorView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
+    @Environment(NewBackendAuthService.self) private var auth
+    @Environment(PruningSyncService.self) private var pruningSync
     private var pruningStore: PruningStore { .shared }
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
     @State private var draft: PruningActivityDraft
     @State private var showBlockPicker: Bool = false
+    @State private var showResourcePicker: Bool = false
     @State private var showReversePrompt: Bool = false
     @State private var showDiscardPrompt: Bool = false
     @State private var removeCandidate: UUID?
@@ -287,6 +290,13 @@ struct PruningActivityEditorView: View {
                 }
             }
         }
+        .sheet(isPresented: $showResourcePicker) {
+            PruningResourcePickerView(vineyardId: draft.vineyardId, selectedName: draft.worker) { external, person, name in
+                guard let userId = auth.userId else { return }
+                draft.worker = name
+                draft.resourceLink = PruningResourceLink(externalResourceId: external, workerUserId: person, name: name, authoredBy: userId)
+            }
+        }
         .sheet(isPresented: $showBlockPicker) {
             PruningActivityBlockPicker(blocks: paddocks, draft: draft) { paddock in
                 draft = PruningAllocationEditor.focus(draft, paddockId: paddock.id, blockName: paddock.name)
@@ -375,7 +385,35 @@ struct PruningActivityEditorView: View {
             } else {
                 DatePicker("Date", selection: $draft.date, displayedComponents: .date)
             }
-            TextField("Worker or crew", text: $draft.worker)
+            Button { showResourcePicker = true } label: {
+                LabeledContent("Assigned to", value: draft.worker.isEmpty ? "Unassigned / Other" : draft.worker)
+            }
+            .disabled(auth.userId == nil || (pruningStore.activity(id: draft.id)?.resourceLink ?? draft.resourceLink)?.conflict != nil)
+            if draft.resourceLink?.externalResourceId == nil && draft.resourceLink?.workerUserId == nil && (draft.resourceLink != nil || (draft.resourceSnapshot?.externalResourceId == nil && draft.resourceSnapshot?.workerUserId == nil)) {
+                TextField("Other / manual name", text: $draft.worker)
+                    .onChange(of: draft.worker) { _, name in
+                        if let userId = auth.userId, let link = draft.resourceLink, link.externalResourceId == nil, link.workerUserId == nil {
+                            draft.resourceLink = PruningResourceLink(externalResourceId: nil, workerUserId: nil, name: name, authoredBy: userId)
+                        }
+                    }
+            }
+            if let link = pruningStore.activity(id: draft.id)?.resourceLink ?? draft.resourceLink, let message = link.message {
+                Text(message).font(.footnote).foregroundStyle(.orange)
+                if let conflict = link.conflict {
+                    Text("Pending: \(link.name.isEmpty ? "Unassigned / Other" : link.name)").font(.caption)
+                    Text("Server resource: \(conflict.externalResourceId?.uuidString ?? conflict.workerUserId?.uuidString ?? "Unassigned / Other")").font(.caption).textSelection(.enabled)
+                    Button("Keep server resource") {
+                        draft.resourceLink = nil
+                        draft.resourceSnapshot = conflict
+                        guard (try? pruningStore.persistResourceState(id: draft.id, generation: link.generation, link: nil, snapshot: conflict)) == true else { return }
+                        Task {
+                            if let canonical = await pruningSync.loadActivity(id: draft.id) { draft = canonical }
+                        }
+                    }
+                } else {
+                    Button("Retry resource sync") { Task { await pruningSync.sync(vineyardId: draft.vineyardId) } }
+                }
+            }
             Picker("Method", selection: $draft.method) {
                 ForEach(PruningMethod.allCases) { method in
                     Text(method.label).tag(method)

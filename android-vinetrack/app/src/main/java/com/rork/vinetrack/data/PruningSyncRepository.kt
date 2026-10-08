@@ -53,6 +53,9 @@ class PruningSyncRepository(
     private val session: SessionStore,
     val vineyardZone: (String) -> ZoneId,
 ) {
+    val selectedVineyardId: String? get() = session.selectedVineyardId
+    val currentUserId: String? get() = session.userId
+
     fun prepareEntry(entry: PruningEntry): PruningEntry {
         val zone = vineyardZone(entry.vineyardId)
         return entry.copy(workTiming = entry.workTiming?.resolve(entry.date, entry.startTime, entry.finishTime, zone)
@@ -998,6 +1001,34 @@ class PruningSyncRepository(
                     ReverseActivityArgs(activityId = activityId, reason = reason),
                 ),
             )
+        }
+
+    suspend fun listExternalResources(vineyardId: String): List<com.rork.vinetrack.data.model.VineyardExternalResource> =
+        getList("vineyard_external_resources?select=*&vineyard_id=eq.$vineyardId&order=name.asc")
+
+    suspend fun fetchResourceSnapshot(activityId: String, vineyardId: String): com.rork.vinetrack.data.model.PruningResourceSnapshot {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val rows = withContext(Dispatchers.IO) {
+            val response = SupabaseClient.http.get(SupabaseClient.restUrl("pruning_activities?select=id,vineyard_id,client_updated_at,external_resource_id,worker_user_id,deleted_at&id=eq.$activityId&vineyard_id=eq.$vineyardId")) { authHeaders(token) }
+            requireSuccess(response)
+            resultJson.decodeFromString(ListSerializer(com.rork.vinetrack.data.model.PruningResourceSnapshot.serializer()), response.bodyAsText())
+        }
+        return rows.single().also { require(it.id == activityId && it.vineyardId == vineyardId && it.deletedAt == null) }
+    }
+
+    suspend fun setActivityResourceCAS(args: com.rork.vinetrack.data.model.PruningResourceCASArgs, authoredBy: String): com.rork.vinetrack.data.model.PruningResourceCASResult =
+        withContext(Dispatchers.IO) {
+            requireConfig()
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            require(session.userId == authoredBy) { "Sign in as the person who authored this pending selection." }
+            val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("set_pruning_activity_resource_cas")) {
+                authHeaders(token)
+                contentType(ContentType.Application.Json)
+                setBody(rpcJson.encodeToString(com.rork.vinetrack.data.model.PruningResourceCASArgs.serializer(), args))
+            }
+            requireSuccess(response)
+            resultJson.decodeFromString(com.rork.vinetrack.data.model.PruningResourceCASResult.serializer(), response.bodyAsText())
         }
 
     /** Canonical read-back of one activity (`get_pruning_activity`). */

@@ -293,6 +293,19 @@ struct PruningTrackerView: View {
                 if let reconciliation = pruningSync.lastActivityReconciliation {
                     reconciliationBanner(reconciliation)
                 }
+                ForEach(pruningStore.activities.filter { $0.vineyardId == store.selectedVineyardId && !$0.isReversed && $0.resourceLink?.isPending == true }) { activity in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(activity.resourceLink?.conflict == nil ? "Resource selection pending" : "Resource conflict").font(.headline)
+                        Text(activity.resourceLink?.message ?? "Activity saved; resource selection is pending.").font(.footnote)
+                        Button("Review saved activity") {
+                            Task { if let loaded = await pruningSync.loadActivity(id: activity.id) { editorDraft = loaded } }
+                        }
+                    }
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.12), in: .rect(cornerRadius: 14))
+                    .padding(.horizontal)
+                }
                 dashboardCard
                 newActivityButton
                 activityReportLink

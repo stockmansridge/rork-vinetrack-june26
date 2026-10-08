@@ -333,6 +333,11 @@ fun PruningTrackerScreen(
             // in the field, but only owners/managers may review or change one.
             canEnterPricing = TeamRole.from(state.currentRole).canEnterPricing,
             initialDraft = openDraft,
+            currentUserId = state.currentUserId,
+            resourceMembers = state.members,
+            loadExternalResources = vm::listPruningExternalResources,
+            currentResourceLink = state.pruningResourceLinks[openDraft.id],
+            onRetryResource = vm::retryPruningResourceSync,
             timingPreflight = vm::preparePruningActivity,
             isEditing = activities.any { it.id == openDraft.id } || openDraft.serverAcknowledged,
             reconciliation = state.pruningActivityReconciliation,
@@ -791,6 +796,7 @@ fun PruningTrackerScreen(
                     item(key = "activity-history") {
                         PruningActivityHistoryCard(
                             activities = activities.take(8),
+                            resourceLinks = state.pruningResourceLinks,
                             blockNameOf = { id -> paddocks.firstOrNull { it.id == id }?.name ?: "Block" },
                             onOpen = { activity -> openActivity(activity.id, null) },
                             onRecord = beginNewActivity,
@@ -970,6 +976,7 @@ private fun PruningNoActivityEmptyState(access: PruningCreateAccess, onRecord: (
 @Composable
 private fun PruningActivityHistoryCard(
     activities: List<PruningActivityDraft>,
+    resourceLinks: Map<String, com.rork.vinetrack.data.model.PruningResourceLink>,
     blockNameOf: (String) -> String,
     onOpen: (PruningActivityDraft) -> Unit,
     onRecord: () -> Unit,
@@ -1041,6 +1048,9 @@ private fun PruningActivityHistoryCard(
                                 modifier = Modifier.size(16.dp),
                             )
                         }
+                    }
+                    (resourceLinks[activity.id] ?: activity.resourceLink)?.message?.let { message ->
+                        Text(message, fontSize = 12.sp, color = VineColors.Destructive)
                     }
                     if (isExpanded) {
                         activity.activeAllocations.forEach { allocation ->

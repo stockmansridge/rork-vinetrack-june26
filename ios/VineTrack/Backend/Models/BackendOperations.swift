@@ -35,6 +35,12 @@ nonisolated struct BackendWorkTask: Codable, Sendable, Identifiable {
     let updatedAt: Date?
     let deletedAt: Date?
     let clientUpdatedAt: Date?
+    var assignedTo: UUID? = nil
+    var assignedExternalResourceId: UUID? = nil
+    var scheduleBasis: String? = nil
+    var targetELStage: Int? = nil
+    var completedBy: UUID? = nil
+    var completedAt: Date? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -66,6 +72,12 @@ nonisolated struct BackendWorkTask: Codable, Sendable, Identifiable {
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
         case clientUpdatedAt = "client_updated_at"
+        case assignedTo = "assigned_to"
+        case assignedExternalResourceId = "assigned_external_resource_id"
+        case scheduleBasis = "schedule_basis"
+        case targetELStage = "target_el_stage"
+        case completedBy = "completed_by"
+        case completedAt = "completed_at"
     }
 }
 
@@ -224,7 +236,13 @@ extension BackendWorkTask {
             costingMethodRaw: costingMethod,
             pieceRatePerVine: pieceRatePerVine,
             pieceVineCount: pieceVineCount,
-            pruningActivityId: pruningActivityId
+            pruningActivityId: pruningActivityId,
+            assignedTo: assignedTo,
+            assignedExternalResourceId: assignedExternalResourceId,
+            scheduleBasis: scheduleBasis,
+            targetELStage: targetELStage,
+            completedBy: completedBy,
+            completedAt: completedAt
         )
     }
 }

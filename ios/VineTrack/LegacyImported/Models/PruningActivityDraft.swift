@@ -111,6 +111,8 @@ nonisolated struct PruningActivityDraft: Codable, Identifiable, Sendable, Hashab
     var businessDateSnapshot: String? = nil
     var businessDateSnapshotInstant: Date? = nil
     var worker: String
+    var resourceSnapshot: PruningResourceSnapshot? = nil
+    var resourceLink: PruningResourceLink? = nil
     var method: PruningMethod
     var startTime: Date?
     var finishTime: Date?
@@ -480,7 +482,7 @@ nonisolated enum PruningAllocationEditor {
         }
         copy.startTime = activity.startTime
         copy.finishTime = activity.finishTime
-        copy.worker = activity.workerOrCrew ?? draft.worker
+        copy.worker = draft.resourceLink.flatMap { $0.isPending ? $0.name : nil } ?? activity.workerOrCrew ?? draft.worker
         copy.method = PruningMethod(rawValue: activity.method ?? "") ?? draft.method
         copy.labourHours = activity.labourHours
         copy.hourlyRate = activity.hourlyRate

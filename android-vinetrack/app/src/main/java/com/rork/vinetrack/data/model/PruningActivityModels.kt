@@ -86,6 +86,8 @@ data class PruningActivityDraft(
     /** ISO date, yyyy-MM-dd. The season of EVERY allocation derives from this. */
     val date: String,
     val worker: String = "",
+    val resourceSnapshot: PruningResourceSnapshot? = null,
+    val resourceLink: PruningResourceLink? = null,
     val method: String = "spur",
     /** Optional HH:mm times. */
     val startTime: String? = null,
@@ -342,7 +344,7 @@ object PruningAllocationEditor {
             workTiming = PruningWorkTiming.fromServer(activity.entryDate?.take(10) ?: draft.date, activity.startTime, activity.finishTime, vineyardZone),
             startTime = PruningWorkTiming.wall(activity.startTime, vineyardZone),
             finishTime = PruningWorkTiming.wall(activity.finishTime, vineyardZone),
-            worker = activity.workerOrCrew ?: draft.worker,
+            worker = draft.resourceLink?.takeIf { it.isPending }?.name ?: activity.workerOrCrew ?: draft.worker,
             method = activity.method ?: draft.method,
             labourHours = activity.labourHours,
             hourlyRate = activity.hourlyRate,

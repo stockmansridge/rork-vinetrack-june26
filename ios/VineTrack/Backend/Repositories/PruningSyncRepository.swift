@@ -56,6 +56,8 @@ protocol PruningSyncRepositoryProtocol: Sendable {
     /// (`list_pruning_activities`) — one element per PARENT record, which is
     /// what the Tracker history and the mobile Activity Report render.
     func fetchActivities(vineyardId: UUID) async throws -> [BackendPruningActivityCanonical]
+    func fetchResourceSnapshot(id: UUID, vineyardId: UUID) async throws -> PruningResourceSnapshot
+    func setActivityResourceCAS(_ params: PruningResourceCASParams) async throws -> PruningResourceCASResult
     func softDeleteSeason(id: UUID) async throws
     /// Fetches the authoritative SQL 115 vineyard summary for the online
     /// parity check. Offline callers must treat failures as "no check".
@@ -70,6 +72,15 @@ protocol PruningSyncRepositoryProtocol: Sendable {
     /// Every pruning labour line of the vineyard, soft-deleted rows included so
     /// a delete made on another device is applied locally too.
     func fetchActivityLabourLines(vineyardId: UUID) async throws -> [BackendPruningActivityLabourLine]
+}
+
+extension PruningSyncRepositoryProtocol {
+    func fetchResourceSnapshot(id: UUID, vineyardId: UUID) async throws -> PruningResourceSnapshot {
+        throw PruningResourceLinkError.invalidBaseline
+    }
+    func setActivityResourceCAS(_ params: PruningResourceCASParams) async throws -> PruningResourceCASResult {
+        throw PruningResourceLinkError.invalidAcknowledgement
+    }
 }
 
 private nonisolated struct PruningIdRequest: Encodable, Sendable {
@@ -241,6 +252,23 @@ final class SupabasePruningSyncRepository: PruningSyncRepositoryProtocol {
             .rpc("list_pruning_activities", params: ListPruningActivitiesParams(vineyardId: vineyardId))
             .execute()
             .value
+    }
+
+    func fetchResourceSnapshot(id: UUID, vineyardId: UUID) async throws -> PruningResourceSnapshot {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [PruningResourceSnapshot] = try await provider.client.from("pruning_activities")
+            .select("id,vineyard_id,client_updated_at,external_resource_id,worker_user_id,deleted_at")
+            .eq("id", value: id.uuidString).eq("vineyard_id", value: vineyardId.uuidString)
+            .execute().value
+        guard let row = rows.first, rows.count == 1, row.deletedAt == nil else {
+            throw PruningResourceLinkError.invalidBaseline
+        }
+        return row
+    }
+
+    func setActivityResourceCAS(_ params: PruningResourceCASParams) async throws -> PruningResourceCASResult {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        return try await provider.client.rpc("set_pruning_activity_resource_cas", params: params).execute().value
     }
 
     func softDeleteSeason(id: UUID) async throws {

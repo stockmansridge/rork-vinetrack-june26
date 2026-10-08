@@ -562,8 +562,8 @@ private fun WorkTaskListRow(task: WorkTask, hours: Double, onClick: () -> Unit) 
                 }
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(formatTaskDayMonth(task.startEpochMs), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
-                formatTaskYear(task.startEpochMs)?.let { Text(it, fontSize = 11.sp, color = vine.textSecondary) }
+                Text(task.stageLabel ?: formatTaskDayMonth(task.startEpochMs), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
+                if (!task.isStageScheduled) formatTaskYear(task.startEpochMs)?.let { Text(it, fontSize = 11.sp, color = vine.textSecondary) }
             }
         }
     }
@@ -605,7 +605,8 @@ private fun WorkTaskLogView(
             items = items.filter {
                 (it.taskType ?: "").contains(q, true) ||
                     (it.paddockName ?: "").contains(q, true) ||
-                    (it.notes ?: "").contains(q, true)
+                    (it.notes ?: "").contains(q, true) ||
+                    (it.stageLabel ?: "").contains(q, true)
             }
         }
         when (sort) {
@@ -1029,7 +1030,7 @@ private fun WorkTaskDetailView(
                     DividerWT(vine.cardBorder)
                     DetailRowWT(Icons.Filled.Grass, "Block", task.paddockName?.takeIf { it.isNotBlank() } ?: "No block linked", VineColors.LeafGreen)
                     DividerWT(vine.cardBorder)
-                    DetailRowWT(Icons.Filled.Schedule, "Work Date", com.rork.vinetrack.data.WorkTaskCompletion.workDate(task, state.seasonZone)?.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy")) ?: "—", VineColors.Cyan)
+                    DetailRowWT(Icons.Filled.Schedule, if (task.isStageScheduled) "Target stage" else "Work Date", task.stageLabel ?: com.rork.vinetrack.data.WorkTaskCompletion.workDate(task, state.seasonZone)?.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy")) ?: "—", VineColors.Cyan)
                     if (task.durationHours > 0) {
                         DividerWT(vine.cardBorder)
                         DetailRowWT(Icons.Filled.Schedule, "Duration", formatHours(task.durationHours), VineColors.Orange)

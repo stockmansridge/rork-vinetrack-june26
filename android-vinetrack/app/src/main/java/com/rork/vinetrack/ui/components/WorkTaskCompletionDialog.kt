@@ -31,9 +31,9 @@ fun WorkTaskCompletionDialog(task: WorkTask, zone: ZoneId, onConfirm: (LocalDate
         title = { Text(if (task.isFinalized) "Edit Completed Date" else "Complete Work Task") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Work Date — ${workDate?.format(format) ?: "Not recorded"}")
+                Text(task.stageLabel ?: "Work Date — ${workDate?.format(format) ?: "Not recorded"}")
                 OutlinedButton(onClick = { showPicker = true }) { Text("Completed Date — ${selected.format(format)}") }
-                Text("Choose a date between the Work Date and today. The completion audit timestamp is recorded separately.")
+                Text(if (task.isStageScheduled) "Choose the actual completion date, no later than today. The target E-L stage is retained." else "Choose a date between the Work Date and today. The completion audit timestamp is recorded separately.")
                 if (!valid) Text("Completed Date cannot precede Work Date or be in the future.", color = MaterialTheme.colorScheme.error)
             }
         },
