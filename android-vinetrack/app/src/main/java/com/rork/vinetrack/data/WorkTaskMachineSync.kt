@@ -83,6 +83,8 @@ class WorkTaskMachineSync(
         val equipmentNameSnapshot: String,
         val operatorCategoryId: String? = null,
         val durationHours: Double? = null,
+        val engineHoursUsed: Double? = null,
+        val entrySource: String = "manual",
         val fuelLitres: Double? = null,
         val fuelCost: Double? = null,
         val hourlyMachineRate: Double? = null,
@@ -116,10 +118,13 @@ class WorkTaskMachineSync(
         totalMachineCost: Double?,
         notes: String?,
         clientUpdatedAt: String,
+        engineHoursUsed: Double? = null,
+        equipmentSource: String? = null,
+        entrySource: String = "manual",
     ): PendingWrite = enqueueUpsert(
         PendingOpType.CREATE, id, workTaskId, vineyardId, workDate, equipmentRefId,
         equipmentNameSnapshot, operatorCategoryId, durationHours, fuelLitres, fuelCost,
-        hourlyMachineRate, totalMachineCost, notes, clientUpdatedAt,
+        hourlyMachineRate, totalMachineCost, notes, clientUpdatedAt, engineHoursUsed, equipmentSource, entrySource,
     )
 
     /**
@@ -141,10 +146,13 @@ class WorkTaskMachineSync(
         totalMachineCost: Double?,
         notes: String?,
         clientUpdatedAt: String,
+        engineHoursUsed: Double? = null,
+        equipmentSource: String? = null,
+        entrySource: String = "manual",
     ): PendingWrite = enqueueUpsert(
         PendingOpType.UPDATE, id, workTaskId, vineyardId, workDate, equipmentRefId,
         equipmentNameSnapshot, operatorCategoryId, durationHours, fuelLitres, fuelCost,
-        hourlyMachineRate, totalMachineCost, notes, clientUpdatedAt,
+        hourlyMachineRate, totalMachineCost, notes, clientUpdatedAt, engineHoursUsed, equipmentSource, entrySource,
     )
 
     private fun enqueueUpsert(
@@ -163,6 +171,9 @@ class WorkTaskMachineSync(
         totalMachineCost: Double?,
         notes: String?,
         clientUpdatedAt: String,
+        engineHoursUsed: Double? = null,
+        equipmentSource: String? = null,
+        entrySource: String = "manual",
     ): PendingWrite {
         pending.list()
             .filter {
@@ -174,7 +185,7 @@ class WorkTaskMachineSync(
             .forEach { pending.remove(it.id) }
         // `equipment_source` is recomputed by the repository on replay; carry it
         // for diagnostics only (linked machine vs free-text snapshot).
-        val source = if (equipmentRefId != null) "vineyard_machine" else "free_text"
+        val source = equipmentSource ?: if (equipmentRefId != null) "vineyard_machine" else "free_text"
         val payload = UpsertPayload(
             id = id,
             workTaskId = workTaskId,
@@ -185,6 +196,8 @@ class WorkTaskMachineSync(
             equipmentNameSnapshot = equipmentNameSnapshot,
             operatorCategoryId = operatorCategoryId,
             durationHours = durationHours,
+            engineHoursUsed = engineHoursUsed,
+            entrySource = entrySource,
             fuelLitres = fuelLitres,
             fuelCost = fuelCost,
             hourlyMachineRate = hourlyMachineRate,
@@ -224,6 +237,9 @@ class WorkTaskMachineSync(
         totalMachineCost: Double?,
         notes: String?,
         clientUpdatedAt: String,
+        engineHoursUsed: Double? = null,
+        equipmentSource: String? = null,
+        entrySource: String = "manual",
     ): Boolean {
         val hasCreate = pending.list().any {
             it.entityType == PendingEntityType.WORK_TASK_MACHINE &&
@@ -235,7 +251,7 @@ class WorkTaskMachineSync(
         enqueueCreate(
             id, workTaskId, vineyardId, workDate, equipmentRefId, equipmentNameSnapshot,
             operatorCategoryId, durationHours, fuelLitres, fuelCost, hourlyMachineRate,
-            totalMachineCost, notes, clientUpdatedAt,
+            totalMachineCost, notes, clientUpdatedAt, engineHoursUsed, equipmentSource, entrySource,
         )
         return true
     }
@@ -368,6 +384,9 @@ class WorkTaskMachineSync(
                     equipmentNameSnapshot = payload.equipmentNameSnapshot,
                     operatorCategoryId = payload.operatorCategoryId,
                     durationHours = payload.durationHours,
+                    engineHoursUsed = payload.engineHoursUsed,
+                    equipmentSource = payload.equipmentSource,
+                    entrySource = payload.entrySource,
                     fuelLitres = payload.fuelLitres,
                     fuelCost = payload.fuelCost,
                     hourlyMachineRate = payload.hourlyMachineRate,

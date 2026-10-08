@@ -27,6 +27,8 @@ struct AddEditWorkTaskMachineLineView: View {
     @State private var hourlyRateText: String = ""
     @State private var totalCostText: String = ""
     @State private var notes: String = ""
+    @State private var didLoad: Bool = false
+    @State private var fuelSeedText: String = ""
     @State private var showDelete: Bool = false
     /// Suppresses the free-text detach in the name field's onChange while we
     /// set the name programmatically from a picker selection or when editing.
@@ -69,7 +71,19 @@ struct AddEditWorkTaskMachineLineView: View {
     }
 
     private var vineyardMachineItems: [VineyardMachine] {
-        store.machines().filter { $0.legacyTractorId == nil }
+        store.vineyardMachines.filter { $0.vineyardId == vineyardId && $0.legacyTractorId == nil }
+    }
+
+    private var fuelRate: Double? {
+        WorkTaskMachineCosting.fuelRate(vineyardID: vineyardId, source: equipmentSource, equipmentID: equipmentRefId, machines: store.vineyardMachines, tractors: store.tractors)
+    }
+
+    private var fuelPrice: Double? {
+        WorkTaskMachineCosting.fuelPrice(vineyardID: vineyardId, purchases: store.fuelPurchases)
+    }
+
+    private var calculated: WorkTaskMachineCosting.Result {
+        WorkTaskMachineCosting.resolve(duration: parsedOptional(durationText), engineHours: parsedOptional(engineHoursText), fuelRate: fuelRate, fuelPrice: fuelPrice, hourlyRate: parsedOptional(hourlyRateText), fuelOverride: existingLine?.fuelLitres != nil && fuelLitresText == fuelSeedText ? existingLine?.fuelLitres : parsedOptional(fuelLitresText).map { fmt.fuelToCanonical($0) }, fuelCostOverride: parsedOptional(fuelCostText), machineOverride: parsedOptional(totalCostText))
     }
 
     private var otherEquipmentItems: [EquipmentItem] {
@@ -95,7 +109,9 @@ struct AddEditWorkTaskMachineLineView: View {
     }
 
     private var isValid: Bool {
-        !trimmedName.isEmpty && hasTimeValue
+        !trimmedName.isEmpty && hasTimeValue && [durationText, engineHoursText, fuelLitresText, fuelCostText, hourlyRateText, totalCostText].allSatisfy {
+            $0.trimmingCharacters(in: .whitespaces).isEmpty || parsedOptional($0).map { $0 >= 0 } == true
+        }
     }
 
     var body: some View {
@@ -155,9 +171,9 @@ struct AddEditWorkTaskMachineLineView: View {
     private var equipmentSection: some View {
         Section {
             Menu {
-                if !store.currentTractors.isEmpty {
+                if !store.tractors.filter({ $0.vineyardId == vineyardId }).isEmpty {
                     Section("Tractors") {
-                        ForEach(store.currentTractorsSorted) { tractor in
+                        ForEach(store.tractors.filter { $0.vineyardId == vineyardId }) { tractor in
                             Button(tractor.displayName) {
                                 select(name: tractor.displayName, source: "tractor", refId: tractor.id)
                             }
@@ -258,6 +274,13 @@ struct AddEditWorkTaskMachineLineView: View {
                     .multilineTextAlignment(.trailing)
                     .frame(width: 100)
             }
+            if fuelRate == nil {
+                Text("Fuel consumption rate is not configured for this equipment.").font(.caption).foregroundStyle(.secondary)
+            }
+            if let fuel = calculated.fuelLitres {
+                LabeledContent("Fuel to save", value: fmt.formatFuel(litres: fuel))
+            }
+            Text("Leave fuel blank for automatic calculation. Engine hours used takes priority over duration; enter hours used, not the hour-meter reading.").font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -282,7 +305,7 @@ struct AddEditWorkTaskMachineLineView: View {
                     .frame(width: 100)
             }
             HStack {
-                Text("Total Machine Cost")
+                Text("Machine Charge (excludes fuel)")
                 Spacer()
                 Text(currencySymbol).foregroundStyle(.secondary)
                 TextField("Optional", text: $totalCostText)
@@ -290,6 +313,10 @@ struct AddEditWorkTaskMachineLineView: View {
                     .multilineTextAlignment(.trailing)
                     .frame(width: 100)
             }
+            if let fuelCost = calculated.fuelCost { LabeledContent("Fuel cost to save", value: fmt.formatCurrency(fuelCost)) }
+            if fuelPrice == nil { Text("A vineyard fuel purchase price is required to calculate fuel cost. You can enter a fuel cost manually.").font(.caption).foregroundStyle(.secondary) }
+            if let charge = calculated.machineCharge { LabeledContent("Machine charge to save", value: fmt.formatCurrency(charge)) }
+            Text("Saved values are retained. Clear a value to restore automatic calculation. Enter zero fuel cost if your machine rate already includes fuel.").font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -301,6 +328,8 @@ struct AddEditWorkTaskMachineLineView: View {
     }
 
     private func loadIfEditing() {
+        guard !didLoad else { return }
+        didLoad = true
         guard let line = existingLine else { return }
         workDate = line.workDate
         suppressNameChange = !line.equipmentNameSnapshot.isEmpty
@@ -308,12 +337,13 @@ struct AddEditWorkTaskMachineLineView: View {
         equipmentSource = (line.equipmentSource == "free_text") ? nil : line.equipmentSource
         equipmentRefId = line.equipmentRefId
         entrySource = EntrySource(rawValue: line.entrySource) ?? .manual
-        if let d = line.durationHours, d > 0 { durationText = String(format: "%.2f", d) }
-        if let e = line.engineHoursUsed, e > 0 { engineHoursText = String(format: "%.2f", e) }
-        if let f = line.fuelLitres, f > 0 { fuelLitresText = String(format: "%.2f", f) }
-        if let fc = line.fuelCost, fc > 0 { fuelCostText = String(format: "%.2f", fc) }
-        if let hr = line.hourlyMachineRate, hr > 0 { hourlyRateText = String(format: "%.2f", hr) }
-        if let tc = line.totalMachineCost, tc > 0 { totalCostText = String(format: "%.2f", tc) }
+        durationText = line.durationHours.map { String($0) } ?? ""
+        engineHoursText = line.engineHoursUsed.map { String($0) } ?? ""
+        fuelLitresText = line.fuelLitres.map { String(fmt.fuelValue(litres: $0)) } ?? ""
+        fuelSeedText = fuelLitresText
+        fuelCostText = line.fuelCost.map { String($0) } ?? ""
+        hourlyRateText = line.hourlyMachineRate.map { String($0) } ?? ""
+        totalCostText = line.totalMachineCost.map { String($0) } ?? ""
         notes = line.notes
     }
 
@@ -339,10 +369,10 @@ struct AddEditWorkTaskMachineLineView: View {
         line.entrySource = entrySource.rawValue
         line.durationHours = parsedOptional(durationText)
         line.engineHoursUsed = parsedOptional(engineHoursText)
-        line.fuelLitres = parsedOptional(fuelLitresText)
-        line.fuelCost = parsedOptional(fuelCostText)
+        line.fuelLitres = calculated.fuelLitres
+        line.fuelCost = canViewFinancials ? calculated.fuelCost : existingLine?.fuelCost
         line.hourlyMachineRate = parsedOptional(hourlyRateText)
-        line.totalMachineCost = parsedOptional(totalCostText)
+        line.totalMachineCost = canViewFinancials ? calculated.machineCharge : existingLine?.totalMachineCost
         line.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if isEditing {

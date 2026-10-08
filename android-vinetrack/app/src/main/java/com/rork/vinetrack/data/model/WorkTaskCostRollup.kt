@@ -87,7 +87,8 @@ object WorkTaskCostRollup {
         val material = if (includeMaterials) WorkTaskMaterialCosting.total(materials, task.id) else BigDecimal.ZERO
         val allocatedTripIds = linkedAllocations.mapTo(mutableSetOf()) { it.tripId }
         val linkedTripsComplete = linkedTripIds.all { it in allocatedTripIds } && linkedAllocations.all { it.totalCost != null }
-        val complete = labourComplete && linkedTripsComplete
+        val machineComplete = machineLines.filter { it.workTaskId == task.id && it.deletedAt == null }.all { it.totalMachineCost != null && it.fuelCost != null }
+        val complete = labourComplete && linkedTripsComplete && machineComplete
 
         return WorkTaskCostRollupResult(
             labourCost = labour.money(),

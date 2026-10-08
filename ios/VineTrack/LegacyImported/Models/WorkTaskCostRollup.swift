@@ -67,7 +67,7 @@ nonisolated enum WorkTaskCostRollup {
             manualMachineCost: machineDecimal,
             linkedTripCost: tripDecimal,
             materialCost: material,
-            isComplete: labourIsComplete && tripIsComplete
+            isComplete: labourIsComplete && tripIsComplete && taskMachineLines.allSatisfy { $0.totalMachineCost != nil && $0.fuelCost != nil }
         )
     }
 

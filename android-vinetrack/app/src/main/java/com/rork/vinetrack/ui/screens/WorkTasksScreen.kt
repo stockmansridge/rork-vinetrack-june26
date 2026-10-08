@@ -105,6 +105,7 @@ import com.rork.vinetrack.data.model.WorkTask
 import com.rork.vinetrack.data.model.WorkTaskEditorLifecycle
 import com.rork.vinetrack.data.model.WorkTaskEditorSaveOperation
 import com.rork.vinetrack.data.model.WorkTaskLabourLine
+import com.rork.vinetrack.data.model.WorkTaskMachineCosting
 import com.rork.vinetrack.data.model.WorkTaskMachineLine
 import com.rork.vinetrack.data.material.WorkTaskMaterialCosting
 import com.rork.vinetrack.data.model.builtInWorkTaskTypes
@@ -970,7 +971,6 @@ private fun WorkTaskDetailView(
             includeMaterials = materialCostsAllowed,
         )
     }
-    val machineTotal = costRollup.manualMachineCost
     val materialTotal = costRollup.materialCost
     val overallTotal = costRollup.totalCost
     val areaHa = remember(state.paddocks, task.paddockId) {
@@ -1178,7 +1178,9 @@ private fun WorkTaskDetailView(
                             )
                         }
                         DividerWT(vine.cardBorder)
-                        CostRow("Machinery", materialCurrency(machineTotal, fmt), vine.textSecondary, vine.textPrimary)
+                        CostRow("Manual machine charge", fmt.formatCurrency(allMachineLines.filter { it.workTaskId == task.id && it.deletedAt == null }.sumOf { it.totalMachineCost ?: 0.0 }), vine.textSecondary, vine.textPrimary)
+                        DividerWT(vine.cardBorder)
+                        CostRow("Manual machine fuel", fmt.formatCurrency(allMachineLines.filter { it.workTaskId == task.id && it.deletedAt == null }.sumOf { it.fuelCost ?: 0.0 }), vine.textSecondary, vine.textPrimary)
                         if (costRollup.linkedTripCost > BigDecimal.ZERO) {
                             DividerWT(vine.cardBorder)
                             CostRow("Linked GPS trips", materialCurrency(costRollup.linkedTripCost, fmt), vine.textSecondary, vine.textPrimary)
@@ -1784,6 +1786,7 @@ private fun formatCurrency(value: Double): String =
 @Composable
 private fun MachineLineRow(line: WorkTaskMachineLine, equipmentName: String, onClick: () -> Unit) {
     val vine = LocalVineColors.current
+    val fmt = LocalRegionFormatter.current
     Row(
         modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1799,14 +1802,14 @@ private fun MachineLineRow(line: WorkTaskMachineLine, equipmentName: String, onC
             Text(equipmentName, color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
             val parts = buildList {
                 line.durationHours?.takeIf { it > 0 }?.let { add(formatHours(it)) }
-                line.fuelLitres?.takeIf { it > 0 }?.let { add("${trimHours(it)} L") }
+                line.fuelLitres?.takeIf { it > 0 }?.let { add(fmt.formatFuel(it)) }
             }
             if (parts.isNotEmpty()) {
                 Text(parts.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp, maxLines = 1)
             }
         }
         // Absent rate/total/fuel means cost was never specified — don't imply $0.00.
-        val machineCostText = if (line.totalMachineCost == null && line.hourlyMachineRate == null && line.fuelCost == null) "Not specified" else formatCurrency(line.resolvedCost)
+        val machineCostText = if (line.totalMachineCost == null || line.fuelCost == null) "Not specified" else formatCurrency(line.resolvedCost)
         Text(machineCostText, color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
@@ -1837,11 +1840,23 @@ private fun MachineLineSheet(
 
     var machineId by remember { mutableStateOf(existing?.equipmentRefId) }
     var freeText by remember { mutableStateOf(if (existing?.equipmentRefId == null) existing?.equipmentNameSnapshot ?: "" else "") }
-    var hoursText by remember { mutableStateOf(existing?.durationHours?.takeIf { it > 0 }?.let { trimHours(it) } ?: "") }
-    var fuelText by remember { mutableStateOf(existing?.fuelLitres?.takeIf { it > 0 }?.let { trimHours(it) } ?: "") }
-    var fuelCostText by remember { mutableStateOf(existing?.fuelCost?.let { trimHours(it) } ?: "") }
-    var rateText by remember { mutableStateOf(existing?.hourlyMachineRate?.let { trimHours(it) } ?: "") }
-    var totalText by remember { mutableStateOf(existing?.totalMachineCost?.let { trimHours(it) } ?: "") }
+    val fmt = state.regionFormatter
+    val vineyardId = existing?.vineyardId ?: state.selectedVineyardId
+    val machines = state.machines.filter { it.vineyardId == vineyardId && it.deletedAt == null }
+    val financials = state.currentRole == "owner" || state.currentRole == "manager"
+    var source by remember { mutableStateOf(existing?.equipmentSource) }
+    var hoursText by remember { mutableStateOf(existing?.durationHours?.toString() ?: "") }
+    var engineText by remember { mutableStateOf(existing?.engineHoursUsed?.toString() ?: "") }
+    var fuelText by remember { mutableStateOf(existing?.fuelLitres?.let { fmt.fuelValue(it).toString() } ?: "") }
+    var fuelCostText by remember { mutableStateOf(existing?.fuelCost?.toString() ?: "") }
+    var rateText by remember { mutableStateOf(existing?.hourlyMachineRate?.toString() ?: "") }
+    var totalText by remember { mutableStateOf(existing?.totalMachineCost?.toString() ?: "") }
+    fun number(text: String): Double? = WorkTaskMachineCosting.valid(text.trim().replace(',', '.').toDoubleOrNull())
+    val equipment = WorkTaskMachineCosting.equipment(vineyardId, source, machineId, machines)
+    val fuelRate = WorkTaskMachineCosting.valid(equipment?.fuelUsageLPerHour)?.takeIf { it > 0 }
+    val fuelPrice = WorkTaskMachineCosting.fuelPrice(vineyardId, state.fuelPurchases)
+    val fuelOverride = if (existing?.fuelLitres != null && fuelText == fmt.fuelValue(existing.fuelLitres).toString()) existing.fuelLitres else number(fuelText)?.let { fmt.fuelToCanonical(it) }
+    val calculated = WorkTaskMachineCosting.resolve(number(hoursText), number(engineText), fuelRate, fuelPrice, number(rateText), fuelOverride, number(fuelCostText), number(totalText))
     var notes by remember { mutableStateOf(existing?.notes ?: "") }
     var machineMenu by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
@@ -1850,7 +1865,7 @@ private fun MachineLineSheet(
     fun save() {
         if (saving) return
         saving = true
-        val resolvedName = machineId?.let { id -> state.machines.firstOrNull { it.id == id }?.displayName } ?: freeText.trim()
+        val resolvedName = equipment?.displayName ?: freeText.trim().ifBlank { existing?.equipmentNameSnapshot ?: "" }
         vm.saveMachineLine(
             lineId = existing?.id,
             taskId = taskId,
@@ -1858,27 +1873,30 @@ private fun MachineLineSheet(
             equipmentRefId = machineId,
             equipmentNameSnapshot = resolvedName,
             operatorCategoryId = existing?.operatorCategoryId,
-            durationHours = hoursText.replace(',', '.').toDoubleOrNull(),
-            fuelLitres = fuelText.replace(',', '.').toDoubleOrNull(),
-            fuelCost = fuelCostText.replace(',', '.').toDoubleOrNull(),
-            hourlyMachineRate = rateText.replace(',', '.').toDoubleOrNull(),
-            totalMachineCost = totalText.replace(',', '.').toDoubleOrNull(),
+            durationHours = number(hoursText),
+            engineHoursUsed = number(engineText),
+            equipmentSource = source,
+            entrySource = existing?.entrySource ?: "manual",
+            fuelLitres = calculated.fuelLitres,
+            fuelCost = if (financials) calculated.fuelCost else existing?.fuelCost,
+            hourlyMachineRate = number(rateText),
+            totalMachineCost = if (financials) calculated.machineCharge else existing?.totalMachineCost,
             notes = notes.trim().ifBlank { null },
         ) { ok -> saving = false; if (ok) onDismiss() }
     }
 
-    val canSave = machineId != null || freeText.isNotBlank()
+    val canSave = (machineId != null || freeText.isNotBlank()) && vineyardId == state.selectedVineyardId && listOf(hoursText, engineText, fuelText, fuelCostText, rateText, totalText).all { it.isBlank() || number(it) != null }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 24.dp),
+            modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(if (existing == null) "Add machinery" else "Edit machinery", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
 
             ExposedDropdownMenuBox(expanded = machineMenu, onExpandedChange = { machineMenu = it }) {
                 OutlinedTextField(
-                    value = machineId?.let { id -> state.machines.firstOrNull { it.id == id }?.displayName } ?: "Other / unlisted",
+                    value = equipment?.displayName ?: existing?.equipmentNameSnapshot ?: "Other / unlisted",
                     onValueChange = {},
                     readOnly = true,
                     label = { Text("Machine") },
@@ -1886,9 +1904,9 @@ private fun MachineLineSheet(
                     modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
                 )
                 ExposedDropdownMenu(expanded = machineMenu, onDismissRequest = { machineMenu = false }) {
-                    DropdownMenuItem(text = { Text("Other / unlisted") }, onClick = { machineId = null; machineMenu = false })
-                    state.machines.forEach { m ->
-                        DropdownMenuItem(text = { Text(m.displayName) }, onClick = { machineId = m.id; freeText = ""; machineMenu = false })
+                    DropdownMenuItem(text = { Text("Other / unlisted") }, onClick = { machineId = null; source = "free_text"; machineMenu = false })
+                    machines.forEach { m ->
+                        DropdownMenuItem(text = { Text(m.displayName) }, onClick = { machineId = m.id; source = "vineyard_machine"; freeText = ""; machineMenu = false })
                     }
                 }
             }
@@ -1912,7 +1930,7 @@ private fun MachineLineSheet(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
                 )
-                OutlinedTextField(
+                if (financials) OutlinedTextField(
                     value = rateText,
                     onValueChange = { rateText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
                     label = { Text("Rate / hr") },
@@ -1922,16 +1940,19 @@ private fun MachineLineSheet(
                 )
             }
 
+            OutlinedTextField(value = engineText, onValueChange = { engineText = it }, label = { Text("Engine hours used (optional)") }, supportingText = { Text("Blank uses duration. Enter hours used, not the hour-meter reading.") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+            if (fuelRate == null) Text("Fuel consumption rate is not configured for this equipment.", fontSize = 12.sp)
+            calculated.fuelLitres?.let { Text("Fuel to save: ${fmt.formatFuel(it)}", fontSize = 13.sp) }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     value = fuelText,
                     onValueChange = { fuelText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                    label = { Text("Fuel (L)") },
+                    label = { Text("Fuel (${fmt.fuelUnitAbbreviation})") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     modifier = Modifier.weight(1f),
                 )
-                OutlinedTextField(
+                if (financials) OutlinedTextField(
                     value = fuelCostText,
                     onValueChange = { fuelCostText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
                     label = { Text("Fuel cost") },
@@ -1941,14 +1962,20 @@ private fun MachineLineSheet(
                 )
             }
 
-            OutlinedTextField(
+            if (financials) OutlinedTextField(
                 value = totalText,
                 onValueChange = { totalText = it.filter { c -> c.isDigit() || c == '.' || c == ',' } },
-                label = { Text("Total cost override (optional)") },
+                label = { Text("Machine charge (excludes fuel)") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (financials) {
+                if (fuelPrice == null) Text("A vineyard fuel purchase price is required to calculate fuel cost. You can enter a fuel cost manually.", fontSize = 12.sp)
+                calculated.fuelCost?.let { Text("Fuel cost to save: ${fmt.formatCurrency(it)}") }
+                calculated.machineCharge?.let { Text("Machine charge to save: ${fmt.formatCurrency(it)}") }
+            }
+            Text("Saved values are retained. Leave or clear overrides blank for automatic calculation. Enter zero fuel cost if your rate includes fuel.", fontSize = 12.sp)
 
             OutlinedTextField(
                 value = notes,

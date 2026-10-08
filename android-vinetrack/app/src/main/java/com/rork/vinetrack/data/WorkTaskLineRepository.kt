@@ -17,6 +17,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -128,7 +132,7 @@ class WorkTaskLineRepository(private val session: SessionStore) {
     // MARK: - Machine lines
 
     @Serializable
-    private data class MachineLineUpsert(
+    internal data class MachineLineUpsert(
         val id: String,
         @SerialName("work_task_id") val workTaskId: String,
         @SerialName("vineyard_id") val vineyardId: String,
@@ -139,6 +143,7 @@ class WorkTaskLineRepository(private val session: SessionStore) {
         @SerialName("operator_user_id") val operatorUserId: String? = null,
         @SerialName("worker_type_id") val operatorCategoryId: String? = null,
         @SerialName("duration_hours") val durationHours: Double? = null,
+        @SerialName("engine_hours_used") val engineHoursUsed: Double? = null,
         @SerialName("fuel_litres") val fuelLitres: Double? = null,
         @SerialName("fuel_cost") val fuelCost: Double? = null,
         @SerialName("hourly_machine_rate") val hourlyMachineRate: Double? = null,
@@ -149,6 +154,16 @@ class WorkTaskLineRepository(private val session: SessionStore) {
         @SerialName("updated_by") val updatedBy: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
     )
+
+    companion object {
+        /** Full machine snapshots clear nullable owned fields without clearing the unedited operator identity. */
+        internal fun encodeMachineSnapshot(body: MachineLineUpsert): String {
+            val json = Json(SupabaseClient.json) { explicitNulls = true }
+            val snapshot = json.encodeToJsonElement(MachineLineUpsert.serializer(), body).jsonObject
+            val owned = JsonObject(snapshot.filterKeys { it != "operator_user_id" })
+            return json.encodeToString(ListSerializer(JsonObject.serializer()), listOf(owned))
+        }
+    }
 
     suspend fun listMachineLines(workTaskId: String): List<WorkTaskMachineLine> = withContext(Dispatchers.IO) {
         requireConfig()
@@ -181,12 +196,15 @@ class WorkTaskLineRepository(private val session: SessionStore) {
         totalMachineCost: Double?,
         notes: String?,
         clientUpdatedAt: String? = null,
+        engineHoursUsed: Double? = null,
+        equipmentSource: String? = null,
+        entrySource: String = "manual",
     ): WorkTaskMachineLine = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         // `vineyard_machine` is the canonical source for linked equipment;
         // unlinked entries use the free-text snapshot (matches iOS).
-        val source = if (equipmentRefId != null) "vineyard_machine" else "free_text"
+        val source = equipmentSource ?: if (equipmentRefId != null) "vineyard_machine" else "free_text"
         val body = MachineLineUpsert(
             id = id ?: UUID.randomUUID().toString(),
             workTaskId = workTaskId,
@@ -197,11 +215,12 @@ class WorkTaskLineRepository(private val session: SessionStore) {
             equipmentNameSnapshot = equipmentNameSnapshot.trim(),
             operatorCategoryId = operatorCategoryId,
             durationHours = durationHours,
+            engineHoursUsed = engineHoursUsed,
             fuelLitres = fuelLitres,
             fuelCost = fuelCost,
             hourlyMachineRate = hourlyMachineRate,
             totalMachineCost = totalMachineCost,
-            entrySource = "manual",
+            entrySource = entrySource,
             notes = notes ?: "",
             createdBy = session.userId,
             updatedBy = session.userId,
@@ -213,7 +232,7 @@ class WorkTaskLineRepository(private val session: SessionStore) {
                 append("Prefer", "resolution=merge-duplicates,return=representation")
             }
             contentType(ContentType.Application.Json)
-            setBody(listOf(body))
+            setBody(encodeMachineSnapshot(body))
         }
         firstMachine(response)
     }

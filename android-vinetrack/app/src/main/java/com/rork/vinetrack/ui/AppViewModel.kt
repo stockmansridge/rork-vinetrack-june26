@@ -10884,6 +10884,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         hourlyMachineRate: Double?,
         totalMachineCost: Double?,
         notes: String?,
+        engineHoursUsed: Double? = null,
+        equipmentSource: String? = null,
+        entrySource: String = "manual",
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
@@ -10893,9 +10896,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val trimmedNotes = notes?.ifBlank { null }
         // `equipment_source` mirrors the repository's derivation (linked machine
         // vs free-text snapshot) so the optimistic row matches the eventual save.
-        val source = if (equipmentRefId != null) "vineyard_machine" else "free_text"
+        val source = equipmentSource ?: if (equipmentRefId != null) "vineyard_machine" else "free_text"
         // Snapshot the current lines for rollback (covers both create and update).
         val previous = _ui.value.taskMachineLines
+        val previousVineyardLines = _ui.value.vineyardMachineLines
         val optimistic = WorkTaskMachineLine(
             id = id,
             workTaskId = taskId,
@@ -10909,8 +10913,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             fuelLitres = fuelLitres,
             fuelCost = fuelCost,
             hourlyMachineRate = hourlyMachineRate,
-            // DB may recompute the total — leave the caller's value (or null) so
-            // the model's resolvedCost falls back to the local derivation.
+            engineHoursUsed = engineHoursUsed,
+            entrySource = entrySource,
             totalMachineCost = totalMachineCost,
             notes = trimmedNotes ?: "",
         )
@@ -10925,20 +10929,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val folded = workTaskMachineSync.foldCreate(
                 id, taskId, vineyardId, workDate, equipmentRefId, trimmedSnapshot,
                 operatorCategoryId, durationHours, fuelLitres, fuelCost, hourlyMachineRate,
-                totalMachineCost, trimmedNotes, clientUpdatedAt,
+                totalMachineCost, trimmedNotes, clientUpdatedAt, engineHoursUsed, source, entrySource,
             )
             if (!folded) {
                 if (lineId == null) {
                     workTaskMachineSync.enqueueCreate(
                         id, taskId, vineyardId, workDate, equipmentRefId, trimmedSnapshot,
                         operatorCategoryId, durationHours, fuelLitres, fuelCost, hourlyMachineRate,
-                        totalMachineCost, trimmedNotes, clientUpdatedAt,
+                        totalMachineCost, trimmedNotes, clientUpdatedAt, engineHoursUsed, source, entrySource,
                     )
                 } else {
                     workTaskMachineSync.enqueueUpdate(
                         id, taskId, vineyardId, workDate, equipmentRefId, trimmedSnapshot,
                         operatorCategoryId, durationHours, fuelLitres, fuelCost, hourlyMachineRate,
-                        totalMachineCost, trimmedNotes, clientUpdatedAt,
+                        totalMachineCost, trimmedNotes, clientUpdatedAt, engineHoursUsed, source, entrySource,
                     )
                 }
             }
@@ -10963,6 +10967,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     workDate = workDate,
                     equipmentRefId = equipmentRefId,
                     equipmentNameSnapshot = trimmedSnapshot,
+                    engineHoursUsed = engineHoursUsed,
+                    equipmentSource = source,
+                    entrySource = entrySource,
                     operatorCategoryId = operatorCategoryId,
                     durationHours = durationHours,
                     fuelLitres = fuelLitres,
@@ -10982,7 +10989,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — restore previous lines,
                 // surface, don't queue as retryable.
-                _ui.update { it.copy(taskMachineLines = previous, taskLineBusy = false, taskLineError = friendlyWriteError(e.code)) }
+                _ui.update { it.copy(taskMachineLines = previous, vineyardMachineLines = previousVineyardLines, taskLineBusy = false, taskLineError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
                 // Transient network failure — keep the optimistic row and queue/fold.

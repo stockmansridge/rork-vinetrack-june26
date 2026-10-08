@@ -524,6 +524,15 @@ if (providers.gradleProperty("inventoryTraceabilityFocusedTests").orNull == "tru
     }
 }
 
+if (providers.gradleProperty("machineCostingFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach { testLogging { events("passed", "failed", "skipped") } }
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") { include("**/WorkTaskMachineCostingTest.kt") })
+        }
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)

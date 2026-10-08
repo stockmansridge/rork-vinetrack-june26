@@ -1557,6 +1557,7 @@ data class WorkTaskMachineLine(
     @SerialName("operator_user_id") val operatorUserId: String? = null,
     @SerialName("worker_type_id") val operatorCategoryId: String? = null,
     @SerialName("duration_hours") val durationHours: Double? = null,
+    @SerialName("engine_hours_used") val engineHoursUsed: Double? = null,
     @SerialName("fuel_litres") val fuelLitres: Double? = null,
     @SerialName("fuel_cost") val fuelCost: Double? = null,
     @SerialName("hourly_machine_rate") val hourlyMachineRate: Double? = null,
@@ -1566,13 +1567,11 @@ data class WorkTaskMachineLine(
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     /**
-     * Computed machine cost. Prefers the explicit `total_machine_cost`, else
-     * derives `duration * hourly_rate + fuel_cost` so the roll-up still works
-     * when only the inputs were entered.
+     * Saved machine charge excludes the separately stored fuel charge.
+     * Never reprice historical records from rates when rendering.
      */
     val resolvedCost: Double
-        get() = totalMachineCost
-            ?: ((durationHours ?: 0.0) * (hourlyMachineRate ?: 0.0) + (fuelCost ?: 0.0))
+        get() = (totalMachineCost ?: 0.0) + (fuelCost ?: 0.0)
 
     /**
      * Best display name for the linked equipment. Prefers a live match against

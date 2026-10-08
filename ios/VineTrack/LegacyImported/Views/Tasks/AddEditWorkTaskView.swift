@@ -276,6 +276,7 @@ struct AddEditWorkTaskView: View {
             linkedTripCost: WorkTaskCostRollup.decimal(linkedTripCost),
             materialCost: materialCostsAllowed ? materialCosts : 0,
             isComplete: labourComplete
+                && machineLines.allSatisfy { $0.totalMachineCost != nil && $0.fuelCost != nil }
                 && linkedTripIDs.isSubset(of: Set(linkedAllocations.map(\.tripId)))
                 && linkedAllocations.allSatisfy { $0.totalCost != nil }
         )

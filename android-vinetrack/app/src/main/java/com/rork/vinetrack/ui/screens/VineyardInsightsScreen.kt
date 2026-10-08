@@ -701,6 +701,7 @@ private fun ScoutList(
 @Composable
 private fun ScoutVisitHeader(vm: AppViewModel, state: AppUiState, visit: ScoutVisit) {
     val vine = LocalVineColors.current
+    val insights = vm.vineyardInsights
     VineyardCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
