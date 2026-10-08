@@ -21,6 +21,11 @@ struct GrapeAllocationView: View {
     @State private var selectedVintage: Int?
     @State private var editorContext: EditorContext?
     @State private var deleteCandidate: GrapeAllocation?
+    @State private var collapsedVarieties: Set<String> = []
+
+    private var scopedAllocations: [GrapeAllocation] {
+        allocationService.allocations.filter { $0.vineyardId == store.selectedVineyardId }
+    }
 
     private struct EditorContext: Identifiable {
         let id = UUID()
@@ -50,14 +55,15 @@ struct GrapeAllocationView: View {
             seasonStartMonth: store.settings.seasonStartMonth,
             seasonStartDay: store.settings.seasonStartDay
         ))
-        for allocation in allocationService.allocations { all.insert(allocation.vintage) }
+        for allocation in scopedAllocations { all.insert(allocation.vintage) }
         return all.sorted(by: >)
     }
 
     /// The canonical contract for the selected vintage, damage applied per
     /// block when the toggle is on. nil until the overview has loaded.
     private var projection: SeasonYieldProjection.Result? {
-        guard seasonYield.loadedVintage == reportVintage else { return nil }
+        guard seasonYield.loadedVintage == reportVintage,
+              seasonYield.loadedVineyardId == store.selectedVineyardId else { return nil }
         return seasonYield.projection(
             damageRecords: store.damageRecords,
             seasonStartMonth: store.settings.seasonStartMonth,
@@ -73,7 +79,7 @@ struct GrapeAllocationView: View {
     private var summary: GrapeAllocationCalculator.CanonicalSummary {
         GrapeAllocationCalculator.canonicalSummary(
             projection: projection,
-            allocations: allocationService.allocations,
+            allocations: scopedAllocations,
             vintage: reportVintage
         )
     }
@@ -81,13 +87,13 @@ struct GrapeAllocationView: View {
     private var varietyRows: [GrapeAllocationCalculator.CanonicalVarietyRow] {
         GrapeAllocationCalculator.canonicalVarietyRows(
             supply: canonicalSupply,
-            allocations: allocationService.allocations,
+            allocations: scopedAllocations,
             vintage: reportVintage
         )
     }
 
     private var vintageAllocations: [GrapeAllocation] {
-        allocationService.allocations.filter { $0.vintage == reportVintage }
+        scopedAllocations.filter { $0.vintage == reportVintage }
     }
 
     var body: some View {
@@ -138,7 +144,13 @@ struct GrapeAllocationView: View {
             }
             Button("Cancel", role: .cancel) { deleteCandidate = nil }
         }
-        .task(id: reportVintage) {
+        .onChange(of: store.selectedVineyardId) { _, _ in
+            collapsedVarieties = []
+            editorContext = nil
+            deleteCandidate = nil
+        }
+        .onChange(of: reportVintage) { _, _ in collapsedVarieties = [] }
+        .task(id: "\(store.selectedVineyardId?.uuidString ?? "")|\(reportVintage)") {
             guard let vineyardId = store.selectedVineyardId else { return }
             await allocationService.load(vineyardId: vineyardId)
             await seasonYield.load(vineyardId: vineyardId, vintage: reportVintage)
@@ -208,7 +220,7 @@ struct GrapeAllocationView: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Text(fmt.formatCurrency(GrapeAllocationCalculator.totalContractedIncome(
-                        allocations: allocationService.allocations,
+                        allocations: scopedAllocations,
                         vintage: reportVintage
                     )))
                     .font(.title3.weight(.bold).monospacedDigit())
@@ -305,11 +317,11 @@ struct GrapeAllocationView: View {
             Label("Income Breakdown", systemImage: "chart.pie.fill")
                 .font(.headline)
             incomeGroup(title: "By Purchaser", lines: GrapeAllocationCalculator.incomeByPurchaser(
-                allocations: allocationService.allocations, vintage: reportVintage))
+                allocations: scopedAllocations, vintage: reportVintage))
             incomeGroup(title: "By Variety", lines: GrapeAllocationCalculator.incomeByVariety(
-                allocations: allocationService.allocations, vintage: reportVintage))
+                allocations: scopedAllocations, vintage: reportVintage))
             incomeGroup(title: "By Block", lines: GrapeAllocationCalculator.incomeByBlock(
-                allocations: allocationService.allocations, vintage: reportVintage))
+                allocations: scopedAllocations, vintage: reportVintage))
         }
     }
 
@@ -363,9 +375,22 @@ struct GrapeAllocationView: View {
 
     private func varietyCard(_ row: GrapeAllocationCalculator.CanonicalVarietyRow) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if !collapsedVarieties.insert(row.varietyKey).inserted { collapsedVarieties.remove(row.varietyKey) }
+                }
+            } label: {
+                HStack {
+                    Image(systemName: collapsedVarieties.contains(row.varietyKey) ? "chevron.right" : "chevron.down")
+                    Text(row.displayName).font(.subheadline.weight(.semibold))
+                    Spacer()
+                }
+                .frame(minHeight: 44).contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(collapsedVarieties.contains(row.varietyKey) ? "Expand" : "Collapse") \(row.displayName) blocks")
+            .accessibilityValue(collapsedVarieties.contains(row.varietyKey) ? "Collapsed" : "Expanded")
             HStack {
-                Text(row.displayName)
-                    .font(.subheadline.weight(.semibold))
                 Spacer()
                 if row.isShortfall {
                     Label("Shortfall", systemImage: "exclamationmark.triangle.fill")
@@ -377,23 +402,17 @@ struct GrapeAllocationView: View {
                         .foregroundStyle(.orange)
                 }
             }
-            HStack(spacing: 0) {
-                varietyStat("Estimated", row.estimatedTonnes, .indigo)
-                varietyStat("Own Use", row.ownUseTonnes, .purple)
-                varietyStat("External", row.externalTonnes, .orange)
-                VStack(spacing: 2) {
-                    Text(row.balanceTonnes.map { tonnesText($0) } ?? "—")
-                        .font(.caption.weight(.bold).monospacedDigit())
-                        .foregroundStyle(
-                            row.isSupplyUnknown
-                                ? Color.secondary
-                                : (row.isShortfall ? .red : VineyardTheme.leafGreen)
-                        )
-                    Text("Balance")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+            hierarchyMetrics(estimated: row.estimatedTonnes, own: row.ownUseTonnes,
+                             external: row.externalTonnes, balance: row.balanceTonnes)
+            if !collapsedVarieties.contains(row.varietyKey), let vineyardId = store.selectedVineyardId {
+                let names = Dictionary(store.paddocks.filter { $0.vineyardId == vineyardId }.map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
+                let children = GrapeAllocationHierarchy.rows(varietyKey: row.varietyKey, vineyardId: vineyardId,
+                    vintage: reportVintage, allocations: scopedAllocations,
+                    estimates: GrapeAllocationHierarchy.estimates(projection), blockNames: names)
+                ForEach(children) { child in
+                    Divider()
+                    blockChild(child, variety: row.displayName).padding(.leading, 16)
                 }
-                .frame(maxWidth: .infinity)
             }
             if row.isSupplyUnknown && row.knownEstimatedTonnes > 0 {
                 Text("\(tonnesText(row.knownEstimatedTonnes)) known so far — not enough to allocate against.")
@@ -403,6 +422,58 @@ struct GrapeAllocationView: View {
         }
         .padding(12)
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
+    }
+
+    private func hierarchyMetrics(estimated: Double?, own: Double, external: Double, balance: Double?) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 125), alignment: .leading)], alignment: .leading, spacing: 10) {
+            varietyStat("Estimated", estimated, .indigo)
+            varietyStat("Own Use", own, .purple)
+            varietyStat("External", external, .orange)
+            varietyStat("Total allocated", own + external, .primary)
+            varietyStat((balance ?? 0) < -GrapeAllocationCalculator.shortfallTolerance ? "Shortfall" : "Available",
+                        balance.map { abs($0) }, (balance ?? 0) < 0 ? .red : VineyardTheme.leafGreen)
+        }
+    }
+
+    private func blockChild(_ child: GrapeAllocationHierarchy.BlockRow, variety: String) -> some View {
+        let editable = vintageAllocations.filter { child.allocationIds.contains($0.id) }
+        return VStack(alignment: .leading, spacing: 10) {
+            Text(child.paddockId == nil ? child.name : "Block: \(child.name)")
+                .font(.subheadline.weight(.medium))
+            hierarchyMetrics(estimated: child.estimatedTonnes, own: child.ownUseTonnes,
+                             external: child.externalTonnes, balance: child.balanceTonnes)
+            if child.hasUnspecifiedQuantity {
+                Text("Block quantity not recorded. Unmatched tonnes appear under No block specified.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if child.paddockId == nil, child.allocatedTonnes < 0 {
+                Text("Recorded block quantities exceed the allocation total. Edit the allocation to reconcile them.")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            if editable.count == 1, let allocation = editable.first {
+                Button("Edit allocation") { openAllocation(allocation.id) }
+                    .frame(minHeight: 44)
+                    .accessibilityLabel("Edit \(variety) allocation for \(child.name)")
+            } else if !editable.isEmpty {
+                Menu {
+                    ForEach(editable) { allocation in
+                        Button(allocationChoiceLabel(allocation)) { openAllocation(allocation.id) }
+                    }
+                } label: { Label("Edit allocation (\(editable.count))", systemImage: "square.and.pencil") }
+                .frame(minHeight: 44)
+                .accessibilityLabel("Choose a \(variety) allocation to edit for \(child.name)")
+            }
+        }
+    }
+
+    private func openAllocation(_ id: UUID) {
+        guard let allocation = vintageAllocations.first(where: { $0.id == id }) else { return }
+        editorContext = EditorContext(allocation: allocation, defaultVintage: allocation.vintage)
+    }
+
+    private func allocationChoiceLabel(_ allocation: GrapeAllocation) -> String {
+        let destination = allocation.allocationType == .external ? allocation.purchaserName : allocation.destinationName
+        return "\(allocation.allocationType.displayName) · \(destination ?? "Unnamed destination") · \(tonnesText(allocation.quantityTonnes)) · \(allocation.id.uuidString.prefix(8))"
     }
 
     private func varietyStat(_ title: String, _ tonnes: Double?, _ color: Color) -> some View {

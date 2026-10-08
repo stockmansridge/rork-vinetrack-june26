@@ -70,6 +70,7 @@ import com.rork.vinetrack.data.YieldVintageReport
 import com.rork.vinetrack.data.model.GrapeAllocation
 import com.rork.vinetrack.data.model.GrapeAllocationBlock
 import com.rork.vinetrack.data.model.GrapeAllocationCalculator
+import com.rork.vinetrack.data.model.GrapeAllocationHierarchy
 import com.rork.vinetrack.data.model.GrapeAllocationFormLogic
 import com.rork.vinetrack.data.model.GrapePurchaser
 import com.rork.vinetrack.data.model.Paddock
@@ -113,21 +114,23 @@ fun GrapeAllocationScreen(
     var selectedVintage by remember { mutableStateOf<Int?>(null) }
     val reportVintage = selectedVintage ?: currentVintage
 
-    var editing by remember { mutableStateOf<GrapeAllocation?>(null) }
-    var creating by remember { mutableStateOf(false) }
-    var deleteCandidate by remember { mutableStateOf<GrapeAllocation?>(null) }
+    var editing by remember(state.selectedVineyardId) { mutableStateOf<GrapeAllocation?>(null) }
+    var creating by remember(state.selectedVineyardId) { mutableStateOf(false) }
+    var deleteCandidate by remember(state.selectedVineyardId) { mutableStateOf<GrapeAllocation?>(null) }
+    var collapsedVarieties by remember(state.selectedVineyardId, reportVintage) { mutableStateOf<Set<String>>(emptySet()) }
+    val scopedAllocations = state.grapeAllocations.filter { it.vineyardId.equals(state.selectedVineyardId, true) && it.deletedAt == null }
 
     LaunchedEffect(state.selectedVineyardId) { vm.refreshGrapeAllocations() }
     LaunchedEffect(state.selectedVineyardId, reportVintage) {
         vm.loadSeasonYieldOverview(reportVintage)
     }
 
-    val availableVintages = remember(state.yieldSessions, state.yieldRecords, state.pickingRecords, state.grapeAllocations, currentVintage) {
+    val availableVintages = remember(state.yieldSessions, state.yieldRecords, state.pickingRecords, scopedAllocations, currentVintage) {
         (
             YieldVintageReport.availableVintages(
                 currentVintage, state.yieldSessions, state.yieldRecords, state.pickingRecords,
                 state.seasonStartMonth, state.seasonStartDay,
-            ) + state.grapeAllocations.map { it.vintage }
+            ) + scopedAllocations.map { it.vintage }
             ).distinct().sortedDescending()
     }
 
@@ -136,7 +139,7 @@ fun GrapeAllocationScreen(
     // canonical total (any active block still unconfigured) the screen shows
     // "—" and refuses to compute a balance: allocating against an invented 0 t
     // is how a grower over-commits a crop nobody has measured.
-    val overview = state.seasonYieldOverview?.takeIf { state.seasonYieldVintage == reportVintage }
+    val overview = state.seasonYieldOverview?.takeIf { state.seasonYieldVintage == reportVintage && it.vineyardId.equals(state.selectedVineyardId, true) }
     val projection = remember(overview, state.damageRecords, state.seasonYieldApplyDamage) {
         overview?.let {
             SeasonYieldProjection.make(
@@ -155,15 +158,17 @@ fun GrapeAllocationScreen(
     val canonicalSupply = remember(projection) {
         projection?.let { GrapeAllocationCalculator.canonicalSupply(it) }.orEmpty()
     }
-    val summary = remember(projection, state.grapeAllocations, reportVintage) {
-        GrapeAllocationCalculator.canonicalSummary(projection, state.grapeAllocations, reportVintage)
+    val summary = remember(projection, scopedAllocations, reportVintage) {
+        GrapeAllocationCalculator.canonicalSummary(projection, scopedAllocations, reportVintage)
     }
-    val varietyRows = remember(canonicalSupply, state.grapeAllocations, reportVintage) {
+    val varietyRows = remember(canonicalSupply, scopedAllocations, reportVintage) {
         GrapeAllocationCalculator.canonicalVarietyRows(
-            canonicalSupply, state.grapeAllocations, reportVintage,
+            canonicalSupply, scopedAllocations, reportVintage,
         )
     }
-    val vintageAllocations = state.grapeAllocations.filter { it.vintage == reportVintage }
+    val vintageAllocations = scopedAllocations.filter { it.vintage == reportVintage }
+    val blockNames = state.paddocks.filter { it.vineyardId.equals(state.selectedVineyardId, true) }.associate { it.id to it.name }
+    val blockEstimates = remember(projection) { GrapeAllocationHierarchy.estimates(projection) }
     val fmt = state.regionFormatter
 
     if (creating || editing != null) {
@@ -231,7 +236,7 @@ fun GrapeAllocationScreen(
                 contractedIncome = if (canViewFinancials) {
                     fmt.formatCurrency(
                         GrapeAllocationCalculator.totalContractedIncome(
-                            state.grapeAllocations,
+                            scopedAllocations,
                             reportVintage,
                         ),
                     )
@@ -241,9 +246,9 @@ fun GrapeAllocationScreen(
             )
 
             if (canViewFinancials) {
-                val byPurchaser = GrapeAllocationCalculator.incomeByPurchaser(state.grapeAllocations, reportVintage)
-                val byVariety = GrapeAllocationCalculator.incomeByVariety(state.grapeAllocations, reportVintage)
-                val byBlock = GrapeAllocationCalculator.incomeByBlock(state.grapeAllocations, reportVintage)
+                val byPurchaser = GrapeAllocationCalculator.incomeByPurchaser(scopedAllocations, reportVintage)
+                val byVariety = GrapeAllocationCalculator.incomeByVariety(scopedAllocations, reportVintage)
+                val byBlock = GrapeAllocationCalculator.incomeByBlock(scopedAllocations, reportVintage)
                 if (byPurchaser.isNotEmpty()) {
                     SectionHeader("Income Breakdown")
                     IncomeGroup("By Purchaser", byPurchaser, state)
@@ -262,39 +267,16 @@ fun GrapeAllocationScreen(
                 }
             } else {
                 varietyRows.forEach { row ->
-                    VineyardCard {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(row.displayName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                                Spacer(Modifier.weight(1f))
-                                if (row.isShortfall) {
-                                    Icon(Icons.Filled.Warning, contentDescription = null, tint = VineColors.Destructive, modifier = Modifier.size(14.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Shortfall", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Destructive)
-                                } else if (row.isSupplyUnknown) {
-                                    Icon(Icons.Filled.Warning, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(14.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Estimate incomplete", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Orange)
-                                }
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                AllocationStat("Estimated", row.estimatedTonnes, VineColors.Indigo, Modifier.weight(1f))
-                                AllocationStat("Own Use", row.ownUseTonnes, VineColors.Purple, Modifier.weight(1f))
-                                AllocationStat("External", row.externalTonnes, VineColors.Orange, Modifier.weight(1f))
-                                AllocationStat(
-                                    "Balance", row.balanceTonnes,
-                                    if (row.isShortfall) VineColors.Destructive else VineColors.LeafGreen,
-                                    Modifier.weight(1f),
-                                )
-                            }
-                            if (row.isSupplyUnknown && row.knownEstimatedTonnes > 0) {
-                                Text(
-                                    "${tonnesText(row.knownEstimatedTonnes)} known so far — not enough to allocate against.",
-                                    fontSize = 11.sp, color = vine.textSecondary,
-                                )
-                            }
-                        }
+                    val children = remember(row.varietyKey, state.selectedVineyardId, reportVintage, scopedAllocations, blockEstimates, blockNames) {
+                        GrapeAllocationHierarchy.rows(row.varietyKey, state.selectedVineyardId.orEmpty(), reportVintage,
+                            scopedAllocations, blockEstimates, blockNames)
                     }
+                    GrapeAllocationHierarchyCard(
+                        parent = row, children = children, allocations = vintageAllocations,
+                        expanded = row.varietyKey !in collapsedVarieties,
+                        onToggle = { collapsedVarieties = if (row.varietyKey in collapsedVarieties) collapsedVarieties - row.varietyKey else collapsedVarieties + row.varietyKey },
+                        onEdit = { id -> editing = vintageAllocations.firstOrNull { it.id == id } },
+                    )
                 }
             }
 
