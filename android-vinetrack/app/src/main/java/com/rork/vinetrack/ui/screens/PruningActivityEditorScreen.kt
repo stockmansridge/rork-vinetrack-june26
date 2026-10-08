@@ -175,6 +175,7 @@ fun PruningActivityEditorScreen(
     var showTaskPicker by rememberSaveable { mutableStateOf(false) }
     var taskCreateDraft by remember { mutableStateOf<PruningWorkTaskLinkDraft?>(null) }
     var openTaskId by rememberSaveable { mutableStateOf<String?>(null) }
+    var timingSaveError by remember { mutableStateOf<String?>(null) }
 
     val isDirty = draft != initialDraft
     val leave: () -> Unit = { if (isDirty) showDiscardPrompt = true else onBack() }
@@ -439,10 +440,16 @@ fun PruningActivityEditorScreen(
             }
 
             item(key = "save") {
+                timingSaveError?.let { Text(it, color = VineColors.Destructive) }
                 Button(
                     onClick = {
-                        onSave(PruningAllocationEditor.pruneEmptyBlocks(draft))
-                        onBack()
+                        try {
+                            onSave(PruningAllocationEditor.pruneEmptyBlocks(draft))
+                            timingSaveError = null
+                            onBack()
+                        } catch (_: IllegalArgumentException) {
+                            timingSaveError = "Check the vineyard timezone and work times. A daylight-saving clock change can make a local time unavailable. Your draft has not been discarded."
+                        }
                     },
                     enabled = draft.canSave,
                     modifier = Modifier.fillMaxWidth().height(50.dp),

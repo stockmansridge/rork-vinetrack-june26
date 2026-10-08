@@ -150,6 +150,7 @@ fun ScoutReportScreen(vm: AppViewModel, state: AppUiState, visit: ScoutVisit, on
                         context, visit, vineyard, blocks,
                         photoBytes = { id -> visit.assessments.flatMap { it.observations }.flatMap { it.photos }.firstOrNull { it.id == id }?.let(vm.vineyardInsights::photoBytes) },
                         logo = logo,
+                        formatter = liveState.regionFormatter,
                         growthRecords = liveState.growthRecords,
                         pins = liveState.pins,
                         locationBlocks = liveState.paddocks,

@@ -597,6 +597,7 @@ fun PinsScreen(
             paddocks = state.paddocks,
             format = format,
             logo = state.selectedVineyardLogo,
+            formatter = state.regionFormatter,
         )
         isExporting = false
         if (!ok) scope.launch { snackbarHostState.showSnackbar("Couldn't create the export.") }

@@ -494,13 +494,14 @@ fun PruningTrackerScreen(
             },
             onUpsertSetup = { setups = vm.upsertPruningSetup(vineyardId, it) },
             onAddEntry = { entry, taskDraft ->
+                val prepared = vm.preparePruningEntryForSave(entry)
                 val setup = resolveSeasonForDate(entry.paddockId, entry.date)
                 val metrics = PruningCalculator.metrics(
                     paddock = selectedPaddock,
                     setup = setup,
                     entries = entries.filter { it.paddockId == entry.paddockId },
                 )
-                var linked = entry.copy(
+                var linked = prepared.copy(
                     seasonId = setup.id,
                     estimatedVines = PruningCalculator.vines(entry.segments, metrics.rows),
                 )
@@ -549,7 +550,7 @@ fun PruningTrackerScreen(
                 entries = vm.recordPruningEntry(vineyardId, linked)
             },
             onEditEntry = { entry, action ->
-                var updated = entry
+                var updated = vm.preparePruningEntryForSave(entry)
                 when (action) {
                     is PruningEditTaskAction.UpdateLinked -> {
                         val taskId = entry.workTaskId
@@ -2663,6 +2664,7 @@ private fun PruningEntrySheet(
         )
     }
     var showSkipConfirm by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
     /** Stable ids of the linked task's live lines when the editor opened —
      * lines missing from the saved set soft-delete through the normal flow. */
     var originalLineIds by remember { mutableStateOf(setOf<String>()) }
@@ -3132,7 +3134,11 @@ private fun PruningEntrySheet(
                 )
             }
 
+            saveError?.let { Text(it, color = VineColors.Destructive, fontSize = 13.sp) }
+
             val performSave: () -> Unit = performSave@{
+                saveError = null
+                try {
                     if (existingEntry != null) {
                         // Person-hours convention: with a live task, the entry's
                         // labour hours = sum of the labour-line person-hours.
@@ -3270,6 +3276,9 @@ private fun PruningEntrySheet(
                         }
                         onSave(entry, draft)
                     }
+                } catch (_: Exception) {
+                    saveError = "Unable to save. Check the vineyard timezone and work times, then try again. Your draft has been kept."
+                }
             }
 
             Button(

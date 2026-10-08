@@ -107,6 +107,7 @@ data class PruningActivityDraft(
     val serverAcknowledged: Boolean = false,
     val serverSeasonYear: Int? = null,
     val vintageYear: Int? = null,
+    val workTiming: PruningWorkTiming? = null,
 ) {
     val isReversed: Boolean get() = reversedAtMs > 0L
 
@@ -191,6 +192,7 @@ data class PruningActivityDraft(
                 method = entry.method,
                 startTime = entry.startTime,
                 finishTime = entry.finishTime,
+                workTiming = entry.workTiming,
                 labourHours = entry.labourHours,
                 hourlyRate = null,
                 notes = entry.notes,
@@ -316,6 +318,7 @@ object PruningAllocationEditor {
     fun adoptCanonical(
         draft: PruningActivityDraft,
         canonical: PruningActivityCanonical,
+        vineyardZone: java.time.ZoneId = java.time.ZoneOffset.UTC,
     ): PruningActivityDraft {
         val activity = canonical.activity ?: return draft
         val blockNames = draft.allocations.mapValues { it.value.blockName }
@@ -336,6 +339,9 @@ object PruningAllocationEditor {
             ?: allocations.values.sortedBy { it.paddockId }.firstOrNull()?.paddockId
         return draft.copy(
             date = activity.entryDate?.take(10) ?: draft.date,
+            workTiming = PruningWorkTiming.fromServer(activity.entryDate?.take(10) ?: draft.date, activity.startTime, activity.finishTime, vineyardZone),
+            startTime = PruningWorkTiming.wall(activity.startTime, vineyardZone),
+            finishTime = PruningWorkTiming.wall(activity.finishTime, vineyardZone),
             worker = activity.workerOrCrew ?: draft.worker,
             method = activity.method ?: draft.method,
             labourHours = activity.labourHours,
@@ -381,6 +387,7 @@ object PruningAllocationEditor {
                 labourHours = if (isPrimary) draft.labourHours else null,
                 startTime = if (isPrimary) draft.startTime else null,
                 finishTime = if (isPrimary) draft.finishTime else null,
+                workTiming = if (isPrimary) draft.workTiming else null,
                 method = draft.method,
                 notes = draft.notes,
                 estimatedVines = alloc.estimatedVines,

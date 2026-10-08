@@ -45,7 +45,9 @@ fun SprayTripCorrectionSheet(
 ) {
     var machineId by remember(report) { mutableStateOf(report.equipment.machineId) }
     var sprayEquipmentId by remember(report) { mutableStateOf(report.equipment.sprayEquipmentId) }
-    var fuel by remember(report) { mutableStateOf(report.equipment.fuelConsumptionLPerHour?.toString().orEmpty()) }
+    val formatter = remember(report) { state.regionFormatter }
+    val fuelSeed = remember(report) { com.rork.vinetrack.data.RegionalInput.seed(report.equipment.fuelConsumptionLPerHour, formatter::fuelValue) }
+    var fuel by remember(report) { mutableStateOf(fuelSeed.text) }
     var start by remember(report) { mutableStateOf(report.equipment.startEngineHours?.toString().orEmpty()) }
     var end by remember(report) { mutableStateOf(report.equipment.endEngineHours?.toString().orEmpty()) }
     var saving by remember { mutableStateOf(false) }
@@ -54,11 +56,11 @@ fun SprayTripCorrectionSheet(
     var pendingFingerprint by remember { mutableStateOf<String?>(null) }
 
     fun number(value: String): Double? = value.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() }
-    val fuelValue = number(fuel)
+    val fuelValue = fuelSeed.resolve(fuel, formatter::fuelToCanonical)
     val startValue = number(start)
     val endValue = number(end)
     val validation = when {
-        fuel.isNotBlank() && (fuelValue == null || fuelValue <= 0 || fuelValue >= 1000) -> "Fuel use must be greater than 0 and below 1000 L/hr."
+        fuel.isNotBlank() && (fuelValue == null || fuelValue <= 0 || fuelValue >= 1000) -> "Fuel use must be greater than 0 and below ${formatter.fuelValue(1000.0)} ${formatter.fuelUnitAbbreviation}/hr."
         start.isNotBlank() && (startValue == null || startValue < 0) -> "Enter valid start engine hours."
         end.isNotBlank() && (endValue == null || endValue < 0) -> "Enter valid end engine hours."
         startValue != null && endValue != null && endValue < startValue -> "End engine hours cannot be lower than start engine hours."
@@ -81,7 +83,7 @@ fun SprayTripCorrectionSheet(
             state.sprayEquipment.filter { it.vineyardId == report.identity.vineyardId }.forEach { unit ->
                 ChoiceRow(unit.displayName, sprayEquipmentId == unit.id) { sprayEquipmentId = unit.id }
             }
-            NumberField("Fuel use (L/hr)", fuel) { fuel = it }
+            NumberField("Fuel use (${formatter.fuelUnitAbbreviation}/hr)", fuel) { fuel = it }
             NumberField("Start engine hours", start) { start = it }
             NumberField("End engine hours", end) { end = it }
             Text(error ?: validation ?: "Saving creates an audited correction. Blank means not recorded.")
@@ -91,7 +93,7 @@ fun SprayTripCorrectionSheet(
                     error = null
                     val fingerprint = listOf(
                         machineId, report.equipment.tractorId, sprayEquipmentId,
-                        report.trip.operatorId, fuel.trim(), start.trim(), end.trim(),
+                        report.trip.operatorId, fuelValue?.toString(), startValue?.toString(), endValue?.toString(),
                     ).joinToString("|") { it ?: "null" }
                     if (pendingFingerprint != fingerprint) {
                         pendingFingerprint = fingerprint

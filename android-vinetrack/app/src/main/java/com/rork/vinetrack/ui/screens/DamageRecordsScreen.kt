@@ -272,12 +272,7 @@ private fun DamageListView(
                                         fontWeight = FontWeight.Bold,
                                     )
                                     Text(
-                                        String.format(
-                                            Locale.getDefault(),
-                                            "%.2f of %.2f ha lost",
-                                            damage.effectiveLossHectares,
-                                            damage.blockAreaHectares ?: 0.0,
-                                        ),
+                                        "${state.regionFormatter.formatArea(damage.effectiveLossHectares)} of ${state.regionFormatter.formatArea(damage.blockAreaHectares ?: 0.0)} lost",
                                         color = vine.textSecondary,
                                         fontSize = 11.sp,
                                     )

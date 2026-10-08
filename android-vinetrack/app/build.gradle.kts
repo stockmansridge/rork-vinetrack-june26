@@ -535,6 +535,17 @@ if (providers.gradleProperty("grapeHierarchyFocusedTests").orNull == "true") {
     }
 }
 
+if (providers.gradleProperty("regionResidualFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach { testLogging { events("passed", "failed", "skipped") } }
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/PruningVineyardTimeTest.kt", "**/RegionResidualBoundaryTest.kt", "**/RegionFormatterTest.kt", "**/PruningActivityEditorFlowTest.kt", "**/PruningSyncIntegrityTest.kt")
+            })
+        }
+    }
+}
+
 if (providers.gradleProperty("machineCostingFocusedTests").orNull == "true") {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach { testLogging { events("passed", "failed", "skipped") } }
     afterEvaluate {

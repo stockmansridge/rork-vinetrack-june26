@@ -196,11 +196,7 @@ struct DamageRecordsListView: View {
                             Text(String(format: "%.0f%% remaining", remaining * 100))
                                 .font(.caption.weight(.bold))
                                 .foregroundStyle(remaining >= 0.8 ? Color.green : remaining >= 0.5 ? Color.orange : Color.red)
-                            Text(String(
-                                format: "%.2f of %.2f ha lost",
-                                damage.effectiveLossHectares,
-                                damage.blockAreaHectares ?? 0
-                            ))
+                            Text("\(store.settings.regionFormatter.formatArea(hectares: damage.effectiveLossHectares)) of \(store.settings.regionFormatter.formatArea(hectares: damage.blockAreaHectares ?? 0)) lost")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                         }

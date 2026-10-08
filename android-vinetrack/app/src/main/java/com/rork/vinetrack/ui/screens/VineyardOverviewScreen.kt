@@ -581,27 +581,27 @@ private fun BlockDetailSheetContent(block: Paddock, fmt: RegionFormatter, state:
         DetailSection("Overview") {
             DetailRow("Area", fmt.formatArea(block.areaHectares))
             DetailRow("Vines", "${block.summaryVineCount}")
-            DetailRow("Trellis Length", "${"%,.0f".format(block.effectiveTotalRowLength)} m")
+            DetailRow("Trellis Length", fmt.formatLength(block.effectiveTotalRowLength, 0))
             DetailRow("Rows", "${block.rowCount}")
-            block.rowWidth?.let { DetailRow("Row Spacing", "${"%.1f".format(it)} m") }
-            block.vineSpacing?.let { DetailRow("Vine Spacing", "${"%.1f".format(it)} m") }
+            block.rowWidth?.let { DetailRow("Row Spacing", fmt.formatLength(it, 1)) }
+            block.vineSpacing?.let { DetailRow("Vine Spacing", fmt.formatLength(it, 1)) }
         }
 
         if (block.intermediatePostSpacing != null || VineyardBlockPresentation.intermediatePostCount(block) != null) {
             DetailSection("Trellis") {
-                block.intermediatePostSpacing?.let { DetailRow("Intermediate Post Spacing", "${"%.1f".format(it)} m") }
+                block.intermediatePostSpacing?.let { DetailRow("Intermediate Post Spacing", fmt.formatLength(it, 1)) }
                 VineyardBlockPresentation.intermediatePostCount(block)?.let { DetailRow("Intermediate Posts", "%,d".format(it)) }
             }
         }
 
         if (block.flowPerEmitter != null || block.emitterSpacing != null) {
             DetailSection("Irrigation") {
-                block.flowPerEmitter?.let { DetailRow("Emitter Rate", "${"%.1f".format(it)} L/hr") }
-                block.emitterSpacing?.let { DetailRow("Emitter Spacing", "${"%.1f".format(it)} m") }
+                block.flowPerEmitter?.let { DetailRow("Emitter Rate", "${fmt.formatVolume(it)}/hr") }
+                block.emitterSpacing?.let { DetailRow("Emitter Spacing", fmt.formatLength(it, 1)) }
                 VineyardBlockPresentation.totalEmitters(block)?.let { DetailRow("Emitters", "%,d".format(it)) }
-                VineyardBlockPresentation.litresPerVinePerHour(block)?.let { DetailRow("L/Vine/Hr", "%.1f".format(it)) }
-                VineyardBlockPresentation.litresPerHour(block)?.let { DetailRow("Block L/hr", "%,.0f".format(it)) }
-                block.litresPerHaPerHour?.let { DetailRow("L/ha/hr", "%,.0f".format(it)) }
+                VineyardBlockPresentation.litresPerVinePerHour(block)?.let { DetailRow("Carrier per vine/hour", "${fmt.formatVolume(it)}/vine/hr") }
+                VineyardBlockPresentation.litresPerHour(block)?.let { DetailRow("Block flow", "${fmt.formatVolume(it, 0)}/hr") }
+                block.litresPerHaPerHour?.let { DetailRow("Flow per area", "${fmt.formatVolumePerLandArea(it)}/hr") }
             }
         }
 

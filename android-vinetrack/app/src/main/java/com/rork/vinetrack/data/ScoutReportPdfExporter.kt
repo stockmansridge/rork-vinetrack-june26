@@ -37,6 +37,7 @@ object ScoutReportPdfExporter {
         pins: List<Pin>,
         locationBlocks: List<Paddock> = blocks,
         deletionStatus: String? = null,
+        formatter: RegionFormatter,
     ): Boolean = runCatching {
         val locations = ScoutReportPresentation.locations(visit, locationBlocks, growthRecords, pins)
         val document = PdfDocument()
@@ -49,12 +50,12 @@ object ScoutReportPdfExporter {
         state.text(vineyard?.name ?: "Vineyard", 22f, true)
         state.text(if (visit.status == ScoutStatus.DRAFT) "DRAFT SCOUT REPORT" else "SCOUT REPORT", 12f, true,
             if (visit.status == ScoutStatus.DRAFT) Color.rgb(230, 126, 34) else Color.rgb(52, 125, 60))
-        state.text("Visit: ${visit.scoutDateIso}   Vintage: ${VintageYearText.format(visit.vintageYear)}")
+        state.text("Visit: ${formatter.formatDate(visit.scoutDateIso)}   Vintage: ${VintageYearText.format(visit.vintageYear)}")
         state.text("Observer: ${visit.scoutNameSnapshot ?: "Unavailable"}   Status: ${visit.status.label}")
         deletionStatus?.let { state.text(it, color = Color.rgb(230, 126, 34)) }
         state.y = maxOf(state.y, 108f)
         state.heading("Weather")
-        state.text(weatherText(visit))
+        state.text(weatherText(visit, formatter))
         state.heading("Visit summary")
         state.text(visit.visitSummary ?: "Not assessed")
         state.ensure(190f)
@@ -112,15 +113,15 @@ object ScoutReportPdfExporter {
         true
     }.getOrDefault(false)
 
-    private fun weatherText(visit: ScoutVisit): String {
+    internal fun weatherText(visit: ScoutVisit, formatter: RegionFormatter): String {
         val weather = visit.weather ?: return "Not captured"
         if (weather.isUnavailable) return "Unavailable at observation time • ${weather.source ?: "source unavailable"}"
         val parts = mutableListOf<String>()
-        parts += "Temp: ${weather.temperatureCelsius?.let { "%.1f °C".format(it) } ?: "Unavailable"}"
+        parts += "Temp: ${weather.temperatureCelsius?.let { formatter.formatTemperature(it) } ?: "Unavailable"}"
         parts += "Humidity: ${weather.humidityPercent?.let { "${it.toInt()}%" } ?: "Unavailable"}"
-        parts += "Wind: ${weather.windSpeedKph?.let { "${it.toInt()} km/h" } ?: "Unavailable"}"
+        parts += "Wind: ${weather.windSpeedKph?.let { formatter.formatSpeed(it) } ?: "Unavailable"}"
         parts += "Source: ${weather.source ?: "Unavailable"}"
-        parts += weather.observedAtIso?.let { "observed $it" } ?: "observation time unavailable"
+        parts += weather.observedAtIso?.let { "observed ${com.rork.vinetrack.data.model.parseIsoToEpochMs(it)?.let(formatter::formatDateTime) ?: "Unavailable"}" } ?: "observation time unavailable"
         if (weather.isStale) parts += "STALE"
         return parts.joinToString(" • ")
     }

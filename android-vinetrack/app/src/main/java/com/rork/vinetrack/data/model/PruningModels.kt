@@ -252,6 +252,7 @@ data class PruningEntry(
      * before this field existed decoding as what it was — pruned.
      */
     val isSkipped: Boolean = false,
+    val workTiming: PruningWorkTiming? = null,
 ) {
     /** A full row = 1.0; each quarter = 0.25. */
     val rowEquivalents: Double get() = segments.size / 4.0

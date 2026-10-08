@@ -147,12 +147,19 @@ class PruningSyncCoordinator(
         return updated
     }
 
+    /** Freeze and validate work times before the editor makes any linked-task writes. */
+    fun prepareEntryForSave(entry: PruningEntry): PruningEntry {
+        val seed = entry.workTiming ?: store.loadEntries(entry.vineyardId).firstOrNull { it.id == entry.id }?.workTiming
+        return repo.prepareEntry(entry.copy(workTiming = seed))
+    }
+
     fun recordEntry(vineyardId: String, entry: PruningEntry): List<PruningEntry> {
-        val updated = store.addEntry(vineyardId, entry)
+        val prepared = prepareEntryForSave(entry)
+        val updated = store.addEntry(vineyardId, prepared)
         enqueueCoalesced(
             entityType = PendingEntityType.PRUNING_ENTRY,
             opType = PendingOpType.CREATE,
-            payloadJson = json.encodeToString(PruningEntry.serializer(), entry),
+            payloadJson = json.encodeToString(PruningEntry.serializer(), prepared),
             clientId = entry.id,
         )
         scope.launch { replayAll() }
@@ -173,7 +180,8 @@ class PruningSyncCoordinator(
      *    restore quarters removed by a newer edit on another device.
      */
     fun editEntry(vineyardId: String, entry: PruningEntry): List<PruningEntry> {
-        val updated = store.updateEntry(vineyardId, entry)
+        val prepared = prepareEntryForSave(entry)
+        val updated = store.updateEntry(vineyardId, prepared)
         val hasQueuedCreate = pending.list().any {
             it.entityType == PendingEntityType.PRUNING_ENTRY && it.opType == PendingOpType.CREATE &&
                 it.clientId == entry.id && it.status in PendingWriteStatus.unresolved
@@ -181,7 +189,7 @@ class PruningSyncCoordinator(
         enqueueCoalesced(
             entityType = PendingEntityType.PRUNING_ENTRY,
             opType = if (hasQueuedCreate) PendingOpType.CREATE else PendingOpType.UPDATE,
-            payloadJson = json.encodeToString(PruningEntry.serializer(), entry),
+            payloadJson = json.encodeToString(PruningEntry.serializer(), prepared),
             clientId = entry.id,
         )
         scope.launch { replayAll() }
@@ -293,7 +301,7 @@ class PruningSyncCoordinator(
             vineyardId = vineyardId,
             date = canonical.activity.entryDate?.take(10) ?: LocalDate.now().toString(),
         )
-        val adopted = PruningAllocationEditor.adoptCanonical(base, canonical)
+        val adopted = PruningAllocationEditor.adoptCanonical(base, canonical, repo.vineyardZone(vineyardId))
         store.upsertActivity(vineyardId, adopted)
         store.mergeActivityEntries(vineyardId, PruningAllocationEditor.toLegacyEntries(adopted))
         return adopted
@@ -326,7 +334,7 @@ class PruningSyncCoordinator(
                 vineyardId = vineyardId,
                 date = canonical.activity.entryDate?.take(10) ?: LocalDate.now().toString(),
             )
-            val adopted = PruningAllocationEditor.adoptCanonical(base, canonical)
+            val adopted = PruningAllocationEditor.adoptCanonical(base, canonical, repo.vineyardZone(vineyardId))
             store.upsertActivity(vineyardId, adopted)
         }
         return store.loadActivities(vineyardId)
@@ -350,7 +358,7 @@ class PruningSyncCoordinator(
      */
     fun saveActivity(vineyardId: String, draft: PruningActivityDraft): PruningActivityDraft {
         val previous = store.activity(vineyardId, draft.id)
-        val cleaned = PruningAllocationEditor.pruneEmptyBlocks(draft)
+        val cleaned = repo.prepareActivity(PruningAllocationEditor.pruneEmptyBlocks(draft.copy(workTiming = draft.workTiming ?: previous?.workTiming)))
         val keptIds = cleaned.activeAllocations.map { it.allocationIdFor(cleaned.id) }.toSet()
         val staleIds = previous?.activeAllocations
             ?.map { it.allocationIdFor(cleaned.id) }
@@ -476,7 +484,7 @@ class PruningSyncCoordinator(
         result: PruningSyncRepository.ActivityResult,
     ) {
         val canonical = result.canonical ?: return
-        val adopted = PruningAllocationEditor.adoptCanonical(draft, canonical)
+        val adopted = PruningAllocationEditor.adoptCanonical(draft, canonical, repo.vineyardZone(draft.vineyardId))
         val keptIds = adopted.activeAllocations.map { it.allocationIdFor(adopted.id) }.toSet()
         val staleIds = draft.activeAllocations
             .map { it.allocationIdFor(draft.id) }
@@ -826,10 +834,11 @@ class PruningSyncCoordinator(
                         it.id !in pendingEntryEditIds && it.id !in pendingEntryDeleteIds
                 }
             seededEntries.forEach { entry ->
+                val prepared = repo.prepareEntry(entry)
                 enqueueCoalesced(
                     entityType = PendingEntityType.PRUNING_ENTRY,
                     opType = PendingOpType.CREATE,
-                    payloadJson = json.encodeToString(PruningEntry.serializer(), entry),
+                    payloadJson = json.encodeToString(PruningEntry.serializer(), prepared),
                     clientId = entry.id,
                 )
             }
@@ -846,6 +855,7 @@ class PruningSyncCoordinator(
                     val model = row.toModel(
                         segments = segmentsByEntry[row.id].orEmpty(),
                         serverSeasonYear = serverSeasonYears[row.pruningSeasonId],
+                        vineyardZone = repo.vineyardZone(row.vineyardId),
                     )
                     if (model.isReversed && model.segments.isEmpty()) {
                         // The server no longer attributes quarters to a reversed

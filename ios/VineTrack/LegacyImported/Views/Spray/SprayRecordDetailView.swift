@@ -804,7 +804,7 @@ struct SprayRecordDetailView: View {
                                 Text(name)
                                     .font(.subheadline)
                                 Spacer()
-                                Text(chemicalComplete ? String(format: "$%.2f", cost) : "Unavailable / incomplete")
+                                Text(chemicalComplete ? fmt.formatCurrency(cost) : "Unavailable / incomplete")
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
@@ -815,7 +815,7 @@ struct SprayRecordDetailView: View {
                                 Label("Chemical", systemImage: "flask.fill")
                                     .font(.subheadline.weight(.medium))
                                 Spacer()
-                                Text(chemicalComplete ? String(format: "$%.2f", totalChemCost) : "Unavailable / incomplete")
+                                Text(chemicalComplete ? fmt.formatCurrency(totalChemCost) : "Unavailable / incomplete")
                                     .font(.subheadline.weight(.semibold))
                             }
                             Divider()
@@ -825,7 +825,7 @@ struct SprayRecordDetailView: View {
                                 Label("Fuel", systemImage: "fuelpump.fill")
                                     .font(.subheadline)
                                 Spacer()
-                                Text(String(format: "$%.2f", fuelCost))
+                                Text(fmt.formatCurrency(fuelCost))
                                     .font(.subheadline)
                             }
                             Divider()
@@ -835,7 +835,7 @@ struct SprayRecordDetailView: View {
                                 Label(operatorCatName ?? "Operator", systemImage: "person.badge.clock")
                                     .font(.subheadline)
                                 Spacer()
-                                Text(String(format: "$%.2f", operatorCost))
+                                Text(fmt.formatCurrency(operatorCost))
                                     .font(.subheadline)
                             }
                             Divider()
@@ -844,7 +844,7 @@ struct SprayRecordDetailView: View {
                             Text("Total Cost")
                                 .font(.subheadline.weight(.semibold))
                             Spacer()
-                            Text(chemicalComplete ? String(format: "$%.2f", grandTotal) : "Incomplete")
+                            Text(chemicalComplete ? fmt.formatCurrency(grandTotal) : "Incomplete")
                                 .font(.headline)
                                 .foregroundStyle(VineyardTheme.leafGreen)
                         }

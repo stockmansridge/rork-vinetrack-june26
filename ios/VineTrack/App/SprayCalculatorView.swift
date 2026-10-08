@@ -3871,7 +3871,7 @@ struct SprayCalculatorView: View {
     /// which would verify nothing at all.
     @ViewBuilder
     private var calculationReferenceGroup: some View {
-        let reference = SprayCalculationReferenceBuilder.make(flow: flow)
+        let reference = SprayCalculationReferenceBuilder.make(flow: flow, formatter: store.settings.regionFormatter)
         if !reference.isEmpty {
             GuidedReviewGroup(title: "Calculation reference") {
                 VStack(alignment: .leading, spacing: 14) {

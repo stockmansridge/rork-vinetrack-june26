@@ -10,6 +10,11 @@ struct SprayTripCorrectionEditor: View {
     let onSaved: (SprayTripCorrectionMetadata) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(MigratedDataStore.self) private var store
+    @State private var fuelSeed: RegionalInput?
+    @State private var inputFormatter: RegionFormatter?
+    private var fmt: RegionFormatter { inputFormatter ?? store.settings.regionFormatter }
+    private var canonicalFuel: Double? { fuelSeed?.resolve(fuelRateText, inverse: fmt.fuelToCanonical) }
     @State private var machineId: UUID?
     @State private var tractorId: UUID?
     @State private var sprayEquipmentId: UUID?
@@ -63,7 +68,7 @@ struct SprayTripCorrectionEditor: View {
                     }
                 }
                 Section {
-                    numericField("Fuel use (L/hr)", text: $fuelRateText)
+                    numericField("Fuel use (\(fmt.fuelUnitAbbreviation)/hr)", text: $fuelRateText)
                     numericField("Start engine hours", text: $startHoursText)
                     numericField("End engine hours", text: $endHoursText)
                 } header: {
@@ -71,6 +76,13 @@ struct SprayTripCorrectionEditor: View {
                 } footer: {
                     Text("Saving creates an audited correction. Leave a field blank only when it is genuinely not recorded.")
                 }
+            }
+            .onAppear {
+                guard fuelSeed == nil else { return }
+                inputFormatter = store.settings.regionFormatter
+                let seed = RegionalInput(canonical: report.equipment.fuelConsumptionLPerHour, forward: fmt.fuelValue)
+                fuelSeed = seed
+                fuelRateText = seed.text
             }
             .navigationTitle("Correct equipment")
             .navigationBarTitleDisplayMode(.inline)
@@ -91,10 +103,10 @@ struct SprayTripCorrectionEditor: View {
     }
 
     private var validationError: String? {
-        let fuel = number(fuelRateText)
+        let fuel = canonicalFuel
         let start = number(startHoursText)
         let end = number(endHoursText)
-        if !fuelRateText.trimmingCharacters(in: .whitespaces).isEmpty && (fuel == nil || fuel! <= 0 || fuel! >= 1000) { return "Enter a fuel rate greater than 0 and below 1000 L/hr." }
+        if !fuelRateText.trimmingCharacters(in: .whitespaces).isEmpty && (fuel == nil || fuel! <= 0 || fuel! >= 1000) { return "Enter a fuel rate greater than 0 and below \(fmt.fuelValue(litres: 1000)) \(fmt.fuelUnitAbbreviation)/hr." }
         if !startHoursText.trimmingCharacters(in: .whitespaces).isEmpty && (start == nil || start! < 0) { return "Enter valid start engine hours." }
         if !endHoursText.trimmingCharacters(in: .whitespaces).isEmpty && (end == nil || end! < 0) { return "Enter valid end engine hours." }
         if let start, let end, end < start { return "End engine hours cannot be lower than start engine hours." }
@@ -111,7 +123,7 @@ struct SprayTripCorrectionEditor: View {
             tractorId?.uuidString ?? "null",
             sprayEquipmentId?.uuidString ?? "null",
             report.trip.operatorId?.uuidString ?? "null",
-            fuelRateText.trimmingCharacters(in: .whitespacesAndNewlines),
+            canonicalFuel.map { String($0) } ?? "null",
             startHoursText.trimmingCharacters(in: .whitespacesAndNewlines),
             endHoursText.trimmingCharacters(in: .whitespacesAndNewlines)
         ].joined(separator: "|")
@@ -128,7 +140,7 @@ struct SprayTripCorrectionEditor: View {
                 tractorId: tractorId,
                 sprayEquipmentId: sprayEquipmentId,
                 operatorUserId: report.trip.operatorId,
-                fuelConsumptionLPerHour: number(fuelRateText),
+                fuelConsumptionLPerHour: canonicalFuel,
                 startEngineHours: number(startHoursText),
                 endEngineHours: number(endHoursText)
             )

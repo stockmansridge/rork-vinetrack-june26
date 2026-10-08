@@ -2,14 +2,30 @@ import SwiftUI
 
 struct CalculationSettingsView: View {
     @Environment(MigratedDataStore.self) private var store
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
     @State private var rates: CanopyWaterRateEntry = .defaults
+    @State private var inputs: [String: RegionalInput] = [:]
+    @State private var editedInputs: [String: String] = [:]
+
+    private func carrierInput(_ name: String, _ canonical: Binding<Double>) -> Binding<String> {
+        Binding(get: { editedInputs[name] ?? inputs[name]?.text ?? String(fmt.volumePer100LengthValue(canonical.wrappedValue)) }, set: { text in
+            editedInputs[name] = text
+            if let value = inputs[name]?.resolve(text, inverse: fmt.volumePer100LengthToCanonical), value >= 0 { canonical.wrappedValue = value }
+        })
+    }
+    private var hasValidInputs: Bool {
+        editedInputs.allSatisfy { name, text in
+            guard let value = inputs[name]?.resolve(text, inverse: fmt.volumePer100LengthToCanonical) else { return false }
+            return value >= 0
+        }
+    }
     @State private var savedFeedback: Bool = false
     @State private var showResetAlert: Bool = false
 
     var body: some View {
         Form {
             Section {
-                Text("These values represent litres per 100m of row for each canopy size and density combination. They are used to calculate the recommended water rate (L/ha) based on your row spacing.")
+                Text("These values represent \(fmt.volumePer100LengthUnit) of row for each canopy size and density combination. They calculate the recommended carrier rate (\(fmt.volumePerAreaUnit)) from row spacing.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -24,7 +40,7 @@ struct CalculationSettingsView: View {
             } header: {
                 Text("Example Calculation")
             } footer: {
-                Text("L/ha = (L per 100m) × 100 ÷ Row Spacing (m)")
+                Text("Carrier per area is calculated from carrier per row length and row spacing, then converted to \(fmt.volumePerAreaUnit).")
             }
 
             Section {
@@ -43,13 +59,14 @@ struct CalculationSettingsView: View {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save") {
                     save()
-                }
+                }.disabled(!hasValidInputs)
             }
         }
         .alert("Reset to Defaults?", isPresented: $showResetAlert) {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) {
                 rates = .defaults
+                seedInputs()
                 save()
             }
         } message: {
@@ -57,6 +74,7 @@ struct CalculationSettingsView: View {
         }
         .onAppear {
             rates = store.settings.canopyWaterRates
+            seedInputs()
         }
     }
 
@@ -79,14 +97,14 @@ struct CalculationSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 4) {
-                        TextField("0", value: lowBinding, format: .number)
+                        TextField("0", text: carrierInput(title + "Low", lowBinding))
                             .keyboardType(.decimalPad)
                             .font(.body.weight(.medium))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 8)
                             .background(Color(.tertiarySystemGroupedBackground))
                             .clipShape(.rect(cornerRadius: 8))
-                        Text("L/100m")
+                        Text(fmt.volumePer100LengthUnit)
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
@@ -99,14 +117,14 @@ struct CalculationSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 4) {
-                        TextField("0", value: highBinding, format: .number)
+                        TextField("0", text: carrierInput(title + "High", highBinding))
                             .keyboardType(.decimalPad)
                             .font(.body.weight(.medium))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 8)
                             .background(Color(.tertiarySystemGroupedBackground))
                             .clipShape(.rect(cornerRadius: 8))
-                        Text("L/100m")
+                        Text(fmt.volumePer100LengthUnit)
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
@@ -130,15 +148,15 @@ struct CalculationSettingsView: View {
                     Text("Medium / Low Density")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("\(String(format: "%.0f", examplePer100m)) L/100m")
+                    Text(fmt.formatVolumePer100Length(examplePer100m))
                         .font(.subheadline.weight(.semibold))
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("@ 2.8m row spacing")
+                    Text("@ \(fmt.formatLength(metres: exampleRowSpacing)) row spacing")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("\(String(format: "%.0f", exampleLPerHa)) L/ha")
+                    Text(fmt.formatVolumePerArea(litresPerHectare: exampleLPerHa))
                         .font(.subheadline.weight(.bold))
                         .foregroundStyle(VineyardTheme.olive)
                 }
@@ -146,7 +164,14 @@ struct CalculationSettingsView: View {
         }
     }
 
+    private func seedInputs() {
+        let values: [(String, Double)] = [("Small CanopyLow", rates.smallLow), ("Small CanopyHigh", rates.smallHigh), ("Medium CanopyLow", rates.mediumLow), ("Medium CanopyHigh", rates.mediumHigh), ("Large CanopyLow", rates.largeLow), ("Large CanopyHigh", rates.largeHigh), ("Full CanopyLow", rates.fullLow), ("Full CanopyHigh", rates.fullHigh)]
+        inputs = Dictionary(uniqueKeysWithValues: values.map { ($0.0, RegionalInput(canonical: $0.1, forward: fmt.volumePer100LengthValue)) })
+        editedInputs = [:]
+    }
+
     private func save() {
+        guard hasValidInputs else { return }
         var s = store.settings
         s.canopyWaterRates = rates
         store.updateSettings(s)

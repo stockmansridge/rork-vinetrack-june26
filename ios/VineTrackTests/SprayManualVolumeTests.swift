@@ -206,7 +206,7 @@ struct SprayManualVolumeTests {
         // The implied rate appears, but labelled as reference and derived FROM
         // the total rather than the other way round.
         let implied = try? #require(reference.water.first { $0.id == "impliedPerHa" })
-        #expect(implied?.value == "40.0 L/ha")
+        #expect(implied?.value == "40.00 L/ha")
         #expect(implied?.workings?.contains("400 L ÷") == true)
         #expect(implied?.workings?.contains("for reference only") == true)
     }

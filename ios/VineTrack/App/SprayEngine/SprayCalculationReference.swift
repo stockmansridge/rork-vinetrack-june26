@@ -62,18 +62,18 @@ nonisolated enum SprayCalculationReferenceBuilder {
 
     // MARK: - Build
 
-    static func make(flow: SprayGuidedFlow) -> SprayCalculationReference {
+    static func make(flow: SprayGuidedFlow, formatter: RegionFormatter = RegionFormatter()) -> SprayCalculationReference {
         let plan = flow.plan
         let decision = flow.volumeDecision
         return SprayCalculationReference(
-            canopy: canopyLines(decision: decision),
-            volume: volumeLines(decision: decision),
-            water: waterLines(plan: plan, decision: decision),
+            canopy: canopyLines(decision: decision, fmt: formatter),
+            volume: volumeLines(decision: decision, fmt: formatter),
+            water: waterLines(plan: plan, decision: decision, fmt: formatter),
             products: productLines(plan: plan, decision: decision)
         )
     }
 
-    private static func canopyLines(decision: SprayVolumeDecision?) -> [SprayCalculationReference.Line] {
+    private static func canopyLines(decision: SprayVolumeDecision?, fmt: RegionFormatter) -> [SprayCalculationReference.Line] {
         guard let recommendation = decision?.recommendation else { return [] }
         var lines: [SprayCalculationReference.Line] = [
             .init(id: "canopyType", label: "Canopy type", value: recommendation.type.rawValue),
@@ -87,14 +87,14 @@ nonisolated enum SprayCalculationReferenceBuilder {
             .init(
                 id: "recommendedPer100m",
                 label: "Recommended dilute volume",
-                value: "\(trim(recommendation.diluteLitresPer100Metres)) L/100 m"
+                value: fmt.formatVolumePer100Length(recommendation.diluteLitresPer100Metres)
             )
         ]
         if let spacing = recommendation.rowSpacingMetres {
             lines.append(.init(
                 id: "rowSpacing",
                 label: "Row spacing",
-                value: "\(trim(spacing)) m"
+                value: fmt.formatLength(metres: spacing)
             ))
         }
         if let perHectare = recommendation.diluteLitresPerHectare,
@@ -102,9 +102,8 @@ nonisolated enum SprayCalculationReferenceBuilder {
             lines.append(.init(
                 id: "recommendedPerHa",
                 label: "Recommended per area",
-                value: "\(number(perHectare, decimals: 1)) L/ha",
-                workings: "\(trim(recommendation.diluteLitresPer100Metres)) L/100 m × 100 ÷ "
-                    + "\(trim(spacing)) m"
+                value: fmt.formatVolumePerArea(litresPerHectare: perHectare),
+                workings: "\(fmt.formatVolumePer100Length(recommendation.diluteLitresPer100Metres)) at \(fmt.formatLength(metres: spacing)) row spacing → \(fmt.formatVolumePerArea(litresPerHectare: perHectare))"
             ))
         } else {
             lines.append(.init(
@@ -117,7 +116,7 @@ nonisolated enum SprayCalculationReferenceBuilder {
         return lines
     }
 
-    private static func volumeLines(decision: SprayVolumeDecision?) -> [SprayCalculationReference.Line] {
+    private static func volumeLines(decision: SprayVolumeDecision?, fmt: RegionFormatter) -> [SprayCalculationReference.Line] {
         guard let decision, decision.recommendation != nil else { return [] }
         let selection: String
         switch decision.choice {
@@ -132,7 +131,7 @@ nonisolated enum SprayCalculationReferenceBuilder {
             lines.append(.init(
                 id: "actualOutput",
                 label: "Actual sprayer output",
-                value: "\(number(actual, decimals: 1)) L/ha"
+                value: fmt.formatVolumePerArea(litresPerHectare: actual)
             ))
         }
         if let recommended = decision.recommendedLitresPerHectare,
@@ -141,8 +140,7 @@ nonisolated enum SprayCalculationReferenceBuilder {
                 id: "concentrationFactor",
                 label: "Concentration factor",
                 value: "\(number(decision.concentrationFactor, decimals: 2))×",
-                workings: "max(1.00, \(number(recommended, decimals: 1)) ÷ "
-                    + "\(number(actual, decimals: 1)))"
+                workings: "max(1.00, \(fmt.formatVolumePerArea(litresPerHectare: recommended)) ÷ \(fmt.formatVolumePerArea(litresPerHectare: actual)))"
             ))
         }
         return lines
@@ -150,7 +148,8 @@ nonisolated enum SprayCalculationReferenceBuilder {
 
     private static func waterLines(
         plan: SprayApplicationPlan,
-        decision: SprayVolumeDecision?
+        decision: SprayVolumeDecision?,
+        fmt: RegionFormatter
     ) -> [SprayCalculationReference.Line] {
         let carrier = plan.carrier
         var lines: [SprayCalculationReference.Line] = []
@@ -167,14 +166,14 @@ nonisolated enum SprayCalculationReferenceBuilder {
             lines.append(.init(
                 id: "totalWater",
                 label: "Total water",
-                value: "\(number(carrier.totalLitres, decimals: 0)) L",
+                value: fmt.formatVolume(litres: carrier.totalLitres),
                 workings: "Entered directly — not calculated from a rate or an area"
             ))
             if treated > 0 {
                 lines.append(.init(
                     id: "treatedArea",
                     label: "Treated area",
-                    value: "\(number(treated, decimals: 2)) ha",
+                    value: fmt.formatArea(hectares: treated),
                     workings: plan.treatedAreaHectares == nil
                         ? "Whole block area"
                         : "Treated band area"
@@ -184,9 +183,8 @@ nonisolated enum SprayCalculationReferenceBuilder {
                 lines.append(.init(
                     id: "impliedPerHa",
                     label: "Works out to",
-                    value: "\(number(perHectare, decimals: 1)) L/ha",
-                    workings: "\(number(carrier.totalLitres, decimals: 0)) L ÷ "
-                        + "\(number(treated, decimals: 2)) ha — for reference only"
+                    value: fmt.formatVolumePerArea(litresPerHectare: perHectare),
+                    workings: "\(fmt.formatVolume(litres: carrier.totalLitres)) ÷ \(fmt.formatArea(hectares: treated)) = \(fmt.formatVolumePerLandArea(litresPerHectare: perHectare)) — for reference only"
                 ))
             }
             if let per100m = carrier.appliedLitresPer100Metres,
@@ -194,9 +192,8 @@ nonisolated enum SprayCalculationReferenceBuilder {
                 lines.append(.init(
                     id: "impliedPer100m",
                     label: "Works out to",
-                    value: "\(number(per100m, decimals: 1)) L/100 m",
-                    workings: "\(number(carrier.totalLitres, decimals: 0)) L ÷ "
-                        + "\(number(metres, decimals: 0)) m × 100 — for reference only"
+                    value: fmt.formatVolumePer100Length(per100m),
+                    workings: "\(fmt.formatVolume(litres: carrier.totalLitres)) ÷ \(fmt.formatLength(metres: metres)) × 100 — for reference only"
                 ))
             }
             return lines
@@ -205,22 +202,21 @@ nonisolated enum SprayCalculationReferenceBuilder {
         lines.append(.init(
             id: "treatedArea",
             label: "Treated area",
-            value: "\(number(treated, decimals: 2)) ha",
+            value: fmt.formatArea(hectares: treated),
             workings: plan.treatedAreaHectares == nil ? "Whole block area" : "Treated band area"
         ))
         if let perHectare = carrier.litresPerHectare, perHectare > 0, treated > 0 {
             lines.append(.init(
                 id: "totalWater",
                 label: "Total water",
-                value: "\(number(carrier.totalLitres, decimals: 0)) L",
-                workings: "\(number(perHectare, decimals: 1)) L/ha × "
-                    + "\(number(treated, decimals: 2)) ha"
+                value: fmt.formatVolume(litres: carrier.totalLitres),
+                workings: "\(fmt.formatVolumePerLandArea(litresPerHectare: perHectare)) × \(fmt.formatArea(hectares: treated))"
             ))
         } else {
             lines.append(.init(
                 id: "totalWater",
                 label: "Total water",
-                value: "\(number(carrier.totalLitres, decimals: 0)) L"
+                value: fmt.formatVolume(litres: carrier.totalLitres)
             ))
         }
         return lines

@@ -29,6 +29,9 @@ struct EditPaddockSheet: View {
     @State private var rowVineCountOverrides: [Int: Int] = [:]
     /// The row currently open in the per-row vine-count editor.
     @State private var rowVineCountEditorTarget: RowVineCountTarget?
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+    @State private var flowSeed: RegionalInput?
+    @State private var spacingSeed: RegionalInput?
     @State private var flowPerEmitterText: String = ""
     @State private var emitterSpacingText: String = ""
     @State private var intermediatePostSpacingText: String = ""
@@ -119,7 +122,7 @@ struct EditPaddockSheet: View {
                             dismiss()
                         }
                     }
-                    .disabled(name.isEmpty)
+                    .disabled(name.isEmpty || !irrigationInputsValid)
                 }
             }
             .sheet(isPresented: $showAddVariety) {
@@ -199,12 +202,12 @@ struct EditPaddockSheet: View {
                     if let rlOverride = paddock.rowLengthOverride {
                         rowLengthOverride = String(format: "%.0f", rlOverride)
                     }
-                    if let flow = paddock.flowPerEmitter {
-                        flowPerEmitterText = String(format: "%.1f", flow)
-                    }
-                    if let spacing = paddock.emitterSpacing {
-                        emitterSpacingText = String(format: "%.2f", spacing)
-                    }
+                    let flow = RegionalInput(canonical: paddock.flowPerEmitter, forward: fmt.volumeValue)
+                    let spacing = RegionalInput(canonical: paddock.emitterSpacing, forward: fmt.lengthValue)
+                    flowSeed = flow
+                    spacingSeed = spacing
+                    flowPerEmitterText = flow.text
+                    emitterSpacingText = spacing.text
                     if let postSpacing = paddock.intermediatePostSpacing {
                         intermediatePostSpacingText = String(format: "%.2f", postSpacing)
                     }
@@ -762,13 +765,20 @@ struct EditPaddockSheet: View {
         }
     }
 
+    private var irrigationInputsValid: Bool {
+        (flowPerEmitterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || irrigationFlowPerEmitter != nil) &&
+        (emitterSpacingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || irrigationEmitterSpacing != nil)
+    }
+
     private var irrigationFlowPerEmitter: Double? {
-        guard let val = Double(flowPerEmitterText), val > 0 else { return nil }
+        let value = flowSeed?.resolve(flowPerEmitterText, inverse: fmt.volumeToCanonical) ?? Double(flowPerEmitterText).map(fmt.volumeToCanonical)
+        guard let val = value, val.isFinite, val > 0 else { return nil }
         return val
     }
 
     private var irrigationEmitterSpacing: Double? {
-        guard let val = Double(emitterSpacingText), val > 0 else { return nil }
+        let value = spacingSeed?.resolve(emitterSpacingText, inverse: fmt.lengthToCanonical) ?? Double(emitterSpacingText).map(fmt.lengthToCanonical)
+        guard let val = value, val.isFinite, val > 0 else { return nil }
         return val
     }
 
@@ -788,7 +798,7 @@ struct EditPaddockSheet: View {
                     .multilineTextAlignment(.trailing)
                     .frame(width: 80)
                     .font(.system(.subheadline, design: .monospaced).weight(.semibold))
-                Text("L/hr")
+                Text("\(fmt.volumeUnitAbbreviation)/hr")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -802,7 +812,7 @@ struct EditPaddockSheet: View {
                     .multilineTextAlignment(.trailing)
                     .frame(width: 80)
                     .font(.system(.subheadline, design: .monospaced).weight(.semibold))
-                Text("m")
+                Text(fmt.lengthUnitAbbreviation)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -812,10 +822,10 @@ struct EditPaddockSheet: View {
                     .font(.subheadline)
                 Spacer()
                 if rowWidth > 0 {
-                    Text(String(format: "%.2f", rowWidth))
+                    Text(String(format: "%.2f", fmt.lengthValue(metres: rowWidth)))
                         .font(.system(.subheadline, design: .monospaced).weight(.semibold))
                         .foregroundStyle(.primary)
-                    Text("m")
+                    Text(fmt.lengthUnitAbbreviation)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -838,17 +848,17 @@ struct EditPaddockSheet: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.teal)
                     Spacer()
-                    Text(String(format: "%.2f mm/hr", mmHr))
+                    Text("\(fmt.formatRainfall(mm: mmHr))/hr")
                         .font(.system(.subheadline, design: .monospaced).weight(.semibold))
                         .foregroundStyle(.teal)
                 }
 
                 HStack {
-                    Label("ML/ha/hr", systemImage: "drop.fill")
+                    Label("\(fmt.volumeUnitAbbreviation)/\(fmt.areaUnitAbbreviation)/hr", systemImage: "drop.fill")
                         .font(.caption)
                         .foregroundStyle(VineyardTheme.info)
                     Spacer()
-                    Text(String(format: "%.4f", mlPerHaHr))
+                    Text("\(fmt.formatVolumePerLandArea(litresPerHectare: litresPerHaHr))/hr")
                         .font(.system(.caption, design: .monospaced).weight(.semibold))
                         .foregroundStyle(VineyardTheme.info)
                 }
@@ -872,7 +882,7 @@ struct EditPaddockSheet: View {
                 Text("Irrigation")
             }
         } footer: {
-            Text("ML/ha/hr = (emitters per ha × flow) ÷ 1,000,000. mm/hr = ML/ha/hr × 100. Row spacing (\(String(format: "%.1f", rowWidth)) m) is used for the calculation.")
+            Text("Application rate uses emitter flow ÷ (row spacing × emitter spacing). Calculations use canonical geometry; results are shown in \(fmt.rainfallUnitAbbreviation)/hr and \(fmt.volumeUnitAbbreviation)/\(fmt.areaUnitAbbreviation)/hr. Row spacing: \(fmt.formatLength(metres: rowWidth)).")
         }
     }
 
@@ -1809,6 +1819,7 @@ struct EditPaddockSheet: View {
     }
 
     private func savePaddock() {
+        guard irrigationInputsValid else { return }
         let polygonCoords = polygonPoints.map { $0.coordinate }
         let lines = calculateRowLines(
             polygonCoords: polygonCoords,

@@ -1749,7 +1749,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val fertiliserStore = FertiliserStore(app)
     private val pruningSyncCoordinator = PruningSyncCoordinator(
         store = pruningStore,
-        repo = PruningSyncRepository(session),
+        repo = PruningSyncRepository(session) { vineyardId ->
+            val zone = _ui.value.vineyards.firstOrNull { it.id == vineyardId }?.timezone
+                ?.takeIf { it.isNotBlank() } ?: regionSettingsStore.load(vineyardId).timezone
+            require(!zone.isNullOrBlank()) { "Set the vineyard timezone before saving pruning work." }
+            java.time.ZoneId.of(zone)
+        },
         pending = pendingWrites,
         scope = viewModelScope,
         canSync = { session.accessToken != null && _ui.value.isOnline },
@@ -5184,6 +5189,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun upsertPruningSetup(vineyardId: String, setup: PruningBlockSetup): List<PruningBlockSetup> =
         pruningSyncCoordinator.upsertSetup(vineyardId, setup)
+
+    /** Validate the vineyard work-time boundary before linked task mutations. */
+    fun preparePruningEntryForSave(entry: PruningEntry): PruningEntry =
+        pruningSyncCoordinator.prepareEntryForSave(entry)
 
     fun recordPruningEntry(vineyardId: String, entry: PruningEntry): List<PruningEntry> =
         pruningSyncCoordinator.recordEntry(vineyardId, entry)

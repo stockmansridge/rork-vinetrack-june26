@@ -49,7 +49,21 @@ import java.time.format.DateTimeFormatter
  *   RPC (replay-safe: a quarter completed first on another device stays with
  *   that device's entry) or the explicit `delete_pruning_entry` RPC.
  */
-class PruningSyncRepository(private val session: SessionStore) {
+class PruningSyncRepository(
+    private val session: SessionStore,
+    val vineyardZone: (String) -> ZoneId,
+) {
+    fun prepareEntry(entry: PruningEntry): PruningEntry {
+        val zone = vineyardZone(entry.vineyardId)
+        return entry.copy(workTiming = entry.workTiming?.resolve(entry.date, entry.startTime, entry.finishTime, zone)
+            ?: com.rork.vinetrack.data.model.PruningWorkTiming.capture(entry.date, entry.startTime, entry.finishTime, zone))
+    }
+
+    fun prepareActivity(draft: PruningActivityDraft): PruningActivityDraft {
+        val zone = vineyardZone(draft.vineyardId)
+        return draft.copy(workTiming = draft.workTiming?.resolve(draft.date, draft.startTime, draft.finishTime, zone)
+            ?: com.rork.vinetrack.data.model.PruningWorkTiming.capture(draft.date, draft.startTime, draft.finishTime, zone))
+    }
 
     /**
      * PostgREST resolves RPC functions by the EXACT set of provided argument
@@ -236,17 +250,18 @@ class PruningSyncRepository(private val session: SessionStore) {
          * acknowledgement, so it doubles as the canonical-season confirmation
          * used by [PruningSyncIntegrity].
          */
-        fun toModel(segments: List<PruningSegment>, serverSeasonYear: Int? = null): PruningEntry = PruningEntry(
+        fun toModel(segments: List<PruningSegment>, serverSeasonYear: Int? = null, vineyardZone: ZoneId = java.time.ZoneOffset.UTC): PruningEntry = PruningEntry(
             id = id,
             vineyardId = vineyardId,
             paddockId = paddockId,
             seasonId = pruningSeasonId,
-            date = entryDate?.take(10) ?: createdAt?.take(10) ?: LocalDate.now().toString(),
+            date = businessDate(entryDate, createdAt, vineyardZone),
             segments = segments,
             worker = workerOrCrew.orEmpty(),
             labourHours = labourHours,
-            startTime = toLocalHhmm(startTime),
-            finishTime = toLocalHhmm(finishTime),
+            startTime = com.rork.vinetrack.data.model.PruningWorkTiming.wall(startTime, vineyardZone),
+            finishTime = com.rork.vinetrack.data.model.PruningWorkTiming.wall(finishTime, vineyardZone),
+            workTiming = com.rork.vinetrack.data.model.PruningWorkTiming.fromServer(businessDate(entryDate, createdAt, vineyardZone), startTime, finishTime, vineyardZone),
             method = pruningMethod ?: "spur",
             notes = notes.orEmpty(),
             estimatedVines = estimatedVinesCompleted ?: 0,
@@ -717,8 +732,8 @@ class PruningSyncRepository(private val session: SessionStore) {
             entryDate = entry.date,
             worker = entry.worker,
             labourHours = entry.labourHours,
-            startTime = toInstantString(entry.date, entry.startTime),
-            finishTime = toInstantString(entry.date, entry.finishTime),
+            startTime = prepareEntry(entry).workTiming?.startInstant,
+            finishTime = prepareEntry(entry).workTiming?.finishInstant,
             method = entry.method,
             notes = entry.notes,
             estimatedVines = entry.estimatedVines,
@@ -840,8 +855,8 @@ class PruningSyncRepository(private val session: SessionStore) {
             entryDate = entry.date,
             worker = entry.worker,
             labourHours = entry.labourHours,
-            startTime = toInstantString(entry.date, entry.startTime),
-            finishTime = toInstantString(entry.date, entry.finishTime),
+            startTime = prepareEntry(entry).workTiming?.startInstant,
+            finishTime = prepareEntry(entry).workTiming?.finishInstant,
             method = entry.method,
             notes = entry.notes,
             estimatedVines = entry.estimatedVines,
@@ -883,7 +898,7 @@ class PruningSyncRepository(private val session: SessionStore) {
                 RecordActivityArgs(
                     activityId = draft.id,
                     vineyardId = draft.vineyardId,
-                    activity = activityPayload(draft),
+                    activity = activityPayload(prepareActivity(draft), vineyardZone(draft.vineyardId)),
                     allocations = allocationPayloads(draft),
                     clientUpdatedAt = clientUpdatedAt,
                 ),
@@ -908,7 +923,7 @@ class PruningSyncRepository(private val session: SessionStore) {
                 UpdateActivityArgs.serializer(),
                 UpdateActivityArgs(
                     activityId = draft.id,
-                    activity = activityPayload(draft),
+                    activity = activityPayload(prepareActivity(draft), vineyardZone(draft.vineyardId)),
                     allocations = allocationPayloads(draft),
                     clientUpdatedAt = clientUpdatedAt,
                 ),
@@ -1114,12 +1129,14 @@ class PruningSyncRepository(private val session: SessionStore) {
          * The activity payload — labour, timing, rate, notes and the task link
          * exactly once. Never derived per block.
          */
-        fun activityPayload(draft: PruningActivityDraft): ActivityPayload = ActivityPayload(
+        fun activityPayload(draft: PruningActivityDraft, vineyardZone: ZoneId = java.time.ZoneOffset.UTC): ActivityPayload = ActivityPayload(
             entryDate = draft.date,
             workerOrCrew = draft.worker,
             method = draft.method,
-            startTime = toInstantString(draft.date, draft.startTime),
-            finishTime = toInstantString(draft.date, draft.finishTime),
+            startTime = (draft.workTiming?.resolve(draft.date, draft.startTime, draft.finishTime, vineyardZone)
+                ?: com.rork.vinetrack.data.model.PruningWorkTiming.capture(draft.date, draft.startTime, draft.finishTime, vineyardZone)).startInstant,
+            finishTime = (draft.workTiming?.resolve(draft.date, draft.startTime, draft.finishTime, vineyardZone)
+                ?: com.rork.vinetrack.data.model.PruningWorkTiming.capture(draft.date, draft.startTime, draft.finishTime, vineyardZone)).finishInstant,
             labourHours = draft.labourHours,
             hourlyRate = draft.hourlyRate,
             notes = draft.notes,
@@ -1151,25 +1168,9 @@ class PruningSyncRepository(private val session: SessionStore) {
                 )
             }
 
-        private fun toInstantString(date: String, hhmm: String?): String? {
-            if (hhmm.isNullOrBlank()) return null
-            return runCatching {
-                LocalDateTime.of(LocalDate.parse(date), LocalTime.parse(hhmm))
-                    .atZone(ZoneId.systemDefault())
-                    .toInstant()
-                    .toString()
-            }.getOrNull()
-        }
-
-        private fun toLocalHhmm(instant: String?): String? {
-            if (instant.isNullOrBlank()) return null
-            return runCatching {
-                OffsetDateTime.parse(instant)
-                    .atZoneSameInstant(ZoneId.systemDefault())
-                    .toLocalTime()
-                    .format(DateTimeFormatter.ofPattern("HH:mm"))
-            }.getOrNull()
-        }
+        private fun businessDate(day: String?, createdAt: String?, zone: ZoneId): String =
+            day?.take(10) ?: createdAt?.let { runCatching { OffsetDateTime.parse(it).atZoneSameInstant(zone).toLocalDate().toString() }.getOrNull() }
+                ?: LocalDate.now(zone).toString()
 
         private fun parseInstantMs(instant: String?): Long {
             if (instant.isNullOrBlank()) return 0L

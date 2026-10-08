@@ -332,17 +332,17 @@ struct SprayVolumeDecisionTests {
         let reference = SprayCalculationReferenceBuilder.make(flow: built)
 
         #expect(reference.canopy.first { $0.id == "canopyType" }?.value == "VSP")
-        #expect(reference.canopy.first { $0.id == "recommendedPer100m" }?.value == "20 L/100 m")
-        #expect(reference.canopy.first { $0.id == "rowSpacing" }?.value == "2.8 m")
+        #expect(reference.canopy.first { $0.id == "recommendedPer100m" }?.value == "20.00 L/100 m")
+        #expect(reference.canopy.first { $0.id == "rowSpacing" }?.value == "2.80 m")
 
         let perArea = try #require(reference.canopy.first { $0.id == "recommendedPerHa" })
-        #expect(perArea.value == "714.3 L/ha")
-        #expect(perArea.workings == "20 L/100 m × 100 ÷ 2.8 m")
+        #expect(perArea.value == "714.29 L/ha")
+        #expect(perArea.workings == "20.00 L/100 m at 2.80 m row spacing → 714.29 L/ha")
 
         let cf = try #require(reference.volume.first { $0.id == "concentrationFactor" })
         #expect(cf.value == "1.19×")
-        #expect(cf.workings == "max(1.00, 714.3 ÷ 600.0)")
-        #expect(reference.volume.first { $0.id == "actualOutput" }?.value == "600.0 L/ha")
+        #expect(cf.workings == "max(1.00, 714.29 L/ha ÷ 600.00 L/ha)")
+        #expect(reference.volume.first { $0.id == "actualOutput" }?.value == "600.00 L/ha")
 
         // The per-100 L product shows the concentrated tank strength...
         let dithane = try #require(reference.products.first { $0.name == "DITHANE" })
