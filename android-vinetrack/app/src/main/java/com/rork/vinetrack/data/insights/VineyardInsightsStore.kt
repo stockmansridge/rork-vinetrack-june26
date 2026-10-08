@@ -173,6 +173,7 @@ class VineyardInsightsStore(
         @SerialName("scout_user_id") val scoutUserId: String? = null,
         @SerialName("scout_name") val scoutName: String? = null,
         val assessments: List<StoredAssessment> = emptyList(),
+        val removedAssessments: List<ScoutAssessmentRemoval> = emptyList(),
         @SerialName("client_updated_at") val clientUpdatedAt: String,
         @SerialName("sync_version") val syncVersion: Long = 0,
         @SerialName("sync_owed") val syncOwed: Boolean = false,
@@ -359,6 +360,7 @@ class VineyardInsightsStore(
         vineyardId = vineyardId,
         vintageYear = vintageYear,
         scoutDateIso = scoutDate,
+        removedAssessments = removedAssessments,
         status = ScoutStatus.byCode(status),
         visitSummary = visitSummary,
         weather = weather?.let {
@@ -396,6 +398,7 @@ class VineyardInsightsStore(
         vineyardId = vineyardId,
         vintageYear = vintageYear,
         scoutDate = scoutDateIso,
+        removedAssessments = removedAssessments,
         status = status.code,
         visitSummary = visitSummary,
         weather = weather?.let {
@@ -689,6 +692,9 @@ class VineyardInsightsStore(
                 )
             }
 
+    fun pendingNoteTypeVineyards(): Set<String> = decodeList<StoredNoteType>(KEY_NOTE_TYPES)
+        .filter { it.isPending }.mapNotNull { it.vineyardId }.toSet()
+
     fun pendingNoteTypes(vineyardId: String): List<VintageNoteType> =
         decodeList<StoredNoteType>(KEY_NOTE_TYPES)
             .filter { it.vineyardId == vineyardId && it.isPending }
@@ -709,7 +715,7 @@ class VineyardInsightsStore(
         if (!encodeAndWrite(KEY_NOTE_TYPES, merged)) return false
         val byCode = types.mapNotNull { type -> type.databaseId?.let { type.code to it } }.toMap()
         val notes = loadNotes().map { note ->
-            val legacyCode = note.noteTypeId?.takeIf { runCatching { UUID.fromString(it) }.isFailure }
+            val legacyCode = note.noteTypeId?.takeIf { note.vineyardId == vineyardId && runCatching { UUID.fromString(it) }.isFailure }
             if (legacyCode != null) byCode[legacyCode]?.let { note.copy(noteTypeId = it) } ?: note else note
         }
         return encodeAndWrite(KEY_NOTES, notes.map { it.toStored(isSyncOwedForNote(it.id)) })
@@ -767,12 +773,12 @@ class VineyardInsightsStore(
         val queue = loadQueue()
         val completed = queue.firstOrNull { it.id == queueId } ?: return true
         val next = decodeList<StoredQueueEntry>(KEY_QUEUE).filterNot { it.id == queueId }
-        if (!encodeAndWrite(KEY_QUEUE, next)) return false
-        return when (completed.entity) {
+        val saved = when (completed.entity) {
             QueuedOperation.Entity.SCOUT_VISIT -> {
                 val visit = loadVisits().firstOrNull { it.id == completed.recordId }
                 if (visit?.clientUpdatedAtIso == completed.clientUpdatedAtIso) {
-                    saveVisit(visit.copy(syncVersion = acknowledgedSyncVersion ?: visit.syncVersion), false)
+                    saveVisit(visit.copy(syncVersion = acknowledgedSyncVersion ?: visit.syncVersion,
+                        removedAssessments = visit.removedAssessments.map { it.copy(acknowledged = true) }), false)
                 } else true
             }
             QueuedOperation.Entity.VINTAGE_NOTE -> {
@@ -780,6 +786,8 @@ class VineyardInsightsStore(
                 if (note?.clientUpdatedAtIso == completed.clientUpdatedAtIso) saveNote(note, false) else true
             }
         }
+        if (!saved) return false
+        return encodeAndWrite(KEY_QUEUE, next)
     }
 
     /** Recover entity/photo obligations after a record write/outbox write split failure. */

@@ -374,7 +374,7 @@ private fun ScoutWorkspace(
     }
 
     val currentVintage = VintageResolver.vintageYear(
-        LocalDate.now(),
+        LocalDate.now(state.seasonZone),
         state.seasonStartMonth,
         state.seasonStartDay,
     )
@@ -719,7 +719,7 @@ private fun ScoutVisitHeader(vm: AppViewModel, state: AppUiState, visit: ScoutVi
         // held the record says so rather than leaving a confident blank.
         val weather = visit.weather
         WeatherRows(weather)
-        if (visit.isEditable && visit.scoutDateIso == LocalDate.now().toString() &&
+        if (visit.isEditable && visit.scoutDateIso == LocalDate.now(state.seasonZone).toString() &&
             (weather == null || weather.isUnavailable)) {
             TextButton(onClick = { vm.captureScoutWeather(visit.id) }) { Text("Retry weather") }
         }
@@ -1349,8 +1349,9 @@ private fun VintageNotesWorkspace(
     val vine = LocalVineColors.current
     val insights = vm.vineyardInsights
     val allNotes by insights.notes.collectAsStateWithLifecycle()
+    val noteSyncError by insights.lastSyncError.collectAsStateWithLifecycle()
     val noteTypesByVineyard by insights.noteTypesByVineyard.collectAsStateWithLifecycle()
-    var draft by remember { mutableStateOf(VintageNoteDraft()) }
+    var draft by remember { mutableStateOf(VintageNoteDraft(date = LocalDate.now(state.seasonZone))) }
     var showPicker by remember { mutableStateOf(false) }
     var isEditing by remember { mutableStateOf(false) }
     var isCreating by remember { mutableStateOf(false) }
@@ -1386,6 +1387,14 @@ private fun VintageNotesWorkspace(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item { PreviewBadge() }
+            noteSyncError?.let { error ->
+                item {
+                    VineyardCard {
+                        Text(error, color = VineColors.Destructive)
+                        TextButton(onClick = { state.selectedVineyardId?.let(vm::syncVineyardInsights) }) { Text("Retry sync") }
+                    }
+                }
+            }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { showAllVintages = false }) { Text("Vintage $vintage") }
@@ -1396,7 +1405,7 @@ private fun VintageNotesWorkspace(
                 item {
                     Button(
                         onClick = {
-                            draft = VintageNoteDraft()
+                            draft = VintageNoteDraft(date = LocalDate.now(state.seasonZone))
                             isCreating = true
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -1479,7 +1488,7 @@ private fun VintageNotesWorkspace(
                                     seasonStartMonth = state.seasonStartMonth,
                                     seasonStartDay = state.seasonStartDay,
                                 )
-                                draft = VintageNoteDraft()
+                                draft = VintageNoteDraft(date = LocalDate.now(state.seasonZone))
                                 isEditing = false
                                 isCreating = false
                             },
@@ -1488,7 +1497,7 @@ private fun VintageNotesWorkspace(
                         ) { Text("Save note") }
                         if (isEditing) {
                             OutlinedButton(onClick = {
-                                draft = VintageNoteDraft()
+                                draft = VintageNoteDraft(date = LocalDate.now(state.seasonZone))
                                 isEditing = false
                                 isCreating = false
                             }) { Text("Cancel") }
@@ -1543,7 +1552,7 @@ private fun VintageNotesWorkspace(
                             draft = VintageNoteDraft(
                                 id = note.id,
                                 date = runCatching { LocalDate.parse(note.noteDateIso) }
-                                    .getOrDefault(LocalDate.now()),
+                                    .getOrDefault(LocalDate.now(state.seasonZone)),
                                 noteTypeId = note.noteTypeId,
                                 noteTypeLabel = note.noteTypeLabelSnapshot,
                                 notes = note.notes.orEmpty(),
@@ -1698,7 +1707,7 @@ private fun VintageReportWorkspace(
     var vintage by remember {
         mutableStateOf(
             VintageResolver.vintageYear(
-                LocalDate.now(),
+                LocalDate.now(state.seasonZone),
                 state.seasonStartMonth,
                 state.seasonStartDay,
             ),

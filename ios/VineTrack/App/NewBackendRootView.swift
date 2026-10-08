@@ -8,6 +8,7 @@ struct NewBackendRootView: View {
     @Environment(BiometricAuthService.self) private var biometric
     @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(VineyardInsightsService.self) private var vineyardInsights
+    @Environment(NetworkMonitor.self) private var network
     @Environment(CanopyReferenceImageRepository.self) private var canopyReferenceImages
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
@@ -298,6 +299,10 @@ struct NewBackendRootView: View {
             systemAdmin.clearOnSignOut()
             vineyardInsights.clearOnSignOut()
         }
+        .onChange(of: network.isOnline) { _, online in
+            guard online, auth.isSignedIn, systemAdmin.isSystemAdmin else { return }
+            Task { await vineyardInsights.retryPendingWork() }
+        }
         .onChange(of: scenePhase) { _, newPhase in
             // Re-arm the biometric lock only when returning from a true
             // background state. The Face ID system prompt itself causes a
@@ -327,6 +332,9 @@ struct NewBackendRootView: View {
                 // Foreground telemetry heartbeat (throttled to 15 min).
                 Task { await ClientTelemetryService.shared.reportActivity(vineyardId: store.selectedVineyardId) }
                 Task { await canopyReferenceImages.refresh() }
+                if network.isOnline && systemAdmin.isSystemAdmin {
+                    Task { await vineyardInsights.retryPendingWork() }
+                }
             }
             if newPhase == .active {
                 Task { await releasePolicy.refreshIfNeeded() }

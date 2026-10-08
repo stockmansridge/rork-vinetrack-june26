@@ -1,5 +1,7 @@
 package com.rork.vinetrack.data.insights
 
+import java.time.Instant
+
 /**
  * Replay worker for Scout and Vintage Notes.
  *
@@ -40,18 +42,18 @@ class VineyardInsightsSyncWorker(
         val error: String? = null,
     )
 
-    suspend fun sync(vineyardId: String): Outcome {
+    suspend fun sync(vineyardId: String, refreshGraph: Boolean = true, refreshCatalogue: Boolean = true): Outcome {
         if (!store.repairMissingObligations()) {
             return Outcome(error = "Local changes could not be prepared safely for sync.")
         }
         val deletionsBeforePush = pullDeletions(vineyardId)
         val localCleanup = processLocalObjectCleanup(vineyardId)
         val serverCleanup = processServerPhotoCleanup(vineyardId)
-        val typePull = pullNoteTypes(vineyardId)
+        val typePull = if (refreshCatalogue) pullNoteTypes(vineyardId) else Outcome()
         val typePush = pushNoteTypes(vineyardId)
         val push = pushQueue(vineyardId)
         val photos = pushPhotos(vineyardId)
-        val pull = pull(vineyardId)
+        val pull = if (refreshGraph) pull(vineyardId) else Outcome()
         val deletionsAfterPull = pullDeletions(vineyardId)
         return Outcome(
             pushed = push.pushed,
@@ -69,11 +71,13 @@ class VineyardInsightsSyncWorker(
         val cursor = store.deletionCursor(vineyardId)
         val rows = repository.fetchDeletions(vineyardId, cursor?.deletedAt)
             .filter { row ->
-                row.vineyardId == vineyardId && (cursor == null ||
-                    row.deletedAt > cursor.deletedAt ||
-                    (row.deletedAt == cursor.deletedAt && row.id > cursor.ledgerId))
+                val deletedAt = Instant.parse(row.deletedAt)
+                val previous = cursor?.let { Instant.parse(it.deletedAt) }
+                row.vineyardId == vineyardId && (previous == null ||
+                    deletedAt > previous ||
+                    (deletedAt == previous && cursor != null && row.id > cursor.ledgerId))
             }
-            .sortedWith(compareBy<VineyardInsightsSyncApi.DeletionRow> { it.deletedAt }.thenBy { it.id })
+        if (!canApplyServerResults()) return Outcome()
         for (row in rows) {
             val localPaths = if (row.entityType == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT.code) {
                 val visitPaths = store.loadVisits().firstOrNull {
@@ -177,7 +181,8 @@ class VineyardInsightsSyncWorker(
                         sortOrder = type.sortOrder, isActive = type.isActive,
                     ),
                 )
-                store.markNoteTypeSynced(id)
+                check(canApplyServerResults()) { "Session changed during note type sync." }
+                check(store.markNoteTypeSynced(id)) { "Could not save the note type acknowledgement." }
                 pushed += 1
             } catch (e: Exception) {
                 error = e.message ?: "Could not sync a custom note type yet."
@@ -198,7 +203,8 @@ class VineyardInsightsSyncWorker(
                         null
                     }
                 }
-                store.dequeue(entry.id, acknowledgedVersion)
+                check(canApplyServerResults()) { "Session changed during Insights sync." }
+                check(store.dequeue(entry.id, acknowledgedVersion)) { "Could not save the sync acknowledgement." }
                 pushed += 1
             } catch (e: Exception) {
                 // Left queued deliberately: the local record is intact, so a
@@ -272,7 +278,12 @@ class VineyardInsightsSyncWorker(
             clientRevisionId = revisionId,
         )
 
-        val assessments = visit.assessments.map {
+        val removals = visit.removedAssessments.filterNot { it.acknowledged }.map {
+            VineyardInsightsSyncApi.AssessmentUpsert(id = it.id, scoutVisitId = visit.id,
+                vineyardId = visit.vineyardId, paddockId = it.paddockId, status = it.status,
+                deletedAt = it.removedAtIso, clientUpdatedAt = entry.clientUpdatedAtIso, clientRevisionId = revisionId)
+        }
+        val assessments = removals + visit.assessments.map {
             VineyardInsightsSyncApi.AssessmentUpsert(
                 id = it.id,
                 scoutVisitId = visit.id,
@@ -352,7 +363,11 @@ class VineyardInsightsSyncWorker(
         )
         // Reconcile the server's canonical answer, above all the vintage it
         // resolved from the date. The local value was only ever for display.
-        returned?.let { applyNoteRow(it) }
+        check(returned != null && returned.id == entry.recordId && returned.vineyardId == entry.vineyardId) {
+            "The server did not acknowledge this Vintage Note."
+        }
+        check(canApplyServerResults()) { "Session changed during Vintage Note sync." }
+        applyNoteRow(returned)
     }
 
     // ---------------------------------------------------------- Photographs
@@ -546,13 +561,9 @@ class VineyardInsightsSyncWorker(
             // System Admin preview uses a complete active-graph pull. This is
             // server-authoritative and cannot miss a changed child because its
             // parent row did not change or because a client clock was skewed.
-            val typeOutcome = pullNoteTypes(vineyardId)
-            if (typeOutcome.error != null) return typeOutcome
-
+            var downloadError: String? = null
             val noteRows = repository.fetchNotes(vineyardId, null)
             if (!canApplyServerResults()) return Outcome()
-            noteRows.forEach { applyNoteRow(it) }
-
             val visitRows = repository.fetchVisits(vineyardId, null)
             if (!canApplyServerResults()) return Outcome()
             if (visitRows.isNotEmpty()) {
@@ -583,6 +594,7 @@ class VineyardInsightsSyncWorker(
                     }
                 }
                 if (!canApplyServerResults()) return Outcome()
+                if (failedDownloads.isNotEmpty()) downloadError = "Some Scout photographs could not be downloaded. Retry sync; local photographs are retained."
                 visitRows.forEach { row ->
                     applyVisitRow(
                         row,
@@ -593,7 +605,9 @@ class VineyardInsightsSyncWorker(
                     )
                 }
             }
-            Outcome(pulledVisits = visitRows.size, pulledNotes = noteRows.size)
+            if (!canApplyServerResults()) return Outcome()
+            noteRows.forEach { applyNoteRow(it) }
+            Outcome(pulledVisits = visitRows.size, pulledNotes = noteRows.size, error = downloadError)
         } catch (e: Exception) {
             Outcome(error = e.message ?: "Could not refresh yet.")
         }
@@ -612,7 +626,7 @@ class VineyardInsightsSyncWorker(
                 it.entity == VineyardInsightsStore.QueuedOperation.Entity.VINTAGE_NOTE
         }
         if (pending || store.isSyncOwedForNote(row.id) || store.isDeleted(row.vineyardId, "vintage_note", row.id)) return
-        store.saveNote(
+        val saved = store.saveNote(
             VintageNote(
                 id = row.id,
                 vineyardId = row.vineyardId,
@@ -632,6 +646,7 @@ class VineyardInsightsSyncWorker(
             ),
             syncOwed = false,
         )
+        check(saved) { "Could not cache a Vintage Note on this device." }
     }
 
     fun applyVisitRow(
@@ -649,13 +664,14 @@ class VineyardInsightsSyncWorker(
 
         // A tombstoned visit is removed locally rather than shown as empty.
         if (row.deletedAt != null) {
-            store.deleteVisit(row.id)
+            check(store.deleteVisit(row.id)) { "Could not reconcile a removed Scout on this device." }
             return
         }
 
         val localVisit = store.loadVisits().firstOrNull { it.id == row.id }
+        val removedIds = localVisit?.removedAssessments.orEmpty().map { it.id }.toSet()
         val builtAssessments = assessments
-            .filter { it.deletedAt == null }
+            .filter { it.deletedAt == null && it.id !in removedIds }
             .map { assessmentRow ->
                 val built = observations
                     .filter { it.assessmentId == assessmentRow.id && it.deletedAt == null }
@@ -692,12 +708,11 @@ class VineyardInsightsSyncWorker(
                             observationRow.linkedGrowthStageRecordId,
                         )
                     }
-                // Items absent server-side are re-created as defaulted rows so
-                // the form still presents every question.
-                val present = built.map { it.item }.toSet()
-                val filled = built + ScoutItem.entries
-                    .filterNot { present.contains(it) }
-                    .map { ScoutObservation.empty(assessmentRow.id, it) }
+                // Absence never licenses a replacement observation identity.
+                val present = built.map { it.id }.toSet()
+                val deletedIds = observations.filter { it.assessmentId == assessmentRow.id && it.deletedAt != null }.map { it.id }.toSet()
+                val filled = built + localVisit?.assessments?.firstOrNull { it.id == assessmentRow.id }
+                    ?.observations.orEmpty().filterNot { it.id in present || it.id in deletedIds }
                 ScoutBlockAssessment(
                     id = assessmentRow.id,
                     visitId = assessmentRow.scoutVisitId,
@@ -708,7 +723,7 @@ class VineyardInsightsSyncWorker(
                 )
             }
 
-        store.saveVisit(
+        val saved = store.saveVisit(
             ScoutVisit(
                 id = row.id,
                 vineyardId = row.vineyardId,
@@ -733,12 +748,16 @@ class VineyardInsightsSyncWorker(
                 },
                 scoutUserId = row.scoutUserId,
                 scoutNameSnapshot = row.scoutNameSnapshot,
-                assessments = builtAssessments,
+                assessments = builtAssessments + localVisit?.assessments.orEmpty().filterNot { local ->
+                    local.id in removedIds || assessments.any { it.id == local.id }
+                },
+                removedAssessments = localVisit?.removedAssessments.orEmpty(),
                 clientUpdatedAtIso = row.clientUpdatedAt ?: row.updatedAt ?: row.scoutDate,
                 syncVersion = row.syncVersion,
             ),
             syncOwed = false,
         )
+        check(saved) { "Could not cache a Scout on this device." }
     }
 
     private fun mergePhotos(

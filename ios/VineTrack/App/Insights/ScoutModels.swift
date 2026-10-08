@@ -413,6 +413,8 @@ nonisolated struct ScoutVisit: Identifiable, Equatable, Sendable {
     let scoutUserID: UUID?
     let scoutNameSnapshot: String?
     var assessments: [ScoutBlockAssessment]
+    var removedAssessments: [ScoutAssessmentRemoval]
+    var scoutDateOnly: String?
     var clientUpdatedAt: Date
     var syncVersion: Int
 
@@ -428,7 +430,9 @@ nonisolated struct ScoutVisit: Identifiable, Equatable, Sendable {
         scoutNameSnapshot: String?,
         assessments: [ScoutBlockAssessment] = [],
         clientUpdatedAt: Date = Date(),
-        syncVersion: Int = 0
+        syncVersion: Int = 0,
+        removedAssessments: [ScoutAssessmentRemoval] = [],
+        scoutDateOnly: String? = nil
     ) {
         self.id = id
         self.vineyardID = vineyardID
@@ -442,6 +446,8 @@ nonisolated struct ScoutVisit: Identifiable, Equatable, Sendable {
         self.assessments = assessments
         self.clientUpdatedAt = clientUpdatedAt
         self.syncVersion = syncVersion
+        self.removedAssessments = removedAssessments
+        self.scoutDateOnly = scoutDateOnly
     }
 
     var isEditable: Bool { status == .draft }
@@ -462,7 +468,9 @@ nonisolated struct ScoutVisit: Identifiable, Equatable, Sendable {
         )
     }
 
-    mutating func removeBlock(paddockID: UUID) {
+    mutating func removeBlock(paddockID: UUID, at date: Date = Date()) {
+        guard let assessment = assessment(paddockID: paddockID), assessment.recordedObservations.isEmpty else { return }
+        removedAssessments.append(.init(id: assessment.id, paddockID: paddockID, removedAt: date, status: assessment.status.code))
         assessments.removeAll { $0.paddockID == paddockID }
     }
 

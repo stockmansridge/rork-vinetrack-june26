@@ -1331,7 +1331,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         com.rork.vinetrack.data.insights.VineyardInsightsDebouncer(viewModelScope) { vineyardId ->
             // The full pass has its own single-flight lifecycle. Once started it
             // is not a child of the cancellable debounce timer.
-            viewModelScope.launch { runCatching { vineyardInsights.sync(vineyardId) } }
+            viewModelScope.launch { runCatching { vineyardInsights.sync(vineyardId, refreshGraph = false) } }
         }
     }
 
@@ -1355,6 +1355,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             com.rork.vinetrack.data.insights.ScoutWeatherRepository(session).current(vineyardId, capturedAt)
         },
         onMutation = ::scheduleVineyardInsightsSync,
+        vineyardTimeZone = { vineyardId ->
+            if (_ui.value.selectedVineyardId == vineyardId) _ui.value.seasonZone
+            else (_ui.value.vineyards.firstOrNull { it.id == vineyardId }?.timezone
+                ?: regionSettingsStore.load(vineyardId).timezone)?.takeIf { it.isNotBlank() }
+                ?.let { runCatching { java.time.ZoneId.of(it) }.getOrNull() } ?: java.time.ZoneId.systemDefault()
+        },
         scoutDeletionAccess = { vineyardId ->
             val current = _ui.value
             val role = com.rork.vinetrack.data.model.TeamRole.from(current.currentRole)
@@ -1375,6 +1381,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * OWN vineyard id — replay must never be filed against whichever vineyard
      * happens to be selected when connectivity returns.
      */
+    private fun retryPendingVineyardInsights() {
+        if (!session.hasSession || !_ui.value.isSystemAdmin) return
+        vineyardInsights.pendingVineyards().forEach(::scheduleVineyardInsightsSync)
+    }
+
     fun syncVineyardInsights(vineyardId: String) {
         viewModelScope.launch { runCatching { vineyardInsights.sync(vineyardId) } }
     }
@@ -4556,6 +4567,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // pin creates, then queued completion toggles. No-op when the
                 // outbox is empty or no session yet.
                 if (online) {
+                    retryPendingVineyardInsights()
                     optimalRipenessWeatherCoordinator.refreshIfNeeded(isOnline = true)
                     refreshCanopyReferenceImages()
                     replayPendingPinCreates()
@@ -4931,6 +4943,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (_ui.value.isOnline) refreshCanopyReferenceImages()
             if (_ui.value.isOnline) {
                 replayAllPendingWrites()
+                retryPendingVineyardInsights()
                 // Freshness parity (audit #1/#9/#11): re-pull remote snapshots
                 // changed while backgrounded (throttled to once a minute).
                 refreshRemoteSnapshots()

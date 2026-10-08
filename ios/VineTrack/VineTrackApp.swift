@@ -174,6 +174,10 @@ struct VineTrackApp: App {
                 }
             }
             .task {
+                vineyardInsightsService.configureCalendarTimeZone { vineyardID in
+                    migratedStore.selectedVineyardId == vineyardID
+                        ? migratedStore.settings.resolvedTimeZone : migratedStore.settingsRepo.load(for: vineyardID).resolvedTimeZone
+                }
                 vineyardInsightsService.configureScoutDeletionAccess { vineyardID in
                     guard auth.isSignedIn, let userID = auth.userId,
                           migratedStore.selectedVineyardId == vineyardID,

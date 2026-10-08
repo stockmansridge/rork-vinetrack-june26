@@ -36,6 +36,7 @@ class VineyardInsightsController(
     private val clock: () -> Instant = { Instant.now() },
     private val onMutation: (String) -> Unit = {},
     private val scoutDeletionAccess: (String) -> Boolean = { false },
+    private val vineyardTimeZone: (String) -> java.time.ZoneId = { java.time.ZoneId.systemDefault() },
 ) {
 
     private val _visits = MutableStateFlow(store.loadVisits())
@@ -141,7 +142,7 @@ class VineyardInsightsController(
         scoutName: String?,
         seasonStartMonth: Int,
         seasonStartDay: Int,
-        date: LocalDate = LocalDate.now(),
+        date: LocalDate = clock().atZone(vineyardTimeZone(vineyardId)).toLocalDate(),
     ): ScoutVisit {
         val visit = ScoutVisit(
             id = UUID.randomUUID().toString(),
@@ -166,7 +167,7 @@ class VineyardInsightsController(
         // work, so only an untouched block may be removed by a toggle.
         val next = when {
             existing == null -> visit.withBlock(paddockId)
-            existing.recordedObservations.isEmpty() -> visit.withoutBlock(paddockId)
+            existing.recordedObservations.isEmpty() -> visit.withoutBlock(paddockId, nowIso())
             else -> return
         }
         persist(next)
@@ -189,7 +190,7 @@ class VineyardInsightsController(
         val visit = visit(visitId) ?: return
         if (!visit.isEditable || deletionPending(visitId)) return
         val capturedAt = nowIso()
-        val today = clock().atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        val today = clock().atZone(vineyardTimeZone(visit.vineyardId)).toLocalDate()
         val visitDate = runCatching { LocalDate.parse(visit.scoutDateIso) }.getOrNull()
         if (visitDate != today) {
             if (visit.weather == null) {
@@ -681,6 +682,9 @@ class VineyardInsightsController(
         }
     }
     private val syncCoordinator = VineyardInsightsSingleFlightCoordinator()
+    private val lastGraphPull = mutableMapOf<String, Instant>()
+    private val lastCataloguePull = mutableMapOf<String, Instant>()
+    private val requestedFullPulls = mutableSetOf<String>()
 
     /**
      * Push queued work then pull the server's view for one vineyard.
@@ -689,21 +693,33 @@ class VineyardInsightsController(
      * "try again later" and never data loss. Reloads state from the store at the
      * end so pulled work becomes visible.
      */
-    suspend fun sync(vineyardId: String) {
+    suspend fun sync(vineyardId: String, refreshGraph: Boolean = true) {
         val requestGeneration = syncGeneration
         val worker = worker(requestGeneration) ?: return
+        if (refreshGraph) requestedFullPulls.add(vineyardId)
         syncCoordinator.request(vineyardId) {
             if (requestGeneration != syncGeneration) return@request
+            val fullPullRequested = requestedFullPulls.remove(vineyardId)
             processLocalFileCleanup(vineyardId)
-            flushPhotoDeletions(worker)
-            val outcome = worker.sync(vineyardId)
+            val deletionError = flushPhotoDeletions(worker, vineyardId)
+            val pullGraph = fullPullRequested || lastGraphPull[vineyardId]?.let { java.time.Duration.between(it, clock()).seconds >= 60 } != false
+            val pullCatalogue = fullPullRequested || lastCataloguePull[vineyardId]?.let { java.time.Duration.between(it, clock()).seconds >= 300 } != false
+            val outcome = worker.sync(vineyardId, pullGraph, pullCatalogue)
+            if (requestGeneration != syncGeneration) return@request
+            if (outcome.error == null) {
+                if (pullGraph) lastGraphPull[vineyardId] = clock()
+                if (pullCatalogue) lastCataloguePull[vineyardId] = clock()
+            }
             if (requestGeneration != syncGeneration) return@request
             processLocalFileCleanup(vineyardId)
             _visits.value = store.loadVisits()
             _notes.value = store.loadNotes()
             _noteTypesByVineyard.value = _noteTypesByVineyard.value + (vineyardId to store.noteTypes(vineyardId))
             _pendingPhotoCount.value = store.loadPhotoQueue().size
-            _lastSyncError.value = outcome.error
+            val unresolved = store.loadQueue().isNotEmpty() || store.loadPhotoQueue().isNotEmpty() ||
+                store.photoDeletionRevisions().isNotEmpty() || store.loadObjectCleanup().isNotEmpty() ||
+                store.pendingNoteTypeVineyards().isNotEmpty()
+            _lastSyncError.value = deletionError ?: outcome.error ?: if (unresolved) _lastSyncError.value else null
         }
     }
 
@@ -716,14 +732,13 @@ class VineyardInsightsController(
     }
 
     /** Retry failed photograph uploads. The local bytes were never discarded. */
-    suspend fun retryPhotoUploads(vineyardId: String) {
-        val worker = worker(syncGeneration) ?: return
-        flushPhotoDeletions(worker)
-        val outcome = worker.pushPhotos(vineyardId)
-        _visits.value = store.loadVisits()
-        _pendingPhotoCount.value = store.loadPhotoQueue().size
-        _lastSyncError.value = outcome.error
-    }
+    suspend fun retryPhotoUploads(vineyardId: String) { sync(vineyardId) }
+
+    /** Reconnection/foreground uses the existing coalesced full-pass coordinator. */
+    fun pendingVineyards(): Set<String> = (store.loadQueue().map { it.vineyardId } +
+        store.loadPhotoQueue().map { it.vineyardId } + store.photoDeletionRevisions().map { it.vineyardId } +
+        store.loadObjectCleanup().map { it.vineyardId } + store.loadLocalFileCleanup().map { it.vineyardId }).toSet() +
+        store.pendingNoteTypeVineyards()
 
     /**
      * Apply deletions that could only be finished server-side.
@@ -732,13 +747,16 @@ class VineyardInsightsController(
      * here leaves the obligation outstanding for the next attempt rather than
      * silently abandoning an unreachable object or an un-tombstoned row.
      */
-    private suspend fun flushPhotoDeletions(worker: VineyardInsightsSyncWorker) {
-        pendingOrphanedObjects.toList().forEach { path ->
+    private suspend fun flushPhotoDeletions(worker: VineyardInsightsSyncWorker, vineyardId: String): String? {
+        var error: String? = null
+        pendingOrphanedObjects.toList().filter { it.substringBefore('/').equals(vineyardId, ignoreCase = true) }.forEach { path ->
             if (worker.removeOrphanedPhotoObject(path)) pendingOrphanedObjects.remove(path)
+            else error = "Photograph cleanup is still pending. Retry sync."
         }
-        store.photoDeletionRevisions().forEach { revision ->
-            worker.tombstonePhoto(revision)
+        store.photoDeletionRevisions().filter { it.vineyardId == vineyardId }.forEach { revision ->
+            if (!worker.tombstonePhoto(revision)) error = "Photograph removal is still pending. Retry sync."
         }
+        return error
     }
 
     // ------------------------------------------------------------ Session
@@ -747,6 +765,9 @@ class VineyardInsightsController(
     suspend fun clearForSignOut() {
         syncGeneration += 1
         syncCoordinator.invalidateAll()
+        lastGraphPull.clear()
+        lastCataloguePull.clear()
+        requestedFullPulls.clear()
         pendingOrphanedObjects.clear()
         store.clearForSignOut()
         photoFiles?.clearForSignOut()

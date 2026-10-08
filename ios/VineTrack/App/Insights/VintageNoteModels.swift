@@ -37,6 +37,7 @@ nonisolated struct VintageNote: Identifiable, Equatable, Sendable {
     var clientUpdatedAt: Date
     var syncVersion: Int
     var deletedAt: Date?
+    var noteDateOnly: String? = nil
 
     var isDeleted: Bool { deletedAt != nil }
 
@@ -104,11 +105,12 @@ nonisolated struct VintageNoteDraft: Equatable, Sendable {
     var blockedReason: String? { canSave ? nil : VintageNoteRules.emptyMessage }
 
     /// Vintage shown in the form, resolved exactly as the server will.
-    func resolvedVintage(seasonStartMonth: Int, seasonStartDay: Int) -> Int {
+    func resolvedVintage(seasonStartMonth: Int, seasonStartDay: Int, calendar: Calendar = .current) -> Int {
         VintageResolver.vintageYear(
             for: date,
             seasonStartMonth: seasonStartMonth,
-            seasonStartDay: seasonStartDay
+            seasonStartDay: seasonStartDay,
+            calendar: calendar
         )
     }
 }

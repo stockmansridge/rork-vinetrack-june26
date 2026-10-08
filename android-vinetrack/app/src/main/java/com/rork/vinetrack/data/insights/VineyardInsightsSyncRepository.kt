@@ -19,6 +19,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
 /**
  * Ktor-backed implementation of [VineyardInsightsSyncApi] against Supabase
@@ -31,6 +33,11 @@ import kotlinx.serialization.Serializable
 class VineyardInsightsSyncRepository(
     private val session: SessionStore,
 ) : VineyardInsightsSyncApi {
+
+    // Full revision snapshots explicitly clear nullable columns. Partial PATCH DTOs
+    // contain only the fields they own; omitted columns remain unchanged.
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    private val payloadJson = Json(SupabaseClient.json) { explicitNulls = true; encodeDefaults = true }
 
     @Serializable
     private data class SoftDeletePatch(
@@ -74,19 +81,14 @@ class VineyardInsightsSyncRepository(
         observations: List<VineyardInsightsSyncApi.ObservationUpsert>,
     ): VineyardInsightsSyncApi.VisitRow = withContext(Dispatchers.IO) {
         val acknowledged = upsertVisitReturning(visit)
-        if (assessments.isNotEmpty()) {
-            upsert(
-                "scout_block_assessments",
-                assessments,
-                VineyardInsightsSyncApi.AssessmentUpsert.serializer(),
-            )
+        // Release the active (visit, block) key before sending a re-selection.
+        for (rows in listOf(assessments.filter { it.deletedAt != null }, assessments.filter { it.deletedAt == null })) {
+            for (batch in rows.chunked(100)) {
+                upsert("scout_block_assessments", batch, VineyardInsightsSyncApi.AssessmentUpsert.serializer())
+            }
         }
-        if (observations.isNotEmpty()) {
-            upsert(
-                "scout_observations",
-                observations,
-                VineyardInsightsSyncApi.ObservationUpsert.serializer(),
-            )
+        for (batch in observations.chunked(100)) {
+            upsert("scout_observations", batch, VineyardInsightsSyncApi.ObservationUpsert.serializer())
         }
         acknowledged
     }
@@ -192,16 +194,16 @@ class VineyardInsightsSyncRepository(
             return response.body<Boolean>()
         }
         val preview = checkBoolean("can_use_vineyard_insights",
-            SupabaseClient.json.encodeToString(ScoutPreviewArgs.serializer(), ScoutPreviewArgs(vineyardId)))
+            payloadJson.encodeToString(ScoutPreviewArgs.serializer(), ScoutPreviewArgs(vineyardId)))
         val role = checkBoolean("has_vineyard_role",
-            SupabaseClient.json.encodeToString(ScoutDeleteRoleArgs.serializer(), ScoutDeleteRoleArgs(vineyardId, listOf("owner", "manager"))))
+            payloadJson.encodeToString(ScoutDeleteRoleArgs.serializer(), ScoutDeleteRoleArgs(vineyardId, listOf("owner", "manager"))))
         check(preview && role) {
             "Delete denied: only this vineyard’s Owner or Manager may delete Scouts. Local information has been retained."
         }
         val args = VineyardInsightsSyncApi.HardDeleteVisitArgs(
             vineyardId = vineyardId, visitId = id, operationId = operationId, deletedAt = atIso)
         val acknowledged = checkBoolean("hard_delete_scout_visit",
-            SupabaseClient.json.encodeToString(VineyardInsightsSyncApi.HardDeleteVisitArgs.serializer(), args))
+            payloadJson.encodeToString(VineyardInsightsSyncApi.HardDeleteVisitArgs.serializer(), args))
         check(acknowledged) { "Scout deletion was not acknowledged. Local information has been retained." }
     }
 
@@ -233,7 +235,7 @@ class VineyardInsightsSyncRepository(
             buildString {
                 append("scout_visits?vineyard_id=eq.$vineyardId")
                 if (sinceIso != null) append("&updated_at=gt.$sinceIso")
-                append("&order=updated_at.asc")
+                append("&order=id.asc")
             },
         )
 
@@ -244,10 +246,10 @@ class VineyardInsightsSyncRepository(
         if (visitIds.isEmpty()) {
             emptyList()
         } else {
-            select(
-                "scout_block_assessments?vineyard_id=eq.$vineyardId" +
-                    "&scout_visit_id=in.(${visitIds.joinToString(",")})",
-            )
+            visitIds.distinct().sorted().chunked(60).flatMap { ids ->
+                select<VineyardInsightsSyncApi.AssessmentRow>(
+                    "scout_block_assessments?vineyard_id=eq.$vineyardId&scout_visit_id=in.(${ids.joinToString(",")})&order=id.asc")
+            }
         }
 
     override suspend fun fetchObservations(
@@ -257,10 +259,10 @@ class VineyardInsightsSyncRepository(
         if (assessmentIds.isEmpty()) {
             emptyList()
         } else {
-            select(
-                "scout_observations?vineyard_id=eq.$vineyardId" +
-                    "&assessment_id=in.(${assessmentIds.joinToString(",")})",
-            )
+            assessmentIds.distinct().sorted().chunked(60).flatMap { ids ->
+                select<VineyardInsightsSyncApi.ObservationRow>(
+                    "scout_observations?vineyard_id=eq.$vineyardId&assessment_id=in.(${ids.joinToString(",")})&order=id.asc")
+            }
         }
 
     override suspend fun fetchPhotos(
@@ -270,16 +272,16 @@ class VineyardInsightsSyncRepository(
         if (observationIds.isEmpty()) {
             emptyList()
         } else {
-            select(
-                "scout_observation_photos?vineyard_id=eq.$vineyardId" +
-                    "&observation_id=in.(${observationIds.joinToString(",")})",
-            )
+            observationIds.distinct().sorted().chunked(60).flatMap { ids ->
+                select<VineyardInsightsSyncApi.PhotoRow>(
+                    "scout_observation_photos?vineyard_id=eq.$vineyardId&observation_id=in.(${ids.joinToString(",")})&order=id.asc")
+            }
         }
 
     override suspend fun fetchNoteTypes(vineyardId: String): List<VineyardInsightsSyncApi.NoteTypeRow> =
         select(
             "vintage_note_types?select=id,vineyard_id,code,group_code,label,sort_order,is_system,is_active,deleted_at" +
-                "&or=(vineyard_id.is.null,vineyard_id.eq.$vineyardId)&order=group_code.asc,sort_order.asc",
+                "&or=(vineyard_id.is.null,vineyard_id.eq.$vineyardId)&order=id.asc",
         )
 
     override suspend fun fetchNotes(
@@ -290,7 +292,7 @@ class VineyardInsightsSyncRepository(
             buildString {
                 append("vintage_notes?vineyard_id=eq.$vineyardId")
                 if (sinceIso != null) append("&updated_at=gt.$sinceIso")
-                append("&order=updated_at.asc")
+                append("&order=id.asc")
             },
         )
 
@@ -331,7 +333,7 @@ class VineyardInsightsSyncRepository(
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("upsert_vintage_note")) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
-            setBody(args)
+            setBody(payloadJson.encodeToString(args))
         }
         when {
             response.status.isSuccess() ->
@@ -366,7 +368,7 @@ class VineyardInsightsSyncRepository(
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl(rpc)) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
-            setBody(args)
+            setBody(payloadJson.encodeToString(args))
         }
         checkWrite(response.status.value) { response.bodyAsText() }
     }
@@ -380,7 +382,7 @@ class VineyardInsightsSyncRepository(
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl(rpc)) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
-            setBody(args)
+            setBody(payloadJson.encodeToString(args))
         }
         when {
             response.status.isSuccess() -> response.body<List<R>>()
@@ -399,7 +401,7 @@ class VineyardInsightsSyncRepository(
             ) {
                 authHeaders(token)
                 contentType(ContentType.Application.Json)
-                setBody(args)
+                setBody(payloadJson.encodeToString(args))
             }
             checkWrite(response.status.value) { response.bodyAsText() }
         }
@@ -410,15 +412,29 @@ class VineyardInsightsSyncRepository(
         withContext(Dispatchers.IO) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
-            val response = SupabaseClient.http.get(SupabaseClient.restUrl(path)) {
-                authHeaders(token)
+            val rows = mutableListOf<T>()
+            var continuation: String? = null
+            val ledger = path.startsWith("vineyard_insights_deletions?")
+            while (true) {
+                val pagePath = path + "&limit=200" + (continuation ?: "")
+                val response = SupabaseClient.http.get(SupabaseClient.restUrl(pagePath)) { authHeaders(token) }
+                checkWrite(response.status.value) { response.bodyAsText() }
+                check(session.accessToken == token) { "Account changed during Insights pull." }
+                val page = response.body<List<T>>()
+                if (page.isEmpty()) break
+                rows.addAll(page)
+                val last = payloadJson.encodeToJsonElement(kotlinx.serialization.serializer<T>(), page.last())
+                    as kotlinx.serialization.json.JsonObject
+                val id = (last.getValue("id") as kotlinx.serialization.json.JsonPrimitive).content
+                val next = if (ledger) {
+                    val at = java.net.URLEncoder.encode(
+                        (last.getValue("deleted_at") as kotlinx.serialization.json.JsonPrimitive).content, "UTF-8")
+                    "&or=(deleted_at.gt.$at,and(deleted_at.eq.$at,id.gt.$id))"
+                } else "&id=gt.$id"
+                check(next != continuation) { "Insights pagination did not advance." }
+                continuation = next
             }
-            when {
-                response.status.isSuccess() -> response.body<List<T>>()
-                response.status.value == 401 || response.status.value == 403 ->
-                    throw BackendError.Unauthorized
-                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
-            }
+            rows
         }
 
     private suspend fun upsertVisitReturning(
@@ -426,7 +442,7 @@ class VineyardInsightsSyncRepository(
     ): VineyardInsightsSyncApi.VisitRow {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val body = SupabaseClient.json.encodeToString(
+        val body = payloadJson.encodeToString(
             kotlinx.serialization.builtins.ListSerializer(VineyardInsightsSyncApi.VisitUpsert.serializer()),
             listOf(visit),
         )
@@ -450,7 +466,7 @@ class VineyardInsightsSyncRepository(
     ) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val body = SupabaseClient.json.encodeToString(
+        val body = payloadJson.encodeToString(
             kotlinx.serialization.builtins.ListSerializer(serializer),
             rows,
         )

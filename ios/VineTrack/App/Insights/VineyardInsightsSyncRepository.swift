@@ -40,6 +40,14 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
     static func day(_ date: Date) -> String { dayFormatter.string(from: date) }
     static func parseDay(_ value: String) -> Date? { dayFormatter.date(from: value) }
 
+    static func day(_ date: Date, timeZone: TimeZone) -> String {
+        FertiliserApplicationDate.snapshot(date, timeZone: timeZone)
+    }
+
+    static func parseDay(_ value: String, timeZone: TimeZone) -> Date? {
+        FertiliserApplicationDate.date(value, timeZone: timeZone)
+    }
+
     static func timestamp(_ date: Date) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -67,6 +75,25 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let client_updated_at: String
         let client_revision_id: String
         let deleted_at: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case id, vineyard_id, scout_date, status, visit_summary, weather_snapshot
+            case scout_user_id, scout_name_snapshot, client_updated_at, client_revision_id, deleted_at
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(id, forKey: .id)
+            try c.encode(vineyard_id, forKey: .vineyard_id)
+            try c.encode(scout_date, forKey: .scout_date)
+            try c.encode(status, forKey: .status)
+            try c.encode(visit_summary, forKey: .visit_summary)
+            try c.encode(weather_snapshot, forKey: .weather_snapshot)
+            try c.encode(scout_user_id, forKey: .scout_user_id)
+            try c.encode(scout_name_snapshot, forKey: .scout_name_snapshot)
+            try c.encode(client_updated_at, forKey: .client_updated_at)
+            try c.encode(client_revision_id, forKey: .client_revision_id)
+            try c.encode(deleted_at, forKey: .deleted_at)
+        }
     }
 
     struct WeatherPayload: Codable, Sendable {
@@ -105,8 +132,24 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let vineyard_id: String
         let paddock_id: String
         let status: String
+        var deleted_at: String? = nil
         let client_updated_at: String
         let client_revision_id: String
+
+        private enum CodingKeys: String, CodingKey {
+            case id, scout_visit_id, vineyard_id, paddock_id, status, deleted_at, client_updated_at, client_revision_id
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(id, forKey: .id)
+            try c.encode(scout_visit_id, forKey: .scout_visit_id)
+            try c.encode(vineyard_id, forKey: .vineyard_id)
+            try c.encode(paddock_id, forKey: .paddock_id)
+            try c.encode(status, forKey: .status)
+            try c.encode(deleted_at, forKey: .deleted_at)
+            try c.encode(client_updated_at, forKey: .client_updated_at)
+            try c.encode(client_revision_id, forKey: .client_revision_id)
+        }
     }
 
     struct AssessmentRow: Decodable, Sendable {
@@ -221,6 +264,26 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let captured_by: String?
         let client_updated_at: String
         let client_revision_id: String
+
+        private enum CodingKeys: String, CodingKey {
+            case id, observation_id, vineyard_id, storage_path, captured_at, latitude, longitude
+            case horizontal_accuracy, location_status, captured_by, client_updated_at, client_revision_id
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(id, forKey: .id)
+            try c.encode(observation_id, forKey: .observation_id)
+            try c.encode(vineyard_id, forKey: .vineyard_id)
+            try c.encode(storage_path, forKey: .storage_path)
+            try c.encode(captured_at, forKey: .captured_at)
+            try c.encode(latitude, forKey: .latitude)
+            try c.encode(longitude, forKey: .longitude)
+            try c.encode(horizontal_accuracy, forKey: .horizontal_accuracy)
+            try c.encode(location_status, forKey: .location_status)
+            try c.encode(captured_by, forKey: .captured_by)
+            try c.encode(client_updated_at, forKey: .client_updated_at)
+            try c.encode(client_revision_id, forKey: .client_revision_id)
+        }
     }
 
     struct PhotoRow: Decodable, Sendable {
@@ -304,18 +367,17 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
             .execute()
             .value
 
-        if !assessments.isEmpty {
-            try await provider.client
-                .from("scout_block_assessments")
-                .upsert(assessments, onConflict: "id")
-                .execute()
+        // Tombstones precede re-selections to release the active visit/block key.
+        for rows in [assessments.filter { $0.deleted_at != nil }, assessments.filter { $0.deleted_at == nil }] {
+            for offset in stride(from: 0, to: rows.count, by: 100) {
+                try await provider.client.from("scout_block_assessments")
+                    .upsert(Array(rows[offset..<min(offset + 100, rows.count)]), onConflict: "id").execute()
+            }
         }
 
-        if !observations.isEmpty {
-            try await provider.client
-                .from("scout_observations")
-                .upsert(observations, onConflict: "id")
-                .execute()
+        for offset in stride(from: 0, to: observations.count, by: 100) {
+            try await provider.client.from("scout_observations")
+                .upsert(Array(observations[offset..<min(offset + 100, observations.count)]), onConflict: "id").execute()
         }
         return acknowledged
     }
@@ -440,72 +502,112 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
 
     // MARK: - Scout pull
 
+    private func pages<Row>(id: (Row) -> UUID, fetch: (UUID?) async throws -> [Row]) async throws -> [Row] {
+        var rows: [Row] = []
+        var cursor: UUID?
+        let userID = provider.client.auth.currentUser?.id
+        while true {
+            let page = try await fetch(cursor)
+            guard provider.client.auth.currentUser?.id == userID else { throw CancellationError() }
+            guard let last = page.last else { return rows }
+            let next = id(last)
+            guard next != cursor else { throw NSError(domain: "InsightsPagination", code: 1) }
+            rows.append(contentsOf: page)
+            cursor = next
+        }
+    }
+
+    private func batches(_ ids: [UUID]) -> [[String]] {
+        let values = Set(ids).map(\.uuidString).sorted()
+        return stride(from: 0, to: values.count, by: 60).map { Array(values[$0..<min($0 + 60, values.count)]) }
+    }
+
     func fetchVisits(vineyardID: UUID, since: Date?) async throws -> [VisitRow] {
         try requireConfigured()
-        let query = provider.client
-            .from("scout_visits")
-            .select()
-            .eq("vineyard_id", value: vineyardID.uuidString)
-        if let since {
-            return try await query
-                .gt("updated_at", value: Self.timestamp(since))
-                .order("updated_at", ascending: true)
-                .execute()
-                .value
+        return try await pages(id: { $0.id }) { cursor in
+            let query = self.provider.client.from("scout_visits").select().eq("vineyard_id", value: vineyardID.uuidString)
+            if let since { _ = query.gte("updated_at", value: Self.timestamp(since)) }
+            if let cursor { _ = query.gt("id", value: cursor.uuidString) }
+            return try await query.order("id", ascending: true).limit(200).execute().value
         }
-        return try await query.order("updated_at", ascending: true).execute().value
     }
 
     func fetchAssessments(vineyardID: UUID, visitIDs: [UUID]) async throws -> [AssessmentRow] {
         try requireConfigured()
         guard !visitIDs.isEmpty else { return [] }
-        return try await provider.client
-            .from("scout_block_assessments")
-            .select()
-            .eq("vineyard_id", value: vineyardID.uuidString)
-            .in("scout_visit_id", values: visitIDs.map { $0.uuidString })
-            .execute()
-            .value
+        var rows: [AssessmentRow] = []
+        for ids in batches(visitIDs) {
+            rows += try await pages(id: { $0.id }) { cursor in
+                let query = self.provider.client.from("scout_block_assessments").select()
+                    .eq("vineyard_id", value: vineyardID.uuidString).in("scout_visit_id", values: ids)
+                if let cursor { _ = query.gt("id", value: cursor.uuidString) }
+                return try await query.order("id", ascending: true).limit(200).execute().value
+            }
+        }
+        return rows
     }
 
     func fetchObservations(vineyardID: UUID, assessmentIDs: [UUID]) async throws -> [ObservationRow] {
         try requireConfigured()
         guard !assessmentIDs.isEmpty else { return [] }
-        return try await provider.client
-            .from("scout_observations")
-            .select()
-            .eq("vineyard_id", value: vineyardID.uuidString)
-            .in("assessment_id", values: assessmentIDs.map { $0.uuidString })
-            .execute()
-            .value
+        var rows: [ObservationRow] = []
+        for ids in batches(assessmentIDs) {
+            rows += try await pages(id: { $0.id }) { cursor in
+                let query = self.provider.client.from("scout_observations").select()
+                    .eq("vineyard_id", value: vineyardID.uuidString).in("assessment_id", values: ids)
+                if let cursor { _ = query.gt("id", value: cursor.uuidString) }
+                return try await query.order("id", ascending: true).limit(200).execute().value
+            }
+        }
+        return rows
     }
 
     func fetchPhotos(vineyardID: UUID, observationIDs: [UUID]) async throws -> [PhotoRow] {
         try requireConfigured()
         guard !observationIDs.isEmpty else { return [] }
-        return try await provider.client
-            .from("scout_observation_photos")
-            .select()
-            .eq("vineyard_id", value: vineyardID.uuidString)
-            .in("observation_id", values: observationIDs.map { $0.uuidString })
-            .execute()
-            .value
+        var rows: [PhotoRow] = []
+        for ids in batches(observationIDs) {
+            rows += try await pages(id: { $0.id }) { cursor in
+                let query = self.provider.client.from("scout_observation_photos").select()
+                    .eq("vineyard_id", value: vineyardID.uuidString).in("observation_id", values: ids)
+                if let cursor { _ = query.gt("id", value: cursor.uuidString) }
+                return try await query.order("id", ascending: true).limit(200).execute().value
+            }
+        }
+        return rows
     }
 
     // MARK: - Deletion feed and cleanup queue
 
-    func fetchDeletions(vineyardID: UUID, since: Date?) async throws -> [DeletionRow] {
+    func fetchDeletions(vineyardID: UUID, since: Date?, sinceISO: String? = nil, ledgerID: UUID? = nil) async throws -> [DeletionRow] {
         try requireConfigured()
-        let query = provider.client.from("vineyard_insights_deletions")
-            .select()
-            .eq("vineyard_id", value: vineyardID.uuidString)
-        if let since {
-            return try await query.gte("deleted_at", value: Self.timestamp(since))
-                .order("deleted_at", ascending: true).order("id", ascending: true)
-                .execute().value
+        var rows: [DeletionRow] = []
+        let userID = provider.client.auth.currentUser?.id
+        var last: DeletionRow?
+        while true {
+            let query = provider.client.from("vineyard_insights_deletions").select()
+                .eq("vineyard_id", value: vineyardID.uuidString)
+            if let sinceISO { _ = query.gte("deleted_at", value: sinceISO) }
+            else if let since {
+                // Legacy cursors lost submillisecond precision. Overlap instead
+                // of rounding forward and skipping a server deletion.
+                let overlap = Date(timeIntervalSince1970: floor(since.timeIntervalSince1970) - 1)
+                _ = query.gte("deleted_at", value: Self.timestamp(overlap))
+            }
+            if last == nil, let sinceISO, let ledgerID {
+                _ = query.or("deleted_at.gt.\(sinceISO),and(deleted_at.eq.\(sinceISO),id.gt.\(ledgerID.uuidString))")
+            }
+            if let last {
+                _ = query.or("deleted_at.gt.\(last.deleted_at),and(deleted_at.eq.\(last.deleted_at),id.gt.\(last.id.uuidString))")
+            }
+            let page: [DeletionRow] = try await query.order("deleted_at", ascending: true)
+                .order("id", ascending: true).limit(200).execute().value
+            guard provider.client.auth.currentUser?.id == userID else { throw CancellationError() }
+            guard let next = page.last else { return rows }
+            guard next.id != last?.id else { throw NSError(domain: "InsightsPagination", code: 1) }
+            rows += page
+            last = next
         }
-        return try await query.order("deleted_at", ascending: true).order("id", ascending: true)
-            .execute().value
     }
 
     private struct ClaimCleanupParams: Encodable, Sendable {
@@ -622,30 +724,23 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
 
     func fetchNoteTypes(vineyardID: UUID) async throws -> [NoteTypeRow] {
         try requireConfigured()
-        return try await provider.client
-            .from("vintage_note_types")
-            .select("id,vineyard_id,code,group_code,label,sort_order,is_system,is_active,deleted_at")
-            .or("vineyard_id.is.null,vineyard_id.eq.\(vineyardID.uuidString)")
-            .order("group_code", ascending: true)
-            .order("sort_order", ascending: true)
-            .execute()
-            .value
+        return try await pages(id: { $0.id }) { cursor in
+            let query = self.provider.client.from("vintage_note_types")
+                .select("id,vineyard_id,code,group_code,label,sort_order,is_system,is_active,deleted_at")
+                .or("vineyard_id.is.null,vineyard_id.eq.\(vineyardID.uuidString)")
+            if let cursor { _ = query.gt("id", value: cursor.uuidString) }
+            return try await query.order("id", ascending: true).limit(200).execute().value
+        }
     }
 
     func fetchNotes(vineyardID: UUID, since: Date?) async throws -> [NoteRow] {
         try requireConfigured()
-        let query = provider.client
-            .from("vintage_notes")
-            .select()
-            .eq("vineyard_id", value: vineyardID.uuidString)
-        if let since {
-            return try await query
-                .gt("updated_at", value: Self.timestamp(since))
-                .order("updated_at", ascending: true)
-                .execute()
-                .value
+        return try await pages(id: { $0.id }) { cursor in
+            let query = self.provider.client.from("vintage_notes").select().eq("vineyard_id", value: vineyardID.uuidString)
+            if let since { _ = query.gte("updated_at", value: Self.timestamp(since)) }
+            if let cursor { _ = query.gt("id", value: cursor.uuidString) }
+            return try await query.order("id", ascending: true).limit(200).execute().value
         }
-        return try await query.order("updated_at", ascending: true).execute().value
     }
 
     private func requireConfigured() throws {

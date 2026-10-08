@@ -318,6 +318,11 @@ data class ScoutWeatherSnapshot(
     }
 }
 
+/** Durable explicit removal, persisted with the Scout edit and replayed by its revision. */
+@kotlinx.serialization.Serializable
+data class ScoutAssessmentRemoval(val id: String, val paddockId: String, val removedAtIso: String,
+    val status: String = "in_progress", val acknowledged: Boolean = false)
+
 /** A Scout visit: the unit an operator starts, saves and completes. */
 data class ScoutVisit(
     /** Client-generated UUID — the offline idempotency key. */
@@ -334,6 +339,7 @@ data class ScoutVisit(
     val assessments: List<ScoutBlockAssessment> = emptyList(),
     val clientUpdatedAtIso: String,
     val syncVersion: Long = 0,
+    val removedAssessments: List<ScoutAssessmentRemoval> = emptyList(),
 ) {
     val isEditable: Boolean get() = status == ScoutStatus.DRAFT
 
@@ -357,8 +363,12 @@ data class ScoutVisit(
             )
         }
 
-    fun withoutBlock(paddockId: String): ScoutVisit =
-        copy(assessments = assessments.filterNot { it.paddockId == paddockId })
+    fun withoutBlock(paddockId: String, atIso: String = java.time.Instant.now().toString()): ScoutVisit {
+        val existing = assessment(paddockId) ?: return this
+        if (existing.recordedObservations.isNotEmpty()) return this
+        return copy(assessments = assessments.filterNot { it.paddockId == paddockId },
+            removedAssessments = removedAssessments + ScoutAssessmentRemoval(existing.id, paddockId, atIso, existing.status.code))
+    }
 
     fun withAssessment(updated: ScoutBlockAssessment): ScoutVisit {
         val index = assessments.indexOfFirst { it.id == updated.id }

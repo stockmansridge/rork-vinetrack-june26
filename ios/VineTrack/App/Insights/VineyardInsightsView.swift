@@ -210,7 +210,8 @@ struct ScoutWorkspaceView: View {
         VintageResolver.vintageYear(
             for: Date(),
             seasonStartMonth: store.settings.seasonStartMonth,
-            seasonStartDay: store.settings.seasonStartDay
+            seasonStartDay: store.settings.seasonStartDay,
+            calendar: store.settings.resolvedCalendar
         )
     }
     private var historyVisits: [ScoutVisit] {
@@ -298,7 +299,7 @@ struct ScoutWorkspaceView: View {
             Button("Cancel", role: .cancel) { visitPendingDeletion = nil }
         } message: {
             if let visit = visitPendingDeletion {
-                Text("Scout \(visit.scoutDate.formatted(date: .abbreviated, time: .omitted)) • \(visit.scoutNameSnapshot ?? "Unknown scout") • \(visit.status.label) • \(visit.id.uuidString). The visit, assessments, observations and Scout photos will be permanently removed. This cannot be undone. Offline deletion stays pending until server confirmation; local information is retained if deletion fails. Canonical Growth Stage pins and records are kept.")
+                Text("Scout \(RegionFormatter(settings: store.settings.regionSettings).formatDate(insights.scoutDay(visit))) • \(visit.scoutNameSnapshot ?? "Unknown scout") • \(visit.status.label) • \(visit.id.uuidString). The visit, assessments, observations and Scout photos will be permanently removed. This cannot be undone. Offline deletion stays pending until server confirmation; local information is retained if deletion fails. Canonical Growth Stage pins and records are kept.")
             }
         }
         .sheet(item: $cameraRequest) { request in
@@ -403,7 +404,7 @@ struct ScoutWorkspaceView: View {
                 } label: {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(visit.scoutDate, format: .dateTime.day().month().year().hour().minute())
+                            Text(RegionFormatter(settings: store.settings.regionSettings).formatDate(insights.scoutDay(visit)))
                                 .foregroundStyle(.primary)
                             Text("\(visit.status.label) • \(visit.scoutNameSnapshot ?? "—")")
                                 .font(.caption)
@@ -456,7 +457,7 @@ struct ScoutWorkspaceView: View {
     private func visitSections(_ visit: ScoutVisit) -> some View {
         Section("Scout visit") {
             LabeledContent("Date") {
-                Text(visit.scoutDate, format: .dateTime.day().month().year())
+                Text(RegionFormatter(settings: store.settings.regionSettings).formatDate(insights.scoutDay(visit)))
             }
             LabeledContent("Vintage", value: VintageYearText.format(visit.vintageYear))
             LabeledContent("Scout", value: visit.scoutNameSnapshot ?? auth.userName ?? "—")
@@ -1115,7 +1116,8 @@ struct VintageNotesWorkspaceView: View {
     private var vintage: Int {
         draft.resolvedVintage(
             seasonStartMonth: store.settings.seasonStartMonth,
-            seasonStartDay: store.settings.seasonStartDay
+            seasonStartDay: store.settings.seasonStartDay,
+            calendar: store.settings.resolvedCalendar
         )
     }
 
@@ -1126,6 +1128,15 @@ struct VintageNotesWorkspaceView: View {
 
     var body: some View {
         List {
+            if let error = insights.lastSyncError {
+                Section {
+                    Text(error).foregroundStyle(.red)
+                    Button("Retry sync") {
+                        guard let vineyardID = store.selectedVineyardId else { return }
+                        Task { await insights.sync(vineyardID: vineyardID) }
+                    }
+                }
+            }
             Section("Season") {
                 Picker("Vintage", selection: $showsAllVintages) {
                     Text(verbatim: "Vintage \(VintageYearText.format(vintage))").tag(false)
@@ -1146,6 +1157,8 @@ struct VintageNotesWorkspaceView: View {
             } else {
             Section {
                 DatePicker("Date", selection: $draft.date, displayedComponents: .date)
+                    .environment(\.timeZone, store.settings.resolvedTimeZone)
+                    .environment(\.calendar, store.settings.resolvedCalendar)
 
                 // The Vintage moves with the date so the observer can see which
                 // season they are filing against before they save.
@@ -1209,7 +1222,7 @@ struct VintageNotesWorkspaceView: View {
                                 Text("Edited").font(.caption2).foregroundStyle(.secondary)
                             }
                         }
-                        Text(note.noteDate, format: .dateTime.day().month().year())
+                        Text(RegionFormatter(settings: store.settings.regionSettings).formatDate(insights.noteDay(note)))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         if !note.preview().isEmpty {
@@ -1275,7 +1288,7 @@ struct VintageNotesWorkspaceView: View {
         isCreating = false
         draft = VintageNoteDraft(
             id: note.id,
-            date: note.noteDate,
+            date: VineyardInsightsSyncRepository.parseDay(insights.noteDay(note), timeZone: store.settings.resolvedTimeZone) ?? note.noteDate,
             noteTypeID: note.noteTypeID,
             noteTypeLabel: note.noteTypeLabelSnapshot,
             notes: note.notes ?? ""
@@ -1363,7 +1376,8 @@ struct VintageReportWorkspaceView: View {
         vintage ?? VintageResolver.vintageYear(
             for: Date(),
             seasonStartMonth: store.settings.seasonStartMonth,
-            seasonStartDay: store.settings.seasonStartDay
+            seasonStartDay: store.settings.seasonStartDay,
+            calendar: store.settings.resolvedCalendar
         )
     }
 

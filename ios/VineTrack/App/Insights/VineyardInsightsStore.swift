@@ -136,6 +136,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
     nonisolated struct DeletionCursor: Codable, Equatable, Sendable {
         let deletedAt: Date
         let ledgerID: UUID
+        var serverDeletedAt: String? = nil
     }
 
     nonisolated struct ConsumedDeletion: Codable, Equatable, Sendable {
@@ -222,6 +223,8 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         let vineyardID: UUID
         let vintageYear: Int
         let scoutDate: Date
+        let scoutDateOnly: String?
+        let removedAssessments: [ScoutAssessmentRemoval]?
         let status: String
         let visitSummary: String?
         let weather: StoredWeather?
@@ -239,6 +242,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         let id: UUID
         let vineyardID: UUID
         let noteDate: Date
+        let noteDateOnly: String?
         let vintageYear: Int
         let noteTypeID: String?
         let noteTypeLabel: String?
@@ -369,7 +373,9 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
                 )
             },
             clientUpdatedAt: stored.clientUpdatedAt,
-            syncVersion: stored.syncVersion
+            syncVersion: stored.syncVersion,
+            removedAssessments: stored.removedAssessments ?? [],
+            scoutDateOnly: stored.scoutDateOnly
         )
     }
 
@@ -379,6 +385,8 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
             vineyardID: visit.vineyardID,
             vintageYear: visit.vintageYear,
             scoutDate: visit.scoutDate,
+            scoutDateOnly: visit.scoutDateOnly,
+            removedAssessments: visit.removedAssessments,
             status: visit.status.code,
             visitSummary: visit.visitSummary,
             weather: visit.weather.map {
@@ -445,7 +453,8 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
             updatedAt: stored.updatedAt,
             clientUpdatedAt: stored.clientUpdatedAt,
             syncVersion: stored.syncVersion,
-            deletedAt: stored.deletedAt
+            deletedAt: stored.deletedAt,
+            noteDateOnly: stored.noteDateOnly
         )
     }
 
@@ -454,6 +463,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
             id: note.id,
             vineyardID: note.vineyardID,
             noteDate: note.noteDate,
+            noteDateOnly: note.noteDateOnly,
             vintageYear: note.vintageYear,
             noteTypeID: note.noteTypeID,
             noteTypeLabel: note.noteTypeLabelSnapshot,
@@ -680,6 +690,11 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         return encodeAndWrite(all, Key.noteTypes)
     }
 
+    func pendingNoteTypeVineyards() -> Set<UUID> {
+        Set((decode([StoredNoteType].self, Key.noteTypes) ?? [])
+            .filter { $0.isPending == true }.compactMap(\.vineyardID))
+    }
+
     func pendingNoteTypes(vineyardID: UUID) -> [VintageNoteType] {
         let rows = decode([StoredNoteType].self, Key.noteTypes) ?? []
         return rows.filter { $0.vineyardID == vineyardID && $0.isPending == true }.map {
@@ -707,7 +722,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         })
         var notes = loadNotes()
         var changed = false
-        for index in notes.indices where UUID(uuidString: notes[index].noteTypeID ?? "") == nil {
+        for index in notes.indices where notes[index].vineyardID == vineyardID && UUID(uuidString: notes[index].noteTypeID ?? "") == nil {
             if let legacy = notes[index].noteTypeID, let resolved = byCode[legacy] {
                 notes[index].noteTypeID = resolved
                 changed = true
@@ -769,25 +784,32 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         return encodeAndWrite(all, Key.queue)
     }
 
-    /// Remove a queue entry after the server confirmed it, then acknowledge
-    /// only the exact revision that was sent. A newer edit remains owed.
+    /// Persist acknowledgement of the exact sent revision before removing its
+    /// queue entry. Failed writes and newer edits retain their obligations.
     @discardableResult
     func dequeue(queueID: UUID, acknowledgedSyncVersion: Int? = nil) -> Bool {
         var all = loadQueue()
         guard let completed = all.first(where: { $0.id == queueID }) else { return true }
         all.removeAll { $0.id == queueID }
-        guard encodeAndWrite(all, Key.queue) else { return false }
+        let saved: Bool
         switch completed.entity {
         case .scoutVisit:
             guard var visit = loadVisits().first(where: { $0.id == completed.recordID }),
-                  visit.clientUpdatedAt == completed.clientUpdatedAt else { return true }
+                  visit.clientUpdatedAt == completed.clientUpdatedAt else { return encodeAndWrite(all, Key.queue) }
             if let acknowledgedSyncVersion { visit.syncVersion = acknowledgedSyncVersion }
-            return saveVisit(visit, syncOwed: false)
+            visit.removedAssessments = visit.removedAssessments.map { removal in
+                var acknowledged = removal
+                acknowledged.acknowledged = true
+                return acknowledged
+            }
+            saved = saveVisit(visit, syncOwed: false)
         case .vintageNote:
             guard let note = loadNotes().first(where: { $0.id == completed.recordID }),
-                  note.clientUpdatedAt == completed.clientUpdatedAt else { return true }
-            return saveNote(note, syncOwed: false)
+                  note.clientUpdatedAt == completed.clientUpdatedAt else { return encodeAndWrite(all, Key.queue) }
+            saved = saveNote(note, syncOwed: false)
         }
+        guard saved else { return false }
+        return encodeAndWrite(all, Key.queue)
     }
 
     @discardableResult
