@@ -304,6 +304,7 @@ struct NewBackendRootView: View {
             Task { await vineyardInsights.retryPendingWork() }
         }
         .onChange(of: scenePhase) { _, newPhase in
+            PerformanceCapture.shared.setForeground(newPhase == .active)
             // Re-arm the biometric lock only when returning from a true
             // background state. The Face ID system prompt itself causes a
             // brief `.inactive` phase; re-locking on `.inactive -> .active`
@@ -351,6 +352,7 @@ struct NewBackendRootView: View {
             // User just signed in.
             biometric.updateSavedEmailIfEnabled(auth.userEmail)
         } else {
+            PerformanceCapture.shared.revoke()
             // Signed out — clear the unlock gate so a future sign-in starts fresh.
             biometric.markUnlocked()
             lockCover.hide()
@@ -422,6 +424,8 @@ struct NewBackendRootView: View {
     }
 
     private func loadVineyardsAndApplyDefault(forceReload: Bool = false) async {
+        let performanceSpan = PerformanceCapture.shared.begin("startup membership and default vineyard")
+        defer { PerformanceCapture.shared.end(performanceSpan) }
         isLoadingVineyards = true
         StartupDiagnostics.log("vineyard sync started (forceReload=\(forceReload))")
         defer { isLoadingVineyards = false }

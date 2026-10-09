@@ -54,6 +54,8 @@ final class PersistenceStore {
     /// persistence key and underlying error (never silently swallowed) and
     /// reported through `onDecodeFailure`.
     func loadOutcome<T: Decodable>(key: String) -> LoadOutcome<T> {
+        let performanceSpan = PerformanceCapture.shared.begin("persistence read and JSON decode")
+        defer { PerformanceCapture.shared.end(performanceSpan) }
         let url = fileURL(for: key)
         guard FileManager.default.fileExists(atPath: url.path) else {
             return .missing
@@ -82,6 +84,8 @@ final class PersistenceStore {
     }
 
     func save<T: Encodable>(_ value: T, key: String) {
+        let performanceSpan = PerformanceCapture.shared.begin("persistence JSON encode and atomic save")
+        defer { PerformanceCapture.shared.end(performanceSpan) }
         let url = fileURL(for: key)
         guard let data = try? encoder.encode(value) else { return }
         try? data.write(to: url, options: [.atomic])
@@ -92,6 +96,8 @@ final class PersistenceStore {
     /// cache) whose sync must not report success — or advance a watermark —
     /// until the data is verifiably on disk.
     func saveOrThrow<T: Encodable>(_ value: T, key: String) throws {
+        let performanceSpan = PerformanceCapture.shared.begin("persistence durable JSON encode and atomic save")
+        defer { PerformanceCapture.shared.end(performanceSpan) }
         #if DEBUG
         if let error = durableSaveFailureForTesting?(key) { throw error }
         #endif

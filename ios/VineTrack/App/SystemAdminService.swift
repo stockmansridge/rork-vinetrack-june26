@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import Supabase
 
 /// VineTrack platform-level system admin status + shared feature flags.
 ///
@@ -52,6 +53,8 @@ final class SystemAdminService {
     /// Refresh admin status + flags. Safe to call on launch and on settings
     /// open — failures are stored in `lastError` but never throw to the UI.
     func refresh() async {
+        let performanceAccount = SupabaseClientProvider.shared.client.auth.currentUser?.id
+        PerformanceCapture.shared.suspendAuthorization()
         isLoading = true
         lastError = nil
         defer { isLoading = false }
@@ -60,6 +63,7 @@ final class SystemAdminService {
             async let flagsTask = repository.fetchFlags()
             let (admin, flagList) = try await (adminTask, flagsTask)
             isSystemAdmin = admin
+            PerformanceCapture.shared.authorize(admin && performanceAccount == SupabaseClientProvider.shared.client.auth.currentUser?.id)
             var map: [String: SystemFeatureFlag] = [:]
             for flag in flagList { map[flag.key] = flag }
             flags = map
@@ -67,6 +71,7 @@ final class SystemAdminService {
         } catch {
             lastError = error.localizedDescription
             isSystemAdmin = false
+            PerformanceCapture.shared.authorize(false)
         }
     }
 
@@ -103,6 +108,7 @@ final class SystemAdminService {
     }
 
     func clearOnSignOut() {
+        PerformanceCapture.shared.revoke()
         isSystemAdmin = false
         flags = [:]
         lastError = nil

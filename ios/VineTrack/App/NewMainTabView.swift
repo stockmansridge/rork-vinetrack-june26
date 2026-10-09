@@ -91,9 +91,25 @@ struct NewMainTabView: View {
         )
     }
 
+    private var timedTabSelection: Binding<Int> {
+        Binding(get: { selectedTab }, set: { value in
+            guard value != selectedTab else { return }
+            let span: PerformanceCapture.Span?
+            switch value {
+            case 0: span = PerformanceCapture.shared.begin("navigation Home to next main-queue turn")
+            case 2: span = PerformanceCapture.shared.begin("navigation Trip to next main-queue turn")
+            case 3: span = PerformanceCapture.shared.begin("navigation Program to next main-queue turn")
+            default: span = PerformanceCapture.shared.begin("navigation other tab to next main-queue turn")
+            }
+            selectedTab = value
+            DispatchQueue.main.async { PerformanceCapture.shared.end(span) }
+        })
+    }
+
     var body: some View {
-        TabView(selection: $selectedTab) {
-            NewHomeTabView(selectedTab: $selectedTab)
+        TabView(selection: timedTabSelection) {
+            NewHomeTabView(selectedTab: timedTabSelection)
+                .onAppear { PerformanceCapture.shared.mark("Home appeared") }
                 .tabItem { Label("Home", systemImage: "house.fill") }
                 .tag(0)
 
@@ -104,11 +120,13 @@ struct NewMainTabView: View {
             .tag(1)
 
             TripView()
+                .onAppear { PerformanceCapture.shared.mark("Trip appeared") }
                 .tabItem { Label("Trip", systemImage: "steeringwheel") }
                 .tag(2)
 
             NavigationStack {
                 SprayProgramView()
+                    .onAppear { PerformanceCapture.shared.mark("Program appeared") }
             }
             .tabItem { Label("Program", systemImage: "drop.fill") }
             .tag(3)
@@ -340,6 +358,8 @@ struct NewMainTabView: View {
             isManualDiagnosticRequested = isManualDiagnosticRequested || startsManualDiagnostic
             return
         }
+        let performanceSweep = PerformanceCapture.shared.begin("full sync sweep including network waits")
+        defer { PerformanceCapture.shared.end(performanceSweep) }
         isSweeping = true
         let sweepVineyardId = store.selectedVineyardId
         defer {
@@ -430,17 +450,27 @@ struct NewMainTabView: View {
                 elapsedSince: manualReplayStartedAt
             )
         }
+        let performancePins = PerformanceCapture.shared.begin("sync Pins")
         await pinSync.syncPinsForSelectedVineyard()
+        PerformanceCapture.shared.end(performancePins)
         if let sweepVineyardId {
             VineyardSelectionDiagnostics.stage("sync-blocks", vineyardId: sweepVineyardId)
         }
+        let performanceBlocks = PerformanceCapture.shared.begin("sync Blocks")
         await paddockSync.syncPaddocksForSelectedVineyard()
+        PerformanceCapture.shared.end(performanceBlocks)
         if let sweepVineyardId {
             VineyardSelectionDiagnostics.stage("sync-remaining-records", vineyardId: sweepVineyardId)
         }
+        let performanceTrips = PerformanceCapture.shared.begin("sync Trips initial pass")
         await tripSync.syncTripsForSelectedVineyard()
+        PerformanceCapture.shared.end(performanceTrips)
+        let performanceSprays = PerformanceCapture.shared.begin("sync Spray records")
         await sprayRecordSync.syncSprayRecordsForSelectedVineyard()
+        PerformanceCapture.shared.end(performanceSprays)
         if let vineyardId = store.selectedVineyardId {
+            let performanceTanks = PerformanceCapture.shared.begin("sync Tank actuals and Trip final stage")
+            defer { PerformanceCapture.shared.end(performanceTanks) }
             await SprayTankActualStore.shared.syncPending(
                 tripSync: tripSync,
                 spraySync: sprayRecordSync,
@@ -451,7 +481,10 @@ struct NewMainTabView: View {
             // after this trip's actual-use rows have cleared their queue.
             await tripSync.syncTripsForSelectedVineyard()
         }
+        let performanceTemplates = PerformanceCapture.shared.begin("sync Program templates")
         await sprayJobTemplateService.syncForSelectedVineyard()
+        PerformanceCapture.shared.end(performanceTemplates)
+        let performanceResources = PerformanceCapture.shared.begin("sync buttons chemicals equipment fuel and growth records")
         await buttonConfigSync.syncButtonConfigForSelectedVineyard()
         await savedChemicalSync.syncForSelectedVineyard()
         await savedSprayPresetSync.syncForSelectedVineyard()
@@ -467,6 +500,8 @@ struct NewMainTabView: View {
         await tripCostAllocationSync.syncForSelectedVineyard()
         await growthStageImageSync.syncForSelectedVineyard()
         await growthStageRecordSync.syncForSelectedVineyard()
+        PerformanceCapture.shared.end(performanceResources)
+        let performanceWork = PerformanceCapture.shared.begin("sync Work Tasks resources yield pruning and fertiliser")
         await workTaskSync.syncForSelectedVineyard()
         await workTaskLabourLineSync.syncForSelectedVineyard()
         await workTaskMachineLineSync.syncForSelectedVineyard()
@@ -486,6 +521,8 @@ struct NewMainTabView: View {
         await pruningYieldSettingsSync.syncForSelectedVineyard()
         await pruningSync.syncForSelectedVineyard()
         await fertiliserSync.syncForSelectedVineyard()
+        PerformanceCapture.shared.end(performanceWork)
+        let performanceSettings = PerformanceCapture.shared.begin("sync region season alerts and notices")
         // Vineyard-scoped organisation region/unit settings (country, currency,
         // units, date format, terminology). Previously only pulled on vineyard
         // selection — pulling it here too means a manual/forced "Sync now"
@@ -500,6 +537,7 @@ struct NewMainTabView: View {
         case .none:     break
         }
         await appNoticeService.refresh()
+        PerformanceCapture.shared.end(performanceSettings)
         // "Last full sync" is a two-way claim: it only advances when the pull
         // half succeeded AND the upload queue actually drained. A pull-only
         // success used to refresh the timestamp while uploads stayed stuck.

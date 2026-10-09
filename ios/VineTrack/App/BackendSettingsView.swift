@@ -772,6 +772,16 @@ struct BackendSettingsView: View {
     private var systemAdminSection: some View {
         Section {
             NavigationLink {
+                PerformanceDiagnosticsView()
+            } label: {
+                SettingsRow(
+                    title: "Performance Diagnostics",
+                    subtitle: "Capture and share startup & navigation timings",
+                    symbol: "speedometer",
+                    color: .purple
+                )
+            }
+            NavigationLink {
                 AdminDashboardView()
             } label: {
                 SettingsRow(

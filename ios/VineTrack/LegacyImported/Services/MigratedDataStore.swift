@@ -348,6 +348,8 @@ final class MigratedDataStore {
     // MARK: - Lifecycle
 
     func load() {
+        let performanceSpan = PerformanceCapture.shared.begin("store global load and repair")
+        defer { PerformanceCapture.shared.end(performanceSpan) }
         deviceTripOwnership = persistence.load(key: Keys.deviceActiveTripId)
         vineyards = vineyardRepo.loadAll()
         hydrateVineyardLogosFromCache()
@@ -501,6 +503,8 @@ final class MigratedDataStore {
 
     /// Reload all per-vineyard scoped collections from disk for the currently selected vineyard.
     func reloadCurrentVineyardData() {
+        let performanceSpan = PerformanceCapture.shared.begin("store selected vineyard hydration")
+        defer { PerformanceCapture.shared.end(performanceSpan) }
         guard let vineyardId = selectedVineyardId else {
             pins = []
             paddocks = []
