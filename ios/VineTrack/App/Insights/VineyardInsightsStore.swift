@@ -203,6 +203,7 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
         let paddockID: UUID
         let status: String
         let observations: [StoredObservation]
+        let stopContext: ScoutStopContext?
     }
 
     private struct StoredWeather: Codable {
@@ -369,7 +370,8 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
                             linkedPinID: observation.linkedPinID,
                             linkedGrowthStageRecordID: observation.linkedGrowthRecordID
                         )
-                    }
+                    },
+                    stopContext: assessment.stopContext
                 )
             },
             clientUpdatedAt: stored.clientUpdatedAt,
@@ -429,7 +431,8 @@ nonisolated final class VineyardInsightsStore: @unchecked Sendable {
                             linkedPinID: observation.linkedPinID,
                             linkedGrowthRecordID: observation.linkedGrowthStageRecordID
                         )
-                    }
+                    },
+                    stopContext: assessment.stopContext
                 )
             },
             clientUpdatedAt: visit.clientUpdatedAt,

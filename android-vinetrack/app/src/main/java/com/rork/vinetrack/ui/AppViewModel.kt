@@ -1515,6 +1515,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { vineyardInsights.captureWeather(visitId) }
     }
 
+    fun captureScoutStopWeather(visitId: String, stopId: String) {
+        viewModelScope.launch { vineyardInsights.captureStopWeather(visitId, stopId) }
+    }
+
+    /** Uses the same qualified fix source as item capture; never substitutes a block centre. */
+    fun scoutStopFix(onResult: (com.rork.vinetrack.data.insights.ScoutPhotoFix?) -> Unit) {
+        fetchCurrentFix { result ->
+            val success = result as? PinLocationResult.Success
+            onResult(success?.fix?.let { fix -> com.rork.vinetrack.data.insights.ScoutPhotoFix(
+                fix.latitude, fix.longitude, fix.accuracyMetres,
+                java.time.Instant.ofEpochMilli(fix.fixTimeEpochMs).toString()) })
+        }
+    }
+
     /** Retry failed Scout photograph uploads. The local bytes are retained. */
     fun retryVineyardInsightsPhotos(vineyardId: String) {
         viewModelScope.launch { runCatching { vineyardInsights.retryPhotoUploads(vineyardId) } }

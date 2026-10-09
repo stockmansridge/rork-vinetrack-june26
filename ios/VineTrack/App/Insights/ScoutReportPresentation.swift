@@ -3,7 +3,7 @@ import Foundation
 
 /// Read-only projection shared by Scout maps, previews and the existing offline PDF renderer.
 enum ScoutReportPresentation {
-    static let legend = "O = measured observation (blue); P = photograph capture (orange); E-R = linked E-L record, E-P = linked E-L pin (green). Boundaries are context, not measured locations. References identify the item and photograph below."
+    static let legend = "S = measured stop (blue); O = measured observation (blue); P = photograph capture (orange); E-R = linked E-L record, E-P = linked E-L pin (green). Boundaries are context, not measured locations. References identify the item and photograph below."
 
     struct Locations {
         var markers: [ScoutReportMarker] = []
@@ -41,16 +41,24 @@ enum ScoutReportPresentation {
         func blockName(_ id: UUID?) -> String {
             blocks.first { $0.id == id }?.name ?? "Block \(id?.uuidString ?? "unavailable")"
         }
-        for assessment in visit.assessments {
+        for assessment in visit.orderedStops {
             let polygon = blocks.first { $0.id == assessment.paddockID }?.polygonPoints ?? []
             if polygon.count < 3 || polygon.contains(where: { coordinate($0.latitude, $0.longitude) == nil }) {
                 result.boundaryUnavailable.append("Boundary unavailable — \(blockName(assessment.paddockID)); recorded markers are retained.")
             }
+            let stopLabel = assessment.stopReference + " • " + (assessment.stopContext?.captured_at ?? "Legacy capture time unavailable")
+            if let context = assessment.stopContext, let coordinate = coordinate(context.latitude, context.longitude),
+               context.location_measured_at != nil, context.accuracy_metres != nil {
+                result.markers.append(.init(id: assessment.id.uuidString + ":stop", reference: assessment.stopReference,
+                    observationID: assessment.id, title: "Observation stop", subtitle: blockName(assessment.paddockID) + " • " + stopLabel,
+                    source: "Measured stop GPS • \(context.location_measured_at ?? "") • ±\(context.accuracy_metres ?? 0) m",
+                    coordinate: coordinate, photo: nil))
+            } else { result.unavailable.append(stopLabel + " — stop GPS unavailable") }
             for observation in assessment.observations where observation.hasContent || observation.linkedPinID != nil
                 || (observation.item == .growthStage && !(observation.valueLabel ?? "").isEmpty) {
                 observationNumber += 1
                 let reference = "O\(observationNumber)"
-                let block = blockName(assessment.paddockID)
+                let block = blockName(assessment.paddockID) + " • " + stopLabel
                 func add(_ ref: String, _ source: String, _ latitude: Double?, _ longitude: Double?, actualBlock: String? = nil, photo: ScoutPhoto? = nil) -> Bool {
                     guard let coordinate = coordinate(latitude, longitude) else { return false }
                     result.markers.append(ScoutReportMarker(id: observation.id.uuidString + ":" + ref,

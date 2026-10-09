@@ -37,6 +37,7 @@ nonisolated struct ScoutPhotoFix: Equatable, Sendable {
 final class VineyardInsightsService {
 
     private(set) var visits: [ScoutVisit] = []
+    private var failedVisitDrafts: [UUID: ScoutVisit] = [:]
     private(set) var notes: [VintageNote] = []
     private(set) var openVisitID: UUID?
 
@@ -107,7 +108,7 @@ final class VineyardInsightsService {
         self.repository = repository
         self.now = now
         _ = store.repairMissingObligations()
-        self.visits = store.loadVisits()
+        self.reloadVisits()
         self.notes = store.loadNotes()
         self.pendingPhotoCount = store.loadPhotoQueue().count
     }
@@ -169,9 +170,91 @@ final class VineyardInsightsService {
             clientUpdatedAt: now(),
             scoutDateOnly: VineyardInsightsSyncRepository.day(date, timeZone: vineyardTimeZone(vineyardID))
         )
-        persist(visit)
-        openVisitID = visit.id
+        if persist(visit) { openVisitID = visit.id }
         return visit
+    }
+
+    /// A new UUID is allocated for every stop, including repeat visits to the same block.
+    func beginStop(visitID: UUID, paddockID: UUID, observerID: UUID?, observerName: String?, fix: ScoutPhotoFix?) -> UUID? {
+        guard var visit = visit(visitID), visit.isEditable, !deletionPending(visitID: visitID) else { return nil }
+        var stop = ScoutBlockAssessment.create(visitID: visitID, vineyardID: visit.vineyardID, paddockID: paddockID)
+        var context = ScoutStopContext(captured_at: VineyardInsightsSyncRepository.timestamp(now()),
+            observer_id: observerID?.uuidString, observer_name: observerName, is_draft: true,
+            latitude: fix?.latitude, longitude: fix?.longitude, accuracy_metres: fix?.accuracyMetres,
+            location_measured_at: fix.map { VineyardInsightsSyncRepository.timestamp($0.measuredAt) })
+        context.setWeather(.unavailable(capturedAt: now(), source: "Configured vineyard weather source"))
+        stop.stopContext = context
+        visit.assessments.append(stop)
+        _ = persist(visit)
+        // Keep the same stop in the mounted editor even if the local obligation needs Retry.
+        Task { await captureStopWeather(visitID: visitID, stopID: stop.id) }
+        return stop.id
+    }
+
+    /// Reassign only new stops without canonical links; GPS/photos stay unchanged.
+    @discardableResult
+    func correctStopBlock(visitID: UUID, stopID: UUID, paddockID: UUID) -> Bool {
+        guard var visit = visit(visitID), visit.isEditable, !deletionPending(visitID: visitID),
+              var stop = visit.assessments.first(where: { $0.id == stopID }), stop.stopContext != nil,
+              !stop.observations.contains(where: { $0.linkedPinID != nil || $0.linkedGrowthStageRecordID != nil }) else { return false }
+        stop.paddockID = paddockID; stop.stopContext?.is_draft = true
+        visit.setAssessment(stop)
+        return persist(visit)
+    }
+
+    @discardableResult
+    func discardEmptyStop(visitID: UUID, stopID: UUID) -> Bool {
+        guard var visit = visit(visitID), visit.isEditable,
+              let stop = visit.assessments.first(where: { $0.id == stopID }), stop.recordedObservations.isEmpty else { return false }
+        visit.removedAssessments.append(.init(id: stop.id, paddockID: stop.paddockID, removedAt: now(), status: stop.status.code))
+        visit.assessments.removeAll { $0.id == stopID }
+        return persist(visit)
+    }
+
+    @discardableResult
+    func saveObservationDraft(visitID: UUID) -> Bool {
+        guard let current = visit(visitID), current.isEditable else { return !lastWriteFailed }
+        return persist(current) && record(store.repairMissingObligations())
+    }
+
+    @discardableResult
+    func saveStop(visitID: UUID, stopID: UUID) -> Bool {
+        guard var visit = visit(visitID), visit.isEditable, !deletionPending(visitID: visitID),
+              var stop = visit.assessments.first(where: { $0.id == stopID }), !stop.recordedObservations.isEmpty else { return false }
+        stop.stopContext?.is_draft = false
+        stop.status = .complete
+        visit.setAssessment(stop)
+        guard persist(visit), store.repairMissingObligations() else { return record(false) }
+        return record(true)
+    }
+
+    @discardableResult
+    func setStopLocation(visitID: UUID, stopID: UUID, fix: ScoutPhotoFix) -> Bool {
+        guard var visit = visit(visitID), visit.isEditable,
+              var stop = visit.assessments.first(where: { $0.id == stopID }), var context = stop.stopContext else { return false }
+        context.latitude = fix.latitude; context.longitude = fix.longitude
+        context.accuracy_metres = fix.accuracyMetres
+        context.location_measured_at = VineyardInsightsSyncRepository.timestamp(fix.measuredAt)
+        stop.stopContext = context; visit.setAssessment(stop)
+        return persist(visit)
+    }
+
+    func captureStopWeather(visitID: UUID, stopID: UUID) async {
+        guard let visit = visit(visitID), let original = visit.assessments.first(where: { $0.id == stopID })?.stopContext else { return }
+        let capturedAt = original.capturedAt ?? now()
+        var weather = ScoutWeatherSnapshot.unavailable(capturedAt: capturedAt, source: "Configured vineyard weather source")
+        if let snapshot = try? await WeatherCurrentService().fetchCachedCurrent(vineyardId: visit.vineyardID), snapshot.status == "ok" {
+            weather = .init(observedAt: snapshot.observedAt, capturedAt: capturedAt,
+                source: snapshot.stationName.map { "\(snapshot.source) — \($0)" } ?? snapshot.source,
+                temperatureCelsius: snapshot.temperatureC, humidityPercent: snapshot.humidityPct,
+                windSpeedKph: snapshot.windSpeedKmh, windGustKph: nil, recentRainfallMm: snapshot.rainTodayMm,
+                isStale: snapshot.isStale)
+        }
+        guard var current = self.visit(visitID), current.isEditable, !deletionPending(visitID: visitID),
+              var stop = current.assessments.first(where: { $0.id == stopID }),
+              stop.stopContext?.captured_at == original.captured_at else { return }
+        // Completion must not be followed by a late weather mutation. Only this stop changes.
+        stop.stopContext?.setWeather(weather); current.setAssessment(stop); _ = persist(current)
     }
 
     func toggleBlock(visitID: UUID, paddockID: UUID) {
@@ -291,7 +374,7 @@ final class VineyardInsightsService {
         visit.setAssessment(assessment)
         guard persist(visit) else {
             _ = store.saveVisit(previousVisit, syncOwed: previousSyncOwed)
-            visits = store.loadVisits()
+            reloadVisits()
             return false
         }
         return true
@@ -389,6 +472,7 @@ final class VineyardInsightsService {
 
         var updated = observation
         updated.photos.append(photo)
+        assessment.stopContext?.is_draft = true
         assessment.setObservation(updated)
         var nextVisit = visit
         nextVisit.setAssessment(assessment)
@@ -435,6 +519,7 @@ final class VineyardInsightsService {
         pendingPhotoCount = store.loadPhotoQueue().count
 
         observation.photos.removeAll { $0.id == photoID }
+        assessment.stopContext?.is_draft = true
         assessment.setObservation(observation)
         var nextVisit = visit
         nextVisit.setAssessment(assessment)
@@ -512,6 +597,7 @@ final class VineyardInsightsService {
         var observation = assessment.observation(item)
             ?? ScoutObservation.empty(assessmentID: assessmentID, item: item)
         transform(&observation)
+        assessment.stopContext?.is_draft = true
         assessment.setObservation(observation)
         visit.setAssessment(assessment)
         return persist(visit)
@@ -545,8 +631,12 @@ final class VineyardInsightsService {
             if durable { scheduleSync(vineyardID: visit.vineyardID) }
             return record(durable)
         }
+        let draft = visit
         visit.status = .completed
-        return persist(visit)
+        if persist(visit), store.repairMissingObligations() { return true }
+        if !store.saveVisit(draft, syncOwed: true) { failedVisitDrafts[draft.id] = draft }
+        reloadVisits()
+        return record(false)
     }
 
     func completionNeedsRetry(_ visitID: UUID) -> Bool {
@@ -580,7 +670,7 @@ final class VineyardInsightsService {
         }
         if record(store.enqueue(recordID: visit.id, vineyardID: visit.vineyardID,
             entity: .scoutVisit, operation: .delete, clientUpdatedAt: now())) {
-            visits = store.loadVisits()
+            reloadVisits()
             if openVisitID == visitID { openVisitID = nil }
             scheduleSync(vineyardID: visit.vineyardID)
         }
@@ -597,7 +687,8 @@ final class VineyardInsightsService {
             : visit.clientUpdatedAt.addingTimeInterval(0.001)
         let saved = store.saveVisit(stamped)
         if saved {
-            visits = store.loadVisits()
+            failedVisitDrafts.removeValue(forKey: stamped.id)
+            reloadVisits()
             let queued = store.enqueue(
                 recordID: stamped.id,
                 vineyardID: stamped.vineyardID,
@@ -608,7 +699,20 @@ final class VineyardInsightsService {
             if queued { scheduleSync(vineyardID: stamped.vineyardID) }
             return record(queued)
         }
+        // Retain failed edits in the mounted editor so Retry writes the exact content.
+        failedVisitDrafts[stamped.id] = stamped
+        reloadVisits()
         return record(false)
+    }
+
+    private func reloadVisits() {
+        // A sync refresh cannot discard text whose disk write failed. Authoritative deletion still wins.
+        failedVisitDrafts = failedVisitDrafts.filter {
+            !store.isDeleted(vineyardID: $0.value.vineyardID, entity: .scoutVisit, entityID: $0.key)
+        }
+        let stored = store.loadVisits()
+        visits = stored.map { failedVisitDrafts[$0.id] ?? $0 }
+            + failedVisitDrafts.values.filter { draft in !stored.contains { $0.id == draft.id } }
     }
 
     // MARK: - Vintage Notes
@@ -903,7 +1007,7 @@ final class VineyardInsightsService {
                   store.consumeDeletion(vineyardID: entry.vineyardID, entity: .scoutVisit, entityID: entry.recordID)
             else { throw VineyardInsightsReconciliationError.localWriteFailed }
             processLocalFileCleanup(vineyardID: entry.vineyardID)
-            visits = store.loadVisits()
+            reloadVisits()
             pendingPhotoCount = store.loadPhotoQueue().count
             if openVisitID == entry.recordID { openVisitID = nil }
             return nil
@@ -962,6 +1066,7 @@ final class VineyardInsightsService {
                 vineyard_id: assessment.vineyardID.uuidString,
                 paddock_id: assessment.paddockID.uuidString,
                 status: assessment.status.code,
+                stop_context: assessment.stopContext,
                 client_updated_at: VineyardInsightsSyncRepository.timestamp(entry.clientUpdatedAt),
                 client_revision_id: revisionID
             )
@@ -1179,7 +1284,7 @@ final class VineyardInsightsService {
             guard changed else { continue }
             // Saved WITHOUT re-queuing the visit: reconciling a storage path is
             // the server's own answer coming home, not a new local edit.
-            if store.saveVisit(visit, syncOwed: store.isSyncOwed(visitID: visit.id)) { visits = store.loadVisits() }
+            if store.saveVisit(visit, syncOwed: store.isSyncOwed(visitID: visit.id)) { reloadVisits() }
             return
         }
     }
@@ -1226,7 +1331,7 @@ final class VineyardInsightsService {
                       )
                 else { throw VineyardInsightsReconciliationError.localWriteFailed }
                 processLocalFileCleanup(vineyardID: vineyardID)
-                visits = store.loadVisits()
+                reloadVisits()
                 notes = store.loadNotes()
                 if openVisitID == row.entity_id { openVisitID = nil }
             }
@@ -1410,7 +1515,7 @@ final class VineyardInsightsService {
         // A tombstoned visit is removed locally rather than shown as empty.
         if VineyardInsightsSyncRepository.parseTimestamp(row.deleted_at) != nil {
             guard store.deleteVisit(id: row.id) else { throw VineyardInsightsReconciliationError.localWriteFailed }
-            visits = store.loadVisits()
+            reloadVisits()
             if openVisitID == row.id { openVisitID = nil }
             return
         }
@@ -1529,7 +1634,8 @@ final class VineyardInsightsService {
                     vineyardID: assessmentRow.vineyard_id,
                     paddockID: assessmentRow.paddock_id,
                     status: ScoutAssessmentStatus(rawValue: assessmentRow.status) ?? .inProgress,
-                    observations: filled
+                    observations: filled,
+                    stopContext: assessmentRow.stop_context
                 )
             }
 
@@ -1570,7 +1676,7 @@ final class VineyardInsightsService {
             scoutDateOnly: row.scout_date
         )
         guard store.saveVisit(visit, syncOwed: false) else { throw VineyardInsightsReconciliationError.localWriteFailed }
-        visits = store.loadVisits()
+        reloadVisits()
     }
 
     // MARK: - Session
@@ -1590,7 +1696,7 @@ final class VineyardInsightsService {
             return
         }
         _ = store.repairMissingObligations()
-        visits = store.loadVisits()
+        reloadVisits()
         notes = store.loadNotes()
         pendingPhotoCount = store.loadPhotoQueue().count
     }
@@ -1629,6 +1735,7 @@ final class VineyardInsightsService {
         lastCataloguePull.removeAll()
         requestedFullPulls.removeAll()
         isSyncing = false
+        failedVisitDrafts.removeAll()
         store.clearForSignOut()
         photoFiles.clearForSignOut()
         visits = []

@@ -75,7 +75,7 @@ fun ScoutReportScreen(vm: AppViewModel, state: AppUiState, visit: ScoutVisit, on
     val syncError by vm.vineyardInsights.lastSyncError.collectAsStateWithLifecycle()
     val vineyard = liveState.vineyards.firstOrNull { it.id == visit.vineyardId }
     val logo = liveState.selectedVineyardLogo.takeIf { liveState.selectedVineyardId == visit.vineyardId }
-    val blocks = visit.assessments.mapNotNull { assessment -> state.paddocks.firstOrNull { it.id == assessment.paddockId } }
+    val blocks = state.paddocks.filter { block -> visit.assessments.any { it.paddockId == block.id } }
     val locations = ScoutReportPresentation.locations(visit, liveState.paddocks, liveState.growthRecords, liveState.pins)
     val markers = reportMarkers(locations)
     var selected by remember { mutableStateOf<ScoutMapMarker?>(null) }
@@ -97,13 +97,14 @@ fun ScoutReportScreen(vm: AppViewModel, state: AppUiState, visit: ScoutVisit, on
                         fontWeight = FontWeight.Bold)
                     Text("${visit.scoutDateIso} • Vintage ${VintageYearText.format(visit.vintageYear)}")
                     Text("Observer: ${visit.scoutNameSnapshot ?: "Unavailable"} • ${visit.status.label}")
+                    Text(vm.vineyardInsights.syncStatus(visit), fontSize = 12.sp)
                     if (vm.vineyardInsights.deletionPending(visit.id)) {
                         Text(vm.vineyardInsights.syncStatus(visit), color = VineColors.Warning)
                         syncError?.let { Text(it, fontSize = 12.sp, color = VineColors.Warning) }
                     }
                 }
             }
-            item { WeatherReportCard(visit) }
+            item { WeatherReportCard(visit, liveState) }
             item { ScoutVisitMap(blocks, markers) { selected = it } }
             item { Text(ScoutReportPresentation.LEGEND, fontSize = 12.sp) }
             items(locations.boundaryUnavailable) { Text(it, fontSize = 12.sp) }
@@ -114,10 +115,14 @@ fun ScoutReportScreen(vm: AppViewModel, state: AppUiState, visit: ScoutVisit, on
                 item { Row { Icon(Icons.Filled.LocationOff, null); Spacer(Modifier.size(8.dp)); Text("Location unavailable", fontWeight = FontWeight.Bold) } }
                 items(locations.unavailable) { Text(it, fontSize = 12.sp, color = vine.textSecondary) }
             }
-            items(visit.assessments, key = { it.id }) { assessment ->
+            items(visit.orderedStops, key = { it.id }) { assessment ->
                 val block = blocks.firstOrNull { it.id == assessment.paddockId }
                 VineyardCard {
                     Text(block?.name ?: "Block ${assessment.paddockId}", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("${assessment.stopReference} • ${assessment.stopContext?.capturedAt?.let { com.rork.vinetrack.data.model.parseIsoToEpochMs(it)?.let(liveState.regionFormatter::formatDateTime) } ?: "Legacy capture time unavailable"}", fontWeight = FontWeight.SemiBold)
+                    Text(assessment.stopContext?.observerName ?: "Legacy stop observer unavailable", fontSize = 12.sp)
+                    Text(ScoutReportPdfExporter.weatherText(visit.copy(weather = assessment.stopContext?.weatherSnapshot), liveState.regionFormatter), fontSize = 12.sp)
+                    if (assessment.stopContext?.isDraft == true) Text("UNFINISHED OBSERVATION DRAFT", color = VineColors.Warning)
                     val varieties = block?.varietyAllocations.orEmpty().mapNotNull { it.displayName }.distinct()
                     Text(if (varieties.isEmpty()) "Variety details unavailable" else varieties.joinToString(", "), fontSize = 12.sp, color = vine.textSecondary)
                     ScoutItem.entries.forEach { item ->
@@ -169,14 +174,14 @@ fun ScoutReportScreen(vm: AppViewModel, state: AppUiState, visit: ScoutVisit, on
 }
 
 @Composable
-private fun WeatherReportCard(visit: ScoutVisit) {
+private fun WeatherReportCard(visit: ScoutVisit, state: AppUiState, modifier: Modifier = Modifier) {
     val vine = LocalVineColors.current
     VineyardCard {
         Text("Weather", fontWeight = FontWeight.Bold)
         val weather = visit.weather
-        Text("Temp: ${weather?.temperatureCelsius?.let { "%.1f °C".format(it) } ?: "Unavailable"}")
+        Text("Temp: ${weather?.temperatureCelsius?.let(state.regionFormatter::formatTemperature) ?: "Unavailable"}")
         Text("Humidity: ${weather?.humidityPercent?.let { "${it.toInt()}%" } ?: "Unavailable"}")
-        Text("Wind: ${weather?.windSpeedKph?.let { "${it.toInt()} km/h" } ?: "Unavailable"}")
+        Text("Wind: ${weather?.windSpeedKph?.let(state.regionFormatter::formatSpeed) ?: "Unavailable"}")
         Text("Source: ${weather?.source ?: "Unavailable"}")
         Text(weather?.observedAtIso?.let { "Observed $it" } ?: "Observation time unavailable", fontSize = 12.sp, color = vine.textSecondary)
         if (weather?.isUnavailable == true) Text("Unavailable at observation time", fontSize = 12.sp, color = VineColors.Warning)
@@ -185,12 +190,19 @@ private fun WeatherReportCard(visit: ScoutVisit) {
 }
 
 @Composable
-fun ScoutWorkspaceMap(visit: ScoutVisit, blocks: List<Paddock>, pins: List<Pin>, photoBytes: (String) -> ByteArray?, growthRecords: List<GrowthStageRecord>, locationBlocks: List<Paddock>) {
+fun ScoutWorkspaceMap(visit: ScoutVisit, blocks: List<Paddock>, pins: List<Pin>, photoBytes: (String) -> ByteArray?, growthRecords: List<GrowthStageRecord>, locationBlocks: List<Paddock>, currentFix: com.rork.vinetrack.data.insights.ScoutPhotoFix? = null, onBlockSelected: ((String) -> Unit)? = null, modifier: Modifier = Modifier) {
     var selected by remember { mutableStateOf<ScoutMapMarker?>(null) }
     val locations = ScoutReportPresentation.locations(visit, locationBlocks, growthRecords, pins)
     val markers = reportMarkers(locations)
-    Column {
-        ScoutVisitMap(blocks, markers) { selected = it }
+    var selectedBlock by remember { mutableStateOf<String?>(null) }
+    Column(modifier) {
+        ScoutVisitMap(blocks.distinctBy { it.id }, markers, currentFix = currentFix, onBlockSelected = {
+            selectedBlock = it; onBlockSelected?.invoke(it)
+        }) { selected = it }
+        blocks.firstOrNull { it.id == selectedBlock }?.let { block ->
+            Text(block.name + " • " + block.varietyAllocations.orEmpty().mapNotNull { it.displayName }.joinToString(), fontWeight = FontWeight.Bold)
+        }
+        Text("Tap a boundary or block label for details. Boundaries remain available without imagery. Location is optional.", fontSize = 12.sp)
         LocationReferences(markers) { selected = it }
         locations.boundaryUnavailable.forEach { Text(it, fontSize = 12.sp) }
         if (locations.unavailable.isNotEmpty()) {
@@ -206,11 +218,13 @@ fun ScoutWorkspaceMap(visit: ScoutVisit, blocks: List<Paddock>, pins: List<Pin>,
 }
 
 @Composable
-private fun ScoutVisitMap(blocks: List<Paddock>, markers: List<ScoutMapMarker>, onMarker: (ScoutMapMarker) -> Unit) {
+private fun ScoutVisitMap(blocks: List<Paddock>, markers: List<ScoutMapMarker>, currentFix: com.rork.vinetrack.data.insights.ScoutPhotoFix? = null, onBlockSelected: ((String) -> Unit)? = null, modifier: Modifier = Modifier, onMarker: (ScoutMapMarker) -> Unit) {
     val camera = rememberCameraPositionState()
     val points = blocks.flatMap { block -> block.polygonPoints.orEmpty().filter { ScoutReportPresentation.valid(it.latitude, it.longitude) }.map { LatLng(it.latitude, it.longitude) } } + markers.map { it.point }
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
-    androidx.compose.runtime.LaunchedEffect(points, mapSize) {
+    var recenter by remember { mutableStateOf(0) }
+    androidx.compose.material3.TextButton(onClick = { recenter++ }) { Text("Recenter vineyard") }
+    androidx.compose.runtime.LaunchedEffect(points, mapSize, recenter) {
         if (mapSize.width > 0 && mapSize.height > 0 && points.isNotEmpty()) {
             val builder = LatLngBounds.builder(); points.forEach(builder::include)
             runCatching {
@@ -220,8 +234,23 @@ private fun ScoutVisitMap(blocks: List<Paddock>, markers: List<ScoutMapMarker>, 
             }
         }
     }
-    GoogleMap(modifier = Modifier.fillMaxWidth().height(280.dp).onSizeChanged { mapSize = it }, cameraPositionState = camera, properties = MapProperties(mapType = MapType.HYBRID)) {
-        blocks.forEach { block -> val polygon = block.polygonPoints.orEmpty().filter { ScoutReportPresentation.valid(it.latitude, it.longitude) }.map { LatLng(it.latitude, it.longitude) }; if (polygon.size >= 3 && polygon.size == block.polygonPoints.orEmpty().size) Polygon(points = polygon, fillColor = VineColors.LeafGreen.copy(alpha = 0.18f), strokeColor = VineColors.LeafGreen) }
+    GoogleMap(modifier = modifier.fillMaxWidth().height(380.dp).onSizeChanged { mapSize = it }, cameraPositionState = camera, properties = MapProperties(mapType = MapType.HYBRID)) {
+        blocks.distinctBy { it.id }.forEach { block ->
+            val polygon = block.polygonPoints.orEmpty().filter { ScoutReportPresentation.valid(it.latitude, it.longitude) }.map { LatLng(it.latitude, it.longitude) }
+            if (polygon.size >= 3 && polygon.size == block.polygonPoints.orEmpty().size) {
+                Polygon(points = polygon, fillColor = VineColors.LeafGreen.copy(alpha = 0.18f), strokeColor = VineColors.LeafGreen,
+                    clickable = onBlockSelected != null, onClick = { onBlockSelected?.invoke(block.id) })
+                // Centre is only a block label anchor, never observation/photo GPS.
+                Marker(state = MarkerState(LatLng(polygon.map { it.latitude }.average(), polygon.map { it.longitude }.average())),
+                    title = block.name, snippet = block.varietyAllocations.orEmpty().mapNotNull { it.displayName }.joinToString(),
+                    onClick = { onBlockSelected?.invoke(block.id); false })
+            }
+        }
+        currentFix?.let { fix ->
+            Marker(state = MarkerState(LatLng(fix.latitude, fix.longitude)), title = "Your qualifying location",
+                snippet = "Measured ${fix.measuredAtIso} • ±${fix.accuracyMetres} m",
+                icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_VIOLET))
+        }
         markers.forEach { marker ->
             androidx.compose.runtime.key(marker.id) {
                 Marker(state = MarkerState(marker.point), title = marker.title, snippet = marker.subtitle,

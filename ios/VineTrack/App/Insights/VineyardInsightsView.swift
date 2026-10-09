@@ -75,7 +75,7 @@ struct VineyardInsightsView: View {
                         subtitle: "Block assessments, observations & photos",
                         icon: "figure.walk",
                         tint: VineyardTheme.leafGreen,
-                        actions: ["New Scout", "Draft Scouts", "Completed Scouts"]
+                        actions: ["New Scout Trip", "Draft Scouts", "Completed Scouts"]
                     )
                 }
                 NavigationLink {
@@ -148,18 +148,20 @@ private struct HubCard: View {
 }
 
 private struct ScoutWeatherRows: View {
+    @Environment(MigratedDataStore.self) private var store
     let weather: ScoutWeatherSnapshot?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            LabeledContent("Temp", value: weather?.temperatureCelsius.map { String(format: "%.1f °C", $0) } ?? "Unavailable")
+            LabeledContent("Temp", value: weather?.temperatureCelsius.map { RegionFormatter(settings: store.settings.regionSettings).formatTemperature(celsius: $0) } ?? "Unavailable")
             LabeledContent("Humidity", value: weather?.humidityPercent.map { "\(Int($0.rounded()))%" } ?? "Unavailable")
-            LabeledContent("Wind", value: weather?.windSpeedKph.map { "\(Int($0.rounded())) km/h" } ?? "Unavailable")
+            LabeledContent("Wind", value: weather?.windSpeedKph.map { RegionFormatter(settings: store.settings.regionSettings).formatSpeed(kmh: $0) } ?? "Unavailable")
             LabeledContent("Source", value: weather?.source ?? "Unavailable")
             Text(weather?.observedAt.map { "Observed " + $0.formatted(date: .abbreviated, time: .shortened) }
                 ?? "Observation time unavailable")
                 .font(.caption2).foregroundStyle(.secondary)
             if weather?.isStale == true { Text("Stale weather reading").font(.caption2.bold()).foregroundStyle(.orange) }
+            if weather == nil || weather?.isUnavailable == true { Text("Weather unavailable at capture time").font(.caption2).foregroundStyle(.orange) }
         }
     }
 }
@@ -204,10 +206,15 @@ struct ScoutWorkspaceView: View {
     @State private var reviewReport: ScoutVisit?
     @State private var reportReturnsToReview: Bool = false
     @State private var growthPickerRequest: ScoutGrowthPickerRequest?
-    @State private var assessmentToScrollTo: UUID?
     @State private var growthStageError: String?
+    @State private var editingStopID: UUID?
+    @State private var selectedMapBlockID: UUID?
+    @State private var showsBlockSelection: Bool = false
+    @State private var blockCorrectionStopID: UUID?
+    @State private var confirmsLeaveObservation: Bool = false
+    @State private var observationError: String?
 
-    private var openVisit: ScoutVisit? { insights.openVisit }
+    private var openVisit: ScoutVisit? { insights.openVisit.flatMap { $0.vineyardID == store.selectedVineyardId ? $0 : nil } }
     private var currentVintage: Int {
         VintageResolver.vintageYear(
             for: Date(),
@@ -225,7 +232,7 @@ struct ScoutWorkspaceView: View {
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
+        ScrollViewReader { _ in
         List {
             if let syncError = insights.lastSyncError {
                 Section {
@@ -268,18 +275,63 @@ struct ScoutWorkspaceView: View {
                 listSections
             }
         }
-        .navigationTitle("Scout")
+        .navigationTitle(editingStopID == nil ? "Scout Trip" : "Observation")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if openVisit != nil {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button { if !insights.lastWriteFailed { insights.openVisit(nil) } } label: {
+                    Button {
+                        if editingStopID != nil { confirmsLeaveObservation = true }
+                        else { insights.openVisit(nil) }
+                    } label: {
                         Label("Scout history", systemImage: "chevron.left")
                     }
                 }
             }
         }
         .navigationBarBackButtonHidden(openVisit != nil)
+        .onChange(of: openVisit?.id) { _, _ in editingStopID = nil; selectedMapBlockID = nil }
+        .onAppear { locationService.startUpdating() }
+        .confirmationDialog("Return to Scout Trip?", isPresented: $confirmsLeaveObservation, titleVisibility: .visible) {
+            Button("Keep draft and return") {
+                if let visit = openVisit, insights.saveObservationDraft(visitID: visit.id) { editingStopID = nil }
+                else { observationError = "The draft could not be saved. Stay here and retry." }
+            }
+            Button("Continue editing", role: .cancel) {}
+        } message: { Text("Your unfinished observation and photographs will be kept for later. The trip stays a draft.") }
+        .sheet(isPresented: $showsBlockSelection) {
+            NavigationStack {
+                List {
+                    Section("Confirm the block being assessed") {
+                        Text("Choose a block explicitly when location is unavailable, outside boundaries or ambiguous. You can correct the suggested block before recording.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(store.paddocks) { block in
+                            Button {
+                                selectedMapBlockID = block.id
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(block.name)
+                                        Text(block.varietyAllocations.compactMap(\.name).joined(separator: ", ")).font(.caption)
+                                    }
+                                    Spacer()
+                                    if selectedMapBlockID == block.id { Image(systemName: "checkmark") }
+                                }
+                            }
+                        }
+                    }
+                    Button(blockCorrectionStopID == nil ? "Make observation" : "Save block correction") {
+                        if let stopID = blockCorrectionStopID, let visit = openVisit, let blockID = selectedMapBlockID {
+                            if insights.correctStopBlock(visitID: visit.id, stopID: stopID, paddockID: blockID) {
+                                showsBlockSelection = false; blockCorrectionStopID = nil
+                            } else { observationError = "The block correction could not be saved. Retry; canonical linked evidence cannot be moved." }
+                        } else { beginObservation() }
+                    }.disabled(selectedMapBlockID == nil)
+                    if let observationError { Text(observationError).foregroundStyle(.red) }
+                }.navigationTitle("Select block")
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showsBlockSelection = false } } }
+            }
+        }
         .alert("Could not record E-L stage", isPresented: Binding(
             get: { growthStageError != nil }, set: { if !$0 { growthStageError = nil } }
         )) { Button("OK", role: .cancel) {} } message: { Text(growthStageError ?? "Please try again.") }
@@ -341,21 +393,17 @@ struct ScoutWorkspaceView: View {
         }) { visit in
             ScoutReportView(visit: visit)
         }
-        .onChange(of: assessmentToScrollTo) { _, target in
-            guard let target else { return }
-            withAnimation { proxy.scrollTo(target, anchor: .top) }
-            assessmentToScrollTo = nil
-        }
         .sheet(isPresented: $showReview, onDismiss: {
             if let visit = reviewReport {
                 reviewReport = nil
-                reportReturnsToReview = true
+                reportReturnsToReview = visit.isEditable && openVisit != nil
                 reportVisit = visit
             }
         }) {
             if let visit = openVisit {
                 ScoutReviewSheet(
                     review: ScoutReview.of(visit),
+                    visit: visit,
                     completionCanRetry: !insights.deletionPending(visitID: visit.id) && (visit.isEditable || insights.completionNeedsRetry(visit.id)),
                     completionError: completionError,
                     onViewReport: {
@@ -366,7 +414,12 @@ struct ScoutWorkspaceView: View {
                     if insights.completeVisit(visit.id) {
                         completionError = nil
                         showReview = false
+                        let completed = insights.visit(visit.id)
+                        editingStopID = nil
                         insights.openVisit(nil)
+                        // Present only after the review sheet has dismissed.
+                        reviewReport = completed
+                        reportReturnsToReview = false
                     } else {
                         completionError = "The completed Scout could not be saved with its sync obligation. Your field data remains on this device; try Complete again."
                     }
@@ -390,7 +443,7 @@ struct ScoutWorkspaceView: View {
                 )
                 Task { await insights.captureWeather(visitID: visit.id) }
             } label: {
-                Label("New Scout", systemImage: "plus.circle.fill")
+                Label("New Scout Trip", systemImage: "plus.circle.fill")
             }
         } footer: {
             Text(
@@ -450,8 +503,7 @@ struct ScoutWorkspaceView: View {
                     Button("View Report") { reportVisit = visit }.buttonStyle(.bordered)
                     Spacer()
                     Button(visit.isEditable ? "Edit" : "Reopen and edit") {
-                        if !visit.isEditable { _ = insights.reopenVisit(visit.id) }
-                        insights.openVisit(visit.id)
+                        if visit.isEditable || insights.reopenVisit(visit.id) { insights.openVisit(visit.id) }
                     }.buttonStyle(.bordered)
                     .disabled(insights.deletionPending(visitID: visit.id))
                 }
@@ -472,89 +524,111 @@ struct ScoutWorkspaceView: View {
 
     @ViewBuilder
     private func visitSections(_ visit: ScoutVisit) -> some View {
-        Section("Scout visit") {
-            LabeledContent("Date") {
-                Text(RegionFormatter(settings: store.settings.regionSettings).formatDate(insights.scoutDay(visit)))
-            }
-            LabeledContent("Vintage", value: VintageYearText.format(visit.vintageYear))
-            LabeledContent("Scout", value: visit.scoutNameSnapshot ?? auth.userName ?? "—")
-            LabeledContent("Status", value: visit.status.label)
-            // Weather never blocks saving and is never invented: when no
-            // reading is held the record says so rather than leaving a
-            // confident blank.
-            ScoutWeatherRows(weather: visit.weather)
-            if visit.isEditable && (visit.weather == nil || visit.weather?.isUnavailable == true) {
-                Button("Retry weather") {
-                    Task { await insights.captureWeather(visitID: visit.id) }
-                }
-            }
-            TextField(
-                "Visit summary (optional)",
-                text: Binding(
-                    get: { visit.visitSummary ?? "" },
-                    set: { insights.setSummary(visitID: visit.id, summary: $0) }
-                ),
-                axis: .vertical
-            )
-            .lineLimit(2...5)
-            .disabled(!visit.isEditable)
-        }
-
-        Section("Scout map") {
-            ScoutWorkspaceMap(visit: visit)
-        }
-
-        Section("Blocks") {
-            if store.paddocks.isEmpty {
-                Text("No blocks in this vineyard.").font(.caption).foregroundStyle(.secondary)
-            }
-            ForEach(store.paddocks) { paddock in
-                let selected = visit.assessment(paddockID: paddock.id) != nil
-                Button {
-                    insights.toggleBlock(visitID: visit.id, paddockID: paddock.id)
-                    if !selected {
-                        assessmentToScrollTo = insights.visit(visit.id)?.assessment(paddockID: paddock.id)?.id
-                    }
-                } label: {
-                    HStack {
-                        Image(systemName: selected ? "checkmark.circle.fill" : "plus.circle")
-                            .foregroundStyle(selected ? VineyardTheme.leafGreen : .secondary)
-                        Text(paddock.name).foregroundStyle(.primary)
+        if let stopID = editingStopID, let assessment = visit.assessments.first(where: { $0.id == stopID }) {
+            Section("Observation • \(assessment.stopReference)") {
+                Text(assessment.stopContext?.capturedAt.map { RegionFormatter(settings: store.settings.regionSettings).formatDateTime($0) } ?? "Legacy stop — capture time unavailable")
+                Text(assessment.stopContext?.observer_name ?? visit.scoutNameSnapshot ?? "Observer unavailable")
+                ScoutWeatherRows(weather: assessment.stopContext?.weatherSnapshot)
+                if let measured = assessment.stopContext?.location_measured_at {
+                    Text("Stop GPS measured \(measured) • ±\(Int(assessment.stopContext?.accuracy_metres ?? 0)) m").font(.caption)
+                } else { Text("Stop location unavailable").font(.caption).foregroundStyle(.orange) }
+                if visit.isEditable, assessment.stopContext != nil {
+                    Button("Retry / record stop location") {
+                        if let fix = qualifyingFix() {
+                            if !insights.setStopLocation(visitID: visit.id, stopID: stopID, fix: fix) { observationError = "Location could not be saved. Retry." }
+                        } else { observationError = "No qualifying GPS fix. Location remains unavailable; recording can continue." }
                     }
                 }
-                .disabled(!visit.isEditable)
+                if visit.isEditable && assessment.stopContext != nil && !assessment.observations.contains(where: { $0.linkedPinID != nil || $0.linkedGrowthStageRecordID != nil }) {
+                    Button("Change assessed block") {
+                        blockCorrectionStopID = assessment.id; selectedMapBlockID = assessment.paddockID; showsBlockSelection = true
+                    }
+                } else {
+                    Text("Legacy and canonical Growth Stage-linked block identities are retained. Correct the block before linking E-L evidence.").font(.caption)
+                }
+                if let observationError { Text(observationError).foregroundStyle(.red) }
             }
-        }
-
-        ForEach(visit.assessments) { assessment in
-            ScoutAssessmentSection(
-                visitID: visit.id,
-                assessment: assessment,
-                paddock: store.paddocks.first { $0.id == assessment.paddockID },
-                vintageYear: visit.vintageYear,
+            ScoutAssessmentSection(visitID: visit.id, assessment: assessment,
+                paddock: store.paddocks.first { $0.id == assessment.paddockID }, vintageYear: visit.vintageYear,
                 isEditable: visit.isEditable,
-                onRequestGrowthStage: {
-                    growthPickerRequest = ScoutGrowthPickerRequest(
-                        visitID: visit.id, assessment: assessment, paddockID: assessment.paddockID
-                    )
-                },
-                onRequestPhoto: { item in
-                    cameraRequest = ScoutCameraRequest(
-                        visitID: visit.id,
-                        assessmentID: assessment.id,
-                        item: item
-                    )
+                onRequestGrowthStage: { growthPickerRequest = .init(visitID: visit.id, assessment: assessment, paddockID: assessment.paddockID) },
+                onRequestPhoto: { cameraRequest = .init(visitID: visit.id, assessmentID: assessment.id, item: $0) })
+            Section {
+                if visit.isEditable {
+                    Button("Save observation") {
+                        if insights.saveStop(visitID: visit.id, stopID: stopID) { editingStopID = nil; observationError = nil }
+                        else { observationError = "Record at least one finding, note or photograph, then retry saving. Stay here until saved." }
+                    }.buttonStyle(.borderedProminent).tint(VineyardTheme.leafGreen)
+                    if assessment.recordedObservations.isEmpty {
+                        Button("Discard empty observation", role: .destructive) {
+                            if insights.discardEmptyStop(visitID: visit.id, stopID: stopID) { editingStopID = nil }
+                            else { observationError = "Could not discard the empty draft. Retry." }
+                        }
+                    }
+                } else { Button("Back to Scout Trip") { editingStopID = nil } }
+            }
+        } else {
+            Section {
+                ScoutWorkspaceMap(visit: visit, selectedBlockID: $selectedMapBlockID)
+                    .listRowInsets(EdgeInsets())
+                if visit.isEditable {
+                    Button("Make observation") { blockCorrectionStopID = nil; suggestBlock(); showsBlockSelection = true }
+                        .buttonStyle(.borderedProminent).tint(VineyardTheme.leafGreen)
+                        .frame(maxWidth: .infinity, minHeight: 48)
                 }
-            )
-            .id(assessment.id)
-        }
-
-        Section {
-            Button(visit.isEditable ? "Review & complete" : "Review") { showReview = true }
-            if !visit.isEditable {
-                Button("Reopen and edit") { insights.reopenVisit(visit.id) }
+            }
+            Section("Observations") {
+                if visit.assessments.isEmpty { Text("Walk the vineyard and make your first observation.").foregroundStyle(.secondary) }
+                ForEach(visit.assessments) { stop in
+                    Button { editingStopID = stop.id; observationError = nil } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text((store.paddocks.first { $0.id == stop.paddockID }?.name ?? "Block") + " • " + stop.stopReference).font(.headline)
+                            Text(stop.stopContext?.capturedAt.map { RegionFormatter(settings: store.settings.regionSettings).formatDateTime($0) } ?? "Legacy capture time unavailable").font(.caption)
+                            Text(stop.recordedObservations.map { $0.item.label + ": " + ($0.valueLabel ?? $0.notes ?? "Recorded") }.joined(separator: ", ")).font(.caption).lineLimit(3)
+                            Text("\(stop.photoCount) photos" + (stop.stopContext?.is_draft == true ? " • Unfinished draft — tap to resume" : "")).font(.caption)
+                        }
+                    }
+                }
+            }
+            Section {
+                DisclosureGroup("Trip details") {
+                    Text(RegionFormatter(settings: store.settings.regionSettings).formatDate(insights.scoutDay(visit)))
+                    Text("Vintage " + VintageYearText.format(visit.vintageYear))
+                    Text(visit.scoutNameSnapshot ?? "Observer unavailable")
+                    ScoutWeatherRows(weather: visit.weather)
+                    if let summary = visit.visitSummary { Text(summary) }
+                }
+                Text(insights.syncStatus(for: visit)).font(.caption).foregroundStyle(.secondary)
+                Button("View Report") { reportVisit = visit }
+                if visit.isEditable { Button("Save & Finish Scout Trip") { showReview = true } }
+                else { Button("Reopen and edit") { _ = insights.reopenVisit(visit.id) } }
             }
         }
+    }
+
+    private func qualifyingFix() -> ScoutPhotoFix? {
+        let (location, quality) = locationService.freshLocation()
+        guard quality == .fresh, let location else { return nil }
+        return .init(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude,
+            accuracyMetres: location.horizontalAccuracy, measuredAt: location.timestamp)
+    }
+
+    private func suggestBlock() {
+        guard selectedMapBlockID == nil, let fix = qualifyingFix() else { return }
+        let coordinate = CLLocationCoordinate2D(latitude: fix.latitude, longitude: fix.longitude)
+        let matches = store.paddocks.filter { block in
+            block.polygonPoints.count >= 3 && RowGuidance.isPointInPolygon(point: coordinate, polygon: block.polygonPoints.map(\.coordinate))
+        }
+        if matches.count == 1 { selectedMapBlockID = matches.first?.id }
+    }
+
+    private func beginObservation() {
+        guard let visit = openVisit, let blockID = selectedMapBlockID else { return }
+        if let id = insights.beginStop(visitID: visit.id, paddockID: blockID, observerID: auth.userId,
+            observerName: auth.userName, fix: qualifyingFix()) {
+            editingStopID = id; showsBlockSelection = false
+            observationError = insights.lastWriteFailed ? "The draft needs a durable save. Retry Save observation before leaving." : nil
+        } else { observationError = "The observation draft could not be saved. Retry before leaving." }
     }
 
     private func recordStage(_ stage: GrowthStage, request: ScoutGrowthPickerRequest) {
@@ -1072,8 +1146,11 @@ private struct ScoutPhotoThumbnail: View {
 
 private struct ScoutReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(MigratedDataStore.self) private var store
+    @Environment(VineyardInsightsService.self) private var insights
 
     let review: ScoutReview
+    let visit: ScoutVisit
     let completionCanRetry: Bool
     let completionError: String?
     let onViewReport: () -> Void
@@ -1084,7 +1161,8 @@ private struct ScoutReviewSheet: View {
             List {
                 Section {
                     LabeledContent("Blocks assessed", value: String(review.blocksAssessed))
-                    LabeledContent("Blocks still incomplete", value: String(review.blocksIncomplete))
+                    LabeledContent("Unfinished stops", value: String(review.blocksIncomplete))
+                    LabeledContent("Observation stops", value: String(visit.assessments.count))
                     LabeledContent("E-L observations created", value: String(review.growthStageObservations))
                     LabeledContent("Items needing attention", value: String(review.attentionItems))
                     LabeledContent("Photographs", value: String(review.photoCount))
@@ -1094,6 +1172,18 @@ private struct ScoutReviewSheet: View {
                     Text(review.blockedReason() ?? ScoutReview.completionHint)
                 }
 
+                ForEach(visit.orderedStops) { stop in
+                    Section(store.paddocks.first { $0.id == stop.paddockID }?.name ?? "Block") {
+                        Text(stop.stopReference + " • " + (stop.stopContext?.captured_at ?? "Legacy capture time unavailable"))
+                        Text(stop.recordedObservations.map { $0.item.label + ": " + ($0.valueLabel ?? $0.notes ?? "Recorded") }.joined(separator: "\n"))
+                        ForEach(stop.observations.flatMap(\.photos)) { photo in
+                            Color(.secondarySystemBackground).frame(height: 100).overlay {
+                                if let image = insights.localImage(photo) { Image(uiImage: image).resizable().aspectRatio(contentMode: .fit).allowsHitTesting(false) }
+                                else { Text("Saved photograph not downloaded") }
+                            }.clipShape(.rect(cornerRadius: 10))
+                        }
+                    }
+                }
                 if let completionError {
                     Section {
                         Text(completionError).foregroundStyle(.red)
@@ -1101,11 +1191,11 @@ private struct ScoutReviewSheet: View {
                 }
                 Section {
                     Button("View Report", action: onViewReport)
-                    Button("Complete Scout", action: onComplete)
+                    Button("Confirm & finish Scout Trip", action: onComplete)
                         .disabled(!completionCanRetry || !review.canComplete)
                 }
             }
-            .navigationTitle("Review Scout")
+            .navigationTitle("Review Scout Trip")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

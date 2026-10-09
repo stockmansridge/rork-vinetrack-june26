@@ -294,6 +294,7 @@ class VineyardInsightsSyncWorker(
                 vineyardId = it.vineyardId,
                 paddockId = it.paddockId,
                 status = it.status.code,
+                stopContext = it.stopContext,
                 clientUpdatedAt = entry.clientUpdatedAtIso,
                 clientRevisionId = revisionId,
             )
@@ -724,6 +725,7 @@ class VineyardInsightsSyncWorker(
                     paddockId = assessmentRow.paddockId,
                     status = ScoutAssessmentStatus.byCode(assessmentRow.status),
                     observations = filled,
+                    stopContext = assessmentRow.stopContext,
                 )
             }
 

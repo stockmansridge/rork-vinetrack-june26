@@ -6,7 +6,7 @@ import com.rork.vinetrack.data.model.Pin
 
 /** Read-only location/value projection shared by Scout maps, previews and offline PDFs. */
 object ScoutReportPresentation {
-    const val LEGEND = "O = measured observation (blue); P = photograph capture (orange); E-R = linked E-L record, E-P = linked E-L pin (green). Boundaries are context, not measured locations. References identify the item and photograph below."
+    const val LEGEND = "S = measured stop (blue); O = measured observation (blue); P = photograph capture (orange); E-R = linked E-L record, E-P = linked E-L pin (green). Boundaries are context, not measured locations. References identify the item and photograph below."
 
     data class Location(
         val reference: String,
@@ -45,16 +45,23 @@ object ScoutReportPresentation {
         var observationNumber = 0
         var photoNumber = 0
         fun blockName(id: String?): String = blocks.firstOrNull { it.id == id }?.name ?: "Block ${id ?: "unavailable"}"
-        visit.assessments.forEach { assessment ->
+        visit.orderedStops.forEach { assessment ->
             val polygon = blocks.firstOrNull { it.id == assessment.paddockId }?.polygonPoints.orEmpty()
             if (polygon.size < 3 || polygon.any { !valid(it.latitude, it.longitude) }) {
                 boundaryUnavailable += "Boundary unavailable — ${blockName(assessment.paddockId)}; recorded markers are retained."
             }
+            val stopLabel = "${assessment.stopReference} • ${assessment.stopContext?.capturedAt ?: "Legacy capture time unavailable"}"
+            val context = assessment.stopContext
+            if (context != null && valid(context.latitude, context.longitude) && context.locationMeasuredAt != null && context.accuracyMetres != null) {
+                markers += Location(assessment.stopReference, assessment.id, block = blockName(assessment.paddockId),
+                    item = "Observation stop • $stopLabel", source = "Measured stop GPS • ${context.locationMeasuredAt} • ±${context.accuracyMetres} m",
+                    latitude = context.latitude!!, longitude = context.longitude!!)
+            } else unavailable += "$stopLabel — stop GPS unavailable"
             assessment.observations.filter { it.hasContent || it.linkedPinId != null ||
                 (it.item == ScoutItem.GROWTH_STAGE && !it.valueLabel.isNullOrBlank()) }.forEach { observation ->
                 observationNumber++
                 val reference = "O$observationNumber"
-                val block = blockName(assessment.paddockId)
+                val block = blockName(assessment.paddockId) + " • " + stopLabel
                 fun add(ref: String, source: String, latitude: Double?, longitude: Double?, actualBlock: String = block, photoId: String? = null): Boolean {
                     if (!valid(latitude, longitude)) return false
                     markers += Location(ref, observation.id, photoId, actualBlock, observation.item.label, source, latitude!!, longitude!!)

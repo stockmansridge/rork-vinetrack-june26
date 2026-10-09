@@ -69,9 +69,13 @@ object ScoutReportPdfExporter {
             state.heading("Location unavailable")
             locations.unavailable.forEach { state.text(it, color = Color.DKGRAY) }
         }
-        visit.assessments.forEach { assessment ->
+        visit.orderedStops.forEach { assessment ->
             val block = blocks.firstOrNull { it.id == assessment.paddockId }
             state.heading(block?.name ?: "Block ${assessment.paddockId}", 16f)
+            state.text("${assessment.stopReference} • ${assessment.stopContext?.capturedAt?.let { com.rork.vinetrack.data.model.parseIsoToEpochMs(it)?.let(formatter::formatDateTime) } ?: "Legacy capture time unavailable"}", 12f, true)
+            state.text("Observer: ${assessment.stopContext?.observerName ?: "Legacy stop observer unavailable"}")
+            state.text(weatherText(visit.copy(weather = assessment.stopContext?.weatherSnapshot), formatter))
+            if (assessment.stopContext?.isDraft == true) state.text("UNFINISHED OBSERVATION DRAFT", color = Color.rgb(230, 126, 34))
             val varieties = block?.varietyAllocations.orEmpty().mapNotNull { it.displayName }.distinct()
             state.text(if (varieties.isEmpty()) "Variety details unavailable" else varieties.joinToString(", "), color = Color.DKGRAY)
             ScoutItem.entries.forEach { item ->

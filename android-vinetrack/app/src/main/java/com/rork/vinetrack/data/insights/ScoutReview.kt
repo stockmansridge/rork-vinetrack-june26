@@ -39,24 +39,20 @@ data class ScoutReview(
         blocksAssessed == 0 && blocksIncomplete == 0 ->
             "Add at least one block to this Scout before completing it."
         blocksIncomplete == 1 ->
-            "1 block has no observations yet. Record an observation, issue or " +
-                "recommendation for it, or remove it from this Scout."
+            "1 observation stop is unfinished. Open it and Save observation before finishing this Scout Trip."
         blocksIncomplete > 1 ->
-            "$blocksIncomplete blocks have no observations yet. Record an " +
-                "observation, issue or recommendation for each, or remove them " +
-                "from this Scout."
+            "$blocksIncomplete observation stops are unfinished. Save each before finishing this Scout Trip."
         else -> null
     }
 
     companion object {
         const val COMPLETION_HINT: String =
-            "Every dropdown does not need a value. Each selected block needs at " +
-                "least one observation, issue or recommendation."
+            "Every observation stop must be saved and contain at least one finding, note or photograph. Return to editing any unfinished stops before finishing the trip."
 
         fun of(visit: ScoutVisit): ScoutReview {
             val incomplete = visit.assessments.filterNot { it.isComplete }
             return ScoutReview(
-                blocksAssessed = visit.assessments.count { it.isComplete },
+                blocksAssessed = visit.assessments.filter { it.isComplete }.map { it.paddockId }.distinct().size,
                 blocksIncomplete = incomplete.size,
                 growthStageObservations = visit.assessments.count { assessment ->
                     assessment.observation(ScoutItem.GROWTH_STAGE)

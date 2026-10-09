@@ -145,6 +145,7 @@ class VineyardInsightsStore(
         @SerialName("paddock_id") val paddockId: String,
         val status: String,
         val observations: List<StoredObservation> = emptyList(),
+        val stopContext: ScoutStopContext? = null,
     )
 
     @Serializable
@@ -387,6 +388,7 @@ class VineyardInsightsStore(
                 paddockId = stored.paddockId,
                 status = ScoutAssessmentStatus.byCode(stored.status),
                 observations = stored.observations.mapNotNull { it.toDomain() },
+                stopContext = stored.stopContext,
             )
         },
         clientUpdatedAtIso = clientUpdatedAt,
@@ -425,6 +427,7 @@ class VineyardInsightsStore(
                 paddockId = assessment.paddockId,
                 status = assessment.status.code,
                 observations = assessment.observations.map { it.toStored() },
+                stopContext = assessment.stopContext,
             )
         },
         clientUpdatedAt = clientUpdatedAtIso,

@@ -274,14 +274,16 @@ nonisolated struct ScoutObservation: Identifiable, Equatable, Sendable {
     }
 }
 
-/// One block's assessment within a visit.
+/// One stable observation stop within a visit, grouped by block.
 nonisolated struct ScoutBlockAssessment: Identifiable, Equatable, Sendable {
     let id: UUID
     let visitID: UUID
     let vineyardID: UUID
-    let paddockID: UUID
+    var paddockID: UUID
     var status: ScoutAssessmentStatus
     var observations: [ScoutObservation]
+    var stopContext: ScoutStopContext?
+    var stopReference: String { "S-" + id.uuidString.prefix(8) }
 
     init(
         id: UUID = UUID(),
@@ -289,7 +291,8 @@ nonisolated struct ScoutBlockAssessment: Identifiable, Equatable, Sendable {
         vineyardID: UUID,
         paddockID: UUID,
         status: ScoutAssessmentStatus = .inProgress,
-        observations: [ScoutObservation] = []
+        observations: [ScoutObservation] = [],
+        stopContext: ScoutStopContext? = nil
     ) {
         self.id = id
         self.visitID = visitID
@@ -297,6 +300,7 @@ nonisolated struct ScoutBlockAssessment: Identifiable, Equatable, Sendable {
         self.paddockID = paddockID
         self.status = status
         self.observations = observations
+        self.stopContext = stopContext
     }
 
     func observation(_ item: ScoutItem) -> ScoutObservation? {
@@ -317,7 +321,7 @@ nonisolated struct ScoutBlockAssessment: Identifiable, Equatable, Sendable {
     /// selections to record that would train people to click through defaults.
     /// What IS required is evidence the block was actually visited — at least
     /// one observation, issue or recommendation.
-    var isComplete: Bool { !recordedObservations.isEmpty }
+    var isComplete: Bool { !recordedObservations.isEmpty && stopContext?.is_draft != true }
 
     mutating func setObservation(_ updated: ScoutObservation) {
         if let index = observations.firstIndex(where: { $0.item == updated.item }) {
@@ -452,15 +456,21 @@ nonisolated struct ScoutVisit: Identifiable, Equatable, Sendable {
 
     var isEditable: Bool { status == .draft }
 
+    /// Deterministic block grouping, followed by capture time and immutable stop identity.
+    var orderedStops: [ScoutBlockAssessment] {
+        assessments.sorted {
+            if $0.paddockID != $1.paddockID { return $0.paddockID.uuidString < $1.paddockID.uuidString }
+            let a = $0.stopContext?.captured_at ?? ""
+            let b = $1.stopContext?.captured_at ?? ""
+            return a == b ? $0.id.uuidString < $1.id.uuidString : a < b
+        }
+    }
+
     func assessment(paddockID: UUID) -> ScoutBlockAssessment? {
         assessments.first { $0.paddockID == paddockID }
     }
 
-    /// Add a block, or do nothing if it is already assessed.
-    ///
-    /// The uniqueness of one assessment per visit and block is a domain rule,
-    /// not only a database constraint: two partially-filled assessments for the
-    /// same block would make "what did the scout find in Block 4?" ambiguous.
+    /// Legacy block selection is retained for old callers. New capture appends a fresh stop by ID.
     mutating func addBlock(paddockID: UUID) {
         guard assessment(paddockID: paddockID) == nil else { return }
         assessments.append(
@@ -471,7 +481,7 @@ nonisolated struct ScoutVisit: Identifiable, Equatable, Sendable {
     mutating func removeBlock(paddockID: UUID, at date: Date = Date()) {
         guard let assessment = assessment(paddockID: paddockID), assessment.recordedObservations.isEmpty else { return }
         removedAssessments.append(.init(id: assessment.id, paddockID: paddockID, removedAt: date, status: assessment.status.code))
-        assessments.removeAll { $0.paddockID == paddockID }
+        assessments.removeAll { $0.id == assessment.id }
     }
 
     mutating func setAssessment(_ updated: ScoutBlockAssessment) {

@@ -96,7 +96,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         }
     }
 
-    struct WeatherPayload: Codable, Sendable {
+    struct WeatherPayload: Codable, Equatable, Sendable {
         let observed_at: String?
         let captured_at: String
         let source: String?
@@ -132,17 +132,19 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let vineyard_id: String
         let paddock_id: String
         let status: String
+        var stop_context: ScoutStopContext? = nil
         var deleted_at: String? = nil
         let client_updated_at: String
         let client_revision_id: String
 
         private enum CodingKeys: String, CodingKey {
-            case id, scout_visit_id, vineyard_id, paddock_id, status, deleted_at, client_updated_at, client_revision_id
+            case id, scout_visit_id, vineyard_id, paddock_id, status, stop_context, deleted_at, client_updated_at, client_revision_id
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(id, forKey: .id)
             try c.encode(scout_visit_id, forKey: .scout_visit_id)
+            try c.encodeIfPresent(stop_context, forKey: .stop_context)
             try c.encode(vineyard_id, forKey: .vineyard_id)
             try c.encode(paddock_id, forKey: .paddock_id)
             try c.encode(status, forKey: .status)
@@ -158,6 +160,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let vineyard_id: UUID
         let paddock_id: UUID
         let status: String
+        let stop_context: ScoutStopContext?
         let deleted_at: String?
     }
 

@@ -17,8 +17,7 @@ nonisolated struct ScoutReview: Equatable, Sendable {
     let incompletePaddockIDs: [UUID]
 
     static let completionHint =
-        "Every dropdown does not need a value. Each selected block needs at "
-        + "least one observation, issue or recommendation."
+        "Every observation stop must be saved and contain at least one finding, note or photograph. Return to editing any unfinished stops before finishing the trip."
 
     /// Completion rule.
     ///
@@ -41,13 +40,10 @@ nonisolated struct ScoutReview: Equatable, Sendable {
             return "Add at least one block to this Scout before completing it."
         }
         if blocksIncomplete == 1 {
-            return "1 block has no observations yet. Record an observation, issue or "
-                + "recommendation for it, or remove it from this Scout."
+            return "1 observation stop is unfinished. Open it and Save observation before finishing this Scout Trip."
         }
         if blocksIncomplete > 1 {
-            return "\(blocksIncomplete) blocks have no observations yet. Record an "
-                + "observation, issue or recommendation for each, or remove them "
-                + "from this Scout."
+            return "\(blocksIncomplete) observation stops are unfinished. Save each before finishing this Scout Trip."
         }
         return nil
     }
@@ -55,7 +51,7 @@ nonisolated struct ScoutReview: Equatable, Sendable {
     static func of(_ visit: ScoutVisit) -> ScoutReview {
         let incomplete = visit.assessments.filter { !$0.isComplete }
         return ScoutReview(
-            blocksAssessed: visit.assessments.filter(\.isComplete).count,
+            blocksAssessed: Set(visit.assessments.filter(\.isComplete).map(\.paddockID)).count,
             blocksIncomplete: incomplete.count,
             growthStageObservations: visit.assessments.filter {
                 $0.observation(.growthStage)?.linkedGrowthStageRecordID != nil

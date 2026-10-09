@@ -39,6 +39,7 @@ class VineyardInsightsController(
     private val vineyardTimeZone: (String) -> java.time.ZoneId = { java.time.ZoneId.systemDefault() },
 ) {
 
+    private val failedVisitDrafts = mutableMapOf<String, ScoutVisit>()
     private val _visits = MutableStateFlow(store.loadVisits())
     val visits: StateFlow<List<ScoutVisit>> = _visits.asStateFlow()
 
@@ -154,9 +155,74 @@ class VineyardInsightsController(
             scoutNameSnapshot = scoutName,
             clientUpdatedAtIso = nowIso(),
         )
-        persist(visit)
-        _openVisitId.value = visit.id
+        if (persist(visit)) _openVisitId.value = visit.id
         return visit
+    }
+
+    /** Allocate a distinct stop even when the trip already contains this block. */
+    fun beginStop(visitId: String, paddockId: String, observerId: String?, observerName: String?, fix: ScoutPhotoFix? = null): String? {
+        val visit = visit(visitId) ?: return null
+        if (!visit.isEditable || deletionPending(visitId)) return null
+        val capturedAt = nowIso()
+        val context = ScoutStopContext(capturedAt, observerId, observerName,
+            latitude = fix?.latitude, longitude = fix?.longitude, accuracyMetres = fix?.accuracyMetres,
+            locationMeasuredAt = fix?.measuredAtIso).withWeather(
+                ScoutWeatherSnapshot.unavailable(capturedAt, "Configured vineyard weather source"))
+        val stop = ScoutBlockAssessment.create(visit.id, visit.vineyardId, paddockId).copy(stopContext = context)
+        persist(visit.copy(assessments = visit.assessments + stop))
+        // Retain identity in the mounted editor when the durable obligation needs Retry.
+        return stop.id
+    }
+
+    /** Reassign only new stops without canonical links. Never move photo/item GPS. */
+    fun correctStopBlock(visitId: String, stopId: String, paddockId: String): Boolean {
+        val visit = visit(visitId) ?: return false
+        val stop = visit.assessments.firstOrNull { it.id == stopId } ?: return false
+        if (!visit.isEditable || deletionPending(visitId) || stop.stopContext == null ||
+            stop.observations.any { it.linkedPinId != null || it.linkedGrowthStageRecordId != null }) return false
+        return persist(visit.withAssessment(stop.copy(paddockId = paddockId, stopContext = stop.stopContext.copy(isDraft = true))))
+    }
+
+    fun discardEmptyStop(visitId: String, stopId: String): Boolean {
+        val visit = visit(visitId) ?: return false
+        val stop = visit.assessments.firstOrNull { it.id == stopId } ?: return false
+        if (!visit.isEditable || deletionPending(visitId) || stop.recordedObservations.isNotEmpty()) return false
+        return persist(visit.copy(assessments = visit.assessments.filterNot { it.id == stopId },
+            removedAssessments = visit.removedAssessments + ScoutAssessmentRemoval(stop.id, stop.paddockId, nowIso(), stop.status.code)))
+    }
+
+    fun saveObservationDraft(visitId: String): Boolean {
+        val visit = visit(visitId) ?: return false
+        if (!visit.isEditable) return !_lastWriteFailed.value
+        return persist(visit) && record(store.repairMissingObligations())
+    }
+
+    fun saveStop(visitId: String, stopId: String): Boolean {
+        val visit = visit(visitId) ?: return false
+        val stop = visit.assessments.firstOrNull { it.id == stopId } ?: return false
+        if (!visit.isEditable || deletionPending(visitId) || stop.recordedObservations.isEmpty()) return false
+        if (!persist(visit.withAssessment(stop.copy(status = ScoutAssessmentStatus.COMPLETE, stopContext = stop.stopContext?.copy(isDraft = false))))) return false
+        return record(store.repairMissingObligations())
+    }
+
+    fun setStopLocation(visitId: String, stopId: String, fix: ScoutPhotoFix): Boolean {
+        val visit = visit(visitId) ?: return false
+        val stop = visit.assessments.firstOrNull { it.id == stopId } ?: return false
+        val context = stop.stopContext ?: return false
+        if (!visit.isEditable || deletionPending(visitId)) return false
+        return persist(visit.withAssessment(stop.copy(stopContext = context.copy(latitude = fix.latitude,
+            longitude = fix.longitude, accuracyMetres = fix.accuracyMetres, locationMeasuredAt = fix.measuredAtIso))))
+    }
+
+    suspend fun captureStopWeather(visitId: String, stopId: String) {
+        val visit = visit(visitId) ?: return
+        val original = visit.assessments.firstOrNull { it.id == stopId }?.stopContext ?: return
+        val weather = runCatching { weatherLoader?.invoke(visit.vineyardId, original.capturedAt) }.getOrNull()
+            ?: ScoutWeatherSnapshot.unavailable(original.capturedAt, "Configured vineyard weather source")
+        val current = this.visit(visitId) ?: return
+        val stop = current.assessments.firstOrNull { it.id == stopId } ?: return
+        if (!current.isEditable || deletionPending(visitId) || stop.stopContext?.capturedAt != original.capturedAt) return
+        persist(current.withAssessment(stop.copy(stopContext = stop.stopContext?.withWeather(weather))))
     }
 
     fun toggleBlock(visitId: String, paddockId: String) {
@@ -240,7 +306,7 @@ class VineyardInsightsController(
         }
         if (persist(visit.withAssessment(nextAssessment))) return true
         store.saveVisit(visit, previousSyncOwed)
-        _visits.value = store.loadVisits()
+        reloadVisits()
         return false
     }
 
@@ -321,7 +387,7 @@ class VineyardInsightsController(
             )
         }
 
-        val nextAssessment = assessment
+        val nextAssessment = assessment.copy(stopContext = assessment.stopContext?.copy(isDraft = true))
             .withObservation(observation.copy(photos = observation.photos + photo))
             .let {
                 it.copy(
@@ -478,7 +544,7 @@ class VineyardInsightsController(
         val assessment = visit.assessments.firstOrNull { it.id == assessmentId } ?: return false
         val existing = assessment.observation(item) ?: ScoutObservation.empty(assessmentId, item)
         val updated = transform(existing)
-        val nextAssessment = assessment.withObservation(updated).let {
+        val nextAssessment = assessment.copy(stopContext = assessment.stopContext?.copy(isDraft = true)).withObservation(updated).let {
             it.copy(
                 status = if (it.isComplete) {
                     ScoutAssessmentStatus.COMPLETE
@@ -507,7 +573,11 @@ class VineyardInsightsController(
             if (durable) onMutation(visit.vineyardId)
             return record(durable)
         }
-        return persist(visit.copy(status = ScoutStatus.COMPLETED))
+        if (deletionPending(visitId)) return false
+        if (persist(visit.copy(status = ScoutStatus.COMPLETED)) && store.repairMissingObligations()) return true
+        if (!store.saveVisit(visit, syncOwed = true)) failedVisitDrafts[visit.id] = visit
+        reloadVisits()
+        return record(false)
     }
 
     fun completionNeedsRetry(visitId: String): Boolean =
@@ -552,7 +622,8 @@ class VineyardInsightsController(
         val stamped = visit.copy(clientUpdatedAtIso = nextRevisionIso(visit.clientUpdatedAtIso))
         val saved = store.saveVisit(stamped)
         if (saved) {
-            _visits.value = store.loadVisits()
+            failedVisitDrafts.remove(stamped.id)
+            reloadVisits()
             val queued = store.enqueue(
                 recordId = stamped.id,
                 vineyardId = stamped.vineyardId,
@@ -563,7 +634,18 @@ class VineyardInsightsController(
             if (queued) onMutation(stamped.vineyardId)
             return record(queued)
         }
+        // A failed disk write must not reset text in the mounted editor.
+        failedVisitDrafts[stamped.id] = stamped
+        reloadVisits()
         return record(false)
+    }
+
+    private fun reloadVisits() {
+        // Sync may refresh the durable graph, but cannot discard mounted failed edits.
+        failedVisitDrafts.entries.removeAll { store.isDeleted(it.value.vineyardId, "scout_visit", it.key) }
+        val stored = store.loadVisits()
+        _visits.value = stored.map { failedVisitDrafts[it.id] ?: it } +
+            failedVisitDrafts.values.filter { draft -> stored.none { it.id == draft.id } }
     }
 
     // ------------------------------------------------------ Vintage Notes
@@ -712,7 +794,7 @@ class VineyardInsightsController(
             }
             if (requestGeneration != syncGeneration) return@request
             processLocalFileCleanup(vineyardId)
-            _visits.value = store.loadVisits()
+            reloadVisits()
             _notes.value = store.loadNotes()
             _noteTypesByVineyard.value = _noteTypesByVineyard.value + (vineyardId to store.noteTypes(vineyardId))
             _pendingPhotoCount.value = store.loadPhotoQueue().size
@@ -769,6 +851,7 @@ class VineyardInsightsController(
         lastCataloguePull.clear()
         requestedFullPulls.clear()
         pendingOrphanedObjects.clear()
+        failedVisitDrafts.clear()
         store.clearForSignOut()
         photoFiles?.clearForSignOut()
         _visits.value = emptyList()

@@ -95,6 +95,7 @@ interface VineyardInsightsSyncApi {
         @SerialName("vineyard_id") val vineyardId: String,
         @SerialName("paddock_id") val paddockId: String,
         val status: String,
+        @SerialName("stop_context") val stopContext: ScoutStopContext? = null,
         @SerialName("deleted_at") val deletedAt: String? = null,
         @SerialName("client_updated_at") val clientUpdatedAt: String,
         @SerialName("client_revision_id") val clientRevisionId: String,
@@ -107,6 +108,7 @@ interface VineyardInsightsSyncApi {
         @SerialName("vineyard_id") val vineyardId: String,
         @SerialName("paddock_id") val paddockId: String,
         val status: String = "in_progress",
+        @SerialName("stop_context") val stopContext: ScoutStopContext? = null,
         @SerialName("deleted_at") val deletedAt: String? = null,
     )
 

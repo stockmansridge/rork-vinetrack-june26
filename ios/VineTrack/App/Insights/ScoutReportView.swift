@@ -18,7 +18,7 @@ struct ScoutReportView: View {
         return RegionFormatter(settings: settings)
     }
     private var vineyard: Vineyard? { store.vineyards.first { $0.id == visit.vineyardID } }
-    private var blocks: [Paddock] { visit.assessments.compactMap { assessment in store.paddocks.first { $0.id == assessment.paddockID } } }
+    private var blocks: [Paddock] { store.paddocks.filter { block in visit.assessments.contains { $0.paddockID == block.id } } }
     private var locations: ScoutReportPresentation.Locations {
         ScoutReportPresentation.locations(visit: visit, blocks: store.paddocks, records: growthSync.records, pins: store.pins)
     }
@@ -32,7 +32,7 @@ struct ScoutReportView: View {
                     ScoutReportMap(blocks: blocks, markers: locations.markers, selectedMarker: $selectedMarker)
                         .frame(height: 280).clipShape(.rect(cornerRadius: 16))
                     ScoutLocationReferences(locations: locations, selectedMarker: $selectedMarker)
-                    ForEach(visit.assessments) { assessment in assessmentSection(assessment) }
+                    ForEach(visit.orderedStops) { assessment in assessmentSection(assessment) }
                     reportText("Visit summary", visit.visitSummary)
                 }.padding(16)
             }
@@ -62,6 +62,7 @@ struct ScoutReportView: View {
                     .font(.caption.bold()).foregroundStyle(visit.status == .draft ? .orange : VineyardTheme.leafGreen)
                 Text(fmt.formatDate(insights.scoutDay(visit)))
                 Text("Vintage \(VintageYearText.format(visit.vintageYear)) • \(visit.scoutNameSnapshot ?? "Observer unavailable")").foregroundStyle(.secondary)
+                Text(insights.syncStatus(for: visit)).font(.caption).foregroundStyle(.secondary)
                 if insights.deletionPending(visitID: visit.id) {
                     Text(insights.syncStatus(for: visit)).font(.caption.bold()).foregroundStyle(.orange)
                     if let error = insights.lastSyncError { Text(error).font(.caption).foregroundStyle(.orange) }
@@ -88,6 +89,10 @@ struct ScoutReportView: View {
         let block = store.paddocks.first { $0.id == assessment.paddockID }
         return VStack(alignment: .leading, spacing: 10) {
             Text(block?.name ?? "Block \(assessment.paddockID.uuidString)").font(.title3.bold())
+            Text(assessment.stopReference + " • " + (assessment.stopContext?.capturedAt.map { fmt.formatDateTime($0) } ?? "Legacy capture time unavailable")).font(.subheadline.bold())
+            Text(assessment.stopContext?.observer_name ?? "Legacy stop observer unavailable").font(.caption)
+            Text(ScoutReportPDFService.weatherText(assessment.stopContext?.weatherSnapshot, formatter: fmt)).font(.caption)
+            if assessment.stopContext?.is_draft == true { Text("UNFINISHED OBSERVATION DRAFT").font(.caption.bold()).foregroundStyle(.orange) }
             let varieties = block?.varietyAllocations.compactMap(\.name).filter { !$0.isEmpty } ?? []
             Text(varieties.isEmpty ? "Variety details unavailable" : varieties.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
             ForEach(ScoutItem.allCases) { item in
@@ -154,13 +159,23 @@ struct ScoutWorkspaceMap: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(GrowthStageRecordSyncService.self) private var growthSync
     let visit: ScoutVisit
+    @Binding var selectedBlockID: UUID?
     @State private var selectedMarker: ScoutReportMarker?
+    init(visit: ScoutVisit, selectedBlockID: Binding<UUID?> = .constant(nil)) {
+        self.visit = visit
+        self._selectedBlockID = selectedBlockID
+    }
     var body: some View {
-        let blocks = visit.assessments.compactMap { assessment in store.paddocks.first { $0.id == assessment.paddockID } }
+        let blocks = store.paddocks
         let locations = ScoutReportPresentation.locations(visit: visit, blocks: store.paddocks, records: growthSync.records, pins: store.pins)
         VStack(alignment: .leading, spacing: 6) {
-            ScoutReportMap(blocks: blocks, markers: locations.markers, selectedMarker: $selectedMarker)
-                .frame(height: 240).clipShape(.rect(cornerRadius: 14))
+            ScoutReportMap(blocks: blocks, markers: locations.markers, selectedMarker: $selectedMarker,
+                onSelectBlock: { selectedBlockID = $0 }, showsUserLocation: true)
+                .frame(height: 380).clipShape(.rect(cornerRadius: 14))
+            if let block = blocks.first(where: { $0.id == selectedBlockID }) {
+                Text(block.name + " • " + block.varietyAllocations.compactMap(\.name).joined(separator: ", ")).font(.subheadline.bold())
+            }
+            Text("Tap a block label to select it. Boundaries remain usable without imagery; GPS permission is optional.").font(.caption).foregroundStyle(.secondary)
             ScoutLocationReferences(locations: locations, selectedMarker: $selectedMarker)
         }.sheet(item: $selectedMarker) { marker in ScoutMarkerDetail(marker: marker) }
     }
@@ -205,6 +220,8 @@ private struct ScoutReportMap: View {
     let blocks: [Paddock]
     let markers: [ScoutReportMarker]
     @Binding var selectedMarker: ScoutReportMarker?
+    var onSelectBlock: ((UUID) -> Void)? = nil
+    var showsUserLocation: Bool = false
     @State private var position: MapCameraPosition = .automatic
     private var points: [CLLocationCoordinate2D] {
         blocks.flatMap(\.polygonPoints).compactMap { ScoutReportPresentation.coordinate($0.latitude, $0.longitude) } + markers.map(\.coordinate)
@@ -216,8 +233,19 @@ private struct ScoutReportMap: View {
                 let polygon = block.polygonPoints.compactMap { ScoutReportPresentation.coordinate($0.latitude, $0.longitude) }
                 if polygon.count >= 3 && polygon.count == block.polygonPoints.count {
                     MapPolygon(coordinates: polygon).foregroundStyle(VineyardTheme.leafGreen.opacity(0.18)).stroke(VineyardTheme.leafGreen, lineWidth: 2)
+                    Annotation(block.name, coordinate: CLLocationCoordinate2D(
+                        latitude: polygon.map(\.latitude).reduce(0, +) / Double(polygon.count),
+                        longitude: polygon.map(\.longitude).reduce(0, +) / Double(polygon.count))) {
+                        Button { onSelectBlock?(block.id) } label: {
+                            VStack(spacing: 2) {
+                                Text(block.name).font(.caption.bold())
+                                Text(block.varietyAllocations.compactMap(\.name).joined(separator: ", ")).font(.caption2)
+                            }.padding(6).foregroundStyle(.primary).background(.regularMaterial, in: .rect(cornerRadius: 8))
+                        }.frame(minHeight: 44)
+                    }
                 }
             }
+            if showsUserLocation { UserAnnotation() }
             ForEach(markers) { marker in
                 Annotation(marker.reference + " • " + marker.title, coordinate: marker.coordinate) {
                     Button { selectedMarker = marker } label: {
@@ -226,7 +254,14 @@ private struct ScoutReportMap: View {
                     }.accessibilityLabel(marker.label)
                 }
             }
-        }.mapStyle(.hybrid).onAppear { fitAllLocations() }.onChange(of: boundsKey) { _, _ in fitAllLocations() }
+        }.mapStyle(.hybrid)
+            .overlay(alignment: .topTrailing) {
+                VStack {
+                    Button("Recenter") { fitAllLocations() }.buttonStyle(.borderedProminent)
+                    if showsUserLocation { Button("My location") { position = .userLocation(fallback: .automatic) }.buttonStyle(.bordered) }
+                }.padding(10)
+            }
+            .onAppear { fitAllLocations() }.onChange(of: boundsKey) { _, _ in fitAllLocations() }
     }
     private func fitAllLocations() {
         var rect = MKMapRect.null
@@ -306,10 +341,14 @@ enum ScoutReportPDFService {
                 text("Location unavailable", font: .boldSystemFont(ofSize: 12))
                 for row in locations.unavailable { text(row, color: .darkGray) }
             }
-            for assessment in visit.assessments {
+            for assessment in visit.orderedStops {
                 let block = blocks.first { $0.id == assessment.paddockID }
                 let blockName = block?.name ?? "Block \(assessment.paddockID.uuidString)"
                 text(blockName, font: .boldSystemFont(ofSize: 16))
+                text(assessment.stopReference + " • " + (assessment.stopContext?.capturedAt.map { fmt.formatDateTime($0) } ?? "Legacy capture time unavailable"), font: .boldSystemFont(ofSize: 12))
+                text("Observer: " + (assessment.stopContext?.observer_name ?? "Legacy stop observer unavailable"))
+                text(weatherText(assessment.stopContext?.weatherSnapshot, formatter: fmt))
+                if assessment.stopContext?.is_draft == true { text("UNFINISHED OBSERVATION DRAFT", color: .systemOrange) }
                 let varieties = block?.varietyAllocations.compactMap(\.name).filter { !$0.isEmpty } ?? []
                 text(varieties.isEmpty ? "Variety details unavailable" : varieties.joined(separator: ", "), color: .darkGray)
                 for item in ScoutItem.allCases {

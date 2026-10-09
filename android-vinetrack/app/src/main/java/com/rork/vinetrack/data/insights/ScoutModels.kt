@@ -223,7 +223,7 @@ data class ScoutObservation(
     }
 }
 
-/** One block's assessment within a visit. */
+/** One stable observation stop within a visit, grouped by block. */
 data class ScoutBlockAssessment(
     val id: String,
     val visitId: String,
@@ -231,7 +231,9 @@ data class ScoutBlockAssessment(
     val paddockId: String,
     val status: ScoutAssessmentStatus = ScoutAssessmentStatus.IN_PROGRESS,
     val observations: List<ScoutObservation> = emptyList(),
+    val stopContext: ScoutStopContext? = null,
 ) {
+    val stopReference: String get() = "S-${id.take(8)}"
     fun observation(item: ScoutItem): ScoutObservation? = observations.firstOrNull { it.item == item }
 
     /** Observations carrying real content — what the review and report count. */
@@ -253,7 +255,7 @@ data class ScoutBlockAssessment(
      * least one observation, issue or recommendation.
      */
     val isComplete: Boolean
-        get() = recordedObservations.isNotEmpty()
+        get() = recordedObservations.isNotEmpty() && stopContext?.isDraft != true
 
     fun withObservation(updated: ScoutObservation): ScoutBlockAssessment {
         val existing = observations.indexOfFirst { it.item == updated.item }
@@ -342,6 +344,8 @@ data class ScoutVisit(
     val removedAssessments: List<ScoutAssessmentRemoval> = emptyList(),
 ) {
     val isEditable: Boolean get() = status == ScoutStatus.DRAFT
+    val orderedStops: List<ScoutBlockAssessment> get() = assessments.sortedWith(
+        compareBy<ScoutBlockAssessment> { it.paddockId }.thenBy { it.stopContext?.capturedAt.orEmpty() }.thenBy { it.id })
 
     fun assessment(paddockId: String): ScoutBlockAssessment? =
         assessments.firstOrNull { it.paddockId == paddockId }
@@ -349,9 +353,8 @@ data class ScoutVisit(
     /**
      * Add a block, or return unchanged if it is already assessed.
      *
-     * The uniqueness of one assessment per visit and block is a domain rule,
-     * not only a database constraint: two partially-filled assessments for the
-     * same block would make "what did the scout find in Block 4?" ambiguous.
+     * Legacy block-selection helper only. New capture allocates a new assessment ID
+     * for each stop; paddockId is grouping, not the identity of an assessment.
      */
     fun withBlock(paddockId: String): ScoutVisit =
         if (assessment(paddockId) != null) {
@@ -366,7 +369,7 @@ data class ScoutVisit(
     fun withoutBlock(paddockId: String, atIso: String = java.time.Instant.now().toString()): ScoutVisit {
         val existing = assessment(paddockId) ?: return this
         if (existing.recordedObservations.isNotEmpty()) return this
-        return copy(assessments = assessments.filterNot { it.paddockId == paddockId },
+        return copy(assessments = assessments.filterNot { it.id == existing.id },
             removedAssessments = removedAssessments + ScoutAssessmentRemoval(existing.id, paddockId, atIso, existing.status.code))
     }
 
