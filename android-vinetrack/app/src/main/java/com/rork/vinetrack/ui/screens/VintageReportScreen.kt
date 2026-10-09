@@ -52,7 +52,7 @@ fun VintageReportScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier 
     var syncBusy by remember(key) { mutableStateOf(false) }
     var error by remember(key) { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val revision = report.cache.revisions.firstOrNull { it.id == selected } ?: report.current
+    val revision = if (selected != null) report.cache.revisions.firstOrNull { it.id == selected } else report.current
     LaunchedEffect(key) { reportVM.refresh() }
     LaunchedEffect(key, report.cache.coverage?.report_through) { report.cache.coverage?.report_through?.let { through = it } }
     fun syncThenConfirm(action: String) {
@@ -91,7 +91,7 @@ fun VintageReportScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier 
             OutlinedButton(onClick = { reportVM.updateThrough(through) }, enabled = !report.busy) { Text("Validate reporting date") }
             Text("Status: ${report.cache.request?.status ?: if (report.current == null) "Not generated" else "Saved"}")
             report.current?.let { Text("Current revision ${it.revision} • saved ${VintageReportExport.timestamp(it.created_at, state.regionFormatter)}") }
-            report.cache.revisions.firstOrNull { it.action != "edit" }?.let { Text("Last generated revision saved ${VintageReportExport.timestamp(it.created_at, state.regionFormatter)} (including candidates)", style = MaterialTheme.typography.bodySmall) }
+            report.history.firstOrNull { it.action != "edit" }?.let { Text("Last generated revision saved ${VintageReportExport.timestamp(it.created_at, state.regionFormatter)} (including candidates)", style = MaterialTheme.typography.bodySmall) }
             if (report.busy || syncBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
             report.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             OutlinedButton(onClick = { reportVM.refresh() }, enabled = !report.busy) { Text("Refresh reports and coverage") }
@@ -149,9 +149,14 @@ fun VintageReportScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier 
             }
             HorizontalDivider()
             Text("Revision history", style = MaterialTheme.typography.titleMedium)
-            report.cache.revisions.forEach { saved ->
-                TextButton(onClick = { selected = saved.id; editing = false }) { Text("Revision ${saved.revision} • ${saved.action} • ${saved.created_at}${if (saved.id == report.cache.currentID) " • Current" else ""}") }
+            if (selected != null && revision == null) {
+                Text("Selected revision content is not downloaded.")
+                TextButton(onClick = { selected?.let(reportVM::selectRevision) }, enabled = !report.busy) { Text("Download selected revision") }
             }
+            report.history.forEach { saved ->
+                TextButton(onClick = { selected = saved.id; editing = false; reportVM.selectRevision(saved.id) }, enabled = !report.busy) { Text("Revision ${saved.revision} • ${saved.action} • ${saved.created_at}${if (saved.id == report.cache.currentID) " • Current" else ""}") }
+            }
+            if (report.hasMoreHistory) TextButton(onClick = { reportVM.loadMoreHistory() }, enabled = !report.busy) { Text("Load older revision metadata") }
         }
     }
 }

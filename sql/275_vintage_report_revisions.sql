@@ -1,4 +1,7 @@
--- REVIEW / UNAPPLIED. Apply after 272, 273 and 274. No operational tables are mutated.
+-- REVIEW / UNAPPLIED (user-reported 2026-10-09). Apply after 272, 273 and 274.
+-- This draft was corrected in place only on that unapplied basis. If already applied,
+-- STOP: prepare an additive migration instead; do not rerun this CREATE TABLE draft.
+-- No operational tables are mutated. Verify SQL 227/234/259 spray helpers first.
 -- New-client Vintage Report protocol v1. All report writes use the RPC below.
 begin;
 create table public.vintage_reports (
@@ -30,7 +33,7 @@ alter table public.vintage_report_requests add foreign key(result_revision_id) r
 -- Provider/usage data is deliberately separate from provider-independent content.
 create table public.vintage_report_diagnostics (
  operation_id uuid primary key references public.vintage_report_requests(operation_id),
- provider_response_id text, model text, usage jsonb, validated_content jsonb, updated_at timestamptz not null default clock_timestamp()
+ provider_response_id text, provider_store boolean not null, output_contract text not null, model text, usage jsonb, validated_content jsonb, updated_at timestamptz not null default clock_timestamp()
 );
 create index vintage_report_revision_history on public.vintage_report_revisions(report_id,revision desc);
 create index vintage_report_request_recovery on public.vintage_report_requests(authored_by,vineyard_id,status);
@@ -55,6 +58,7 @@ declare
  records jsonb := '[]'; coverage jsonb := '{}'; gaps jsonb := '[]'; rain jsonb;
  source_name text; date_key text; event_day date; stop_day date; event_raw text; offset_rows integer;
  n integer; draft_count integer; keys text[]; stop_record record; item_record record;
+ stop_data jsonb; block_data jsonb; linked_growth jsonb; spray_facts jsonb; actual_rows jsonb; linked_trip jsonb;
 begin
  if not public.can_use_vineyard_insights(p_vineyard) then raise exception 'not_authorised' using errcode='42501'; end if;
  select * into strict v from public.vineyards where id=p_vineyard;
@@ -70,9 +74,9 @@ begin
  if not exists(select 1 from information_schema.columns where table_schema='public' and table_name='scout_block_assessments' and column_name='stop_context') then raise exception 'migration_274_required'; end if;
  keys:=array['id','paddock_id','paddock_ids','paddock_name','targets','operation_type','application_blocks','trip_id','spray_job_id','work_task_id','pruning_activity_id','growth_stage_record_id','pin_id',
  'sync_version','client_revision_id','updated_at','scout_date','visit_summary','scout_name_snapshot','note_date','note_type_id','note_type_label','observer_name_snapshot','title','body','notes','text',
- 'stage_code','stage_label','variety','variety_name','observed_at','date','start_time','end_time','trip_function','is_active','is_finalized','completed_at','end_date','schedule_basis','target_el_stage','task_type','description',
+ 'stage_code','stage_label','variety','variety_name','observed_at','date','start_time','end_time','trip_function','is_active','is_finalized','completed_at','end_date','schedule_basis','target_el_stage','task_name','task_type','description',
  'entry_date','finish_time','vintage_year','vintage','status','session_date','started_at','finished_at','total_volume_litres','effective_volume_litres','calculation_method','source_type','volume_is_estimated','actual_volume_l','allocated_volume_l','water_volume_l','duration_minutes','fertiliser_name','nutrients',
- 'calculated_at','estimate_source','base_estimate_tonnes','is_estimate_available','source_session_id','estimated_tonnes','estimated_yield_tonnes','yield_tonnes','total_tonnes','weight_kg','picked_at','sugar_value','sugar_unit','ph','ta_g_l','date_observed','damage_type','damage_percent','loss_percent','severity','product_name','record_status','calculation_mode','application_date','block_names','application_rate','application_rate_unit','total_product_required','product_unit'];
+ 'entry_source','manual_entry_id','spray_reference','completion_notes','calculated_at','estimate_source','base_estimate_tonnes','is_estimate_available','source_session_id','estimated_tonnes','estimated_yield_tonnes','yield_tonnes','total_tonnes','weight_kg','picked_at','sugar_value','sugar_unit','ph','ta_g_l','date_observed','damage_type','damage_percent','loss_percent','severity','product_name','record_status','calculation_mode','application_date','block_names','application_rate','application_rate_unit','total_product_required','product_unit'];
  for spec in select value from jsonb_array_elements('[
   {"table":"scout_visits","date":"scout_date"},{"table":"vintage_notes","date":"note_date"},
   {"table":"growth_stage_records","date":"observed_at"},{"table":"spray_records","date":"date"},
@@ -108,28 +112,57 @@ begin
       exists(select 1 from public.pruning_activities a where a.id=(row_data->>'pruning_activity_id')::uuid and a.vineyard_id=p_vineyard and a.deleted_at is null and a.vintage_year=p_vintage and a.entry_date between start_day and p_through)
       or exists(select 1 from public.trips t where to_jsonb(t)->>'work_task_id'=row_data->>'id' and t.vineyard_id=p_vineyard and t.deleted_at is null and not t.is_active and t.end_time is not null and (t.start_time at time zone coalesce(nullif(v.timezone,''),'UTC'))::date between start_day and p_through)
     ) then continue; end if;
-    if source_name='trips' and exists(select 1 from public.spray_records s where s.trip_id=(row_data->>'id')::uuid and s.vineyard_id=p_vineyard and s.deleted_at is null and not s.is_template and (coalesce(s.date,s.start_time) at time zone coalesce(nullif(v.timezone,''),'UTC'))::date between start_day and p_through) then continue; end if;
+    -- Keep distinct Trip notes/status. The relationship marks one linked application,
+    -- not a second application; no blanket suppression of Trip evidence.
     select coalesce(jsonb_object_agg(key,value),'{}') into compact from jsonb_each(row_data) where key=any(keys);
     if source_name='work_tasks' then
      compact:=(compact-'date')||jsonb_build_object('record_kind',case when coalesce((row_data->>'is_finalized')::boolean,false) then 'finalised_record' else 'planned_work' end,'planned_date',case when coalesce(row_data->>'schedule_basis','date')='date' then left(row_data->>'date',10) else null end);
      if not coalesce((row_data->>'is_finalized')::boolean,false) or (row_data->>'end_date' is null and row_data->>'completed_at' is null) then event_day:=null; end if;
     end if;
     if source_name='spray_records' then
-     -- Recorded product identities/rates only; no entire tank/route/cost payload.
-     compact:=compact||jsonb_build_object('recorded_tanks',coalesce((select jsonb_agg(jsonb_build_object('tank_number',x->'tankNumber','products',coalesce((select jsonb_agg((select jsonb_object_agg(key,value) from jsonb_each(product) where key=any(array['id','name','savedChemicalId','unit','volumePerTank','ratePerHa','ratePer100L','rateBasis']))) from jsonb_array_elements(case when jsonb_typeof(x->'chemicals')='array' then x->'chemicals' else '[]' end) product),'[]'::jsonb),'targets',x->'targets')) from jsonb_array_elements(case when jsonb_typeof(row_data->'tanks')='array' then row_data->'tanks' else '[]' end) x),'[]'));
+     -- SQL 259: only an explicit spray end_time establishes completion.
+     -- Manual SQL 232 applications retain their own completion and provenance.
+     select to_jsonb(t) into linked_trip from public.trips t where t.id=(row_data->>'trip_id')::uuid and t.vineyard_id=p_vineyard and t.deleted_at is null;
+     compact:=compact||jsonb_build_object('record_kind',case when row_data->>'end_time' is not null then 'completed_application' when coalesce((linked_trip->>'is_active')::boolean,false) then 'active_application' else 'planned_or_completion_unconfirmed' end,
+       'completion_basis',case when row_data->>'end_time' is not null then 'spray_end_time' else 'completion_not_recorded' end);
+     -- Canonical tank reporting helper (SQL 227), only when the trip belongs to
+     -- this record unambiguously. Otherwise exact record-scoped actuals remain
+     -- separate from the recipe; no cross-record tank-number matching.
+     if linked_trip is not null and (select count(*) from public.spray_records s where s.trip_id=(row_data->>'trip_id')::uuid and s.vineyard_id=p_vineyard and s.deleted_at is null and not s.is_template)=1
+      and not exists(select 1 from public.spray_tank_actuals a where a.trip_id=(row_data->>'trip_id')::uuid and a.deleted_at is null and (a.spray_record_id<>(row_data->>'id')::uuid or a.vineyard_id<>p_vineyard)) then
+      spray_facts:=public.spray_report_tanks_v1(row_data->'tanks',(row_data->>'trip_id')::uuid);
+     else spray_facts:=null; end if;
+     select coalesce(jsonb_agg(jsonb_build_object('id',a.id,'tank_session_id',a.tank_session_id,'tank_number',a.tank_number,'correction_version',a.correction_version,'water_volume_l',a.water_volume_l,'chemicals',coalesce((select jsonb_agg((select jsonb_object_agg(key,value) from jsonb_each(c) where key=any(array['id','plannedChemicalId','savedChemicalId','replacesPlannedChemicalId','usageKind','name','unit','actualAmountBase']))) from jsonb_array_elements(a.chemicals) c),'[]'::jsonb)) order by a.id),'[]') into actual_rows
+       from public.spray_tank_actuals a where a.spray_record_id=(row_data->>'id')::uuid and a.vineyard_id=p_vineyard and a.deleted_at is null;
+     compact:=compact||jsonb_build_object('canonical_tanks',spray_facts,'record_scoped_actuals',actual_rows,
+       'planned_recipe',coalesce((select jsonb_agg(jsonb_build_object('tank_number',x->'tankNumber','products',coalesce((select jsonb_agg((select jsonb_object_agg(key,value) from jsonb_each(product) where key=any(array['id','name','savedChemicalId','unit','volumePerTank','ratePerHa','ratePer100L','rateBasis']))) from jsonb_array_elements(case when jsonb_typeof(x->'chemicals')='array' then x->'chemicals' else '[]' end) product),'[]'::jsonb),'targets',x->'targets')) from jsonb_array_elements(case when jsonb_typeof(row_data->'tanks')='array' then row_data->'tanks' else '[]' end) x),'[]'));
+     if row_data->>'end_time' is null then event_day:=null; end if;
     end if;
     records:=records||jsonb_build_array(jsonb_build_object('id',source_name||':'||(row_data->>'id'),'event_date',event_day,'hash',md5((compact-'sync_version'-'updated_at'-'client_revision_id')::text),'data',compact)); n:=n+1;
     if source_name='scout_visits' then
      for stop_record in select a.* from public.scout_block_assessments a where a.scout_visit_id=(row_data->>'id')::uuid and a.vineyard_id=p_vineyard and a.deleted_at is null and a.status='complete' and coalesce((a.stop_context->>'is_draft')::boolean,false)=false order by a.id loop
       stop_day:=case when stop_record.stop_context->>'captured_at' is not null then ((stop_record.stop_context->>'captured_at')::timestamptz at time zone coalesce(nullif(v.timezone,''),'UTC'))::date else event_day end;
       if stop_day not between start_day and p_through then continue; end if;
-      compact:=jsonb_build_object('event_date_basis',case when stop_record.stop_context is null then 'associated_trip_date_not_stop_capture' else 'stop_capture_date' end,'id',stop_record.id,'paddock_id',stop_record.paddock_id,'stop_context',stop_record.stop_context,'client_revision_id',stop_record.client_revision_id);
+      select jsonb_build_object('block_name',p.name,'variety_names',coalesce((select jsonb_agg(coalesce(a->>'name',a->>'varietyName',a->>'variety_name')) from jsonb_array_elements(case when jsonb_typeof(p.variety_allocations)='array' then p.variety_allocations else '[]'::jsonb end) a where nullif(coalesce(a->>'name',a->>'varietyName',a->>'variety_name'),'') is not null),'[]'::jsonb),'block_label_basis','current_directory_at_collection_not_capture_snapshot') into block_data from public.paddocks p where p.id=stop_record.paddock_id and p.vineyard_id=p_vineyard;
+      stop_data:=coalesce(block_data,jsonb_build_object('block_name','Block name unavailable','variety_names','[]'::jsonb))||jsonb_build_object('event_date_basis',case when stop_record.stop_context->>'captured_at' is null then 'associated_visit_date_not_stop_capture' else 'stop_capture_date' end,'id',stop_record.id,'stop_reference',stop_record.id,'scout_visit_id',stop_record.scout_visit_id,'paddock_id',stop_record.paddock_id,'stop_context',case when stop_record.stop_context is null then null else (select jsonb_object_agg(key,value) from jsonb_each(stop_record.stop_context) where key=any(array['captured_at','observer_name','is_draft','weather'])) end,'client_revision_id',stop_record.client_revision_id);
+      compact:=stop_data;
       records:=records||jsonb_build_array(jsonb_build_object('id','scout_stop:'||stop_record.id,'event_date',stop_day,'hash',md5((compact-'sync_version'-'updated_at'-'client_revision_id')::text),'data',compact));
-      for item_record in select o.* from public.scout_observations o where o.assessment_id=stop_record.id and o.vineyard_id=p_vineyard and o.deleted_at is null and (o.value_code is not null or o.value_label is not null or nullif(trim(o.notes),'') is not null or o.linked_growth_record_id is not null) order by o.id loop
+      for item_record in select o.* from public.scout_observations o where o.assessment_id=stop_record.id and o.vineyard_id=p_vineyard and o.deleted_at is null and (nullif(o.value_code,'not_assessed') is not null or (o.value_code is distinct from 'not_assessed' and o.value_label is not null) or nullif(trim(o.notes),'') is not null or o.linked_growth_record_id is not null) order by o.id loop
        row_data:=to_jsonb(item_record);
-       -- Canonical E-L evidence is read once through growth_stage_records.
-       if row_data->>'linked_growth_record_id' is not null then continue; end if;
-       select coalesce(jsonb_object_agg(key,value),'{}') into compact from jsonb_each(row_data) where key=any(array['id','assessment_id','item_kind','value_code','value_label','notes','client_revision_id']);
+       select coalesce(jsonb_object_agg(key,value),'{}') into compact from jsonb_each(row_data) where key=any(array['id','assessment_id','item_kind','value_code','value_label','notes','linked_growth_record_id','client_revision_id']);
+       compact:=compact||(stop_data-'id'-'client_revision_id'-'stop_context')||jsonb_build_object('observation_date',stop_day,'item_name',replace(item_record.item_kind,'_',' '));
+       if row_data->>'linked_growth_record_id' is not null then
+        select to_jsonb(g) into linked_growth from public.growth_stage_records g where g.id=(row_data->>'linked_growth_record_id')::uuid and g.vineyard_id=p_vineyard and g.deleted_at is null
+          and coalesce(to_jsonb(g)->>'vintage_year',to_jsonb(g)->>'vintage',public.resolve_vineyard_vintage_year(p_vineyard,(g.observed_at at time zone coalesce(nullif(v.timezone,''),'UTC'))::date)::text)::integer=p_vintage
+          and (g.observed_at at time zone coalesce(nullif(v.timezone,''),'UTC'))::date between start_day and p_through;
+        if linked_growth is not null then
+         -- Remove only the duplicated measurement; never the distinct Scout notes.
+         compact:=(compact-'value_code'-'value_label')||jsonb_build_object('measurement_reference','growth_stage_records:'||(row_data->>'linked_growth_record_id'),'measurement_status','canonical_measurement_retained_separately');
+        else
+         compact:=compact||jsonb_build_object('measurement_status','linked_canonical_record_unavailable_or_outside_report_scope; Scout value is not a verified canonical measurement');
+         gaps:=gaps||jsonb_build_array('Scout item '||item_record.id||': linked canonical E-L record unavailable or outside the reporting scope; distinct Scout notes retained.');
+        end if;
+       end if;
        records:=records||jsonb_build_array(jsonb_build_object('id','scout_item:'||item_record.id,'event_date',stop_day,'hash',md5((compact-'sync_version'-'updated_at'-'client_revision_id')::text),'data',compact));
       end loop;
      end loop;
@@ -148,8 +181,8 @@ begin
  end loop;
  compact:=jsonb_build_object('season_start',start_day,'season_end',end_day,'report_through',p_through,'season_to_date',p_through<end_day,'vineyard_name',v.name,'timezone',coalesce(nullif(v.timezone,''),'UTC'));
  records:=records||jsonb_build_array(jsonb_build_object('id','report_scope:'||p_vineyard||':'||p_vintage,'event_date',p_through,'hash',md5(compact::text),'data',compact));
- coverage:=coverage||jsonb_build_object('saved_stops',(select count(*) from jsonb_array_elements(records) x where x->>'id' like 'scout_stop:%'),'saved_scout_items',(select count(*) from jsonb_array_elements(records) x where x->>'id' like 'scout_item:%'),'rainfall_recorded_days',(select count(*) from jsonb_array_elements(rain) x where x->>'rainfall_mm' is not null),'rainfall_missing_days',(select count(*) from jsonb_array_elements(rain) x where x->>'rainfall_mm' is null));
- gaps:=gaps||jsonb_build_array('Photographs are not analysed. Scout snapshot weather is observation-time only.','Historical temperature/wind series and comparable baseline are not integrated. No heat, frost, wind extremes or average comparisons are inferred.','Scout weather snapshots describe observation-time conditions only.','Operational records establish recorded dates, not necessarily actual activity start or completion.','Work logs, detailed fertigation allocations and historical actual-yield archives are not integrated in v1.');
+ coverage:=coverage||jsonb_build_object('completed_spray_applications',(select count(*) from jsonb_array_elements(records) x where x->>'id' like 'spray_records:%' and x->'data'->>'record_kind'='completed_application'),'active_spray_applications',(select count(*) from jsonb_array_elements(records) x where x->>'id' like 'spray_records:%' and x->'data'->>'record_kind'='active_application'),'planned_or_unconfirmed_sprays',(select count(*) from jsonb_array_elements(records) x where x->>'id' like 'spray_records:%' and x->'data'->>'record_kind'='planned_or_completion_unconfirmed'),'saved_stops',(select count(*) from jsonb_array_elements(records) x where x->>'id' like 'scout_stop:%'),'saved_scout_items',(select count(*) from jsonb_array_elements(records) x where x->>'id' like 'scout_item:%'),'rainfall_recorded_days',(select count(*) from jsonb_array_elements(rain) x where x->>'rainfall_mm' is not null),'rainfall_missing_days',(select count(*) from jsonb_array_elements(rain) x where x->>'rainfall_mm' is null));
+ gaps:=gaps||jsonb_build_array('Photographs are not analysed. Scout snapshot weather is observation-time only.','Historical temperature/wind series and comparable baseline are not integrated. No heat, frost, wind extremes or average comparisons are inferred.','Scout weather snapshots describe observation-time conditions only.','Operational records establish recorded dates, not necessarily actual activity start or completion.','Work logs, dedicated linked-fertigation authority, detailed allocations and historical actual-yield archives are not integrated.','Complete preferred-unit narrative conversion and event-prose localization are not integrated.');
  compact:=jsonb_build_object('schema_version',1,'vineyard_id',p_vineyard,'vineyard_name',v.name,'vintage',p_vintage,'timezone',coalesce(nullif(v.timezone,''),'UTC'),'season_start',start_day,'season_end',end_day,'report_through',p_through,'season_to_date',p_through<end_day,'collected_at',statement_timestamp(),'coverage',coverage,'gaps',gaps,'rainfall',rain,'sources',records);
  if octet_length(compact::text)>500000 then raise exception 'evidence_too_large_no_truncation'; end if;
  return compact;
@@ -164,18 +197,26 @@ declare r public.vintage_reports%rowtype; q public.vintage_report_requests%rowty
 begin
  if p_author_id is distinct from auth.uid() or not public.can_use_vineyard_insights(p_vineyard_id) then raise exception 'not_authorised' using errcode='42501'; end if;
  if p_vintage not between 1900 and 2200 then raise exception 'invalid_vintage'; end if;
+ if p_command='revision' then
+  select x.* into strict rev from public.vintage_report_revisions x join public.vintage_reports h on h.id=x.report_id where (x.operation_id=p_operation_id or x.id=p_expected_revision_id) and h.vineyard_id=p_vineyard_id and h.vintage=p_vintage;
+  return to_jsonb(rev);
+ end if;
  if p_command='read' then
   select * into r from public.vintage_reports where vineyard_id=p_vineyard_id and vintage=p_vintage;
-  return jsonb_build_object('report',to_jsonb(r),'revisions',coalesce((select jsonb_agg(to_jsonb(x) order by x.revision desc) from(select * from public.vintage_report_revisions where report_id=r.id and (p_before_revision is null or revision<p_before_revision) order by revision desc limit 20) x),'[]'),
+  return jsonb_build_object('report',to_jsonb(r),'revisions',coalesce((select jsonb_agg(to_jsonb(x) order by x.revision desc) from(select id,revision,operation_id,action,report_through,collected_at,created_at from public.vintage_report_revisions where report_id=r.id and (p_before_revision is null or revision<p_before_revision) order by revision desc limit 20) x),'[]'),
    'requests',coalesce((select jsonb_agg(to_jsonb(x)-'evidence') from (select * from public.vintage_report_requests where report_id=r.id and authored_by=auth.uid() and status in ('queued','running') order by created_at desc limit 20) x),'[]'));
  end if;
  if p_command='coverage' then
   -- Resolve boundaries by querying all candidate dates with the existing resolver.
   select min(day),max(day) into start_date,end_date from (select gs::date day from generate_series(make_date(p_vintage-1,1,1),make_date(p_vintage+1,1,1),interval '1 day') gs) x where public.resolve_vineyard_vintage_year(p_vineyard_id,day)=p_vintage;
   select (statement_timestamp() at time zone coalesce(nullif(timezone,''),'UTC'))::date into today from public.vineyards where id=p_vineyard_id;
-  if least(today,end_date)<start_date then return jsonb_build_object('season_start',start_date,'season_end',end_date,'not_started',true); end if;
-  e:=public._vr_collect(p_vineyard_id,p_vintage,coalesce(p_report_through,least(today,end_date)));
-  return e-'sources'-'rainfall';
+  if least(today,end_date)<start_date then return jsonb_build_object('season_start',start_date,'season_end',end_date,'not_started',true,'gaps',jsonb_build_array('Historical temperature/wind/baselines, detailed work logs, linked-fertigation authority, historical yield archives and complete regional narrative formatting are not integrated.')); end if;
+  if coalesce(p_report_through,least(today,end_date)) not between start_date and least(today,end_date) then raise exception 'invalid_report_through'; end if;
+  -- Routine status reuses the last saved scoped coverage; it does NOT scan all
+  -- operational evidence. Generate/regenerate/append still freeze every source.
+  select x.evidence-'sources'-'rainfall' into e from public.vintage_reports h join public.vintage_report_revisions x on x.id=h.current_revision_id where h.vineyard_id=p_vineyard_id and h.vintage=p_vintage;
+  return coalesce(e,'{}'::jsonb)||jsonb_build_object('vineyard_name',(select name from public.vineyards where id=p_vineyard_id),'timezone',(select coalesce(nullif(timezone,''),'UTC') from public.vineyards where id=p_vineyard_id),'season_start',start_date,'season_end',end_date,'report_through',coalesce(p_report_through,least(today,end_date)),'season_to_date',coalesce(p_report_through,least(today,end_date))<end_date,
+   'gaps',coalesce(e->'gaps',jsonb_build_array('Historical temperature/wind/baseline, detailed work logs, linked-fertigation authority and historical yield archives are not integrated.'))||jsonb_build_array('Complete regional narrative formatting remains outstanding.',case when e is null then 'Source counts not collected yet. A complete authoritative snapshot is built only on an explicit generation request.' else 'Coverage counts are from the saved revision collected '||(e->>'collected_at')||', report through '||(e->>'report_through')||', not a live scan. Generation collects a new complete authoritative snapshot.' end));
  end if;
  insert into public.vintage_reports(vineyard_id,vintage) values(p_vineyard_id,p_vintage) on conflict(vineyard_id,vintage) do nothing;
  select * into strict r from public.vintage_reports where vineyard_id=p_vineyard_id and vintage=p_vintage for update;
@@ -199,7 +240,7 @@ begin
  if p_command='edit' then
   select * into strict rev from public.vintage_report_revisions where id=r.current_revision_id;
   if p_content is null or jsonb_typeof(p_content) is distinct from 'object' or jsonb_typeof(p_content->'narrative') is distinct from 'string' or length(p_content->>'narrative') not between 1 and 100000 then raise exception 'invalid_narrative'; end if;
-  e:=rev.evidence; content_value:=rev.content||jsonb_build_object('narrative',p_content->>'narrative','manually_edited',true);
+  e:=rev.evidence; content_value:=(rev.content-'sections')||jsonb_build_object('narrative',p_content->>'narrative','manually_edited',true);
  else
   if exists(select 1 from public.vintage_report_requests where report_id=r.id and status in ('queued','running')) then raise exception 'generation_in_progress'; end if;
   e:=public._vr_collect(p_vineyard_id,p_vintage,p_report_through);

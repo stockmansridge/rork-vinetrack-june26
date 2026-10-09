@@ -82,30 +82,43 @@ class VintageReportViewModel(
     }
     private suspend inline fun <reified T> command(params: JsonObject): T = codec.decodeFromString(transport("/rest/v1/rpc/vintage_report_command", params))
     private suspend fun load() {
-        var offset = 0
-        val rows = mutableListOf<VintageReportRevision>()
-        var pointer: String? = null
-        var beforeRevision: Int? = null
-        var serverRequest: VintageReportRequest? = null
-        while (true) {
-            val result: VintageReportRead = command(params("read", beforeRevision = beforeRevision))
-            if (offset == 0) { pointer = result.report?.current_revision_id; serverRequest = result.requests.firstOrNull() }
-            rows += result.revisions; offset += result.revisions.size
-            beforeRevision = result.revisions.lastOrNull()?.revision
-            if (result.revisions.size < 20) break
-        }
+        val result: VintageReportRead = command(params("read"))
+        val pointer = result.report?.current_revision_id
+        val serverRequest = result.requests.firstOrNull()
         val previous = _ui.value.cache
+        val rows = previous.revisions.toMutableList()
+        if (pointer != null && rows.none { it.id == pointer }) {
+            val saved: VintageReportRevision = command(params("revision", expected = pointer))
+            check(saved.id == pointer); rows += saved
+        }
         val coverage: VintageReportCoverage = command(params("coverage", through = selectedThrough))
         check(scoped())
         val recoverable = serverRequest?.input?.let { input -> VintageReportCommand(input.action, requireNotNull(serverRequest).operation_id, input.expected, input.through, input.content?.narrative) }
-        val cache = previous.copy(revisions = rows, currentID = pointer, coverage = coverage,
+        val cache = previous.copy(revisions = rows, history = result.revisions, currentID = pointer, coverage = coverage,
             pending = previous.pending ?: recoverable, request = previous.request ?: serverRequest)
         if (cacheUnreadable && file.baseFile.exists()) withContext(Dispatchers.IO) {
             file.baseFile.copyTo(File(file.baseFile.parentFile, "${file.baseFile.name}.unreadable-${System.currentTimeMillis()}"))
         }
-        persist(cache); cacheUnreadable = false; _ui.value = _ui.value.copy(cache = cache)
+        persist(cache); cacheUnreadable = false; _ui.value = _ui.value.copy(cache = cache, hasMoreHistory = result.revisions.size == 20)
     }
     fun refresh() = work { load() }
+    fun loadMoreHistory() = work {
+        check(!cacheUnreadable)
+        val before = _ui.value.history.lastOrNull()?.revision ?: return@work
+        if (!_ui.value.hasMoreHistory) return@work
+        val result: VintageReportRead = command(params("read", beforeRevision = before))
+        val existing = _ui.value.history.map { it.id }.toSet()
+        val cache = _ui.value.cache.copy(history = _ui.value.history + result.revisions.filter { it.id !in existing })
+        persist(cache); _ui.value = _ui.value.copy(cache = cache, hasMoreHistory = result.revisions.size == 20)
+    }
+    fun selectRevision(id: String) = work {
+        check(!cacheUnreadable)
+        if (_ui.value.cache.revisions.any { it.id == id }) return@work
+        val saved: VintageReportRevision = command(params("revision", expected = id))
+        check(saved.id == id)
+        val cache = _ui.value.cache.copy(revisions = _ui.value.cache.revisions + saved)
+        persist(cache); _ui.value = _ui.value.copy(cache = cache)
+    }
     fun updateThrough(through: String) = work {
         check(!cacheUnreadable)
         val coverage: VintageReportCoverage = command(params("coverage", through = through))

@@ -6,6 +6,6 @@ nonisolated struct VintageReportRead: Decodable {
         nonisolated private enum CodingKeys: String, CodingKey { case currentRevisionID = "current_revision_id" }
     }
     let report: Pointer?
-    let revisions: [VintageReportRevision]
+    let revisions: [VintageReportRevisionMetadata]
     let requests: [VintageReportRequest]
 }

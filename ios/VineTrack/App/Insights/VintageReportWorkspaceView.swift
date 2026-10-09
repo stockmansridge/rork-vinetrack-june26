@@ -37,7 +37,10 @@ struct VintageReportScreen: View {
     }
     private var resolvedVintage: Int { vintage ?? VintageResolver.vintageYear(for: Date(), seasonStartMonth: store.settings.seasonStartMonth, seasonStartDay: store.settings.seasonStartDay, calendar: store.settings.resolvedCalendar) }
     private var allowed: Bool { auth.isSignedIn && admin.isSystemAdmin && access.currentRole != nil && store.selectedVineyardId != nil }
-    private var selectedRevision: VintageReportRevision? { model.cache.revisions.first { $0.id == selected } ?? model.current }
+    private var selectedRevision: VintageReportRevision? {
+        if let selected { return model.cache.revisions.first { $0.id == selected } }
+        return model.current
+    }
     private var scope: String { "\(SupabaseClientProvider.shared.client.auth.currentUser?.id.uuidString ?? "signed-out")/\(store.selectedVineyardId?.uuidString ?? "none")/\(resolvedVintage)" }
     private var pendingEvidence: Bool {
         guard let id = store.selectedVineyardId else { return true }
@@ -86,7 +89,7 @@ struct VintageReportScreen: View {
             Section("Report status") {
                 LabeledContent("Status", value: model.cache.request?.status ?? (model.current == nil ? "Not generated" : "Saved"))
                 if let current = model.current { Text("Current revision \(current.revision) • saved \(VintageReportExport.timestamp(current.createdAt, formatter: formatter))") }
-                if let generated = model.cache.revisions.first(where: { $0.action != "edit" }) {
+                if let generated = model.history.first(where: { $0.action != "edit" }) {
                     Text("Last generated revision saved \(VintageReportExport.timestamp(generated.createdAt, formatter: formatter)) (including candidates)").font(.caption)
                 }
                 if model.isBusy || syncBusy { ProgressView("Working…") }
@@ -120,7 +123,7 @@ struct VintageReportScreen: View {
                             Text("A newer revision is current. This draft still belongs to the revision you opened; its wording has not been replaced.").font(.callout)
                         }
                         TextEditor(text: $narrative).frame(minHeight: 300)
-                        Button("Save narrative as new revision") { Task { await model.submit(action: "edit", through: revision.reportThrough, narrative: narrative, editingRevisionID: editingRevisionID); if model.cache.request?.status == "succeeded" { editing = false } } }.disabled(model.isBusy || model.cache.pending != nil)
+                        Button("Save narrative as new revision") { Task { let saved = await model.submit(action: "edit", through: revision.reportThrough, narrative: narrative, editingRevisionID: editingRevisionID); if saved { editing = false; selected = model.cache.currentID } } }.disabled(model.isBusy || model.cache.pending != nil)
                         Button("Cancel editing", role: .cancel) { editing = false }
                     } else {
                         ForEach(Array(revision.content.narrative.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
@@ -137,10 +140,17 @@ struct VintageReportScreen: View {
                 Section("Key-event timeline") { ForEach(Array(revision.content.timeline.enumerated()), id: \.offset) { _, line in Text(line) } }
                 Section("Sources and coverage appendix") { ForEach(Array(revision.content.appendix.enumerated()), id: \.offset) { _, line in Text(line).font(.caption) } }
             }
+            if let selected, selectedRevision == nil {
+                Section { Text("Selected revision content is not downloaded."); Button("Download selected revision") { Task { await model.selectRevision(selected) } }.disabled(model.isBusy) }
+            }
             Section("Revision history") {
-                ForEach(model.cache.revisions) { revision in
-                    Button("Revision \(revision.revision) • \(revision.action) • \(revision.createdAt)\(revision.id == model.cache.currentID ? " • Current" : "")") { selected = revision.id; editing = false }
+                ForEach(model.history) { revision in
+                    Button("Revision \(revision.revision) • \(revision.action) • \(revision.createdAt)\(revision.id == model.cache.currentID ? " • Current" : "")") {
+                        selected = revision.id; editing = false
+                        Task { await model.selectRevision(revision.id) }
+                    }.disabled(model.isBusy)
                 }
+                if model.hasMoreHistory { Button("Load older revision metadata") { Task { await model.loadMoreHistory() } }.disabled(model.isBusy) }
             }
         }
     }
