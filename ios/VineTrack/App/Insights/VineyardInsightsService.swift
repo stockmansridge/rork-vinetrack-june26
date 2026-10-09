@@ -318,6 +318,15 @@ final class VineyardInsightsService {
         }
     }
 
+    /// Local-only coverage preflight. Other devices' pending evidence cannot be known here.
+    func hasPendingReportEvidence(vineyardID: UUID) -> Bool {
+        store.loadQueue().contains { $0.vineyardID == vineyardID }
+            || store.loadPhotoQueue().contains { $0.vineyardID == vineyardID }
+            || store.pendingNoteTypeVineyards().contains(vineyardID)
+            || visits.contains { $0.vineyardID == vineyardID && store.isSyncOwed(visitID: $0.id) }
+            || failedVisitDrafts.values.contains { $0.vineyardID == vineyardID }
+    }
+
     func syncStatus(for visit: ScoutVisit) -> String {
         let isQueued = store.loadQueue().contains { $0.entity == .scoutVisit && $0.recordID == visit.id }
         let hasQueuedPhoto = store.loadPhotoQueue().contains { $0.visitID == visit.id }

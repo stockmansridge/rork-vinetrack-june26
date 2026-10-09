@@ -100,7 +100,7 @@ import java.time.LocalDate
 /**
  * Vineyard Insights — System Admin preview (SQL 236, Round 1).
  *
- * Hosts Scout, Vintage Notes and the prepared Vintage Report workspace behind
+ * Hosts Scout, Vintage Notes and the Vintage Report workspace behind
  * a single continuously re-checked access gate.
  */
 
@@ -154,7 +154,7 @@ fun VineyardInsightsScreen(
         InsightsPane.Hub -> InsightsHub(modifier, onBack) { pane = it }
         InsightsPane.Scout -> ScoutWorkspace(vm, state, modifier) { pane = InsightsPane.Hub }
         InsightsPane.Notes -> VintageNotesWorkspace(vm, state, modifier) { pane = InsightsPane.Hub }
-        InsightsPane.Report -> VintageReportWorkspace(state, modifier) { pane = InsightsPane.Hub }
+        InsightsPane.Report -> VintageReportScreen(vm, state, modifier) { pane = InsightsPane.Hub }
     }
 }
 
@@ -1829,7 +1829,7 @@ private fun NoteTypePicker(
 // ----------------------------------------------------------- Vintage Report
 
 /**
- * The prepared report workspace.
+ * Historical Round 1 reference, no longer wired into navigation.
  *
  * Round 1 deliberately shows an EMPTY report area and disabled controls. There
  * is no template prose and no model call: a plausible-looking narrative

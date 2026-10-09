@@ -1506,6 +1506,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         vineyardInsights.pendingVineyards().forEach(::scheduleVineyardInsightsSync)
     }
 
+    /** Current preview scope is checked again after every report network suspension. */
+    fun canUseVintageReport(account: String, vineyardId: String): Boolean =
+        session.userId == account && _ui.value.selectedVineyardId == vineyardId &&
+            com.rork.vinetrack.data.insights.VineyardInsightsAccess.resolve(
+                sessionPhase = _ui.value.sessionPhase, isSystemAdmin = _ui.value.isSystemAdmin,
+                selectedVineyardId = vineyardId, isMemberOfSelectedVineyard = _ui.value.currentRole != null,
+            ).isAllowed
+
+    fun hasPendingVintageReportEvidence(vineyardId: String): Boolean =
+        irrigationRepository.pendingSessions(vineyardId).isNotEmpty() ||
+            irrigationRepository.fertigationOutbox.entries().any { it.irrigation.vineyardId == vineyardId && it.phase != com.rork.vinetrack.data.FertigationLinkedOutbox.Phase.ACKNOWLEDGED } ||
+            vineyardInsights.pendingVineyards().contains(vineyardId) || pendingWrites.list().any {
+            it.status in PendingWriteStatus.unresolved
+        }
+
+    /** Uses the existing replay paths; a bounded wait is not an acknowledgement of sync. */
+    suspend fun prepareVintageReportEvidence(account: String, vineyardId: String) {
+        check(canUseVintageReport(account, vineyardId))
+        retryPendingSync()
+        replayAllPendingWrites()
+        vineyardInsights.sync(vineyardId)
+        check(canUseVintageReport(account, vineyardId))
+        pruningSyncCoordinator.replayAll()
+        check(canUseVintageReport(account, vineyardId))
+        fertiliserSyncCoordinator.replayAll()
+        check(canUseVintageReport(account, vineyardId))
+        irrigationRepository.flushPending(vineyardId)
+        kotlinx.coroutines.withTimeoutOrNull(10_000) {
+            while (canUseVintageReport(account, vineyardId) && hasPendingVintageReportEvidence(vineyardId)) {
+                kotlinx.coroutines.delay(250)
+            }
+        }
+        check(canUseVintageReport(account, vineyardId))
+    }
+
     fun syncVineyardInsights(vineyardId: String) {
         viewModelScope.launch { runCatching { vineyardInsights.sync(vineyardId) } }
     }

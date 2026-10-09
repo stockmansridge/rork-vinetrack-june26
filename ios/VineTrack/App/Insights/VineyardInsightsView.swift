@@ -3,7 +3,7 @@ import CoreLocation
 
 /// Vineyard Insights — System Admin preview (SQL 236, Round 1).
 ///
-/// Hosts Scout, Vintage Notes and the prepared Vintage Report workspace behind
+/// Hosts Scout, Vintage Notes and the Vintage Report workspace behind
 /// a single continuously re-checked access gate.
 struct VineyardInsightsView: View {
     @Environment(NewBackendAuthService.self) private var auth
@@ -90,7 +90,7 @@ struct VineyardInsightsView: View {
                     )
                 }
                 NavigationLink {
-                    VintageReportWorkspaceView()
+                    VintageReportScreen()
                 } label: {
                     HubCard(
                         title: "Vintage Report",
@@ -1461,7 +1461,7 @@ private struct VintageNoteTypePicker: View {
 
 // MARK: - Vintage Report
 
-/// The prepared report workspace.
+/// Historical Round 1 reference, no longer wired into navigation.
 ///
 /// Round 1 deliberately shows an EMPTY report area and disabled controls. There
 /// is no template prose and no model call: a plausible-looking narrative
