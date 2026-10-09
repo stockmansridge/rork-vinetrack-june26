@@ -1,3 +1,5 @@
+-- WITHDRAWN 2026-10-09 by user instruction. DO NOT APPLY.
+-- No expansion, enforcement, grants or trigger replacement is authorised.
 -- REVIEW PROPOSAL ONLY. NOT APPLIED. SEPARATE enforcement from expansion.
 -- Requires docs/work-task-cas-proposed.sql and compatibility sign-off.
 -- Read docs/work-task-cas-proposal.md before deploying anything.

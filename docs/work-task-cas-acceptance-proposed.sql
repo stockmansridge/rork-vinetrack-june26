@@ -1,3 +1,4 @@
+-- WITHDRAWN 2026-10-09. DO NOT EXECUTE; requires a rejected new-schema contract.
 -- REVIEW-ONLY acceptance script. NOT EXECUTED. Run only on a disposable full
 -- schema clone AFTER expansion AND enforcement. Entire session is rolled back.
 -- Requires a migration administrator able to SET ROLE authenticated.

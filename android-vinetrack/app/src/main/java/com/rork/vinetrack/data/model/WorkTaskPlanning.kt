@@ -64,6 +64,8 @@ data class WorkTaskPlanningDraft(
     val blockIds: Set<String> = emptySet(),
     val durationText: String = "",
     val notes: String = "",
+    /** Original server read, never refreshed implicitly when resuming a draft. */
+    val baselineJson: String? = null,
 ) {
     val isValid: Boolean get() = !(assignedTo != null && externalId != null) &&
         (scheduleBasis == "el_stage" || endDate == null || runCatching { !Instant.parse(endDate).isBefore(Instant.parse(date)) }.getOrDefault(false)) &&

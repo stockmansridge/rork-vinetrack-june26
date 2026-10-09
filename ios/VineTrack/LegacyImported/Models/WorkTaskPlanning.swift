@@ -63,6 +63,8 @@ nonisolated struct WorkTaskPlanningDraft: Codable, Equatable {
     var durationText: String
     var notes: String
     var resources: [WorkTaskResource] = []
+    /// Immutable original online read; drafts without one are never automatically rebased.
+    var baselineJSON: String? = nil
 
     var isValid: Bool {
         !(assignedTo != nil && externalID != nil) && (scheduleBasis == "el_stage" || endDate.map { $0 >= date } != false) &&

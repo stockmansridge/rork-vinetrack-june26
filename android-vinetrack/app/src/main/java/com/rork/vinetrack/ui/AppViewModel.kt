@@ -1184,6 +1184,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         planningDrafts.save(draft)
     }
 
+    private fun hasPendingTaskHeader(id: String): Boolean = pendingWrites.list().any {
+        it.entityType == PendingEntityType.WORK_TASK && it.clientId == id && it.status in PendingWriteStatus.unresolved
+    } || id in inFlightWorkTaskCreates || _ui.value.workTaskBusy
+
+    suspend fun loadWorkTaskPlanningBaseline(task: WorkTask): String {
+        require(!hasPendingTaskHeader(task.id) && _ui.value.isOnline && task.vineyardId == _ui.value.selectedVineyardId)
+        return com.rork.vinetrack.data.WorkTaskPlanningRepository(session).baseline(task)
+    }
+
+    fun saveWorkTaskSelectionOnline(draft: com.rork.vinetrack.data.model.WorkTaskPlanningDraft, onResult: (Result<WorkTask>) -> Unit) {
+        viewModelScope.launch {
+            onResult(runCatching {
+                require(_ui.value.isOnline && draft.taskId != null && !hasPendingTaskHeader(draft.taskId)) { "Finish pending task writes before online selection save." }
+                saveWorkTaskPlanningDraft(draft)
+                val saved = com.rork.vinetrack.data.WorkTaskPlanningRepository(session).saveSelection(draft)
+                require(session.userId == draft.authorId && _ui.value.selectedVineyardId == draft.vineyardId && !hasPendingTaskHeader(saved.id))
+                _ui.update { st -> st.copy(workTasks = st.workTasks.map { if (it.id == saved.id) saved else it }) }
+                domainCache.saveWorkTasks(draft.authorId, draft.vineyardId, _ui.value.workTasks)
+                saved
+            })
+        }
+    }
+
     suspend fun listExternalResources(vineyardId: String): List<com.rork.vinetrack.data.model.VineyardExternalResource> = externalResources.list(vineyardId)
 
     suspend fun saveExternalResource(desired: com.rork.vinetrack.data.model.VineyardExternalResource, expected: com.rork.vinetrack.data.model.VineyardExternalResource?): com.rork.vinetrack.data.model.VineyardExternalResource {

@@ -41,6 +41,7 @@ nonisolated struct BackendWorkTask: Codable, Sendable, Identifiable {
     var targetELStage: Int? = nil
     var completedBy: UUID? = nil
     var completedAt: Date? = nil
+    var syncVersion: Int64? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -78,6 +79,7 @@ nonisolated struct BackendWorkTask: Codable, Sendable, Identifiable {
         case targetELStage = "target_el_stage"
         case completedBy = "completed_by"
         case completedAt = "completed_at"
+        case syncVersion = "sync_version"
     }
 }
 
@@ -242,7 +244,8 @@ extension BackendWorkTask {
             scheduleBasis: scheduleBasis,
             targetELStage: targetELStage,
             completedBy: completedBy,
-            completedAt: completedAt
+            completedAt: completedAt,
+            syncVersion: syncVersion
         )
     }
 }

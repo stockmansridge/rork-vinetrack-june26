@@ -1,3 +1,5 @@
+-- WITHDRAWN 2026-10-09 by user instruction. DO NOT APPLY ANY SECTION.
+-- Superseded by existing-schema functional parity and sync_version review.
 -- REVIEW PROPOSAL ONLY. NOT APPLIED. Not in a migration discovery directory.
 -- Contract v1; read docs/work-task-cas-proposal.md BEFORE running anything.
 -- PostgreSQL / native Supabase Auth. Run only on a disposable schema clone first.

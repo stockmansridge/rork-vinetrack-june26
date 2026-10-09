@@ -1139,6 +1139,7 @@ data class WorkTask(
     @SerialName("target_el_stage") val targetELStage: Int? = null,
     @SerialName("completed_by") val completedBy: String? = null,
     @SerialName("completed_at") val completedAt: String? = null,
+    @SerialName("sync_version") val syncVersion: Long? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
 ) {
     val isStageScheduled: Boolean get() = scheduleBasis == "el_stage"

@@ -47,6 +47,9 @@ struct AddEditWorkTaskView: View {
     @State private var loadedPlanning: Bool = false
     @State private var editorAuthor: UUID?
     @State private var draftMessage: String?
+    @State private var planningBaselineJSON: String?
+    @State private var resumedPlanningDraft: Bool = false
+    @State private var savingSelection: Bool = false
 
     init(existingTask: WorkTask? = nil) {
         self.existingTask = existingTask
@@ -408,7 +411,7 @@ struct AddEditWorkTaskView: View {
         if let task = currentTask {
             Section("Completion") {
                 WorkTaskAttributionView(task: task, showsAssignment: true)
-                Text("Completion attribution writes await the authenticated guarded server contract. Existing completion controls retain their legacy behaviour.").font(.footnote).foregroundStyle(.secondary)
+                Text("Existing completion controls retain their current lifecycle. Originally loaded version checks and Portal completion-payload parity still require verification; completion is not part of online selection save.").font(.footnote).foregroundStyle(.secondary)
                 if task.isFinalized {
                     if let completed = WorkTaskCompletion.displayedDate(task) {
                         LabeledContent("Completed", value: completionDateLabel(completed))
@@ -436,7 +439,11 @@ struct AddEditWorkTaskView: View {
                         LabeledContent("Assigned to", value: assignmentName.isEmpty ? "Unassigned" : assignmentName)
                     }
                     Text("Assignments do not create labour charges.").font(.footnote).foregroundStyle(.secondary)
-                    Text("New assignment and scheduling changes are local drafts until guarded server writes are deployed. They will not synchronise yet.").font(.footnote).foregroundStyle(.orange)
+                    Text("Online selection save changes only assignment and an existing E-L target, using the originally loaded server state. Date/range, mode changes and other form edits remain local drafts; no automatic replay.").font(.footnote).foregroundStyle(.secondary)
+                    if existingTask != nil {
+                        Button(savingSelection ? "Saving selection…" : "Save assignment / E-L target online") { saveSelectionOnline() }
+                            .disabled(savingSelection || planningBaselineJSON == nil)
+                    }
                     Button("Save local planning draft") { savePlanningDraft() }
                     if let draftMessage { Text(draftMessage).font(.footnote).foregroundStyle(.orange) }
 
@@ -696,6 +703,15 @@ struct AddEditWorkTaskView: View {
                 loadIfEditing()
                 loadPlanningDraft()
                 loadedPlanning = true
+                if !resumedPlanningDraft, let original = existingTask, !workTaskSync.isPendingUpsert(original.id), !workTaskSync.isPendingDelete(original.id), !workTaskSync.isSyncing {
+                    Task {
+                        do {
+                            let baseline = try await SupabaseWorkTaskPlanningRepository().baseline(for: original)
+                            guard editorAuthor == auth.userId, store.selectedVineyardId == original.vineyardId else { return }
+                            planningBaselineJSON = baseline
+                        } catch { draftMessage = "Online selection unavailable. Refresh the task before editing; your local draft remains available." }
+                    }
+                }
             }
             .sheet(isPresented: $showCompletion) {
                 if let task = currentTask {
@@ -1154,7 +1170,7 @@ struct AddEditWorkTaskView: View {
 
     private var planningDraft: WorkTaskPlanningDraft? {
         guard let vineyard = store.selectedVineyardId, let author = auth.userId else { return nil }
-        return WorkTaskPlanningDraft(taskID: existingTask?.id, vineyardID: vineyard, authorID: author, assignedTo: assignedTo, externalID: assignedExternalID, assignmentName: assignmentName, scheduleBasis: scheduleBasis, targetStage: targetStage, date: date, endDate: usesRange ? rangeEnd : nil, taskType: taskType, blockIDs: selectedBlockIds, durationText: durationText, notes: notes, resources: resources)
+        return WorkTaskPlanningDraft(taskID: existingTask?.id, vineyardID: vineyard, authorID: author, assignedTo: assignedTo, externalID: assignedExternalID, assignmentName: assignmentName, scheduleBasis: scheduleBasis, targetStage: targetStage, date: date, endDate: usesRange ? rangeEnd : nil, taskType: taskType, blockIDs: selectedBlockIds, durationText: durationText, notes: notes, resources: resources, baselineJSON: planningBaselineJSON)
     }
 
     private func savePlanningDraft() {
@@ -1181,15 +1197,47 @@ struct AddEditWorkTaskView: View {
         switch outcome {
         case .decoded(let draft):
             guard draft.authorID == seed.authorID, draft.vineyardID == seed.vineyardID, draft.taskID == seed.taskID else { return }
+            resumedPlanningDraft = true
+            planningBaselineJSON = draft.baselineJSON
             assignedTo = draft.assignedTo; assignedExternalID = draft.externalID; assignmentName = draft.assignmentName
             scheduleBasis = draft.scheduleBasis; targetStage = draft.targetStage; date = draft.date
             usesRange = draft.endDate != nil; rangeEnd = draft.endDate ?? draft.date
             taskType = draft.taskType; selectedBlockIds = draft.blockIDs; durationText = draft.durationText; notes = draft.notes; resources = draft.resources
             if !mergedTaskTypeNames.contains(taskType) { showCustomTaskField = true; customTaskType = taskType }
             planningChanged = true
-            draftMessage = "Resumed local draft. Server task remains unchanged; synchronisation awaits guarded writes."
+            draftMessage = "Resumed local draft. Only online selection save is available with an original baseline; other fields are not queued. No automatic rebase."
         case .failed: draftMessage = "Stored draft could not be read. It has not been overwritten."
         case .missing: break
+        }
+    }
+
+    private func saveSelectionOnline() {
+        guard !savingSelection, let draft = planningDraft, let id = draft.taskID,
+              editorAuthor == auth.userId, WorkTaskPlanning.canSaveDraft(draft, signedInUser: auth.userId, selectedVineyard: store.selectedVineyardId, membershipRole: backendAccessControl.currentRole?.rawValue),
+              !workTaskSync.isPendingUpsert(id), !workTaskSync.isPendingDelete(id), !workTaskSync.isSyncing else {
+            draftMessage = "Finish pending task writes and verify the account/vineyard before saving a selection. Draft retained."
+            return
+        }
+        do { try PersistenceStore.shared.saveOrThrow(draft, key: draft.persistenceKey) }
+        catch { draftMessage = "Draft could not be persisted. No online write was attempted."; return }
+        savingSelection = true
+        Task {
+            defer { savingSelection = false }
+            do {
+                let saved = try await SupabaseWorkTaskPlanningRepository().saveSelection(draft)
+                guard auth.userId == draft.authorID, store.selectedVineyardId == draft.vineyardID,
+                      !workTaskSync.isPendingUpsert(id), !workTaskSync.isPendingDelete(id) else {
+                    draftMessage = "Selection response arrived after the account or local task changed. Draft retained; refresh to review."
+                    return
+                }
+                store.applyRemoteWorkTaskUpsert(saved)
+                persistedTask = saved
+                planningBaselineJSON = nil
+                draftMessage = "Assignment / E-L target saved online. Other form edits remain in your local draft. Reopen after reviewing the server task for another selection edit."
+            } catch {
+                planningBaselineJSON = nil
+                draftMessage = (error as? WorkTaskPlanningWriteError)?.errorDescription ?? "Selection save not confirmed. Local draft retained; review server state and permission before retrying. No automatic retry."
+            }
         }
     }
 

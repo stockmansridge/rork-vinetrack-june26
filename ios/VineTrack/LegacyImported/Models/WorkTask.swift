@@ -84,6 +84,8 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
     var targetELStage: Int?
     var completedBy: UUID?
     var completedAt: Date?
+    /// Original server token; missing historical caches must refresh before online planning writes.
+    var syncVersion: Int64?
 
     var isStageScheduled: Bool { scheduleBasis == "el_stage" }
     var plannedDate: Date? { isStageScheduled ? nil : (startDate ?? date) }
@@ -129,7 +131,8 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         scheduleBasis: String? = nil,
         targetELStage: Int? = nil,
         completedBy: UUID? = nil,
-        completedAt: Date? = nil
+        completedAt: Date? = nil,
+        syncVersion: Int64? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -162,6 +165,7 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         self.targetELStage = targetELStage
         self.completedBy = completedBy
         self.completedAt = completedAt
+        self.syncVersion = syncVersion
     }
 
     /// How this task's labour cost is calculated (sql/188). Anything missing or
@@ -201,7 +205,7 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         case isArchived, archivedAt, archivedBy, isFinalized, finalizedAt, finalizedBy
         case startDate, endDate, areaHa, taskDescription, status
         case costingMethodRaw, pieceRatePerVine, pieceVineCount
-        case pruningActivityId, assignedTo, assignedExternalResourceId, scheduleBasis, targetELStage, completedBy, completedAt
+        case pruningActivityId, assignedTo, assignedExternalResourceId, scheduleBasis, targetELStage, completedBy, completedAt, syncVersion
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -239,6 +243,7 @@ nonisolated struct WorkTask: Codable, Identifiable, Sendable {
         targetELStage = try c.decodeIfPresent(Int.self, forKey: .targetELStage)
         completedBy = try c.decodeIfPresent(UUID.self, forKey: .completedBy)
         completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
+        syncVersion = try c.decodeIfPresent(Int64.self, forKey: .syncVersion)
     }
 }
 

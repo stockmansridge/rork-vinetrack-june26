@@ -26,8 +26,8 @@ import kotlinx.serialization.json.Json
  *
  * Idempotency: the client mints the final work-task UUID up front and uses it as
  * both [PendingWrite.clientId] and the inserted row id, so a retried insert is
- * safe — if the server reports a duplicate primary key (409) the row is already
- * there and we treat it as synced rather than inserting a second task. The
+ * INSERT-only — a 409 is retained as a blocked local intent. It is not proof
+ * of acknowledgement and never becomes an unconditional PATCH of an existing row. The
  * original [Payload.clientUpdatedAt] travels in the payload so replay preserves
  * the moment the operator actually saved the task, not when it later synced.
  */
@@ -228,25 +228,13 @@ class WorkTaskCreateSync(
                     retryOrBlock(write, "Sign-in needed to sync this work task.")
                 } catch (e: BackendError.Server) {
                     when {
-                        // Duplicate primary key — the client id is already on the
-                        // server, so the work task exists. Idempotent success;
-                        // the optimistic row stays as-is.
+                        // Includes uniqueness conflicts, not only duplicate primary keys.
+                        // Retain the local intent rather than claiming acknowledgement.
                         e.code == 409 -> {
-                            // The original insert may have landed before a later completion
-                            // was folded offline. Apply the frozen latest header before ack.
-                            try {
-                                val updated = workTaskRepo.replayUpdate(WorkTaskUpdateSync.Payload(
-                                    id = payload.id, paddockId = payload.paddockId, paddockName = payload.paddockName,
-                                    date = payload.date, taskType = payload.taskType, durationHours = payload.durationHours,
-                                    notes = payload.notes, isFinalized = payload.isFinalized,
-                                    finalizedAt = payload.finalizedAt, finalizedBy = payload.finalizedBy,
-                                    clientUpdatedAt = payload.clientUpdatedAt, endDate = payload.endDate, endDatePresent = true,
-                                ))
-                                pending.remove(write.id)
-                                onSynced(updated)
-                            } catch (patchError: Exception) {
-                                retryOrBlock(write, "Waiting to sync the latest work task completion.")
-                            }
+                            // A duplicate does not prove that the frozen intent was applied.
+                            // Never PATCH a possibly newer Portal row to recover an INSERT.
+                            pending.updateStatus(write.id, PendingWriteStatus.BLOCKED,
+                                "Task already exists or creation conflicted. Saved local intent is retained; review the server task before resolving. No overwrite was attempted.")
                         }
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
                         else -> pending.updateStatus(

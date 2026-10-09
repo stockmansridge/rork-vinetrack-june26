@@ -1,6 +1,8 @@
 # Work Task CAS contract v1 — complete review proposal
 
-**Status: proposed only; not applied, deployed, SQL-executed or behaviorally verified.**
+**WITHDRAWN 2026-10-09. Do not apply any accompanying expansion, cutover or acceptance SQL. No SQL was applied.**
+
+The user rejected this new-schema/RPC direction after reviewing the Portal and live schema. The material below is retained only as historical review evidence, not an implementation requirement. Current work must reuse existing Work Task fields, lifecycle and `sync_version`; no receipt tables, new revisions, new Work Task RPC, bypass gate or vintage-trigger replacement is authorised. See `docs/work-task-sync-version-review.md` for the replacement minimal cross-client proposal.
 
 Prepared 2026-10-08 against the accepted live-inspection findings and current local schema/model definitions. A fresh metadata request in this turn could not run because `SUPABASE_ACCESS_TOKEN` was not available to the process. This is not a claim of a fresh live-schema match. Review the assumptions below against your live database before deployment.
 
