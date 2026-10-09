@@ -46,6 +46,7 @@ fun VintageReportScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier 
     var selected by rememberSaveable(key) { mutableStateOf<String?>(null) }
     var editing by rememberSaveable(key) { mutableStateOf(false) }
     var narrative by rememberSaveable(key) { mutableStateOf("") }
+    var editingRevisionID by rememberSaveable(key) { mutableStateOf<String?>(null) }
     var proposedAction by remember(key) { mutableStateOf<String?>(null) }
     var confirm by remember(key) { mutableStateOf(false) }
     var syncBusy by remember(key) { mutableStateOf(false) }
@@ -114,8 +115,11 @@ fun VintageReportScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier 
                 Text("Revision ${saved.revision} • ${saved.action}", style = MaterialTheme.typography.titleLarge)
                 if (saved.evidence.season_to_date == true) Text("SEASON TO DATE", style = MaterialTheme.typography.labelLarge)
                 if (editing) {
+                    if (editingRevisionID != report.cache.currentID) {
+                        Text("A newer revision is current. This draft still belongs to the revision you opened; its wording has not been replaced.", style = MaterialTheme.typography.bodySmall)
+                    }
                     OutlinedTextField(narrative, { narrative = it }, modifier = Modifier.fillMaxWidth().heightIn(min = 300.dp), label = { Text("Narrative") })
-                    Button(onClick = { reportVM.submit("edit", saved.report_through, narrative) }, enabled = !report.busy && report.cache.pending == null) { Text("Save as new revision") }
+                    Button(onClick = { reportVM.submit("edit", saved.report_through, narrative, editingRevisionID) }, enabled = !report.busy && report.cache.pending == null) { Text("Save as new revision") }
                     TextButton(onClick = { editing = false }) { Text("Finish review") }
                 } else {
                     SelectionContainer {
@@ -125,7 +129,7 @@ fun VintageReportScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier 
                             }
                         }
                     }
-                    OutlinedButton(onClick = { narrative = saved.content.narrative; editing = true }, enabled = saved.id == report.cache.currentID && report.cache.pending == null) { Text("Review / edit current narrative") }
+                    OutlinedButton(onClick = { selected = saved.id; editingRevisionID = saved.id; narrative = saved.content.narrative; editing = true }, enabled = saved.id == report.cache.currentID && report.cache.pending == null) { Text("Review / edit current narrative") }
                 }
                 if (saved.id != report.cache.currentID && saved.action == "regenerate") {
                     Button(onClick = { reportVM.activate(saved) }, enabled = !report.busy) { Text("Confirm regenerated revision as current") }

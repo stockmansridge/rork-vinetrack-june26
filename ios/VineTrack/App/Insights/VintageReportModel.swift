@@ -95,11 +95,15 @@ import Observation
             cache.coverage = coverage; try persist()
         } catch { message = "Could not validate the reporting date against the vineyard season." }
     }
-    func submit(action: String, through: String, narrative: String? = nil) async {
+    func submit(action: String, through: String, narrative: String? = nil, editingRevisionID: UUID? = nil) async {
         guard !isBusy, isScoped, !cacheUnreadable, cache.pending == nil else { message = "Recover the existing request before starting another."; return }
         guard through.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil else { message = "Use YYYY-MM-DD for Report through."; return }
+        if action == "edit", editingRevisionID == nil || editingRevisionID != cache.currentID {
+            message = "The current report changed since this draft was opened. Your wording is retained; review the newer revision before starting a new edit. Nothing was sent."
+            return
+        }
         selectedThrough = through
-        let command = VintageReportCommand(action: action, operation: UUID(), expected: cache.currentID, through: through, narrative: narrative)
+        let command = VintageReportCommand(action: action, operation: UUID(), expected: action == "edit" ? editingRevisionID : cache.currentID, through: through, narrative: narrative)
         do { cache.pending = command; cache.request = nil; try persist() }
         catch { cache.pending = nil; message = "Request could not be saved on this device. Nothing was sent."; return }
         await recover()

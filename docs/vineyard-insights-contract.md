@@ -34,7 +34,7 @@ Both report-through date and evidence collection timestamp are stored. They are 
 
 ### Review/edit
 
-Editing creates an immutable new revision from the current saved narrative. Its frozen evidence, report-through date, original collection cutoff, timeline and source appendix are retained. Edits are labelled by revision action/manual-edit metadata; they are human-authored, not represented as newly AI-validated facts. A stale expected current pointer conflicts. Unsent editor text stays mounted on errors, and submitted text is part of the durable operation envelope.
+Editing creates an immutable new revision from the current saved narrative. Its frozen evidence, report-through date, original collection cutoff, timeline and source appendix are retained. Edits are labelled by revision action/manual-edit metadata; they are human-authored, not represented as newly AI-validated facts. A stale expected current pointer conflicts. Both native editors capture the revision ID when review begins and keep that original baseline when reports refresh; submission must never rebase older wording onto a newly current revision. If refresh reveals a newer current revision, the draft remains visible with a warning and submission is rejected locally before creating an operation. A concurrent change not yet refreshed is rejected by the server's expected-pointer check. Unsent editor text stays mounted on errors, and submitted text and its original baseline are part of the durable operation envelope.
 
 ## Evidence actually integrated
 
@@ -125,7 +125,7 @@ PDF is locally paginated A4 with margins, wrapping and footers. Word is a **genu
 - Two stops in one block remain distinct; unfinished/deleted stops excluded; legacy context unknown; stop capture crossing midnight/report cutoff handled honestly.
 - Linked E-L, sprays/Trips and task/pruning operations are not duplicated; plans and E-L compatibility dates never become actual activity/completion dates.
 - Restart/double-tap/lost response: reuse exact operation, restore server envelope, recover a stored/validated result without another model POST; test missing provider ID, expiry and safe cancellation fence.
-- Concurrent edit/generation/activation: expected-pointer conflict, immutable history, no silent overwrite or automatic rebase.
+- Concurrent edit/generation/activation: expected-pointer conflict, immutable history, no silent overwrite or automatic rebase. Open a narrative draft, advance the current revision from another session, refresh while editing, then attempt Save: retain the draft and reject the stale edit without creating an operation. Repeat without refreshing to verify server-side conflict handling.
 - Missing rain days/source switches break runs; no current-cache season extrapolation, imaginary average, frost-damage or wind-damage inference.
 - Offline downloaded history/PDF/DOCX readable; sign-out, account/vineyard/vintage switching and revoked preview access isolate the interface.
 - PDF wrapping/long references/branding and genuine Word opening, dated addenda, historical/current appendices, pagination and explicit share/storage errors on both platforms.

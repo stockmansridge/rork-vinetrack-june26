@@ -23,6 +23,7 @@ struct VintageReportScreen: View {
     @State private var through: String = ""
     @State private var editing: Bool = false
     @State private var narrative: String = ""
+    @State private var editingRevisionID: UUID?
     @State private var proposedAction: String?
     @State private var showGenerateConfirmation: Bool = false
     @State private var syncBusy: Bool = false
@@ -51,7 +52,7 @@ struct VintageReportScreen: View {
         }
         .navigationTitle("Vintage Report").navigationBarTitleDisplayMode(.inline)
         .task(id: scope) {
-            selected = nil; editing = false; proposedAction = nil; showGenerateConfirmation = false; showShare = false
+            selected = nil; editing = false; editingRevisionID = nil; narrative = ""; proposedAction = nil; showGenerateConfirmation = false; showShare = false
             guard allowed, let id = store.selectedVineyardId else { return }
             let capturedVintage = resolvedVintage
             await model.configure(vineyard: id, vintage: capturedVintage, isCurrentScope: { allowed && store.selectedVineyardId == id && resolvedVintage == capturedVintage })
@@ -115,14 +116,17 @@ struct VintageReportScreen: View {
                 Section("Revision \(revision.revision) • \(revision.action)") {
                     if revision.evidence.seasonToDate == true { Text("SEASON TO DATE").font(.caption.bold()) }
                     if editing {
+                        if editingRevisionID != model.cache.currentID {
+                            Text("A newer revision is current. This draft still belongs to the revision you opened; its wording has not been replaced.").font(.callout)
+                        }
                         TextEditor(text: $narrative).frame(minHeight: 300)
-                        Button("Save narrative as new revision") { Task { await model.submit(action: "edit", through: revision.reportThrough, narrative: narrative); if model.cache.request?.status == "succeeded" { editing = false } } }.disabled(model.isBusy || model.cache.pending != nil)
+                        Button("Save narrative as new revision") { Task { await model.submit(action: "edit", through: revision.reportThrough, narrative: narrative, editingRevisionID: editingRevisionID); if model.cache.request?.status == "succeeded" { editing = false } } }.disabled(model.isBusy || model.cache.pending != nil)
                         Button("Cancel editing", role: .cancel) { editing = false }
                     } else {
                         ForEach(Array(revision.content.narrative.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
                             Text(line).font(VintageReportExport.headings.contains(line) ? .headline : .body).textSelection(.enabled)
                         }
-                        Button("Review / edit current narrative") { narrative = revision.content.narrative; editing = true }.disabled(revision.id != model.cache.currentID || model.cache.pending != nil)
+                        Button("Review / edit current narrative") { selected = revision.id; editingRevisionID = revision.id; narrative = revision.content.narrative; editing = true }.disabled(revision.id != model.cache.currentID || model.cache.pending != nil)
                     }
                     if revision.id != model.cache.currentID, revision.action == "regenerate" {
                         Button("Confirm this regenerated revision as current") { Task { await model.activate(revision) } }.disabled(model.isBusy)

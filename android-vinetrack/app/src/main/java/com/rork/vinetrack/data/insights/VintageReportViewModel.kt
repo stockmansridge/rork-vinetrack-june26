@@ -121,11 +121,15 @@ class VintageReportViewModel(
             finally { _ui.value = _ui.value.copy(busy = false) }
         }
     }
-    fun submit(action: String, through: String, narrative: String? = null) = work {
+    fun submit(action: String, through: String, narrative: String? = null, editingRevisionID: String? = null) = work {
         check(!cacheUnreadable && _ui.value.cache.pending == null)
         require(Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}").matches(through)) { "Use YYYY-MM-DD" }
+        if (action == "edit" && (editingRevisionID == null || editingRevisionID != _ui.value.cache.currentID)) {
+            _ui.value = _ui.value.copy(message = "The current report changed since this draft was opened. Your wording is retained; review the newer revision before starting a new edit. Nothing was sent.")
+            return@work
+        }
         selectedThrough = through
-        val intent = VintageReportCommand(action, UUID.randomUUID().toString(), _ui.value.cache.currentID, through, narrative)
+        val intent = VintageReportCommand(action, UUID.randomUUID().toString(), if (action == "edit") editingRevisionID else _ui.value.cache.currentID, through, narrative)
         val cache = _ui.value.cache.copy(pending = intent, request = null)
         persist(cache); _ui.value = _ui.value.copy(cache = cache)
         recoverRequest(intent)
