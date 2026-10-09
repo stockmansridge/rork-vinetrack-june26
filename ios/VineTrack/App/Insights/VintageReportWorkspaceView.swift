@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Supabase
 
 /// Preview-gated native workspace. Generation is always an explicit user action.
 struct VintageReportScreen: View {
