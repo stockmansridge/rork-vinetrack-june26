@@ -213,6 +213,16 @@ struct ScoutWorkspaceView: View {
     @State private var blockCorrectionStopID: UUID?
     @State private var confirmsLeaveObservation: Bool = false
     @State private var observationError: String?
+    @State private var detectedBlockID: UUID?
+    @State private var observationFix: ScoutPhotoFix?
+    @State private var observationVisitID: UUID?
+    @State private var observationUserID: UUID?
+    @State private var blockSelectionReason: String?
+    @State private var creatingStop: Bool = false
+
+    private var observationBlocks: [Paddock] {
+        store.paddocks.filter { $0.vineyardId == store.selectedVineyardId }
+    }
 
     private var openVisit: ScoutVisit? { insights.openVisit.flatMap { $0.vineyardID == store.selectedVineyardId ? $0 : nil } }
     private var currentVintage: Int {
@@ -290,7 +300,8 @@ struct ScoutWorkspaceView: View {
             }
         }
         .navigationBarBackButtonHidden(openVisit != nil)
-        .onChange(of: openVisit?.id) { _, _ in editingStopID = nil; selectedMapBlockID = nil }
+        .onChange(of: openVisit?.id) { _, _ in editingStopID = nil; selectedMapBlockID = nil; cancelBlockSelection() }
+        .onChange(of: auth.userId) { _, _ in cancelBlockSelection() }
         .onAppear { locationService.startUpdating() }
         .confirmationDialog("Return to Scout Trip?", isPresented: $confirmsLeaveObservation, titleVisibility: .visible) {
             Button("Keep draft and return") {
@@ -299,38 +310,8 @@ struct ScoutWorkspaceView: View {
             }
             Button("Continue editing", role: .cancel) {}
         } message: { Text("Your unfinished observation and photographs will be kept for later. The trip stays a draft.") }
-        .sheet(isPresented: $showsBlockSelection) {
-            NavigationStack {
-                List {
-                    Section("Confirm the block being assessed") {
-                        Text("Choose a block explicitly when location is unavailable, outside boundaries or ambiguous. You can correct the suggested block before recording.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        ForEach(store.paddocks) { block in
-                            Button {
-                                selectedMapBlockID = block.id
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading) {
-                                        Text(block.name)
-                                        Text(block.varietyAllocations.compactMap(\.name).joined(separator: ", ")).font(.caption)
-                                    }
-                                    Spacer()
-                                    if selectedMapBlockID == block.id { Image(systemName: "checkmark") }
-                                }
-                            }
-                        }
-                    }
-                    Button(blockCorrectionStopID == nil ? "Make observation" : "Save block correction") {
-                        if let stopID = blockCorrectionStopID, let visit = openVisit, let blockID = selectedMapBlockID {
-                            if insights.correctStopBlock(visitID: visit.id, stopID: stopID, paddockID: blockID) {
-                                showsBlockSelection = false; blockCorrectionStopID = nil
-                            } else { observationError = "The block correction could not be saved. Retry; canonical linked evidence cannot be moved." }
-                        } else { beginObservation() }
-                    }.disabled(selectedMapBlockID == nil)
-                    if let observationError { Text(observationError).foregroundStyle(.red) }
-                }.navigationTitle("Select block")
-                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showsBlockSelection = false } } }
-            }
+        .sheet(isPresented: $showsBlockSelection, onDismiss: { cancelBlockSelection() }) {
+            blockSelectionSheet
         }
         .alert("Could not record E-L stage", isPresented: Binding(
             get: { growthStageError != nil }, set: { if !$0 { growthStageError = nil } }
@@ -429,6 +410,57 @@ struct ScoutWorkspaceView: View {
         }
     }
 
+    private var blockSelectionSheet: some View {
+        NavigationStack {
+            if let detectedBlockID, let block = observationBlocks.first(where: { $0.id == detectedBlockID }) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Are you observing \(block.name)?").font(.title2.bold())
+                        Text(block.varietyAllocations.compactMap(\.name).joined(separator: ", "))
+                            .foregroundStyle(.secondary)
+                        Button("Yes, continue") { beginObservation() }
+                            .buttonStyle(.borderedProminent).tint(VineyardTheme.leafGreen)
+                            .disabled(creatingStop)
+                        Button("Choose another block") {
+                            self.detectedBlockID = nil; selectedMapBlockID = nil; observationFix = nil
+                            blockSelectionReason = "Choose and confirm the block you are observing."
+                        }.buttonStyle(.bordered)
+                        Button("Cancel", role: .cancel) { cancelBlockSelection() }
+                        if let observationError { Text(observationError).foregroundStyle(.red) }
+                    }.padding()
+                }.navigationTitle("Confirm block")
+            } else {
+                List {
+                    Section("Confirm the block being assessed") {
+                        Text(blockSelectionReason ?? "Choose and confirm the block you are observing. Location is optional.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(observationBlocks) { block in
+                            Button { selectedMapBlockID = block.id } label: {
+                                HStack {
+                                    VStack(alignment: .leading) {
+                                        Text(block.name)
+                                        Text(block.varietyAllocations.compactMap(\.name).joined(separator: ", ")).font(.caption)
+                                    }
+                                    Spacer()
+                                    if selectedMapBlockID == block.id { Image(systemName: "checkmark") }
+                                }
+                            }
+                        }
+                    }
+                    Button(blockCorrectionStopID == nil ? "Confirm block and continue" : "Save block correction") {
+                        if let stopID = blockCorrectionStopID, let visit = openVisit, let blockID = selectedMapBlockID {
+                            if insights.correctStopBlock(visitID: visit.id, stopID: stopID, paddockID: blockID) {
+                                cancelBlockSelection()
+                            } else { observationError = "The block correction could not be saved. Retry; canonical linked evidence cannot be moved." }
+                        } else { beginObservation() }
+                    }.disabled(selectedMapBlockID == nil || creatingStop)
+                    if let observationError { Text(observationError).foregroundStyle(.red) }
+                }.navigationTitle("Select block")
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { cancelBlockSelection() } } }
+            }
+        }
+    }
+
     @ViewBuilder
     private var listSections: some View {
         Section {
@@ -469,50 +501,52 @@ struct ScoutWorkspaceView: View {
                 Text("None yet.").font(.caption).foregroundStyle(.secondary)
             }
             ForEach(visits) { visit in
-                Button {
-                    insights.openVisit(visit.id)
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(RegionFormatter(settings: store.settings.regionSettings).formatDate(insights.scoutDay(visit)))
-                                .foregroundStyle(.primary)
-                            Text("\(visit.status.label) • \(visit.scoutNameSnapshot ?? "—")")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            let syncState = insights.syncStatus(for: visit)
-                            Text(syncState)
-                                .font(.caption)
-                                .foregroundStyle(syncState == "Synced" ? .green : ((syncState.hasPrefix("Sync failed") || syncState.hasPrefix("Deletion failed")) ? .red : .orange))
-                            Text(blockNames(visit))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("\(visit.assessments.reduce(0) { $0 + $1.attentionItems.count }) attention • \(visit.assessments.reduce(0) { $0 + $1.photoCount }) photos")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            if let summary = visit.visitSummary, !summary.isEmpty {
-                                Text(summary).font(.caption).lineLimit(2)
-                            }
-                        }
-                        Spacer()
-                        Text(verbatim: "Vintage \(VintageYearText.format(visit.vintageYear))")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                scoutHistoryCard(visit)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+            }
+        }
+    }
+
+    private func scoutHistoryCard(_ visit: ScoutVisit) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button { insights.openVisit(visit.id) } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(RegionFormatter(settings: store.settings.regionSettings).formatDate(insights.scoutDay(visit)))
+                        .font(.headline).foregroundStyle(.primary)
+                    Text("\(visit.status.label) • \(visit.scoutNameSnapshot ?? "—")")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(verbatim: "Vintage \(VintageYearText.format(visit.vintageYear))")
+                        .font(.caption).foregroundStyle(.secondary)
+                    let syncState = insights.syncStatus(for: visit)
+                    Text(syncState).font(.caption)
+                        .foregroundStyle(syncState == "Synced" ? .green : ((syncState.hasPrefix("Sync failed") || syncState.hasPrefix("Deletion failed")) ? .red : .orange))
+                    Text(blockNames(visit)).font(.caption).foregroundStyle(.secondary)
+                    Text("\(visit.assessments.reduce(0) { $0 + $1.recordedObservations.count }) observations • \(visit.assessments.reduce(0) { $0 + $1.attentionItems.count }) attention • \(visit.assessments.reduce(0) { $0 + $1.photoCount }) photos")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    if let summary = visit.visitSummary, !summary.isEmpty {
+                        Text(summary).font(.caption).lineLimit(2)
                     }
-                }
-                HStack {
-                    Button("View Report") { reportVisit = visit }.buttonStyle(.bordered)
-                    Spacer()
-                    Button(visit.isEditable ? "Edit" : "Reopen and edit") {
-                        if visit.isEditable || insights.reopenVisit(visit.id) { insights.openVisit(visit.id) }
-                    }.buttonStyle(.bordered)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.buttonStyle(.plain)
+            Divider()
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), alignment: .leading)], alignment: .leading, spacing: 8) {
+                Button("View Report") { reportVisit = visit }.buttonStyle(.bordered)
+                Button(visit.isEditable ? "Edit" : "Reopen and edit") {
+                    if visit.isEditable || insights.reopenVisit(visit.id) { insights.openVisit(visit.id) }
+                }.buttonStyle(.bordered)
                     .disabled(insights.deletionPending(visitID: visit.id))
-                }
                 if insights.canDeleteVisit(vineyardID: visit.vineyardID), store.selectedVineyardId == visit.vineyardID {
-                    Button("Delete Scout", role: .destructive) { visitPendingDeletion = visit }
+                    Button("Delete", role: .destructive) { visitPendingDeletion = visit }
+                        .buttonStyle(.bordered)
                         .disabled(insights.deletionPending(visitID: visit.id))
                 }
             }
         }
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
+        .overlay { RoundedRectangle(cornerRadius: 14).stroke(Color.secondary.opacity(0.25), lineWidth: 1) }
     }
 
     private func blockNames(_ visit: ScoutVisit) -> String {
@@ -541,6 +575,7 @@ struct ScoutWorkspaceView: View {
                 }
                 if visit.isEditable && assessment.stopContext != nil && !assessment.observations.contains(where: { $0.linkedPinID != nil || $0.linkedGrowthStageRecordID != nil }) {
                     Button("Change assessed block") {
+                        detectedBlockID = nil; observationFix = nil; blockSelectionReason = nil
                         blockCorrectionStopID = assessment.id; selectedMapBlockID = assessment.paddockID; showsBlockSelection = true
                     }
                 } else {
@@ -569,13 +604,15 @@ struct ScoutWorkspaceView: View {
             }
         } else {
             Section {
+                if visit.isEditable {
+                    Button { prepareObservation() } label: {
+                        Text("Make observation").frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.borderedProminent).tint(VineyardTheme.leafGreen)
+                    .disabled(showsBlockSelection || creatingStop)
+                }
                 ScoutWorkspaceMap(visit: visit, selectedBlockID: $selectedMapBlockID)
                     .listRowInsets(EdgeInsets())
-                if visit.isEditable {
-                    Button("Make observation") { blockCorrectionStopID = nil; suggestBlock(); showsBlockSelection = true }
-                        .buttonStyle(.borderedProminent).tint(VineyardTheme.leafGreen)
-                        .frame(maxWidth: .infinity, minHeight: 48)
-                }
             }
             Section("Observations") {
                 if visit.assessments.isEmpty { Text("Walk the vineyard and make your first observation.").foregroundStyle(.secondary) }
@@ -613,20 +650,49 @@ struct ScoutWorkspaceView: View {
             accuracyMetres: location.horizontalAccuracy, measuredAt: location.timestamp)
     }
 
-    private func suggestBlock() {
-        guard selectedMapBlockID == nil, let fix = qualifyingFix() else { return }
-        let coordinate = CLLocationCoordinate2D(latitude: fix.latitude, longitude: fix.longitude)
-        let matches = store.paddocks.filter { block in
-            block.polygonPoints.count >= 3 && RowGuidance.isPointInPolygon(point: coordinate, polygon: block.polygonPoints.map(\.coordinate))
+    private func cancelBlockSelection() {
+        showsBlockSelection = false; detectedBlockID = nil; observationFix = nil
+        observationVisitID = nil; observationUserID = nil; blockCorrectionStopID = nil
+        blockSelectionReason = nil
+    }
+
+    private func prepareObservation() {
+        guard !showsBlockSelection, !creatingStop, editingStopID == nil,
+              let visit = openVisit, visit.isEditable, !insights.deletionPending(visitID: visit.id) else { return }
+        selectedMapBlockID = nil; detectedBlockID = nil; blockCorrectionStopID = nil
+        observationError = nil; observationFix = nil
+        observationVisitID = visit.id; observationUserID = auth.userId
+        locationService.startUpdating()
+        if locationService.authorizationStatus == .authorizedAlways || locationService.authorizationStatus == .authorizedWhenInUse,
+           let fix = qualifyingFix() {
+            let coordinate = CLLocationCoordinate2D(latitude: fix.latitude, longitude: fix.longitude)
+            let matches = observationBlocks.filter { block in
+                block.polygonPoints.count >= 3 && RowGuidance.isPointInPolygon(point: coordinate, polygon: block.polygonPoints.map(\.coordinate))
+            }
+            if matches.count == 1 {
+                detectedBlockID = matches.first?.id; selectedMapBlockID = detectedBlockID
+                observationFix = fix; blockSelectionReason = nil
+            } else {
+                blockSelectionReason = matches.isEmpty ? "No block boundary matches your GPS position. Choose a block manually." : "Block boundaries overlap at your GPS position. Choose a block manually."
+            }
+        } else {
+            blockSelectionReason = locationService.authorizationStatus == .denied || locationService.authorizationStatus == .restricted
+                ? "Location permission is unavailable. Choose a block manually; recording still works offline."
+                : "A current, accurate GPS fix is unavailable. Choose a block manually; recording still works offline."
         }
-        if matches.count == 1 { selectedMapBlockID = matches.first?.id }
+        showsBlockSelection = true
     }
 
     private func beginObservation() {
-        guard let visit = openVisit, let blockID = selectedMapBlockID else { return }
+        guard showsBlockSelection, !creatingStop, editingStopID == nil,
+              let visit = openVisit, visit.id == observationVisitID, auth.userId == observationUserID,
+              visit.isEditable, !insights.deletionPending(visitID: visit.id),
+              let blockID = selectedMapBlockID, observationBlocks.contains(where: { $0.id == blockID }) else { return }
+        creatingStop = true
+        defer { creatingStop = false }
         if let id = insights.beginStop(visitID: visit.id, paddockID: blockID, observerID: auth.userId,
-            observerName: auth.userName, fix: qualifyingFix()) {
-            editingStopID = id; showsBlockSelection = false
+            observerName: auth.userName, fix: detectedBlockID == blockID ? observationFix : nil) {
+            editingStopID = id; cancelBlockSelection()
             observationError = insights.lastWriteFailed ? "The draft needs a durable save. Retry Save observation before leaving." : nil
         } else { observationError = "The observation draft could not be saved. Retry before leaving." }
     }

@@ -8,6 +8,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -53,6 +55,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -339,6 +342,14 @@ private fun ScoutWorkspace(
     var observationError by remember { mutableStateOf<String?>(null) }
     var creatingStop by remember { mutableStateOf(false) }
     var stopFix by remember { mutableStateOf<com.rork.vinetrack.data.insights.ScoutPhotoFix?>(null) }
+    var observationFix by remember { mutableStateOf<com.rork.vinetrack.data.insights.ScoutPhotoFix?>(null) }
+    var detectedBlockId by remember { mutableStateOf<String?>(null) }
+    var observationRequestId by remember { mutableStateOf<String?>(null) }
+    var observationTripId by remember { mutableStateOf<String?>(null) }
+    var observationAuthorId by remember { mutableStateOf<String?>(null) }
+    var locatingBlock by remember { mutableStateOf(false) }
+    var blockSelectionReason by remember { mutableStateOf<String?>(null) }
+    val observationBlocks = state.paddocks.filter { it.vineyardId == state.selectedVineyardId }
     var showReview by remember { mutableStateOf(false) }
     var completionError by remember { mutableStateOf<String?>(null) }
     var showAllVintages by remember { mutableStateOf(false) }
@@ -372,13 +383,79 @@ private fun ScoutWorkspace(
             cameraError = message
         },
     )
-    LaunchedEffect(current?.id) {
+    fun cancelBlockSelection() {
+        showBlockSelection = false; detectedBlockId = null; observationFix = null
+        observationRequestId = null; observationTripId = null; observationAuthorId = null
+        locatingBlock = false; blockCorrectionStopId = null; blockSelectionReason = null
+    }
+    LaunchedEffect(current?.id, state.currentUserId, state.selectedVineyardId) {
         selectedMapBlockId = null
+        cancelBlockSelection()
+        stopFix = null
         if (current?.assessments?.none { it.id == editingStopId } != false) editingStopId = null
-        if (current != null) vm.scoutStopFix { stopFix = it }
+        if (current != null) {
+            val tripId = current.id
+            val vineyardId = state.selectedVineyardId
+            val authorId = state.currentUserId
+            vm.scoutStopFix { fix ->
+                val latest = vm.ui.value
+                if (insights.openVisitId.value == tripId && latest.selectedVineyardId == vineyardId &&
+                    latest.currentUserId == authorId && observationRequestId == null) stopFix = fix
+            }
+        }
+    }
+    DisposableEffect(Unit) { onDispose { observationRequestId = null } }
+    fun beginObservation() {
+        if (!showBlockSelection || creatingStop || locatingBlock || editingStopId != null) return
+        val visit = current ?: return
+        val blockId = selectedMapBlockId ?: return
+        val latest = vm.ui.value
+        if (observationRequestId == null || observationTripId != visit.id ||
+            insights.openVisitId.value != visit.id || latest.currentUserId != observationAuthorId ||
+            latest.selectedVineyardId != visit.vineyardId || !visit.isEditable ||
+            insights.deletionPending(visit.id) || latest.paddocks.none { it.id == blockId && it.vineyardId == visit.vineyardId }) return
+        creatingStop = true
+        val id = insights.beginStop(visit.id, blockId, observationAuthorId, latest.userDisplayName,
+            if (detectedBlockId == blockId) observationFix else null)
+        if (id != null) {
+            editingStopId = id; cancelBlockSelection()
+            observationError = if (insights.lastWriteFailed.value) "The draft needs a durable save. Retry Save observation before leaving." else null
+            vm.captureScoutStopWeather(visit.id, id)
+        } else observationError = "The observation draft could not be saved. Retry before leaving."
+        creatingStop = false
+    }
+    fun prepareObservation() {
+        if (showBlockSelection || locatingBlock || creatingStop || editingStopId != null) return
+        val visit = current ?: return
+        if (!visit.isEditable || insights.deletionPending(visit.id)) return
+        val requestId = java.util.UUID.randomUUID().toString()
+        val authorId = state.currentUserId
+        observationRequestId = requestId; observationTripId = visit.id; observationAuthorId = authorId
+        selectedMapBlockId = null; detectedBlockId = null; observationFix = null; stopFix = null
+        blockCorrectionStopId = null; observationError = null
+        locatingBlock = true; blockSelectionReason = "Checking your current GPS position…"; showBlockSelection = true
+        vm.scoutStopFix { fix ->
+            val latest = vm.ui.value
+            if (observationRequestId != requestId || !showBlockSelection ||
+                insights.openVisitId.value != visit.id || latest.selectedVineyardId != visit.vineyardId ||
+                latest.currentUserId != authorId) return@scoutStopFix
+            locatingBlock = false; stopFix = fix
+            val matches = if (fix == null) emptyList() else latest.paddocks.filter { block ->
+                block.vineyardId == visit.vineyardId && com.rork.vinetrack.data.RowAttachment.containsPoint(block, fix.latitude, fix.longitude)
+            }
+            if (matches.size == 1) {
+                detectedBlockId = matches.single().id; selectedMapBlockId = detectedBlockId
+                observationFix = fix; blockSelectionReason = null
+            } else blockSelectionReason = when {
+                fix == null -> "A current, accurate GPS fix is unavailable or location permission is denied. Choose a block manually; recording still works offline."
+                matches.isEmpty() -> "No block boundary matches your GPS position. Choose a block manually."
+                else -> "Block boundaries overlap at your GPS position. Choose a block manually."
+            }
+        }
     }
     fun leaveTripOrObservation() {
-        if (editingStopId != null) confirmsLeaveObservation = true
+        if (showBlockSelection) cancelBlockSelection()
+        else if (editingStopId != null) confirmsLeaveObservation = true
         else if (current != null) insights.openVisit(null)
         else onBack()
     }
@@ -510,10 +587,11 @@ private fun ScoutWorkspace(
                         }
                     }
                 }
-                item {
-                    ScoutList(
-                        title = "Scout history",
-                        visits = historyVisits,
+                item { SectionHeader("Scout history", onLight = true) }
+                if (historyVisits.isEmpty()) item { Text("None yet.", color = vine.textSecondary) }
+                items(historyVisits, key = { "scout-trip:${it.id}" }) { visit ->
+                    ScoutTripCard(
+                        visit = visit,
                         paddocks = state.paddocks,
                         onOpen = { insights.openVisit(it) },
                         onReport = { reportVisit = it },
@@ -531,6 +609,12 @@ private fun ScoutWorkspace(
                     Text(insights.syncStatus(current), color = VineColors.Warning)
                     TextButton(onClick = { reportVisit = current }) { Text("View Report") }
                 }
+                if (editingStopId == null && current.isEditable && !insights.deletionPending(current.id)) item {
+                    Button(onClick = { prepareObservation() }, enabled = !showBlockSelection && !locatingBlock && !creatingStop,
+                        modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen)) {
+                        Text("Make observation")
+                    }
+                }
                 if (editingStopId == null) item {
                     ScoutWorkspaceMap(
                         visit = current,
@@ -542,19 +626,6 @@ private fun ScoutWorkspace(
                         onBlockSelected = { selectedMapBlockId = it },
                         photoBytes = { id -> current.assessments.flatMap { it.observations }.flatMap { it.photos }.firstOrNull { it.id == id }?.let(vm.vineyardInsights::photoBytes) },
                     )
-                }
-                if (editingStopId == null && current.isEditable && !insights.deletionPending(current.id)) item {
-                    Button(onClick = {
-                        blockCorrectionStopId = null
-                        showBlockSelection = true
-                        vm.scoutStopFix { fresh ->
-                            stopFix = fresh
-                            if (selectedMapBlockId == null && fresh != null) {
-                                val matches = state.paddocks.filter { block -> com.rork.vinetrack.data.RowAttachment.containsPoint(block, fresh.latitude, fresh.longitude) }
-                                if (matches.size == 1) selectedMapBlockId = matches.single().id
-                            }
-                        }
-                    }, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen)) { Text("Make observation") }
                 }
                 items(current.assessments.filter { editingStopId == null || it.id == editingStopId }, key = { it.id }) { assessment ->
                     if (editingStopId == null) {
@@ -580,7 +651,7 @@ private fun ScoutWorkspace(
                                 }
                             }) { Text("Retry / record stop location") }
                             if (current.isEditable && assessment.stopContext != null && assessment.observations.none { it.linkedPinId != null || it.linkedGrowthStageRecordId != null }) {
-                                TextButton(onClick = { blockCorrectionStopId = assessment.id; selectedMapBlockId = assessment.paddockId; showBlockSelection = true }) { Text("Change assessed block") }
+                                TextButton(onClick = { detectedBlockId = null; observationFix = null; blockSelectionReason = null; blockCorrectionStopId = assessment.id; selectedMapBlockId = assessment.paddockId; showBlockSelection = true }) { Text("Change assessed block") }
                             } else Text("Legacy and canonical Growth Stage-linked block identities are retained. Correct the block before linking E-L evidence.", fontSize = 12.sp)
                             observationError?.let { Text(it, color = VineColors.Destructive) }
                         }
@@ -643,39 +714,43 @@ private fun ScoutWorkspace(
         }) { Text("Keep draft and return") } },
         dismissButton = { TextButton(onClick = { confirmsLeaveObservation = false }) { Text("Continue editing") } })
 
-    if (showBlockSelection && current != null) AlertDialog(
-        onDismissRequest = { showBlockSelection = false }, title = { Text("Confirm observation block") },
+    val detectedBlock = observationBlocks.firstOrNull { it.id == detectedBlockId }
+    if (showBlockSelection && current != null && detectedBlock != null) AlertDialog(
+        onDismissRequest = { cancelBlockSelection() },
+        title = { Text("Are you observing ${detectedBlock.name}?") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(detectedBlock.varietyAllocations.orEmpty().mapNotNull { it.displayName }.joinToString())
+            observationError?.let { Text(it, color = VineColors.Destructive) }
+        } },
+        confirmButton = { TextButton(enabled = !creatingStop, onClick = { beginObservation() }) { Text("Yes, continue") } },
+        dismissButton = { Column {
+            TextButton(onClick = {
+                detectedBlockId = null; selectedMapBlockId = null; observationFix = null
+                blockSelectionReason = "Choose and confirm the block you are observing."
+            }) { Text("Choose another block") }
+            TextButton(onClick = { cancelBlockSelection() }) { Text("Cancel") }
+        } })
+    if (showBlockSelection && current != null && detectedBlock == null) AlertDialog(
+        onDismissRequest = { cancelBlockSelection() }, title = { Text("Confirm observation block") },
         text = { LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            item { Text("Correct the suggestion or select a block explicitly. Location is optional.") }
-            items(state.paddocks, key = { it.id }) { block ->
-                OutlinedButton(onClick = { selectedMapBlockId = block.id }, modifier = Modifier.fillMaxWidth()) {
+            item { Text(blockSelectionReason ?: "Choose and confirm the block you are observing. Location is optional.") }
+            items(observationBlocks, key = { it.id }) { block ->
+                OutlinedButton(enabled = !locatingBlock, onClick = { selectedMapBlockId = block.id }, modifier = Modifier.fillMaxWidth()) {
                     Text((if (selectedMapBlockId == block.id) "✓ " else "") + block.name + " • " + block.varietyAllocations.orEmpty().mapNotNull { it.displayName }.joinToString())
                 }
             }
             observationError?.let { item { Text(it, color = VineColors.Destructive) } }
         } },
-        confirmButton = { TextButton(enabled = selectedMapBlockId != null && !creatingStop, onClick = {
-            creatingStop = true
+        confirmButton = { TextButton(enabled = selectedMapBlockId != null && !creatingStop && !locatingBlock, onClick = {
+            if (!showBlockSelection || creatingStop || locatingBlock) return@TextButton
             val blockId = selectedMapBlockId ?: return@TextButton
             val correctionId = blockCorrectionStopId
             if (correctionId != null) {
-                creatingStop = false
-                if (insights.correctStopBlock(current.id, correctionId, blockId)) { showBlockSelection = false; blockCorrectionStopId = null }
+                if (insights.correctStopBlock(current.id, correctionId, blockId)) cancelBlockSelection()
                 else observationError = "The block correction could not be saved. Retry; canonical linked evidence cannot be moved."
-                return@TextButton
-            }
-            val tripId = current.id
-            val authorId = state.currentUserId
-            vm.scoutStopFix { fix ->
-                creatingStop = false
-                val latest = vm.ui.value
-                if (latest.selectedVineyardId != current.vineyardId || latest.currentUserId != authorId) return@scoutStopFix
-                val id = insights.beginStop(tripId, blockId, authorId, state.userDisplayName, fix)
-                if (id != null) { editingStopId = id; showBlockSelection = false; observationError = if (insights.lastWriteFailed.value) "The draft needs a durable save. Retry Save observation before leaving." else null; vm.captureScoutStopWeather(tripId, id) }
-                else observationError = "The observation draft could not be saved. Retry before leaving."
-            }
-        }) { Text(if (blockCorrectionStopId == null) "Make observation" else "Save block correction") } },
-        dismissButton = { TextButton(onClick = { showBlockSelection = false }) { Text("Cancel") } })
+            } else beginObservation()
+        }) { Text(if (blockCorrectionStopId == null) "Confirm block and continue" else "Save block correction") } },
+        dismissButton = { TextButton(onClick = { cancelBlockSelection() }) { Text("Cancel") } })
 
     stageRequest?.let { request ->
         ScoutGrowthStagePickerSheet(
@@ -731,10 +806,10 @@ private fun ScoutWorkspace(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ScoutList(
-    title: String,
-    visits: List<ScoutVisit>,
+private fun ScoutTripCard(
+    visit: ScoutVisit,
     paddocks: List<Paddock>,
     onOpen: (String) -> Unit,
     onReport: (ScoutVisit) -> Unit,
@@ -743,63 +818,37 @@ private fun ScoutList(
     canDelete: (ScoutVisit) -> Boolean,
     deletionPending: (ScoutVisit) -> Boolean,
     syncStatus: (ScoutVisit) -> String,
+    modifier: Modifier = Modifier,
 ) {
     val vine = LocalVineColors.current
-    VineyardCard {
-        Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
-        Spacer(Modifier.height(8.dp))
-        if (visits.isEmpty()) {
-            Text("None yet.", fontSize = 13.sp, color = vine.textSecondary)
+    VineyardCard(modifier = modifier) {
+        val names = visit.assessments
+            .mapNotNull { a -> paddocks.firstOrNull { it.id == a.paddockId }?.name }
+        val status = syncStatus(visit)
+        Column(
+            modifier = Modifier.fillMaxWidth().clickable { onOpen(visit.id) }.padding(vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(visit.scoutDateIso, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+            Text("${visit.status.label} • ${visit.scoutNameSnapshot ?: "—"}", fontSize = 12.sp, color = vine.textSecondary)
+            Text("Vintage ${VintageYearText.format(visit.vintageYear)}", fontSize = 12.sp, color = vine.textSecondary)
+            Text(status, fontSize = 12.sp, color = if (status == "Synced") VineColors.LeafGreen else VineColors.Warning)
+            Text(if (names.isEmpty()) "No blocks yet" else "${names.joinToString(", ")} (${names.size})",
+                fontSize = 12.sp, color = vine.textSecondary)
+            Text("${visit.assessments.sumOf { it.recordedObservations.size }} observations • " +
+                "${visit.assessments.sumOf { it.attentionItems.size }} attention • ${visit.assessments.sumOf { it.photoCount }} photos",
+                fontSize = 11.sp, color = vine.textSecondary)
+            visit.visitSummary?.let { Text(it, maxLines = 2, fontSize = 12.sp, color = vine.textPrimary) }
         }
-        visits.forEach { visit ->
-            val names = visit.assessments
-                .mapNotNull { a -> paddocks.firstOrNull { it.id == a.paddockId }?.name }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onOpen(visit.id) }
-                    .padding(vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(visit.scoutDateIso, fontSize = 14.sp, color = vine.textPrimary)
-                    Text(
-                        "${visit.status.label} • ${visit.scoutNameSnapshot ?: "—"}",
-                        fontSize = 12.sp,
-                        color = vine.textSecondary,
-                    )
-                    Text(
-                        syncStatus(visit),
-                        fontSize = 12.sp,
-                        color = if (syncStatus(visit) == "Synced") VineColors.LeafGreen else VineColors.Warning,
-                    )
-                    Text(
-                        if (names.isEmpty()) "No blocks yet" else "${names.joinToString(", ")} (${names.size})",
-                        fontSize = 12.sp,
-                        color = vine.textSecondary,
-                    )
-                    Text(
-                        "${visit.assessments.sumOf { it.attentionItems.size }} attention • " +
-                            "${visit.assessments.sumOf { it.photoCount }} photos",
-                        fontSize = 11.sp,
-                        color = vine.textSecondary,
-                    )
-                    visit.visitSummary?.let { Text(it, maxLines = 2, fontSize = 12.sp, color = vine.textPrimary) }
-                }
-                Text("Vintage ${VintageYearText.format(visit.vintageYear)}", fontSize = 12.sp, color = vine.textSecondary)
+        HorizontalDivider(color = vine.cardBorder)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = { onReport(visit) }) { Text("View Report") }
+            TextButton(onClick = { onEdit(visit) }, enabled = !deletionPending(visit)) {
+                Text(if (visit.isEditable) "Edit" else "Reopen and edit")
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = { onReport(visit) }) { Text("View Report") }
-                TextButton(onClick = { onEdit(visit) }, enabled = !deletionPending(visit)) {
-                    Text(if (visit.isEditable) "Edit" else "Reopen and edit")
-                }
-                if (canDelete(visit)) {
-                    TextButton(onClick = { onDelete(visit) }) {
-                        Text("Delete Scout", color = VineColors.Destructive)
-                    }
-                }
+            if (canDelete(visit)) {
+                TextButton(onClick = { onDelete(visit) }) { Text("Delete", color = VineColors.Destructive) }
             }
-            HorizontalDivider(color = vine.cardBorder)
         }
     }
 }
