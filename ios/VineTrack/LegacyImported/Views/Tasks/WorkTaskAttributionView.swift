@@ -23,7 +23,7 @@ struct WorkTaskAttributionView: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if task.isFinalized || task.status == "completed" {
+            if task.isFinalized {
                 Text("Completed").foregroundStyle(Color.green)
                 if let user = WorkTaskPlanning.completingUser(task, trips: store.trips, verifiedMemberIDs: Set(members.filter { $0.vineyardId == task.vineyardId }.map(\.userId))) {
                     Text("Completed by \(person(user))")

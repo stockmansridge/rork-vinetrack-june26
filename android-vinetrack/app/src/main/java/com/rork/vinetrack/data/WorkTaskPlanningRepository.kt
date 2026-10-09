@@ -83,6 +83,46 @@ class WorkTaskPlanningRepository(private val session: SessionStore) {
         saved
     }
 
+    /** Acknowledges only one canonical row. No duplicate INSERT recovery or conditional PATCH retry. */
+    suspend fun write(intent: WorkTaskWriteIntent): WorkTask = withContext(Dispatchers.IO) {
+        require(session.userId == intent.authorId && session.selectedVineyardId == intent.vineyardId)
+        val baseline = intent.baselineJson?.let { json.parseToJsonElement(it).jsonObject }
+        if (baseline != null) {
+            val version = baseline["sync_version"]?.jsonPrimitive?.longOrNull ?: error(refreshMessage)
+            require(observedKeys.all { it in baseline } && baseline["id"]?.jsonPrimitive?.content == intent.taskId &&
+                baseline["vineyard_id"]?.jsonPrimitive?.content == intent.vineyardId && baseline["deleted_at"] == JsonNull &&
+                version > 0 && version < Long.MAX_VALUE && intent.payload["sync_version"]?.jsonPrimitive?.longOrNull == version + 1)
+        } else require(intent.payload["id"]?.jsonPrimitive?.content == intent.taskId && intent.payload["vineyard_id"]?.jsonPrimitive?.content == intent.vineyardId && intent.payload["sync_version"]?.jsonPrimitive?.longOrNull == 1L)
+        val membership = SupabaseClient.http.get(SupabaseClient.restUrl("vineyard_members")) {
+            auth(); parameter("select", "role"); parameter("vineyard_id", "eq.${intent.vineyardId}"); parameter("user_id", "eq.${intent.authorId}")
+        }
+        check(membership.status.isSuccess())
+        val member = json.parseToJsonElement(membership.bodyAsText()).jsonArray.singleOrNull()?.jsonObject
+        require(member?.get("role")?.jsonPrimitive?.content in listOf("owner", "manager", "supervisor", "operator"))
+        intent.payload["assigned_to"]?.takeUnless { it == JsonNull || it == baseline?.get("assigned_to") }?.let { selected ->
+            val response = SupabaseClient.http.get(SupabaseClient.restUrl("vineyard_members")) {
+                auth(); parameter("select", "user_id"); parameter("vineyard_id", "eq.${intent.vineyardId}"); parameter("user_id", "eq.${selected.jsonPrimitive.content}")
+            }
+            check(response.status.isSuccess() && json.parseToJsonElement(response.bodyAsText()).jsonArray.size == 1)
+        }
+        intent.payload["assigned_external_resource_id"]?.takeUnless { it == JsonNull || it == baseline?.get("assigned_external_resource_id") }?.let { selected ->
+            check(ExternalResourceRepository(session).list(intent.vineyardId).any { it.id == selected.jsonPrimitive.content && it.isActive && it.deletedAt == null })
+        }
+        require(session.userId == intent.authorId && session.selectedVineyardId == intent.vineyardId)
+        val response = SupabaseClient.http.request(SupabaseClient.restUrl("work_tasks")) {
+            method = if (baseline == null) HttpMethod.Post else HttpMethod.Patch
+            auth(); headers { append("Prefer", "return=representation") }; contentType(ContentType.Application.Json)
+            baseline?.let { row -> WorkTaskWriteContract.predicates(row, observedKeys).forEach { (key, predicate) -> parameter(key, predicate) } }
+            setBody(intent.payload.toString())
+        }
+        check(response.status.isSuccess()) { conflictMessage }
+        val row = json.parseToJsonElement(response.bodyAsText()).jsonArray.singleOrNull()?.jsonObject ?: error(conflictMessage)
+        WorkTaskWriteContract.verify(baseline, intent.payload, row, observedKeys)
+        val saved = json.decodeFromJsonElement<WorkTask>(row)
+        check(saved.id == intent.taskId && saved.vineyardId == intent.vineyardId && session.userId == intent.authorId && session.selectedVineyardId == intent.vineyardId)
+        saved
+    }
+
     private fun HttpRequestBuilder.auth() {
         val token = session.accessToken ?: error("Sign in required")
         headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
@@ -96,7 +136,8 @@ class WorkTaskPlanningRepository(private val session: SessionStore) {
         val observedKeys = listOf("id", "vineyard_id", "sync_version", "updated_at", "deleted_at", "is_archived",
             "assigned_to", "assigned_external_resource_id", "schedule_basis", "target_el_stage", "date", "start_date", "end_date", "vintage_year",
             "status", "is_finalized", "completed_by", "completed_at", "finalized_by", "finalized_at",
-            "task_type", "description", "notes", "paddock_id", "paddock_name", "duration_hours")
+            "task_type", "description", "notes", "paddock_id", "paddock_name", "duration_hours",
+            "area_ha", "costing_method", "piece_rate_per_vine", "piece_vine_count", "pruning_activity_id", "created_at", "created_by")
 
         /** Deliberately excludes dates, lifecycle, costs, resource JSON and generated-task links. */
         fun selectionPatch(draft: WorkTaskPlanningDraft, assignmentChanged: Boolean, stageChanged: Boolean, version: Long): JsonObject = buildJsonObject {

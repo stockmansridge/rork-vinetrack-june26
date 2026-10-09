@@ -562,7 +562,7 @@ if (providers.gradleProperty("workTaskPlanningFocusedTests").orNull == "true") {
     afterEvaluate {
         tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
             setSource(fileTree("src/test/java") {
-                include("**/WorkTaskPlanningParityTest.kt", "**/PruningResourceCASTest.kt", "**/WorkTaskMachineCostingTest.kt", "**/PruningActivityEditorFlowTest.kt")
+                include("**/WorkTaskPlanningParityTest.kt", "**/WorkTaskWriteParityTest.kt", "**/PruningResourceCASTest.kt", "**/WorkTaskMachineCostingTest.kt", "**/PruningActivityEditorFlowTest.kt")
             })
         }
     }

@@ -1,0 +1,316 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:compileDebugKotlin
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/ChemicalInfoService.kt:178:24 Unnecessary safe call on a non-null receiver of type 'ChemicalInfoService.ChemicalMasterMatch'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/ChemicalInfoService.kt:371:76 Unnecessary safe call on a non-null receiver of type 'ChemicalInfoService.ChemicalMasterMatch'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PinPlacement.kt:295:35 Condition is always 'true'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SavedChemicalRepository.kt:468:58 Unnecessary safe call on a non-null receiver of type 'SessionStore'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/ScoutReportPdfExporter.kt:87:100 Unnecessary safe call on a non-null receiver of type 'ScoutObservation'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SprayCalculator.kt:295:47 Unnecessary safe call on a non-null receiver of type 'String'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SprayCalculator.kt:302:58 Unnecessary safe call on a non-null receiver of type 'String'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/StartTankCommitCoordinator.kt:105:31 Unnecessary safe call on a non-null receiver of type 'Trip'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/StartTankCommitCoordinator.kt:106:31 Unnecessary safe call on a non-null receiver of type 'Trip'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/StartTankCommitCoordinator.kt:107:31 Unnecessary safe call on a non-null receiver of type 'Trip'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SupabaseClient.kt:98:41 Condition is always 'true'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SupabaseClient.kt:112:42 Condition is always 'false'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripCostAllocationRepository.kt:15:41 Unnecessary safe call on a non-null receiver of type 'String'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripCostAllocationRepository.kt:16:45 Elvis operator (?:) always returns the left operand of non-nullable type 'String'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/WorkTaskRepository.kt:371:23 Redundant creation of Json format. Creating instances for each usage can be slow.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AuthRepository.kt:186:70 Elvis operator (?:) always returns the left operand of non-nullable type 'Long'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalDefaultRateValidity.kt:100:73 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalDefaultRateValidity.kt:102:40 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalDefaultRateValidity.kt:103:40 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalDetailsCompleteness.kt:35:111 Unnecessary safe call on a non-null receiver of type 'ChemicalActivityGroup'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalServerDefaultRateOptions.kt:106:69 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalServerDefaultRateOptions.kt:106:83 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/insights/VineyardInsightsSyncWorker.kt:78:47 Condition is always 'true'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/insights/VineyardInsightsSyncWorker.kt:797:54 Unnecessary safe call on a non-null receiver of type 'ScoutPhotoFiles'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/material/WorkTaskMaterialModels.kt:145:36 This declaration needs opt-in. Its usage should be marked with '@kotlinx.serialization.ExperimentalSerializationApi' or '@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)'
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/Models.kt:560:38 Unnecessary safe call on a non-null receiver of type 'PlantingGroupTotal'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/Models.kt:561:42 Unnecessary safe call on a non-null receiver of type 'PlantingGroupTotal'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt:6650:48 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Pair<Int, Int>'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt:8145:47 Unnecessary safe call on a non-null receiver of type 'VineyardLogoCache.Entry'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt:11720:45 Elvis operator (?:) always returns the left operand of non-nullable type 'String'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/BlockGeometryOverlay.kt:132:30 'fun rememberMarkerState(key: String? = ..., position: LatLng = ...): MarkerState' is deprecated. Use 'rememberUpdatedMarkerState' instead - It may be confusing to think that the state is automatically updated as the position changes, so it will be changed or removed.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/ChemicalIntelligenceUi.kt:82:60 'val Icons.Filled.Help: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Help.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/CompassHeading.kt:95:38 Unnecessary safe call on a non-null receiver of type 'Display'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/WorkTaskLabourLines.kt:31:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/WorkTaskLabourLines.kt:233:28 Condition is always 'true'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/WorkTaskLabourLines.kt:624:55 Unnecessary safe call on a non-null receiver of type 'WorkTaskCostingContext'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/WorkTaskLabourLines.kt:657:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/WorkTaskLabourLines.kt:851:46 Unnecessary safe call on a non-null receiver of type 'Function3<WorkTaskCostingMethod, Double?, Int?, Unit>'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/WorkTaskLabourLines.kt:875:68 Unnecessary safe call on a non-null receiver of type 'WorkTaskCostingContext'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/WorkTaskLabourLines.kt:876:46 Unnecessary safe call on a non-null receiver of type 'Function3<WorkTaskCostingMethod, Double?, Int?, Unit>'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/main/Navigation.kt:84:67 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/main/Navigation.kt:108:84 'val Icons.Filled.FactCheck: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.FactCheck.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/main/WorkContextViewModel.kt:330:18 This class or interface requires opt-in to be implemented: Inheriting from this kotlinx.coroutines API is unstable. Either new methods may be added in the future, which would break the inheritance, or correctly inheriting from it requires fulfilling contracts that may change in the future.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/main/WorkContextViewModel.kt:350:32 This class or interface requires opt-in to be implemented: Inheriting from this kotlinx.coroutines API is unstable. Either new methods may be added in the future, which would break the inheritance, or correctly inheriting from it requires fulfilling contracts that may change in the future.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/AdminDashboardScreen.kt:314:51 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/AlertsCentreScreen.kt:423:47 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/BlockMapEditorScreen.kt:235:18 'fun rememberCameraPositionState(key: String? = ..., crossinline init: CameraPositionState.() -> Unit = ...): CameraPositionState' is deprecated. The 'key' parameter is deprecated. Please use the new `rememberCameraPositionState` function without a key.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/BlockMapEditorScreen.kt:817:45 'val Icons.Filled.Undo: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Undo.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalManualEditorSheet.kt:28:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalManualEditorSheet.kt:774:29 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalMatchFlowSheet.kt:663:50 'val Icons.Filled.Help: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Help.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalsScreen.kt:48:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalsScreen.kt:1145:44 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SavedChemical'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalsScreen.kt:2127:59 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalsScreen.kt:2156:59 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CostReportsScreen.kt:35:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CostReportsScreen.kt:517:59 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/DamageRecordsScreen.kt:603:39 'val Icons.Filled.Undo: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Undo.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/EditBlockScreen.kt:47:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/EditBlockScreen.kt:1053:59 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ElRipenessHeatmapScreen.kt:373:52 'fun Modifier.menuAnchor(): Modifier' is deprecated. Use overload that takes ExposedDropdownMenuAnchorType and enabled parameters.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ElRipenessHeatmapScreen.kt:603:17 'fun rememberMarkerState(key: String? = ..., position: LatLng = ...): MarkerState' is deprecated. Use 'rememberUpdatedMarkerState' instead - It may be confusing to think that the state is automatically updated as the position changes, so it will be changed or removed.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ElRipenessHeatmapScreen.kt:642:17 'fun rememberMarkerState(key: String? = ..., position: LatLng = ...): MarkerState' is deprecated. Use 'rememberUpdatedMarkerState' instead - It may be confusing to think that the state is automatically updated as the position changes, so it will be changed or removed.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ElRipenessHeatmapScreen.kt:717:34 'val Icons.Filled.NavigateBefore: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.NavigateBefore.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ElRipenessHeatmapScreen.kt:734:34 'val Icons.Filled.NavigateNext: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.NavigateNext.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/EquipmentScreen.kt:50:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/EquipmentScreen.kt:433:181 Elvis operator (?:) always returns the left operand of non-nullable type 'Double'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/EquipmentScreen.kt:463:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/FuelLogScreen.kt:47:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/FuelLogScreen.kt:1074:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/FuelLogScreen.kt:1108:60 Elvis operator (?:) always returns the left operand of non-nullable type 'String'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/GrapeAllocationScreen.kt:37:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/GrapeAllocationScreen.kt:609:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/GrapeAllocationScreen.kt:659:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/GrapeAllocationScreen.kt:893:63 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/GrowthScreen.kt:1315:47 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/IrrigationScreen.kt:411:72 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaintenanceScreen.kt:70:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaintenanceScreen.kt:426:79 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaintenanceScreen.kt:699:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaintenanceScreen.kt:929:35 'val Icons.Filled.ReceiptLong: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.ReceiptLong.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ManualSprayEntrySheet.kt:332:285 'fun Modifier.menuAnchor(): Modifier' is deprecated. Use overload that takes ExposedDropdownMenuAnchorType and enabled parameters.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaterialCostsScreen.kt:34:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaterialCostsScreen.kt:311:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaterialCostsScreen.kt:508:32 Unnecessary safe call on a non-null receiver of type 'MaterialLibraryEntry'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaterialCostsScreen.kt:511:55 Unnecessary safe call on a non-null receiver of type 'MaterialLibraryEntry'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaterialCostsScreen.kt:512:45 Unnecessary safe call on a non-null receiver of type 'MaterialLibraryEntry'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaterialCostsScreen.kt:513:49 Unnecessary safe call on a non-null receiver of type 'MaterialLibraryEntry'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaterialCostsScreen.kt:529:244 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaterialCostsScreen.kt:535:203 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/NoVineyardMembershipScreen.kt:37:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/NoVineyardMembershipScreen.kt:261:34 'val Icons.Filled.Logout: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Logout.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/NoVineyardMembershipScreen.kt:437:41 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/OperatorCategoriesScreen.kt:263:55 Unnecessary non-null assertion (!!) on a non-null receiver of type 'OperatorCategory'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/PinsScreen.kt:66:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/PinsScreen.kt:3286:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/PruningActivityReportScreen.kt:854:39 'val Icons.Filled.Undo: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Undo.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/RipenessSurfaces.kt:183:21 'when' is exhaustive so 'else' is redundant here.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SavedInputsScreen.kt:35:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SavedInputsScreen.kt:286:49 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SavedInput'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SavedInputsScreen.kt:319:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SavedInputsScreen.kt:341:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ScoutReportScreen.kt:132:102 Unnecessary safe call on a non-null receiver of type 'ScoutObservation'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ScoutReportScreen.kt:134:46 Unnecessary safe call on a non-null receiver of type 'ScoutObservation'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SettingsScreen.kt:73:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SettingsScreen.kt:559:42 'val Icons.Filled.FactCheck: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.FactCheck.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SettingsScreen.kt:1152:79 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SoilProfileEditorSheet.kt:27:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SoilProfileEditorSheet.kt:370:41 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:62:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:1308:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:1950:47 Unnecessary safe call on a non-null receiver of type 'Double'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:3902:63 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:3916:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:4199:79 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayEquipmentScreen.kt:251:186 Elvis operator (?:) always returns the left operand of non-nullable type 'Double'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayEquipmentScreen.kt:256:53 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SprayEquipment'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayPresetsScreen.kt:237:55 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SavedSprayPreset'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayProgramStepDetailScreen.kt:260:58 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayProgramStepEditSheet.kt:41:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayProgramStepEditSheet.kt:578:59 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt:98:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt:1557:54 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt:1644:37 Condition is always 'true'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt:1674:47 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt:1940:45 Unnecessary safe call on a non-null receiver of type 'SprayRecord'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt:1983:42 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SprayRecord'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt:2029:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt:2175:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt:2267:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt:2405:59 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt:2665:59 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt:2696:59 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SyncStatusScreen.kt:106:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripAuditScreen.kt:397:58 Unnecessary non-null assertion (!!) on a non-null receiver of type 'String'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripFunctionsSettingsScreen.kt:287:40 Unnecessary non-null assertion (!!) on a non-null receiver of type 'VineyardTripFunction'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripFunctionsSettingsScreen.kt:293:51 Unnecessary non-null assertion (!!) on a non-null receiver of type 'VineyardTripFunction'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripFunctionsSettingsScreen.kt:322:57 Unnecessary non-null assertion (!!) on a non-null receiver of type 'VineyardTripFunction'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:129:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:897:69 Elvis operator (?:) always returns the left operand of non-nullable type 'String'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:1238:54 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:1279:46 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:1679:47 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:2118:46 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:2215:28 Condition is always 'true'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:3408:43 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:4651:117 Elvis operator (?:) always returns the left operand of non-nullable type 'Double'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:5158:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:5201:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:5271:59 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:5309:59 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:5335:59 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:5389:63 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt:5432:63 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/UnifiedPinComposerScreen.kt:1289:9 'fun TabRow(selectedTabIndex: Int, modifier: Modifier = ..., containerColor: Color = ..., contentColor: Color = ..., indicator: ComposableFunction1<List<TabPosition>, Unit> = ..., divider: ComposableFunction0<Unit> = ..., tabs: ComposableFunction0<Unit>): Unit' is deprecated. Replaced with PrimaryTabRow and SecondaryTabRow.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/VineyardInsightsScreen.kt:235:37 'val Icons.Filled.EventNote: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.EventNote.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/VineyardInsightsScreen.kt:242:37 'val Icons.Filled.Article: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Article.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WeatherDataScreen.kt:996:75 Unnecessary safe call on a non-null receiver of type 'VineyardWeatherIntegration'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WeatherDataScreen.kt:996:103 Unnecessary safe call on a non-null receiver of type 'VineyardWeatherIntegration'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WeatherDataScreen.kt:1004:57 Unnecessary safe call on a non-null receiver of type 'VineyardWeatherIntegration'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WeatherDataScreen.kt:1021:34 Condition is always 'true'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt:70:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt:311:34 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt:721:47 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt:840:75 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt:1017:43 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt:1054:46 'val Icons.Filled.Assignment: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Assignment.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt:1303:47 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt:1561:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt:1593:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt:1998:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:64:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:933:79 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:1488:47 'val Icons.Filled.Notes: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Notes.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:1836:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:1926:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:1947:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:1980:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:2222:32 Elvis operator (?:) always returns the left operand of non-nullable type 'Int'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:2223:45 Elvis operator (?:) always returns the left operand of non-nullable type 'Double'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:2224:51 Elvis operator (?:) always returns the left operand of non-nullable type 'Double'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:2267:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac UP-TO-DATE
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:compileDebugUnitTestKotlin
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugJavaRes
+> Task :app:processDebugUnitTestJavaRes
+
+> Task :app:testDebugUnitTest
+
+PruningResourceCASTest > successful and duplicate retries acknowledge the same generation PASSED
+
+PruningResourceCASTest > cross vineyard and two identities cannot produce a CAS request PASSED
+
+PruningResourceCASTest > legacy draft absence never becomes an intentional resource clear PASSED
+
+PruningResourceCASTest > six explicit keys retain timestamp precision and intentional clears PASSED
+
+PruningResourceCASTest > stale cross device response preserves local selection and original baseline PASSED
+
+PruningResourceCASTest > serialized draft preserves retry baseline conflict snapshot and costing PASSED
+
+PruningResourceCASTest > wrong identity and absent response keys are not success PASSED
+
+PruningResourceCASTest > stage compatibility dates do not become plans or completion limits PASSED
+
+PruningResourceCASTest > missing baseline fields are not authoritative nulls PASSED
+
+WorkTaskMachineCostingTest > equipmentScopedIncludingLegacyMapping PASSED
+
+WorkTaskMachineCostingTest > zeroRateAndOverflowUnavailable PASSED
+
+WorkTaskMachineCostingTest > weightedPriceScoped PASSED
+
+WorkTaskMachineCostingTest > canonicalPayloadReopensWithoutRepricing PASSED
+
+WorkTaskMachineCostingTest > overridesSurviveEquipmentAndPriceRefresh PASSED
+
+WorkTaskMachineCostingTest > missingConfigurationIsNotZero PASSED
+
+WorkTaskMachineCostingTest > engineHoursPreferredIncludingZero PASSED
+
+WorkTaskMachineCostingTest > clearingOverridesRestoresAutomatic PASSED
+
+WorkTaskMachineCostingTest > zeroOverridesRemainExplicit PASSED
+
+WorkTaskMachineCostingTest > clearedMachineFieldsEncodeExplicitNulls PASSED
+
+WorkTaskMachineCostingTest > taskRollupIncludesSeparateFuelOnce PASSED
+
+WorkTaskMachineCostingTest > manualQuantityWithMissingRate PASSED
+
+WorkTaskMachineCostingTest > automaticFuelAndCharges PASSED
+
+WorkTaskMachineCostingTest > linkedTripCostsRemainSeparate PASSED
+
+WorkTaskMachineCostingTest > legacyPayloadStillDecodes PASSED
+
+WorkTaskMachineCostingTest > missingPriceLeavesCostUnset PASSED
+
+WorkTaskMachineCostingTest > missingAmountsKeepSummaryIncomplete PASSED
+
+WorkTaskMachineCostingTest > outboxRepositoryRestartRetainsSnapshot PASSED
+
+WorkTaskPlanningParityTest > directory payload explicitly clears contacts but cannot write audit or cost fields PASSED
+
+WorkTaskPlanningParityTest > canonical completion instant displays vineyard day across UTC midnight PASSED
+
+WorkTaskPlanningParityTest > only unambiguous finished same vineyard trips attribute historical completion PASSED
+
+WorkTaskPlanningParityTest > inclusive stage range combines search and excludes dated tasks PASSED
+
+WorkTaskPlanningParityTest > draft validates catalogue exclusivity and date range PASSED
+
+WorkTaskPlanningParityTest > draft permissions and selectable resource scope fail closed PASSED
+
+WorkTaskPlanningParityTest > real disk restart retains local planning draft and intentional clearing without a sync payload PASSED
+
+WorkTaskPlanningParityTest > failed durable draft write cannot report success PASSED
+
+WorkTaskPlanningParityTest > portal order keeps to do first then descending stages and upcoming dates PASSED
+
+WorkTaskPlanningParityTest > recorded completer is distinct from assignee and linked operator PASSED
+
+WorkTaskWriteParityTest > stale versions and changed preserved audit cannot acknowledge PASSED
+
+WorkTaskWriteParityTest > new E-L insert omits date and vintage and accepts server-derived vintage PASSED
+
+WorkTaskWriteParityTest > account change after response prevents acknowledgement PASSED
+
+WorkTaskWriteParityTest > completion records authenticated person and real press instant not backdated date PASSED
+
+WorkTaskWriteParityTest > conditional predicates preserve original version raw timestamp scope and deliberate nulls PASSED
+
+WorkTaskWriteParityTest > reopen clears audit only and date correction preserves original audit PASSED
+
+WorkTaskWriteParityTest > dated completion rejects before work day and E-L rejects unsupported catalogue gaps PASSED
+
+WorkTaskWriteParityTest > lost response persists original intent and restart cannot replay or rebase PASSED
+
+WorkTaskWriteParityTest > mode switches preserve anchor and omit completion PASSED
+
+WorkTaskWriteParityTest > business date leading component does not shift but audit fallback uses vineyard timezone PASSED
+
+WorkTaskWriteParityTest > persistence failure prevents network initiation PASSED
+
+BUILD SUCCESSFUL in 4m 7s
+26 actionable tasks: 7 executed, 19 up-to-date

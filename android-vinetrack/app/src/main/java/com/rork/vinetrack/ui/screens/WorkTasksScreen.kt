@@ -936,6 +936,7 @@ private fun WorkTaskDetailView(
 
     LaunchedEffect(task == null) { if (task == null) onBack() }
     if (task == null) return
+    LaunchedEffect(taskId) { vm.beginWorkTaskCompletion(task) }
     if (showCompletion) {
         com.rork.vinetrack.ui.components.WorkTaskCompletionDialog(task, state.seasonZone,
             onConfirm = { selected ->
@@ -1400,6 +1401,7 @@ private fun WorkTaskSheet(
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
     val editorAuthor = remember(existing?.id) { state.currentUserId }
+    val editorVineyard = remember(existing?.id) { state.selectedVineyardId }
 
     var taskType by remember { mutableStateOf(existing?.taskType ?: builtInWorkTaskTypes.first()) }
     // Multi-block selection (sql/051). Seed from the task's join rows when present,
@@ -1447,6 +1449,7 @@ private fun WorkTaskSheet(
     var draftMessage by remember(existing?.id) { mutableStateOf<String?>(null) }
     var planningBaselineJson by remember(existing?.id) { mutableStateOf<String?>(null) }
     var resumedPlanningDraft by remember(existing?.id) { mutableStateOf(false) }
+    var creationId by remember(existing?.id) { mutableStateOf(java.util.UUID.randomUUID().toString()) }
     var showAssignment by remember { mutableStateOf(false) }
     var showQuickAdd by remember { mutableStateOf(false) }
     var showRangePicker by remember { mutableStateOf(false) }
@@ -1456,6 +1459,7 @@ private fun WorkTaskSheet(
             vm.loadWorkTaskPlanningDraft(existing?.id)?.let { draft ->
                 resumedPlanningDraft = true
                 planningBaselineJson = draft.baselineJson
+                creationId = draft.creationId ?: creationId
                 assignedTo = draft.assignedTo; externalId = draft.externalId; assignmentName = draft.assignmentName
                 scheduleBasis = draft.scheduleBasis; targetStage = draft.targetStage; workDateIso = draft.date; endDate = draft.endDate
                 taskType = draft.taskType; selectedBlockIds = draft.blockIds; hoursText = draft.durationText; notes = draft.notes
@@ -1474,8 +1478,8 @@ private fun WorkTaskSheet(
         val author = state.currentUserId ?: return
         val vineyard = state.selectedVineyardId ?: return
         try {
-            require(author == editorAuthor && (existing == null || existing.vineyardId == vineyard))
-            vm.saveWorkTaskPlanningDraft(com.rork.vinetrack.data.model.WorkTaskPlanningDraft(existing?.id, vineyard, author, assignedTo, externalId, assignmentName, scheduleBasis, targetStage, workDateIso, endDate, taskType, selectedBlockIds, hoursText, notes, baselineJson = planningBaselineJson))
+            require(author == editorAuthor && vineyard == editorVineyard && (existing == null || existing.vineyardId == vineyard))
+            vm.saveWorkTaskPlanningDraft(com.rork.vinetrack.data.model.WorkTaskPlanningDraft(existing?.id, vineyard, author, assignedTo, externalId, assignmentName, scheduleBasis, targetStage, workDateIso, endDate, taskType, selectedBlockIds, hoursText, notes, baselineJson = planningBaselineJson, creationId = creationId))
             draftMessage = "Local draft saved on this device. Reopen this form to resume. Not queued or synchronised."
         } catch (_: Exception) { draftMessage = "Draft not saved. Check permission, assignment and supported stage; keep this form open and retry." }
     }
@@ -1494,36 +1498,18 @@ private fun WorkTaskSheet(
     }
 
     fun save() {
-        if (planningChanged) { savePlanningDraft(); return }
-        if (saving || taskType.isBlank()) return
+        val author = state.currentUserId ?: return
+        val vineyard = state.selectedVineyardId ?: return
+        if (saving || author != editorAuthor || vineyard != editorVineyard || (existing != null && vineyard != existing.vineyardId)) return
         saving = true
-        val iso = existing?.date ?: workDateIso
-        val hours = hoursText.replace(',', '.').toDoubleOrNull() ?: 0.0
-        val blockIds = selectedBlockIds.toList()
-        val currentId = lifecycle.persistedTaskId
-        if (lifecycle.saveOperation == WorkTaskEditorSaveOperation.CREATE) {
-            val mintedId = vm.createWorkTask(
-                taskType = taskType,
-                paddockIds = blockIds,
-                date = iso,
-                durationHours = hours,
-                notes = notes.trim().ifBlank { null },
-            ) { ok ->
-                saving = false
-                if (ok) showsSavedFeedback = true else lifecycle = lifecycle.rejectingFirstSave()
-            }
-            // The optimistic parent and stable UUID exist synchronously, even
-            // offline, so child controls can unlock without a server round-trip.
-            mintedId?.let { lifecycle = lifecycle.acceptingFirstSave(it) }
-        } else {
-            vm.updateWorkTask(
-                taskId = requireNotNull(currentId),
-                taskType = taskType,
-                paddockIds = blockIds,
-                date = iso,
-                durationHours = hours,
-                notes = notes.trim().ifBlank { null },
-            ) { ok -> saving = false; if (ok) onSaved() }
+        val draft = com.rork.vinetrack.data.model.WorkTaskPlanningDraft(lifecycle.persistedTaskId, vineyard, author, assignedTo, externalId, assignmentName, scheduleBasis, targetStage, workDateIso, null, taskType, selectedBlockIds, hoursText, notes, baselineJson = planningBaselineJson, creationId = creationId)
+        vm.saveWorkTaskPlanningOnline(draft, workDay) { result ->
+            saving = false; planningBaselineJson = null
+            result.fold({ saved ->
+                if (!lifecycle.hasPersistedTask) lifecycle = lifecycle.acceptingFirstSave(saved.id)
+                showsSavedFeedback = true
+                draftMessage = "Header saved online. Blocks use the existing separate allocation sync. Reopen and review before further edits."
+            }, { draftMessage = "Save not confirmed. Draft and original request retained; review server state. No automatic retry or rebase." })
         }
     }
 
@@ -1643,25 +1629,13 @@ private fun WorkTaskSheet(
                 Text("  " + (formatTaskDate(workDay.atStartOfDay(state.seasonZone).toInstant().toEpochMilli()) ?: "Pick date"))
             }
 
-            OutlinedButton(onClick = { showRangePicker = true }, modifier = Modifier.fillMaxWidth()) { Text(endDate?.let { "Range through ${WorkTaskCompletion.localDate(it, state.seasonZone)}" } ?: "Add date range") }
-            if (endDate != null) TextButton(onClick = { endDate = null; planningChanged = true }) { Text("Clear range") }
+            Text("Completed Date is recorded separately. The shared task contract does not store a planned range end.", style = MaterialTheme.typography.bodySmall)
             }
-            Text("Online selection save changes only assignment and an existing E-L target using the originally loaded server state. Date/range, mode changes and other edits remain local drafts; no automatic replay.", style = MaterialTheme.typography.bodySmall)
-            if (existing != null) OutlinedButton(enabled = !saving && planningBaselineJson != null && state.isOnline, onClick = {
-                val author = state.currentUserId
-                val vineyard = state.selectedVineyardId
-                if (author == editorAuthor && author != null && vineyard == existing.vineyardId) {
-                    saving = true
-                    val draft = com.rork.vinetrack.data.model.WorkTaskPlanningDraft(existing.id, vineyard, author, assignedTo, externalId, assignmentName, scheduleBasis, targetStage, workDateIso, endDate, taskType, selectedBlockIds, hoursText, notes, baselineJson = planningBaselineJson)
-                    vm.saveWorkTaskSelectionOnline(draft) { result ->
-                        saving = false
-                        planningBaselineJson = null
-                        draftMessage = if (result.isSuccess) "Assignment / E-L target saved online. Other edits remain in the local draft. Reopen after reviewing the server task for another selection edit."
-                            else "Selection not confirmed. Local draft retained; review server state and permission before retrying. No automatic retry."
-                    }
-                } else draftMessage = "Account or vineyard changed. Close and reopen the task; no write attempted."
-            }, modifier = Modifier.fillMaxWidth()) { Text("Save assignment / E-L target online") }
+            Text("Online planning uses the original task version. Completion, costing and linked Trips remain untouched. No automatic replay.", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { savePlanningDraft() }) { Text("Save local planning draft") }
+            if (resumedPlanningDraft) TextButton(onClick = {
+                runCatching { require(state.currentUserId == editorAuthor && state.selectedVineyardId == editorVineyard); vm.discardWorkTaskPlanningDraft(existing?.id) }.fold({ onDismiss() }, { draftMessage = "Draft could not be removed. Unconfirmed write requests remain protected." })
+            }) { Text("Discard planning draft and close") }
             draftMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
             OutlinedTextField(

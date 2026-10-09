@@ -189,6 +189,9 @@ import com.rork.vinetrack.data.spray.VineyardSprayTargetCreateParams
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import com.rork.vinetrack.data.resistance.ResistancePlan
 import com.rork.vinetrack.data.resistance.ResistancePlannedPosition
 import com.rork.vinetrack.data.SprayRecordRepository
@@ -1179,6 +1182,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return planningDrafts.load(author, vineyard, taskId)
     }
 
+    fun discardWorkTaskPlanningDraft(taskId: String?) {
+        val author = session.userId ?: return
+        val vineyard = _ui.value.selectedVineyardId ?: return
+        planningDrafts.discardPlanningDraft(author, vineyard, taskId)
+    }
+
     fun saveWorkTaskPlanningDraft(draft: com.rork.vinetrack.data.model.WorkTaskPlanningDraft) {
         require(com.rork.vinetrack.data.model.WorkTaskPlanning.canSaveDraft(draft, session.userId, _ui.value.selectedVineyardId, _ui.value.currentRole))
         planningDrafts.save(draft)
@@ -1203,6 +1212,73 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(workTasks = st.workTasks.map { if (it.id == saved.id) saved else it }) }
                 domainCache.saveWorkTasks(draft.authorId, draft.vineyardId, _ui.value.workTasks)
                 saved
+            })
+        }
+    }
+
+    private val originalCompletionBaselines = mutableMapOf<String, String>()
+
+    /** Called when opening details, never from the save-time mutation helper. */
+    fun beginWorkTaskCompletion(task: WorkTask) {
+        originalCompletionBaselines.remove(task.id)
+        viewModelScope.launch {
+            runCatching { loadWorkTaskPlanningBaseline(task) }.onSuccess { baseline ->
+                if (_ui.value.selectedVineyardId == task.vineyardId) originalCompletionBaselines[task.id] = baseline
+            }
+        }
+    }
+
+    fun saveWorkTaskPlanningOnline(draft: com.rork.vinetrack.data.model.WorkTaskPlanningDraft, day: java.time.LocalDate, onResult: (Result<WorkTask>) -> Unit) {
+        viewModelScope.launch {
+            onResult(runCatching {
+                saveWorkTaskPlanningDraft(draft)
+                val blocks = selectedBlocks(draft.blockIds.toList())
+                require(blocks.size == draft.blockIds.size) { "Selected blocks unavailable" }
+                val id = draft.taskId ?: requireNotNull(draft.creationId)
+                val intent = com.rork.vinetrack.data.WorkTaskWriteContract.planning(draft, id, day, Instant.now(), blocks.firstOrNull()?.id,
+                    blocks.joinToString(", ") { it.name }, blocks.sumOf { it.areaHectares })
+                val saved = submitWorkTaskIntent(intent)
+                planningDrafts.archiveCreatedDraft(draft, saved.id)
+                reconcileWorkTaskPaddocks(saved.id, saved.vineyardId, draft.blockIds.toList())
+                saved
+            })
+        }
+    }
+
+    private suspend fun submitWorkTaskIntent(intent: com.rork.vinetrack.data.WorkTaskWriteIntent): WorkTask {
+        require(session.userId == intent.authorId && _ui.value.selectedVineyardId == intent.vineyardId &&
+            _ui.value.currentRole in listOf("owner", "manager", "supervisor", "operator") && !hasPendingTaskHeader(intent.taskId))
+        val saved = com.rork.vinetrack.data.WorkTaskWriteCoordinator(planningDrafts).submit(intent,
+            canWrite = { session.userId == intent.authorId && _ui.value.selectedVineyardId == intent.vineyardId && !hasPendingTaskHeader(intent.taskId) },
+            send = {
+                check(_ui.value.isOnline) { "Saved on this device only. No automatic replay." }
+                com.rork.vinetrack.data.WorkTaskPlanningRepository(session).write(it)
+            })
+        _ui.update { st -> st.copy(workTasks = st.workTasks.filterNot { it.id == saved.id } + saved) }
+        domainCache.saveWorkTasks(intent.authorId, intent.vineyardId, _ui.value.workTasks)
+        originalCompletionBaselines.remove(saved.id)
+        return saved
+    }
+
+    private fun guardedCompletion(task: WorkTask, action: String, selected: java.time.LocalDate?, onResult: (Boolean) -> Unit) {
+        val author = session.userId ?: run { onResult(false); return }
+        val now = Instant.now()
+        val baseline = originalCompletionBaselines[task.id]
+        val intent = runCatching {
+            val fields = com.rork.vinetrack.data.WorkTaskWriteContract.completion(action, task, selected, _ui.value.seasonZone, now, author)
+            val payload = kotlinx.serialization.json.buildJsonObject {
+                fields.forEach { (k, v) -> put(k, v) }
+                val version = baseline?.let { kotlinx.serialization.json.Json.parseToJsonElement(it).jsonObject["sync_version"]?.jsonPrimitive?.longOrNull }
+                if (version != null && version > 0 && version < Long.MAX_VALUE) put("sync_version", kotlinx.serialization.json.JsonPrimitive(version + 1))
+                put("client_updated_at", kotlinx.serialization.json.JsonPrimitive(now.toString())); put("updated_by", kotlinx.serialization.json.JsonPrimitive(author))
+            }
+            com.rork.vinetrack.data.WorkTaskWriteIntent(task.id, task.vineyardId, author, baseline, payload)
+        }.getOrElse { _ui.update { it.copy(workTaskError = "Invalid completion state or Completed Date.") }; onResult(false); return }
+        viewModelScope.launch {
+            runCatching { submitWorkTaskIntent(intent) }.fold({
+                _ui.update { it.copy(workTaskError = null) }; onResult(true)
+            }, {
+                _ui.update { it.copy(workTaskError = "Completion not confirmed. Original request retained on this device. Review server state; no automatic retry or rebase.") }; onResult(false)
             })
         }
     }
@@ -10063,25 +10139,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun setWorkTaskComplete(taskId: String, complete: Boolean, completedDate: java.time.LocalDate? = null, onResult: (Boolean) -> Unit = {}) {
         val current = _ui.value.workTasks.firstOrNull { it.id == taskId } ?: run { onResult(false); return }
-        val now = Instant.now()
-        val updated = if (complete) {
-            val user = session.userId ?: run { onResult(false); return }
-            val selected = completedDate ?: now.atZone(_ui.value.seasonZone).toLocalDate()
-            runCatching { com.rork.vinetrack.data.WorkTaskCompletion.complete(current, selected, _ui.value.seasonZone, now, user) }
-                .getOrElse { _ui.update { it.copy(workTaskError = "Completed Date must be between Work Date and today.") }; onResult(false); return }
-        } else com.rork.vinetrack.data.WorkTaskCompletion.reopen(current)
-        onResult(runCatching { persistWorkTaskCompletion(updated, now.toString(), dateOnly = false) }
-            .fold({ true }, { _ui.update { it.copy(workTaskError = "Could not save completion on this device. Please try again.") }; false }))
+        guardedCompletion(current, if (complete) "complete" else "reopen", completedDate ?: Instant.now().atZone(_ui.value.seasonZone).toLocalDate(), onResult)
     }
 
     /** Corrects only the business date; the original completion audit is immutable. */
     fun editWorkTaskCompletedDate(taskId: String, selected: java.time.LocalDate, onResult: (Boolean) -> Unit = {}) {
         val current = _ui.value.workTasks.firstOrNull { it.id == taskId } ?: run { onResult(false); return }
-        val now = Instant.now()
-        val updated = runCatching { com.rork.vinetrack.data.WorkTaskCompletion.editDate(current, selected, _ui.value.seasonZone, now) }
-            .getOrElse { onResult(false); return }
-        onResult(runCatching { persistWorkTaskCompletion(updated, now.toString(), dateOnly = true) }
-            .fold({ true }, { _ui.update { it.copy(workTaskError = "Could not save Completed Date on this device. Please try again.") }; false }))
+        guardedCompletion(current, "completion_date", selected, onResult)
     }
 
     private fun persistWorkTaskCompletion(task: WorkTask, stamp: String, dateOnly: Boolean) {

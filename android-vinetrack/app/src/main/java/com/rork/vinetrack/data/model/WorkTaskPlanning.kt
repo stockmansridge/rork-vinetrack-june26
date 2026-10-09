@@ -14,7 +14,7 @@ object WorkTaskPlanning {
     fun canSelect(resource: VineyardExternalResource, vineyard: String): Boolean = resource.vineyardId == vineyard && resource.isActive && resource.deletedAt == null
 
     fun completingUser(task: WorkTask, trips: List<Trip>, verifiedMemberIds: Set<String>): String? {
-        if (!task.isFinalized && task.status != "completed") return null
+        if (!task.isFinalized) return null
         task.completedBy?.let { return it }
         val linked = trips.filter { it.vineyardId == task.vineyardId && it.workTaskId == task.id && !it.isActive && it.endTime != null }
         val operators = linked.mapNotNull { it.operatorUserId }.toSet()
@@ -25,8 +25,8 @@ object WorkTaskPlanning {
     fun ordered(tasks: List<WorkTask>, now: Instant, zone: ZoneId): List<WorkTask> {
         val today = now.atZone(zone).toLocalDate().atStartOfDay(zone).toInstant().toEpochMilli()
         return tasks.sortedWith { lhs, rhs ->
-            val lc = lhs.isFinalized || lhs.status == "completed"
-            val rc = rhs.isFinalized || rhs.status == "completed"
+            val lc = lhs.isFinalized
+            val rc = rhs.isFinalized
             when {
                 lc != rc -> if (lc) 1 else -1
                 lhs.isStageScheduled != rhs.isStageScheduled -> if (lhs.isStageScheduled) -1 else 1
@@ -66,6 +66,7 @@ data class WorkTaskPlanningDraft(
     val notes: String = "",
     /** Original server read, never refreshed implicitly when resuming a draft. */
     val baselineJson: String? = null,
+    val creationId: String? = null,
 ) {
     val isValid: Boolean get() = !(assignedTo != null && externalId != null) &&
         (scheduleBasis == "el_stage" || endDate == null || runCatching { !Instant.parse(endDate).isBefore(Instant.parse(date)) }.getOrDefault(false)) &&

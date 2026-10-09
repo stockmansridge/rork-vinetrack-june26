@@ -46,10 +46,12 @@ struct AddEditWorkTaskView: View {
     @State private var planningChanged: Bool = false
     @State private var loadedPlanning: Bool = false
     @State private var editorAuthor: UUID?
+    @State private var editorVineyard: UUID?
     @State private var draftMessage: String?
     @State private var planningBaselineJSON: String?
     @State private var resumedPlanningDraft: Bool = false
     @State private var savingSelection: Bool = false
+    @State private var creationID: UUID = UUID()
 
     init(existingTask: WorkTask? = nil) {
         self.existingTask = existingTask
@@ -398,11 +400,7 @@ struct AddEditWorkTaskView: View {
         } else {
             DatePicker("Work Date", selection: $date, displayedComponents: .date).environment(\.timeZone, tz)
                 .onChange(of: date) { _, _ in if loadedPlanning { planningChanged = true } }
-            Toggle("Date range", isOn: $usesRange).onChange(of: usesRange) { _, _ in planningChanged = true }
-            if usesRange {
-                DatePicker("Through", selection: $rangeEnd, in: date..., displayedComponents: .date).environment(\.timeZone, tz)
-                    .onChange(of: rangeEnd) { _, _ in planningChanged = true }
-            }
+            Text("Completed Date is recorded separately when the work finishes. Planned range ends are not stored by the shared task contract.").font(.footnote).foregroundStyle(.secondary)
         }
     }
 
@@ -411,19 +409,18 @@ struct AddEditWorkTaskView: View {
         if let task = currentTask {
             Section("Completion") {
                 WorkTaskAttributionView(task: task, showsAssignment: true)
-                Text("Existing completion controls retain their current lifecycle. Originally loaded version checks and Portal completion-payload parity still require verification; completion is not part of online selection save.").font(.footnote).foregroundStyle(.secondary)
+                Text("Completion records the signed-in person and actual press time separately from Completed Date. Offline or uncertain outcomes stay on this device without automatic replay.").font(.footnote).foregroundStyle(.secondary)
                 if task.isFinalized {
-                    if let completed = WorkTaskCompletion.displayedDate(task) {
+                    if let completed = WorkTaskCompletion.displayedDate(task, timeZone: tz) {
                         LabeledContent("Completed", value: completionDateLabel(completed))
                     } else { Text("Completed") }
                     Button("Edit Completed Date") { showCompletion = true }
                     Button("Reopen") {
-                        workTaskSync.saveCompletion(WorkTaskCompletion.reopen(task), dateOnly: false)
-                        Task { await workTaskSync.syncForSelectedVineyard() }
+                        saveCompletionOnline(action: "reopen", selected: nil)
                     }
                 } else {
                     LabeledContent("Completion", value: "To do")
-                    Button("Complete") { showCompletion = true }.disabled(auth.userId == nil)
+                    Button("Complete") { showCompletion = true }.tint(.green).disabled(auth.userId == nil || savingSelection)
                 }
             }
         }
@@ -439,12 +436,17 @@ struct AddEditWorkTaskView: View {
                         LabeledContent("Assigned to", value: assignmentName.isEmpty ? "Unassigned" : assignmentName)
                     }
                     Text("Assignments do not create labour charges.").font(.footnote).foregroundStyle(.secondary)
-                    Text("Online selection save changes only assignment and an existing E-L target, using the originally loaded server state. Date/range, mode changes and other form edits remain local drafts; no automatic replay.").font(.footnote).foregroundStyle(.secondary)
-                    if existingTask != nil {
-                        Button(savingSelection ? "Saving selection…" : "Save assignment / E-L target online") { saveSelectionOnline() }
-                            .disabled(savingSelection || planningBaselineJSON == nil)
-                    }
+                    Text("Online planning saves use the original task version. Completion, costing and linked Trips are not overwritten. Uncertain saves remain durable drafts; no automatic retry.").font(.footnote).foregroundStyle(.secondary)
+                    Button(savingSelection ? "Saving online…" : "Save planning online") { saveSelectionOnline() }
+                        .disabled(savingSelection || (hasPersistedTask && planningBaselineJSON == nil))
                     Button("Save local planning draft") { savePlanningDraft() }
+                    if resumedPlanningDraft {
+                        Button("Discard planning draft and close", role: .destructive) {
+                            guard let draft = planningDraft, editorAuthor == auth.userId, (existingTask == nil || existingTask?.vineyardId == store.selectedVineyardId) else { return }
+                            do { try PersistenceStore.shared.removeOrThrow(key: draft.persistenceKey); dismiss() }
+                            catch { draftMessage = "Draft could not be removed. Unconfirmed write requests remain protected." }
+                        }
+                    }
                     if let draftMessage { Text(draftMessage).font(.footnote).foregroundStyle(.orange) }
 
                     Menu {
@@ -700,6 +702,7 @@ struct AddEditWorkTaskView: View {
             .onAppear {
                 guard !loadedPlanning else { return }
                 editorAuthor = auth.userId
+                editorVineyard = store.selectedVineyardId
                 loadIfEditing()
                 loadPlanningDraft()
                 loadedPlanning = true
@@ -725,8 +728,7 @@ struct AddEditWorkTaskView: View {
                             updated = WorkTaskCompletion.complete(current, selected: selected, timeZone: tz, now: Date(), userId: user.uuidString)
                         }
                         guard let updated else { return false }
-                        workTaskSync.saveCompletion(updated, dateOnly: current.isFinalized)
-                        Task { await workTaskSync.syncForSelectedVineyard() }
+                        saveCompletionOnline(action: current.isFinalized ? "completion_date" : "complete", selected: selected)
                         return true
                     }
                 }
@@ -1145,7 +1147,7 @@ struct AddEditWorkTaskView: View {
             matchedCost=\(matched.reduce(0.0) { $0 + $1.totalCost })
             """)
             #endif
-            date = t.isStageScheduled ? t.date : (t.startDate ?? t.date)
+            date = t.isStageScheduled ? Date() : WorkTaskCompletion.workDate(t, timeZone: tz)
             taskType = t.taskType
             if !mergedTaskTypeNames.contains(t.taskType) && !t.taskType.isEmpty {
                 showCustomTaskField = true
@@ -1169,8 +1171,8 @@ struct AddEditWorkTaskView: View {
     }
 
     private var planningDraft: WorkTaskPlanningDraft? {
-        guard let vineyard = store.selectedVineyardId, let author = auth.userId else { return nil }
-        return WorkTaskPlanningDraft(taskID: existingTask?.id, vineyardID: vineyard, authorID: author, assignedTo: assignedTo, externalID: assignedExternalID, assignmentName: assignmentName, scheduleBasis: scheduleBasis, targetStage: targetStage, date: date, endDate: usesRange ? rangeEnd : nil, taskType: taskType, blockIDs: selectedBlockIds, durationText: durationText, notes: notes, resources: resources, baselineJSON: planningBaselineJSON)
+        guard let vineyard = store.selectedVineyardId, vineyard == editorVineyard, let author = auth.userId, author == editorAuthor else { return nil }
+        return WorkTaskPlanningDraft(taskID: currentTaskID, vineyardID: vineyard, authorID: author, assignedTo: assignedTo, externalID: assignedExternalID, assignmentName: assignmentName, scheduleBasis: scheduleBasis, targetStage: targetStage, date: date, endDate: usesRange ? rangeEnd : nil, taskType: taskType, blockIDs: selectedBlockIds, durationText: durationText, notes: notes, resources: resources, baselineJSON: planningBaselineJSON, creationID: creationID)
     }
 
     private func savePlanningDraft() {
@@ -1199,6 +1201,7 @@ struct AddEditWorkTaskView: View {
             guard draft.authorID == seed.authorID, draft.vineyardID == seed.vineyardID, draft.taskID == seed.taskID else { return }
             resumedPlanningDraft = true
             planningBaselineJSON = draft.baselineJSON
+            creationID = draft.creationID ?? creationID
             assignedTo = draft.assignedTo; assignedExternalID = draft.externalID; assignmentName = draft.assignmentName
             scheduleBasis = draft.scheduleBasis; targetStage = draft.targetStage; date = draft.date
             usesRange = draft.endDate != nil; rangeEnd = draft.endDate ?? draft.date
@@ -1211,33 +1214,58 @@ struct AddEditWorkTaskView: View {
         }
     }
 
+    private func saveCompletionOnline(action: String, selected: Date?) {
+        guard let task = currentTask, let author = auth.userId, editorAuthor == author,
+              store.selectedVineyardId == task.vineyardId else { return }
+        do {
+            let baseline = planningBaselineJSON
+            let row = try baseline.map { try JSONDecoder().decode([String: WorkTaskWriteValue].self, from: Data($0.utf8)) }
+            var payload = try WorkTaskWriteContract.completion(action: action, task: task, selected: selected, zone: tz, now: Date(), author: author)
+            if case .integer(let version) = row?["sync_version"], version > 0, version < Int64.max { payload["sync_version"] = .integer(version + 1) }
+            payload["client_updated_at"] = .string(WorkTaskWriteContract.instant(Date()))
+            payload["updated_by"] = .string(author.uuidString)
+            submitOnline(WorkTaskWriteIntent(taskID: task.id, vineyardID: task.vineyardId, authorID: author, baselineJSON: baseline, payload: payload), reconcileBlocks: false)
+        } catch { draftMessage = "Completion not sent. Original baseline required; refresh and review the task. No automatic rebase." }
+    }
+
     private func saveSelectionOnline() {
-        guard !savingSelection, let draft = planningDraft, let id = draft.taskID,
-              editorAuthor == auth.userId, WorkTaskPlanning.canSaveDraft(draft, signedInUser: auth.userId, selectedVineyard: store.selectedVineyardId, membershipRole: backendAccessControl.currentRole?.rawValue),
-              !workTaskSync.isPendingUpsert(id), !workTaskSync.isPendingDelete(id), !workTaskSync.isSyncing else {
-            draftMessage = "Finish pending task writes and verify the account/vineyard before saving a selection. Draft retained."
-            return
+        guard let draft = planningDraft, editorAuthor == auth.userId,
+              WorkTaskPlanning.canSaveDraft(draft, signedInUser: auth.userId, selectedVineyard: store.selectedVineyardId, membershipRole: backendAccessControl.currentRole?.rawValue) else { return }
+        do {
+            try PersistenceStore.shared.saveOrThrow(draft, key: draft.persistenceKey)
+            let blocks = selectedBlocksOrdered
+            let intent = try WorkTaskWriteContract.planning(draft: draft, id: currentTaskID ?? creationID, zone: tz, now: Date(), paddockID: blocks.first?.id, paddockName: blocks.map(\.name).joined(separator: ", "), area: totalSelectedArea)
+            submitOnline(intent, reconcileBlocks: true)
+        } catch { draftMessage = "Planning not sent. Draft retained; verify original baseline and supported schedule." }
+    }
+
+    private func submitOnline(_ intent: WorkTaskWriteIntent, reconcileBlocks: Bool) {
+        guard !savingSelection, !workTaskSync.isPendingUpsert(intent.taskID), !workTaskSync.isPendingDelete(intent.taskID), !workTaskSync.isSyncing else {
+            draftMessage = "Finish pending task writes first. No write attempted."; return
         }
-        do { try PersistenceStore.shared.saveOrThrow(draft, key: draft.persistenceKey) }
-        catch { draftMessage = "Draft could not be persisted. No online write was attempted."; return }
         savingSelection = true
         Task {
-            defer { savingSelection = false }
+            defer { savingSelection = false; planningBaselineJSON = nil }
             do {
-                let saved = try await SupabaseWorkTaskPlanningRepository().saveSelection(draft)
-                guard auth.userId == draft.authorID, store.selectedVineyardId == draft.vineyardID,
-                      !workTaskSync.isPendingUpsert(id), !workTaskSync.isPendingDelete(id) else {
-                    draftMessage = "Selection response arrived after the account or local task changed. Draft retained; refresh to review."
-                    return
+                let canWrite = { auth.userId == intent.authorID && store.selectedVineyardId == intent.vineyardID && ["owner", "manager", "supervisor", "operator"].contains(backendAccessControl.currentRole?.rawValue ?? "") && !workTaskSync.isPendingUpsert(intent.taskID) && !workTaskSync.isPendingDelete(intent.taskID) }
+                let saved = try await WorkTaskWriteCoordinator(persistence: .shared).submit(intent, canWrite: canWrite) { request in
+                    try await SupabaseWorkTaskPlanningRepository().write(request, isCurrentScope: canWrite)
                 }
                 store.applyRemoteWorkTaskUpsert(saved)
                 persistedTask = saved
-                planningBaselineJSON = nil
-                draftMessage = "Assignment / E-L target saved online. Other form edits remain in your local draft. Reopen after reviewing the server task for another selection edit."
-            } catch {
-                planningBaselineJSON = nil
-                draftMessage = (error as? WorkTaskPlanningWriteError)?.errorDescription ?? "Selection save not confirmed. Local draft retained; review server state and permission before retrying. No automatic retry."
-            }
+                if !lifecycle.hasPersistedTask { lifecycle.acceptFirstSave(taskID: saved.id) }
+                if reconcileBlocks {
+                    if var draft = planningDraft, draft.taskID == saved.id, intent.baselineJSON == nil {
+                        let newKey = "work-task-planning-\(draft.authorID.uuidString)-\(draft.vineyardID.uuidString)-new"
+                        draft.taskID = saved.id
+                        try PersistenceStore.shared.saveOrThrow(draft, key: draft.persistenceKey)
+                        try PersistenceStore.shared.removeOrThrow(key: newKey)
+                    }
+                    reconcileBlockLinks(for: saved.id)
+                    await workTaskPaddockSync.syncForSelectedVineyard()
+                }
+                draftMessage = "Header saved online. Blocks use the separate allocation sync. Inline labour-resource edits remain in your draft; costing lines and Trips were not rewritten. Reopen and review before further header edits."
+            } catch { draftMessage = "Save not confirmed. Original request and draft retained on this device. Review server state; no automatic retry." }
         }
     }
 
@@ -1248,96 +1276,7 @@ struct AddEditWorkTaskView: View {
         return formatter.string(from: value)
     }
 
-    private func saveTask() {
-        if planningChanged { savePlanningDraft(); return }
-        let trimmed = taskType.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-
-        // If the user entered a custom task type that is not in the merged
-        // catalog yet, persist it to work_task_types so it syncs to other
-        // devices and Lovable.
-        let lower = trimmed.lowercased()
-        let knownLower = Set(mergedTaskTypeNames.map { $0.lowercased() })
-        if !knownLower.contains(lower), let vineyardId = store.selectedVineyardId {
-            store.addWorkTaskType(WorkTaskType(
-                vineyardId: vineyardId,
-                name: trimmed,
-                isDefault: false,
-                sortOrder: 0
-            ))
-        }
-
-        // Backward-compat scalar fields: first selected block id, and a
-        // comma-separated list of selected block names. Empty when no block.
-        let orderedSelected = selectedBlocksOrdered
-        let primaryBlockId = orderedSelected.first?.id
-        let blockNames = orderedSelected.map { $0.name }.joined(separator: ", ")
-
-        let wasPersisted = hasPersistedTask
-        var task = currentTask ?? WorkTask()
-        task.vineyardId = store.selectedVineyardId ?? task.vineyardId
-        if !wasPersisted && !task.isStageScheduled { task.date = date }
-        task.taskType = trimmed
-        task.paddockId = primaryBlockId
-        task.paddockName = blockNames
-        task.durationHours = durationHours
-        task.resources = resources
-        task.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        let userName = auth.userName ?? ""
-        task.createdBy = userName.isEmpty ? nil : userName
-
-        // Auto-populate area (hectares) from the selected block so portal
-        // reports can show hectares without the operator entering them.
-        // Portal-created tasks persist `area_ha` directly; iPhone-created
-        // tasks now match by deriving it from the linked block. The block ID
-        // is still synced (`paddock_id`) so the portal can re-derive if needed.
-        var areaSource = "none"
-        let summedArea = totalSelectedArea
-        if summedArea > 0 {
-            task.areaHa = summedArea
-            areaSource = orderedSelected.count > 1 ? "summed-from-blocks" : "derived-from-block"
-        } else if orderedSelected.isEmpty, task.areaHa != nil {
-            // No block selected (Does not apply to a block) — keep existing value.
-            areaSource = "existing"
-        } else if task.areaHa != nil {
-            areaSource = "existing"
-        }
-
-        #if DEBUG
-        print("""
-        [WorkTask] saveTask id=\(task.id) type=\(task.taskType) \
-        blockId=\(task.paddockId?.uuidString ?? "nil") \
-        block=\(task.paddockName.isEmpty ? "<none>" : task.paddockName) \
-        areaHa=\(task.areaHa.map { String(format: "%.4f", $0) } ?? "nil") \
-        areaSource=\(areaSource)
-        """)
-        #endif
-
-        if wasPersisted {
-            store.updateWorkTask(task)
-        } else {
-            store.addWorkTask(task)
-        }
-        persistedTask = task
-        if !wasPersisted { lifecycle.acceptFirstSave(taskID: task.id) }
-
-        reconcileBlockLinks(for: task.id)
-
-        Task {
-            await workTaskTypeSync.syncForSelectedVineyard()
-            await workTaskSync.syncForSelectedVineyard()
-            await workTaskPaddockSync.syncForSelectedVineyard()
-        }
-        if wasPersisted && lifecycle.shouldCloseAfterAcceptedSave() {
-            dismiss()
-        } else {
-            withAnimation { showsSavedFeedback = true }
-            Task {
-                try? await Task.sleep(for: .seconds(1.5))
-                withAnimation { showsSavedFeedback = false }
-            }
-        }
-    }
+    private func saveTask() { saveSelectionOnline() }
 
     @ViewBuilder
     private func childDestination(_ route: WorkTaskChildRoute) -> some View {

@@ -17,8 +17,8 @@ nonisolated enum WorkTaskPlanning {
     static func ordered(_ tasks: [WorkTask], now: Date, timeZone: TimeZone) -> [WorkTask] {
         let today = WorkTaskCompletion.calendar(timeZone).startOfDay(for: now)
         return tasks.sorted { lhs, rhs in
-            let lc = lhs.isFinalized || lhs.status == "completed"
-            let rc = rhs.isFinalized || rhs.status == "completed"
+            let lc = lhs.isFinalized
+            let rc = rhs.isFinalized
             if lc != rc { return !lc }
             if lhs.isStageScheduled != rhs.isStageScheduled { return lhs.isStageScheduled }
             if lhs.isStageScheduled {
@@ -36,7 +36,7 @@ nonisolated enum WorkTaskPlanning {
     }
 
     static func completingUser(_ task: WorkTask, trips: [Trip], verifiedMemberIDs: Set<UUID>) -> UUID? {
-        guard task.isFinalized || task.status == "completed" else { return nil }
+        guard task.isFinalized else { return nil }
         if let recorded = task.completedBy { return recorded }
         let linked = trips.filter { $0.vineyardId == task.vineyardId && $0.workTaskId == task.id && !$0.isActive && $0.endTime != nil }
         let operators = Set(linked.compactMap(\.operatorUserId))
@@ -65,6 +65,7 @@ nonisolated struct WorkTaskPlanningDraft: Codable, Equatable {
     var resources: [WorkTaskResource] = []
     /// Immutable original online read; drafts without one are never automatically rebased.
     var baselineJSON: String? = nil
+    var creationID: UUID? = nil
 
     var isValid: Bool {
         !(assignedTo != nil && externalID != nil) && (scheduleBasis == "el_stage" || endDate.map { $0 >= date } != false) &&

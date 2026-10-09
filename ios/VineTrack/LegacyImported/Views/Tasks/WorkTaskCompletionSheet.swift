@@ -11,19 +11,19 @@ struct WorkTaskCompletionSheet: View {
         self.task = task
         self.timeZone = timeZone
         self.onConfirm = onConfirm
-        let initial = task.isFinalized ? WorkTaskCompletion.displayedDate(task) ?? Date() : Date()
+        let initial = task.isFinalized ? WorkTaskCompletion.displayedDate(task, timeZone: timeZone) ?? Date() : Date()
         _selectedDate = State(initialValue: initial)
     }
 
     private var today: Date { WorkTaskCompletion.calendar(timeZone).startOfDay(for: Date()) }
-    private var firstDay: Date { task.isStageScheduled ? .distantPast : WorkTaskCompletion.calendar(timeZone).startOfDay(for: WorkTaskCompletion.workDate(task)) }
+    private var firstDay: Date { task.isStageScheduled ? .distantPast : WorkTaskCompletion.calendar(timeZone).startOfDay(for: WorkTaskCompletion.workDate(task, timeZone: timeZone)) }
     private var valid: Bool { WorkTaskCompletion.isValid(selectedDate, task: task, timeZone: timeZone, now: Date()) }
 
     private var workDateLabel: String {
         let formatter = DateFormatter()
         formatter.timeZone = timeZone
         formatter.dateStyle = .long
-        return formatter.string(from: WorkTaskCompletion.workDate(task))
+        return formatter.string(from: WorkTaskCompletion.workDate(task, timeZone: timeZone))
     }
 
     var body: some View {
@@ -55,6 +55,7 @@ struct WorkTaskCompletionSheet: View {
                     Button(task.isFinalized ? "Save date" : "Complete") {
                         if onConfirm(selectedDate) { dismiss() }
                     }
+                    .tint(.green)
                     .disabled(!valid)
                 }
             }

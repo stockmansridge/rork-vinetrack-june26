@@ -25,7 +25,7 @@ fun WorkTaskAttribution(task: WorkTask, state: AppUiState, vm: AppViewModel? = n
         resources.firstOrNull { it.id == id && it.vineyardId == task.vineyardId }?.let { it.name + if (it.isActive && it.deletedAt == null) "" else " · Inactive" } ?: "Historical resource (name unavailable)"
     } ?: "Unassigned"
     Column(modifier) {
-        if (task.isFinalized || task.status == "completed") {
+        if (task.isFinalized) {
             val user = WorkTaskPlanning.completingUser(task, state.trips, members.map { it.userId }.toSet())
             Text(user?.let { "Completed by ${person(it)}" } ?: "Completed by unknown", style = MaterialTheme.typography.bodySmall)
             if (showsAssignment) Text("Assigned to: $assigned", style = MaterialTheme.typography.bodySmall)

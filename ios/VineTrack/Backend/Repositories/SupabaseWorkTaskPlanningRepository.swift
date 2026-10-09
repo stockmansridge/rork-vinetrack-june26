@@ -11,7 +11,8 @@ final class SupabaseWorkTaskPlanningRepository {
         "assigned_to", "assigned_external_resource_id", "schedule_basis", "target_el_stage",
         "date", "start_date", "end_date", "vintage_year", "status", "is_finalized",
         "completed_by", "completed_at", "finalized_by", "finalized_at",
-        "task_type", "description", "notes", "paddock_id", "paddock_name", "duration_hours"
+        "task_type", "description", "notes", "paddock_id", "paddock_name", "duration_hours",
+        "area_ha", "costing_method", "piece_rate_per_vine", "piece_vine_count", "pruning_activity_id", "created_at", "created_by"
     ]
 
     /// Capture only against the task originally loaded by the editor, not a new save-time read.
@@ -90,6 +91,59 @@ final class SupabaseWorkTaskPlanningRepository {
               saved.syncVersion == version + 1, saved.assignedTo == draft.assignedTo,
               saved.assignedExternalResourceId == draft.externalID,
               !stageChanged || saved.targetELStage == draft.targetStage else { throw WorkTaskPlanningWriteError.conflict }
+        return saved.toWorkTask()
+    }
+
+    /// INSERT only for new IDs; edits atomically retain every original predicate.
+    func write(_ intent: WorkTaskWriteIntent, isCurrentScope: () -> Bool = { true }) async throws -> WorkTask {
+        guard isCurrentScope(), provider.isConfigured, provider.client.auth.currentUser?.id == intent.authorID else { throw BackendRepositoryError.missingAuthenticatedUser }
+        let membership = try await provider.client.from("vineyard_members").select("role")
+            .eq("vineyard_id", value: intent.vineyardID.uuidString).eq("user_id", value: intent.authorID.uuidString).execute().data
+        guard let members = try JSONSerialization.jsonObject(with: membership) as? [[String: Any]], members.count == 1,
+              let role = members.first?["role"] as? String, ["owner", "manager", "supervisor", "operator"].contains(role) else { throw WorkTaskPlanningWriteError.invalidResource }
+        let baseline = try intent.baselineJSON.map { try JSONDecoder().decode([String: WorkTaskWriteValue].self, from: Data($0.utf8)) }
+        if let baseline {
+            guard Self.observedKeys.allSatisfy({ baseline[$0] != nil }),
+                  WorkTaskWriteContract.equivalent(baseline["id"], .string(intent.taskID.uuidString), key: "id"),
+                  WorkTaskWriteContract.equivalent(baseline["vineyard_id"], .string(intent.vineyardID.uuidString), key: "vineyard_id"),
+                  baseline["deleted_at"] == .null, case .integer(let version) = baseline["sync_version"], version > 0, version < Int64.max,
+                  intent.payload["sync_version"] == .integer(version + 1) else { throw WorkTaskPlanningWriteError.refresh }
+        } else {
+            guard intent.payload["id"] == .string(intent.taskID.uuidString), intent.payload["sync_version"] == .integer(1),
+                  intent.payload["vineyard_id"] == .string(intent.vineyardID.uuidString) else { throw WorkTaskPlanningWriteError.refresh }
+        }
+        if let selected = intent.payload["assigned_to"], selected != .null,
+           !WorkTaskWriteContract.equivalent(selected, baseline?["assigned_to"], key: "assigned_to") {
+            guard let user = selected.filter else { throw WorkTaskPlanningWriteError.invalidResource }
+            let data = try await provider.client.from("vineyard_members").select("user_id")
+                .eq("vineyard_id", value: intent.vineyardID.uuidString).eq("user_id", value: user).execute().data
+            guard let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]], rows.count == 1 else { throw WorkTaskPlanningWriteError.invalidResource }
+        }
+        if let selected = intent.payload["assigned_external_resource_id"], selected != .null,
+           !WorkTaskWriteContract.equivalent(selected, baseline?["assigned_external_resource_id"], key: "assigned_external_resource_id") {
+            let resources = try await SupabaseExternalResourceRepository(provider: provider).list(vineyardId: intent.vineyardID)
+            guard resources.contains(where: { $0.id.uuidString.lowercased() == selected.filter?.lowercased() && WorkTaskPlanning.canSelect($0, vineyard: intent.vineyardID) }) else { throw WorkTaskPlanningWriteError.invalidResource }
+        }
+        guard isCurrentScope(), provider.client.auth.currentUser?.id == intent.authorID else { throw BackendRepositoryError.missingAuthenticatedUser }
+        let response: PostgrestResponse<[BackendWorkTask]>
+        if let baseline {
+            var query = try provider.client.from("work_tasks").update(intent.payload)
+            for (key, value) in try WorkTaskWriteContract.predicates(baseline: baseline, observedKeys: Self.observedKeys) {
+                if let value { query = query.eq(key, value: value) }
+                else { query = query.is(key, value: nil) }
+            }
+            response = try await query.select().execute()
+        } else {
+            response = try await provider.client.from("work_tasks").insert(intent.payload).select().execute()
+        }
+        guard let rows = try JSONSerialization.jsonObject(with: response.data) as? [[String: Any]], rows.count == 1,
+              let raw = rows.first, response.value.count == 1, let saved = response.value.first,
+              saved.id == intent.taskID, saved.vineyardId == intent.vineyardID,
+              provider.client.auth.currentUser?.id == intent.authorID else { throw WorkTaskPlanningWriteError.conflict }
+        let keys = Set(Self.observedKeys).union(intent.payload.keys)
+        let scalar = raw.filter { keys.contains($0.key) }
+        let row = try JSONDecoder().decode([String: WorkTaskWriteValue].self, from: JSONSerialization.data(withJSONObject: scalar))
+        try WorkTaskWriteContract.verify(baseline: baseline, payload: intent.payload, row: row, observedKeys: Self.observedKeys)
         return saved.toWorkTask()
     }
 
