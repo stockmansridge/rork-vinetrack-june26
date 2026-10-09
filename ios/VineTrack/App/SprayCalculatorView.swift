@@ -197,6 +197,21 @@ struct SprayCalculatorView: View {
         }
     }
 
+    #if DEBUG
+    /// Seeds only local editing state for the actual calculator UI regression.
+    static func keyboardRegression(blockID: UUID) -> SprayCalculatorView {
+        var view = SprayCalculatorView()
+        view._operationType = State(initialValue: .spreader)
+        view._selectedPaddockIds = State(initialValue: [blockID])
+        view._sprayTargets = State(initialValue: [.nutritionBiostimulant])
+        view._growthStage = State(initialValue: SprayGrowthStageSelection(shared: .notSet))
+        view._carrierBasisChoice = State(initialValue: .manualTotalVolume)
+        view._openedStep = State(initialValue: .equipment)
+        view._hasSeededOpenedStep = State(initialValue: true)
+        return view
+    }
+    #endif
+
     @State private var carrierInputText: [String: (canonical: String, display: String)] = [:]
     private var region: RegionFormatter { store.settings.regionFormatter }
     private var guidedFormat: SprayGuidedFormat { SprayGuidedFormat(formatter: region) }
@@ -851,6 +866,7 @@ struct SprayCalculatorView: View {
                     }
                 }
             }
+            .accessibilityIdentifier("spray.calculator.form")
             .onAppear { seedOpenedStepIfNeeded() }
             .task(id: "\(store.selectedVineyardId?.uuidString ?? ""):\(accessControl.canViewFinancials)") {
                 seasonPrices = nil
@@ -1896,9 +1912,11 @@ struct SprayCalculatorView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("No. Fans / Jets").font(.subheadline.weight(.semibold))
                     Text("Optional — recorded for compliance").font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("spray.fans.background")
                 }
                 Spacer()
                 TextField("e.g. 6", text: $numberOfFansJets)
+                    .accessibilityIdentifier("spray.fans.input")
                     .keyboardType(.numberPad).multilineTextAlignment(.trailing).frame(width: 80)
             }
             .padding(14)

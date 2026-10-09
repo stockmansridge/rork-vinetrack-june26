@@ -3,10 +3,10 @@ package com.rork.vinetrack.data.chemical
 /** Canonicalises structured label rates without guessing across contradictory bases. */
 object ChemicalLabelRateNormalizer {
     private val textPattern = Regex(
-        "^\\s*([0-9]+(?:[.,][0-9]+)?)(?:\\s*[-–—]\\s*([0-9]+(?:[.,][0-9]+)?))?\\s*(mL|L|kg|g)\\s*/\\s*(100\\s*L|ha)\\s*$",
+        "^\\s*([0-9]+(?:[.,][0-9]+)?)(?:\\s*[-–—]\\s*([0-9]+(?:[.,][0-9]+)?))?\\s*(mL|L|kg|g)\\s*(?:/|per)\\s*(100\\s*(?:L|litres?|liters?)(?:\\s+(?:of\\s+)?water)?|ha|hectares?)\\s*$",
         RegexOption.IGNORE_CASE,
     )
-    private val unitPattern = Regex("^\\s*(mL|L|kg|g)(?:\\s*/\\s*(100\\s*L|ha))?\\s*$", RegexOption.IGNORE_CASE)
+    private val unitPattern = Regex("^\\s*(mL|L|kg|g)(?:\\s*(?:/|per)\\s*(100\\s*(?:L|litres?|liters?)(?:\\s+(?:of\\s+)?water)?|ha|hectares?))?\\s*$", RegexOption.IGNORE_CASE)
 
     fun canonicalBareUnit(raw: String?): String? = when (raw?.trim()?.lowercase()) {
         "l" -> "L"
@@ -22,7 +22,7 @@ object ChemicalLabelRateNormalizer {
         val high = match.groupValues[2].takeIf { it.isNotEmpty() }?.replace(',', '.')?.toDoubleOrNull()
         if (!low.isFinite() || low <= 0.0 || high?.let { !it.isFinite() || it < low } == true) return null
         val unit = canonicalBareUnit(match.groupValues[3]) ?: return null
-        val isPer100 = match.groupValues[4].replace(" ", "").equals("100L", true)
+        val isPer100 = match.groupValues[4].startsWith("100")
         val basis = when {
             high != null && isPer100 -> ChemicalLabelRateBasis.RANGE_PER_100_LITRES
             high != null -> ChemicalLabelRateBasis.RANGE_PER_HECTARE
@@ -42,13 +42,13 @@ object ChemicalLabelRateNormalizer {
     fun normalize(rate: ChemicalLabelRate): ChemicalLabelRate? {
         if (rate.basis == ChemicalLabelRateBasis.OTHER) {
             val parsed = rate.rawText?.let(::parse) ?: return rate
-            return parsed.copy(label = rate.label, rateId = rate.rateId, conditionAmbiguous = rate.conditionAmbiguous)
+            return parsed.copy(label = rate.label, rateId = rate.rateId, conditionAmbiguous = rate.conditionAmbiguous, rawText = rate.rawText)
         }
         val unitMatch = unitPattern.matchEntire(rate.unit) ?: return null
         val unit = canonicalBareUnit(unitMatch.groupValues[1]) ?: return null
         val denominator = unitMatch.groupValues[2].replace(" ", "")
         if (denominator.isNotEmpty()) {
-            val unitIsPer100 = denominator.equals("100L", true)
+            val unitIsPer100 = denominator.startsWith("100")
             if (unitIsPer100 != rate.basis.isVolumeBased) return null
         }
         val parsedText = rate.rawText?.let(::parse)

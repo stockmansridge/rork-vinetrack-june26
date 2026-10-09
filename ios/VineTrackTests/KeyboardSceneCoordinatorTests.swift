@@ -76,6 +76,48 @@ struct KeyboardSceneCoordinatorTests {
         #expect(unrelated.keyboardDismissMode == .onDrag)
     }
 
+    @Test func frameUpdatesNeverRepositionAFormDuringDragOrRecedingKeyboard() {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UIViewController()
+        let form = TrackingRegressionScrollView(frame: window.bounds)
+        form.contentSize = CGSize(width: 390, height: 1800)
+        let field = UITextField(frame: CGRect(x: 16, y: 1100, width: 300, height: 44))
+        field.keyboardType = .numberPad
+        field.text = "42"
+        form.addSubview(field)
+        window.rootViewController?.view.addSubview(form)
+        let coordinator = KeyboardSceneCoordinator()
+        coordinator.attach(to: window)
+        window.makeKeyAndVisible()
+        defer { coordinator.detach(); window.isHidden = true }
+        #expect(field.becomeFirstResponder())
+        coordinator.activate(field)
+        func frame(_ y: CGFloat) {
+            let rect = window.convert(CGRect(x: 0, y: y, width: 390, height: 844 - y), to: window.screen.coordinateSpace)
+            NotificationCenter.default.post(name: UIResponder.keyboardDidChangeFrameNotification, object: nil,
+                userInfo: [UIResponder.keyboardFrameEndUserInfoKey: rect])
+        }
+        form.reportsTracking = true
+        frame(500)
+        form.contentOffset = .zero
+        coordinator.revealActiveInput()
+        #expect(form.contentOffset == .zero && form.contentInset.bottom == 0)
+        form.reportsTracking = false
+        frame(650)
+        coordinator.revealActiveInput()
+        #expect(form.contentOffset == .zero && form.contentInset.bottom == 0)
+        #expect(field.text == "42" && field.isFirstResponder)
+        // Standalone test windows do not reproduce UIKit's visible scroll layout;
+        // assert the growing-frame policy directly, with rendered repair covered by UI tests.
+        let shown = CGRect(x: 0, y: 500, width: 390, height: 344)
+        let receding = CGRect(x: 0, y: 650, width: 390, height: 194)
+        #expect(KeyboardSceneCoordinator.isReceding(previous: shown, next: receding, bounds: window.bounds, wasReceding: false))
+        #expect(KeyboardSceneCoordinator.isReceding(previous: receding, next: receding, bounds: window.bounds, wasReceding: true))
+        #expect(!KeyboardSceneCoordinator.isReceding(previous: receding, next: shown, bounds: window.bounds, wasReceding: true))
+        #expect(!KeyboardSceneCoordinator.isReceding(previous: .null, next: shown, bounds: window.bounds, wasReceding: false))
+        #expect(field.text == "42")
+    }
+
     @Test func foreignWindowInputsAreNotModified() {
         let window = UIWindow(), otherWindow = UIWindow()
         let field = UITextField(); otherWindow.addSubview(field)
@@ -115,6 +157,12 @@ struct KeyboardSceneCoordinatorTests {
         #expect(window.gestureRecognizers?.last?.cancelsTouchesInView == false)
         #expect(window.gestureRecognizers?.last?.delaysTouchesBegan == false)
     }
+}
+
+@MainActor
+private final class TrackingRegressionScrollView: UIScrollView {
+    var reportsTracking: Bool = false
+    override var isTracking: Bool { reportsTracking }
 }
 
 @MainActor

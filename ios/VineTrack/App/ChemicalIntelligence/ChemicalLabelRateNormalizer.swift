@@ -3,11 +3,11 @@ import Foundation
 /// Canonicalises structured label rates without guessing across contradictory bases.
 nonisolated enum ChemicalLabelRateNormalizer {
     private static let textPattern = try! NSRegularExpression(
-        pattern: #"^\s*([0-9]+(?:[.,][0-9]+)?)(?:\s*[-–—]\s*([0-9]+(?:[.,][0-9]+)?))?\s*(mL|L|kg|g)\s*/\s*(100\s*L|ha)\s*$"#,
+        pattern: #"^\s*([0-9]+(?:[.,][0-9]+)?)(?:\s*[-–—]\s*([0-9]+(?:[.,][0-9]+)?))?\s*(mL|L|kg|g)\s*(?:/|per)\s*(100\s*(?:L|litres?|liters?)(?:\s+(?:of\s+)?water)?|ha|hectares?)\s*$"#,
         options: [.caseInsensitive]
     )
     private static let unitPattern = try! NSRegularExpression(
-        pattern: #"^\s*(mL|L|kg|g)(?:\s*/\s*(100\s*L|ha))?\s*$"#,
+        pattern: #"^\s*(mL|L|kg|g)(?:\s*(?:/|per)\s*(100\s*(?:L|litres?|liters?)(?:\s+(?:of\s+)?water)?|ha|hectares?))?\s*$"#,
         options: [.caseInsensitive]
     )
 
@@ -33,7 +33,7 @@ nonisolated enum ChemicalLabelRateNormalizer {
               let unit = canonicalBareUnit(group(3)), let denominator = group(4) else { return nil }
         let high = group(2).flatMap { Double($0.replacingOccurrences(of: ",", with: ".")) }
         if let high, (!high.isFinite || high < low) { return nil }
-        let isPer100 = denominator.replacingOccurrences(of: " ", with: "").lowercased() == "100l"
+        let isPer100 = denominator.hasPrefix("100")
         let basis: ChemicalLabelRateBasis = if high != nil {
             isPer100 ? .rangePer100Litres : .rangePerHectare
         } else {
@@ -51,6 +51,7 @@ nonisolated enum ChemicalLabelRateNormalizer {
             guard var parsed = rate.rawText.flatMap(parse) else { return rate }
             parsed.label = rate.label; parsed.rateId = rate.rateId
             parsed.conditionIsAmbiguous = rate.conditionIsAmbiguous
+            parsed.rawText = rate.rawText
             return parsed
         }
         let ns = rate.unit as NSString
@@ -61,7 +62,7 @@ nonisolated enum ChemicalLabelRateNormalizer {
         let denominatorRange = match.range(at: 2)
         if denominatorRange.location != NSNotFound {
             let denominator = ns.substring(with: denominatorRange).replacingOccurrences(of: " ", with: "")
-            if (denominator.lowercased() == "100l") != rate.basis.isVolumeBased { return nil }
+            if denominator.hasPrefix("100") != rate.basis.isVolumeBased { return nil }
         }
         if let parsed = rate.rawText.flatMap(parse) {
             guard parsed.basis.isVolumeBased == rate.basis.isVolumeBased, parsed.unit == unit else { return nil }

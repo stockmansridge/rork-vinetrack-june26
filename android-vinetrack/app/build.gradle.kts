@@ -506,6 +506,17 @@ if (providers.gradleProperty("vineCountSummaryFocusedTests").orNull == "true") {
     }
 }
 
+if (providers.gradleProperty("cropSilFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach { testLogging { events("passed", "failed", "skipped") } }
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/CropSilRateRegressionTest.kt", "**/ChemicalLabelRateNormalizerTest.kt", "**/SprayRegisteredUseRatesTest.kt")
+            })
+        }
+    }
+}
+
 if (providers.gradleProperty("chemicalSeasonPricingFocusedTests").orNull == "true") {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach { testLogging { events("passed", "failed", "skipped") } }
     afterEvaluate {

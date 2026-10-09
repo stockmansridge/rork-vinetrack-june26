@@ -172,7 +172,8 @@ nonisolated struct SpraySelectableRate: Identifiable, Sendable, Hashable {
     /// numbers the label printed and which one is arithmetic.
     var menuText: String {
         if let preset {
-            return "\(displayText) (\(preset.qualifier))"
+            let choice = "\(displayText) (\(preset.qualifier))"
+            return label.isEmpty ? choice : "\(label): \(choice)"
         }
         let name = label.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? displayText : "\(name): \(displayText)"
@@ -445,10 +446,11 @@ nonisolated enum SprayRegisteredUseRates {
         return out
     }
 
-    /// Adds quick-selection points beneath a registered band — but only when
-    /// that band is the ONLY rate its registered use states.
+    /// Adds quick-selection points only for the sole selectable band on a basis.
+    /// Different application bases are independent; competing conditions on the
+    /// same basis remain label choices without manufactured presets.
     ///
-    /// # Why the "only rate" condition matters
+    /// # Why the "only rate on this basis" condition matters
     ///
     /// A label that prints several rates against named conditions — low versus
     /// high disease pressure, pre- versus post-bunch-closure — has already told
@@ -457,8 +459,8 @@ nonisolated enum SprayRegisteredUseRates {
     /// under twice as many numbers VineTrack made up, and would quietly invite
     /// picking a rate without reading the condition attached to it.
     ///
-    /// So a lone band gets its endpoints and midpoint, and a set of named rates
-    /// is presented exactly as the label states them.
+    /// A lone band on each basis gets its endpoints and midpoint, and competing
+    /// rates on the same basis are presented exactly as the label states them.
     private static func expandingPresets(
         _ pairs: [(labelRate: ChemicalLabelRate, entry: SpraySelectableRate)],
         use: ChemicalRegisteredUse,
@@ -466,39 +468,37 @@ nonisolated enum SprayRegisteredUseRates {
         seen: inout Set<UUID>
     ) -> [SpraySelectableRate] {
         let entries = pairs.map(\.entry)
-        guard entries.filter(\.isSelectable).count == 1,
-              let only = pairs.first(where: { $0.entry.isSelectable }),
-              case let .range(minimum, maximum) = only.entry.seed
-        else { return entries }
-
         var out = entries
-        for point in presetPoints(minimum: minimum, maximum: maximum) {
-            let id = stableIdentifier(
-                "preset|\(use.crop)|\(use.targetRaw)|\(only.labelRate.basis.rawValue)"
-                    + "|\(only.labelRate.unit)|\(minimum)|\(maximum)|\(point.preset.rawValue)"
-            )
-            guard seen.insert(id).inserted else { continue }
-            let shown = displayValue(
-                point.value,
-                labelUnit: only.labelRate.unit,
-                chemical: chemical
-            ) ?? point.value
-            let text = "\(SprayRateFormatter.format(shown)) \(only.labelRate.unit)"
-                + only.labelRate.basis.suffix
-            out.append(SpraySelectableRate(
-                id: id,
-                origin: .registeredUse,
-                crop: use.crop,
-                targetRaw: use.targetRaw,
-                label: only.labelRate.label,
-                basis: only.entry.basis,
-                seed: .value(point.value),
-                displayText: text.trimmingCharacters(in: .whitespaces),
-                labelUnit: only.labelRate.unit,
-                labelRange: minimum...maximum,
-                labelRangeText: only.entry.displayText,
-                preset: point.preset
-            ))
+        for only in pairs where only.entry.isSelectable && !only.labelRate.conditionIsAmbiguous {
+            guard entries.filter({ $0.isSelectable && $0.basis == only.entry.basis }).count == 1,
+                  case let .range(minimum, maximum) = only.entry.seed,
+                  let normalized = ChemicalLabelRateNormalizer.normalize(only.labelRate)
+            else { continue }
+            for point in presetPoints(minimum: minimum, maximum: maximum) {
+                let id = stableIdentifier(
+                    "preset|\(use.crop)|\(use.targetRaw)|\(only.labelRate.basis.rawValue)"
+                        + "|\(only.labelRate.unit)|\(minimum)|\(maximum)|\(point.preset.rawValue)"
+                )
+                guard seen.insert(id).inserted,
+                      let shown = displayValue(point.value, labelUnit: only.entry.labelUnit, chemical: chemical)
+                else { continue }
+                let text = "\(SprayRateFormatter.format(shown)) \(only.entry.labelUnit)"
+                    + normalized.basis.suffix
+                out.append(SpraySelectableRate(
+                    id: id,
+                    origin: .registeredUse,
+                    crop: use.crop,
+                    targetRaw: use.targetRaw,
+                    label: only.labelRate.label,
+                    basis: only.entry.basis,
+                    seed: .value(point.value),
+                    displayText: text.trimmingCharacters(in: .whitespaces),
+                    labelUnit: only.entry.labelUnit,
+                    labelRange: minimum...maximum,
+                    labelRangeText: only.entry.displayText,
+                    preset: point.preset
+                ))
+            }
         }
         return out
     }

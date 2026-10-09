@@ -2,6 +2,49 @@ import XCTest
 
 final class KeyboardInteractionUITests: XCTestCase {
     @MainActor
+    func testActualSprayCalculatorNumericDragDoneAndBackgroundKeepDraftWithoutSaving() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--keyboard-validation", "--spray-calculator-keyboard-validation"]
+        app.launch()
+        let open = app.buttons["Open Spray Calculator"]
+        XCTAssertTrue(open.waitForExistence(timeout: 8))
+        open.tap()
+        let number = app.textFields["spray.fans.input"]
+        for _ in 0..<6 where !number.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(number.waitForExistence(timeout: 5))
+        number.tap(); number.typeText("42")
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        let background = app.staticTexts["spray.fans.background"]
+        XCTAssertTrue(background.isHittable)
+        let start = background.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.95)))
+        var hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: keyboard)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed, "Actual calculator scroll drag")
+        for _ in 0..<6 where !number.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertEqual(number.value as? String, "42")
+        number.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        let done = app.buttons["keyboard.dismiss"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        done.tap()
+        hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: keyboard)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed)
+        XCTAssertEqual(number.value as? String, "42")
+        number.tap()
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        background.tap()
+        hidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: keyboard)
+        XCTAssertEqual(XCTWaiter.wait(for: [hidden], timeout: 5), .completed, "Passive calculator text")
+        XCTAssertEqual(number.value as? String, "42")
+        XCTAssertTrue(app.navigationBars["Spray Calculator"].exists, "Dismissal must not close the calculator")
+        XCTAssertFalse(app.staticTexts["Spray Summary"].exists)
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["spray.keyboard.records"].label, "Sprays: 0; Trips: 0")
+    }
+
+    @MainActor
     func testDoneAcrossKeyboardTypesKeepsValuesWithoutSavingOrSubmitting() {
         let app = XCUIApplication()
         app.launchArguments = ["--keyboard-validation"]

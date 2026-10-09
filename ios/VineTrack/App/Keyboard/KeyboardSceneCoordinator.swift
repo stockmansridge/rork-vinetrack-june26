@@ -5,6 +5,7 @@ final class KeyboardSceneCoordinator: NSObject, UIGestureRecognizerDelegate {
     private weak var window: UIWindow?
     private weak var activeInput: UIView?
     private var keyboardFrame: CGRect = .null
+    private var isKeyboardReceding: Bool = false
     private var scrollStates: [ScrollState] = []
     private let backgroundTap = UITapGestureRecognizer()
 
@@ -60,6 +61,7 @@ final class KeyboardSceneCoordinator: NSObject, UIGestureRecognizerDelegate {
         guard input.window === window, input is UITextField || input is UITextView else { return }
         restoreScrollViews()
         activeInput = input
+        isKeyboardReceding = false
         installAccessory(on: input)
         // Only the focused input's containing scroll views are touched; maps and tracing surfaces are not.
         var ancestor: UIView? = input
@@ -102,12 +104,27 @@ final class KeyboardSceneCoordinator: NSObject, UIGestureRecognizerDelegate {
     @objc private func keyboardChanged(_ notification: Notification) {
         guard let window, activeInput?.window === window,
               let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
-        keyboardFrame = window.convert(frame, from: window.screen.coordinateSpace)
+        let nextFrame = window.convert(frame, from: window.screen.coordinateSpace)
+        isKeyboardReceding = Self.isReceding(previous: keyboardFrame, next: nextFrame,
+            bounds: window.bounds, wasReceding: isKeyboardReceding)
+        keyboardFrame = nextFrame
+        // Interactive dismissal sends a shrinking frame on each drag update.
+        // Never scroll the form back towards its responder while UIKit is dismissing.
+        guard !isKeyboardReceding else { return }
         scheduleVisibilityUpdate()
+    }
+
+    static func isReceding(previous: CGRect, next: CGRect, bounds: CGRect, wasReceding: Bool) -> Bool {
+        let oldOverlap = bounds.intersection(previous)
+        let oldHeight = oldOverlap.isNull ? 0 : oldOverlap.height
+        let newOverlap = bounds.intersection(next)
+        return newOverlap.isNull || newOverlap.height < oldHeight
+            || (wasReceding && newOverlap.height == oldHeight)
     }
 
     @objc private func keyboardHidden(_ notification: Notification) {
         keyboardFrame = .null
+        isKeyboardReceding = false
         removeAddedInsets()
     }
 
@@ -118,7 +135,9 @@ final class KeyboardSceneCoordinator: NSObject, UIGestureRecognizerDelegate {
 
     func revealActiveInput() {
         guard let window, let input = activeInput, input.window === window, input.isFirstResponder,
-              !keyboardFrame.isNull, keyboardFrame.intersects(window.bounds) else { return }
+              !isKeyboardReceding, !keyboardFrame.isNull, keyboardFrame.intersects(window.bounds),
+              !scrollStates.contains(where: { $0.scrollView?.isTracking == true || $0.scrollView?.isDragging == true || $0.scrollView?.isDecelerating == true })
+        else { return }
         window.layoutIfNeeded()
         for index in scrollStates.indices.reversed() {
             guard let scrollView = scrollStates[index].scrollView, scrollView !== input else { continue }

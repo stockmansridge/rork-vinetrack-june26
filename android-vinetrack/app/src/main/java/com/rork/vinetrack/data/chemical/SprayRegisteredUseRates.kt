@@ -61,7 +61,10 @@ data class SpraySelectableRate(
         }
 
     val menuText: String
-        get() = preset?.let { "$displayText (${it.qualifier})" }
+        get() = preset?.let {
+            val choice = "$displayText (${it.qualifier})"
+            if (label.isBlank()) choice else "$label: $choice"
+        }
             ?: label.trim().takeIf { it.isNotEmpty() }?.let { "$it: $displayText" }
             ?: displayText
 }
@@ -135,9 +138,10 @@ object SprayRegisteredUseRates {
                     selectable(labelRate, use)?.takeIf { seen.add(it.id) }
                 }
                 addAll(entries)
-                val only = entries.singleOrNull { it.isSelectable }
-                val range = only?.amount as? SprayRateAmount.Range
-                if (only != null && range != null) {
+                for (only in entries.filter { it.isSelectable }) {
+                    if (entries.count { it.isSelectable && it.basis == only.basis } != 1) continue
+                    if (use.rates.any { it.conditionAmbiguous == true && selectable(it, use)?.id == only.id }) continue
+                    val range = only.amount as? SprayRateAmount.Range ?: continue
                     for ((preset, value) in presetPoints(range.minimum, range.maximum)) {
                         val id = stableId(
                             "preset|${use.crop}|${use.targetRaw}|${only.basis}|${only.unit}|" +
