@@ -208,7 +208,9 @@ begin
  end if;
  if p_command='coverage' then
   -- Resolve boundaries by querying all candidate dates with the existing resolver.
-  select min(day),max(day) into start_date,end_date from (select gs::date day from generate_series(make_date(p_vintage-1,1,1),make_date(p_vintage+1,1,1),interval '1 day') gs) x where public.resolve_vineyard_vintage_year(p_vineyard_id,day)=p_vintage;
+  select min(x.candidate_date),max(x.candidate_date) into start_date,end_date
+ from (select gs::date as candidate_date from generate_series(make_date(p_vintage-1,1,1),make_date(p_vintage+1,1,1),interval '1 day') as gs) as x
+ where public.resolve_vineyard_vintage_year(p_vineyard_id,x.candidate_date)=p_vintage;
   select (statement_timestamp() at time zone coalesce(nullif(timezone,''),'UTC'))::date into today from public.vineyards where id=p_vineyard_id;
   if least(today,end_date)<start_date then return jsonb_build_object('season_start',start_date,'season_end',end_date,'not_started',true,'gaps',jsonb_build_array('Historical temperature/wind/baselines, detailed work logs, linked-fertigation authority, historical yield archives and complete regional narrative formatting are not integrated.')); end if;
   if coalesce(p_report_through,least(today,end_date)) not between start_date and least(today,end_date) then raise exception 'invalid_report_through'; end if;
