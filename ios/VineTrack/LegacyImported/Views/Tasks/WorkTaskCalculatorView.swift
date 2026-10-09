@@ -136,12 +136,6 @@ struct WorkTaskCalculatorView: View {
         }
         .navigationTitle("Work Task Calculator")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { focusedField = nil }
-            }
-        }
         .onAppear {
             if selectedCategoryId == nil {
                 selectedCategoryId = store.operatorCategories.first?.id

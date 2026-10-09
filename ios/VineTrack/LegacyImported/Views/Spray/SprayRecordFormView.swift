@@ -177,12 +177,6 @@ struct SprayRecordFormView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { saveRecord() }
                 }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                    }
-                }
             }
         }
         .sheet(item: $picker) { target in

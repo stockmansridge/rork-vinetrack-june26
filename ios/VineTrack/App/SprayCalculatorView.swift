@@ -877,12 +877,6 @@ struct SprayCalculatorView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") {
-                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                    }
-                }
             }
             .sheet(isPresented: $showSummary, onDismiss: { dismiss() }) {
                 if let result = calculationResult {

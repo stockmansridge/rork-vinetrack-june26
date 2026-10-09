@@ -422,16 +422,13 @@ struct VineyardSetupHubView: View {
                     }
                 }
             }
-            .onChange(of: focusedField) { oldValue, _ in
-                switch oldValue {
-                case .latitude, .longitude:
-                    saveLatLon()
-                case .elevation:
-                    saveElevation()
-                case .none:
-                    break
-                }
+            Button("Apply location") {
+                saveLatLon()
+                saveElevation()
+                focusedField = nil
             }
+            .buttonStyle(.bordered)
+            .accessibilityHint("Save the entered vineyard coordinates and elevation")
 
             sectionFooter("Coordinates and elevation improve degree-day accuracy. Standard GDD is base 10\u{00B0}C. BEDD caps daily temps at 19\u{00B0}C, adds a diurnal-range bonus, and applies a day-length factor from latitude. Reset Point determines when accumulation starts each season (overridable per block).")
         }

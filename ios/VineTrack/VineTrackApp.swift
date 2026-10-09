@@ -105,10 +105,24 @@ struct VineTrackApp: App {
         }
     }()
 
+    private var isKeyboardValidationEnabled: Bool {
+        #if DEBUG
+        CommandLine.arguments.contains("--keyboard-validation")
+        #else
+        false
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {
-                if AppFeatureFlags.useNewBackendShell {
+                if isKeyboardValidationEnabled {
+                    #if DEBUG
+                    KeyboardValidationView()
+                    #else
+                    EmptyView()
+                    #endif
+                } else if AppFeatureFlags.useNewBackendShell {
                     NewBackendRootView()
                         .environment(auth)
                         .environment(biometric)
@@ -173,6 +187,8 @@ struct VineTrackApp: App {
                     ContentView()
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
+            .background { KeyboardSceneBridge().frame(width: 0, height: 0) }
             .task {
                 vineyardInsightsService.configureCalendarTimeZone { vineyardID in
                     migratedStore.selectedVineyardId == vineyardID

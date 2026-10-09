@@ -37,32 +37,36 @@ struct NewBackendLoginView: View {
             GeometryReader { proxy in
                 let isCompactHeight = proxy.size.height < 760
 
-                VStack(spacing: isCompactHeight ? 8 : 12) {
-                    header(isCompactHeight: isCompactHeight)
-                    featureChips
-                    modePicker
-                    formCard(isCompactHeight: isCompactHeight)
-                    actionButton
-                    if showBiometricQuickButton {
-                        biometricQuickButton
+                ScrollView {
+                    VStack(spacing: isCompactHeight ? 8 : 12) {
+                        header(isCompactHeight: isCompactHeight)
+                        featureChips
+                        modePicker
+                        formCard(isCompactHeight: isCompactHeight)
+                        actionButton
+                        if showBiometricQuickButton {
+                            biometricQuickButton
+                        }
+                        dividerWithOr
+                        appleSignInButton
+                        footerLinks
+                        if let errorMessage = auth.errorMessage {
+                            Text(errorMessage)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.white)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.red.opacity(0.82), in: .rect(cornerRadius: 14))
+                        }
                     }
-                    dividerWithOr
-                    appleSignInButton
-                    footerLinks
-                    if let errorMessage = auth.errorMessage {
-                        Text(errorMessage)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.white)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(.red.opacity(0.82), in: .rect(cornerRadius: 14))
-                    }
+                    .frame(maxWidth: .infinity, minHeight: max(0, proxy.size.height - (isCompactHeight ? 20 : 40)), alignment: .center)
+                    .padding(.horizontal, 18)
+                    .padding(.top, isCompactHeight ? 10 : 22)
+                    .padding(.bottom, isCompactHeight ? 10 : 18)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                .padding(.horizontal, 18)
-                .padding(.top, isCompactHeight ? 10 : 22)
-                .padding(.bottom, isCompactHeight ? 10 : 18)
+                .scrollIndicators(.hidden)
+                .scrollDismissesKeyboard(.interactively)
             }
         }
         .sheet(isPresented: $showForgotPassword) {

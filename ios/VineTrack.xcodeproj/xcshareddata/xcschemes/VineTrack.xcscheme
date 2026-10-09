@@ -47,6 +47,9 @@
                ReferencedContainer = "container:VineTrack.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="NO">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="105FC5922E9EAD3200EA8BCF" BuildableName="VineTrackUITests.xctest" BlueprintName="VineTrackUITests" ReferencedContainer="container:VineTrack.xcodeproj" />
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -74,6 +77,9 @@
                BlueprintName = "VineTrackTripTests"
                ReferencedContainer = "container:VineTrack.xcodeproj">
             </BuildableReference>
+         </TestableReference>
+         <TestableReference skipped="NO">
+            <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="105FC5922E9EAD3200EA8BCF" BuildableName="VineTrackUITests.xctest" BlueprintName="VineTrackUITests" ReferencedContainer="container:VineTrack.xcodeproj" />
          </TestableReference>
       </Testables>
    </TestAction>

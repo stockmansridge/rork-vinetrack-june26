@@ -243,12 +243,6 @@ struct YieldDeterminationCalculatorView: View {
         }
         .navigationTitle("Pruning Yield Calculator")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { focusedField = nil }
-            }
-        }
         .onAppear {
             if selectedPaddockId == nil {
                 selectedPaddockId = vineyardPaddocks.first?.id

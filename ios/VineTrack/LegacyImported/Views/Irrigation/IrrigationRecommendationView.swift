@@ -403,12 +403,6 @@ struct IrrigationRecommendationView: View {
         }
         .navigationTitle("Irrigation Advisor")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { focusedField = nil }
-            }
-        }
         .onAppear {
             if !didLoadFromSettings {
                 loadParametersFromSettings()
