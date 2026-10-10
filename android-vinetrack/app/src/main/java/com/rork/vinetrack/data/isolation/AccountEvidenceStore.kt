@@ -54,11 +54,22 @@ internal class AccountEvidenceStore(
     private val authority = authorities.computeIfAbsent(root.canonicalPath) { Authority() }
 
     fun authenticateVerifiedAccount(account: String, vineyards: Set<String>): FieldAccountCapability = synchronized(authority) {
+        check(authority.guardedOperations == 0) { "Session change during protected publication" }
         require(account.isNotBlank() && vineyards.all { it.isNotBlank() })
         FieldAccountCapability(account, vineyards.toSet(), UUID.randomUUID().toString()).also { authority.current = it }
     }
 
-    fun revoke(): Unit = synchronized(authority) { authority.current = null }
+    fun revoke(): Unit = synchronized(authority) {
+        check(authority.guardedOperations == 0) { "Reentrant session change during protected publication" }
+        authority.current = null
+    }
+
+    /** Serializes a controlled callback side effect against revocation; never hands out a legacy repository. */
+    fun <T> withAccess(capability: FieldAccountCapability, vineyard: String, action: () -> T): T = synchronized(authority) {
+        checkAccess(capability, vineyard)
+        authority.guardedOperations++
+        try { action() } finally { authority.guardedOperations-- }
+    }
 
     fun append(capability: FieldAccountCapability, vineyard: String, collection: String, recordId: String,
                bytes: ByteArray, originalPhotoPath: String? = null): String {
@@ -67,9 +78,17 @@ internal class AccountEvidenceStore(
             immutable.size.toLong(), IsolationDisk.digest(immutable), originalPhotoPath) { ByteArrayInputStream(immutable) }
     }
 
+    /** New controlled work only: exact stable revision makes callback restart idempotent without changing original ownership. */
+    fun appendRevision(capability: FieldAccountCapability, vineyard: String, collection: String, recordId: String,
+                       revision: String, bytes: ByteArray): String {
+        val immutable = bytes.copyOf()
+        return appendStream(capability, vineyard, collection, recordId, revision, immutable.size.toLong(),
+            IsolationDisk.digest(immutable), null) { ByteArrayInputStream(immutable) }
+    }
+
     /** Caller retains a stable revision to resume this exact write; a retry with different bytes is refused. */
     fun appendBinary(capability: FieldAccountCapability, vineyard: String, collection: String, recordId: String,
-                     revision: String, source: File, originalPhotoPath: String? = null): String = synchronized(authority) {
+                     revision: String, source: File, originalPhotoPath: String? = null): String = withAccess(capability, vineyard) {
         checkAccess(capability, vineyard)
         check(source.absoluteFile == source.canonicalFile && source.isFile) { "Invalid binary source" }
         appendStream(capability, vineyard, collection, recordId, revision, source.length(),
@@ -78,7 +97,7 @@ internal class AccountEvidenceStore(
 
     private fun appendStream(capability: FieldAccountCapability, vineyard: String, collection: String, recordId: String,
                              revision: String, length: Long, hash: String, originalPhotoPath: String?,
-                             open: () -> InputStream): String = synchronized(authority) {
+                             open: () -> InputStream): String = withAccess(capability, vineyard) {
         checkAccess(capability, vineyard)
         require(collection.isNotBlank() && recordId.isNotBlank())
         require(revision.matches(Regex("[a-zA-Z0-9-]{1,80}")))
@@ -117,12 +136,12 @@ internal class AccountEvidenceStore(
     }
 
     /** Listing loads metadata only, never JSON-encoded photo bytes. Interrupted intents cannot masquerade as empty. */
-    fun metadata(capability: FieldAccountCapability, vineyard: String, collection: String): List<OwnedRecordMetadata> = synchronized(authority) {
+    fun metadata(capability: FieldAccountCapability, vineyard: String, collection: String): List<OwnedRecordMetadata> = withAccess(capability, vineyard) {
         checkAccess(capability, vineyard)
         disk.locked(root) { metadataLocked(capability, vineyard, collection) }
     }
 
-    fun read(capability: FieldAccountCapability, vineyard: String, collection: String): List<OwnedEvidence> = synchronized(authority) {
+    fun read(capability: FieldAccountCapability, vineyard: String, collection: String): List<OwnedEvidence> = withAccess(capability, vineyard) {
         checkAccess(capability, vineyard)
         disk.locked(root) {
             metadataLocked(capability, vineyard, collection).map { row ->
@@ -137,7 +156,7 @@ internal class AccountEvidenceStore(
 
     /** Scoped streaming resolver: no absolute file or unrevocable stream escapes the capability boundary. */
     fun copyBinary(capability: FieldAccountCapability, vineyard: String, collection: String, revision: String,
-                   output: OutputStream, originalPath: String? = null): Boolean = synchronized(authority) {
+                   output: OutputStream, originalPath: String? = null): Boolean = withAccess(capability, vineyard) {
         checkAccess(capability, vineyard)
         disk.locked(root) {
             val row = metadataLocked(capability, vineyard, collection).singleOrNull {
@@ -151,7 +170,7 @@ internal class AccountEvidenceStore(
     }
 
     /** Exact revision receipt retains all original payloads and is not permission for garbage collection. */
-    fun acknowledge(capability: FieldAccountCapability, vineyard: String, collection: String, revision: String): Boolean = synchronized(authority) {
+    fun acknowledge(capability: FieldAccountCapability, vineyard: String, collection: String, revision: String): Boolean = withAccess(capability, vineyard) {
         checkAccess(capability, vineyard)
         disk.locked(root) {
             val row = metadataLocked(capability, vineyard, collection).singleOrNull { it.revision == revision } ?: return@locked false
@@ -167,7 +186,7 @@ internal class AccountEvidenceStore(
     }
 
     fun photoBytes(capability: FieldAccountCapability, vineyard: String, collection: String, revision: String,
-                   originalPath: String): ByteArray? = synchronized(authority) {
+                   originalPath: String): ByteArray? = withAccess(capability, vineyard) {
         val output = java.io.ByteArrayOutputStream()
         if (copyBinary(capability, vineyard, collection, revision, output, originalPath)) output.toByteArray() else null
     }
@@ -218,6 +237,9 @@ internal class AccountEvidenceStore(
         File(root, IsolationDisk.digest(capability.account.toByteArray(Charsets.UTF_8)))
 
     @Serializable private data class Receipt(val account: String, val vineyard: String, val revision: String, val sha256: String)
-    private class Authority { var current: FieldAccountCapability? = null }
+    private class Authority {
+        var current: FieldAccountCapability? = null
+        var guardedOperations: Int = 0
+    }
     private companion object { val authorities = ConcurrentHashMap<String, Authority>() }
 }

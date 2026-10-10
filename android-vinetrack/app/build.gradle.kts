@@ -412,6 +412,20 @@ if (providers.gradleProperty("workTaskCompletionFocusedTests").orNull == "true")
     }
 }
 
+// Disabled Stage 1B contract maintenance only; no unrelated suites or emulator execution.
+if (providers.gradleProperty("disabledStage1BFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        testLogging { events("passed", "failed", "skipped") }
+    }
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/DisabledStage1BContractsTest.kt", "**/DisabledFamilyAccessTest.kt")
+            })
+        }
+    }
+}
+
 // Compile only Round 2 contract coverage, leaving unrelated legacy suites untouched.
 if (providers.gradleProperty("sprayProgramRound2FocusedTests").orNull == "true") {
     afterEvaluate {

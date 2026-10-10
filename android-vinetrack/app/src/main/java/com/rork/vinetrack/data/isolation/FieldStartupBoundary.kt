@@ -1,7 +1,6 @@
 package com.rork.vinetrack.data.isolation
 
 import java.util.concurrent.locks.ReentrantReadWriteLock
-import kotlin.concurrent.read
 
 /** All legacy writers, constructor repairs and export snapshot writes must participate before certification. */
 internal class FieldHandoverFence(private val expectedParticipants: Set<String>) {
@@ -15,7 +14,9 @@ internal class FieldHandoverFence(private val expectedParticipants: Set<String>)
 
     fun <T> legacyOperation(participant: String, action: () -> T): T {
         synchronized(this) { check(participant in registered) { "Unregistered legacy writer" } }
-        return lock.read(action)
+        check(!lock.isWriteLockedByCurrentThread) { "Reentrant mutation during baseline refused" }
+        check(lock.readLock().tryLock()) { "Admission closed; retain operation for retry, never wait or discard" }
+        try { return action() } finally { lock.readLock().unlock() }
     }
 
     /** Does not wait for or pause a running field operation. Call again at an independently established idle boundary. */

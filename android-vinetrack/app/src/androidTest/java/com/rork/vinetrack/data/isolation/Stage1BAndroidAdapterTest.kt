@@ -183,7 +183,6 @@ class Stage1BAndroidAdapterTest {
         val report = "STAGE1B_ANDROID_VOLUME sourceBytes=$originalBytes vaultBytes=$vaultBytes entries=${manifest.entries.size} initialMs=$initialMs verifyMs=$verifyMs sdk=${android.os.Build.VERSION.SDK_INT} model=${android.os.Build.MODEL} bufferBytes=65536"
         Log.i("Stage1B", report)
         println(report)
-        InstrumentationRegistry.getInstrumentation().sendStatus(0, android.os.Bundle().apply { putString("stream", report + "\n") })
         assertEquals(128L * 1024 * 1024, originalBytes)
         assertTrue(vaultBytes - originalBytes < 128 * 1024)
     }

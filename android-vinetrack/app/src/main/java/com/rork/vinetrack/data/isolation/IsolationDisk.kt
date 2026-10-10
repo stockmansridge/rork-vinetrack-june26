@@ -27,6 +27,15 @@ internal class IsolationDisk(
         }
     }
 
+    /** Copy admission never waits behind another process. Null means defer, not an empty source set. */
+    fun <T : Any> tryLocked(root: File, action: () -> T): T? {
+        directory(root)
+        return RandomAccessFile(File(root, "storage.lock"), "rw").use { handle ->
+            val lease = try { handle.channel.tryLock() } catch (_: java.nio.channels.OverlappingFileLockException) { null }
+            lease?.use { action() }
+        }
+    }
+
     /** Existing committed files are never overwritten, even when unreadable. */
     fun publish(file: File, write: (FileOutputStream) -> Unit) {
         check(!file.exists()) { "Protected evidence already exists" }
