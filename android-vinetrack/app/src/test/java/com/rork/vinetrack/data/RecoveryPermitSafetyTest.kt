@@ -6,7 +6,7 @@ import kotlinx.serialization.json.Json
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Investigation of why the current ID-only permit must not unlock selective replay. */
+/** Regression coverage for the two controlled permit/acknowledgement findings; not selective replay acceptance. */
 class RecoveryPermitSafetyTest {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
@@ -23,9 +23,9 @@ class RecoveryPermitSafetyTest {
         val replacement = queue.upsertCoalesced(PendingEntityType.PIN, "pin",
             json.encodeToString(PinRepository.PinInput.serializer(), changed), PendingOpType.CREATE)
         assertEquals(frozen.id, replacement.id)
-        sync.replayAll(setOf(frozen.id)) { }
-        // This is evidence of the deficient ID-only contract, NOT a safety acceptance assertion.
-        assertEquals(changed, consumed)
+        sync.replayAll(setOf(frozen.id), mapOf(frozen.id to frozen)) { }
+        assertNull(consumed)
+        assertEquals(listOf(replacement), queue.list())
         assertNotEquals(frozen.payloadJson, replacement.payloadJson)
     }
 
@@ -44,7 +44,7 @@ class RecoveryPermitSafetyTest {
         assertEquals(frozen.id, replacement.id)
         response.complete(Pin("pin", "A"))
         replay.await()
-        // Existing coordinator removes by ID after awaiting; selective safety is unproven.
-        assertTrue(queue.list().isEmpty())
+        // Even an ID-only caller cannot acknowledge a replacement with an earlier response.
+        assertEquals(listOf(replacement), queue.list())
     }
 }

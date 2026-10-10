@@ -2651,6 +2651,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         accountDeletionRepo.submitRequest(reason)
 
     init {
+        pendingWrites.configureReplayScope {
+            session.userId?.takeIf { session.accessToken != null }?.let {
+                PendingWriteRepository.ReplayScope(it, performanceAuthorizationEpoch)
+            }
+        }
+        pendingPhotos.configureReplayScope {
+            session.userId?.takeIf { session.accessToken != null }?.let {
+                PendingWriteRepository.ReplayScope(it, performanceAuthorizationEpoch)
+            }
+        }
         startTankCommitCoordinator.recover()
         observeConnectivity()
         observePendingWrites()
@@ -3082,12 +3092,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * durably preserve every owning vineyard before any coordinator mutates it.
      * Work queued after this snapshot waits for the next trigger.
      */
+    private fun prepareFrozenReplayWrites(): Map<String, com.rork.vinetrack.data.model.PendingWrite>? {
+        val writes = pendingWrites.list().filter { it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved }
+        if (!preserveAffectedRecoveryEvidence(writes = writes).didRun) return null
+        return pendingWrites.freezeReplayVersions(writes)
+    }
+
     private fun prepareAffectedPinReplay(): com.rork.vinetrack.data.AffectedPinReplayOrchestration.Permit? {
         val writes = pendingWrites.list().filter {
             it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
         }
         val photos = pendingPhotos.list()
-        return com.rork.vinetrack.data.AffectedPinReplayOrchestration.prepare(
+        val permit = com.rork.vinetrack.data.AffectedPinReplayOrchestration.prepare(
             writes = writes,
             photos = photos,
             preserve = { frozenWrites, photoVineyardIds ->
@@ -3096,7 +3112,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     additionalVineyardIds = photoVineyardIds,
                 )
             },
-        )
+        ) ?: return null
+        return permit.copy(writeVersions = pendingWrites.freezeReplayVersions(permit.writeVersions.values))
     }
 
     /**
@@ -3109,8 +3126,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (session.accessToken == null) return
         val permit = prepareAffectedPinReplay() ?: return
         viewModelScope.launch {
-            pinCreateSync.replayAll(permit.writeIds) { pin ->
+            pinCreateSync.replayAll(permit.writeIds, permit.writeVersions) { pin ->
+                if (pendingWrites.list().any { it.clientId == pin.id &&
+                    it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved }) return@replayAll
                 _ui.update { st ->
+                    if (st.selectedVineyardId != pin.vineyardId) return@update st
                     if (st.pins.any { it.id == pin.id }) {
                         // A payload queued before the driving-path column
                         // existed replays without it. Merging keeps the
@@ -3158,6 +3178,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             customPinSync.replayAll(
                 permittedWriteIds = permit.writeIds,
+                permittedWrites = permit.writeVersions,
                 onTypeSynced = { type -> reconcileCustomPinType(type) },
                 onPinSynced = { issue -> reconcileManualIssue(issue) },
             )
@@ -3174,8 +3195,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (session.accessToken == null || !_ui.value.isOnline) return
         val permit = prepareAffectedPinReplay() ?: return
         viewModelScope.launch {
-            pinCompletionSync.replayAll(permit.writeIds) { pin ->
-                _ui.update { st -> st.copy(pins = st.pins.map { if (it.id == pin.id) pin else it }) }
+            pinCompletionSync.replayAll(permit.writeIds, permit.writeVersions) { pin ->
+                _ui.update { st -> if (st.selectedVineyardId != pin.vineyardId) st else
+                    st.copy(pins = st.pins.map { if (it.id == pin.id) it.copy(isCompleted = pin.isCompleted) else it }) }
             }
         }
     }
@@ -3191,8 +3213,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (session.accessToken == null || !_ui.value.isOnline) return
         val permit = prepareAffectedPinReplay() ?: return
         viewModelScope.launch {
-            pinEditSync.replayAll(permit.writeIds) { pin ->
-                _ui.update { st -> st.copy(pins = st.pins.map { if (it.id == pin.id) pin else it }) }
+            pinEditSync.replayAll(permit.writeIds, permit.writeVersions) { pin ->
+                _ui.update { st -> if (st.selectedVineyardId != pin.vineyardId) st else
+                    st.copy(pins = st.pins.map { if (it.id == pin.id) it.copy(title = pin.title,
+                        category = pin.category, mode = pin.mode, notes = pin.notes,
+                        clientUpdatedAt = pin.clientUpdatedAt) else it }) }
             }
         }
     }
@@ -3211,6 +3236,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             pinDeleteSync.replayAll(
                 permittedWriteIds = permit.writeIds,
+                permittedWrites = permit.writeVersions,
                 permittedRetainedPhotos = permit.retainedPhotoPermits,
             ) { pinId ->
                 _ui.update { st -> st.copy(pins = st.pins.filterNot { it.id == pinId }) }
@@ -3229,11 +3255,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripMetadata() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (!preserveAffectedRecoveryEvidence().didRun) return
+        val versions = prepareFrozenReplayWrites() ?: return
         viewModelScope.launch {
-            tripMetadataSync.replayAll { trip ->
-                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) trip.copy(manualCorrectionEvents =
-                    (trip.manualCorrectionEvents.orEmpty() + it.manualCorrectionEvents.orEmpty()).distinct()) else it }) }
+            tripMetadataSync.replayAll(versions) { trip ->
+                _ui.update { st -> st.copy(trips = st.trips.map { local ->
+                    if (local.id == trip.id) com.rork.vinetrack.data.TripReplayPublication.metadata(trip, local) else local }) }
                 persistActiveTripSnapshot()
             }
         }
@@ -3248,11 +3274,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripSeeding() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (!preserveAffectedRecoveryEvidence().didRun) return
+        val versions = prepareFrozenReplayWrites() ?: return
         viewModelScope.launch {
-            tripSeedingSync.replayAll { trip ->
-                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) trip.copy(manualCorrectionEvents =
-                    (trip.manualCorrectionEvents.orEmpty() + it.manualCorrectionEvents.orEmpty()).distinct()) else it }) }
+            tripSeedingSync.replayAll(versions) { trip ->
+                _ui.update { st -> st.copy(trips = st.trips.map { local ->
+                    if (local.id == trip.id) com.rork.vinetrack.data.TripReplayPublication.seeding(trip, local) else local }) }
                 persistActiveTripSnapshot()
             }
         }
@@ -3261,7 +3287,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Runs Phase 5 parent and dependent writes in one awaited, per-process pipeline. */
     private fun replayPhase5Writes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (!preserveAffectedRecoveryEvidence().didRun) return
+        val versions = prepareFrozenReplayWrites() ?: return
         if (!phase5ReplayRunning.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
@@ -3271,14 +3297,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val state = _ui.value
                     if (state.selectedVineyardId == owningVineyardId) state.currentRole else null
                 }
-                tripStartSync.replayAll { trip ->
+                tripStartSync.replayAll(versions) { trip ->
                     _ui.update { st -> st.copy(trips = st.trips.map { existing ->
                         if (existing.id == trip.id) TripStartReconciliation.reconcile(server = trip, local = existing) else existing
                     }) }
                     persistActiveTripSnapshot()
                 }
                 tripLabourSync.replay()
-                tripRowPlanSync.replayAll { _ ->
+                tripRowPlanSync.replayAll(versions) { _ ->
                     // The durable local trip is authoritative for live GPS and
                     // coverage; a replay response must not rewind its row pointer.
                 }
@@ -3292,17 +3318,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         } else st.copy(sprayRecords = listOf(record) + st.sprayRecords)
                     }
                 }
-                tripTankSync.replayAll { trip ->
+                tripTankSync.replayAll(versions) { trip ->
                     _ui.update { st -> st.copy(trips = st.trips.map { existing ->
                         if (existing.id == trip.id && (existing.tankSessions != trip.tankSessions ||
                             existing.activeTankNumber != trip.activeTankNumber || existing.isFillingTank != trip.isFillingTank)) {
                             return@map existing
                         }
                         if (existing.id != trip.id) existing
-                        else if ((trip.pathPoints?.size ?: 0) >= (existing.pathPoints?.size ?: 0))
-                            trip.copy(manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct())
-                        else trip.copy(pathPoints = existing.pathPoints, totalDistance = existing.totalDistance,
-                            manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct())
+                        else com.rork.vinetrack.data.TripReplayPublication.tanks(trip, existing)
                     }) }
                     persistActiveTripSnapshot()
                 }
@@ -3315,14 +3338,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     if (!unresolved) {
                         runCatching { sprayTankActualRepo.upsert(actual) }
-                            .onSuccess { sprayTankActualStore.markSynced(actual.id) }
+                            .onSuccess { sprayTankActualStore.markSyncedIfCurrent(actual) }
                     }
                 }
                 _ui.value.selectedVineyardId?.let { vineyardId ->
                     runCatching { sprayTankActualRepo.fetch(vineyardId) }
                         .onSuccess { sprayTankActualStore.mergeRemote(it) }
                 }
-                tripEndSync.replayAll { trip ->
+                tripEndSync.replayAll(versions) { trip ->
                     _ui.update { st -> st.copy(
                         trips = st.trips.map { if (it.id == trip.id)
                             trip.copy(manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + it.manualCorrectionEvents.orEmpty()).distinct()) else it },
@@ -3364,28 +3387,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripGps() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (!preserveAffectedRecoveryEvidence().didRun) return
+        val versions = prepareFrozenReplayWrites() ?: return
         viewModelScope.launch {
-            tripGpsSync.replayAll { trip ->
+            tripGpsSync.replayAll(versions) { trip ->
                 _ui.update { st ->
                     st.copy(
                         trips = st.trips.map { existing ->
                             if (existing.id != trip.id) {
                                 existing
                             } else {
-                                val existingCount = existing.pathPoints?.size ?: 0
-                                val returnedCount = trip.pathPoints?.size ?: 0
-                                if (returnedCount >= existingCount) {
-                                    trip.copy(manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct())
-                                } else {
-                                    // Don't let a replay reconcile shrink a path the
-                                    // live tracker has grown past since the PATCH.
-                                    trip.copy(
-                                        pathPoints = existing.pathPoints,
-                                        totalDistance = existing.totalDistance,
-                                        manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct(),
-                                    )
-                                }
+                                com.rork.vinetrack.data.TripReplayPublication.gps(trip, existing)
                             }
                         },
                     )
@@ -3407,29 +3418,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripRow() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (!preserveAffectedRecoveryEvidence().didRun) return
+        val versions = prepareFrozenReplayWrites() ?: return
         viewModelScope.launch {
-            tripRowSync.replayAll { trip ->
+            tripRowSync.replayAll(versions) { trip ->
                 _ui.update { st ->
                     st.copy(
                         trips = st.trips.map { existing ->
                             if (existing.id != trip.id) {
                                 existing
                             } else {
-                                val existingCount = existing.pathPoints?.size ?: 0
-                                val returnedCount = trip.pathPoints?.size ?: 0
-                                if (returnedCount >= existingCount) {
-                                    trip.copy(manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct())
-                                } else {
-                                    // The coverage PATCH returns the server's path,
-                                    // which can lag the live tracker — keep the
-                                    // longer in-memory path/distance.
-                                    trip.copy(
-                                        pathPoints = existing.pathPoints,
-                                        totalDistance = existing.totalDistance,
-                                        manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + existing.manualCorrectionEvents.orEmpty()).distinct(),
-                                    )
-                                }
+                                com.rork.vinetrack.data.TripReplayPublication.rows(trip, existing)
                             }
                         },
                     )
@@ -3481,9 +3479,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        if (!preserveAffectedRecoveryEvidence().didRun) return
+        val versions = prepareFrozenReplayWrites() ?: return
         viewModelScope.launch {
-            tripDeleteSync.replayAll { tripId ->
+            tripDeleteSync.replayAll(versions) { tripId ->
                 _ui.update { st -> st.copy(trips = st.trips.filterNot { it.id == tripId }) }
             }
         }
@@ -4534,13 +4532,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         pinPhotoSync.replayAll(photoIds) { confirmation ->
             val attachment = confirmation.attachment
             _ui.update { st ->
+                if (st.selectedVineyardId != attachment.vineyardId) return@update st
                 st.copy(
                     pins = st.pins.map { pin ->
-                        if (pin.id == attachment.clientPinId && confirmation.pin != null) confirmation.pin else pin
+                        if (pin.id == attachment.clientPinId && confirmation.pin != null)
+                            pin.copy(photoPath = confirmation.pin.photoPath) else pin
                     },
                     growthRecords = st.growthRecords.map { record ->
                         if (record.id == attachment.growthRecordId && confirmation.growthRecord != null) {
-                            confirmation.growthRecord
+                            record.copy(photoPaths = confirmation.growthRecord.photoPaths)
                         } else {
                             record
                         }
@@ -6893,7 +6893,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Reconcile a canonical server issue into state and mirror its marker onto the shared pins list. */
     private fun reconcileManualIssue(issue: ManualIssue) {
+        if (pendingWrites.list().any { it.clientId == issue.id &&
+            it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved }) return
         _ui.update { st ->
+            if (st.selectedVineyardId != issue.vineyardId) return@update st
             val issues = if (st.manualIssues.any { it.id == issue.id }) {
                 st.manualIssues.map { if (it.id == issue.id) issue else it }
             } else {
@@ -6929,11 +6932,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun refreshManualIssues(includeFinished: Boolean = false) {
         val vineyardId = _ui.value.selectedVineyardId ?: return
+        val owner = session.userId
+        val epoch = vineyardSelectionEpoch
+        val accountEpoch = performanceAuthorizationEpoch
         viewModelScope.launch {
-            if (session.accessToken != null) {
+            val permit = if (session.accessToken != null) prepareAffectedPinReplay() else null
+            if (permit != null) {
                 manualIssueSync.replayAll(
                     onSynced = { reconcileManualIssue(it) },
-                    onDeleted = { removeManualIssueFromState(it) },
+                    onDeleted = { if (_ui.value.selectedVineyardId == vineyardId) removeManualIssueFromState(it) },
+                    permittedWrites = permit.writeVersions,
                 )
             }
             runCatching {
@@ -6941,8 +6949,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     vineyardId = vineyardId,
                     statuses = if (includeFinished) ManualIssueStatuses.all else null,
                 )
-            }.onSuccess { remote ->
+            }.onSuccess { response ->
+                if (session.userId != owner || vineyardSelectionEpoch != epoch ||
+                    performanceAuthorizationEpoch != accountEpoch || _ui.value.selectedVineyardId != vineyardId) return@onSuccess
                 _ui.update { st ->
+                    val remote = response.filterNot { manualIssueSync.isPending(it.id) }
                     // Keep locally queued issues the server doesn't know yet,
                     // and never let an active-only page evict cached finished
                     // records (legacy-cache safety).
@@ -7336,6 +7347,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Reconcile a canonical custom pin type into state (insert or replace by id). */
     private fun reconcileCustomPinType(type: CustomPinType) {
         _ui.update { st ->
+            if (st.selectedVineyardId != type.vineyardId) return@update st
             val rest = st.customPinTypes.filterNot { it.id == type.id }
             st.copy(customPinTypes = (rest + type).sortedBy { it.name.lowercase() })
         }
@@ -7699,11 +7711,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * deletes, or photos. Unauthorized still signs out; validation/permission
      * failures roll the flip back and surface an error rather than queueing.
      */
+    private val pinCompletionActions = com.rork.vinetrack.data.PinCompletionActionClock()
+
     fun togglePinCompleted(pin: Pin) {
+        val actionVersion = pinCompletionActions.begin(pin.id)
+        val actionOwner = session.userId
+        val actionAccountEpoch = performanceAuthorizationEpoch
+        fun isCurrentAction(): Boolean = pinCompletionActions.isCurrent(pin.id, actionVersion) &&
+            session.userId == actionOwner && performanceAuthorizationEpoch == actionAccountEpoch
         val previous = _ui.value.pins
         val target = !pin.isCompleted
         _ui.update { st -> st.copy(pins = st.pins.map { if (it.id == pin.id) it.copy(isCompleted = target) else it }) }
 
+        // Keep newer completion intent behind an already queued/in-flight toggle.
+        val hasQueuedCompletion = pendingWrites.list().any {
+            it.entityType == PendingEntityType.PIN && it.opType == PendingOpType.UPDATE &&
+                it.clientId == pin.id && it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
+        }
+        if (hasQueuedCompletion) {
+            pinCompletionSync.enqueue(pin.id, target)
+            replayPendingPinCompletions()
+            return
+        }
         // Known-offline: keep the optimistic flip and queue without a network call.
         if (!_ui.value.isOnline) {
             pinCompletionSync.enqueue(pin.id, target)
@@ -7714,19 +7743,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val updated = pinRepo.updatePinCompletion(pin.id, target)
-                _ui.update { st -> st.copy(pins = st.pins.map { if (it.id == pin.id) updated else it }) }
+                if (!isCurrentAction()) return@launch
+                _ui.update { st -> if (st.selectedVineyardId != pin.vineyardId) st else
+                    st.copy(pins = st.pins.map { if (it.id == pin.id) it.copy(isCompleted = updated.isCompleted) else it }) }
             } catch (e: BackendError.Unauthorized) {
-                onUnauthorized("togglePinCompleted")
+                if (isCurrentAction()) onUnauthorized("togglePinCompleted")
             } catch (e: BackendError.Server) {
+                if (!isCurrentAction()) return@launch
                 if (e.code in 500..599) {
                     // Transient server failure — keep the flip and queue for replay.
                     pinCompletionSync.enqueue(pin.id, target)
                     _ui.update { it.copy(pinError = "Completion saved on this device — it will retry when the server is reachable.") }
                 } else {
                     // Validation / permission rejection — don't queue; roll back.
-                    _ui.update { it.copy(pins = previous, pinError = friendlyWriteError(e.code)) }
+                    _ui.update { st -> st.copy(pins = st.pins.map { local ->
+                        if (local.id == pin.id) local.copy(isCompleted = previous.firstOrNull { it.id == pin.id }?.isCompleted ?: pin.isCompleted) else local },
+                        pinError = friendlyWriteError(e.code)) }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                if (isCurrentAction()) pinCompletionSync.enqueue(pin.id, target)
+                throw e
             } catch (e: Exception) {
+                if (!isCurrentAction()) return@launch
                 // Clear network/transient failure — keep the flip and queue for replay.
                 pinCompletionSync.enqueue(pin.id, target)
                 _ui.update { it.copy(pinError = "Pin completion saved offline — it will sync when connection returns.") }

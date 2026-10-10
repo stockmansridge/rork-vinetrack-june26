@@ -7,6 +7,7 @@ import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import java.time.OffsetDateTime
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -129,36 +130,39 @@ class PinEditSync(
      * Caller is responsible for only invoking this when online and a session
      * token exists.
      */
-    suspend fun replayAll(permittedWriteIds: Set<String>? = null, onSynced: (Pin) -> Unit) {
+    suspend fun replayAll(permittedWriteIds: Set<String>? = null, permittedWrites: Map<String, PendingWrite>? = null, onSynced: (Pin) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
                 it.entityType == PendingEntityType.PIN_EDIT &&
                     it.opType == PendingOpType.UPDATE &&
                     (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
-                    (permittedWriteIds == null || it.id in permittedWriteIds)
+                    (permittedWriteIds == null || it.id in permittedWriteIds) &&
+                    (permittedWrites == null || permittedWrites[it.id] == it)
             }
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (payload == null) {
                     // Unreplayable payload — block it so it can't loop.
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved edit.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved edit.")
                     continue
                 }
                 try {
                     // Stale-guard: read the live row and block if the server
                     // changed while we were offline.
                     val server = pinRepo.fetchPin(payload.pinId)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (!pending.isCurrent(write)) continue
                     if (server == null) {
-                        pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "This pin no longer exists.")
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "This pin no longer exists.")
                         continue
                     }
                     if (isServerNewer(server.clientUpdatedAt, payload.baseClientUpdatedAt)) {
-                        pending.updateStatus(
-                            write.id,
+                        pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "This pin was changed elsewhere. Open it to review.",
                         )
@@ -172,20 +176,23 @@ class PinEditSync(
                         notes = payload.notes,
                         clientUpdatedAt = payload.clientUpdatedAt,
                     )
-                    pending.remove(write.id)
-                    onSynced(pin)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.removeIfCurrent(write)) onSynced(pin)
                 } catch (e: BackendError.Unauthorized) {
                     // Session expired mid-replay — retry after re-auth (bounded by the cap).
                     retryOrBlock(write, "Sign-in needed to sync this edit.")
                 } catch (e: BackendError.Server) {
                     when {
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
+                        else -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The edit was rejected (${e.code}).",
                         )
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Edit sync was interrupted. Ready to retry.")
+                    throw e
                 } catch (e: Exception) {
                     // Still offline / transient network failure — leave for next time.
                     retryOrBlock(write, e.message ?: "No connection.")
@@ -218,10 +225,7 @@ class PinEditSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

@@ -10,6 +10,7 @@ import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -80,6 +81,7 @@ class CustomPinSync(
      */
     suspend fun replayAll(
         permittedWriteIds: Set<String>? = null,
+        permittedWrites: Map<String, PendingWrite>? = null,
         onTypeSynced: (CustomPinType) -> Unit,
         onPinSynced: (ManualIssue) -> Unit,
     ) {
@@ -89,7 +91,8 @@ class CustomPinSync(
                 .filter {
                     it.entityType == PendingEntityType.CUSTOM_PIN &&
                         (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
-                        (permittedWriteIds == null || it.id in permittedWriteIds)
+                        (permittedWriteIds == null || it.id in permittedWriteIds) &&
+                        (permittedWrites == null || permittedWrites[it.id] == it)
                 }
                 .sortedWith(
                     compareBy(
@@ -97,30 +100,35 @@ class CustomPinSync(
                         { it.createdAt },
                     ),
                 )
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val op = decode(write)
                 if (op == null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved item.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved item.")
                     continue
                 }
                 try {
                     when (op.kind) {
                         QueuedOp.KIND_TYPE_CREATE -> {
                             val params = op.typeParams ?: error("missing type params")
-                            onTypeSynced(repo.createType(params))
+                            val result = repo.createType(params)
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            if (pending.removeIfCurrent(write)) onTypeSynced(result)
                         }
                         QueuedOp.KIND_PIN_CREATE -> {
                             val params = op.pinParams ?: error("missing pin params")
-                            onPinSynced(repo.createCustomPin(params))
+                            val result = repo.createCustomPin(params)
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            if (pending.removeIfCurrent(write)) onPinSynced(result)
                         }
                         QueuedOp.KIND_SEGMENTS -> {
                             val pinId = op.pinId ?: error("missing pin id")
                             pinRepo.setRowSegments(pinId, op.segments.orEmpty())
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            pending.removeIfCurrent(write)
                         }
                         else -> error("unknown op kind ${op.kind}")
                     }
-                    pending.remove(write.id)
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to sync this item.")
                 } catch (e: BackendError.Server) {
@@ -130,13 +138,16 @@ class CustomPinSync(
                         // The parent pin insert hasn't replayed/landed yet —
                         // retry after the pin outbox flushes.
                         retryablePinMissing -> retryOrBlock(write, "Waiting for the pin to sync.")
-                        e.code in 400..499 -> pending.updateStatus(
-                            write.id,
+                        e.code in 400..499 -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The item was rejected (${e.code}).",
                         )
                         else -> retryOrBlock(write, "Server error (${e.code}).")
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Custom pin sync was interrupted. Ready to retry.")
+                    throw e
                 } catch (e: Exception) {
                     // Still offline / transient — leave for next time and stop.
                     retryOrBlock(write, e.message ?: "No connection.")
@@ -161,10 +172,7 @@ class CustomPinSync(
     }.getOrNull()
 
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

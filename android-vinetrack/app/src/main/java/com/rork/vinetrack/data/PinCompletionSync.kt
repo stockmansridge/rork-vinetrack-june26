@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -35,10 +36,12 @@ import kotlinx.serialization.json.Json
  * yet. Last-write-wins is acceptable for a completion-only boolean; ordered
  * conflict metadata is parked for Stage 9B.
  */
-class PinCompletionSync(
-    private val pinRepo: PinRepository,
+class PinCompletionSync private constructor(
+    private val updateRemote: suspend (String, Boolean) -> Pin,
     private val pending: PendingWriteRepository,
 ) {
+    constructor(pinRepo: PinRepository, pending: PendingWriteRepository) : this(pinRepo::updatePinCompletion, pending)
+    internal constructor(pending: PendingWriteRepository, updateRemote: suspend (String, Boolean) -> Pin) : this(updateRemote, pending)
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** Serialises replay so overlapping connectivity events can't double-fire. */
@@ -88,41 +91,45 @@ class PinCompletionSync(
      * Caller is responsible for only invoking this when online and a session
      * token exists.
      */
-    suspend fun replayAll(permittedWriteIds: Set<String>? = null, onSynced: (Pin) -> Unit) {
+    suspend fun replayAll(permittedWriteIds: Set<String>? = null, permittedWrites: Map<String, PendingWrite>? = null, onSynced: (Pin) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
                 it.entityType == PendingEntityType.PIN &&
                     it.opType == PendingOpType.UPDATE &&
                     (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
-                    (permittedWriteIds == null || it.id in permittedWriteIds)
+                    (permittedWriteIds == null || it.id in permittedWriteIds) &&
+                    (permittedWrites == null || permittedWrites[it.id] == it)
             }
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (payload == null) {
                     // Unreplayable payload — block it so it can't loop.
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved change.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved change.")
                     continue
                 }
                 try {
-                    val pin = pinRepo.updatePinCompletion(payload.pinId, payload.isCompleted)
-                    pending.remove(write.id)
-                    onSynced(pin)
+                    val pin = updateRemote(payload.pinId, payload.isCompleted)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.removeIfCurrent(write)) onSynced(pin)
                 } catch (e: BackendError.Unauthorized) {
                     // Session expired mid-replay — retry after re-auth (bounded by the cap).
                     retryOrBlock(write, "Sign-in needed to sync this change.")
                 } catch (e: BackendError.Server) {
                     when {
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
+                        else -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The change was rejected (${e.code}).",
                         )
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Completion sync was interrupted. Ready to retry.")
+                    throw e
                 } catch (e: Exception) {
                     // Still offline / transient network failure — leave for next time.
                     retryOrBlock(write, e.message ?: "No connection.")
@@ -135,10 +142,7 @@ class PinCompletionSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

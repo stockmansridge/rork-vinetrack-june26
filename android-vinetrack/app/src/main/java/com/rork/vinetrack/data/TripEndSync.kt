@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.Trip
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -140,21 +141,22 @@ class TripEndSync(
      *
      * Caller must only invoke this when online and a session token exists.
      */
-    suspend fun replayAll(onSynced: (Trip) -> Unit) {
+    suspend fun replayAll(permittedWrites: Map<String, PendingWrite>? = null, onSynced: (Trip) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
                 it.entityType == PendingEntityType.TRIP_END &&
                     it.opType == PendingOpType.UPDATE &&
-                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
+                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
+                    (permittedWrites == null || permittedWrites[it.id] == it)
             }
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (payload == null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved trip end.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved trip end.")
                     continue
                 }
                 // Mandatory dependency gate: never finalise while same-trip GPS,
@@ -162,8 +164,8 @@ class TripEndSync(
                 // end would freeze stale state. Defer without consuming a retry
                 // attempt so a legitimately-waiting end can't exhaust its cap.
                 if (hasUnresolvedDependencies(payload.tripId)) {
-                    pending.updateStatus(
-                        write.id,
+                    pending.updateStatusIfCurrent(
+                        write,
                         PendingWriteStatus.FAILED,
                         "Waiting for this trip's other changes to sync first.",
                     )
@@ -171,14 +173,21 @@ class TripEndSync(
                 }
                 try {
                     val server = tripRepo.fetchTrip(payload.tripId)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (!pending.isCurrent(write)) continue
+                    if (hasUnresolvedDependencies(payload.tripId)) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED,
+                            "Waiting for this trip's other changes to sync first.")
+                        continue
+                    }
                     if (server == null) {
-                        pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "This trip no longer exists.")
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "This trip no longer exists.")
                         continue
                     }
                     if (!server.isActive) {
                         // Already ended elsewhere (or a prior replay landed) —
                         // the end work is done, drop the marker safely.
-                        pending.remove(write.id)
+                        pending.removeIfCurrent(write)
                         continue
                     }
                     // Final path/distance come from the LIVE server row (the GPS
@@ -192,19 +201,22 @@ class TripEndSync(
                         endEngineHours = payload.endEngineHours,
                         endTime = payload.requestedEndTime,
                     )
-                    pending.remove(write.id)
-                    onSynced(trip)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.removeIfCurrent(write)) onSynced(trip)
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to finish the trip.")
                 } catch (e: BackendError.Server) {
                     when {
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
+                        else -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The trip end was rejected (${e.code}).",
                         )
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Trip end was interrupted. Ready to retry.")
+                    throw e
                 } catch (e: Exception) {
                     retryOrBlock(write, e.message ?: "No connection.")
                 }
@@ -229,10 +241,7 @@ class TripEndSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

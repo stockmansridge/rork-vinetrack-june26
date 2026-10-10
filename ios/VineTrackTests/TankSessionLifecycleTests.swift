@@ -132,6 +132,35 @@ final class TankSessionLifecycleTests: XCTestCase {
         XCTAssertFalse(started.tankSessions.contains { $0.tankNumber == 100 })
     }
 
+    func testExplicitlyEndedOutOfPlanHistoryAllowsPlannedTankOne() {
+        let completed = TankSession(id: sessionID, tankNumber: 99, startTime: fillStart, endTime: fillEnd)
+        let result = TankSessionLifecycle.startResult(
+            trip: trip(sessions: [completed]), at: sprayStart, currentRow: nil,
+            plannedTankNumbers: [1, 2], makeID: { self.createdSessionID }
+        )
+        XCTAssertEqual(result?.tankNumber, 1)
+        XCTAssertEqual(result?.trip.tankSessions.first, completed)
+        XCTAssertEqual(result?.trip.tankSessions.last?.id, createdSessionID)
+    }
+
+    @MainActor
+    func testPersistedOutOfPlanOpenSessionWithoutRuntimeFlagStillBlocksPlannedStart() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("out-of-plan-open-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let open = TankSession(id: sessionID, tankNumber: 99, startTime: fillStart)
+        let original = trip(sessions: [open])
+        TripRepository(persistence: PersistenceStore(directory: directory)).saveSlice([original], for: vineyardID)
+        let restored = try XCTUnwrap(TripRepository(persistence: PersistenceStore(directory: directory))
+            .load(for: vineyardID).single)
+        XCTAssertEqual(restored, original)
+        XCTAssertEqual(TankSessionLifecycle.reconciled(restored), restored)
+        XCTAssertNil(TankSessionLifecycle.startResult(trip: restored, at: sprayStart,
+            currentRow: nil, plannedTankNumbers: [1, 2]))
+        XCTAssertEqual(TripEndGate.evaluate(trip: restored), .blocked(.activeTank(tankNumber: 99)))
+    }
+
     func testPlannedStartReusesFillOnlyTankOne() {
         let started = TankSessionLifecycle.start(
             trip: trip(sessions: [fillOnly(completed: true)]),

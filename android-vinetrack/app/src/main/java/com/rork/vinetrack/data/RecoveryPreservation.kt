@@ -18,6 +18,7 @@ internal object AffectedPinReplayOrchestration {
         val writeIds: Set<String>,
         val replayPhotoIds: Set<String>,
         val retainedPhotoPermits: Set<PinDeleteSync.RetainedPhotoPermit>,
+        val writeVersions: Map<String, PendingWrite> = emptyMap(),
     )
 
     /**
@@ -34,6 +35,7 @@ internal object AffectedPinReplayOrchestration {
         if (!result.didRun) return null
         return Permit(
             writeIds = result.permittedWriteIds,
+            writeVersions = writes.filter { it.id in result.permittedWriteIds }.associateBy { it.id },
             replayPhotoIds = photos.filter {
                 it.status == PendingPhotoStatus.PENDING || it.status == PendingPhotoStatus.FAILED
             }.mapTo(mutableSetOf()) { it.id },

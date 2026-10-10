@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.Json
 
 /**
@@ -73,29 +74,30 @@ class PinCreateSync private constructor(
      *
      * Caller is responsible for only invoking this when a session token exists.
      */
-    suspend fun replayAll(permittedWriteIds: Set<String>? = null, onSynced: (Pin) -> Unit) {
+    suspend fun replayAll(permittedWriteIds: Set<String>? = null, permittedWrites: Map<String, PendingWrite>? = null, onSynced: (Pin) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
                 it.entityType == PendingEntityType.PIN &&
                     it.opType == PendingOpType.CREATE &&
                     (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
-                    (permittedWriteIds == null || it.id in permittedWriteIds)
+                    (permittedWriteIds == null || it.id in permittedWriteIds) &&
+                    (permittedWrites == null || permittedWrites[it.id] == it)
             }
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val input = runCatching {
                     json.decodeFromString(PinRepository.PinInput.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (input == null) {
                     // Unreplayable payload — block it so it can't loop.
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved pin.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved pin.")
                     continue
                 }
                 try {
                     val pin = requireNotNull(createRemote) { "Pin repository is required for replay." }(input)
-                    pending.remove(write.id)
-                    onSynced(pin)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.removeIfCurrent(write)) onSynced(pin)
                 } catch (e: BackendError.Unauthorized) {
                     // Session expired mid-replay — retry after re-auth (bounded by the cap).
                     retryOrBlock(write, "Sign-in needed to sync this pin.")
@@ -103,14 +105,17 @@ class PinCreateSync private constructor(
                     when {
                         // Duplicate primary key — the client id is already on the
                         // server, so the pin exists. Idempotent success.
-                        e.code == 409 -> pending.remove(write.id)
+                        e.code == 409 -> pending.removeIfCurrent(write)
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
+                        else -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The pin was rejected (${e.code}).",
                         )
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Pin sync was interrupted. Ready to retry.")
+                    throw e
                 } catch (e: Exception) {
                     // Still offline / transient network failure — leave for next time.
                     retryOrBlock(write, e.message ?: "No connection.")
@@ -123,10 +128,7 @@ class PinCreateSync private constructor(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

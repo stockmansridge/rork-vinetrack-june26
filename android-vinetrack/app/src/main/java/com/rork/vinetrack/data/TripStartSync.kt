@@ -8,6 +8,7 @@ import com.rork.vinetrack.data.model.SeedingDetails
 import com.rork.vinetrack.data.model.Trip
 import com.rork.vinetrack.data.model.parseIsoToEpochMs
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -213,21 +214,22 @@ class TripStartSync(
      * BEFORE the dependent metadata/GPS/row/tank/end replays so the server row
      * exists when they run.
      */
-    suspend fun replayAll(onSynced: (Trip) -> Unit) {
+    suspend fun replayAll(permittedWrites: Map<String, PendingWrite>? = null, onSynced: (Trip) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
                 it.entityType == PendingEntityType.TRIP_START &&
                     it.opType == PendingOpType.CREATE &&
-                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
+                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
+                    (permittedWrites == null || permittedWrites[it.id] == it)
             }
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (payload == null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved trip start.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved trip start.")
                     continue
                 }
                 try {
@@ -239,10 +241,11 @@ class TripStartSync(
                     } else {
                         requireNotNull(tripRepo) { "Trip repository is required for replay." }.fetchTrip(payload.tripId)
                     }
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (!pending.isCurrent(write)) continue
                     if (existingServer != null) {
                         if (!payload.activateExisting) {
-                            pending.remove(write.id)
-                            onSynced(existingServer)
+                            if (pending.removeIfCurrent(write)) onSynced(existingServer)
                             continue
                         }
                         when (activationDecision(existingServer, payload.startTime)) {
@@ -250,8 +253,8 @@ class TripStartSync(
                                 val activated = activateTripOverride?.invoke(payload.tripId, payload.startTime)
                                     ?: requireNotNull(tripRepo) { "Trip repository is required for replay." }
                                         .activateTrip(payload.tripId, payload.startTime, payload.startEngineHours)
-                                pending.remove(write.id)
-                                onSynced(activated)
+                                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                if (pending.removeIfCurrent(write)) onSynced(activated)
                             }
                             ActivationDecision.IDEMPOTENT_SUCCESS -> {
                                 val synced = if (
@@ -264,21 +267,21 @@ class TripStartSync(
                                 } else {
                                     existingServer
                                 }
-                                pending.remove(write.id)
-                                onSynced(synced)
+                                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                                if (pending.removeIfCurrent(write)) onSynced(synced)
                             }
-                            ActivationDecision.COMPLETED_CONFLICT -> pending.updateStatus(
-                                write.id,
+                            ActivationDecision.COMPLETED_CONFLICT -> pending.updateStatusIfCurrent(
+                                write,
                                 PendingWriteStatus.BLOCKED,
                                 "The saved trip has already been completed.",
                             )
-                            ActivationDecision.ACTIVE_CONFLICT -> pending.updateStatus(
-                                write.id,
+                            ActivationDecision.ACTIVE_CONFLICT -> pending.updateStatusIfCurrent(
+                                write,
                                 PendingWriteStatus.BLOCKED,
                                 "The saved trip was started elsewhere.",
                             )
-                            ActivationDecision.PROGRESS_CONFLICT -> pending.updateStatus(
-                                write.id,
+                            ActivationDecision.PROGRESS_CONFLICT -> pending.updateStatusIfCurrent(
+                                write,
                                 PendingWriteStatus.BLOCKED,
                                 "The saved trip already has runtime progress.",
                             )
@@ -286,8 +289,8 @@ class TripStartSync(
                         continue
                     }
                     if (payload.activateExisting) {
-                        pending.updateStatus(
-                            write.id,
+                        pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The saved trip no longer exists on the server.",
                         )
@@ -318,22 +321,25 @@ class TripStartSync(
                         nextRowNumber = payload.nextRowNumber,
                         totalTanks = payload.totalTanks,
                     )
-                    pending.remove(write.id)
-                    onSynced(created)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.removeIfCurrent(write)) onSynced(created)
                 } catch (e: BackendError.Unauthorized) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Sign-in needed to start the trip.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Sign-in needed to start the trip.")
                 } catch (e: BackendError.Server) {
                     when {
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
                         // A 409 conflict means the row already exists — treat as
                         // success and let the next pass reconcile via the probe.
                         e.code == 409 -> retryOrBlock(write, "Trip already exists; will reconcile.")
-                        else -> pending.updateStatus(
-                            write.id,
+                        else -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The trip start was rejected (${e.code}).",
                         )
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Trip start was interrupted. Ready to retry.")
+                    throw e
                 } catch (e: Exception) {
                     retryOrBlock(write, e.message ?: "No connection.")
                 }
@@ -345,10 +351,7 @@ class TripStartSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     internal enum class ActivationDecision {

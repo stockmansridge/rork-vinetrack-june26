@@ -12,6 +12,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.Serializable
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -54,33 +55,52 @@ class TripLabourSnapshotSync(
     }
 
     /** Captures first, then finalises only after the server records the actual end clocks. */
+    private val replayLock = kotlinx.coroutines.sync.Mutex()
+
     suspend fun replay(tripId: String? = null) {
-        if (session.accessToken == null) return
-        val writes = pending.list().filter {
-            it.entityType == PendingEntityType.TRIP_LABOUR && it.status in PendingWriteStatus.unresolved &&
-                (tripId == null || it.clientId == tripId)
-        }
-        for (write in writes) {
-            val snapshot = runCatching { json.decodeFromString(Snapshot.serializer(), write.payloadJson) }.getOrNull()
-            if (snapshot == null) {
-                pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Saved Trip labour facts are unreadable.")
-                continue
+        if (session.accessToken == null || !replayLock.tryLock()) return
+        try {
+            val writes = pending.list().filter {
+                it.entityType == PendingEntityType.TRIP_LABOUR &&
+                    it.status in setOf(PendingWriteStatus.PENDING, PendingWriteStatus.FAILED) &&
+                    (tripId == null || it.clientId == tripId)
             }
-            try {
-                val server = trips.fetchTrip(snapshot.tripId) ?: continue
-                val captured = rpc("capture_trip_labour_start_v1", captureArgs(snapshot))
-                if (!captured) {
-                    pending.updateStatus(write.id, PendingWriteStatus.FAILED, "Trip labour start needs to sync.")
+            for (candidate in writes) {
+                val write = pending.claimReplay(candidate) ?: continue
+                val snapshot = runCatching { json.decodeFromString(Snapshot.serializer(), write.payloadJson) }.getOrNull()
+                if (snapshot == null) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Saved Trip labour facts are unreadable.")
                     continue
                 }
-                if (server.endTime != null && !server.isActive) {
-                    if (rpc("finalise_trip_labour_v1", buildJsonObject { put("p_trip_id", JsonPrimitive(snapshot.tripId)) })) pending.remove(write.id)
-                    else pending.updateStatus(write.id, PendingWriteStatus.FAILED, "Trip labour finalisation needs to sync.")
+                try {
+                    val server = trips.fetchTrip(snapshot.tripId)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (!pending.isCurrent(write)) continue
+                    if (server == null) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Trip labour start needs to sync.")
+                        continue
+                    }
+                    val captured = rpc("capture_trip_labour_start_v1", captureArgs(snapshot))
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (!pending.isCurrent(write)) continue
+                    if (!captured) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Trip labour start needs to sync.")
+                        continue
+                    }
+                    if (server.endTime != null && !server.isActive) {
+                        val finalised = rpc("finalise_trip_labour_v1", buildJsonObject { put("p_trip_id", JsonPrimitive(snapshot.tripId)) })
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        if (finalised) pending.removeIfCurrent(write)
+                        else pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Trip labour finalisation needs to sync.")
+                    } else pending.updateStatusIfCurrent(write, PendingWriteStatus.PENDING)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Trip labour sync was interrupted. Ready to retry.")
+                    throw e
+                } catch (_: Exception) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Trip labour will retry when connected.")
                 }
-            } catch (_: Exception) {
-                pending.updateStatus(write.id, PendingWriteStatus.FAILED, "Trip labour will retry when connected.")
             }
-        }
+        } finally { replayLock.unlock() }
     }
 
     private suspend fun rpc(name: String, payload: JsonObject): Boolean {

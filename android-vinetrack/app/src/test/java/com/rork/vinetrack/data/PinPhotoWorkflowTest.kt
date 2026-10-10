@@ -22,6 +22,65 @@ import org.junit.Test
 
 class PinPhotoWorkflowTest {
     @Test
+    fun `replacement capture survives old reference success and repository restart`() = runTest {
+        val root = Files.createTempDirectory("photo-older-reference").toFile()
+        try {
+            val store = MemoryPhotoStore()
+            val repository = PendingPhotoRepository(root, store)
+            val original = repository.enqueue("pin-1", "vineyard-1", byteArrayOf(1, 2))
+            val started = CompletableDeferred<Unit>()
+            val response = CompletableDeferred<Pin>()
+            var publications = 0
+            val references = object : PinPhotoReferenceGateway {
+                override suspend fun updatePhotoPath(id: String, photoPath: String?): Pin {
+                    started.complete(Unit)
+                    return response.await()
+                }
+            }
+            val sync = PinPhotoSync(ObjectGateway(), references, GrowthGateway(), repository) { emptyList() }
+            val replay = launch { sync.replayAll { publications++ } }
+            started.await()
+            val replacement = repository.enqueue("pin-1", "vineyard-1", byteArrayOf(9, 8, 7))
+            response.complete(Pin("pin-1", "vineyard-1", photoPath = "old.jpg"))
+            replay.join()
+            assertNotEquals(original.id, replacement.id)
+            assertEquals(0, publications)
+            assertEquals(listOf(replacement), PendingPhotoRepository(root, store).list())
+            assertEquals(listOf<Byte>(9, 8, 7), File(replacement.localPath).readBytes().toList())
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
+    fun `replacement capture survives old reference failure and cancellation`() = runTest {
+        for (cancel in listOf(false, true)) {
+            val root = Files.createTempDirectory("photo-older-failure").toFile()
+            try {
+                val store = MemoryPhotoStore()
+                val repository = PendingPhotoRepository(root, store)
+                repository.enqueue("pin-1", "vineyard-1", byteArrayOf(1))
+                val started = CompletableDeferred<Unit>()
+                val response = CompletableDeferred<Pin>()
+                val references = object : PinPhotoReferenceGateway {
+                    override suspend fun updatePhotoPath(id: String, photoPath: String?): Pin {
+                        started.complete(Unit)
+                        return response.await()
+                    }
+                }
+                val sync = PinPhotoSync(ObjectGateway(), references, GrowthGateway(), repository) { emptyList() }
+                val replay = launch { sync.replayAll { error("Old photo must not publish") } }
+                started.await()
+                val replacement = repository.enqueue("pin-1", "vineyard-1", byteArrayOf(7))
+                if (cancel) replay.cancel() else response.completeExceptionally(java.io.IOException("offline"))
+                replay.join()
+                assertEquals(listOf(replacement), PendingPhotoRepository(root, store).list())
+                assertEquals(0, replacement.attemptCount)
+                assertEquals(PendingPhotoStatus.PENDING, replacement.status)
+                assertEquals(listOf<Byte>(7), File(replacement.localPath).readBytes().toList())
+            } finally { root.deleteRecursively() }
+        }
+    }
+
+    @Test
     fun `revision paths prevent older capture overwriting newer bytes`() {
         val first = PinPhotoRepository.pinStoragePath("vineyard", "pin", "revision-a")
         val second = PinPhotoRepository.pinStoragePath("vineyard", "pin", "revision-b")

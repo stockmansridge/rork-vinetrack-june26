@@ -9,6 +9,7 @@ import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import java.time.Instant
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -99,13 +100,15 @@ class ManualIssueSync(
      * Stops early on a transient failure (still offline) so the queue isn't
      * hammered.
      */
-    suspend fun replayAll(onSynced: (ManualIssue) -> Unit, onDeleted: (String) -> Unit) {
+    suspend fun replayAll(onSynced: (ManualIssue) -> Unit, onDeleted: (String) -> Unit,
+        permittedWrites: Map<String, PendingWrite>? = null) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list()
                 .filter {
                     it.entityType == PendingEntityType.MANUAL_ISSUE &&
-                        (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
+                        (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
+                        (permittedWrites == null || permittedWrites[it.id] == it)
                 }
                 .sortedWith(
                     compareBy(
@@ -113,48 +116,61 @@ class ManualIssueSync(
                         { it.createdAt },
                     ),
                 )
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val op = decode(write)
                 if (op == null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved issue.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved issue.")
                     continue
                 }
                 try {
                     when (op.kind) {
                         QueuedOp.KIND_CREATE -> {
                             val params = op.createParams ?: error("missing create params")
-                            onSynced(repo.create(params))
+                            val result = repo.create(params)
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            if (pending.removeIfCurrent(write) && !isPending(write.clientId)) onSynced(result)
                         }
                         QueuedOp.KIND_UPDATE -> {
                             val params = op.updateParams ?: error("missing update params")
-                            onSynced(repo.update(params))
+                            val result = repo.update(params)
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            if (pending.removeIfCurrent(write) && !isPending(write.clientId)) onSynced(result)
                         }
                         QueuedOp.KIND_STATUS -> {
                             val status = op.status ?: error("missing status")
-                            onSynced(repo.setStatus(write.clientId, status, Instant.now().toString()))
+                            val result = repo.setStatus(write.clientId, status, Instant.ofEpochMilli(write.createdAt).toString())
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            if (pending.removeIfCurrent(write) && !isPending(write.clientId)) onSynced(result)
                         }
-                        QueuedOp.KIND_CANCEL -> onSynced(repo.deleteOrCancel(write.clientId, "cancel"))
+                        QueuedOp.KIND_CANCEL -> {
+                            val result = repo.deleteOrCancel(write.clientId, "cancel")
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            if (pending.removeIfCurrent(write) && !isPending(write.clientId)) onSynced(result)
+                        }
                         QueuedOp.KIND_DELETE -> {
                             repo.deleteOrCancel(write.clientId, "delete")
-                            onDeleted(write.clientId)
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            if (pending.removeIfCurrent(write) && !isPending(write.clientId)) onDeleted(write.clientId)
                         }
                         else -> error("unknown op kind ${op.kind}")
                     }
-                    pending.remove(write.id)
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to sync this issue.")
                 } catch (e: BackendError.Server) {
                     when {
                         // Permanent rejection (validation/permission) — a retry
                         // can never succeed, so block it with the reason.
-                        e.code in 400..499 -> pending.updateStatus(
-                            write.id,
+                        e.code in 400..499 -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The issue was rejected (${e.code}).",
                         )
                         else -> retryOrBlock(write, "Server error (${e.code}).")
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Issue sync was interrupted. Ready to retry.")
+                    throw e
                 } catch (e: Exception) {
                     // Still offline / transient — leave for next time and stop.
                     retryOrBlock(write, e.message ?: "No connection.")
@@ -190,10 +206,7 @@ class ManualIssueSync(
     }.getOrNull()
 
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

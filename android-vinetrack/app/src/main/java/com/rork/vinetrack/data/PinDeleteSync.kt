@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.PendingPhotoStatus
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -106,6 +107,7 @@ class PinDeleteSync(
     suspend fun replayAll(
         permittedWriteIds: Set<String>? = null,
         permittedRetainedPhotos: Set<RetainedPhotoPermit>? = null,
+        permittedWrites: Map<String, PendingWrite>? = null,
         onDeleted: (pinId: String) -> Unit,
     ) {
         if (!replayLock.tryLock()) return
@@ -114,15 +116,16 @@ class PinDeleteSync(
                 it.entityType == PendingEntityType.PIN &&
                     it.opType == PendingOpType.DELETE &&
                     (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
-                    (permittedWriteIds == null || it.id in permittedWriteIds)
+                    (permittedWriteIds == null || it.id in permittedWriteIds) &&
+                    (permittedWrites == null || permittedWrites[it.id] == it)
             }
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (payload == null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved pin delete.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved pin delete.")
                     continue
                 }
                 // Dependency gate: never delete while same-pin create / completion
@@ -130,8 +133,8 @@ class PinDeleteSync(
                 // a retry attempt so a legitimately-waiting delete can't exhaust
                 // its cap.
                 if (hasUnresolvedDependencies(payload.pinId)) {
-                    pending.updateStatus(
-                        write.id,
+                    pending.updateStatusIfCurrent(
+                        write,
                         PendingWriteStatus.FAILED,
                         "Waiting for this pin's other changes to sync first.",
                     )
@@ -139,9 +142,11 @@ class PinDeleteSync(
                 }
                 try {
                     pinRepo.softDeletePin(payload.pinId)
-                    pending.remove(write.id)
-                    cleanupRetainedPhoto(payload.pinId, permittedRetainedPhotos)
-                    onDeleted(payload.pinId)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.removeIfCurrent(write)) {
+                        cleanupRetainedPhoto(payload.pinId, permittedRetainedPhotos)
+                        onDeleted(payload.pinId)
+                    }
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to delete this pin.")
                 } catch (e: BackendError.Server) {
@@ -149,17 +154,21 @@ class PinDeleteSync(
                         // Already deleted / never existed server-side — the delete
                         // intent is satisfied. Idempotent success.
                         e.code == 404 -> {
-                            pending.remove(write.id)
-                            cleanupRetainedPhoto(payload.pinId, permittedRetainedPhotos)
-                            onDeleted(payload.pinId)
+                            if (pending.removeIfCurrent(write)) {
+                                cleanupRetainedPhoto(payload.pinId, permittedRetainedPhotos)
+                                onDeleted(payload.pinId)
+                            }
                         }
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
+                        else -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The delete was rejected (${e.code}).",
                         )
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Pin delete was interrupted. Ready to retry.")
+                    throw e
                 } catch (e: Exception) {
                     retryOrBlock(write, e.message ?: "No connection.")
                 }
@@ -208,15 +217,12 @@ class PinDeleteSync(
                     attachment.status == PendingPhotoStatus.UPLOADED &&
                     RetainedPhotoPermit(attachment.id, attachment.revision) in permittedRetainedPhotos
             }
-            .forEach { pendingPhotos.remove(it.id) }
+            .forEach { pendingPhotos.removeIfCurrent(it.id, it.revision) }
     }
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

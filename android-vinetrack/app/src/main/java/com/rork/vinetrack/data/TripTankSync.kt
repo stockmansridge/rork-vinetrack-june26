@@ -7,6 +7,7 @@ import com.rork.vinetrack.data.model.PendingWriteStatus
 import com.rork.vinetrack.data.model.TankSession
 import com.rork.vinetrack.data.model.Trip
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -140,29 +141,30 @@ class TripTankSync(
      *
      * Caller must only invoke this when online and a session token exists.
      */
-    suspend fun replayAll(onSynced: (Trip) -> Unit) {
+    suspend fun replayAll(permittedWrites: Map<String, PendingWrite>? = null, onSynced: (Trip) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
                 it.entityType == PendingEntityType.TRIP_TANK &&
                     it.opType == PendingOpType.UPDATE &&
-                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
+                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
+                    (permittedWrites == null || permittedWrites[it.id] == it)
             }
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (payload == null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved tank progress.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved tank progress.")
                     continue
                 }
                 // Stage B-3-1 gate: never write to a trip whose server row
                 // hasn't been created yet (offline start). Defer without
                 // consuming a retry attempt until its TRIP_START marker clears.
                 if (TripStartSync.Dependency.hasUnresolvedStart(pending, payload.tripId)) {
-                    pending.updateStatus(
-                        write.id,
+                    pending.updateStatusIfCurrent(
+                        write,
                         PendingWriteStatus.FAILED,
                         "Waiting for this trip to finish starting.",
                     )
@@ -174,18 +176,20 @@ class TripTankSync(
                 // remove the marker safely rather than invent tank data.
                 val local = localTankStateFor(payload.tripId)
                 if (local == null) {
-                    pending.remove(write.id)
+                    pending.removeIfCurrent(write)
                     continue
                 }
                 try {
                     val server = fetchTrip(payload.tripId)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (!pending.isCurrent(write)) continue
                     if (server == null) {
-                        pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "This trip no longer exists.")
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "This trip no longer exists.")
                         continue
                     }
                     if (!server.isActive) {
-                        pending.updateStatus(
-                            write.id,
+                        pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "This trip was finished elsewhere. Open it to review.",
                         )
@@ -195,8 +199,8 @@ class TripTankSync(
                     if (merged == null) {
                         // Merge could not be proven safe (would drop/regress
                         // server sessions) — block rather than overwrite.
-                        pending.updateStatus(
-                            write.id,
+                        pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "This trip's tanks were changed elsewhere. Open it to review.",
                         )
@@ -204,26 +208,29 @@ class TripTankSync(
                     }
                     if (!merged.addsSomething(server)) {
                         // Nothing new beyond the server tank state — don't PATCH.
-                        pending.remove(write.id)
+                        pending.removeIfCurrent(write)
                         continue
                     }
                     val trip = saveTankSessions(
                         payload.tripId, merged.sessions, merged.activeTankNumber,
                         merged.isFillingTank, merged.fillingTankNumber,
                     )
-                    pending.remove(write.id)
-                    onSynced(trip)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.removeIfCurrent(write)) onSynced(trip)
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to sync tank progress.")
                 } catch (e: BackendError.Server) {
                     when {
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
+                        else -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The tank progress was rejected (${e.code}).",
                         )
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Trip sync was interrupted. Ready to retry.")
+                    throw e
                 } catch (e: Exception) {
                     retryOrBlock(write, e.message ?: "No connection.")
                 }
@@ -246,10 +253,7 @@ class TripTankSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

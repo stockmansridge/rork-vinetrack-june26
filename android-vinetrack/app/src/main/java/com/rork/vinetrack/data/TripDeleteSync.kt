@@ -5,6 +5,7 @@ import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -90,21 +91,22 @@ class TripDeleteSync(
      *
      * Caller must only invoke this when online and a session token exists.
      */
-    suspend fun replayAll(onDeleted: (tripId: String) -> Unit) {
+    suspend fun replayAll(permittedWrites: Map<String, PendingWrite>? = null, onDeleted: (tripId: String) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
                 it.entityType == PendingEntityType.TRIP &&
                     it.opType == PendingOpType.DELETE &&
-                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
+                    (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
+                    (permittedWrites == null || permittedWrites[it.id] == it)
             }
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (payload == null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved trip delete.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved trip delete.")
                     continue
                 }
                 // Dependency gate: never delete while same-trip start / metadata /
@@ -112,8 +114,8 @@ class TripDeleteSync(
                 // consuming a retry attempt so a legitimately-waiting delete can't
                 // exhaust its cap.
                 if (hasUnresolvedDependencies(payload.tripId)) {
-                    pending.updateStatus(
-                        write.id,
+                    pending.updateStatusIfCurrent(
+                        write,
                         PendingWriteStatus.FAILED,
                         "Waiting for this trip's other changes to sync first.",
                     )
@@ -121,8 +123,8 @@ class TripDeleteSync(
                 }
                 try {
                     tripRepo.softDeleteTrip(payload.tripId)
-                    pending.remove(write.id)
-                    onDeleted(payload.tripId)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.removeIfCurrent(write)) onDeleted(payload.tripId)
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to delete this trip.")
                 } catch (e: BackendError.Server) {
@@ -130,16 +132,18 @@ class TripDeleteSync(
                         // Already deleted / never existed server-side — the delete
                         // intent is satisfied. Idempotent success.
                         e.code == 404 -> {
-                            pending.remove(write.id)
-                            onDeleted(payload.tripId)
+                            if (pending.removeIfCurrent(write)) onDeleted(payload.tripId)
                         }
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
+                        else -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The delete was rejected (${e.code}).",
                         )
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Trip delete was interrupted. Ready to retry.")
+                    throw e
                 } catch (e: Exception) {
                     retryOrBlock(write, e.message ?: "No connection.")
                 }
@@ -164,10 +168,7 @@ class TripDeleteSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     companion object {

@@ -41,6 +41,12 @@ class PendingPhotoRepository internal constructor(
     private val photoDir: File
         get() = File(rootDir, PHOTO_DIR).apply { if (!exists()) mkdirs() }
 
+    private var scopeProvider: (() -> PendingWriteRepository.ReplayScope?)? = null
+    private val claimedScopes = mutableMapOf<Pair<String, String>, PendingWriteRepository.ReplayScope>()
+
+    @Synchronized
+    fun configureReplayScope(provider: () -> PendingWriteRepository.ReplayScope?) { scopeProvider = provider }
+
     private val _attachments = MutableStateFlow(recoverPreviousProcessWork())
     private var completedCache: List<CompletedPhotoCacheEntry> = store.loadCompletedCache()
     /** Live view of every persisted pending photo attachment. */
@@ -71,9 +77,10 @@ class PendingPhotoRepository internal constructor(
         }
         .maxByOrNull { it.createdAt }
 
+    @Synchronized
     fun isCurrent(id: String, revision: String): Boolean = _attachments.value.any {
         it.id == id && it.revision == revision && it.status in PendingPhotoStatus.unresolved
-    }
+    } && (claimedScopes[id to revision]?.let { it == scopeProvider?.invoke() } ?: true)
 
     /** Observable-display token for rejecting callbacks from an older capture. */
     fun currentRevision(entityId: String): String? = latestAttachment(entityId)?.revision
@@ -133,6 +140,7 @@ class PendingPhotoRepository internal constructor(
         return attachment
     }
 
+    @Synchronized
     fun recordUploadedPath(id: String, revision: String, path: String): Boolean {
         if (!isCurrent(id, revision)) return false
         val now = System.currentTimeMillis()
@@ -236,6 +244,47 @@ class PendingPhotoRepository internal constructor(
     fun retainedDisplayFile(entityId: String): File? =
         displaySource(entityId, remotePath = null, remoteIdentity = null).localPath?.let(::File)
 
+    /** Durable revision-conditional outcome, sharing the enqueue/persistence monitor. */
+    @Synchronized
+    fun updateStatusIfCurrent(attachment: PendingPhotoAttachment, status: String, error: String? = null): Boolean {
+        if (!isCurrent(attachment.id, attachment.revision)) return false
+        val scope = scopeProvider?.invoke()
+        if (scopeProvider != null && scope == null) return false
+        update { rows -> rows.map { if (it.id == attachment.id && it.revision == attachment.revision)
+            it.copy(status = status, lastError = error, updatedAt = System.currentTimeMillis()) else it } }
+        if (status == PendingPhotoStatus.IN_PROGRESS && scope != null) claimedScopes[attachment.id to attachment.revision] = scope
+        return true
+    }
+
+    @Synchronized
+    fun retryIfCurrent(attachment: PendingPhotoAttachment, error: String, maxAttempts: Int): Boolean {
+        if (!isCurrent(attachment.id, attachment.revision)) return false
+        update { rows -> rows.map { if (it.id == attachment.id && it.revision == attachment.revision) {
+            val attempts = it.attemptCount + 1
+            it.copy(attemptCount = attempts, lastError = error, updatedAt = System.currentTimeMillis(),
+                status = if (attempts >= maxAttempts) PendingPhotoStatus.BLOCKED else PendingPhotoStatus.FAILED)
+        } else it } }
+        return true
+    }
+
+    /** Commit metadata before deleting only this revision's retained bytes. */
+    @Synchronized
+    fun removeIfCurrent(id: String, revision: String): Boolean {
+        val attachment = _attachments.value.firstOrNull { it.id == id && it.revision == revision } ?: return false
+        if (claimedScopes[id to revision]?.let { it != scopeProvider?.invoke() } == true) return false
+        update { rows -> rows.filterNot { it.id == id && it.revision == revision } }
+        runCatching { File(attachment.localPath).delete() }
+        return true
+    }
+
+    /** Promotion and acknowledgement cannot race a replacement capture. */
+    @Synchronized
+    fun completeIfCurrent(attachment: PendingPhotoAttachment, path: String, remoteIdentity: String): Boolean {
+        if (!isCurrent(attachment.id, attachment.revision)) return false
+        promoteToDisplayCache(attachment, path, remoteIdentity)
+        return removeIfCurrent(attachment.id, attachment.revision)
+    }
+
     /** Update the status and optional error of an attachment by id. */
     fun updateStatus(id: String, status: String, lastError: String? = null) {
         val now = System.currentTimeMillis()
@@ -263,6 +312,7 @@ class PendingPhotoRepository internal constructor(
     }
 
     /** Remove an attachment entirely and delete its local file. */
+    @Synchronized
     fun remove(id: String) {
         deleteFileFor(id)
         update { list -> list.filterNot { it.id == id } }
@@ -279,6 +329,7 @@ class PendingPhotoRepository internal constructor(
      * Local-only: no Storage deletes, no upload attempts. Leaves no orphaned
      * files behind.
      */
+    @Synchronized
     fun clearAll() {
         runCatching {
             photoDir.listFiles()?.forEach { runCatching { it.delete() } }
@@ -299,6 +350,7 @@ class PendingPhotoRepository internal constructor(
         val next = transform(_attachments.value)
         store.save(next)
         _attachments.value = next
+        claimedScopes.keys.retainAll(next.map { it.id to it.revision }.toSet())
         _pendingCount.value = countUnresolved(next)
     }
 

@@ -6,6 +6,7 @@ import com.rork.vinetrack.data.model.PendingPhotoAttachment
 import com.rork.vinetrack.data.model.PendingPhotoEntityKind
 import com.rork.vinetrack.data.model.PendingPhotoStatus
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.ensureActive
 import java.io.File
 
 /**
@@ -98,7 +99,7 @@ class PinPhotoSync(
                 // Pin-exists ordering: leave the attachment pending until its pin
                 // create has synced. Don't touch the file or counters.
                 if (att.clientPinId in deletingIds || att.growthRecordId in deletingIds) {
-                    pending.remove(att.id)
+                    pending.removeIfCurrent(att.id, att.revision)
                     continue
                 }
                 if (shouldWaitForParent(att, queuedPinIds, queuedGrowthIds)) continue
@@ -106,16 +107,16 @@ class PinPhotoSync(
 
                 val file = File(att.localPath)
                 if (!file.exists()) {
-                    pending.updateStatus(att.id, PendingPhotoStatus.BLOCKED, "The saved photo is no longer on this device.")
+                    pending.updateStatusIfCurrent(att, PendingPhotoStatus.BLOCKED, "The saved photo is no longer on this device.")
                     continue
                 }
                 val bytes = runCatching { file.readBytes() }.getOrNull()
                 if (bytes == null || bytes.isEmpty()) {
-                    pending.updateStatus(att.id, PendingPhotoStatus.BLOCKED, "The saved photo couldn't be read.")
+                    pending.updateStatusIfCurrent(att, PendingPhotoStatus.BLOCKED, "The saved photo couldn't be read.")
                     continue
                 }
 
-                pending.updateStatus(att.id, PendingPhotoStatus.IN_PROGRESS)
+                if (!pending.updateStatusIfCurrent(att, PendingPhotoStatus.IN_PROGRESS)) continue
                 try {
                     val path = att.uploadedPath ?: when (att.entityKind) {
                         PendingPhotoEntityKind.GROWTH -> pinPhotoRepo.uploadAtPath(
@@ -163,13 +164,8 @@ class PinPhotoSync(
                                 )
                             }
                         }
-                        if (!pending.isCurrent(att.id, att.revision)) continue
-                        pending.promoteToDisplayCache(att, path, confirmation.remoteIdentity)
-                        onUploaded(confirmation)
-                        if (pending.isCurrent(att.id, att.revision)) {
-                            pending.markUploaded(att.id)
-                            pending.remove(att.id)
-                        }
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        if (pending.completeIfCurrent(att, path, confirmation.remoteIdentity)) onUploaded(confirmation)
                     } catch (e: BackendError.Unauthorized) {
                         // Upload succeeded but the row update needs re-auth. Keep
                         // the file so a later retry re-runs updatePhotoPath.
@@ -178,11 +174,14 @@ class PinPhotoSync(
                         when {
                             e.code in 500..599 -> retryOrBlock(att, "Server error (${e.code}).")
                             e.code == 401 || e.code == 403 ->
-                                pending.updateStatus(att.id, PendingPhotoStatus.BLOCKED, "Not allowed to attach this photo (${e.code}).")
+                                pending.updateStatusIfCurrent(att, PendingPhotoStatus.BLOCKED, "Not allowed to attach this photo (${e.code}).")
                             // Pin row may not exist yet, or another rejection —
                             // keep the file and retry rather than discarding it.
                             else -> retryOrBlock(att, "Couldn't attach the photo (${e.code}).")
                         }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        pending.updateStatusIfCurrent(att, PendingPhotoStatus.FAILED, "Photo sync was interrupted. Ready to retry.")
+                        throw e
                     } catch (e: Exception) {
                         retryOrBlock(att, e.message ?: "No connection.")
                     }
@@ -192,9 +191,12 @@ class PinPhotoSync(
                     when {
                         e.code in 500..599 -> retryOrBlock(att, "Server error (${e.code}).")
                         e.code == 401 || e.code == 403 ->
-                            pending.updateStatus(att.id, PendingPhotoStatus.BLOCKED, "Not allowed to upload this photo (${e.code}).")
-                        else -> pending.updateStatus(att.id, PendingPhotoStatus.BLOCKED, "The photo was rejected (${e.code}).")
+                            pending.updateStatusIfCurrent(att, PendingPhotoStatus.BLOCKED, "Not allowed to upload this photo (${e.code}).")
+                        else -> pending.updateStatusIfCurrent(att, PendingPhotoStatus.BLOCKED, "The photo was rejected (${e.code}).")
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.updateStatusIfCurrent(att, PendingPhotoStatus.FAILED, "Photo sync was interrupted. Ready to retry.")
+                    throw e
                 } catch (e: Exception) {
                     // Still offline / transient network failure — leave for next time.
                     retryOrBlock(att, e.message ?: "No connection.")
@@ -207,10 +209,7 @@ class PinPhotoSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(att: PendingPhotoAttachment, error: String) {
-        pending.incrementAttempt(att.id)
-        val attempts = att.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingPhotoStatus.BLOCKED else PendingPhotoStatus.FAILED
-        pending.updateStatus(att.id, status, error)
+        pending.retryIfCurrent(att, error, MAX_ATTEMPTS)
     }
 
     companion object {
