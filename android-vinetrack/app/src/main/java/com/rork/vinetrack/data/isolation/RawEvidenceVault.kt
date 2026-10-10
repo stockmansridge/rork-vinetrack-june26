@@ -72,11 +72,28 @@ internal class RawEvidenceVault(
         committed
     }
 
+    /** Historical baselines are immutable archives, not a promise that live legacy sources never change. */
+    fun verifyArchive(): VaultManifest = disk.locked(root) {
+        val pending = json.decodeFromString<VaultManifest>(prepared.readText())
+        validate(pending)
+        val committed = json.decodeFromString<VaultManifest>(verified.readText())
+        check(committed == pending.copy(status = "VERIFIED_NOT_ACTIVATED")) { "Incomplete historical baseline" }
+        pending.entries.forEach { entry ->
+            val blob = File(root, entry.blob)
+            disk.verify(blob, entry.length, entry.sha256)
+            disk.confirmPublished(blob)
+        }
+        disk.confirmPublished(prepared)
+        disk.confirmPublished(verified)
+        committed
+    }
+
     private fun inventory(): List<RawEvidenceSource> = sources().sortedBy { it.identity }.also { rows ->
         check(rows.map { it.identity }.distinct().size == rows.size) { "Duplicate source identity" }
         rows.forEach {
             check(it.identity.isNotBlank() && it.file.isFile) { "Missing source evidence" }
             check(it.file.absoluteFile == it.file.canonicalFile) { "Linked source evidence is not supported" }
+            check(!it.file.canonicalFile.toPath().startsWith(root.canonicalFile.toPath())) { "Vault cannot inventory itself" }
         }
     }
 

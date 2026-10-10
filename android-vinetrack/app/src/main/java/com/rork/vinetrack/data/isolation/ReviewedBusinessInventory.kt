@@ -13,6 +13,11 @@ internal object ReviewedBusinessInventory {
         "vinetrack_irrigation", "vineyard_insights_preview", "vinetrack_pruning", "vinetrack_fertiliser",
         "vinetrack_saved_chemicals_local", "resistance_plans", "vinetrack_map_alignment",
         "vinetrack_operational_tools", "vinetrack_button_templates",
+        "vinetrack_yield_determination", "vinetrack_pruning_yield_settings", "vinetrack_region_settings",
+        "vinetrack_map", "vinetrack_operations", "vinetrack_canopy_rates", "vinetrack_gdd_settings",
+        "vinetrack_bunch_weights", "vinetrack_app_prefs", "vinetrack_home", "vinetrack_onboarding",
+        "vinetrack_setup_wizard", "vinetrack_shared_grape_catalog", "optimal_ripeness_cache_v1",
+        "optimal_ripeness_source_v1", "optimal_ripeness_daily_weather_v2", "master_front_label_v1",
     )
     private val excludedPreferences = setOf(
         "vinetrack_session", "vinetrack_biometric", "vinetrack_entitlement", "vinetrack_telemetry",
@@ -21,6 +26,7 @@ internal object ReviewedBusinessInventory {
     private val businessDirectories = setOf(
         "pending_pin_photos", "pin_photo_display_cache", "pending_chemical_label_photos", "scout_photos",
         "vintage-reports", "vintage-report-exports", "canopy_reference_images", "ripeness-heatmap", "vineyard_logos",
+        "master-label-thumbnails",
     )
     private val evidenceFiles = setOf(
         "pin_capture_evidence_recovery_v2.json", "pin_capture_evidence_recovery_v2.json.bak",
@@ -28,7 +34,14 @@ internal object ReviewedBusinessInventory {
     )
 
     /** Raw XML, including backups, is copied without opening SharedPreferences or AtomicFile. */
-    fun sources(preferences: File, files: File): List<RawEvidenceSource> {
+    fun sources(preferences: File, files: File, cache: File? = null,
+                protectedRoots: Set<File> = emptySet()): List<RawEvidenceSource> {
+        protectedRoots.forEach { root ->
+            check(root.absoluteFile == root.canonicalFile && root.parentFile?.canonicalFile == files.canonicalFile) {
+                "Protected roots must be explicit direct children of files, not business subdirectories"
+            }
+            check(root.name !in businessDirectories && root.name !in evidenceFiles)
+        }
         val result = mutableListOf<RawEvidenceSource>()
         children(preferences).forEach { file ->
             val name = file.name.removeSuffix(".bak").removeSuffix(".xml")
@@ -41,10 +54,15 @@ internal object ReviewedBusinessInventory {
         }
         children(files).forEach { file ->
             when {
+                protectedRoots.any { it.absoluteFile == file.absoluteFile } -> Unit
                 file.name in evidenceFiles -> result += RawEvidenceSource("files/${file.name}", file)
                 file.name in businessDirectories && file.isDirectory -> collect(file, "files/${file.name}", result)
                 else -> error("Unreviewed file location; inventory review required")
             }
+        }
+        // Successful camera captures can be the only surviving photograph before handoff.
+        if (cache != null) children(cache).filter { it.name == "camera-captures" }.forEach {
+            collect(it, "cache/camera-captures", result)
         }
         return result
     }

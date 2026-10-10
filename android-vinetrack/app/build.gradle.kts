@@ -56,6 +56,7 @@ android {
         applicationId = "com.rork.vinetrack"
         minSdk = 24
         targetSdk = 36
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // v3.1.7 release — keep versionCode monotonically increasing.
         versionCode = 10
         versionName = "3.1.7"
@@ -635,6 +636,8 @@ dependencies {
     implementation(libs.revenuecat.purchases)
     implementation(libs.mlkit.text.recognition)
     debugImplementation(libs.androidx.ui.tooling)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.junit)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }
