@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <!-- No INTERNET, providers, receivers, services or production Application. -->
+    <application android:label="VineTrack copy-only preflight" android:allowBackup="false"
+        android:testOnly="true" android:debuggable="true" android:usesCleartextTraffic="false">
+        <activity android:name="com.rork.vinetrack.stage1c.TrialActivity" android:exported="true" />
+        <provider android:name="androidx.startup.InitializationProvider" tools:node="remove" />
+        <receiver android:name="androidx.profileinstaller.ProfileInstallReceiver" tools:node="remove" />
+    </application>
+</manifest>

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "observedAtUtcMillis": 0,
+  "validUntilUtcMillis": 0,
+  "syntheticAccount": "synthetic-stage1c-unprepared",
+  "syntheticOnly": false,
+  "noCredentialsOrProduction": false,
+  "normalWritersStopped": false,
+  "durableIdleBaseline": false,
+  "noActiveTrip": false,
+  "noOpenTank": false,
+  "noCaptureInFlight": false,
+  "noOperationInFlight": false,
+  "noUnresolvedOwnership": false,
+  "allDeviceRootsReviewed": false,
+  "sources": [],
+  "exclusions": [],
+  "references": [],
+  "evidence": {}
+}

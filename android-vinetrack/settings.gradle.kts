@@ -43,3 +43,8 @@ dependencyResolutionManagement {
 }
 rootProject.name = "VineTrack"
 include(":app")
+
+// Separate test-only APK. It is absent from normal customer/release builds.
+if (providers.gradleProperty("stage1cHarness").orNull == "true") {
+    include(":stage1c")
+}
