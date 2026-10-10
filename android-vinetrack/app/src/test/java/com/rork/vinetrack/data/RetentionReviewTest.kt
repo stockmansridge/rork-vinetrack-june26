@@ -4,6 +4,9 @@ import com.rork.vinetrack.data.auth.SessionDecision
 import com.rork.vinetrack.data.auth.SessionDecisions
 import com.rork.vinetrack.data.auth.SessionValidity
 import com.rork.vinetrack.data.model.*
+import com.rork.vinetrack.data.insights.PairedGrowthCaptureCoordinator
+import com.rork.vinetrack.data.insights.PairedGrowthCaptureJournal
+import com.rork.vinetrack.data.insights.PairedGrowthCaptureJournalStore
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -408,6 +411,94 @@ class RetentionReviewTest {
             assertTrue(otherIncarnation.markSyncedIfCurrent(original))
             assertTrue(actuals().pending().isEmpty())
             assertEquals(listOf(original), actuals().load())
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test(timeout = 10000) fun legacyPairedGrowthJournalCanBeReusedByNextAccountAfterRestart() {
+        val root = directory()
+        try {
+            val file = File(root, "paired-growth")
+            fun disk(): PairedGrowthCaptureJournalStore = object : PairedGrowthCaptureJournalStore {
+                private val json = Json { encodeDefaults = true }
+                private val serializer = ListSerializer(PairedGrowthCaptureJournal.serializer())
+                override fun load(): List<PairedGrowthCaptureJournal> = if (file.exists())
+                    json.decodeFromString(serializer, file.readText()) else emptyList()
+                override fun save(journal: PairedGrowthCaptureJournal): Boolean {
+                    val next = load().filterNot { it.operationId == journal.operationId } + journal
+                    commitReviewBytes(file, json.encodeToString(serializer, next).toByteArray())
+                    return true
+                }
+                override fun remove(operationId: String): Boolean {
+                    commitReviewBytes(file, json.encodeToString(serializer,
+                        load().filterNot { it.operationId == operationId }).toByteArray())
+                    return true
+                }
+            }
+            val recordedByA = PairedGrowthCaptureJournal(
+                operationId = "operation-A", pinId = "pin-A", growthRecordId = "growth-A",
+                vineyardId = "shared-vineyard", stageCode = "EL35", observedAtIso = "2026-10-10T00:00:00Z",
+                originatingFeature = "growth", createdAtMillis = 1L, updatedAtMillis = 1L,
+            )
+            assertEquals(recordedByA, PairedGrowthCaptureCoordinator(disk()).beginOrReuse(recordedByA))
+            val originalBytes = file.readBytes()
+            val nextAccountsCapture = recordedByA.copy(operationId = "operation-B", pinId = "pin-B",
+                growthRecordId = "growth-B", createdAtMillis = 2L, updatedAtMillis = 2L)
+            // This production coordinator has no account argument. The fixture labels the
+            // two capture sessions; it does not simulate login or assert UI reachability.
+            assertEquals(recordedByA, PairedGrowthCaptureCoordinator(disk()).beginOrReuse(nextAccountsCapture))
+            assertArrayEquals(originalBytes, file.readBytes())
+            assertEquals(listOf(recordedByA), disk().load())
+            val differentVineyard = nextAccountsCapture.copy(vineyardId = "other-vineyard")
+            assertEquals(differentVineyard, PairedGrowthCaptureCoordinator(disk()).beginOrReuse(differentVineyard))
+            assertEquals(listOf(recordedByA, differentVineyard), disk().load())
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test(timeout = 10000) fun chemicalLabelClearDeletesAnotherOwnersPersistedAttachmentAndJpeg() {
+        val root = directory()
+        try {
+            val file = File(root, "labels")
+            fun disk(): ChemicalLabelPhotoStoring = object : ChemicalLabelPhotoStoring {
+                private val json = Json { encodeDefaults = true }
+                private val serializer = ListSerializer(ChemicalLabelAttachment.serializer())
+                override fun load(): List<ChemicalLabelAttachment> = if (file.exists())
+                    json.decodeFromString(serializer, file.readText()) else emptyList()
+                override fun save(attachments: List<ChemicalLabelAttachment>) {
+                    commitReviewBytes(file, json.encodeToString(serializer, attachments).toByteArray())
+                }
+            }
+            val original = ChemicalLabelPhotoRepository(root, disk())
+                .enqueue("account-A", "shared-vineyard", "chemical-A", jpeg())
+            val recreated = ChemicalLabelPhotoRepository(root, disk())
+            assertEquals(listOf(original), recreated.list())
+            assertArrayEquals(jpeg(), File(original.localPath).readBytes())
+            // clearAll has no principal parameter despite each attachment carrying ownerId.
+            recreated.clearAll()
+            assertTrue(ChemicalLabelPhotoRepository(root, disk()).list().isEmpty())
+            assertFalse(File(original.localPath).exists())
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test(timeout = 10000) fun unreadableActiveTripEvidenceCanBeOverwrittenByNewClaim() {
+        val root = directory()
+        try {
+            val file = File(root, "active-trip")
+            val originalBytes = "{\"owner_user_id\":\"account-A\",\"trip\":{\"id\":\"unfinished-A\"".toByteArray()
+            commitReviewBytes(file, originalBytes)
+            val storage = object : ActiveTripSnapshotStorage {
+                override fun read(): String? = if (file.exists()) file.readText() else null
+                override fun write(raw: String) { commitReviewBytes(file, raw.toByteArray()) }
+                override fun writeDurably(raw: String): Boolean { write(raw); return true }
+                override fun remove() { file.delete() }
+            }
+            val recreated = ActiveTripStore(storage)
+            assertNull(recreated.load())
+            assertArrayEquals(originalBytes, file.readBytes())
+            assertFalse(recreated.hasActiveClaim())
+            assertTrue(recreated.claimIfAvailable("account-B", "other-vineyard",
+                reviewTrip().copy(id = "new-trip-B", vineyardId = "other-vineyard")))
+            assertFalse(originalBytes.contentEquals(file.readBytes()))
+            assertEquals("account-B", ActiveTripStore(storage).load()?.ownerUserId)
         } finally { root.deleteRecursively() }
     }
 
