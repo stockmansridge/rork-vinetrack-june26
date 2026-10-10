@@ -62,12 +62,41 @@ struct PersistencePerformanceTests {
         let rows = [pin(name: "Durable")]
         try store.saveOrThrow(rows, key: PinRepository.storageKey)
         try store.saveOrThrow(rows, key: PinRepository.storageKey)
-        #expect(measurements.last?.changed == false)
+        #expect(measurements.last?.changed == nil)
+        #expect(measurements.last?.readMilliseconds == 0)
         #expect(measurements.last?.writeMilliseconds ?? 0 > 0)
         store.durableSaveFailureForTesting = { _ in CocoaError(.fileWriteUnknown) }
         #expect(throws: (any Error).self) { try store.saveOrThrow(rows, key: PinRepository.storageKey) }
         let recovered: [VinePin]? = PersistenceStore(directory: directory).load(key: PinRepository.storageKey)
         #expect(recovered == rows)
+    }
+
+    @Test func durablePhotoCacheSavesNeverReadForComparisonAndPropagateWriteFailure() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersistenceStore(directory: directory)
+        var measurements: [PersistenceMeasurement] = []
+        store.onPersistenceMeasurementForTesting = { measurements.append($0) }
+        let original = [pin(name: "Photo", photo: Data(repeating: 42, count: 1024 * 1024))]
+        let file = directory.appendingPathComponent("\(PinRepository.storageKey).json")
+        try store.saveOrThrow(original, key: PinRepository.storageKey)
+        let originalBytes = try Data(contentsOf: file)
+        try store.saveOrThrow(original, key: PinRepository.storageKey)
+        #expect(try Data(contentsOf: file) == originalBytes)
+        var changed = original
+        changed[0].notes = "Changed snapshot"
+        try store.saveOrThrow(changed, key: PinRepository.storageKey)
+        #expect(PersistenceStore(directory: directory).load(key: PinRepository.storageKey) as [VinePin]? == changed)
+        #expect(measurements.count == 3)
+        #expect(measurements.allSatisfy { $0.operation == .durableSave && $0.readMilliseconds == 0 && $0.changed == nil && $0.succeeded })
+
+        // A real atomic-write failure must still throw, even with memoized bytes.
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.removeItem(at: directory)
+        #expect(throws: (any Error).self) { try store.saveOrThrow(changed, key: PinRepository.storageKey) }
+        #expect(measurements.last?.succeeded == false)
+        #expect(measurements.last?.readMilliseconds == 0)
+        #expect(measurements.last?.changed == nil)
     }
 
     @Test func metadataWritesNeverUseCollectionSkip() throws {

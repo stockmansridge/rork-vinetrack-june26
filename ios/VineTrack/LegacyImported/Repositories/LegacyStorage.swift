@@ -247,9 +247,11 @@ final class PersistenceStore {
         measurement.codecMilliseconds = (ProcessInfo.processInfo.systemUptime - encodeStart) * 1000
         measurement.bytes = data.count
         let url = fileURL(for: key)
-        // Compare complete encoded bytes, never IDs, counts, timestamps or
-        // model equality. Metadata and pending-operation files are not skipped.
-        if canMemoize(T.self, key: key) {
+        // Only non-durable collection saves compare disk bytes to avoid a
+        // redundant rewrite. Durable saves must write regardless; reading a
+        // photo-heavy cache solely for diagnostics would add main-thread work.
+        // Their changed flag remains unknown, not inferred from an encode memo.
+        if !durable && canMemoize(T.self, key: key) {
             let readStart = ProcessInfo.processInfo.systemUptime
             if let persisted = try? Data(contentsOf: url) {
                 measurement.changed = persisted != data
