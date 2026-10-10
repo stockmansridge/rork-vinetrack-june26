@@ -62,6 +62,13 @@ class DomainCacheRepository(context: Context) {
         return store.loadVineyards()
     }
 
+    /** Await read/decode only; all cache writes and outbox commit contracts stay unchanged. */
+    suspend fun loadVineyardsForHydration(userId: String?): VineyardCacheHydration? =
+        LocalCacheReadWorker.read { store.loadVineyardHydration(userId) }
+
+    fun isVineyardHydrationCurrent(userId: String?, hydration: VineyardCacheHydration): Boolean =
+        store.isVineyardHydrationCurrent(userId, hydration)
+
     fun vineyardsSyncedAt(userId: String?): Long? =
         if (ownerMatches(userId)) store.vineyardsSyncedAt() else null
 

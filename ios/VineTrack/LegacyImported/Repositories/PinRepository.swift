@@ -60,6 +60,12 @@ final class PinRepository {
         case pinNotFound
     }
 
+    /// Prepares only an immutable decode; all authoritative reads and writes remain ordered.
+    func prepareDecode() async {
+        await persistence.prepareDecode([VinePin].self, key: Self.storageKey)
+        await persistence.preparePinEncoding()
+    }
+
     func loadAll() -> [VinePin] {
         persistence.load(key: Self.storageKey) ?? []
     }

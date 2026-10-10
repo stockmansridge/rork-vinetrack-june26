@@ -768,6 +768,7 @@ final class PinSyncService {
             elapsedSince: photoStartedAt
         )
 
+        await store.pinRepo.prepareDecode()
         let mergeStartedAt = Date()
         let publicationCount = store.selectedVineyardId == vineyardId ? 1 : 0
         VineyardSelectionDiagnostics.intervalStage(

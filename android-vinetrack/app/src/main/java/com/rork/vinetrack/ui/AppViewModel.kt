@@ -6376,16 +6376,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Hydrates the last selected logo from app-private storage before server reads begin. */
     private suspend fun hydrateSelectedVineyardLogoBeforeNetwork() {
         val vineyardId = session.selectedVineyardId ?: return
-        val cachedVineyard = domainCache.loadVineyards(session.userId)
-            ?.firstOrNull { it.id == vineyardId }
-            ?: return
+        val owner = session.userId
+        val hydration = domainCache.loadVineyardsForHydration(owner) ?: return
+        if (session.userId != owner || session.selectedVineyardId != vineyardId ||
+            !domainCache.isVineyardHydrationCurrent(owner, hydration)) return
+        val cachedVineyard = hydration.rows.firstOrNull { it.id == vineyardId } ?: return
         if (cachedVineyard.logoPath.isNullOrBlank()) return
         val bitmap = withContext(Dispatchers.IO) {
             vineyardLogoCache.load(vineyardId)?.jpeg?.let { bytes ->
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             }
         } ?: return
-        if (session.selectedVineyardId == vineyardId) {
+        if (session.userId == owner && session.selectedVineyardId == vineyardId &&
+            domainCache.isVineyardHydrationCurrent(owner, hydration)) {
             _ui.update {
                 it.copy(
                     selectedVineyardId = vineyardId,
@@ -6406,8 +6409,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun hydrateVineyardsFromCache(): Boolean {
         if (_ui.value.vineyards.isNotEmpty()) return false
         val userId = session.userId
-        val cached = domainCache.loadVineyards(userId)
-        if (cached.isNullOrEmpty()) return false
+        val selectedBeforeRead = session.selectedVineyardId
+        val epochBeforeRead = vineyardSelectionEpoch
+        val hydration = domainCache.loadVineyardsForHydration(userId) ?: return false
+        if (session.userId != userId || session.selectedVineyardId != selectedBeforeRead ||
+            vineyardSelectionEpoch != epochBeforeRead || _ui.value.vineyards.isNotEmpty() ||
+            !domainCache.isVineyardHydrationCurrent(userId, hydration)) return false
+        val cached = hydration.rows
+        if (cached.isEmpty()) return false
         val memberIds = cached.map { it.id }.toSet()
         val defaultId = session.defaultVineyardId?.takeIf { it in memberIds }
         // Same contract as the online path: the persisted ACTIVE vineyard wins
@@ -6433,7 +6442,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 defaultVineyardId = defaultId,
                 currentUserId = userId,
                 isUsingCachedFieldData = true,
-                cachedFieldDataLastSyncedAt = domainCache.vineyardsSyncedAt(userId),
+                cachedFieldDataLastSyncedAt = hydration.syncedAt,
                 route = when {
                     selected == null -> AppRoute.NoVineyards
                     !offlineAccess -> AppRoute.Paywall

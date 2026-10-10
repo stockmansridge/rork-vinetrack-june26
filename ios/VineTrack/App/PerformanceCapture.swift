@@ -95,6 +95,18 @@ final class PerformanceCapture {
         append(String(describing: label))
     }
 
+    /// Categories and numeric statistics only; the caller cannot supply record contents or keys.
+    func persistence(_ measurement: PersistenceMeasurement) {
+        guard isEnabled else { return }
+        let count = measurement.records.map(String.init) ?? "unknown"
+        let changed = measurement.changed.map { $0 ? "yes" : "no" } ?? "unknown"
+        append(String(format: "persistence dataset=%@ operation=%@ records=%@ bytes=%d read=%.1fms codec=%.1fms write=%.1fms changed=%@ decodeReused=%@ encodeReused=%@ success=%@ offMain=%@",
+            measurement.dataset.rawValue, measurement.operation.rawValue, count, measurement.bytes,
+            measurement.readMilliseconds, measurement.codecMilliseconds, measurement.writeMilliseconds, changed,
+            measurement.reusedDecode ? "yes" : "no", measurement.reusedEncode ? "yes" : "no",
+            measurement.succeeded ? "yes" : "no", measurement.offMain ? "yes" : "no"))
+    }
+
     func clear() {
         rows.removeAll(keepingCapacity: true)
         active.removeAll(keepingCapacity: true)
@@ -125,6 +137,7 @@ final class PerformanceCapture {
         Capture begins only after system-admin verification; pre-verification startup is NOT measured.
         Reports are memory-only and lost on termination. The opt-in setting survives restart, but never grants admin access.
         No vineyard records, persistence keys, account IDs, credentials or raw errors are collected.
+        Persistence categories are allowlisted; counts and bytes describe whole payloads. changed=unknown means no comparison was made. Durable saves are never skipped.
 
         \(rows.joined(separator: "\n"))
         """

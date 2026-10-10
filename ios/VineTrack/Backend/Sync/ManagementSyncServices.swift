@@ -371,6 +371,7 @@ final class SavedChemicalSyncService {
         guard let store else { return [] }
         let owner = auth?.userId
         let remote = try await repository.fetch(vineyardId: vineyardId, since: nil)
+        await store.sprayRepo.prepareChemicalDecode()
         try Task.checkCancellation()
         guard auth?.userId == owner else { throw CancellationError() }
         guard remote.allSatisfy({ $0.vineyardId == vineyardId }) else {

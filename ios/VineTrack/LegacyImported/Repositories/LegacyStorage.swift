@@ -34,6 +34,101 @@ final class PersistenceStore {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private let logger = Logger(subsystem: "com.rork.vinetrack", category: "PersistenceStore")
+    private struct DecodedSnapshot {
+        let bytes: Data
+        let value: Any
+    }
+    // Only audited, Sendable value-type collections are memoized. Every load
+    // still reads the actual file, including durable read-back gates.
+    private var decodedSnapshots: [String: DecodedSnapshot] = [:]
+    private let snapshotByteLimit: Int = 24 * 1024 * 1024
+    private var pinEncodingMemo: PinEncodingMemo?
+    #if DEBUG
+    var onPersistenceMeasurementForTesting: ((PersistenceMeasurement) -> Void)?
+    #endif
+
+    private func canMemoize<T>(_ type: T.Type, key: String) -> Bool {
+        (key == "vinetrack_pins" && type == [VinePin].self)
+            || (key == "vinetrack_paddocks" && type == [Paddock].self)
+            || (key == "vinetrack_saved_chemicals" && type == [SavedChemical].self)
+    }
+
+    private func retainSnapshot<T>(_ value: T, bytes: Data, key: String) {
+        guard canMemoize(T.self, key: key), bytes.count <= snapshotByteLimit,
+              PersistenceDecodeEligibility.permits(.classify(key), bytes: bytes) else { return }
+        decodedSnapshots.removeValue(forKey: key)
+        if decodedSnapshots.values.reduce(bytes.count + (pinEncodingMemo?.bytes.count ?? 0), { $0 + $1.bytes.count }) > snapshotByteLimit {
+            decodedSnapshots.removeAll()
+        }
+        if bytes.count + (pinEncodingMemo?.bytes.count ?? 0) <= snapshotByteLimit {
+            decodedSnapshots[key] = DecodedSnapshot(bytes: bytes, value: value)
+        }
+    }
+
+    private func retainPinEncoding(_ memo: PinEncodingMemo) {
+        guard memo.bytes.count <= snapshotByteLimit else { pinEncodingMemo = nil; return }
+        if decodedSnapshots.values.reduce(memo.bytes.count, { $0 + $1.bytes.count }) > snapshotByteLimit {
+            decodedSnapshots.removeAll()
+        }
+        pinEncodingMemo = memo
+    }
+
+    /// Pure preparation, not an async write. A synchronous save only reuses
+    /// these bytes if its complete pin value matches bit-for-bit/string-for-string.
+    func preparePinEncoding() async {
+        guard pinEncodingMemo == nil,
+              let pins = decodedSnapshots["vinetrack_pins"]?.value as? [VinePin] else { return }
+        var measurement = PersistenceMeasurement(dataset: .pins, operation: .prepare)
+        measurement.records = pins.count
+        defer { report(measurement) }
+        do {
+            let prepared = try await PersistenceEncodePreparation.encode(pins)
+            // A newer synchronous encoder has precedence over speculative work.
+            guard pinEncodingMemo == nil else { return }
+            retainPinEncoding(PinEncodingMemo(pins: pins, bytes: prepared.bytes))
+            measurement.codecMilliseconds = prepared.encodeMilliseconds
+            measurement.bytes = prepared.bytes.count
+            measurement.offMain = prepared.offMain
+            measurement.succeeded = true
+        } catch {
+            // Actual saves still use the original encoder/failure contract.
+        }
+    }
+
+    private func recordCount<T>(_ value: T) -> Int? {
+        (value as? any Collection)?.count
+    }
+
+    private func report(_ measurement: PersistenceMeasurement) {
+        PerformanceCapture.shared.persistence(measurement)
+        #if DEBUG
+        onPersistenceMeasurementForTesting?(measurement)
+        #endif
+    }
+
+    /// Speculative read-only preparation. A stale result is harmless: the next
+    /// synchronous load validates exact file bytes before using it. No state,
+    /// failure callback, sync cursor or acknowledgement changes here.
+    func prepareDecode<T: Decodable & Sendable>(_ type: T.Type, key: String) async {
+        guard canMemoize(type, key: key), decodedSnapshots[key] == nil else { return }
+        var measurement = PersistenceMeasurement(dataset: .classify(key), operation: .prepare)
+        defer { report(measurement) }
+        do {
+            let prepared = try await PersistenceDecodePreparation.read(type, url: fileURL(for: key))
+            // Never replace a snapshot installed by a newer synchronous load.
+            guard decodedSnapshots[key] == nil else { return }
+            retainSnapshot(prepared.value, bytes: prepared.bytes, key: key)
+            measurement.readMilliseconds = prepared.readMilliseconds
+            measurement.codecMilliseconds = prepared.decodeMilliseconds
+            measurement.bytes = prepared.bytes.count
+            measurement.records = recordCount(prepared.value)
+            measurement.offMain = prepared.offMain
+            measurement.succeeded = true
+        } catch {
+            // The authoritative load retains the established missing/corrupt
+            // handling, including callbacks and quarantine, exactly as before.
+        }
+    }
 
     init(directory: URL = LegacyStorage.storageDirectory) {
         self.directory = directory
@@ -56,14 +151,37 @@ final class PersistenceStore {
     func loadOutcome<T: Decodable>(key: String) -> LoadOutcome<T> {
         let performanceSpan = PerformanceCapture.shared.begin("persistence read and JSON decode")
         defer { PerformanceCapture.shared.end(performanceSpan) }
+        var measurement = PersistenceMeasurement(dataset: .classify(key), operation: .read)
+        defer { report(measurement) }
         let url = fileURL(for: key)
         guard FileManager.default.fileExists(atPath: url.path) else {
+            decodedSnapshots.removeValue(forKey: key)
+            measurement.succeeded = true
             return .missing
         }
         do {
+            let readStart = ProcessInfo.processInfo.systemUptime
             let data = try Data(contentsOf: url)
-            return .decoded(try decoder.decode(T.self, from: data))
+            measurement.readMilliseconds = (ProcessInfo.processInfo.systemUptime - readStart) * 1000
+            measurement.bytes = data.count
+            if canMemoize(T.self, key: key), let snapshot = decodedSnapshots[key],
+               snapshot.bytes == data, let value = snapshot.value as? T {
+                measurement.reusedDecode = true
+                measurement.changed = false
+                measurement.records = recordCount(value)
+                measurement.succeeded = true
+                return .decoded(value)
+            }
+            decodedSnapshots.removeValue(forKey: key)
+            let decodeStart = ProcessInfo.processInfo.systemUptime
+            defer { measurement.codecMilliseconds = (ProcessInfo.processInfo.systemUptime - decodeStart) * 1000 }
+            let value = try decoder.decode(T.self, from: data)
+            retainSnapshot(value, bytes: data, key: key)
+            measurement.records = recordCount(value)
+            measurement.succeeded = true
+            return .decoded(value)
         } catch {
+            decodedSnapshots.removeValue(forKey: key)
             logger.error("Load FAILED for persistence key '\(key, privacy: .public)': \(String(describing: error), privacy: .public)")
             #if DEBUG
             print("[PersistenceStore] load FAILED for key '\(key)': \(error)")
@@ -86,9 +204,7 @@ final class PersistenceStore {
     func save<T: Encodable>(_ value: T, key: String) {
         let performanceSpan = PerformanceCapture.shared.begin("persistence JSON encode and atomic save")
         defer { PerformanceCapture.shared.end(performanceSpan) }
-        let url = fileURL(for: key)
-        guard let data = try? encoder.encode(value) else { return }
-        try? data.write(to: url, options: [.atomic])
+        try? encodeAndSave(value, key: key, durable: false)
     }
 
     /// Durable variant of `save`: encoding and disk-write failures THROW
@@ -101,8 +217,56 @@ final class PersistenceStore {
         #if DEBUG
         if let error = durableSaveFailureForTesting?(key) { throw error }
         #endif
-        let data = try encoder.encode(value)
-        try data.write(to: fileURL(for: key), options: [.atomic])
+        try encodeAndSave(value, key: key, durable: true)
+    }
+
+    private func encodeAndSave<T: Encodable>(_ value: T, key: String, durable: Bool) throws {
+        var measurement = PersistenceMeasurement(dataset: .classify(key), operation: durable ? .durableSave : .save)
+        measurement.records = recordCount(value)
+        defer { report(measurement) }
+        let encodeStart = ProcessInfo.processInfo.systemUptime
+        let data: Data
+        do {
+            if key == "vinetrack_pins", let pins = value as? [VinePin],
+               let memo = pinEncodingMemo, memo.matches(pins) {
+                data = memo.bytes
+                measurement.reusedEncode = true
+            } else {
+                data = try encoder.encode(value)
+                if key == "vinetrack_pins", let pins = value as? [VinePin] {
+                    // Single bounded immutable result; failed writes never turn
+                    // this into evidence that anything was persisted.
+                    retainPinEncoding(PinEncodingMemo(pins: pins, bytes: data))
+                }
+            }
+        }
+        catch {
+            measurement.codecMilliseconds = (ProcessInfo.processInfo.systemUptime - encodeStart) * 1000
+            throw error
+        }
+        measurement.codecMilliseconds = (ProcessInfo.processInfo.systemUptime - encodeStart) * 1000
+        measurement.bytes = data.count
+        let url = fileURL(for: key)
+        // Compare complete encoded bytes, never IDs, counts, timestamps or
+        // model equality. Metadata and pending-operation files are not skipped.
+        if canMemoize(T.self, key: key) {
+            let readStart = ProcessInfo.processInfo.systemUptime
+            if let persisted = try? Data(contentsOf: url) {
+                measurement.changed = persisted != data
+            }
+            measurement.readMilliseconds = (ProcessInfo.processInfo.systemUptime - readStart) * 1000
+        }
+        if !durable && measurement.changed == false {
+            measurement.succeeded = true
+            return
+        }
+        // Durable callers ALWAYS perform and wait for the atomic write,
+        // including identical bytes. No new suspension or reordering exists.
+        let writeStart = ProcessInfo.processInfo.systemUptime
+        defer { measurement.writeMilliseconds = (ProcessInfo.processInfo.systemUptime - writeStart) * 1000 }
+        try data.write(to: url, options: [.atomic])
+        if decodedSnapshots[key]?.bytes != data { decodedSnapshots.removeValue(forKey: key) }
+        measurement.succeeded = true
     }
 
     func remove(key: String) {
@@ -110,6 +274,8 @@ final class PersistenceStore {
     }
 
     func removeOrThrow(key: String) throws {
+        decodedSnapshots.removeValue(forKey: key)
+        if key == "vinetrack_pins" { pinEncodingMemo = nil }
         let url = fileURL(for: key)
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         try FileManager.default.removeItem(at: url)
@@ -120,6 +286,8 @@ final class PersistenceStore {
     /// Returns the quarantine location, or nil when there was nothing to move.
     @discardableResult
     func quarantine(key: String) -> URL? {
+        decodedSnapshots.removeValue(forKey: key)
+        if key == "vinetrack_pins" { pinEncodingMemo = nil }
         let url = fileURL(for: key)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let stamp = Int(Date().timeIntervalSince1970)

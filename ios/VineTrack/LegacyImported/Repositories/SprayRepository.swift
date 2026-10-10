@@ -54,6 +54,11 @@ final class SprayRepository {
 
     // MARK: - SavedChemical
 
+    /// Read-only codec preparation; the subsequent load still validates disk bytes.
+    func prepareChemicalDecode() async {
+        await persistence.prepareDecode([SavedChemical].self, key: Self.savedChemicalsKey)
+    }
+
     func loadAllChemicals() -> [SavedChemical] {
         persistence.load(key: Self.savedChemicalsKey) ?? []
     }

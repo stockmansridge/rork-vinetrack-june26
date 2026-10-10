@@ -1,6 +1,9 @@
 package com.rork.vinetrack.data
 
 import android.content.Context
+import android.os.Looper
+import android.util.Log
+import com.rork.vinetrack.BuildConfig
 import androidx.core.content.edit
 import com.rork.vinetrack.data.model.CloneCatalogEntry
 import com.rork.vinetrack.data.model.DamageRecord
@@ -53,7 +56,9 @@ class DomainCacheStore(context: Context) {
         .getSharedPreferences("vinetrack_domain_cache", Context.MODE_PRIVATE)
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    private val vineyardSerializer = ListSerializer(Vineyard.serializer())
+    private val vineyardCodec = VineyardCacheCodec(if (BuildConfig.DEBUG) { timing ->
+        Log.d("LocalPersistenceTiming", "dataset=vineyards operation=${timing.operation} records=${timing.records} bytes=${timing.bytes} codecMs=${timing.codecNanos / 1_000_000.0} reused=${timing.reused} changed=${timing.changed ?: "unknown"} main=${Looper.myLooper() == Looper.getMainLooper()}")
+    } else null)
     private val paddockSerializer = ListSerializer(Paddock.serializer())
     private val pinSerializer = ListSerializer(Pin.serializer())
     private val maintenanceSerializer = ListSerializer(MaintenanceLog.serializer())
@@ -87,11 +92,28 @@ class DomainCacheStore(context: Context) {
 
     // MARK: - Vineyard list
 
-    fun loadVineyards(): List<Vineyard> = decode(prefs.getString(KEY_VINEYARDS, null), vineyardSerializer)
+    fun loadVineyards(): List<Vineyard> = vineyardCodec.decode(prefs.getString(KEY_VINEYARDS, null))
+
+    /** Atomic preference-map snapshot; never mixes a previous owner's JSON with a newer timestamp. */
+    fun loadVineyardHydration(userId: String?): VineyardCacheHydration? {
+        val snapshot = prefs.all
+        if ((snapshot[KEY_OWNER] as String?) != userId || !snapshot.containsKey(KEY_VINEYARDS_AT)) return null
+        // Keep the existing ClassCastException behaviour for corrupt preference
+        // types; do not silently downgrade malformed metadata to a cache miss.
+        val syncedAt = snapshot[KEY_VINEYARDS_AT] as Long
+        val raw = snapshot[KEY_VINEYARDS] as String?
+        return VineyardCacheHydration(vineyardCodec.decode(raw), syncedAt, raw)
+    }
+
+    fun isVineyardHydrationCurrent(userId: String?, hydration: VineyardCacheHydration): Boolean =
+        hydration.matchesSource(userId, owner(), prefs.getString(KEY_VINEYARDS, null), vineyardsSyncedAt())
 
     fun saveVineyards(vineyards: List<Vineyard>, syncedAt: Long) {
+        val encoded = vineyardCodec.encode(vineyards, prefs.getString(KEY_VINEYARDS, null))
+        // Always retain the existing editor + timestamp transition, even when
+        // JSON is identical. This remains apply(), not a new durability claim.
         prefs.edit {
-            putString(KEY_VINEYARDS, json.encodeToString(vineyardSerializer, vineyards))
+            putString(KEY_VINEYARDS, encoded)
             putLong(KEY_VINEYARDS_AT, syncedAt)
         }
     }
@@ -107,7 +129,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveOperatorCategories(vineyardId: String, rows: List<OperatorCategory>, syncedAt: Long) {
         prefs.edit {
-            putString("worker_types_$vineyardId", json.encodeToString(operatorCategorySerializer, rows))
+            putString("worker_types_$vineyardId", encode(operatorCategorySerializer, rows))
             putLong("worker_types_at_$vineyardId", syncedAt)
         }
     }
@@ -119,7 +141,7 @@ class DomainCacheStore(context: Context) {
 
     fun savePaddocks(vineyardId: String, paddocks: List<Paddock>, syncedAt: Long) {
         prefs.edit {
-            putString(keyPaddocks(vineyardId), json.encodeToString(paddockSerializer, paddocks))
+            putString(keyPaddocks(vineyardId), encode(paddockSerializer, paddocks))
             putLong(keyPaddocksAt(vineyardId), syncedAt)
         }
     }
@@ -136,7 +158,7 @@ class DomainCacheStore(context: Context) {
 
     fun savePins(vineyardId: String, pins: List<Pin>, syncedAt: Long) {
         prefs.edit {
-            putString(keyPins(vineyardId), json.encodeToString(pinSerializer, pins))
+            putString(keyPins(vineyardId), encode(pinSerializer, pins))
             putLong(keyPinsAt(vineyardId), syncedAt)
         }
     }
@@ -150,7 +172,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveMaintenance(vineyardId: String, logs: List<MaintenanceLog>, syncedAt: Long) {
         prefs.edit {
-            putString(keyMaintenance(vineyardId), json.encodeToString(maintenanceSerializer, logs))
+            putString(keyMaintenance(vineyardId), encode(maintenanceSerializer, logs))
             putLong(keyMaintenanceAt(vineyardId), syncedAt)
         }
     }
@@ -164,7 +186,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveYield(vineyardId: String, records: List<HistoricalYieldRecord>, syncedAt: Long) {
         prefs.edit {
-            putString(keyYield(vineyardId), json.encodeToString(yieldSerializer, records))
+            putString(keyYield(vineyardId), encode(yieldSerializer, records))
             putLong(keyYieldAt(vineyardId), syncedAt)
         }
     }
@@ -178,7 +200,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveDamage(vineyardId: String, records: List<DamageRecord>, syncedAt: Long) {
         prefs.edit {
-            putString(keyDamage(vineyardId), json.encodeToString(damageSerializer, records))
+            putString(keyDamage(vineyardId), encode(damageSerializer, records))
             putLong(keyDamageAt(vineyardId), syncedAt)
         }
     }
@@ -192,7 +214,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveYieldSessions(vineyardId: String, sessions: List<YieldEstimationSession>, syncedAt: Long) {
         prefs.edit {
-            putString(keyYieldSession(vineyardId), json.encodeToString(yieldSessionSerializer, sessions))
+            putString(keyYieldSession(vineyardId), encode(yieldSessionSerializer, sessions))
             putLong(keyYieldSessionAt(vineyardId), syncedAt)
         }
     }
@@ -206,7 +228,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveGrowth(vineyardId: String, records: List<GrowthStageRecord>, syncedAt: Long) {
         prefs.edit {
-            putString(keyGrowth(vineyardId), json.encodeToString(growthSerializer, records))
+            putString(keyGrowth(vineyardId), encode(growthSerializer, records))
             putLong(keyGrowthAt(vineyardId), syncedAt)
         }
     }
@@ -220,7 +242,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveFuel(vineyardId: String, logs: List<TractorFuelLog>, syncedAt: Long) {
         prefs.edit {
-            putString(keyFuel(vineyardId), json.encodeToString(fuelSerializer, logs))
+            putString(keyFuel(vineyardId), encode(fuelSerializer, logs))
             putLong(keyFuelAt(vineyardId), syncedAt)
         }
     }
@@ -234,7 +256,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveSpray(vineyardId: String, records: List<SprayRecord>, syncedAt: Long) {
         prefs.edit {
-            putString(keySpray(vineyardId), json.encodeToString(spraySerializer, records))
+            putString(keySpray(vineyardId), encode(spraySerializer, records))
             putLong(keySprayAt(vineyardId), syncedAt)
         }
     }
@@ -249,7 +271,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveSprayTemplates(vineyardId: String, templates: List<SprayRecord>, syncedAt: Long) {
         prefs.edit {
-            putString(keySprayTemplates(vineyardId), json.encodeToString(spraySerializer, templates))
+            putString(keySprayTemplates(vineyardId), encode(spraySerializer, templates))
             putLong(keySprayTemplatesAt(vineyardId), syncedAt)
         }
     }
@@ -263,7 +285,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveSprayTargets(vineyardId: String, entries: List<VineyardSprayTarget>, syncedAt: Long) {
         prefs.edit {
-            putString(keySprayTargets(vineyardId), json.encodeToString(sprayTargetSerializer, entries))
+            putString(keySprayTargets(vineyardId), encode(sprayTargetSerializer, entries))
             putLong(keySprayTargetsAt(vineyardId), syncedAt)
         }
     }
@@ -275,7 +297,7 @@ class DomainCacheStore(context: Context) {
         decode(prefs.getString(keySprayTargetOutbox, null), sprayTargetOutboxSerializer)
 
     fun saveSprayTargetOutbox(queue: List<VineyardSprayTargetCreateParams>) {
-        prefs.edit { putString(keySprayTargetOutbox, json.encodeToString(sprayTargetOutboxSerializer, queue)) }
+        prefs.edit { putString(keySprayTargetOutbox, encode(sprayTargetOutboxSerializer, queue)) }
     }
 
     private fun keySprayTargets(vineyardId: String) = "spray_targets_$vineyardId"
@@ -289,7 +311,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveWorkTasks(vineyardId: String, tasks: List<WorkTask>, syncedAt: Long) {
         prefs.edit {
-            putString(keyWorkTask(vineyardId), json.encodeToString(workTaskSerializer, tasks))
+            putString(keyWorkTask(vineyardId), encode(workTaskSerializer, tasks))
             putLong(keyWorkTaskAt(vineyardId), syncedAt)
         }
     }
@@ -303,7 +325,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveLabourLines(workTaskId: String, lines: List<WorkTaskLabourLine>, syncedAt: Long) {
         prefs.edit {
-            putString(keyLabour(workTaskId), json.encodeToString(labourLineSerializer, lines))
+            putString(keyLabour(workTaskId), encode(labourLineSerializer, lines))
             putLong(keyLabourAt(workTaskId), syncedAt)
         }
     }
@@ -317,7 +339,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveMachineLines(workTaskId: String, lines: List<WorkTaskMachineLine>, syncedAt: Long) {
         prefs.edit {
-            putString(keyMachine(workTaskId), json.encodeToString(machineLineSerializer, lines))
+            putString(keyMachine(workTaskId), encode(machineLineSerializer, lines))
             putLong(keyMachineAt(workTaskId), syncedAt)
         }
     }
@@ -331,7 +353,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveVineyardMachineLines(vineyardId: String, lines: List<WorkTaskMachineLine>, syncedAt: Long) {
         prefs.edit {
-            putString("work_task_machines_vineyard_$vineyardId", json.encodeToString(machineLineSerializer, lines))
+            putString("work_task_machines_vineyard_$vineyardId", encode(machineLineSerializer, lines))
             putLong("work_task_machines_vineyard_at_$vineyardId", syncedAt)
         }
     }
@@ -343,7 +365,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveVineyardTaskMaterials(vineyardId: String, lines: List<WorkTaskMaterial>, syncedAt: Long) {
         prefs.edit {
-            putString("work_task_materials_vineyard_$vineyardId", json.encodeToString(taskMaterialSerializer, lines))
+            putString("work_task_materials_vineyard_$vineyardId", encode(taskMaterialSerializer, lines))
             putLong("work_task_materials_vineyard_at_$vineyardId", syncedAt)
         }
     }
@@ -355,7 +377,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveTripCostAllocations(vineyardId: String, lines: List<TripCostAllocation>, syncedAt: Long) {
         prefs.edit {
-            putString("trip_cost_allocations_$vineyardId", json.encodeToString(tripCostAllocationSerializer, lines))
+            putString("trip_cost_allocations_$vineyardId", encode(tripCostAllocationSerializer, lines))
             putLong("trip_cost_allocations_at_$vineyardId", syncedAt)
         }
     }
@@ -372,7 +394,7 @@ class DomainCacheStore(context: Context) {
 
     fun saveTrips(vineyardId: String, trips: List<Trip>, syncedAt: Long) {
         prefs.edit {
-            putString(keyTrips(vineyardId), json.encodeToString(tripSerializer, trips))
+            putString(keyTrips(vineyardId), encode(tripSerializer, trips))
             putLong(keyTripsAt(vineyardId), syncedAt)
         }
     }
@@ -386,7 +408,7 @@ class DomainCacheStore(context: Context) {
 
     fun savePicking(vineyardId: String, records: List<PickingRecord>, syncedAt: Long) {
         prefs.edit {
-            putString(keyPicking(vineyardId), json.encodeToString(pickingSerializer, records))
+            putString(keyPicking(vineyardId), encode(pickingSerializer, records))
             putLong(keyPickingAt(vineyardId), syncedAt)
         }
     }
@@ -467,7 +489,36 @@ class DomainCacheStore(context: Context) {
 
     private fun <T> decode(raw: String?, serializer: kotlinx.serialization.KSerializer<List<T>>): List<T> {
         if (raw == null) return emptyList()
-        return runCatching { json.decodeFromString(serializer, raw) }.getOrDefault(emptyList())
+        val start = System.nanoTime()
+        val decoded = runCatching { json.decodeFromString(serializer, raw) }
+        val rows = decoded.getOrDefault(emptyList())
+        reportCodec(serializer, "decode", rows.size, raw, start, decoded.isSuccess)
+        return rows
+    }
+
+    private fun <T> encode(serializer: kotlinx.serialization.KSerializer<List<T>>, rows: List<T>): String {
+        val start = System.nanoTime()
+        val raw = json.encodeToString(serializer, rows)
+        reportCodec(serializer, "encode", rows.size, raw, start, true)
+        return raw
+    }
+
+    private fun <T> reportCodec(serializer: kotlinx.serialization.KSerializer<List<T>>, operation: String,
+        records: Int, raw: String, start: Long, success: Boolean) {
+        if (!BuildConfig.DEBUG) return
+        // Descriptor is used only for a fixed allowlist; never print it or a scoped preference key.
+        val dataset = when (serializer.descriptor.getElementDescriptor(0).serialName.substringAfterLast('.')) {
+            "Pin" -> "pins"
+            "Paddock" -> "blocks"
+            "Trip" -> "trips"
+            "WorkTask", "WorkTaskLabourLine", "WorkTaskMachineLine", "WorkTaskMaterial" -> "workTasks"
+            "GrowthStageRecord" -> "growth"
+            "TractorFuelLog" -> "fuel"
+            "SprayRecord" -> "sprayRecords"
+            else -> "other"
+        }
+        val elapsed = (System.nanoTime() - start) / 1_000_000.0
+        Log.d("LocalPersistenceTiming", "dataset=$dataset operation=$operation records=$records bytes=${raw.toByteArray(Charsets.UTF_8).size} codecMs=$elapsed success=$success changed=unknown main=${Looper.myLooper() == Looper.getMainLooper()}")
     }
 
     private fun readTimestamp(key: String): Long? =
