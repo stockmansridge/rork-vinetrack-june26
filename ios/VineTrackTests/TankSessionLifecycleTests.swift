@@ -117,10 +117,10 @@ final class TankSessionLifecycleTests: XCTestCase {
         XCTAssertNil(ended.activeTankNumber)
     }
 
-    func testPlannedStartIgnoresStaleOutOfPlanSession() {
-        let stale = TankSession(tankNumber: 99, startTime: fillStart)
+    func testPlannedStartAllowsExplicitlyEndedOutOfPlanHistory() {
+        let historical = TankSession(tankNumber: 99, startTime: fillStart, endTime: fillEnd)
         let started = TankSessionLifecycle.start(
-            trip: trip(sessions: [stale]),
+            trip: trip(sessions: [historical]),
             at: sprayStart,
             currentRow: 4.5,
             plannedTankNumbers: [1, 2],
