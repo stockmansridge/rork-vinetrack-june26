@@ -222,6 +222,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
             MainSurface.HomeTab -> 0
             is MainSurface.TripTab -> 1
             is MainSurface.ProgramTab -> 2
+            is MainSurface.Tool -> if (surface.route == ToolRoute.WorkTasks) 4 else 3
             else -> 3
         })
     }

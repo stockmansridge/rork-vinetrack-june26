@@ -118,6 +118,17 @@ class SessionStore(context: Context) {
         }
     }
 
+    /** Captures this process's auth incarnation, not ownership of any existing field record. */
+    fun accountAccess(): AuthRetentionGuard.AccountAccess? = synchronized(retentionGuard) {
+        if (accessToken.isNullOrBlank()) null else retentionGuard.captureAccount(userId)
+    }
+
+    fun withAccountAccess(access: AuthRetentionGuard.AccountAccess, action: () -> Unit): Boolean =
+        retentionGuard.withAccount(access, { userId?.takeIf { !accessToken.isNullOrBlank() } }, action)
+
+    fun isAccountAccessCurrent(access: AuthRetentionGuard.AccountAccess): Boolean =
+        withAccountAccess(access) { }
+
     /** Credential rejection locks local field access before any credential removal. */
     fun clear() {
         retentionGuard.rejectSession { clearCredentials() }

@@ -13,6 +13,21 @@ class AuthRetentionGuard(
     val state: StateFlow<Boolean> = locked.asStateFlow()
     val isLocked: Boolean get() = locked.value
 
+    /** Runtime authority only; it never establishes ownership of persisted legacy records. */
+    class AccountAccess internal constructor(val userId: String, internal val authority: AuthRetentionGuard)
+
+    @Synchronized
+    fun captureAccount(userId: String?): AccountAccess? =
+        userId?.takeIf { it.isNotBlank() && !isLocked }?.let { AccountAccess(it, this) }
+
+    /** Serialises a synchronous callback with revocation; never hold this monitor across network waits. */
+    @Synchronized
+    fun withAccount(access: AccountAccess, currentUserId: () -> String?, action: () -> Unit): Boolean {
+        if (isLocked || access.authority !== this || currentUserId() != access.userId) return false
+        action()
+        return true
+    }
+
     /** No global field-store emptiness/ownership certificate exists yet. */
     fun canSignOut(): Boolean = false
 
@@ -31,6 +46,6 @@ class AuthRetentionGuard(
 
     companion object {
         const val RECOVERY_MESSAGE = "Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall."
-        const val SIGN_OUT_MESSAGE = "Sign-out is temporarily blocked to protect local vineyard work. Keep this installation and finish synchronising your work. Safe account switching is not yet available."
+        const val SIGN_OUT_MESSAGE = "Sign-out is temporarily blocked to protect local vineyard work. Unsynchronised or unresolved vineyard work must be resolved first. Keep this installation; contact support if synchronising does not resolve it. Safe account switching is not yet available."
     }
 }

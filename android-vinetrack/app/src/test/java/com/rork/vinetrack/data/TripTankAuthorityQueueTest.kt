@@ -24,6 +24,7 @@ class TripTankAuthorityQueueTest {
     fun completedServerBlocksOldTankReplayWithoutRetryAndDoesNotHoldNewTrip() = runBlocking {
         val outbox = InMemoryPendingWriteStore()
         val pending = PendingWriteRepository(outbox)
+        pending.configureReplayScope { PendingWriteRepository.ReplayScope("user", 1) }
         val snapshots = MemorySnapshot()
         val active = ActiveTripStore(snapshots)
         val route = listOf(CoordinatePoint(latitude = -41.0, longitude = 174.0))

@@ -560,6 +560,7 @@ class TripRepository(private val session: SessionStore) {
         activeTankNumber: Int?,
         isFillingTank: Boolean,
         fillingTankNumber: Int?,
+        accountAccess: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null,
     ): Trip = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -575,7 +576,8 @@ class TripRepository(private val session: SessionStore) {
             put("filling_tank_number", fillingTankNumber?.let { JsonPrimitive(it) } ?: JsonNull)
             put("client_updated_at", JsonPrimitive(nowIso()))
         }
-        patchTrip(id, patch, token)
+        if (accountAccess != null && !session.isAccountAccessCurrent(accountAccess)) throw BackendError.Unauthorized
+        patchTrip(id, patch, token, accountAccess)
     }
 
     /**
@@ -584,13 +586,15 @@ class TripRepository(private val session: SessionStore) {
      * metadata-edit replay stale-guard. Returns null when the trip is missing
      * or soft-deleted so the caller can block an edit against a vanished trip.
      */
-    suspend fun fetchTrip(id: String): Trip? = withContext(Dispatchers.IO) {
+    suspend fun fetchTrip(id: String, accountAccess: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null): Trip? = withContext(Dispatchers.IO) {
+        if (accountAccess != null && !session.isAccountAccessCurrent(accountAccess)) throw BackendError.Unauthorized
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.get(
             SupabaseClient.restUrl("trips?id=eq.$id&deleted_at=is.null&select=*"),
         ) {
             authHeaders(token)
+            accountAccess?.let { attributes.put(SupabaseClient.accountRequestScope, it) }
         }
         when {
             response.status.isSuccess() -> response.body<List<Trip>>().firstOrNull()
@@ -704,9 +708,11 @@ class TripRepository(private val session: SessionStore) {
         id: String,
         patch: T,
         token: String,
+        accountAccess: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null,
     ): Trip {
         val response = SupabaseClient.http.patch(SupabaseClient.restUrl("trips?id=eq.$id")) {
             authHeaders(token)
+            accountAccess?.let { attributes.put(SupabaseClient.accountRequestScope, it) }
             headers { append("Prefer", "return=representation") }
             contentType(ContentType.Application.Json)
             setBody(patch)

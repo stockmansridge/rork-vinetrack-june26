@@ -72,18 +72,7 @@ fun RootScreen() {
     val session = remember(context) { SessionStore(context) }
     val recoveryLocked by session.retentionGuard.state.collectAsStateWithLifecycle()
     if (recoveryLocked) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text("Local work protected", fontWeight = FontWeight.Bold, fontSize = 24.sp)
-            Text(
-                AuthRetentionGuard.RECOVERY_MESSAGE,
-                modifier = Modifier.padding(top = 16.dp),
-                textAlign = TextAlign.Center,
-            )
-        }
+        com.rork.vinetrack.ui.auth.ProtectedWorkRecoveryScreen()
     } else {
         NormalRootScreen()
     }

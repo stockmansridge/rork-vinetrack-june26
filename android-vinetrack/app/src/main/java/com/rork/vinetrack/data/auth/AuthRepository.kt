@@ -194,6 +194,8 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
 
     override val sessionAccessToken: String? get() = session.accessToken
     override val isSessionBlocked: Boolean get() = session.retentionGuard.isLocked
+    override fun isAccountAccessCurrent(access: AuthRetentionGuard.AccountAccess): Boolean =
+        session.isAccountAccessCurrent(access)
 
     override fun accessTokenExpiresSoon(): Boolean {
         val token = session.accessToken ?: return false

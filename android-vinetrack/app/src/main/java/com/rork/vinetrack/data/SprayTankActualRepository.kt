@@ -30,9 +30,11 @@ class SprayTankActualRepository(private val session: SessionStore) {
         @SerialName("p_client_updated_at") val clientUpdatedAt: String,
     )
 
-    suspend fun fetch(vineyardId: String): List<SprayTankActual> {
+    suspend fun fetch(vineyardId: String, accountAccess: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null): List<SprayTankActual> {
+        if (accountAccess != null && !session.isAccountAccessCurrent(accountAccess)) throw BackendError.Unauthorized
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.get(SupabaseClient.restUrl("spray_tank_actuals")) {
+            accountAccess?.let { attributes.put(SupabaseClient.accountRequestScope, it) }
             headers {
                 append(HttpHeaders.Authorization, "Bearer $token")
                 append("apikey", SupabaseClient.anonKey)
@@ -45,9 +47,11 @@ class SprayTankActualRepository(private val session: SessionStore) {
         return SupabaseClient.json.decodeFromString(response.bodyAsText())
     }
 
-    suspend fun upsert(actual: SprayTankActual) {
+    suspend fun upsert(actual: SprayTankActual, accountAccess: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null) {
+        if (accountAccess != null && !session.isAccountAccessCurrent(accountAccess)) throw BackendError.Unauthorized
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("upsert_spray_tank_actual")) {
+            accountAccess?.let { attributes.put(SupabaseClient.accountRequestScope, it) }
             headers {
                 append(HttpHeaders.Authorization, "Bearer $token")
                 append("apikey", SupabaseClient.anonKey)

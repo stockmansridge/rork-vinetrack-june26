@@ -43,6 +43,10 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     @Synchronized
     fun configureReplayScope(provider: () -> ReplayScope?) { scopeProvider = provider }
 
+    /** Read-only runtime scope for snapshot-owner admission; not durable operation provenance. */
+    @Synchronized
+    fun currentReplayScope(): ReplayScope? = scopeProvider?.invoke()
+
     private val _writes = MutableStateFlow(store.load())
     /** Live view of every persisted pending write. */
     val writes: StateFlow<List<PendingWrite>> = _writes.asStateFlow()
@@ -112,6 +116,30 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
             it.opType == next.opType && it.status in PendingWriteStatus.unresolved } + next }) {
             "Pending write could not be committed durably."
         }
+        return next
+    }
+
+    /** Replace matching unresolved rows with a fresh operation in one durable commit.
+     * The payload factory reads the same locked snapshot used for replacement (tank baseline).
+     * Failed persistence publishes nothing and retains every prior row unchanged.
+     */
+    @Synchronized
+    internal fun enqueueReplacingUnresolved(
+        entityType: String,
+        opType: String,
+        clientId: String,
+        payload: (List<PendingWrite>) -> String,
+    ): PendingWrite {
+        val existing = _writes.value.filter { it.entityType == entityType && it.opType == opType &&
+            it.clientId == clientId && it.status in PendingWriteStatus.unresolved }
+        val encoded = payload(existing)
+        val now = System.currentTimeMillis()
+        val next = PendingWrite(id = UUID.randomUUID().toString(), entityType = entityType,
+            opType = opType, clientId = clientId, payloadJson = encoded, createdAt = now, updatedAt = now)
+        check(update { rows -> rows.filterNot { it in existing } + next }) {
+            "Pending write could not be committed durably."
+        }
+        existing.forEach { claimedScopes.remove(it) }
         return next
     }
 

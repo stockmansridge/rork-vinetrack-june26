@@ -53,29 +53,15 @@ class PinCompletionSync private constructor(
 
     /**
      * Queue (or replace) a completion toggle for [pinId]. Coalesces by pin:
-     * any earlier unresolved completion write for the same pin is removed first
+     * any earlier unresolved completion write for the same pin is atomically replaced
      * so only the latest toggle is ever replayed (latest toggle wins). Returns
      * the created outbox row.
      */
-    fun enqueue(pinId: String, isCompleted: Boolean): PendingWrite {
-        // Coalesce — drop earlier unresolved completion writes for this pin so
-        // rapid Done/Open taps don't pile up. Synced rows are left alone.
-        pending.list()
-            .filter {
-                it.entityType == PendingEntityType.PIN &&
-                    it.opType == PendingOpType.UPDATE &&
-                    it.clientId == pinId &&
-                    it.status != PendingWriteStatus.SYNCED
-            }
-            .forEach { pending.remove(it.id) }
-        val payload = json.encodeToString(Payload.serializer(), Payload(pinId, isCompleted))
-        return pending.enqueue(
-            entityType = PendingEntityType.PIN,
-            opType = PendingOpType.UPDATE,
-            payloadJson = payload,
-            clientId = pinId,
-        )
-    }
+    fun enqueue(pinId: String, isCompleted: Boolean): PendingWrite = pending.enqueueReplacingUnresolved(
+        entityType = PendingEntityType.PIN,
+        opType = PendingOpType.UPDATE,
+        clientId = pinId,
+    ) { json.encodeToString(Payload.serializer(), Payload(pinId, isCompleted)) }
 
     /**
      * Replay every retry-eligible queued completion toggle. No-ops (returns) if

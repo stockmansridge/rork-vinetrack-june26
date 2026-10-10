@@ -330,6 +330,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -566,6 +568,8 @@ data class AppUiState(
     val sprayRecords: List<SprayRecord> = emptyList(),
     /** Canonical reconciled actual-tank source for screens, costs, and exports. */
     val sprayTankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
+    /** Nonidentifying guidance for the independent actual pending authority. */
+    val tankActualSyncNotice: String? = null,
     /**
      * Read-only portal spray templates from `spray_jobs` (is_template = true,
      * deleted_at IS NULL), mapped to in-memory [SprayRecord] templates. Never
@@ -1176,6 +1180,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val session = SessionStore(app)
     private val performanceCapture = com.rork.vinetrack.data.AdminPerformanceCapture(app) { session.userId }
+        .also { com.rork.vinetrack.data.SupabaseClient.performanceCapture = it }
     private var performanceAuthorizationEpoch: Long = 0L
     private val planningDrafts = com.rork.vinetrack.data.WorkTaskPlanningDraftStore(app)
     private val externalResources = com.rork.vinetrack.data.ExternalResourceRepository(session)
@@ -2660,6 +2665,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 PendingWriteRepository.ReplayScope(it, performanceAuthorizationEpoch)
             }
         }
+        sprayTankActualStore.configureAccountAccess(session::accountAccess)
         startTankCommitCoordinator.recover()
         observeConnectivity()
         observePendingWrites()
@@ -2702,8 +2708,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun observeSprayTankActuals() {
         viewModelScope.launch {
-            sprayTankActualStore.records.collect { actuals ->
-                _ui.update { it.copy(sprayTankActuals = actuals) }
+            combine(sprayTankActualStore.records, session.retentionGuard.state,
+                sprayTankActualStore.syncEvidenceChanges, pendingWrites.writes,
+                _ui.map { it.selectedVineyardId }.distinctUntilChanged()) { actuals, locked, _, writes, vineyard ->
+                Triple(if (locked) emptyList() else actuals, writes, vineyard)
+            }.collect { (actuals, writes, vineyard) ->
+                val access = session.accountAccess()
+                if (access == null) _ui.update { it.copy(sprayTankActuals = emptyList(), tankActualSyncNotice = null) }
+                else session.withAccountAccess(access) {
+                    val notice = sprayTankActualStore.syncNotice(access, vineyard) { actual ->
+                        writes.any { it.status in PendingWriteStatus.unresolved &&
+                            ((it.clientId == actual.tripId && it.entityType in setOf(PendingEntityType.TRIP_TANK, PendingEntityType.TRIP_START)) ||
+                                (it.clientId == actual.sprayRecordId && it.entityType == PendingEntityType.SPRAY_RECORD)) }
+                    }
+                    _ui.update { it.copy(sprayTankActuals = actuals, tankActualSyncNotice = notice) }
+                }
             }
         }
     }
@@ -2878,7 +2897,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             null
         }
-        val friendly = friendlyDetailFor(displayState, lastError)
+        val friendly = if (entityType == PendingEntityType.TRIP_TANK) {
+            when (status) {
+                PendingWriteStatus.BLOCKED -> "Tank progress is retained for review. ${lastError ?: "Syncing needs attention."} Keep this installation and contact support if review cannot resolve it."
+                PendingWriteStatus.PENDING, PendingWriteStatus.FAILED ->
+                    "Saved tank progress waits for a matching original-account Trip snapshot and earlier changes. If syncing remains pending, contact support; Retry all cannot unlock missing or uncertain evidence."
+                else -> friendlyDetailFor(displayState, lastError)
+            }
+        } else friendlyDetailFor(displayState, lastError)
         // Keep the raw error for debugging, but only when it adds something
         // beyond the friendly line.
         val raw = lastError?.takeIf { it.isNotBlank() && it != friendly }
@@ -3287,6 +3313,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun replayPhase5Writes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
         val versions = prepareFrozenReplayWrites() ?: return
+        val tankAccountAccess = session.accountAccess() ?: return
+        val tankVineyardId = _ui.value.selectedVineyardId
         if (!phase5ReplayRunning.compareAndSet(false, true)) return
         viewModelScope.launch {
             try {
@@ -3317,7 +3345,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         } else st.copy(sprayRecords = listOf(record) + st.sprayRecords)
                     }
                 }
-                tripTankSync.replayAll(versions) { trip ->
+                tripTankSync.replayAll(versions, tankAccountAccess, { action ->
+                    session.withAccountAccess(tankAccountAccess, action)
+                }) { trip ->
                     _ui.update { st -> st.copy(trips = st.trips.map { existing ->
                         if (existing.id == trip.id && (existing.tankSessions != trip.tankSessions ||
                             existing.activeTankNumber != trip.activeTankNumber || existing.isFillingTank != trip.isFillingTank)) {
@@ -3328,22 +3358,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }) }
                     persistActiveTripSnapshot()
                 }
-                sprayTankActualStore.pending().sortedBy { it.clientUpdatedAt }.forEach { actual ->
-                    val unresolved = TripStartSync.hasUnresolvedStart(pendingWrites, actual.tripId) ||
+                com.rork.vinetrack.data.ScopedTankActualSync(
+                    sprayTankActualStore, session::withAccountAccess,
+                    { actual, access -> sprayTankActualRepo.upsert(actual, access) },
+                    { vineyardId, access -> sprayTankActualRepo.fetch(vineyardId, access) },
+                ).replay(tankAccountAccess, tankVineyardId, { actual ->
+                    TripStartSync.hasUnresolvedStart(pendingWrites, actual.tripId) ||
                         pendingWrites.list().any { write ->
                             write.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved &&
                                 ((write.clientId == actual.tripId && write.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK) ||
                                     (write.clientId == actual.sprayRecordId && write.entityType == com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD && write.opType == com.rork.vinetrack.data.model.PendingOpType.CREATE))
                         }
-                    if (!unresolved) {
-                        runCatching { sprayTankActualRepo.upsert(actual) }
-                            .onSuccess { sprayTankActualStore.markSyncedIfCurrent(actual) }
-                    }
-                }
-                _ui.value.selectedVineyardId?.let { vineyardId ->
-                    runCatching { sprayTankActualRepo.fetch(vineyardId) }
-                        .onSuccess { sprayTankActualStore.mergeRemote(it) }
-                }
+                }, { vineyardId -> _ui.value.selectedVineyardId == vineyardId })
                 tripEndSync.replayAll(versions) { trip ->
                     _ui.update { st -> st.copy(
                         trips = st.trips.map { if (it.id == trip.id)
@@ -16094,73 +16120,84 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             onComplete?.invoke()
             return
         }
-        val userId = session.userId
+        val taskAccountAccess = session.accountAccess() ?: run { onComplete?.invoke(); return }
+        val userId = taskAccountAccess.userId
+        val refreshTiming = performanceCapture.begin(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.WORK_TASK_REFRESH)
         viewModelScope.launch {
+            try {
             val cachedMachines = domainCache.loadVineyardMachineLines(userId, vineyardId).orEmpty()
             val cachedMaterials = domainCache.loadVineyardTaskMaterials(userId, vineyardId).orEmpty()
             val canReadAllocations = _ui.value.currentRole in setOf("owner", "manager")
             val cachedAllocations = if (canReadAllocations) domainCache.loadTripCostAllocations(userId, vineyardId).orEmpty() else emptyList()
-            _ui.update { st ->
-                if (st.selectedVineyardId != vineyardId) st else st.copy(
-                    vineyardMachineLines = cachedMachines.ifEmpty { st.vineyardMachineLines },
-                    vineyardTaskMaterials = cachedMaterials.ifEmpty { st.vineyardTaskMaterials },
-                    tripCostAllocations = if (canReadAllocations) cachedAllocations.ifEmpty { st.tripCostAllocations } else emptyList(),
-                )
+            session.withAccountAccess(taskAccountAccess) {
+                _ui.update { st ->
+                    if (st.selectedVineyardId != vineyardId) st else st.copy(
+                        vineyardMachineLines = cachedMachines.ifEmpty { st.vineyardMachineLines },
+                        vineyardTaskMaterials = cachedMaterials.ifEmpty { st.vineyardTaskMaterials },
+                        tripCostAllocations = if (canReadAllocations) cachedAllocations.ifEmpty { st.tripCostAllocations } else emptyList(),
+                    )
+                }
             }
-            val tasks = try {
-                timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.WORK_TASKS_READ) { repo.listWorkTasks(vineyardId) }
-            } catch (e: Exception) {
+            val readEpoch = performanceAuthorizationEpoch
+            val batch = try {
+                timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.WORK_TASK_READ_PREPARATION) {
+                com.rork.vinetrack.data.WorkTaskReadBatch.read(
+                    isCurrent = { session.userId == userId && session.accessToken != null &&
+                        performanceAuthorizationEpoch == readEpoch && _ui.value.selectedVineyardId == vineyardId },
+                    headers = { timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.WORK_TASKS_READ) { repo.listWorkTasks(vineyardId) } },
+                    paddocks = { workTaskPaddockRepo.listForVineyard(vineyardId) },
+                    labour = { workTaskLineRepo.listLabourLinesForVineyard(vineyardId) },
+                    machines = { workTaskLineRepo.listMachineLinesForVineyard(vineyardId) },
+                    allocations = { if (canReadAllocations) tripCostAllocationRepo.listForVineyard(vineyardId) else emptyList() },
+                )
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
                 onComplete?.invoke()
                 return@launch
             }
-            val paddockJoins = try {
-                workTaskPaddockRepo.listForVineyard(vineyardId)
-            } catch (e: Exception) {
-                null
-            }
-            val labourLines = try {
-                workTaskLineRepo.listLabourLinesForVineyard(vineyardId)
-            } catch (e: Exception) {
-                null
-            }
-            val machineLines = try {
-                workTaskLineRepo.listMachineLinesForVineyard(vineyardId)
-            } catch (e: Exception) {
-                null
-            }
-            val allocations = if (canReadAllocations) try {
-                tripCostAllocationRepo.listForVineyard(vineyardId)
-            } catch (e: Exception) {
-                null
-            } else emptyList()
+            val tasks = batch.headers
+            val paddockJoins = batch.paddocks
+            val labourLines = batch.labour
+            val machineLines = batch.machines
+            val allocations = batch.allocations
             val materials = if (materialCostsAccess().isAllowed) try {
                 materialRepo.listTaskMaterialsForVineyard(vineyardId)
-            } catch (e: Exception) {
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
                 null
             } else null
-            if (_ui.value.selectedVineyardId != vineyardId) {
+            if (_ui.value.selectedVineyardId != vineyardId || session.userId != userId ||
+                session.accessToken == null || performanceAuthorizationEpoch != readEpoch) {
                 onComplete?.invoke()
                 return@launch
             }
-            runCatching { domainCache.saveWorkTasks(userId, vineyardId, tasks) }
-            machineLines?.let { runCatching { domainCache.saveVineyardMachineLines(userId, vineyardId, it) } }
-            allocations?.let { runCatching { domainCache.saveTripCostAllocations(userId, vineyardId, it) } }
-            materials?.let { runCatching { domainCache.saveVineyardTaskMaterials(userId, vineyardId, it) } }
-            val pendingSnapshot = pendingWrites.list()
-            val overlaid = PendingWriteOverlay.overlayWorkTaskHeaders(tasks, pendingSnapshot, vineyardId)
-            _ui.update { st ->
-                st.copy(
-                    workTasks = overlaid,
-                    workTaskPaddocks = paddockJoins?.let {
-                        PendingWriteOverlay.overlayWorkTaskPaddocks(it, pendingSnapshot, vineyardId)
-                    } ?: st.workTaskPaddocks,
-                    vineyardLabourLines = labourLines ?: st.vineyardLabourLines,
-                    vineyardMachineLines = machineLines ?: st.vineyardMachineLines,
-                    vineyardTaskMaterials = materials ?: st.vineyardTaskMaterials,
-                    tripCostAllocations = allocations ?: st.tripCostAllocations,
-                )
+            session.withAccountAccess(taskAccountAccess) {
+                if (_ui.value.selectedVineyardId != vineyardId || performanceAuthorizationEpoch != readEpoch) return@withAccountAccess
+                runCatching { domainCache.saveWorkTasks(userId, vineyardId, tasks) }
+                machineLines?.let { runCatching { domainCache.saveVineyardMachineLines(userId, vineyardId, it) } }
+                allocations?.let { runCatching { domainCache.saveTripCostAllocations(userId, vineyardId, it) } }
+                materials?.let { runCatching { domainCache.saveVineyardTaskMaterials(userId, vineyardId, it) } }
+                val pendingSnapshot = pendingWrites.list()
+                val overlaid = PendingWriteOverlay.overlayWorkTaskHeaders(tasks, pendingSnapshot, vineyardId)
+                _ui.update { st ->
+                    st.copy(
+                        workTasks = overlaid,
+                        workTaskPaddocks = paddockJoins?.let {
+                            PendingWriteOverlay.overlayWorkTaskPaddocks(it, pendingSnapshot, vineyardId)
+                        } ?: st.workTaskPaddocks,
+                        vineyardLabourLines = labourLines ?: st.vineyardLabourLines,
+                        vineyardMachineLines = machineLines ?: st.vineyardMachineLines,
+                        vineyardTaskMaterials = materials ?: st.vineyardTaskMaterials,
+                        tripCostAllocations = allocations ?: st.tripCostAllocations,
+                    )
+                }
+                performanceCapture.mark(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.WORK_TASKS_PUBLISHED)
             }
             onComplete?.invoke()
+            } finally { performanceCapture.end(refreshTiming) }
         }
     }
 
@@ -16304,6 +16341,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             0 -> com.rork.vinetrack.data.AdminPerformanceCapture.Phase.HOME_APPEARED
             1 -> com.rork.vinetrack.data.AdminPerformanceCapture.Phase.TRIP_APPEARED
             2 -> com.rork.vinetrack.data.AdminPerformanceCapture.Phase.PROGRAM_APPEARED
+            4 -> com.rork.vinetrack.data.AdminPerformanceCapture.Phase.WORK_TASKS_APPEARED
             else -> com.rork.vinetrack.data.AdminPerformanceCapture.Phase.OTHER_SURFACE_APPEARED
         })
     }

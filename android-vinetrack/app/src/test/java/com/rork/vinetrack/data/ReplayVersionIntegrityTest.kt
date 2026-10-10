@@ -220,6 +220,7 @@ class ReplayVersionIntegrityTest {
     @Test(timeout = 10000) fun tankMarkerReplacementWhileRequestSuspendsSurvivesRestartWithoutOldCallback() = runBlocking {
         val store = InMemoryPendingWriteStore()
         val queue = PendingWriteRepository(store)
+        queue.configureReplayScope { PendingWriteRepository.ReplayScope("user", 1) }
         val snapshotStorage = object : ActiveTripSnapshotStorage {
             var bytes: String? = null
             override fun read() = bytes

@@ -3,6 +3,8 @@ package com.rork.vinetrack.data
 import android.util.Log
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
+import io.ktor.client.plugins.BodyProgress
+import io.ktor.client.plugins.onDownload
 import io.ktor.client.plugins.HttpSend
 import io.ktor.client.plugins.plugin
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -36,6 +38,8 @@ interface SessionTokenRefresher {
 
     /** A retained recovery hold forbids new field requests, including captured old tokens. */
     val isSessionBlocked: Boolean get() = false
+
+    fun isAccountAccessCurrent(access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess): Boolean = false
 
     /** True when the access token is expired or expiring within the skew window. */
     fun accessTokenExpiresSoon(): Boolean
@@ -76,18 +80,43 @@ object SupabaseClient {
     @Volatile
     var sessionRefresher: SessionTokenRefresher? = null
 
+    val accountRequestScope = io.ktor.util.AttributeKey<com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess>("VineTrackAccountRequest")
+
+    @Volatile internal var performanceCapture: AdminPerformanceCapture? = null
+
+    private fun readDataset(path: String): ReadTrafficLedger.Dataset = when (path.substringAfter("/rest/v1/").substringBefore('/')) {
+        "work_tasks" -> ReadTrafficLedger.Dataset.WORK_TASKS
+        "work_task_paddocks" -> ReadTrafficLedger.Dataset.TASK_PADDOCKS
+        "work_task_labour_lines" -> ReadTrafficLedger.Dataset.TASK_LABOUR
+        "work_task_machine_lines" -> ReadTrafficLedger.Dataset.TASK_MACHINES
+        "work_task_materials" -> ReadTrafficLedger.Dataset.TASK_MATERIALS
+        "trip_cost_allocations" -> ReadTrafficLedger.Dataset.TRIP_ALLOCATIONS
+        "paddocks" -> ReadTrafficLedger.Dataset.BLOCKS
+        "pins" -> ReadTrafficLedger.Dataset.PINS
+        "trips" -> ReadTrafficLedger.Dataset.TRIPS
+        else -> ReadTrafficLedger.Dataset.OTHER
+    }
+
     private const val AUTH_TAG = "VineTrackAuth"
 
     val http: HttpClient by lazy {
         HttpClient(Android) {
             expectSuccess = false
+            install(BodyProgress)
             install(ContentNegotiation) {
                 json(json)
             }
         }.apply {
             plugin(HttpSend).intercept { request ->
                 val refresher = sessionRefresher
-                if (refresher?.isSessionBlocked == true) throw BackendError.Unauthorized
+                val accountAccess = request.attributes.getOrNull(accountRequestScope)
+                fun requireOriginalAccount() {
+                    if (refresher?.isSessionBlocked == true ||
+                        (accountAccess != null && refresher?.isAccountAccessCurrent(accountAccess) != true)) {
+                        throw BackendError.Unauthorized
+                    }
+                }
+                requireOriginalAccount()
                 val bearer = request.headers[HttpHeaders.Authorization]
                     ?.removePrefix("Bearer")?.trim()
                 // GoTrue endpoints (incl. the refresh call itself) and anon-only
@@ -112,7 +141,22 @@ object SupabaseClient {
                     if (!latest.isNullOrBlank() && latest != bearer) request.replaceBearerToken(latest)
                 }
 
-                if (refresher?.isSessionBlocked == true) throw BackendError.Unauthorized
+                requireOriginalAccount()
+                val capture = performanceCapture
+                // A request fingerprint is used only for bounded in-process equality; never report URLs or digests.
+                val fingerprint by lazy {
+                    java.security.MessageDigest.getInstance("SHA-256")
+                        .digest(request.url.buildString().toByteArray(Charsets.UTF_8))
+                        .joinToString("") { "%02x".format(it) }
+                }
+                fun measureRead(retry: Boolean) {
+                    if (!isSessionRequest || request.method != io.ktor.http.HttpMethod.Get || capture == null) return
+                    val attempt = if (capture.isRequested) capture.beginRead(readDataset(request.url.encodedPath), fingerprint, retry) else null
+                    request.onDownload(if (attempt == null) null else io.ktor.client.content.ProgressListener { bytes, _ ->
+                        capture.received(attempt, bytes)
+                    })
+                }
+                measureRead(false)
                 val call = execute(request)
                 if (!isSessionRequest || refresher == null) return@intercept call
                 if (call.response.status.value != 401) return@intercept call
@@ -121,8 +165,10 @@ object SupabaseClient {
                 when (refresher.refreshAccessToken()) {
                     RefreshOutcome.REFRESHED -> {
                         val fresh = refresher.sessionAccessToken ?: return@intercept call
+                        requireOriginalAccount()
                         request.replaceBearerToken(fresh)
                         Log.d(AUTH_TAG, "Refresh succeeded — retrying ${request.url.encodedPath} once")
+                        measureRead(true)
                         execute(request)
                     }
                     RefreshOutcome.REJECTED -> {

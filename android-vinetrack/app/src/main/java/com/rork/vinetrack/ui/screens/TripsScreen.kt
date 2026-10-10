@@ -1189,6 +1189,17 @@ private fun TripDetailView(
                 )
             }
 
+            state.tankActualSyncNotice?.let { notice ->
+                VineyardCard {
+                    Text("Tank actual sync", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Text("$notice See Settings → Sync for pending changes.", fontSize = 13.sp, color = vine.textSecondary)
+                }
+            }
+            state.pendingSyncItems.firstOrNull { it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK &&
+                it.clientId == trip.id }?.friendlyDetail?.let { notice ->
+                VineyardCard { Text(notice, fontSize = 13.sp, color = vine.textSecondary) }
+            }
+
             // Header — trip name, sync state, start/end (iOS header parity).
             val pinsForTrip = remember(trip.id, state.pins) { state.pins.filter { it.tripId == trip.id } }
             VineyardCard {

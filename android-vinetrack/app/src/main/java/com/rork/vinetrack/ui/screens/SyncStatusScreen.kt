@@ -208,12 +208,12 @@ fun SyncStatusScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     val count = state.pendingSyncCount
                     Text(
-                        "$count items waiting to sync",
+                        "$count queued changes waiting to sync",
                         fontWeight = FontWeight.SemiBold,
                         color = vine.textPrimary,
                         fontSize = 16.sp,
                     )
-                    if (count == 0) {
+                    if (count == 0 && state.tankActualSyncNotice == null && state.pendingPhotoCount == 0) {
                         Text(
                             "No pending items.",
                             fontSize = 13.sp,
@@ -252,6 +252,10 @@ fun SyncStatusScreen(
                             fontSize = 12.sp,
                             color = vine.textSecondary,
                         )
+                    }
+                    state.tankActualSyncNotice?.let { notice ->
+                        Text("Tank actuals — attention", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                        Text(notice, fontSize = 13.sp, color = vine.textSecondary)
                     }
                     val photos = state.pendingPhotoCount
                     if (photos > 0) {

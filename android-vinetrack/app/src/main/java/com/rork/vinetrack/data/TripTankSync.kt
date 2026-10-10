@@ -48,19 +48,16 @@ import kotlinx.serialization.json.Json
  * coverage, row-plan, metadata, engine hours, or trip start/end/delete fields.
  *
  * Conflict / safety: a missing / soft-deleted / no-longer-active server trip is
- * blocked; a missing or mismatched local snapshot means there is no local work
- * to replay, so the marker is safely removed; transient failures retry up to a
+ * blocked; missing, corrupt, foreign or mismatched local snapshots retain the
+ * marker without a claim or probe; transient failures retry up to a
  * cap; permanent failures and corrupt payloads block.
  */
 class TripTankSync(
     private val tripRepo: TripRepository?,
     private val pending: PendingWriteRepository,
     private val activeTripStore: ActiveTripStore,
-    private val fetchTrip: suspend (String) -> Trip? = { requireNotNull(tripRepo).fetchTrip(it) },
-    private val saveTankSessions: suspend (String, List<TankSession>, Int?, Boolean, Int?) -> Trip =
-        { id, sessions, active, filling, fillingNumber ->
-            requireNotNull(tripRepo).updateTripTankSessions(id, sessions, active, filling, fillingNumber)
-        },
+    private val fetchTrip: (suspend (String) -> Trip?)? = null,
+    private val saveTankSessions: (suspend (String, List<TankSession>, Int?, Boolean, Int?) -> Trip)? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -86,19 +83,17 @@ class TripTankSync(
 
     /**
      * Queue (or refresh) the single tank/fill marker for [trip]. Coalesces by
-     * trip: any earlier unresolved marker for the same trip is removed first so
+     * trip: any earlier unresolved marker for the same trip is atomically replaced so
      * only one marker per trip ever exists. The earliest known baseline values
      * from a still-pending earlier marker are preserved so repeated offline tank
      * actions never move the baseline forward. Returns the row.
      */
-    fun enqueue(trip: Trip): PendingWrite {
+    fun enqueue(trip: Trip): PendingWrite = pending.enqueueReplacingUnresolved(
+        entityType = PendingEntityType.TRIP_TANK,
+        opType = PendingOpType.UPDATE,
+        clientId = trip.id,
+    ) { existing ->
         val tripId = trip.id
-        val existing = pending.list().filter {
-            it.entityType == PendingEntityType.TRIP_TANK &&
-                it.opType == PendingOpType.UPDATE &&
-                it.clientId == tripId &&
-                it.status != PendingWriteStatus.SYNCED
-        }
         val decoded = existing
             .mapNotNull { runCatching { json.decodeFromString(Payload.serializer(), it.payloadJson) }.getOrNull() }
         val firstPayload = decoded.firstOrNull()
@@ -106,8 +101,7 @@ class TripTankSync(
         val preservedActiveTank = firstPayload?.baseActiveTankNumber ?: trip.activeTankNumber
         val preservedStamp = decoded.firstNotNullOfOrNull { it.baseClientUpdatedAt }
             ?: trip.clientUpdatedAt
-        existing.forEach { pending.remove(it.id) }
-        val payload = json.encodeToString(
+        json.encodeToString(
             Payload.serializer(),
             Payload(
                 tripId = tripId,
@@ -118,19 +112,13 @@ class TripTankSync(
                 savedAt = System.currentTimeMillis(),
             ),
         )
-        return pending.enqueue(
-            entityType = PendingEntityType.TRIP_TANK,
-            opType = PendingOpType.UPDATE,
-            payloadJson = payload,
-            clientId = tripId,
-        )
     }
 
     /**
      * Replay every retry-eligible tank/fill marker. No-ops (returns) if a replay
      * is already running. For each marker: mark in-progress, decode (block if
      * corrupt), read the local snapshot tank state, then resolve the outcome:
-     *  - no matching local snapshot -> nothing to replay, remove the marker,
+     *  - no provably owned matching local snapshot -> hold the unchanged marker,
      *  - server trip missing/deleted -> blocked,
      *  - server trip no longer active -> blocked,
      *  - merged tank state adds nothing over the server -> remove the marker,
@@ -141,7 +129,12 @@ class TripTankSync(
      *
      * Caller must only invoke this when online and a session token exists.
      */
-    suspend fun replayAll(permittedWrites: Map<String, PendingWrite>? = null, onSynced: (Trip) -> Unit) {
+    suspend fun replayAll(
+        permittedWrites: Map<String, PendingWrite>? = null,
+        accountAccess: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null,
+        withAccountAccess: (() -> Unit) -> Boolean = { action -> action(); true },
+        onSynced: (Trip) -> Unit,
+    ) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
@@ -150,7 +143,18 @@ class TripTankSync(
                     (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED) &&
                     (permittedWrites == null || permittedWrites[it.id] == it)
             }
+            val originalScope = pending.currentReplayScope() ?: return
+            if (tripRepo != null && accountAccess == null) return
+            if (accountAccess != null && accountAccess.userId != originalScope.userId) return
             for (candidate in candidates) {
+                if (pending.currentReplayScope() != originalScope) return
+                // Validate the exact owner-tagged source before claim or network IO. Missing,
+                // corrupt, foreign or mismatched evidence is held, never acknowledged as empty.
+                val candidatePayload = runCatching { json.decodeFromString(Payload.serializer(), candidate.payloadJson) }.getOrNull() ?: continue
+                val snapshot = runCatching { activeTripStore.load() }.getOrNull() ?: continue
+                if (snapshot.ownerUserId != originalScope.userId || snapshot.trip.id != candidatePayload.tripId ||
+                    snapshot.vineyardId != snapshot.trip.vineyardId) continue
+                val local = snapshot.trip
                 val write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
@@ -170,21 +174,22 @@ class TripTankSync(
                     )
                     continue
                 }
-                // The captured tank state lives in the Stage A snapshot. No
-                // matching snapshot means there is no local work to replay (e.g.
-                // ended on this device, or a different trip is now active) —
-                // remove the marker safely rather than invent tank data.
-                val local = localTankStateFor(payload.tripId)
-                if (local == null) {
-                    pending.removeIfCurrent(write)
-                    continue
-                }
+                // Only the owner-validated frozen snapshot supplies tank state. Unknown
+                // evidence above never falls through to a fabricated empty snapshot.
                 try {
-                    val server = fetchTrip(payload.tripId)
+                    val server = fetchTrip?.invoke(payload.tripId) ?: if (fetchTrip == null)
+                        requireNotNull(tripRepo).fetchTrip(payload.tripId, accountAccess) else null
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                    if (!pending.isCurrent(write)) continue
+                    if (pending.currentReplayScope() != originalScope || !pending.isCurrent(write)) continue
                     if (server == null) {
                         pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "This trip no longer exists.")
+                        continue
+                    }
+                    if (server.vineyardId != snapshot.vineyardId) {
+                        withAccountAccess {
+                            pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                                "The server trip belongs to a different vineyard. Local tank progress is retained for review.")
+                        }
                         continue
                     }
                     if (!server.isActive) {
@@ -208,15 +213,20 @@ class TripTankSync(
                     }
                     if (!merged.addsSomething(server)) {
                         // Nothing new beyond the server tank state — don't PATCH.
-                        pending.removeIfCurrent(write)
+                        withAccountAccess { pending.removeIfCurrent(write) }
                         continue
                     }
-                    val trip = saveTankSessions(
+                    val trip = saveTankSessions?.invoke(
                         payload.tripId, merged.sessions, merged.activeTankNumber,
                         merged.isFillingTank, merged.fillingTankNumber,
+                    ) ?: requireNotNull(tripRepo).updateTripTankSessions(
+                        payload.tripId, merged.sessions, merged.activeTankNumber,
+                        merged.isFillingTank, merged.fillingTankNumber, accountAccess,
                     )
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                    if (pending.removeIfCurrent(write)) onSynced(trip)
+                    withAccountAccess {
+                        if (pending.currentReplayScope() == originalScope && pending.removeIfCurrent(write)) onSynced(trip)
+                    }
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to sync tank progress.")
                 } catch (e: BackendError.Server) {
@@ -238,17 +248,6 @@ class TripTankSync(
         } finally {
             replayLock.unlock()
         }
-    }
-
-    /**
-     * The locally captured tank state for [tripId] from the Stage A active-trip
-     * snapshot, or null when no snapshot matches this trip (so the caller knows
-     * there is no local work to replay). Never invents tank data.
-     */
-    private fun localTankStateFor(tripId: String): Trip? {
-        val snapshot = runCatching { activeTripStore.load() }.getOrNull() ?: return null
-        if (snapshot.trip.id != tripId) return null
-        return snapshot.trip
     }
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */

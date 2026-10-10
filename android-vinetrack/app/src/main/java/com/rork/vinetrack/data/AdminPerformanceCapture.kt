@@ -12,6 +12,7 @@ internal class AdminPerformanceCapture(context: Context, private val currentOwne
         SESSION_RESTORE, VINEYARD_MEMBERSHIP_READ, TEAM_MEMBERSHIP_READ,
         BLOCKS_READ, PINS_READ, TRIPS_READ, WORK_TASKS_READ,
         HOME_APPEARED, TRIP_APPEARED, PROGRAM_APPEARED, OTHER_SURFACE_APPEARED,
+        WORK_TASKS_APPEARED, WORK_TASK_REFRESH, WORK_TASK_READ_PREPARATION, WORK_TASKS_PUBLISHED,
     }
     data class Span(val generation: Long, val phase: Phase, val startMs: Long)
 
@@ -22,10 +23,24 @@ internal class AdminPerformanceCapture(context: Context, private val currentOwne
     private var originMs: Long = SystemClock.elapsedRealtime()
     private val rows = ArrayDeque<String>()
     private var dropped: Int = 0
+    private val traffic = ReadTrafficLedger()
+    data class ReadAttempt(val generation: Long, val attempt: ReadTrafficLedger.Attempt)
+
+    @Synchronized fun beginRead(dataset: ReadTrafficLedger.Dataset, fingerprint: String, retry: Boolean): ReadAttempt? {
+        if (!canCapture()) return null
+        val attempt = ReadAttempt(generation, traffic.begin(dataset, fingerprint, retry))
+        val totals = traffic.snapshot()[dataset] ?: return attempt
+        append("READ_STARTED ${dataset.name} attempts=${totals.attempts} repeated=${totals.repeated} retry=$retry")
+        return attempt
+    }
+
+    @Synchronized fun received(attempt: ReadAttempt, cumulativeBytes: Long) {
+        if (attempt.generation == generation && canCapture()) traffic.received(attempt.attempt, cumulativeBytes)
+    }
 
     val isRequested: Boolean get() = owner != null && owner == currentOwner()
 
-    fun authorize(allowed: Boolean, checkedOwner: String?) {
+    @Synchronized fun authorize(allowed: Boolean, checkedOwner: String?) {
         if (!allowed || checkedOwner == null || checkedOwner != currentOwner()) {
             revoke()
             return
@@ -34,7 +49,7 @@ internal class AdminPerformanceCapture(context: Context, private val currentOwne
         verifiedOwner = checkedOwner
     }
 
-    fun setEnabled(enabled: Boolean): Boolean {
+    @Synchronized fun setEnabled(enabled: Boolean): Boolean {
         val current = currentOwner() ?: return false
         if (verifiedOwner != current) return false
         if (!prefs.edit().putString("opted_in_owner", if (enabled) current else null).commit()) return false
@@ -43,7 +58,7 @@ internal class AdminPerformanceCapture(context: Context, private val currentOwne
         return true
     }
 
-    fun revoke() {
+    @Synchronized fun revoke() {
         owner = null
         verifiedOwner = null
         prefs.edit().remove("opted_in_owner").apply()
@@ -60,20 +75,21 @@ internal class AdminPerformanceCapture(context: Context, private val currentOwne
         return true
     }
 
-    fun begin(phase: Phase): Span? = if (canCapture())
+    @Synchronized fun begin(phase: Phase): Span? = if (canCapture())
         Span(generation, phase, SystemClock.elapsedRealtime()) else null
 
-    fun end(span: Span?) {
+    @Synchronized fun end(span: Span?) {
         if (span == null || span.generation != generation || !canCapture()) return
         append(String.format(Locale.US, "%s elapsed=%dms", span.phase.name,
             SystemClock.elapsedRealtime() - span.startMs))
     }
 
-    fun mark(phase: Phase) {
+    @Synchronized fun mark(phase: Phase) {
         if (canCapture()) append(phase.name)
     }
 
-    fun clear() {
+    @Synchronized fun clear() {
+        traffic.clear()
         rows.clear()
         dropped = 0
         generation += 1
@@ -89,7 +105,7 @@ internal class AdminPerformanceCapture(context: Context, private val currentOwne
     }
 
     /** Called only after a fresh server admin check for the current account. */
-    fun report(): String? {
+    @Synchronized fun report(): String? {
         if (verifiedOwner == null || verifiedOwner != currentOwner()) {
             revoke()
             return null
@@ -103,6 +119,13 @@ internal class AdminPerformanceCapture(context: Context, private val currentOwne
             appendLine("Surface markers indicate composition, not proof of fully usable data or a rendered frame.")
             appendLine("Early numeric buffering requires prior verified opt-in. Export requires fresh verification.")
             appendLine("Memory-only; lost on termination. No IDs, coordinates, keys, URLs, tokens or raw errors.")
+            appendLine("Session-bearing GET execute attempts on the shared Supabase client only; includes failed responses. Auth, uploads and other clients excluded.")
+            appendLine("Body bytes are observed engine-delivered response bytes, not TLS/header or compressed wire bytes; partial reads are partial counts.")
+            appendLine("Repeated means the same request fingerprint in this capture, including retries; no freshness/deduplication claim.")
+            appendLine("Fingerprint capacity=2000; evicted=${traffic.evictedFingerprints()}; repeats after eviction may be undercounted.")
+            traffic.snapshot().forEach { (dataset, totals) ->
+                appendLine("READ ${dataset.name} attempts=${totals.attempts} repeated=${totals.repeated} retries=${totals.retries} observed_body_bytes=${totals.bodyBytes}")
+            }
             rows.forEach { appendLine(it) }
         }
     }

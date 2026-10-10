@@ -99,6 +99,44 @@ class AuthRetentionAndroidTest {
         denied { session.save("access-B", "refresh-B", "account-B", null) }
     }
 
+    @Test fun originalAccountCallbackScopeSurvivesRefreshButNotRevocationOrRecreation() {
+        val session = SessionStore(context)
+        session.save("access-A", "refresh-A", "account-A", null)
+        val access = requireNotNull(session.accountAccess())
+        SessionStore(context).save("new-A", "new-refresh-A", "account-A", null)
+        var callbacks = 0
+        assertTrue(SessionStore(context).withAccountAccess(access) { callbacks++ })
+        session.clear()
+        assertFalse(SessionStore(context).withAccountAccess(access) { callbacks++ })
+        assertNull(SessionStore(context).accountAccess())
+        assertEquals(1, callbacks)
+        assertTrue(context.getSharedPreferences("vinetrack_session", 0).getBoolean("field_recovery_locked_v1", false))
+    }
+
+    @Test fun actualDelayedAcknowledgementAfterSessionClearRetainsRealPersistedMarker() {
+        val session = SessionStore(context)
+        session.save("access-A", "refresh-A", "account-A", null)
+        val access = requireNotNull(session.accountAccess())
+        val store = com.rork.vinetrack.data.SprayTankActualStore(context)
+        store.configureAccountAccess(session::accountAccess)
+        val actual = com.rork.vinetrack.data.model.SprayTankActual(
+            "actual", "vineyard", "spray", "trip", "tank", 1, waterVolumeL = 123.45,
+            chemicals = emptyList(), confirmedAt = "2026-10-10T00:00:00Z", confirmedBy = "account-A")
+        assertTrue(store.save(actual))
+        assertEquals(listOf(actual), store.pendingOwned(access))
+        val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
+        val before = prefs.all.toMap()
+        session.clear()
+        assertFalse(session.withAccountAccess(access) { store.markSyncedIfCurrent(actual) })
+        assertEquals(before, prefs.all)
+        val recreated = com.rork.vinetrack.data.SprayTankActualStore(context)
+        assertEquals(listOf(actual), recreated.pending())
+        // Explicit original-confirmation authorship survives disk recreation, but the revoked
+        // runtime scope still cannot acknowledge it. A freshly authenticated A is required.
+        assertEquals(listOf(actual), recreated.pendingOwned(access))
+        assertFalse(SessionStore(context).withAccountAccess(access) { recreated.markSyncedIfCurrent(actual) })
+    }
+
     private fun denied(action: () -> Unit) {
         try { action(); fail("Unsafe account admission") } catch (_: IllegalStateException) { }
     }
