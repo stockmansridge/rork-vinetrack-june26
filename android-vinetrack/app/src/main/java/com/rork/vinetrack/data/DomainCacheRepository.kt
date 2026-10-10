@@ -44,6 +44,13 @@ class DomainCacheRepository(context: Context) {
 
     private val store = DomainCacheStore(context)
 
+    /** Read-only background preparation; durability-critical paths are deliberately excluded. */
+    internal suspend fun loadFieldHydration(userId: String, vineyardId: String, onlyPins: Boolean = false): FieldCacheHydration? =
+        LocalCacheReadWorker.read { store.loadFieldHydration(userId, vineyardId, onlyPins) }
+
+    internal fun isFieldHydrationCurrent(userId: String, vineyardId: String, snapshot: FieldCacheHydration): Boolean =
+        store.isFieldHydrationCurrent(userId, vineyardId, snapshot)
+
     // MARK: - Vineyard list
 
     /**

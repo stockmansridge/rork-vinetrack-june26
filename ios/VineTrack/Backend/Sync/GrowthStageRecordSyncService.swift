@@ -493,9 +493,17 @@ final class GrowthStageRecordSyncService {
     }
 
     nonisolated private static func isMissingRowError(_ error: Error) -> Bool {
-        let message = String(describing: error).lowercased()
-        return message.contains("not found") || message.contains("pgrst116") ||
-            message.contains("no rows") || message.contains("0 rows")
+        let messages = [String(describing: error), (error as? LocalizedError)?.errorDescription ?? ""]
+            .map { $0.lowercased() }
+        if error is URLError || messages.contains(where: {
+            $0.contains("permission") || $0.contains("forbidden") || $0.contains("unauthorized") ||
+                $0.contains("not authorized") || $0.contains("access denied")
+        }) { return false }
+        return messages.contains { message in
+            // Missing functions/storage objects are not evidence that this record is absent.
+            return message.contains("record not found") || message.contains("pin not found") ||
+                message.contains("pgrst116") || message.contains("no rows") || message.contains("0 rows")
+        }
     }
 
     nonisolated private static func isPermissionError(_ error: Error) -> Bool {

@@ -187,6 +187,8 @@ import com.rork.vinetrack.data.spray.SprayTargetVocabulary
 import com.rork.vinetrack.data.spray.VineyardSprayTarget
 import com.rork.vinetrack.data.spray.VineyardSprayTargetCreateParams
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
@@ -16271,29 +16273,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var vineyardDataLoadGeneration: Long = 0L
 
     /** Publish only owner-scoped display snapshots; access and Trip authority stay unchanged. */
-    private fun hydrateCachedVineyardData(userId: String, vineyardId: String) {
+    private suspend fun hydrateCachedVineyardData(userId: String, vineyardId: String, isCurrentLoad: () -> Boolean): com.rork.vinetrack.data.FieldCacheHydration? {
         val timing = performanceCapture.begin(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.LOCAL_HYDRATION)
+        val sessionPhase = _ui.value.sessionPhase
+        val prepared = try {
+            domainCache.loadFieldHydration(userId, vineyardId)
+        } finally {
+            performanceCapture.end(timing)
+        } ?: return null
+        if (!isCurrentLoad() || _ui.value.sessionPhase != sessionPhase ||
+            !domainCache.isFieldHydrationCurrent(userId, vineyardId, prepared)) return null
+        // No waits between fresh pending intent, overlay and publication.
         val pending = pendingWrites.list()
-        val cachedPins = domainCache.loadPins(userId, vineyardId)?.let { cached ->
-            com.rork.vinetrack.data.PendingPinReadOverlay.overlay(cached, _ui.value.pins, pending, vineyardId)
+        val cachedPins = prepared.pins?.let { cached ->
+            com.rork.vinetrack.data.PendingPinReadOverlay.reconcile(
+                _ui.value.pins.ifEmpty { cached }, cached + _ui.value.pins, pending, vineyardId,
+            ).rows
         }
-        val cachedTrips = domainCache.loadTrips(userId, vineyardId)
-        val cachedSpray = domainCache.loadSpray(userId, vineyardId)?.let {
+        val cachedTrips = prepared.trips
+        val cachedSpray = prepared.spray?.let {
             PendingWriteOverlay.overlaySpray(it, pending, vineyardId)
         }
-        val cachedTasks = domainCache.loadWorkTasks(userId, vineyardId)?.let {
+        val cachedTasks = prepared.tasks?.let {
             PendingWriteOverlay.overlayWorkTaskHeaders(it, pending, vineyardId)
         }
-        val cachedGrowth = domainCache.loadGrowth(userId, vineyardId)?.let {
+        val cachedGrowth = prepared.growth?.let {
             PendingWriteOverlay.overlayGrowth(it, pending, vineyardId)
         }
+        val cachedPaddocks = prepared.paddocks?.filter { it.vineyardId.equals(vineyardId, true) }
+            ?.let { PendingWriteOverlay.overlayPaddocks(it, pending, vineyardId) }
         val hasCachedData = cachedPins != null || cachedTrips != null || cachedSpray != null ||
-            cachedTasks != null || cachedGrowth != null
-        performanceCapture.end(timing)
+            cachedTasks != null || cachedGrowth != null || cachedPaddocks != null
         _ui.update { state ->
-            if (session.userId != userId || state.selectedVineyardId != vineyardId ||
-                !state.sessionPhase.isAuthenticated) state else state.copy(
-                pins = state.pins.ifEmpty { cachedPins ?: emptyList() },
+            if (!isCurrentLoad() || state.sessionPhase != sessionPhase ||
+                !domainCache.isFieldHydrationCurrent(userId, vineyardId, prepared)) state else state.copy(
+                paddocks = cachedPaddocks ?: state.paddocks,
+                cachedFieldDataLastSyncedAt = if (cachedPaddocks != null) prepared.paddocksSyncedAt else state.cachedFieldDataLastSyncedAt,
+                pins = cachedPins ?: state.pins,
                 // Historical cache cannot activate a Trip or establish completion.
                 // Keep current local rows; active snapshot restoration stays in its
                 // existing recovery-gated path after the authoritative read.
@@ -16308,6 +16324,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         if (hasCachedData) performanceCapture.mark(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.CACHED_DATA_PUBLISHED)
+        return prepared
     }
 
     private suspend fun loadVineyardData(vineyardId: String) {
@@ -16356,21 +16373,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 grapeVarietyReferenceError = null,
             )
         }
-        hydrateCachedVineyardData(userId, vineyardId)
-        val cachedPaddocks = domainCache.loadPaddocks(userId, vineyardId)
-            ?.filter { it.vineyardId.equals(vineyardId, ignoreCase = true) }
-        if (isCurrentLoad() && cachedPaddocks != null) {
-            val hydrated = PendingWriteOverlay.overlayPaddocks(
-                cachedPaddocks,
-                pendingWrites.list(),
-                vineyardId,
-            )
-            _ui.update {
-                it.copy(
-                    paddocks = hydrated,
-                    isUsingCachedFieldData = true,
-                    cachedFieldDataLastSyncedAt = domainCache.paddocksSyncedAt(userId, vineyardId),
-                )
+        val hydratedSnapshot = hydrateCachedVineyardData(userId, vineyardId, ::isCurrentLoad)
+        if (!isCurrentLoad()) return
+        suspend fun currentCachedFields(): com.rork.vinetrack.data.FieldCacheHydration? {
+            currentCoroutineContext().ensureActive()
+            val prepared = hydratedSnapshot?.takeIf {
+                domainCache.isFieldHydrationCurrent(userId, vineyardId, it)
+            } ?: domainCache.loadFieldHydration(userId, vineyardId)
+            return prepared?.takeIf {
+                isCurrentLoad() && domainCache.isFieldHydrationCurrent(userId, vineyardId, it)
             }
         }
         var paddockError: String? = null
@@ -16388,25 +16399,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
         } catch (e: BackendError) {
             paddockError = e.message
-            cachedPaddocks?.also { paddocksFromCache = true } ?: emptyList()
+            currentCachedFields()?.paddocks?.filter { it.vineyardId.equals(vineyardId, true) }?.also { paddocksFromCache = true } ?: emptyList()
         } catch (e: Exception) {
             paddockError = "Couldn't load blocks. Check your connection."
-            cachedPaddocks?.also { paddocksFromCache = true } ?: emptyList()
+            currentCachedFields()?.paddocks?.filter { it.vineyardId.equals(vineyardId, true) }?.also { paddocksFromCache = true } ?: emptyList()
         }
         val pins = try {
             timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.PINS_READ) { repo.listPins(vineyardId) }.also { pinsFromServer = true }
         } catch (e: BackendError) {
             pinError = e.message
-            cachedPinsOrExisting(userId, vineyardId)?.also { pinsFromCache = true } ?: _ui.value.pins
+            cachedPinsOrExisting(currentCachedFields()?.pins, vineyardId)?.also { pinsFromCache = true } ?: _ui.value.pins
         } catch (e: Exception) {
             pinError = "Couldn't load pins. Check your connection."
-            cachedPinsOrExisting(userId, vineyardId)?.also { pinsFromCache = true } ?: _ui.value.pins
+            cachedPinsOrExisting(currentCachedFields()?.pins, vineyardId)?.also { pinsFromCache = true } ?: _ui.value.pins
         }
         // Write-through (Stage 6A): only persist genuinely fresh server reads so a
         // good cache is never clobbered by an offline fallback to existing state.
         if (!isCurrentLoad()) return
         if (paddocksFromServer) domainCache.savePaddocks(userId, vineyardId, paddocks)
-        if (pinsFromServer) domainCache.savePins(userId, vineyardId, pins)
+        // Pin write-through follows final reconciliation: retain only identified
+        // pending targets missing remotely so vineyard-less edits survive restart.
         var tripError: String? = null
         var tripsFromServer = false
         var tripsFromCache = false
@@ -16420,12 +16432,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: BackendError) {
             tripError = e.message
             _ui.value.trips.ifEmpty {
-                domainCache.loadTrips(userId, vineyardId)?.also { tripsFromCache = true } ?: emptyList()
+                currentCachedFields()?.trips?.also { tripsFromCache = true } ?: emptyList()
             }
         } catch (e: Exception) {
             tripError = "Couldn't load trips. Check your connection."
             _ui.value.trips.ifEmpty {
-                domainCache.loadTrips(userId, vineyardId)?.also { tripsFromCache = true } ?: emptyList()
+                currentCachedFields()?.trips?.also { tripsFromCache = true } ?: emptyList()
             }
         }
         // Write-through (Stage P-4): persist only genuinely fresh server reads, and
@@ -16455,7 +16467,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.WORK_TASKS_READ) { repo.listWorkTasks(vineyardId) }.also { workTasksFromServer = true }
         } catch (e: Exception) {
             _ui.value.workTasks.ifEmpty {
-                domainCache.loadWorkTasks(userId, vineyardId)?.also { workTasksFromCache = true } ?: emptyList()
+                currentCachedFields()?.tasks?.also { workTasksFromCache = true } ?: emptyList()
             }
         }
         // Work-task -> paddock join rows (sql/051) let a task span multiple
@@ -16522,7 +16534,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             repo.listSprayRecords(vineyardId).also { sprayFromServer = true }
         } catch (e: Exception) {
             _ui.value.sprayRecords.ifEmpty {
-                domainCache.loadSpray(userId, vineyardId)?.also { sprayFromCache = true } ?: emptyList()
+                currentCachedFields()?.spray?.also { sprayFromCache = true } ?: emptyList()
             }
         }
         // Portal spray templates (spray_jobs, is_template = true) are a read-only
@@ -16597,7 +16609,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             repo.listGrowthStageRecords(vineyardId).also { growthFromServer = true }
         } catch (e: Exception) {
             _ui.value.growthRecords.ifEmpty {
-                domainCache.loadGrowth(userId, vineyardId)?.also { growthFromCache = true } ?: emptyList()
+                currentCachedFields()?.growth?.also { growthFromCache = true } ?: emptyList()
             }
         }
         // Fuel logs are an operational list; soft-fail to existing, then to the
@@ -16812,14 +16824,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // A slow response for the previous vineyard must never replace the
         // currently selected vineyard's cache-first state.
         if (!isCurrentLoad()) return
+        currentCoroutineContext().ensureActive()
+        val pinEvidence = domainCache.loadFieldHydration(userId, vineyardId, onlyPins = true)
+        if (!isCurrentLoad() || (pinEvidence != null &&
+                !domainCache.isFieldHydrationCurrent(userId, vineyardId, pinEvidence))) return
         val latestPending = pendingWrites.list()
-        val protectedPins = com.rork.vinetrack.data.PendingPinReadOverlay.overlay(
-            pins, _ui.value.pins, latestPending, vineyardId,
+        val protectedPins = com.rork.vinetrack.data.PendingPinReadOverlay.reconcile(
+            pins, pinEvidence?.pins.orEmpty() + _ui.value.pins, latestPending, vineyardId,
         )
+        if (pinsFromServer) domainCache.savePins(userId, vineyardId, protectedPins.cacheRows)
         _ui.update {
             it.copy(
                 paddocks = PendingWriteOverlay.overlayPaddocks(paddocks, latestPending, vineyardId),
-                pins = protectedPins ?: it.pins.ifEmpty { pins },
+                pins = protectedPins.rows,
                 trips = trips,
                 // Provenance, not size: only a successful fresh server read makes
                 // a missing trip proof of a deleted trip. A soft-failed load that
@@ -16929,15 +16946,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * de-duplicate by id. Returns null when no owner-matched pin cache exists so
      * the caller falls back to existing in-memory state.
      */
-    private fun cachedPinsOrExisting(userId: String?, vineyardId: String): List<Pin>? {
-        val cached = domainCache.loadPins(userId, vineyardId) ?: return null
-        val cachedIds = cached.map { it.id }.toSet()
-        val queuedIds = pendingWrites.list()
-            .filter { it.entityType == PendingEntityType.PIN && it.opType == PendingOpType.CREATE }
-            .map { it.clientId }
-            .toSet()
-        val optimistic = _ui.value.pins.filter { it.id in queuedIds && it.id !in cachedIds }
-        return optimistic + cached
+    private fun cachedPinsOrExisting(cached: List<Pin>?, vineyardId: String): List<Pin>? = cached?.let {
+        com.rork.vinetrack.data.PendingPinReadOverlay.reconcile(
+            it, it + _ui.value.pins, pendingWrites.list(), vineyardId,
+        ).rows
     }
 
     /**

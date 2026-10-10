@@ -113,6 +113,36 @@ struct SyncQueueRegressionTests {
         #expect(Set(seenIds).count == 1)
     }
 
+    @Test("A failed singleton gets exactly one request and remains retryable")
+    func singletonTransientFailureDoesNotResendWithinSweep() async {
+        let id = UUID()
+        var calls = 0
+        let result = await SyncQueuePush.run(entity: "Yield Estimates", ids: [id], payloads: [payload(id)]) { _ in
+            calls += 1
+            throw URLError(.networkConnectionLost)
+        }
+        #expect(calls == 1)
+        #expect(result.uploaded.isEmpty)
+        #expect(result.retryable == [id])
+        #expect(result.permanent.isEmpty)
+        #expect(result.firstRetryableError != nil)
+    }
+
+    @Test("A permanently rejected singleton is classified without an immediate duplicate request")
+    func singletonPermanentFailureDoesNotResendWithinSweep() async {
+        let id = UUID()
+        var calls = 0
+        let result = await SyncQueuePush.run(entity: "Yield Estimates", ids: [id], payloads: [payload(id)]) { _ in
+            calls += 1
+            throw FakeServerError(text: "23502 null value in column")
+        }
+        #expect(calls == 1)
+        #expect(result.uploaded.isEmpty)
+        #expect(result.permanent == [id])
+        #expect(result.retryable.isEmpty)
+        #expect(result.firstRetryableError == nil)
+    }
+
     @Test("Successful items are reported for immediate queue removal")
     func successfulItemsAreReportedOnce() async {
         SyncIssueCenter.shared.clearAll()

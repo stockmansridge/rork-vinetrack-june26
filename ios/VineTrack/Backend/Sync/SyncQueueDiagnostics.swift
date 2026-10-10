@@ -428,8 +428,8 @@ nonisolated struct SyncPushError: Error, LocalizedError, Sendable {
 /// The shared upload driver used by every per-record sync service.
 ///
 /// Behaviour contract (regression: one malformed record blocked all 22):
-///   * Batch first — fast path when everything is valid.
-///   * On ANY batch failure, every item is retried **individually**, so a
+///   * Multi-record batch first — fast path when everything is valid.
+///   * On a multi-record batch failure, items are retried **individually**, so a
 ///     single bad record can never block the rest.
 ///   * Successful items are returned for immediate queue removal.
 ///   * Failures are classified and registered with `SyncIssueCenter`.
@@ -449,16 +449,18 @@ enum SyncQueuePush {
         var result = SyncPushResult()
         guard !ids.isEmpty, ids.count == payloads.count else { return result }
 
-        // Fast path: one round trip for the whole batch.
-        do {
-            try await batch(payloads)
-            result.uploaded = ids
-            SyncIssueCenter.shared.clearIssues(ids)
-            return result
-        } catch {
-            #if DEBUG
-            print("[\(entity)Sync] batch of \(ids.count) failed — falling back to per-item upload: \(BackendErrorDiagnostics.sanitise(String(describing: error), limit: 300))")
-            #endif
+        // A singleton already is an isolated request: do not resend it within the same sweep.
+        if ids.count > 1 {
+            do {
+                try await batch(payloads)
+                result.uploaded = ids
+                SyncIssueCenter.shared.clearIssues(ids)
+                return result
+            } catch {
+                #if DEBUG
+                print("[\(entity)Sync] batch of \(ids.count) failed — falling back to per-item upload: \(BackendErrorDiagnostics.sanitise(String(describing: error), limit: 300))")
+                #endif
+            }
         }
 
         // Isolation path: every item gets its own attempt.

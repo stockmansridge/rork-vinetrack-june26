@@ -90,6 +90,13 @@ class DomainCacheStore(context: Context) {
 
     fun setOwner(userId: String?) = prefs.edit { putString(KEY_OWNER, userId) }
 
+    /** One atomic source read; all decoding happens on the caller's awaited worker. */
+    internal fun loadFieldHydration(userId: String, vineyardId: String, onlyPins: Boolean = false): FieldCacheHydration? =
+        FieldCacheHydration.prepare(userId, vineyardId, prefs.all, onlyPins)
+
+    internal fun isFieldHydrationCurrent(userId: String, vineyardId: String, snapshot: FieldCacheHydration): Boolean =
+        snapshot.matches(userId, vineyardId, prefs.all)
+
     // MARK: - Vineyard list
 
     fun loadVineyards(): List<Vineyard> = vineyardCodec.decode(prefs.getString(KEY_VINEYARDS, null))
