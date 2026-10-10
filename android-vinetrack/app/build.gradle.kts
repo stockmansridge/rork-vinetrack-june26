@@ -60,6 +60,9 @@ android {
         versionCode = 10
         versionName = "3.1.7"
 
+        // No runtime/property override: live storage cutover needs separate approval.
+        buildConfigField("boolean", "FIELD_STORAGE_ISOLATION_ACTIVATED", "false")
+
         val supabaseUrl = resolveBuildConfigValue(
             "SUPABASE_URL",
             "EXPO_PUBLIC_SUPABASE_URL",
