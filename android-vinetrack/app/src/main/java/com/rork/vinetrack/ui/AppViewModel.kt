@@ -3019,6 +3019,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val raw = lastError.lowercase()
         return when {
+            raw.startsWith("pin conflict") -> lastError
             raw.contains("couldn't be linked to a vineyard") ->
                 "This saved change isn't linked to a vineyard, so it was held back for attention."
             raw.contains("forbidden") || raw.contains("permission") ||

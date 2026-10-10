@@ -46,6 +46,37 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
         response.body<List<kotlinx.serialization.json.JsonObject>>().any { it["id"]?.toString()?.trim('"').equals(id, true) }
     }
 
+    /** Conflict-only read under the original creator's current authority, not a cached existence check. */
+    internal suspend fun fetchCreateDuplicate(input: PinInput, userId: String): Pin? = withContext(Dispatchers.IO) {
+        requireConfig()
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        if (access.userId != userId || !input.createdBy.equals(userId, true)) throw BackendError.Unauthorized
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl("pins")) {
+            attributes.put(SupabaseClient.accountRequestScope, access)
+            url {
+                parameters.append("select", "id,vineyard_id,created_by,deleted_at")
+                parameters.append("id", "eq.${requireNotNull(input.id)}")
+                parameters.append("vineyard_id", "eq.${input.vineyardId}")
+                parameters.append("deleted_at", "is.null")
+            }
+            authHeaders(token)
+        }
+        if (!session.isAccountAccessCurrent(access)) throw BackendError.Unauthorized
+        when {
+            response.status.isSuccess() -> response.body<List<Pin>>().singleOrNull()
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, "Pin conflict verification unavailable")
+        }
+    }
+
+    /** Serialises duplicate acknowledgement with existing account revocation; no new recovery authority. */
+    internal fun withCreateAccount(userId: String, action: () -> Unit): Boolean {
+        val access = session.accountAccess() ?: return false
+        if (access.userId != userId) return false
+        return session.withAccountAccess(access, action)
+    }
+
     /** Mutable fields the Android pin editor exposes. */
     @Serializable
     data class PinInput(

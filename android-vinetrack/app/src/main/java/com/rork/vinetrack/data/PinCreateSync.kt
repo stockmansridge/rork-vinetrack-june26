@@ -20,26 +20,39 @@ import kotlinx.serialization.json.Json
  *
  * Idempotency: a queued pin carries the client-generated UUID (`PinInput.id`)
  * minted when the user created it offline. Replaying re-uses that same id, so
- * a retried insert is safe — if the server reports a duplicate (409) the row is
- * already there and we treat it as synced rather than creating a second pin.
+ * a 409 is acknowledged only after an account-bound read proves the original
+ * stable target, vineyard and explicit creator. Unproven conflicts retain the payload.
  */
 class PinCreateSync private constructor(
     private val createRemote: (suspend (PinRepository.PinInput) -> Pin)?,
     private val pending: PendingWriteRepository,
+    private val fetchDuplicate: (suspend (PinRepository.PinInput, String) -> Pin?)?,
+    private val withDuplicateAccount: ((String, () -> Unit) -> Boolean)?,
 ) {
     constructor(pinRepo: PinRepository, pending: PendingWriteRepository) : this(
         createRemote = { input -> pinRepo.createPin(input) },
         pending = pending,
+        fetchDuplicate = pinRepo::fetchCreateDuplicate,
+        withDuplicateAccount = pinRepo::withCreateAccount,
     )
 
     /** Queue-only constructor used by durable production-payload tests. */
-    internal constructor(pending: PendingWriteRepository) : this(null, pending)
+    internal constructor(pending: PendingWriteRepository) : this(null, pending, null, null)
 
     /** Production replay seam for executable persistence/network tests. */
     internal constructor(
         pending: PendingWriteRepository,
         createRemote: suspend (PinRepository.PinInput) -> Pin,
-    ) : this(createRemote, pending)
+    ) : this(createRemote, pending, null, null)
+
+    /** Focused conflict verification seam; production uses SessionStore's revocation monitor. */
+    internal constructor(
+        pending: PendingWriteRepository,
+        createRemote: suspend (PinRepository.PinInput) -> Pin,
+        fetchDuplicate: suspend (PinRepository.PinInput, String) -> Pin?,
+        withDuplicateAccount: (String, () -> Unit) -> Boolean = { _, action -> action(); true },
+    ) : this(createRemote, pending, fetchDuplicate, withDuplicateAccount)
+
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** Serialises replay so overlapping connectivity events can't double-fire. */
@@ -65,8 +78,9 @@ class PinCreateSync private constructor(
      * Replay every retry-eligible queued pin create. No-ops (returns) if a
      * replay is already running. For each item: mark in-progress, POST it, then
      * resolve the outcome:
-     *  - success / duplicate (409) -> removed from the outbox; [onSynced] fires
-     *    with the server pin (success only) so callers can reconcile state,
+     *  - success / verified duplicate -> conditional removal; [onSynced] fires
+     *    only for POST success, never publishing a conflict probe over local data,
+     *  - unverified 409 -> retained for review; interrupted read -> retained for retry,
      *  - transient (network / 5xx / expired session) -> back to failed for a
      *    later attempt, attempt counter bumped,
      *  - permanent (validation / forbidden / corrupt) or attempt cap hit ->
@@ -94,6 +108,7 @@ class PinCreateSync private constructor(
                     pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved pin.")
                     continue
                 }
+                val replayScope = pending.currentReplayScope()
                 try {
                     val pin = requireNotNull(createRemote) { "Pin repository is required for replay." }(input)
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -103,9 +118,7 @@ class PinCreateSync private constructor(
                     retryOrBlock(write, "Sign-in needed to sync this pin.")
                 } catch (e: BackendError.Server) {
                     when {
-                        // Duplicate primary key — the client id is already on the
-                        // server, so the pin exists. Idempotent success.
-                        e.code == 409 -> pending.removeIfCurrent(write)
+                        e.code == 409 -> verifyConflict(write, input, replayScope)
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
                         else -> pending.updateStatusIfCurrent(
                             write,
@@ -123,6 +136,43 @@ class PinCreateSync private constructor(
             }
         } finally {
             replayLock.unlock()
+        }
+    }
+
+    private suspend fun verifyConflict(
+        write: PendingWrite,
+        input: PinRepository.PinInput,
+        scope: PendingWriteRepository.ReplayScope?,
+    ) {
+        val held = "Pin conflict could not be verified. The original pin is retained for review; keep this installation and contact support."
+        if (!pending.isCurrent(write)) return
+        if (scope == null || input.id.isNullOrBlank() || input.vineyardId.isBlank() ||
+            !input.id.equals(write.clientId, true) || input.createdBy.isNullOrBlank() ||
+            !input.createdBy.equals(scope.userId, true) || fetchDuplicate == null || withDuplicateAccount == null) {
+            pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, held)
+            return
+        }
+        try {
+            if (pending.currentReplayScope() != scope) return
+            val remote = fetchDuplicate.invoke(input, scope.userId)
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (!pending.isCurrent(write) || pending.currentReplayScope() != scope) return
+            val verified = remote != null && remote.deletedAt == null &&
+                remote.id.equals(input.id, true) && remote.vineyardId.equals(input.vineyardId, true) &&
+                !remote.createdBy.isNullOrBlank() && remote.createdBy.equals(input.createdBy, true)
+            if (!verified) {
+                pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, held)
+                return
+            }
+            withDuplicateAccount.invoke(scope.userId) {
+                if (pending.currentReplayScope() == scope) pending.removeIfCurrent(write)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED,
+                "Pin conflict verification was interrupted. The original pin is retained for retry.")
+            throw e
+        } catch (_: Exception) {
+            retryOrBlock(write, "Pin conflict verification is unavailable. The original pin is retained; retry when connected with account access.")
         }
     }
 
