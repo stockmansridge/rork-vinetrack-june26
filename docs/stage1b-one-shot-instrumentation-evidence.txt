@@ -1,0 +1,139 @@
+Stage 1B one-shot instrumentation evidence — 2026-10-10
+
+PROVENANCE: The original /tmp/rork-android-test-android-vinetrack.log is absent on follow-up. Raw section below is transcribed from the full prior Read tool output, with line-number decorations removed. It is not newly retrieved original filesystem bytes. No rerun or assertion/code change occurred.
+CLASSIFICATION: Seven Android test assertions passed. Managed instrumentation acceptance remains unresolved (infrastructure/reporting gap, not assertion failure).
+
+EXACT TOOL INVOCATION:
+androidTest({"appPath":"android-vinetrack","onlyTesting":["com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest"]})
+
+EXACT MANAGED RESPONSE FROM PRIOR TRANSCRIPT:
+{"success":false,"status":"infra-failed","appPath":"android-vinetrack","error":"Android instrumentation did not produce a complete result.","fullLogPath":"/tmp/rork-android-test-android-vinetrack.log","passed":7,"failed":0,"skipped":0,"durationSeconds":9}
+
+ENVIRONMENT:
+model limdroid_x86_64_only; API 35 (Android 15); com.rork.vinetrack; local debug 3.1.7/code10; source bc1a8231dcdfa6862f87b0947fa58f5c8791b07b.
+Local app APK SHA256 c55d29d36e769dfc10a331933379b360be277bae9d1787867ba10cd955cb0ee8.
+Local test APK SHA256 3433b4b92448ab038c4267d816fba7ee22fe244f10eba4881fc97e6489148650.
+Service did not report installed artifact checksum, service run ID or exact resolved shell command.
+Migration gate false. All fixture IO used random stage1b_-prefixed preferences and stage1b- directories on managed isolated emulator; no real user sources.
+
+COMMAND PROVENANCE:
+Inspected /usr/local/bin/rork-agent command template: am instrument -w -r -e class com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest <discovered-test-package>/<discovered-runner>, launched through nohup and polled test-only status file. This template is not the historical exact command; resolved runner/package/temp path unavailable.
+
+EXISTING SOURCE/SERVICE REVIEW:
+Executable SHA256 7ec3ddf90a8026b2c18a549f7dbd29e663be0cf37760847d73b3d866ca64d2a7; parser k6h bundled line3138; command assembly3141; incomplete fallback3143. Parser treats code0 as test completion, flags missing/mismatching active class/test, clears active state, requires !M for completed success. Test source Stage1BAndroidAdapterTest.kt:186 sends an extra stream-only code0 during the volume test before its named completion. This explains the transcript's 7-pass/incomplete combination against inspected parser. Actual run's deployed parser version and incident trace unavailable; strong reporting-protocol explanation, not independently verified service root cause. No transport failure, assertion failure or crash established. No parser/logging/test changes made.
+
+VOLUME QUALIFICATION:
+64 synthetic 2MiB files; source134217728 bytes; vault134237504 bytes; overhead19776 bytes; preserve912.349247ms; verify172.136523ms; buffer65536 bytes. Emulator storage only, not physical startup/peak memory/real ENOSPC. Low-space was injected preflight capacity. Seven individual completion identities and terminal preserved below.
+
+BEGIN RAW RUNNER TRANSCRIPT
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest:
+INSTRUMENTATION_STATUS: test=actualAndroidPhotoAdapterCopiesValidJpegAndVaultRetainsAbsolutePathAndBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualAndroidPhotoAdapterCopiesValidJpegAndVaultRetainsAbsolutePathAndBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=realSharedPreferencesConstructorRecoveryRunsOnlyAfterRawVaultCommit
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=realSharedPreferencesConstructorRecoveryRunsOnlyAfterRawVaultCommit
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=actualAtomicFileBackupRestorationCannotDestroyRetainedOriginalBackup
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualAtomicFileBackupRestorationCannotDestroyRetainedOriginalBackup
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=unreadableActualTripPreferencesStayRawAndNeverBecomeAvailableClaimInHarness
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=unreadableActualTripPreferencesStayRawAndNeverBecomeAvailableClaimInHarness
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=realScoutAndroidConstructorRepairOccursAfterPreservingUnrepairedXml
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=realScoutAndroidConstructorRepairOccursAfterPreservingUnrepairedXml
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=androidBinaryInterruptedMetadataPublicationResumesWithAccountIsolation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=androidBinaryInterruptedMetadataPublicationResumesWithAccountIsolation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=androidVolumeAndLowSpaceMeasurementUsesStreamingAndExactIntegrity
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: stream=STAGE1B_ANDROID_VOLUME sourceBytes=134217728 vaultBytes=134237504 entries=64 initialMs=912.349247 verifyMs=172.136523 sdk=35 model=limdroid_x86_64_only bufferBytes=65536
+
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.isolation.Stage1BAndroidAdapterTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=7
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=androidVolumeAndLowSpaceMeasurementUsesStreamingAndExactIntegrity
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 2.162
+
+OK (7 tests)
+
+
+INSTRUMENTATION_CODE: -1
+END RAW RUNNER TRANSCRIPT
