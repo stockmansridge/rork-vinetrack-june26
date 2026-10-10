@@ -1,6 +1,8 @@
 package com.rork.vinetrack.data.auth
 
 import android.content.Context
+import android.content.SharedPreferences
+import java.util.WeakHashMap
 import androidx.core.content.edit
 
 /**
@@ -12,17 +14,37 @@ class SessionStore(context: Context) {
     private val prefs = context.applicationContext
         .getSharedPreferences("vinetrack_session", Context.MODE_PRIVATE)
 
+    val retentionGuard: AuthRetentionGuard = synchronized(retentionGuards) {
+        retentionGuards.getOrPut(prefs) {
+            AuthRetentionGuard(
+                readLocked = { prefs.getBoolean(KEY_RECOVERY_LOCK, false) },
+                persistLock = { prefs.edit().putBoolean(KEY_RECOVERY_LOCK, true).commit() },
+            )
+        }
+    }
+
+    init {
+        // Surviving session context is ambiguity evidence, not ownership. Old auth exits may
+        // have removed tokens without clearing authorless queues. Do not open those stores.
+        if (runCatching {
+            prefs.getString(KEY_REFRESH, null).isNullOrBlank() &&
+                prefs.getString(KEY_VINEYARD_CACHE_OWNER, null) != null
+        }.getOrDefault(true)) {
+            retentionGuard.rejectSession { clearCredentials() }
+        }
+    }
+
     var accessToken: String?
-        get() = prefs.getString(KEY_ACCESS, null)
-        set(value) = prefs.edit { putString(KEY_ACCESS, value) }
+        get() = if (retentionGuard.isLocked) null else prefs.getString(KEY_ACCESS, null)
+        set(value) { retentionGuard.requireUnlocked(); prefs.edit { putString(KEY_ACCESS, value) } }
 
     var refreshToken: String?
-        get() = prefs.getString(KEY_REFRESH, null)
-        set(value) = prefs.edit { putString(KEY_REFRESH, value) }
+        get() = if (retentionGuard.isLocked) null else prefs.getString(KEY_REFRESH, null)
+        set(value) { retentionGuard.requireUnlocked(); prefs.edit { putString(KEY_REFRESH, value) } }
 
     var userId: String?
-        get() = prefs.getString(KEY_USER_ID, null)
-        set(value) = prefs.edit { putString(KEY_USER_ID, value) }
+        get() = if (retentionGuard.isLocked) null else prefs.getString(KEY_USER_ID, null)
+        set(value) { retentionGuard.requireUnlocked(); prefs.edit { putString(KEY_USER_ID, value) } }
 
     var userEmail: String?
         get() = prefs.getString(KEY_EMAIL, null)
@@ -65,6 +87,14 @@ class SessionStore(context: Context) {
         name: String? = null,
         createdAt: String? = null,
     ) {
+        synchronized(retentionGuard) {
+        retentionGuard.requireUnlocked()
+        // The cache owner is a switch detector only, never proof of pending-operation authorship.
+        val previousAccount = prefs.getString(KEY_USER_ID, null) ?: prefs.getString(KEY_VINEYARD_CACHE_OWNER, null)
+        if (previousAccount != null && previousAccount != userId) {
+            retentionGuard.rejectSession { clearCredentials() }
+            error(AuthRetentionGuard.RECOVERY_MESSAGE)
+        }
         // If a *different* user is signing in, drop the previous user's cached
         // vineyard selection/default so it can't leak into the new session.
         // We track ownership with a dedicated key that survives `clear()` (which
@@ -85,24 +115,29 @@ class SessionStore(context: Context) {
                 remove(KEY_DEFAULT_VINEYARD)
             }
         }
+        }
     }
 
+    /** Credential rejection locks local field access before any credential removal. */
     fun clear() {
-        prefs.edit {
+        retentionGuard.rejectSession { clearCredentials() }
+    }
+
+    private fun clearCredentials() {
+        check(prefs.edit().apply {
             remove(KEY_ACCESS)
             remove(KEY_REFRESH)
             remove(KEY_USER_ID)
             remove(KEY_EMAIL)
             remove(KEY_NAME)
             remove(KEY_CREATED_AT)
-            // Keep selected/default vineyard so the SAME user re-logging in
-            // restores their context. KEY_VINEYARD_CACHE_OWNER is also kept so
-            // a different user signing in next is detected by save() and the
-            // stale cache is dropped before it can leak.
-        }
+            // Field records and selection evidence remain untouched and locked.
+        }.commit()) { "Couldn't persist credential revocation; recovery remains locked." }
     }
 
     private companion object {
+        val retentionGuards = WeakHashMap<SharedPreferences, AuthRetentionGuard>()
+        const val KEY_RECOVERY_LOCK = "field_recovery_locked_v1"
         const val KEY_ACCESS = "access_token"
         const val KEY_REFRESH = "refresh_token"
         const val KEY_USER_ID = "user_id"

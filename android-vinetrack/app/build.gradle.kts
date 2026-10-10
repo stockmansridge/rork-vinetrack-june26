@@ -412,6 +412,20 @@ if (providers.gradleProperty("workTaskCompletionFocusedTests").orNull == "true")
     }
 }
 
+// Narrow auth retention hotfix selection; archived migration suites are not included.
+if (providers.gradleProperty("authRetentionFocusedTests").orNull == "true") {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        testLogging { events("passed", "failed", "skipped") }
+    }
+    afterEvaluate {
+        tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
+            setSource(fileTree("src/test/java") {
+                include("**/RetentionReviewTest.kt", "**/AuthRetentionGateTest.kt", "**/SessionLifecycleContractTest.kt")
+            })
+        }
+    }
+}
+
 // Disabled Stage 1B contract maintenance only; no unrelated suites or emulator execution.
 if (providers.gradleProperty("disabledStage1BFocusedTests").orNull == "true") {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {

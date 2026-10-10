@@ -18,7 +18,7 @@ import kotlinx.serialization.json.Json
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Characterises current defects, not acceptance of the required retention contract.
+/** Characterises retained low-level hazards, not acceptance of the auth retention guard.
  * Uses production repositories/coordinators and forced disk commits through their storage seams.
  * Child JVM termination is real process termination, but is not Android application termination.
  */
@@ -26,8 +26,8 @@ class RetentionReviewTest {
     private fun directory(): File = Files.createTempDirectory("retention-review").toFile()
 
     @Test(timeout = 20000) fun signOutCleanupDeletesPersistedWorkAndJpegForEverySharedCleanupTrigger() {
-        // Source review establishes these triggers all call AppViewModel.signOut; this invokes
-        // its actual repository cleanup methods, not the Android ViewModel or auth transport.
+        // Historical auth exits used these cleanup methods. Their destructive behaviour remains
+        // characterised here; AuthRetentionGateTest separately verifies admission before cleanup.
         for (trigger in listOf("user", "runtime-auth-rejected", "account-switch-via-sign-out", "biometric-lock")) {
             val root = directory()
             try {

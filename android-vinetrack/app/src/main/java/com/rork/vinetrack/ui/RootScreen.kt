@@ -12,7 +12,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.ui.platform.LocalContext
+import com.rork.vinetrack.data.auth.AuthRetentionGuard
+import com.rork.vinetrack.data.auth.SessionStore
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -64,7 +68,41 @@ import com.rork.vinetrack.ui.theme.VineColors
 
 @Composable
 fun RootScreen() {
+    val context = LocalContext.current
+    val session = remember(context) { SessionStore(context) }
+    val recoveryLocked by session.retentionGuard.state.collectAsStateWithLifecycle()
+    if (recoveryLocked) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text("Local work protected", fontWeight = FontWeight.Bold, fontSize = 24.sp)
+            Text(
+                AuthRetentionGuard.RECOVERY_MESSAGE,
+                modifier = Modifier.padding(top = 16.dp),
+                textAlign = TextAlign.Center,
+            )
+        }
+    } else {
+        NormalRootScreen()
+    }
+}
+
+@Composable
+private fun NormalRootScreen() {
     val vm: AppViewModel = viewModel()
+    val signOutBlocked by vm.signOutProtectionNotice.collectAsStateWithLifecycle()
+    if (signOutBlocked) {
+        AlertDialog(
+            onDismissRequest = vm::dismissSignOutProtectionNotice,
+            title = { Text("Sign-out paused") },
+            text = { Text(AuthRetentionGuard.SIGN_OUT_MESSAGE) },
+            confirmButton = {
+                TextButton(onClick = vm::dismissSignOutProtectionNotice) { Text("Keep working") }
+            },
+        )
+    }
     // Created here rather than inside MainScaffold so its SavedStateHandle is
     // registered for the whole Activity lifetime. MainScaffold is not in
     // composition during the Restoring phase after a process restart, so a

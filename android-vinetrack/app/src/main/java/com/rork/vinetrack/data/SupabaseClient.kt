@@ -34,6 +34,9 @@ interface SessionTokenRefresher {
     /** Current persisted access token, or null when signed out. */
     val sessionAccessToken: String?
 
+    /** A retained recovery hold forbids new field requests, including captured old tokens. */
+    val isSessionBlocked: Boolean get() = false
+
     /** True when the access token is expired or expiring within the skew window. */
     fun accessTokenExpiresSoon(): Boolean
 
@@ -84,6 +87,7 @@ object SupabaseClient {
         }.apply {
             plugin(HttpSend).intercept { request ->
                 val refresher = sessionRefresher
+                if (refresher?.isSessionBlocked == true) throw BackendError.Unauthorized
                 val bearer = request.headers[HttpHeaders.Authorization]
                     ?.removePrefix("Bearer")?.trim()
                 // GoTrue endpoints (incl. the refresh call itself) and anon-only
@@ -108,6 +112,7 @@ object SupabaseClient {
                     if (!latest.isNullOrBlank() && latest != bearer) request.replaceBearerToken(latest)
                 }
 
+                if (refresher?.isSessionBlocked == true) throw BackendError.Unauthorized
                 val call = execute(request)
                 if (!isSessionRequest || refresher == null) return@intercept call
                 if (call.response.status.value != 401) return@intercept call

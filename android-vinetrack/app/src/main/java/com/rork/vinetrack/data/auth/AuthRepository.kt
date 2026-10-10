@@ -193,6 +193,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
     // --- SessionTokenRefresher (central HTTP refresh-and-retry hook) ---
 
     override val sessionAccessToken: String? get() = session.accessToken
+    override val isSessionBlocked: Boolean get() = session.retentionGuard.isLocked
 
     override fun accessTokenExpiresSoon(): Boolean {
         val token = session.accessToken ?: return false
@@ -222,6 +223,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
      * refresh token — never on network/transient failures.
      */
     private suspend fun performRefresh(tokenBefore: String?): RefreshResult = refreshMutex.withLock {
+        if (session.retentionGuard.isLocked) return@withLock RefreshResult.Rejected
         if (tokenBefore != null && session.accessToken != tokenBefore) {
             Log.d(TAG, "Session already refreshed by a concurrent request")
             return@withLock RefreshResult.Success(cachedUser())
@@ -277,6 +279,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
     }
 
     suspend fun signIn(email: String, password: String): AppUser = withContext(Dispatchers.IO) {
+        session.retentionGuard.requireUnlocked()
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
         val response = SupabaseClient.http.post(SupabaseClient.authUrl("token?grant_type=password")) {
             anonHeaders()
@@ -296,6 +299,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
      * with the same verified email, so no duplicate user is created.
      */
     suspend fun signInWithGoogleIdToken(idToken: String, nonce: String?): AppUser = withContext(Dispatchers.IO) {
+        session.retentionGuard.requireUnlocked()
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
         val response = SupabaseClient.http.post(SupabaseClient.authUrl("token?grant_type=id_token")) {
             anonHeaders()
@@ -307,6 +311,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
     }
 
     suspend fun signUp(name: String, email: String, password: String): AppUser = withContext(Dispatchers.IO) {
+        session.retentionGuard.requireUnlocked()
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
         val response = SupabaseClient.http.post(SupabaseClient.authUrl("signup")) {
             anonHeaders()

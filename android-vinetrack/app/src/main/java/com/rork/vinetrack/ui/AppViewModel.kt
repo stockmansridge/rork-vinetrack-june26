@@ -2518,7 +2518,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** "Use a different account" on the lock screen — drop biometrics and sign out. */
     fun signOutFromBiometricLock() {
-        biometricStore.clearAll()
         signOut()
     }
 
@@ -5010,7 +5009,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    val signOutProtectionNotice = MutableStateFlow<Boolean>(false)
+
+    fun dismissSignOutProtectionNotice() { signOutProtectionNotice.value = false }
+
     fun signOut(message: String? = null) {
+        if (session.hasSession && !session.retentionGuard.canSignOut()) {
+            signOutProtectionNotice.value = true
+            return
+        }
+        // Definitive rejection is a locked recovery transition, never field cleanup or new login.
+        session.clear()
         performanceAuthorizationEpoch += 1
         performanceCapture.revoke()
         vineyardSelectionEpoch += 1
@@ -5022,14 +5031,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { revenueCat.logOut() }
             _subscription.value = SubscriptionUiState()
             rcPackages = emptyMap()
-            // Stage 8 — defence-in-depth: clear local offline-reliability data so
-            // no pending/cache state for the signed-out account lingers on the
-            // device. Local-only (no server/Storage deletes, no replay); cleanup
-            // failures must never block sign-out, hence the runCatching guards.
-            runCatching { pendingWrites.clearAll() }
-            runCatching { pendingPhotos.clearAll() }
-            runCatching { chemicalLabelPhotos.clearAll() }
-            runCatching { domainCache.clearAll() }
+            // Field stores, photo binaries and recovery evidence remain unchanged and locked.
             // Keep the device-wide active-trip claim across account switches;
             // restore still checks ownerUserId before exposing trip controls.
             // Best-effort: clear Credential Manager sign-in state so a signed-out
@@ -5048,9 +5050,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Cancel every not-yet-started Insights debounce before invalidating
             // active sync generations and clearing local preview data.
             vineyardInsightsDebouncer.cancelAll()
-            // Unreleased preview data is System Admin-only and must not be
-            // visible to whoever signs in on this device next.
-            runCatching { vineyardInsights.clearForSignOut() }
+            // The root recovery lock hides Insights without deleting saved visits or photos.
             // Drop every keep-awake hold so the next account starts clean.
             runCatching { ScreenAwakeController.reset() }
             _ui.value = AppUiState(route = AppRoute.Login, sessionPhase = SessionPhase.SignedOut)
