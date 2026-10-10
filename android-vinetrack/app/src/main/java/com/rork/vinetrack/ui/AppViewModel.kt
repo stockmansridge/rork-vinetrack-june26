@@ -1173,6 +1173,8 @@ internal fun resolveTripPinAttribution(
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val session = SessionStore(app)
+    private val performanceCapture = com.rork.vinetrack.data.AdminPerformanceCapture(app) { session.userId }
+    private var performanceAuthorizationEpoch: Long = 0L
     private val planningDrafts = com.rork.vinetrack.data.WorkTaskPlanningDraftStore(app)
     private val externalResources = com.rork.vinetrack.data.ExternalResourceRepository(session)
 
@@ -3022,10 +3024,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * only ever added to the preservation set — it is never used as an owner for
      * an unidentified write.
      *
-     * A genuinely unidentifiable item is quarantined (held back for attention)
-     * instead of blocking the whole queue, so ordinary offline pin completions
-     * and deletions can still be retried. Storage failures and
-     * ownership/quarantine failures produce different operator messages.
+     * Unidentified original rows remain untouched. Until every replay caller
+     * enforces a revalidated selective permit, an affected pass stops rather than
+     * rewriting evidence or guessing ownership. Historical BLOCKED rows remain
+     * unchanged. Storage and ownership failures have distinct operator messages.
      */
     private fun preserveAffectedRecoveryEvidence(
         fallbackVineyardId: String? = _ui.value.selectedVineyardId,
@@ -3063,7 +3065,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     .captureBeforeMutation(getApplication(), vineyardId)
                     .isPreserved
             },
-            quarantine = { writeIds -> quarantineUnidentifiedWrites(writeIds) },
+            // Boolean-only Trip/retry callers cannot yet safely exclude unknown
+            // rows. Stop the affected pass without changing any original row.
+            quarantine = { writeIds -> writeIds.isEmpty() },
         )
         result.message?.let { message ->
             _ui.update { it.copy(pinError = message, tripError = message) }
@@ -3092,24 +3096,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             },
         )
     }
-
-    /**
-     * Hold back queued items whose vineyard could not be identified so a replay
-     * can never change their evidence, while the safely resolved remainder
-     * proceeds. Returns true when every unidentified item is held back.
-     */
-    private fun quarantineUnidentifiedWrites(writeIds: Set<String>): Boolean =
-        com.rork.vinetrack.data.RecoveryPreservation.quarantine(
-            writeIds = writeIds,
-            hold = { id, message ->
-                pendingWrites.updateStatus(
-                    id,
-                    com.rork.vinetrack.data.model.PendingWriteStatus.BLOCKED,
-                    message,
-                )
-            },
-            readBack = { pendingWrites.list() },
-        )
 
     /**
      * Replay any queued pin creates (Stage 4A-iv). Pin-create only — never any
@@ -4816,7 +4802,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun restore() {
         viewModelScope.launch {
             val result = try {
-                auth.restoreSession()
+                timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.SESSION_RESTORE) {
+                    auth.restoreSession()
+                }
             } catch (e: Exception) {
                 // Defensive: restoreSession is written not to throw, but an
                 // unexpected failure must never be read as a sign-out while
@@ -4832,6 +4820,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             when (result) {
                 is AuthRepository.RestoreResult.SignedOut -> {
+                    performanceCapture.revoke()
                     _ui.update { it.copy(route = AppRoute.Login, sessionPhase = SessionPhase.SignedOut) }
                     return@launch
                 }
@@ -5020,6 +5009,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun signOut(message: String? = null) {
+        performanceAuthorizationEpoch += 1
+        performanceCapture.revoke()
+        vineyardSelectionEpoch += 1
+        vineyardDataLoadGeneration += 1
         viewModelScope.launch {
             try { auth.signOut() } catch (_: Exception) {}
             // Reset RevenueCat identity so one user's subscription state never
@@ -6051,7 +6044,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         viewModelScope.launch {
             try {
-                val vineyards = repo.listMyVineyards()
+                val vineyards = timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.VINEYARD_MEMBERSHIP_READ) { repo.listMyVineyards() }
                 if (vineyards.isNotEmpty()) {
                     loadVineyards()
                     onResult(true, emptyList(), null)
@@ -6120,6 +6113,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * leaks across users. Runs in the background; never blocks vineyard loading.
      */
     private fun loadAdminStatus() {
+        val checkedOwner = session.userId
+        val checkedEpoch = performanceAuthorizationEpoch
         viewModelScope.launch {
             var admin = runCatching { systemAdminRepository.isSystemAdmin() }.getOrNull()
             if (admin == null) {
@@ -6127,6 +6122,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 kotlinx.coroutines.delay(2_000)
                 admin = runCatching { systemAdminRepository.isSystemAdmin() }.getOrNull()
             }
+            if (checkedOwner != session.userId || checkedEpoch != performanceAuthorizationEpoch) return@launch
+            performanceCapture.authorize(admin == true, checkedOwner)
             if (admin == null) {
                 Log.w(ADMIN_TAG, "System admin check failed twice — keeping current value (${_ui.value.isSystemAdmin})")
                 return@launch
@@ -6134,6 +6131,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val flags = runCatching { systemAdminRepository.fetchFlags() }
                 .getOrDefault(emptyList())
                 .associate { it.key to it.isEnabled }
+            if (checkedOwner != session.userId || checkedEpoch != performanceAuthorizationEpoch) return@launch
             Log.d(ADMIN_TAG, "System admin status resolved: $admin")
             _ui.update { it.copy(isSystemAdmin = admin, systemFeatureFlags = flags) }
         }
@@ -6188,7 +6186,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         try {
             loadAdminStatus()
             refreshProfileDisplayName()
-            val vineyards = repo.listMyVineyards()
+            val vineyards = timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.VINEYARD_MEMBERSHIP_READ) { repo.listMyVineyards() }
             // Write-through: a successful online list is cached for future
             // offline launch (Stage 6A). Cache-only — never hydrated yet.
             domainCache.saveVineyards(session.userId, vineyards)
@@ -6795,7 +6793,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val refreshed = runCatching {
                 repo.updateVineyard(id, trimmed, country)
-                repo.listMyVineyards()
+                timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.VINEYARD_MEMBERSHIP_READ) { repo.listMyVineyards() }
             }.getOrNull()
             if (refreshed == null) {
                 onResult(false)
@@ -13026,7 +13024,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Re-fetch the selected vineyard's team members into state. */
     private suspend fun refreshTeamMembers() {
         val vineyardId = _ui.value.selectedVineyardId ?: return
-        runCatching { repo.listTeamMembers(vineyardId) }
+        runCatching { timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.TEAM_MEMBERSHIP_READ) { repo.listTeamMembers(vineyardId) } }
             .onSuccess { members -> _ui.update { it.copy(members = members) } }
     }
 
@@ -13159,7 +13157,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (current.operatorCategoryId != operatorCategoryId) {
                     teamRepo.updateMemberOperatorCategory(vineyardId, userId, operatorCategoryId)
                 }
-                val refreshed = repo.listTeamMembers(vineyardId)
+                val refreshed = timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.TEAM_MEMBERSHIP_READ) { repo.listTeamMembers(vineyardId) }
                 val persisted = refreshed.firstOrNull { it.userId == userId }
                 if (persisted == null || persisted.operatorCategoryId != operatorCategoryId ||
                     persisted.role?.lowercase() != role.lowercase()) {
@@ -16070,7 +16068,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             val tasks = try {
-                repo.listWorkTasks(vineyardId)
+                timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.WORK_TASKS_READ) { repo.listWorkTasks(vineyardId) }
             } catch (e: Exception) {
                 onComplete?.invoke()
                 return@launch
@@ -16227,7 +16225,108 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    private suspend fun <T> timedPerformanceRead(
+        phase: com.rork.vinetrack.data.AdminPerformanceCapture.Phase,
+        operation: suspend () -> T,
+    ): T {
+        val timing = performanceCapture.begin(phase)
+        return try { operation() } finally { performanceCapture.end(timing) }
+    }
+
+    /** Capture preference only; it never grants access to the report. */
+    fun isPerformanceCaptureRequested(): Boolean = performanceCapture.isRequested
+
+    private suspend fun verifyPerformanceAdmin(): Boolean {
+        val owner = session.userId
+        val epoch = performanceAuthorizationEpoch
+        val allowed = owner != null && session.hasSession &&
+            runCatching { systemAdminRepository.isSystemAdmin() }.getOrDefault(false)
+        if (owner != session.userId || epoch != performanceAuthorizationEpoch) return false
+        performanceCapture.authorize(allowed, owner)
+        return allowed
+    }
+
+    fun setPerformanceCaptureEnabled(enabled: Boolean, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            onResult(verifyPerformanceAdmin() && performanceCapture.setEnabled(enabled))
+        }
+    }
+
+    fun exportPerformanceTimings(onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            onResult(if (verifyPerformanceAdmin()) performanceCapture.report() else null)
+        }
+    }
+
+    /** Fixed surface categories only; no route identifiers or screen contents. */
+    fun recordPerformanceSurface(category: Int) {
+        performanceCapture.mark(when (category) {
+            0 -> com.rork.vinetrack.data.AdminPerformanceCapture.Phase.HOME_APPEARED
+            1 -> com.rork.vinetrack.data.AdminPerformanceCapture.Phase.TRIP_APPEARED
+            2 -> com.rork.vinetrack.data.AdminPerformanceCapture.Phase.PROGRAM_APPEARED
+            else -> com.rork.vinetrack.data.AdminPerformanceCapture.Phase.OTHER_SURFACE_APPEARED
+        })
+    }
+
+    private var vineyardDataLoadGeneration: Long = 0L
+
+    /** Publish only owner-scoped display snapshots; access and Trip authority stay unchanged. */
+    private fun hydrateCachedVineyardData(userId: String, vineyardId: String) {
+        val timing = performanceCapture.begin(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.LOCAL_HYDRATION)
+        val pending = pendingWrites.list()
+        val cachedPins = domainCache.loadPins(userId, vineyardId)?.let { cached ->
+            com.rork.vinetrack.data.PendingPinReadOverlay.overlay(cached, _ui.value.pins, pending, vineyardId)
+        }
+        val cachedTrips = domainCache.loadTrips(userId, vineyardId)
+        val cachedSpray = domainCache.loadSpray(userId, vineyardId)?.let {
+            PendingWriteOverlay.overlaySpray(it, pending, vineyardId)
+        }
+        val cachedTasks = domainCache.loadWorkTasks(userId, vineyardId)?.let {
+            PendingWriteOverlay.overlayWorkTaskHeaders(it, pending, vineyardId)
+        }
+        val cachedGrowth = domainCache.loadGrowth(userId, vineyardId)?.let {
+            PendingWriteOverlay.overlayGrowth(it, pending, vineyardId)
+        }
+        val hasCachedData = cachedPins != null || cachedTrips != null || cachedSpray != null ||
+            cachedTasks != null || cachedGrowth != null
+        performanceCapture.end(timing)
+        _ui.update { state ->
+            if (session.userId != userId || state.selectedVineyardId != vineyardId ||
+                !state.sessionPhase.isAuthenticated) state else state.copy(
+                pins = state.pins.ifEmpty { cachedPins ?: emptyList() },
+                // Historical cache cannot activate a Trip or establish completion.
+                // Keep current local rows; active snapshot restoration stays in its
+                // existing recovery-gated path after the authoritative read.
+                trips = if (state.tripsListKnowledge == TripsListKnowledge.Authoritative) state.trips
+                    else state.trips.ifEmpty { cachedTrips.orEmpty().filter { !it.isActive } },
+                tripsListKnowledge = if (cachedTrips != null && state.tripsListKnowledge != TripsListKnowledge.Authoritative)
+                    TripsListKnowledge.Cached else state.tripsListKnowledge,
+                sprayRecords = state.sprayRecords.ifEmpty { cachedSpray ?: emptyList() },
+                workTasks = state.workTasks.ifEmpty { cachedTasks ?: emptyList() },
+                growthRecords = state.growthRecords.ifEmpty { cachedGrowth ?: emptyList() },
+                isUsingCachedFieldData = state.isUsingCachedFieldData || hasCachedData,
+            )
+        }
+        if (hasCachedData) performanceCapture.mark(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.CACHED_DATA_PUBLISHED)
+    }
+
     private suspend fun loadVineyardData(vineyardId: String) {
+        val timing = performanceCapture.begin(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.VINEYARD_REFRESH)
+        try {
+            loadVineyardDataBody(vineyardId)
+        } finally {
+            performanceCapture.end(timing)
+        }
+    }
+
+    private suspend fun loadVineyardDataBody(vineyardId: String) {
+        val userId = session.userId ?: return
+        val selectionEpoch = vineyardSelectionEpoch
+        val generation = ++vineyardDataLoadGeneration
+        fun isCurrentLoad(): Boolean = session.userId == userId &&
+            _ui.value.sessionPhase.isAuthenticated && _ui.value.selectedVineyardId == vineyardId &&
+            vineyardSelectionEpoch == selectionEpoch && vineyardDataLoadGeneration == generation
+        if (!isCurrentLoad()) return
         // Preserve the first local evidence before hydration/server reads can replace
         // caches and before the successful-load reconnect pipeline drains outboxes.
         val preservation = com.rork.vinetrack.data.RecoverySnapshotStore
@@ -16257,10 +16356,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 grapeVarietyReferenceError = null,
             )
         }
-        val userId = session.userId
+        hydrateCachedVineyardData(userId, vineyardId)
         val cachedPaddocks = domainCache.loadPaddocks(userId, vineyardId)
             ?.filter { it.vineyardId.equals(vineyardId, ignoreCase = true) }
-        if (_ui.value.selectedVineyardId == vineyardId && cachedPaddocks != null) {
+        if (isCurrentLoad() && cachedPaddocks != null) {
             val hydrated = PendingWriteOverlay.overlayPaddocks(
                 cachedPaddocks,
                 pendingWrites.list(),
@@ -16281,7 +16380,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         var paddocksFromCache = false
         var pinsFromCache = false
         val paddocks = try {
-            repo.listPaddocks(vineyardId)
+            timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.BLOCKS_READ) { repo.listPaddocks(vineyardId) }
                 .filter { it.vineyardId.equals(vineyardId, ignoreCase = true) }
                 .also {
                     paddocksFromServer = true
@@ -16295,7 +16394,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             cachedPaddocks?.also { paddocksFromCache = true } ?: emptyList()
         }
         val pins = try {
-            repo.listPins(vineyardId).also { pinsFromServer = true }
+            timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.PINS_READ) { repo.listPins(vineyardId) }.also { pinsFromServer = true }
         } catch (e: BackendError) {
             pinError = e.message
             cachedPinsOrExisting(userId, vineyardId)?.also { pinsFromCache = true } ?: _ui.value.pins
@@ -16305,6 +16404,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         // Write-through (Stage 6A): only persist genuinely fresh server reads so a
         // good cache is never clobbered by an offline fallback to existing state.
+        if (!isCurrentLoad()) return
         if (paddocksFromServer) domainCache.savePaddocks(userId, vineyardId, paddocks)
         if (pinsFromServer) domainCache.savePins(userId, vineyardId, pins)
         var tripError: String? = null
@@ -16316,7 +16416,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // scalar deltas, not reconstructable rows, so NO pending-write overlay is
         // applied to trips. The active trip remains governed by ActiveTripStore.
         val loadedTrips = try {
-            repo.listTrips(vineyardId).also { tripsFromServer = true }
+            timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.TRIPS_READ) { repo.listTrips(vineyardId) }.also { tripsFromServer = true }
         } catch (e: BackendError) {
             tripError = e.message
             _ui.value.trips.ifEmpty {
@@ -16332,6 +16432,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // only the raw server list — written BEFORE restoreActiveTrip() so a
         // restored active-trip provisional row is never baked into the historical
         // snapshot. A trip already present in the server list is cached normally.
+        if (!isCurrentLoad()) return
         if (tripsFromServer) domainCache.saveTrips(userId, vineyardId, loadedTrips)
         // Tier-A Stage A: restore the durable local active-trip snapshot so an
         // in-progress trip survives process death / offline launch / silent
@@ -16351,7 +16452,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         var workTasksFromServer = false
         var workTasksFromCache = false
         val workTasks = try {
-            repo.listWorkTasks(vineyardId).also { workTasksFromServer = true }
+            timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.WORK_TASKS_READ) { repo.listWorkTasks(vineyardId) }.also { workTasksFromServer = true }
         } catch (e: Exception) {
             _ui.value.workTasks.ifEmpty {
                 domainCache.loadWorkTasks(userId, vineyardId)?.also { workTasksFromCache = true } ?: emptyList()
@@ -16370,7 +16471,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // (or empty) so the Trips screen still works if either is unavailable.
         var membershipError: String? = null
         val members = try {
-            repo.listTeamMembers(vineyardId).filter { member ->
+            timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.TEAM_MEMBERSHIP_READ) { repo.listTeamMembers(vineyardId) }.filter { member ->
                 member.vineyardId == null || member.vineyardId.equals(vineyardId, ignoreCase = true)
             }
         } catch (_: Exception) {
@@ -16383,7 +16484,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val savedTripCosts: List<TripCostAllocation> = if (canReadTripCosts) try {
             tripCostAllocationRepo.listForVineyard(vineyardId).also { rows ->
-                runCatching { domainCache.saveTripCostAllocations(userId, vineyardId, rows) }
+                if (isCurrentLoad()) runCatching { domainCache.saveTripCostAllocations(userId, vineyardId, rows) }
             }
         } catch (_: Exception) {
             domainCache.loadTripCostAllocations(userId, vineyardId).orEmpty()
@@ -16396,7 +16497,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 operatorCategoriesError = "Worker types could not be confirmed. Saved assignments are retained; retry when online."
                 cachedCategories ?: _ui.value.operatorCategories
             } else {
-                domainCache.saveOperatorCategories(userId, vineyardId, remote)
+                if (isCurrentLoad()) domainCache.saveOperatorCategories(userId, vineyardId, remote)
                 remote
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -16458,7 +16559,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // optional reference list, soft-fail to the existing list (or empty).
         val savedChemicals = try {
             val remote = repo.listSavedChemicals(vineyardId)
-            userId?.let { savedChemicalCreateSync.mergeRemote(it, vineyardId, remote) } ?: remote
+            if (isCurrentLoad()) savedChemicalCreateSync.mergeRemote(userId, vineyardId, remote) else remote
         } catch (e: Exception) {
             userId?.let { savedChemicalCreateSync.rows(it, vineyardId) } ?: _ui.value.savedChemicals
         }
@@ -16573,6 +16674,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             inMemory = _ui.value.vineyardRootstocks.filter { it.vineyardId == vineyardId },
             cached = domainCache.loadVineyardRootstocks(userId, vineyardId),
         )
+        if (!isCurrentLoad()) return
         if (cloneCatalogRes.fromServer) domainCache.saveCloneCatalog(userId, cloneCatalogRes.entries)
         if (rootstockCatalogRes.fromServer) domainCache.saveRootstockCatalog(userId, rootstockCatalogRes.entries)
         if (vineyardClonesRes.fromServer) domainCache.saveVineyardClones(userId, vineyardId, vineyardClonesRes.entries)
@@ -16636,6 +16738,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.value.pruningYieldSettings.filter { it.vineyardId == vineyardId }
             }
         }
+        if (!isCurrentLoad()) return
         if (pruningSettingsFromServer) {
             pruningYieldSettingsStore.save(vineyardId, pruningYieldSettings)
             // One-time migration: adopt legacy device-local calculator saves for
@@ -16647,6 +16750,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // good cache is never clobbered by an offline fallback. Written before the
         // O-1 overlay so the cache stays a clean server snapshot (no optimistic
         // pending rows leak into it).
+        if (!isCurrentLoad()) return
         if (maintenanceFromServer) domainCache.saveMaintenance(userId, vineyardId, maintenanceLogs)
         if (growthFromServer) domainCache.saveGrowth(userId, vineyardId, growthRecords)
         if (yieldFromServer) domainCache.saveYield(userId, vineyardId, yieldRecords)
@@ -16669,19 +16773,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val pendingSnapshot = pendingWrites.list()
         val overlaidMaintenance =
             PendingWriteOverlay.overlayMaintenance(maintenanceLogs, pendingSnapshot, vineyardId)
-        val overlaidGrowth =
-            PendingWriteOverlay.overlayGrowth(growthRecords, pendingSnapshot, vineyardId)
         val overlaidYield =
             PendingWriteOverlay.overlayYield(yieldRecords, pendingSnapshot, vineyardId)
         val overlaidFuel =
             PendingWriteOverlay.overlayFuel(fuelLogs, pendingSnapshot, vineyardId)
-        val overlaidSpray =
-            PendingWriteOverlay.overlaySpray(sprayRecords, pendingSnapshot, vineyardId)
-        // Work-task header overlay (Stage P-3). Child labour/machine lines load
-        // per task in loadTaskLines() — not here — and are overlaid there behind a
-        // parent gate against this (already-overlaid) header set.
-        val overlaidWorkTasks =
-            PendingWriteOverlay.overlayWorkTaskHeaders(workTasks, pendingSnapshot, vineyardId)
+        // Header/growth/spray/block overlays are computed from a fresh pending
+        // snapshot at publication below, after the final awaited notice read.
         // Block-damage overlay (Android Stage M): restore offline damage
         // creates/edits/deletes after a cold restart.
         val overlaidDamage =
@@ -16690,10 +16787,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // save/delete after a cold restart.
         val overlaidYieldSessions =
             PendingWriteOverlay.overlayYieldSessions(yieldSessions, pendingSnapshot, vineyardId)
-        // Block-edit overlay (audit #5): offline block edits survive a cold
-        // restart; allocation ids in the queued snapshots stay verbatim.
-        val overlaidPaddocks =
-            PendingWriteOverlay.overlayPaddocks(paddocks, pendingSnapshot, vineyardId)
         // Picking overlay (audit #2): queued creates/edits/deletes stay
         // visible over the pulled/cached baseline until replay succeeds — an
         // online pull can never visually revert a queued local edit.
@@ -16718,11 +16811,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         // A slow response for the previous vineyard must never replace the
         // currently selected vineyard's cache-first state.
-        if (_ui.value.selectedVineyardId != vineyardId) return
+        if (!isCurrentLoad()) return
+        val latestPending = pendingWrites.list()
+        val protectedPins = com.rork.vinetrack.data.PendingPinReadOverlay.overlay(
+            pins, _ui.value.pins, latestPending, vineyardId,
+        )
         _ui.update {
             it.copy(
-                paddocks = overlaidPaddocks,
-                pins = pins,
+                paddocks = PendingWriteOverlay.overlayPaddocks(paddocks, latestPending, vineyardId),
+                pins = protectedPins ?: it.pins.ifEmpty { pins },
                 trips = trips,
                 // Provenance, not size: only a successful fresh server read makes
                 // a missing trip proof of a deleted trip. A soft-failed load that
@@ -16734,7 +16831,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     else -> TripsListKnowledge.Unknown
                 },
                 machines = machines,
-                workTasks = overlaidWorkTasks,
+                workTasks = PendingWriteOverlay.overlayWorkTaskHeaders(workTasks, latestPending, vineyardId),
                 workTaskPaddocks = PendingWriteOverlay.overlayWorkTaskPaddocks(
                     workTaskPaddocks,
                     pendingSnapshot,
@@ -16748,7 +16845,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 operatorCategoriesLoading = false,
                 operatorCategoriesError = operatorCategoriesError,
                 vineyardTripFunctions = vineyardTripFunctions,
-                sprayRecords = overlaidSpray,
+                sprayRecords = PendingWriteOverlay.overlaySpray(sprayRecords, latestPending, vineyardId),
                 sprayJobTemplates = sprayJobTemplates,
                 sprayTargetLibrary = sprayTargetLibrary,
                 sprayEquipment = sprayEquipment,
@@ -16756,7 +16853,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 savedInputs = savedInputs,
                 savedSprayPresets = savedSprayPresets,
                 maintenanceLogs = overlaidMaintenance,
-                growthRecords = overlaidGrowth,
+                growthRecords = PendingWriteOverlay.overlayGrowth(growthRecords, latestPending, vineyardId),
                 fuelLogs = overlaidFuel,
                 fuelPurchases = fuelPurchases,
                 equipmentItems = equipmentItems,

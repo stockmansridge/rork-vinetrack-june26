@@ -50,8 +50,8 @@ internal object RecoveryPreservation {
             "Free up device storage, then retry."
 
     const val QUARANTINE_FAILURE_MESSAGE: String =
-        "Some saved changes couldn't be linked to a vineyard and couldn't be held back safely, " +
-            "so nothing was synced or refreshed. Retry, and if it repeats these items need attention."
+        "Some saved changes couldn't be linked to a vineyard. Their original records were left unchanged, " +
+            "so this sync pass was stopped. Retry, and if it repeats these items need attention."
 
     const val QUARANTINED_ITEM_MESSAGE: String =
         "This saved change couldn't be linked to a vineyard, so it was held back for attention."
@@ -64,6 +64,10 @@ internal object RecoveryPreservation {
         val quarantinedWriteIds: Set<String>,
         /** Exact queued-write snapshot that may be consumed by this replay pass. */
         val permittedWriteIds: Set<String>,
+        /** Unidentified original rows, whether or not preservation succeeded. */
+        val unresolvedWriteIds: Set<String> = emptySet(),
+        /** Vineyards whose durable preservation failed. Never diagnostic-exported. */
+        val failedVineyardIds: Set<String> = emptySet(),
     )
 
     /**
@@ -103,11 +107,13 @@ internal object RecoveryPreservation {
                 message = null,
                 quarantinedWriteIds = outcome.quarantinedWriteIds,
                 permittedWriteIds = pendingWrites.mapTo(mutableSetOf()) { it.id } - outcome.quarantinedWriteIds,
+                unresolvedWriteIds = scope.unresolvedWriteIds,
             )
             is RecoveryReplayGate.Outcome.PreservationFailed ->
-                Result(false, STORAGE_FAILURE_MESSAGE, emptySet(), emptySet())
+                Result(false, STORAGE_FAILURE_MESSAGE, emptySet(), emptySet(),
+                    scope.unresolvedWriteIds, outcome.vineyardIds)
             is RecoveryReplayGate.Outcome.QuarantineFailed ->
-                Result(false, QUARANTINE_FAILURE_MESSAGE, emptySet(), emptySet())
+                Result(false, QUARANTINE_FAILURE_MESSAGE, emptySet(), emptySet(), outcome.writeIds)
         }
     }
 
@@ -122,8 +128,8 @@ internal object RecoveryPreservation {
         readBack: () -> List<PendingWrite>,
     ): Boolean {
         writeIds.forEach { id -> hold(id, QUARANTINED_ITEM_MESSAGE) }
-        return readBack()
-            .filter { it.id in writeIds }
-            .all { it.status == PendingWriteStatus.BLOCKED }
+        val rows = readBack().filter { it.id in writeIds }
+        return rows.mapTo(mutableSetOf()) { it.id } == writeIds &&
+            rows.all { it.status == PendingWriteStatus.BLOCKED }
     }
 }

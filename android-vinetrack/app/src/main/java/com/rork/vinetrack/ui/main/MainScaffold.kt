@@ -217,6 +217,15 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
         )
     )
 
+    LaunchedEffect(surface) {
+        vm.recordPerformanceSurface(when (surface) {
+            MainSurface.HomeTab -> 0
+            is MainSurface.TripTab -> 1
+            is MainSurface.ProgramTab -> 2
+            else -> 3
+        })
+    }
+
     Scaffold(
         bottomBar = {
             // The System Admin calibration wizard holds an unsaved in-memory

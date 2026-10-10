@@ -27,6 +27,19 @@ import kotlinx.serialization.json.put
  * SECURITY DEFINER RPCs (owner/manager to write).
  */
 class CloneRootstockRepository(private val session: SessionStore) {
+    private val cloneReads = ScopedReadSingleFlight<List<CloneCatalogEntry>>()
+    private val rootstockReads = ScopedReadSingleFlight<List<RootstockCatalogEntry>>()
+
+    private suspend fun <T> sharedGlobalRead(flight: ScopedReadSingleFlight<T>, request: suspend () -> T): T {
+        val owner = session.userId ?: throw BackendError.Unauthorized
+        val credential = session.accessToken ?: throw BackendError.Unauthorized
+        val result = flight.read(owner, credential) {
+            if (session.userId != owner || session.accessToken != credential) throw BackendError.Unauthorized
+            request()
+        }
+        if (session.userId != owner || session.accessToken != credential) throw BackendError.Unauthorized
+        return result
+    }
 
     @Serializable
     private data class VineyardIdArg(@SerialName("p_vineyard_id") val vineyardId: String)
@@ -35,12 +48,14 @@ class CloneRootstockRepository(private val session: SessionStore) {
     private data class IdArg(@SerialName("p_id") val id: String)
 
     /** Global built-in clone catalogue (`get_grape_clone_catalog`). */
-    suspend fun getCloneCatalog(): List<CloneCatalogEntry> =
+    suspend fun getCloneCatalog(): List<CloneCatalogEntry> = sharedGlobalRead(cloneReads) {
         rpc<VineyardIdArg, List<CloneCatalogEntry>>("get_grape_clone_catalog", null)
+    }
 
     /** Global built-in rootstock catalogue (`get_rootstock_catalog`). */
-    suspend fun getRootstockCatalog(): List<RootstockCatalogEntry> =
+    suspend fun getRootstockCatalog(): List<RootstockCatalogEntry> = sharedGlobalRead(rootstockReads) {
         rpc<VineyardIdArg, List<RootstockCatalogEntry>>("get_rootstock_catalog", null)
+    }
 
     suspend fun listVineyardClones(vineyardId: String): List<VineyardCloneRow> =
         rpc("list_vineyard_grape_clones", VineyardIdArg(vineyardId))

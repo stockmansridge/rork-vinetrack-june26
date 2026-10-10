@@ -217,6 +217,8 @@ nonisolated struct VineyardRootstockRow: Codable, Sendable, Hashable, Identifiab
 /// vineyard-scoped custom pattern.
 final class SupabaseCloneRootstockCatalogRepository: Sendable {
     private let provider: SupabaseClientProvider
+    private let cloneReads = CatalogReadSingleFlight<[SharedGrapeCloneCatalogEntry]>()
+    private let rootstockReads = CatalogReadSingleFlight<[SharedRootstockCatalogEntry]>()
 
     init(provider: SupabaseClientProvider = .shared) {
         self.provider = provider
@@ -224,19 +226,25 @@ final class SupabaseCloneRootstockCatalogRepository: Sendable {
 
     func fetchCloneCatalog() async throws -> [SharedGrapeCloneCatalogEntry] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let rows: [SharedGrapeCloneCatalogEntry] = try await provider.client
-            .rpc("get_grape_clone_catalog")
-            .execute()
-            .value
+        guard let account = provider.client.auth.currentUser?.id else { throw BackendRepositoryError.missingAuthenticatedUser }
+        let provider = self.provider
+        let rows = try await cloneReads.read(account: account) {
+            guard provider.client.auth.currentUser?.id == account else { throw BackendRepositoryError.missingAuthenticatedUser }
+            return try await provider.client.rpc("get_grape_clone_catalog").execute().value
+        }
+        guard provider.client.auth.currentUser?.id == account else { throw BackendRepositoryError.missingAuthenticatedUser }
         return rows
     }
 
     func fetchRootstockCatalog() async throws -> [SharedRootstockCatalogEntry] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let rows: [SharedRootstockCatalogEntry] = try await provider.client
-            .rpc("get_rootstock_catalog")
-            .execute()
-            .value
+        guard let account = provider.client.auth.currentUser?.id else { throw BackendRepositoryError.missingAuthenticatedUser }
+        let provider = self.provider
+        let rows = try await rootstockReads.read(account: account) {
+            guard provider.client.auth.currentUser?.id == account else { throw BackendRepositoryError.missingAuthenticatedUser }
+            return try await provider.client.rpc("get_rootstock_catalog").execute().value
+        }
+        guard provider.client.auth.currentUser?.id == account else { throw BackendRepositoryError.missingAuthenticatedUser }
         return rows
     }
 

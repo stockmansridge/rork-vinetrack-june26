@@ -143,6 +143,7 @@ fun AdminDashboardScreen(
 
     when (val dest = destination) {
         null -> AdminRoot(
+            vm = vm,
             adminRepo = adminRepo,
             modifier = modifier,
             onBack = onBack,
@@ -195,6 +196,7 @@ private fun AdminAccessDenied(modifier: Modifier, onBack: (() -> Unit)?) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AdminRoot(
+    vm: AppViewModel,
     adminRepo: AdminRepository,
     modifier: Modifier,
     onBack: (() -> Unit)?,
@@ -245,6 +247,7 @@ private fun AdminRoot(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
+            PerformanceDiagnosticsCard(vm)
             error?.let {
                 VineyardCard {
                     Text(it, color = VineColors.Warning, fontSize = 13.sp)
