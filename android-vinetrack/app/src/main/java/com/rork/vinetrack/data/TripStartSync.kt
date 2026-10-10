@@ -105,19 +105,12 @@ class TripStartSync(
 
     /**
      * Queue (or refresh) the single trip-start marker for [trip]. Coalesces by
-     * trip: any earlier unresolved marker for the same trip is removed first so
-     * only one marker per trip ever exists. The latest scalar snapshot wins.
+     * trip: earlier unresolved markers and the fresh snapshot are replaced in
+     * one durable commit. Failed persistence retains the original markers.
      * Returns the row.
      */
     fun enqueue(trip: Trip): PendingWrite {
         val tripId = trip.id
-        val existing = pending.list().filter {
-            it.entityType == PendingEntityType.TRIP_START &&
-                it.opType == PendingOpType.CREATE &&
-                it.clientId == tripId &&
-                it.status != PendingWriteStatus.SYNCED
-        }
-        existing.forEach { pending.remove(it.id) }
         val payload = json.encodeToString(
             Payload.serializer(),
             Payload(
@@ -147,23 +140,16 @@ class TripStartSync(
                 savedAt = System.currentTimeMillis(),
             ),
         )
-        return pending.enqueue(
+        return pending.enqueueReplacingUnresolved(
             entityType = PendingEntityType.TRIP_START,
             opType = PendingOpType.CREATE,
-            payloadJson = payload,
             clientId = tripId,
+            payload = { payload },
         )
     }
 
     /** Queue activation of an already-downloaded Not Started trip in place. */
     fun enqueueActivation(trip: Trip): PendingWrite {
-        val existing = pending.list().filter {
-            it.entityType == PendingEntityType.TRIP_START &&
-                it.opType == PendingOpType.CREATE &&
-                it.clientId == trip.id &&
-                it.status != PendingWriteStatus.SYNCED
-        }
-        existing.forEach { pending.remove(it.id) }
         val base = Payload(
             tripId = trip.id,
             vineyardId = trip.vineyardId,
@@ -191,11 +177,11 @@ class TripStartSync(
             clientUpdatedAt = trip.clientUpdatedAt ?: trip.startTime,
             savedAt = System.currentTimeMillis(),
         )
-        return pending.enqueue(
+        return pending.enqueueReplacingUnresolved(
             entityType = PendingEntityType.TRIP_START,
             opType = PendingOpType.CREATE,
-            payloadJson = json.encodeToString(Payload.serializer(), base),
             clientId = trip.id,
+            payload = { json.encodeToString(Payload.serializer(), base) },
         )
     }
 

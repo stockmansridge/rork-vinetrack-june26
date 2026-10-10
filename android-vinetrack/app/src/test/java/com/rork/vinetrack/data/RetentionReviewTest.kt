@@ -18,7 +18,7 @@ import kotlinx.serialization.json.Json
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Characterises retained low-level hazards, not acceptance of the auth retention guard.
+/** Corrected-path regressions plus retained low-level hazards, not blanket auth acceptance.
  * Uses production repositories/coordinators and forced disk commits through their storage seams.
  * Child JVM termination is real process termination, but is not Android application termination.
  */
@@ -233,20 +233,25 @@ class RetentionReviewTest {
         } finally { root.deleteRecursively() }
     }
 
-    @Test(timeout = 10000) fun pinCreateTreatsUnverifiedForeignKey409AsAcknowledgement() = runBlocking {
+    @Test(timeout = 10000) fun pinCreateRetainsUnverifiedForeignKey409ForReview() = runBlocking {
         val root = directory()
         try {
             val queue = PendingWriteRepository(ReviewWriteDisk(File(root, "writes")))
             val sync = PinCreateSync(queue) { throw BackendError.Server(409, """{"code":"23503","message":"foreign key violation"}""") }
-            sync.enqueue(PinRepository.PinInput("pin", "vineyard-A"))
+            val original = sync.enqueue(PinRepository.PinInput("pin", "vineyard-A"))
             var callbacks = 0
             sync.replayAll { callbacks++ }
             assertEquals(0, callbacks)
-            assertTrue(PendingWriteRepository(ReviewWriteDisk(File(root, "writes"))).list().isEmpty())
+            val retained = PendingWriteRepository(ReviewWriteDisk(File(root, "writes"))).list().single()
+            assertEquals(original.id, retained.id)
+            assertEquals(original.payloadJson, retained.payloadJson)
+            assertEquals(original.clientId, retained.clientId)
+            assertEquals(PendingWriteStatus.BLOCKED, retained.status)
+            assertTrue(retained.lastError?.contains("retained", ignoreCase = true) == true)
         } finally { root.deleteRecursively() }
     }
 
-    @Test(timeout = 10000) fun completionReplacementLosesOriginalWhenRemovalCommitsButEnqueueFails() {
+    @Test(timeout = 10000) fun completionReplacementRetainsOriginalWhenCommitFails() {
         val root = directory()
         try {
             val disk = ReviewWriteDisk(File(root, "writes"))
@@ -256,18 +261,19 @@ class RetentionReviewTest {
                 override fun clear() = disk.clear()
                 override fun save(writes: List<PendingWrite>): Boolean {
                     saves++
-                    return if (saves == 3) false else disk.save(writes)
+                    return if (saves == 2) false else disk.save(writes)
                 }
             }
             val queue = PendingWriteRepository(failing)
             val sync = PinCompletionSync(queue) { id, value -> Pin(id, "vineyard-A", isCompleted = value) }
-            sync.enqueue("pin", true)
+            val original = sync.enqueue("pin", true)
             try { sync.enqueue("pin", false); fail("Expected replacement save failure") } catch (_: IllegalStateException) { }
-            assertTrue(PendingWriteRepository(ReviewWriteDisk(File(root, "writes"))).list().isEmpty())
+            assertEquals(2, saves)
+            assertEquals(listOf(original), PendingWriteRepository(ReviewWriteDisk(File(root, "writes"))).list())
         } finally { root.deleteRecursively() }
     }
 
-    @Test(timeout = 10000) fun tankMarkerReplacementLosesOriginalWhenRemovalCommitsButEnqueueFails() {
+    @Test(timeout = 10000) fun tankMarkerReplacementRetainsOriginalWhenCommitFails() {
         val root = directory()
         try {
             val disk = ReviewWriteDisk(File(root, "writes"))
@@ -277,7 +283,7 @@ class RetentionReviewTest {
                 override fun clear() = disk.clear()
                 override fun save(writes: List<PendingWrite>): Boolean {
                     saves++
-                    return if (saves == 3) false else disk.save(writes)
+                    return if (saves == 2) false else disk.save(writes)
                 }
             }
             val storage = object : ActiveTripSnapshotStorage {
@@ -286,9 +292,10 @@ class RetentionReviewTest {
                 override fun remove() { }
             }
             val sync = TripTankSync(null, PendingWriteRepository(failing), ActiveTripStore(storage))
-            sync.enqueue(reviewTrip())
+            val original = sync.enqueue(reviewTrip())
             try { sync.enqueue(reviewTrip().copy(activeTankNumber = 2)); fail("Expected replacement save failure") } catch (_: IllegalStateException) { }
-            assertTrue(PendingWriteRepository(ReviewWriteDisk(File(root, "writes"))).list().isEmpty())
+            assertEquals(2, saves)
+            assertEquals(listOf(original), PendingWriteRepository(ReviewWriteDisk(File(root, "writes"))).list())
         } finally { root.deleteRecursively() }
     }
 
@@ -306,7 +313,7 @@ class RetentionReviewTest {
         } finally { root.deleteRecursively() }
     }
 
-    @Test(timeout = 10000) fun realStartReplyPublishesOldMetadataBesideNewerPendingScalarEdit() = runBlocking {
+    @Test(timeout = 10000) fun realStartReplyPreservesNewerPendingScalarEdit() = runBlocking {
         val root = directory()
         try {
             val queue = PendingWriteRepository(ReviewWriteDisk(File(root, "writes")))
@@ -315,15 +322,17 @@ class RetentionReviewTest {
             var local = reviewTrip().copy(tripTitle = "old title", startEngineHours = 100.0)
             val sync = TripStartSync(queue, { fetched.complete(Unit); reply.await() }) { _, _ -> error("Existing row should not activate") }
             sync.enqueue(local)
-            val replay = async { sync.replayAll { server -> local = TripStartReconciliation.reconcile(server, local) } }
+            val replay = async { sync.replayAll { server -> local = TripStartReconciliation.reconcile(server, local, queue.list()) } }
             fetched.await()
             local = local.copy(tripTitle = "new local title", startEngineHours = 200.0)
             val newer = queue.enqueue(PendingEntityType.TRIP_METADATA, PendingOpType.UPDATE,
-                """{"tripId":"trip","tripTitle":"new local title","startEngineHours":200.0}""", "trip")
+                SupabaseClient.json.encodeToString(TripMetadataSync.Payload.serializer(),
+                    TripMetadataSync.Payload("trip", tripTitle = "new local title", startEngineHours = 200.0,
+                        clientUpdatedAt = "2026-10-10T01:00:00Z", baseClientUpdatedAt = "2026-10-10T00:00:00Z")), "trip")
             reply.complete(reviewTrip().copy(tripTitle = "old title", startEngineHours = 100.0))
             replay.await()
-            assertEquals("old title", local.tripTitle)
-            assertEquals(100.0, local.startEngineHours)
+            assertEquals("new local title", local.tripTitle)
+            assertEquals(200.0, local.startEngineHours)
             assertEquals(listOf(newer), PendingWriteRepository(ReviewWriteDisk(File(root, "writes"))).list())
         } finally { root.deleteRecursively() }
     }
@@ -364,7 +373,7 @@ class RetentionReviewTest {
         }
     }
 
-    @Test(timeout = 10000) fun tankReplayCanUseOtherAccountsPersistedActiveSnapshot() = runBlocking {
+    @Test(timeout = 10000) fun tankReplayRejectsOtherAccountsPersistedActiveSnapshot() = runBlocking {
         val root = directory()
         try {
             val snapshotFile = File(root, "active")
@@ -377,7 +386,7 @@ class RetentionReviewTest {
                 startTime = "2026-10-10T00:00:00Z")), activeTankNumber = 1)
             assertTrue(snapshots().claimIfAvailable("account-A", "vineyard-A", local))
             val queue = PendingWriteRepository(ReviewWriteDisk(File(root, "writes")))
-            TripTankSync(null, queue, snapshots()).enqueue(local)
+            val original = TripTankSync(null, queue, snapshots()).enqueue(local)
             val otherQueue = PendingWriteRepository(ReviewWriteDisk(File(root, "writes")))
             otherQueue.configureReplayScope { PendingWriteRepository.ReplayScope("account-B", 2) }
             var sends = 0
@@ -389,9 +398,10 @@ class RetentionReviewTest {
             })
             sync.replayAll(otherQueue.freezeReplayVersions(otherQueue.list())) { publications++ }
             assertEquals("account-A", snapshots().load()!!.ownerUserId)
-            assertEquals(1, sends)
-            assertEquals(1, publications)
-            assertTrue(otherQueue.list().isEmpty())
+            assertEquals(0, sends)
+            assertEquals(0, publications)
+            assertEquals(listOf(original), otherQueue.list())
+            assertEquals(listOf(original), PendingWriteRepository(ReviewWriteDisk(File(root, "writes"))).list())
         } finally { root.deleteRecursively() }
     }
 
@@ -404,8 +414,8 @@ class RetentionReviewTest {
             val original = SprayTankActual("actual", "vineyard-A", "spray", "trip", "session", 1,
                 chemicals = emptyList(), confirmedAt = "2026-10-10T00:00:00Z", confirmedBy = "account-A")
             assertTrue(actuals().save(original))
-            // Recreated store exposes pending records irrespective of current identity.
-            // AppViewModel's upsert-success callback has no captured-account check either.
+            // The unscoped low-level API still exposes/acknowledges global records.
+            // Production callbacks now use ScopedTankActualSync/account admission instead.
             val otherIncarnation = actuals()
             assertEquals(listOf(original), otherIncarnation.pending())
             assertTrue(otherIncarnation.markSyncedIfCurrent(original))

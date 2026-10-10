@@ -3327,7 +3327,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 tripStartSync.replayAll(versions) { trip ->
                     _ui.update { st -> st.copy(trips = st.trips.map { existing ->
-                        if (existing.id == trip.id) TripStartReconciliation.reconcile(server = trip, local = existing) else existing
+                        if (existing.id == trip.id) TripStartReconciliation.reconcile(server = trip, local = existing, pendingWrites = pendingWrites.list()) else existing
                     }) }
                     persistActiveTripSnapshot()
                 }
