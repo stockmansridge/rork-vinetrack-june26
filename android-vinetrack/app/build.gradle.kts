@@ -684,6 +684,7 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.junit)
+    androidTestImplementation(libs.ktor.client.mock)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }

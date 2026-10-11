@@ -7,6 +7,8 @@ import com.rork.vinetrack.data.RefreshOutcome
 import com.rork.vinetrack.data.SessionTokenRefresher
 import com.rork.vinetrack.data.SupabaseClient
 import com.rork.vinetrack.data.model.AppUser
+import io.ktor.client.HttpClient
+import kotlinx.coroutines.CancellationException
 import io.ktor.client.call.body
 import io.ktor.client.request.headers
 import io.ktor.client.request.post
@@ -28,7 +30,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
-class AuthRepository(private val session: SessionStore) : SessionTokenRefresher {
+class AuthRepository internal constructor(
+    private val session: SessionStore,
+    private val authHttp: HttpClient,
+) : SessionTokenRefresher {
+    constructor(session: SessionStore) : this(session, SupabaseClient.http)
 
     init {
         // Install the refresh hook so the shared HTTP client can transparently
@@ -87,7 +93,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val trimmed = name.trim()
-        val response = SupabaseClient.http.put(SupabaseClient.authUrl("user")) {
+        val response = authHttp.put(SupabaseClient.authUrl("user")) {
             anonHeaders()
             headers { append(HttpHeaders.Authorization, "Bearer $token") }
             contentType(ContentType.Application.Json)
@@ -230,16 +236,26 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
             Log.d(TAG, "Session already refreshed by a concurrent request")
             return@withLock RefreshResult.Success(cachedUser())
         }
-        val refresh = session.refreshToken ?: return@withLock RefreshResult.Rejected
+        val authority = session.refreshAccess() ?: return@withLock RefreshResult.Transient
+        val refresh = authority.token
         try {
-            val response = SupabaseClient.http.post(SupabaseClient.authUrl("token?grant_type=refresh_token")) {
+            val response = authHttp.post(SupabaseClient.authUrl("token?grant_type=refresh_token")) {
                 anonHeaders()
                 contentType(ContentType.Application.Json)
                 setBody(RefreshBody(refresh))
             }
             when {
                 response.status.isSuccess() -> {
-                    val user = persist(response.body())
+                    val token: TokenResponse = response.body()
+                    if (token.user?.id != null && token.user.id != authority.account.userId) {
+                        return@withLock RefreshResult.Transient
+                    }
+                    var user: AppUser? = null
+                    val admitted = session.withRefreshAccess(authority) {
+                        user = persist(token, authority.account.userId)
+                    }
+                    if (!admitted) return@withLock if (session.retentionGuard.isLocked)
+                        RefreshResult.Rejected else RefreshResult.Transient
                     if (user != null) {
                         Log.d(TAG, "Session refresh succeeded")
                         RefreshResult.Success(user)
@@ -251,19 +267,27 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
                     }
                 }
                 response.status.value in listOf(400, 401, 403) -> {
-                    // Refresh token rejected — the session is truly invalid.
-                    Log.w(TAG, "Refresh token rejected (${response.status.value}) — clearing session")
-                    session.clear()
-                    RefreshResult.Rejected
+                    val definitive = RefreshRejection.isDefinitive(
+                        response.status.value, response.bodyAsText(), SupabaseClient.json,
+                    )
+                    if (definitive && session.rejectRefreshIfCurrent(authority)) {
+                        Log.w(TAG, "Refresh session definitively rejected; retained work protected")
+                        RefreshResult.Rejected
+                    } else {
+                        Log.w(TAG, "Refresh denial is inconclusive or obsolete; preserving current session")
+                        RefreshResult.Transient
+                    }
                 }
                 else -> {
                     Log.w(TAG, "Session refresh failed transiently (${response.status.value})")
                     RefreshResult.Transient
                 }
             }
-        } catch (e: Exception) {
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
             // Network failure — keep the user signed in using the cached session.
-            Log.w(TAG, "Session refresh network failure: ${e.message}")
+            Log.w(TAG, "Session refresh unavailable; preserving local session")
             RefreshResult.Transient
         }
     }
@@ -283,7 +307,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
     suspend fun signIn(email: String, password: String): AppUser = withContext(Dispatchers.IO) {
         session.retentionGuard.requireUnlocked()
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
-        val response = SupabaseClient.http.post(SupabaseClient.authUrl("token?grant_type=password")) {
+        val response = authHttp.post(SupabaseClient.authUrl("token?grant_type=password")) {
             anonHeaders()
             contentType(ContentType.Application.Json)
             setBody(Credentials(email.trim(), password))
@@ -303,7 +327,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
     suspend fun signInWithGoogleIdToken(idToken: String, nonce: String?): AppUser = withContext(Dispatchers.IO) {
         session.retentionGuard.requireUnlocked()
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
-        val response = SupabaseClient.http.post(SupabaseClient.authUrl("token?grant_type=id_token")) {
+        val response = authHttp.post(SupabaseClient.authUrl("token?grant_type=id_token")) {
             anonHeaders()
             contentType(ContentType.Application.Json)
             setBody(IdTokenBody(provider = "google", idToken = idToken, nonce = nonce))
@@ -315,7 +339,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
     suspend fun signUp(name: String, email: String, password: String): AppUser = withContext(Dispatchers.IO) {
         session.retentionGuard.requireUnlocked()
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
-        val response = SupabaseClient.http.post(SupabaseClient.authUrl("signup")) {
+        val response = authHttp.post(SupabaseClient.authUrl("signup")) {
             anonHeaders()
             contentType(ContentType.Application.Json)
             setBody(SignUpBody(email.trim(), password, mapOf("full_name" to name)))
@@ -328,7 +352,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
 
     suspend fun sendPasswordReset(email: String): Boolean = withContext(Dispatchers.IO) {
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
-        val response = SupabaseClient.http.post(SupabaseClient.authUrl("recover")) {
+        val response = authHttp.post(SupabaseClient.authUrl("recover")) {
             anonHeaders()
             contentType(ContentType.Application.Json)
             setBody(RecoveryBody(email.trim()))
@@ -345,7 +369,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
     suspend fun resetPasswordWithPin(email: String, pin: String, newPassword: String): Boolean =
         withContext(Dispatchers.IO) {
             if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
-            val verifyResponse = SupabaseClient.http.post(SupabaseClient.authUrl("verify")) {
+            val verifyResponse = authHttp.post(SupabaseClient.authUrl("verify")) {
                 anonHeaders()
                 contentType(ContentType.Application.Json)
                 setBody(VerifyOtpBody(email.trim(), pin.trim(), "recovery"))
@@ -355,7 +379,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
             val access = token.accessToken
                 ?: throw BackendError.Server(verifyResponse.status.value, "No session returned.")
 
-            val updateResponse = SupabaseClient.http.put(SupabaseClient.authUrl("user")) {
+            val updateResponse = authHttp.put(SupabaseClient.authUrl("user")) {
                 anonHeaders()
                 headers { append(HttpHeaders.Authorization, "Bearer $access") }
                 contentType(ContentType.Application.Json)
@@ -370,7 +394,7 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
         val token = session.accessToken
         if (SupabaseClient.isConfigured && !token.isNullOrBlank()) {
             try {
-                SupabaseClient.http.post(SupabaseClient.authUrl("logout")) {
+                authHttp.post(SupabaseClient.authUrl("logout")) {
                     anonHeaders()
                     headers { append(HttpHeaders.Authorization, "Bearer $token") }
                 }
@@ -385,14 +409,14 @@ class AuthRepository(private val session: SessionStore) : SessionTokenRefresher 
 
     private val refreshMutex = Mutex()
 
-    private fun persist(token: TokenResponse): AppUser? {
+    private fun persist(token: TokenResponse, refreshPrincipal: String? = null): AppUser? {
         val access = token.accessToken ?: return null
         val refresh = token.refreshToken ?: return null
         session.save(
             access,
             refresh,
-            token.user?.id,
-            token.user?.email,
+            token.user?.id ?: refreshPrincipal ?: return null,
+            token.user?.email ?: session.userEmail,
             token.user?.displayName,
             token.user?.createdAt,
         )

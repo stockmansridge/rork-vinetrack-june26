@@ -14,18 +14,35 @@ class AuthRetentionGuard(
     val isLocked: Boolean get() = locked.value
 
     /** Runtime authority only; it never establishes ownership of persisted legacy records. */
-    class AccountAccess internal constructor(val userId: String, internal val authority: AuthRetentionGuard)
+    class AccountAccess internal constructor(
+        val userId: String,
+        internal val authority: AuthRetentionGuard,
+        internal val generation: Long,
+    )
+
+    private var generation: Long = 0
+    private var commitDepth: Int = 0
 
     @Synchronized
     fun captureAccount(userId: String?): AccountAccess? =
-        userId?.takeIf { it.isNotBlank() && !isLocked }?.let { AccountAccess(it, this) }
+        userId?.takeIf { it.isNotBlank() && !isLocked }?.let { AccountAccess(it, this, generation) }
+
+    @Synchronized
+    internal fun isAccountCurrent(access: AccountAccess, userId: String?): Boolean =
+        !isLocked && access.authority === this && access.generation == generation &&
+            userId == access.userId
 
     /** Serialises a synchronous callback with revocation; never hold this monitor across network waits. */
     @Synchronized
     fun withAccount(access: AccountAccess, currentUserId: () -> String?, action: () -> Unit): Boolean {
-        if (isLocked || access.authority !== this || currentUserId() != access.userId) return false
-        action()
-        return true
+        if (!isAccountCurrent(access, currentUserId())) return false
+        commitDepth++
+        try {
+            action()
+            return true
+        } finally {
+            commitDepth--
+        }
     }
 
     /** No global field-store emptiness/ownership certificate exists yet. */
@@ -34,6 +51,8 @@ class AuthRetentionGuard(
     /** Revokes runtime admission first; failed persistence never authorises credential replacement. */
     @Synchronized
     fun rejectSession(clearCredentials: () -> Unit): Boolean {
+        check(commitDepth == 0) { "An account transition cannot run inside a field commit." }
+        if (!locked.value) generation++
         locked.value = true
         val durable = runCatching(persistLock).getOrDefault(false)
         if (durable) clearCredentials()

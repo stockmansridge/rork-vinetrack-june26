@@ -18,7 +18,7 @@ class SessionStore(context: Context) {
         retentionGuards.getOrPut(prefs) {
             AuthRetentionGuard(
                 readLocked = { prefs.getBoolean(KEY_RECOVERY_LOCK, false) },
-                persistLock = { prefs.edit().putBoolean(KEY_RECOVERY_LOCK, true).commit() },
+                persistLock = { persistRecoveryClaimAndRevoke() },
             )
         }
     }
@@ -30,7 +30,7 @@ class SessionStore(context: Context) {
             prefs.getString(KEY_REFRESH, null).isNullOrBlank() &&
                 prefs.getString(KEY_VINEYARD_CACHE_OWNER, null) != null
         }.getOrDefault(true)) {
-            retentionGuard.rejectSession { clearCredentials() }
+            retentionGuard.rejectSession { }
         }
     }
 
@@ -92,7 +92,7 @@ class SessionStore(context: Context) {
         // The cache owner is a switch detector only, never proof of pending-operation authorship.
         val previousAccount = prefs.getString(KEY_USER_ID, null) ?: prefs.getString(KEY_VINEYARD_CACHE_OWNER, null)
         if (previousAccount != null && previousAccount != userId) {
-            retentionGuard.rejectSession { clearCredentials() }
+            retentionGuard.rejectSession { }
             error(AuthRetentionGuard.RECOVERY_MESSAGE)
         }
         // If a *different* user is signing in, drop the previous user's cached
@@ -102,7 +102,7 @@ class SessionStore(context: Context) {
         // still detected. A token refresh for the same user keeps the cache.
         val cacheOwner = prefs.getString(KEY_VINEYARD_CACHE_OWNER, null)
         val isDifferentUser = userId != null && cacheOwner != null && userId != cacheOwner
-        prefs.edit {
+        check(prefs.edit().apply {
             putString(KEY_ACCESS, accessToken)
             putString(KEY_REFRESH, refreshToken)
             putString(KEY_USER_ID, userId)
@@ -114,8 +114,43 @@ class SessionStore(context: Context) {
                 remove(KEY_SELECTED_VINEYARD)
                 remove(KEY_DEFAULT_VINEYARD)
             }
+        }.commit()) { "Couldn't persist the authenticated session." }
         }
+    }
+
+    /** Supabase UUID captured from the session being rejected, never from email/cache membership. */
+    val recoveryPrincipal: String?
+        get() = synchronized(retentionGuard) {
+            if (!retentionGuard.isLocked) null else runCatching {
+                prefs.getString(KEY_RECOVERY_PRINCIPAL, null)?.takeIf(::isSupabaseUuid)
+            }.getOrNull()
         }
+
+    /** Fixed refresh authority; tokens intentionally have no data-class/debug string representation. */
+    internal class RefreshAccess(
+        val account: AuthRetentionGuard.AccountAccess,
+        val token: String,
+    )
+
+    internal fun refreshAccess(): RefreshAccess? = synchronized(retentionGuard) {
+        val token = refreshToken?.takeIf { it.isNotBlank() } ?: return@synchronized null
+        val account = retentionGuard.captureAccount(userId) ?: return@synchronized null
+        RefreshAccess(account, token)
+    }
+
+    internal fun withRefreshAccess(access: RefreshAccess, action: () -> Unit): Boolean =
+        retentionGuard.withAccount(access.account, {
+            userId?.takeIf { refreshToken == access.token }
+        }, action)
+
+    /** Reject only the exact refresh incarnation that the server evaluated. */
+    internal fun rejectRefreshIfCurrent(access: RefreshAccess): Boolean = synchronized(retentionGuard) {
+        if (refreshToken != access.token || !retentionGuard.isAccountCurrent(access.account, userId)) {
+            return@synchronized false
+        }
+        retentionGuard.rejectSession { }
+        // Runtime access is revoked even if disk persistence failed; original field bytes are untouched.
+        true
     }
 
     /** Captures this process's auth incarnation, not ownership of any existing field record. */
@@ -131,11 +166,17 @@ class SessionStore(context: Context) {
 
     /** Credential rejection locks local field access before any credential removal. */
     fun clear() {
-        retentionGuard.rejectSession { clearCredentials() }
+        retentionGuard.rejectSession { }
     }
 
-    private fun clearCredentials() {
-        check(prefs.edit().apply {
+    private fun persistRecoveryClaimAndRevoke(): Boolean {
+        val existing = prefs.getString(KEY_RECOVERY_PRINCIPAL, null)
+        val original = prefs.getString(KEY_USER_ID, null)?.takeIf(::isSupabaseUuid)
+        // One session preference transaction publishes both the hold and its principal before
+        // credentials disappear. Historical tokenless cache context is deliberately not adopted.
+        return prefs.edit().apply {
+            putBoolean(KEY_RECOVERY_LOCK, true)
+            if (existing == null && original != null) putString(KEY_RECOVERY_PRINCIPAL, original)
             remove(KEY_ACCESS)
             remove(KEY_REFRESH)
             remove(KEY_USER_ID)
@@ -143,12 +184,16 @@ class SessionStore(context: Context) {
             remove(KEY_NAME)
             remove(KEY_CREATED_AT)
             // Field records and selection evidence remain untouched and locked.
-        }.commit()) { "Couldn't persist credential revocation; recovery remains locked." }
+        }.commit()
     }
+
+    private fun isSupabaseUuid(value: String): Boolean =
+        value.matches(Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
 
     private companion object {
         val retentionGuards = WeakHashMap<SharedPreferences, AuthRetentionGuard>()
         const val KEY_RECOVERY_LOCK = "field_recovery_locked_v1"
+        const val KEY_RECOVERY_PRINCIPAL = "field_recovery_principal_v1"
         const val KEY_ACCESS = "access_token"
         const val KEY_REFRESH = "refresh_token"
         const val KEY_USER_ID = "user_id"
