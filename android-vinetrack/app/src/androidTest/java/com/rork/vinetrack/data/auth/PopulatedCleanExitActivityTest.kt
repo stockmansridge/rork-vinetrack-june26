@@ -31,11 +31,50 @@ class PopulatedCleanExitActivityTest {
     private val account = AtomicReference(A)
     private val logouts = AtomicInteger(0)
     private val requests = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val checkpoints = java.util.concurrent.CopyOnWriteArrayList<String>()
+    private val pending = java.util.concurrent.ConcurrentHashMap<Int, String>()
+    private val responses = java.util.concurrent.CopyOnWriteArrayList<String>()
+    private val requestSequence = AtomicInteger(0)
+    private val uncaught = AtomicReference<String?>(null)
+    private var previousUncaught: Thread.UncaughtExceptionHandler? = null
+
+    private fun checkpoint(stage: String) {
+        checkpoints.add(stage)
+        android.util.Log.i("CleanExitFixture", stage)
+    }
+
+    private fun diagnostic(): String {
+        val session = SessionStore(app)
+        val identity = when (session.userId) { A -> "A"; B -> "B"; null -> "none"; else -> "unexpected" }
+        val tree = runCatching { compose.onRoot(useUnmergedTree = true).printToString() }
+            .getOrElse { "hierarchy unavailable: ${it.javaClass.simpleName}" }
+        return "checkpoints=$checkpoints; session=${session.hasSession}; identity=$identity; " +
+            "locked=${session.retentionGuard.isLocked}; finishing=${session.retentionGuard.finishingCleanExit.value}; " +
+            "epoch=${session.retentionGuard.identityEpoch.value}; refusal=${session.cleanExitRefusal}; " +
+            "pending=$pending; responses=$responses; uncaught=${uncaught.get()}; tree=$tree"
+    }
+
+    private fun awaitStage(stage: String, condition: () -> Boolean) {
+        checkpoint("waiting.$stage")
+        try {
+            compose.waitUntil(20_000, condition)
+            checkpoint("complete.$stage")
+        } catch (failure: Throwable) {
+            throw AssertionError("$stage: ${diagnostic()}", failure)
+        }
+    }
     private val vineyard: String get() = if (account.get() == A) "vineyard-A" else "vineyard-B"
 
     @Before fun setup() {
         app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as CleanExitFixtureApplication
         app.resetFixture()
+        CleanExitDiagnostics.observer = ::checkpoint
+        previousUncaught = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            uncaught.set("${thread.name}:${error.javaClass.simpleName}")
+            checkpoint("uncaught.${error.javaClass.simpleName}")
+            previousUncaught?.uncaughtException(thread, error)
+        }
         OnboardingStore(app).markCompleted()
         AppPreferencesStore(app).save(AppPreferences(displayMode = DisplayMode.Light))
         MapPrefsStore(app).save(MapDefaults())
@@ -44,6 +83,8 @@ class PopulatedCleanExitActivityTest {
         client = HttpClient(MockEngine { request ->
             val path = request.url.encodedPath
             requests.add(path)
+            val sequence = requestSequence.incrementAndGet()
+            pending[sequence] = "${request.method.value} $path"
             val v = vineyard
             val uid = account.get()
             var status = HttpStatusCode.OK
@@ -66,14 +107,21 @@ class PopulatedCleanExitActivityTest {
                 path.substringAfterLast('/') in emptyTables && request.method == HttpMethod.Get -> "[]"
                 else -> { status = HttpStatusCode.ServiceUnavailable; "{}" } // Explicit synthetic failure; never production fallback.
             }
+            responses.add("${request.method.value} $path ${status.value}")
+            pending.remove(sequence)
             respond(body, status, headersOf("Content-Type", "application/json"))
         }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
         SupabaseClient.installInstrumentationTransport(client)
+        checkpoint("activity.launch.begin")
         scenario = ActivityScenario.launch(MainActivity::class.java)
+        scenario.onActivity { checkpoint("activity.created.${it.lifecycle.currentState}") }
     }
 
     @After fun teardown() {
+        if (::app.isInitialized) android.util.Log.i("CleanExitFixture", diagnostic())
         if (::scenario.isInitialized) scenario.close()
+        CleanExitDiagnostics.observer = null
+        Thread.setDefaultUncaughtExceptionHandler(previousUncaught)
         SupabaseClient.installInstrumentationTransport(null)
         SupabaseClient.sessionRefresher = null
         SupabaseClient.performanceCapture = null
@@ -81,37 +129,35 @@ class PopulatedCleanExitActivityTest {
         if (::app.isInitialized) app.resetFixture()
     }
 
-    private fun awaitText(text: String) {
-        try {
-            compose.waitUntil(20_000) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
-        } catch (failure: Exception) {
-            throw AssertionError("Waiting for '$text'; synthetic paths=${requests.toList().sorted()}; session=${SessionStore(app).hasSession}; refusal=${SessionStore(app).cleanExitRefusal}; tree=${compose.onRoot().printToString()}", failure)
-        }
+    private fun awaitText(text: String) = awaitStage("text.$text") {
+        compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
     }
     private fun signIn() {
         awaitText("Email")
         compose.onNodeWithText("Email").performTextInput("synthetic@example.invalid")
         compose.onNodeWithText("Password").performTextInput("synthetic-password")
+        checkpoint("signin.submit.${if (account.get() == A) "A" else "B"}")
         compose.onAllNodesWithText("Sign In").onLast().performClick()
-        try {
-            compose.waitUntil(20_000) { compose.onAllNodesWithContentDescription("Settings").fetchSemanticsNodes().isNotEmpty() }
-        } catch (failure: Exception) {
-            throw AssertionError("Settings missing; synthetic paths=${requests.toList().sorted()}; tree=${compose.onRoot().printToString()}", failure)
+        awaitStage("session.admitted") { SessionStore(app).hasSession }
+        awaitStage("main.settings.ready") {
+            compose.onAllNodes(hasText("Settings") and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
         }
         val cache = DomainCacheRepository(app)
-        try { compose.waitUntil(20_000) {
+        awaitStage("cache.hydrated") {
             cache.loadPins(account.get(), vineyard)?.isNotEmpty() == true &&
                 cache.loadTrips(account.get(), vineyard)?.isNotEmpty() == true &&
                 cache.loadGrowth(account.get(), vineyard)?.isNotEmpty() == true &&
                 cache.loadWorkTasks(account.get(), vineyard)?.isNotEmpty() == true
-        } } catch (failure: Exception) {
-            throw AssertionError("Cache population missing; synthetic paths=${requests.toList().sorted()}; cache keys=${app.getSharedPreferences("vinetrack_domain_cache", 0).all.keys}; tree=${compose.onRoot().printToString()}", failure)
         }
         assertTrue(SessionStore(app).hasSession)
     }
     private fun settingsSignOut() {
-        compose.onNodeWithContentDescription("Settings").performClick()
+        checkpoint("settings.navigate.begin")
+        compose.onNode(hasText("Settings") and hasClickAction()).performClick()
+        awaitText("Sign Out")
+        checkpoint("settings.ready")
         compose.onNodeWithText("Sign Out").performScrollTo().performClick()
+        checkpoint("settings.signout.clicked")
     }
 
     @Test fun populatedSettingsExitRecreateRelaunchReturnAThenBIsolatesPrivateCachesAndAuthority() {
@@ -129,10 +175,14 @@ class PopulatedCleanExitActivityTest {
         assertFalse(session.retentionGuard.isLocked)
         assertEquals(before, app.getSharedPreferences("vinetrack_domain_cache", 0).all)
         assertEquals(devicePrefs, app.getSharedPreferences("vinetrack_app_prefs", 0).all)
+        checkpoint("activity.recreate.begin")
         scenario.recreate()
+        checkpoint("activity.recreate.complete")
         awaitText("Email")
+        checkpoint("activity.relaunch.begin")
         scenario.close()
         scenario = ActivityScenario.launch(MainActivity::class.java)
+        checkpoint("activity.relaunch.complete")
         awaitText("Email")
         assertNull(SessionStore(app).selectedVineyardId)
         signIn()
@@ -169,7 +219,7 @@ class PopulatedCleanExitActivityTest {
         assertEquals(retained, app.getSharedPreferences(name, 0).all)
         assertEquals(cache, app.getSharedPreferences("vinetrack_domain_cache", 0).all)
         compose.onNodeWithText("Keep working").performClick()
-        compose.onNodeWithContentDescription("Home").performClick()
+        compose.onNode(hasText("Home") and hasClickAction()).performClick()
         assertTrue(session.withAccountAccess(authority) { })
     }
 

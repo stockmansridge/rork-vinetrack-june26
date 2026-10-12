@@ -394,11 +394,18 @@ class AuthRepository internal constructor(
         account: AuthRetentionGuard.AccountAccess? = session.accountAccess(),
         afterLocalExit: suspend () -> Unit = {},
     ): Boolean = withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
-        val exit = account?.let(session::cleanExit) ?: return@withContext false
+        CleanExitDiagnostics.checkpoint("exit.inspect.begin")
+        val exit = account?.let(session::cleanExit) ?: run {
+            CleanExitDiagnostics.checkpoint("exit.refused")
+            return@withContext false
+        }
+        CleanExitDiagnostics.checkpoint("exit.session.committed")
         try {
             afterLocalExit()
+            CleanExitDiagnostics.checkpoint("exit.cleanup.complete")
         } finally {
             session.retentionGuard.finishCleanExit()
+            CleanExitDiagnostics.checkpoint("exit.admission.reopened")
         }
         val token = exit.accessToken
         if (SupabaseClient.isConfigured && !token.isNullOrBlank()) {

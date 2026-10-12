@@ -81,12 +81,15 @@ fun RootScreen() {
             restore = { com.rork.vinetrack.ui.auth.AccountViewModelOwner(application, it) },
         )) { com.rork.vinetrack.ui.auth.AccountViewModelOwner(application) }
         DisposableEffect(owner, parentLifecycle) {
+            com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("owner.attached")
             owner.moveTo(parentLifecycle.currentState)
             val observer = LifecycleEventObserver { _, _ -> owner.moveTo(parentLifecycle.currentState) }
             parentLifecycle.addObserver(observer)
             onDispose {
                 parentLifecycle.removeObserver(observer)
+                com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("owner.disposing")
                 owner.close()
+                com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("owner.disposed")
             }
         }
         androidx.compose.runtime.CompositionLocalProvider(
@@ -110,6 +113,9 @@ private fun NormalRootScreen() {
     val vm: AppViewModel = viewModel()
     val work: WorkContextViewModel = viewModel()
     val state by vm.ui.collectAsStateWithLifecycle()
+    LaunchedEffect(state.route) {
+        com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("route.${state.route}")
+    }
     val signOutBlocked by vm.signOutProtectionNotice.collectAsStateWithLifecycle()
     val signOutReason by vm.signOutProtectionReason.collectAsStateWithLifecycle()
     if (signOutBlocked) {

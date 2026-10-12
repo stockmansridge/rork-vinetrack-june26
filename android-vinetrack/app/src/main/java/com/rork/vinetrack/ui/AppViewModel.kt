@@ -4926,6 +4926,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun publishAdmittedSignIn() {
+        val account = checkNotNull(session.accountAccess())
+        check(session.withAccountAccess(account) {
+            _ui.update {
+                it.copy(
+                    route = AppRoute.VineyardLoading,
+                    sessionPhase = SessionPhase.AuthenticatedOnline,
+                    currentUserId = account.userId,
+                )
+            }
+        })
+    }
+
     fun signIn(email: String, password: String) {
         viewModelScope.launch {
             _auth.update { it.copy(isLoading = true, error = null) }
@@ -4934,7 +4947,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _auth.update { AuthFormState() }
                 // Keep the saved biometric email in step with the active account.
                 if (biometricStore.isEnabled) biometricStore.savedEmail = auth.currentEmail
-                _ui.update { it.copy(route = AppRoute.VineyardLoading) }
+                publishAdmittedSignIn()
                 loadVineyards()
             } catch (e: BackendError.Server) {
                 _auth.update { it.copy(isLoading = false, error = e.body.ifBlank { "Sign in failed." }) }
@@ -4969,7 +4982,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         _auth.update { AuthFormState() }
                         // Keep the saved biometric email in step with the active account.
                         if (biometricStore.isEnabled) biometricStore.savedEmail = auth.currentEmail
-                        _ui.update { it.copy(route = AppRoute.VineyardLoading) }
+                        publishAdmittedSignIn()
                         loadVineyards()
                     } catch (e: BackendError.Server) {
                         _auth.update { it.copy(isLoading = false, error = e.body.ifBlank { "Google sign-in failed." }) }
@@ -4995,7 +5008,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (trimmedName.isNotEmpty()) {
                         viewModelScope.launch { runCatching { profileRepo.updateFullName(trimmedName) } }
                     }
-                    _ui.update { it.copy(route = AppRoute.VineyardLoading) }
+                    publishAdmittedSignIn()
                     loadVineyards()
                 } else {
                     _auth.update { it.copy(error = "Check your email to confirm your account, then sign in.") }
@@ -5051,6 +5064,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             vineyardInsightsDebouncer.cancelAll()
             return
         }
+        com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("exit.button.activated")
         val exitingAccount = session.accountAccess() ?: return
         viewModelScope.launch {
             val exited = try {
@@ -5062,13 +5076,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         vineyardSelectionEpoch += 1
                         vineyardDataLoadGeneration += 1
                         // Login remains closed during global identity cleanup, even after owner disposal.
+                        com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("exit.revenuecat.begin")
                         runCatching { revenueCat.logOut() }
+                        com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("exit.revenuecat.complete")
                         _subscription.value = SubscriptionUiState()
                         rcPackages = emptyMap()
+                        com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("exit.credentials.begin")
                         runCatching {
                             CredentialManager.create(getApplication())
                                 .clearCredentialState(ClearCredentialStateRequest())
                         }
+                        com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("exit.credentials.complete")
                         runCatching { telemetryRepo.clearUserCache() }
                         runCatching { operationalToolLayoutStore.signOut() }
                         vineyardInsightsDebouncer.cancelAll()
