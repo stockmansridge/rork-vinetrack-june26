@@ -68,6 +68,26 @@ struct PerformanceValidationTests {
         } catch is CancellationError { }
     }
 
+    @Test func completedAndFailedCatalogueFlightsReleaseCoordinator() async throws {
+        var successful: CatalogReadSingleFlight<Int>? = CatalogReadSingleFlight<Int>()
+        weak var successfulReference = successful
+        let value = try await successful?.read(account: UUID()) { 42 }
+        #expect(value == 42)
+        successful = nil
+        #expect(successfulReference == nil)
+
+        var failed: CatalogReadSingleFlight<Int>? = CatalogReadSingleFlight<Int>()
+        weak var failedReference = failed
+        do {
+            _ = try await failed?.read(account: UUID()) { throw URLError(.timedOut) }
+            Issue.record("Expected fixture transport failure")
+        } catch let error as URLError {
+            #expect(error.code == .timedOut)
+        }
+        failed = nil
+        #expect(failedReference == nil)
+    }
+
     @Test func rejectedPerformanceAccessCannotEnableOrExport() {
         let capture = PerformanceCapture()
         capture.authorize(false)
