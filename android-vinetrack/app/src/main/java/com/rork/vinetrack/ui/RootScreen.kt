@@ -72,6 +72,7 @@ fun RootScreen() {
     val session = remember(context) { SessionStore(context) }
     val recoveryLocked by session.retentionGuard.state.collectAsStateWithLifecycle()
     val identityEpoch by session.retentionGuard.identityEpoch.collectAsStateWithLifecycle()
+    val finishingExit by session.retentionGuard.finishingCleanExit.collectAsStateWithLifecycle()
     val parentLifecycle = LocalLifecycleOwner.current.lifecycle
     androidx.compose.runtime.key(identityEpoch) {
         val application = context.applicationContext as android.app.Application
@@ -92,7 +93,14 @@ fun RootScreen() {
             androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner provides owner,
         ) {
             if (recoveryLocked) com.rork.vinetrack.ui.auth.ProtectedWorkRecoveryScreen()
-            else NormalRootScreen()
+            else if (finishingExit) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        CircularProgressIndicator()
+                        Text("Finishing sign-out…")
+                    }
+                }
+            } else NormalRootScreen()
         }
     }
 }
@@ -103,11 +111,12 @@ private fun NormalRootScreen() {
     val work: WorkContextViewModel = viewModel()
     val state by vm.ui.collectAsStateWithLifecycle()
     val signOutBlocked by vm.signOutProtectionNotice.collectAsStateWithLifecycle()
+    val signOutReason by vm.signOutProtectionReason.collectAsStateWithLifecycle()
     if (signOutBlocked) {
         AlertDialog(
             onDismissRequest = vm::dismissSignOutProtectionNotice,
             title = { Text("Sign-out paused") },
-            text = { Text(AuthRetentionGuard.SIGN_OUT_MESSAGE) },
+            text = { Text(signOutReason) },
             confirmButton = {
                 TextButton(onClick = vm::dismissSignOutProtectionNotice) { Text("Keep working") }
             },

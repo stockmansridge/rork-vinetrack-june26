@@ -93,7 +93,7 @@ class SessionStore(context: Context) {
         retentionGuard.requireUnlocked()
         if (prefs.getBoolean(KEY_CLEAN_EXIT, false)) {
             val evidence = AccountTransitionEvidence(appContext)
-            check(evidence.inspect() != null) {
+            check(evidence.inspectCleanExit() != null) {
                 "Local state changed after sign-out (${evidence.failureCategory}). Keep this installation and contact support."
             }
         }
@@ -184,11 +184,29 @@ class SessionStore(context: Context) {
     /** Opaque remote logout authority; a delayed logout never mutates a newer local session. */
     internal class CleanExit internal constructor(val accessToken: String)
 
-    internal fun cleanExit(): CleanExit? {
+    /** Privacy-safe explanation of the last voluntary refusal; never contains stored identifiers. */
+    @Volatile var cleanExitRefusal: String = "Work is still completing. Wait briefly, then try signing out again."
+        private set
+
+    internal fun cleanExit(account: AuthRetentionGuard.AccountAccess): CleanExit? {
+        cleanExitRefusal = "Work is still completing. Wait briefly, then try signing out again."
         var exit: CleanExit? = null
-        val committed = retentionGuard.cleanExitIfIdle {
+        val committed = retentionGuard.cleanExitIfIdle(account, { userId }) {
             val token = accessToken ?: return@cleanExitIfIdle false
-            if (!hasSession || AccountTransitionEvidence(appContext).inspect() == null) return@cleanExitIfIdle false
+            if (!hasSession) return@cleanExitIfIdle false
+            val evidence = AccountTransitionEvidence(appContext)
+            if (evidence.inspectCleanExit() == null) {
+                cleanExitRefusal = when (evidence.failureCategory) {
+                    "vinetrack_active_trip" -> "An active Trip is retained. Finish the Trip before signing out."
+                    "vinetrack_spray_tank_actuals" -> "Tank actual records are retained. Check Sync Status before signing out."
+                    "vinetrack_pending_writes", "vinetrack_domain_cache" -> "Pending records or uncertain cached evidence are retained. Check Sync Status; do not clear app storage."
+                    "vinetrack_pending_photos", "vinetrack_pin_capture_evidence", PhotoCaptureReceipt.PREFERENCES -> "A photograph or capture is unfinished. Complete it before signing out."
+                    "vinetrack_local_planning", "vinetrack_manual_spray_drafts_v1", "vinetrack_paired_growth_capture" -> "An unresolved draft is retained. Finish or review the draft before signing out."
+                    "file dependencies" -> "Local files or unfinished photographs need review. Keep this installation and contact support."
+                    else -> "Local settings or legacy records could not be verified. Keep this installation and contact support."
+                }
+                return@cleanExitIfIdle false
+            }
             // Removing every account-selection key in the same credential transaction makes restart unambiguous.
             if (!prefs.edit().clear().putBoolean(KEY_CLEAN_EXIT, true)
                     .putLong(KEY_IDENTITY_EPOCH, retentionGuard.identityEpoch.value + 1L).commit()) return@cleanExitIfIdle false

@@ -20,6 +20,10 @@ class AuthRetentionGuard(
     private val epoch = MutableStateFlow(runCatching(readIdentityEpoch).getOrDefault(0L))
     /** Recreates account-bound UI holders after exit or recovery, never as record ownership. */
     val identityEpoch: StateFlow<Long> = epoch.asStateFlow()
+    private val finishing = MutableStateFlow(false)
+    /** Keeps Login admission closed until account-wide cleanup has completed. */
+    val finishingCleanExit: StateFlow<Boolean> = finishing.asStateFlow()
+    internal fun finishCleanExit() { serialized { finishing.value = false } }
     private var commitDepth: Int = 0
     private var transitionClosed: Boolean = false
     private val operations = mutableSetOf<FieldOperation>()
@@ -42,7 +46,7 @@ class AuthRetentionGuard(
     internal fun <T> serialized(action: () -> T): T = authorityLock.withLock(action)
 
     fun captureAccount(userId: String?): AccountAccess? = serialized {
-        userId?.takeIf { it.isNotBlank() && !isLocked && !transitionClosed }
+        userId?.takeIf { it.isNotBlank() && !isLocked && !transitionClosed && !finishing.value }
             ?.let { AccountAccess(it, this, generation) }
     }
 
@@ -52,7 +56,7 @@ class AuthRetentionGuard(
     }
 
     internal fun isAccountCurrent(access: AccountAccess, userId: String?): Boolean = serialized {
-        !isLocked && !transitionClosed && access.authority === this &&
+        !isLocked && !transitionClosed && !finishing.value && access.authority === this &&
             access.generation == generation && userId == access.userId
     }
 
@@ -88,7 +92,7 @@ class AuthRetentionGuard(
     fun transitionIfIdle(checkAndCommit: () -> Boolean): Boolean {
         if (!authorityLock.tryLock()) return false
         return try {
-            if (isLocked || transitionClosed || commitDepth != 0) return false
+            if (isLocked || transitionClosed || finishing.value || commitDepth != 0) return false
             transitionClosed = true
             try { if (operations.isNotEmpty()) false else checkAndCommit() }
             finally { transitionClosed = false }
@@ -98,8 +102,16 @@ class AuthRetentionGuard(
     /** A Boolean query is not a cleanliness certificate; exits use the atomic transition below. */
     fun canSignOut(): Boolean = false
 
-    internal fun cleanExitIfIdle(inspectAndCommit: () -> Boolean): Boolean = transitionIfIdle {
+    internal fun cleanExitIfIdle(account: AccountAccess, currentUserId: () -> String?, inspectAndCommit: () -> Boolean): Boolean {
+        if (!authorityLock.tryLock()) return false
+        return try {
+            if (!isAccountCurrent(account, currentUserId())) false else cleanExitIfIdle(inspectAndCommit)
+        } finally { authorityLock.unlock() }
+    }
+
+    private fun cleanExitIfIdle(inspectAndCommit: () -> Boolean): Boolean = transitionIfIdle {
         if (!inspectAndCommit()) false else {
+            finishing.value = true
             generation++
             epoch.value++
             true
@@ -135,7 +147,7 @@ class AuthRetentionGuard(
         durable
     }
 
-    fun requireUnlocked() { check(!isLocked && !transitionClosed) { RECOVERY_MESSAGE } }
+    fun requireUnlocked() { check(!isLocked && !transitionClosed && !finishing.value) { RECOVERY_MESSAGE } }
 
     companion object {
         const val RECOVERY_MESSAGE = "Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall."

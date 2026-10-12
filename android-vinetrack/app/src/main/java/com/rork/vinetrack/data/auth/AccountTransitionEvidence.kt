@@ -22,15 +22,32 @@ internal class AccountTransitionEvidence(private val context: Context) {
     var failureCategory: String = "retained state"
         private set
 
-    fun inspect(original: String? = null): Assessment? = runCatching {
+    fun inspect(original: String? = null): Assessment? = assess(original, cleanExit = false)
+
+    /** Clean exit has its own cache exceptions; original-account recovery remains unchanged. */
+    fun inspectCleanExit(): Assessment? = assess(original = null, cleanExit = true)
+
+    private fun assess(original: String?, cleanExit: Boolean): Assessment? = runCatching {
         failureCategory = "file dependencies"
         inspectLocations()
         val vineyards = mutableSetOf<String>()
         businessPreferences.forEach { name ->
             failureCategory = name
             val values = context.getSharedPreferences(name, Context.MODE_PRIVATE).all
-            when (name) {
-                "vinetrack_active_trip" -> {
+            when {
+                cleanExit && name in CleanExitCacheContract.devicePreferences -> CleanExitCacheContract.validatePreferences(name, values)
+                cleanExit && name == "vinetrack_domain_cache" -> CleanExitCacheContract.validate(values)
+                cleanExit && name == "vinetrack_recovery_snapshots_v2" -> values.forEach { (key, raw) ->
+                    check(key.startsWith("snapshot_") && raw is String)
+                    val snapshot = codec.decodeFromString(com.rork.vinetrack.data.RecoverySnapshotStore.Snapshot.serializer(), raw)
+                    check(snapshot.formatVersion == 3 && key == "snapshot_${snapshot.vineyardId}" && snapshot.vineyardId.isNotBlank())
+                    check(snapshot.pendingWrites.isEmpty() && snapshot.captureEvidence.isEmpty() && snapshot.activeTrip == null &&
+                        snapshot.cachedPins.isEmpty() && snapshot.cachedTrips.isEmpty() && snapshot.excludedOrUnreadable.isEmpty())
+                    check(snapshot.source == "before_vineyard_load_refresh_or_replay" && snapshot.sourceStatuses.size == 5 &&
+                        snapshot.sourceStatuses.map { it.source }.toSet() == setOf("pending_writes", "pin_capture_evidence", "cached_pins", "cached_trips", "active_trip") &&
+                        snapshot.sourceStatuses.all { it.status == "read" && it.itemCount == 0 })
+                }
+                name == "vinetrack_active_trip" -> {
                     check(values.keys.all { it == "active_trip_snapshot_json" })
                     values["active_trip_snapshot_json"]?.let { raw ->
                         check(original != null && raw is String)
@@ -40,7 +57,7 @@ internal class AccountTransitionEvidence(private val context: Context) {
                         vineyards.add(snapshot.vineyardId)
                     }
                 }
-                "vinetrack_spray_tank_actuals" -> {
+                name == "vinetrack_spray_tank_actuals" -> {
                     check(values.keys.all { it == "cache" })
                     values["cache"]?.let { raw ->
                         check(raw is String)
@@ -56,7 +73,7 @@ internal class AccountTransitionEvidence(private val context: Context) {
                         }
                     }
                 }
-                in emptyArrayKeys -> {
+                name in emptyArrayKeys -> {
                     check(values.keys.all { it in emptyArrayKeys.getValue(name) })
                     values.values.forEach { raw ->
                         check(raw is String)

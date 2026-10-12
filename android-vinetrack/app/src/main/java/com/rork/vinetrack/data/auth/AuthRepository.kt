@@ -390,14 +390,24 @@ class AuthRepository internal constructor(
             true
         }
 
-    suspend fun signOut(): Boolean = withContext(Dispatchers.IO) {
-        val exit = session.cleanExit() ?: return@withContext false
+    suspend fun signOut(
+        account: AuthRetentionGuard.AccountAccess? = session.accountAccess(),
+        afterLocalExit: suspend () -> Unit = {},
+    ): Boolean = withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+        val exit = account?.let(session::cleanExit) ?: return@withContext false
+        try {
+            afterLocalExit()
+        } finally {
+            session.retentionGuard.finishCleanExit()
+        }
         val token = exit.accessToken
         if (SupabaseClient.isConfigured && !token.isNullOrBlank()) {
             try {
-                authHttp.post(SupabaseClient.authUrl("logout?scope=local")) {
-                    anonHeaders()
-                    headers { append(HttpHeaders.Authorization, "Bearer $token") }
+                kotlinx.coroutines.withTimeout(8_000) {
+                    authHttp.post(SupabaseClient.authUrl("logout?scope=local")) {
+                        anonHeaders()
+                        headers { append(HttpHeaders.Authorization, "Bearer $token") }
+                    }
                 }
             } catch (_: Exception) { /* best effort */ }
         }

@@ -56,7 +56,7 @@ android {
         applicationId = "com.rork.vinetrack"
         minSdk = 24
         targetSdk = 36
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "com.rork.vinetrack.data.auth.CleanExitTestRunner"
         // v3.1.7 release — keep versionCode monotonically increasing.
         versionCode = 10
         versionName = "3.1.7"
@@ -685,6 +685,9 @@ dependencies {
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.junit)
     androidTestImplementation(libs.ktor.client.mock)
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.ui.test.junit4)
+    debugImplementation(libs.androidx.ui.test.manifest)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
 }

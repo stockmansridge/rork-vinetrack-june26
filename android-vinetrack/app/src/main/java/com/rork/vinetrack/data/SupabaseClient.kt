@@ -99,7 +99,17 @@ object SupabaseClient {
 
     private const val AUTH_TAG = "VineTrackAuth"
 
-    val http: HttpClient by lazy {
+    @Volatile private var instrumentationHttp: HttpClient? = null
+
+    /** Internal debug-only transport seam; instrumentation must install it before Activity creation. */
+    internal fun installInstrumentationTransport(client: HttpClient?) {
+        check(com.rork.vinetrack.BuildConfig.DEBUG)
+        instrumentationHttp = client
+    }
+
+    val http: HttpClient get() = instrumentationHttp ?: productionHttp
+
+    private val productionHttp: HttpClient by lazy {
         HttpClient(Android) {
             expectSuccess = false
             install(BodyProgress)

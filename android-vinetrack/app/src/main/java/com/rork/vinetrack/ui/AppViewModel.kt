@@ -5039,6 +5039,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     val signOutProtectionNotice = MutableStateFlow<Boolean>(false)
+    val signOutProtectionReason = MutableStateFlow<String>(com.rork.vinetrack.data.auth.AuthRetentionGuard.SIGN_OUT_MESSAGE)
 
     fun dismissSignOutProtectionNotice() { signOutProtectionNotice.value = false }
 
@@ -5050,47 +5051,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             vineyardInsightsDebouncer.cancelAll()
             return
         }
-        performanceAuthorizationEpoch += 1
-        performanceCapture.revoke()
-        vineyardSelectionEpoch += 1
-        vineyardDataLoadGeneration += 1
+        val exitingAccount = session.accountAccess() ?: return
         viewModelScope.launch {
-            val exited = try { auth.signOut() } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            val exited = try {
+                auth.signOut(exitingAccount) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                        // Admission succeeded. A refusal leaves these working-session generations intact.
+                        performanceAuthorizationEpoch += 1
+                        performanceCapture.revoke()
+                        vineyardSelectionEpoch += 1
+                        vineyardDataLoadGeneration += 1
+                        // Login remains closed during global identity cleanup, even after owner disposal.
+                        runCatching { revenueCat.logOut() }
+                        _subscription.value = SubscriptionUiState()
+                        rcPackages = emptyMap()
+                        runCatching {
+                            CredentialManager.create(getApplication())
+                                .clearCredentialState(ClearCredentialStateRequest())
+                        }
+                        runCatching { telemetryRepo.clearUserCache() }
+                        runCatching { operationalToolLayoutStore.signOut() }
+                        vineyardInsightsDebouncer.cancelAll()
+                        runCatching { ScreenAwakeController.reset() }
+                        _ui.value = AppUiState(route = AppRoute.Login, sessionPhase = SessionPhase.SignedOut)
+                        _auth.value = AuthFormState(error = message)
+                    }
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (_: Exception) { false }
-            if (!exited) {
+            if (!exited && session.hasSession) {
+                signOutProtectionReason.value = session.cleanExitRefusal
                 signOutProtectionNotice.value = true
-                return@launch
             }
-            // Reset RevenueCat identity so one user's subscription state never
-            // leaks into another login (iOS parity: subscription.logout()).
-            runCatching { revenueCat.logOut() }
-            _subscription.value = SubscriptionUiState()
-            rcPackages = emptyMap()
-            // Clean exit changes only credentials; nonempty field evidence prevents this transition.
-            // Keep the device-wide active-trip claim across account switches;
-            // restore still checks ownerUserId before exposing trip controls.
-            // Best-effort: clear Credential Manager sign-in state so a signed-out
-            // (or switched) user isn't silently re-selected by Google next time.
-            runCatching {
-                CredentialManager.create(getApplication())
-                    .clearCredentialState(ClearCredentialStateRequest())
-            }
-            // Clear only the user-linked telemetry throttle cache — the random
-            // installation ID is kept (a new account creates its own separate
-            // user/client association server-side).
-            runCatching { telemetryRepo.clearUserCache() }
-            // Drop the in-memory tool layout so the next account starts from
-            // its own cached/served layout (the per-user cache stays on disk).
-            runCatching { operationalToolLayoutStore.signOut() }
-            // Cancel every not-yet-started Insights debounce before invalidating
-            // active sync generations and clearing local preview data.
-            vineyardInsightsDebouncer.cancelAll()
-            // The root recovery lock hides Insights without deleting saved visits or photos.
-            // Drop every keep-awake hold so the next account starts clean.
-            runCatching { ScreenAwakeController.reset() }
-            _ui.value = AppUiState(route = AppRoute.Login, sessionPhase = SessionPhase.SignedOut)
-            _auth.value = AuthFormState(error = message)
         }
     }
 

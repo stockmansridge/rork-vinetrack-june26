@@ -952,6 +952,154 @@ class AuthRetentionAndroidTest {
         }
     }
 
+    /** Populated production stores, not Activity acceptance; caches stay byte-for-byte on exit. */
+    @Test fun populatedReviewedCachesAndPreferencesExitWithoutEmptyingInstallation() = runBlocking {
+        val a = "11111111-1111-4111-8111-111111111111"
+        val session = SessionStore(context)
+        session.save("access-A", "refresh-A", a, null)
+        val cache = com.rork.vinetrack.data.DomainCacheRepository(context)
+        cache.saveVineyards(a, listOf(com.rork.vinetrack.data.model.Vineyard("vineyard", "Synthetic private vineyard")))
+        cache.savePaddocks(a, "vineyard", listOf(com.rork.vinetrack.data.model.Paddock("block", "vineyard", "Synthetic block")))
+        cache.savePins(a, "vineyard", listOf(com.rork.vinetrack.data.model.Pin("pin", "vineyard")))
+        cache.saveTrips(a, "vineyard", listOf(com.rork.vinetrack.data.model.Trip("trip", "vineyard")))
+        cache.saveGrowth(a, "vineyard", listOf(com.rork.vinetrack.data.model.GrowthStageRecord("growth", "vineyard", stageCode = "4")))
+        cache.saveWorkTasks(a, "vineyard", listOf(com.rork.vinetrack.data.model.WorkTask("task", "vineyard")))
+        com.rork.vinetrack.data.AppPreferencesStore(context).save(com.rork.vinetrack.data.AppPreferences())
+        com.rork.vinetrack.data.MapPrefsStore(context).save(com.rork.vinetrack.data.MapDefaults())
+        com.rork.vinetrack.data.HomePrefsStore(context).setInfoCardDismissed(true)
+        com.rork.vinetrack.data.OnboardingStore(context).markCompleted()
+        val before = context.getSharedPreferences("vinetrack_domain_cache", 0).all.toMap()
+        val preferences = context.getSharedPreferences("vinetrack_app_prefs", 0).all.toMap()
+        // Shared mirrors may be populated without creating private field evidence.
+        val reference = File(root, "canopy_reference_images/reference.jpg")
+        check(reference.parentFile!!.mkdirs()); reference.writeBytes(byteArrayOf(1, 2, 3))
+        assertNotNull(AccountTransitionEvidence(context).inspectCleanExit())
+        assertNull("Recovery assessment must retain its original strict rules", AccountTransitionEvidence(context).inspect(a))
+        val old = requireNotNull(session.accountAccess())
+        val client = HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) })
+        try {
+            assertTrue(AuthRepository(session, client).signOut())
+            assertEquals(before, context.getSharedPreferences("vinetrack_domain_cache", 0).all)
+            assertEquals(preferences, context.getSharedPreferences("vinetrack_app_prefs", 0).all)
+            assertArrayEquals(byteArrayOf(1, 2, 3), reference.readBytes())
+            val reopened = SessionStore(context)
+            assertFalse(reopened.hasSession)
+            assertFalse(reopened.retentionGuard.isLocked)
+            reopened.save("access-B", "refresh-B", "22222222-2222-4222-8222-222222222222", null)
+            assertNull(com.rork.vinetrack.data.DomainCacheRepository(context).loadPins(reopened.userId, "vineyard"))
+            assertFalse(reopened.withAccountAccess(old) { fail("A callback entered B") })
+            assertEquals(before, context.getSharedPreferences("vinetrack_domain_cache", 0).all)
+        } finally { client.close() }
+    }
+
+    @Test fun malformedPreferenceUnknownCacheKeyAndMissingTimestampRefuseWithoutRevocation() = runBlocking {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val client = HttpClient(MockEngine { error("Refusal cannot revoke the server session") })
+        val scenarios = listOf(
+            Triple("vinetrack_app_prefs", "row_tracking_enabled", "not-a-boolean"),
+            Triple("vinetrack_app_prefs", "unreviewed_local_draft", "original"),
+            Triple("vinetrack_domain_cache", "unreviewed_future_record", "original"),
+            Triple("vinetrack_domain_cache", "pins_vineyard", "[]"),
+        )
+        try {
+            scenarios.forEach { (name, key, value) ->
+                val prefs = context.getSharedPreferences(name, 0)
+                check(prefs.edit().putString(key, value).commit())
+                val original = prefs.all.toMap()
+                assertFalse(AuthRepository(session, client).signOut())
+                assertEquals(original, prefs.all)
+                assertTrue(session.hasSession)
+                assertFalse(session.retentionGuard.isLocked)
+                check(prefs.edit().remove(key).commit()) // Fixture-owned teardown only, never production repair.
+            }
+        } finally { client.close() }
+    }
+
+    @Test fun activeTripDraftPinAndPhotoRefusalsKeepAuthorityAndAllOriginalBytes() = runBlocking {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val authority = requireNotNull(session.accountAccess())
+        val client = HttpClient(MockEngine { error("Unfinished work must prevent remote logout") })
+        val cases: List<Pair<String, () -> Unit>> = listOf(
+            "vinetrack_active_trip" to { check(com.rork.vinetrack.data.ActiveTripStore(context).saveDurably("account-A", "vineyard", com.rork.vinetrack.data.model.Trip("active", "vineyard", isActive = true))) },
+            "vinetrack_local_planning" to { com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context).save(com.rork.vinetrack.data.model.WorkTaskPlanningDraft(null, "vineyard", "account-A", date = "2026-10-12", taskType = "pruning", notes = "original")) },
+            "vinetrack_pending_writes" to { check(PendingWriteStore(context).save(listOf(com.rork.vinetrack.data.model.PendingWrite("pending", "pin", "create", "{}", "pin", 1, 1)))) },
+        )
+        try {
+            cases.forEach { (name, prepare) ->
+                prepare()
+                val prefs = context.getSharedPreferences(name, 0)
+                val original = prefs.all.toMap()
+                assertFalse(AuthRepository(session, client).signOut())
+                assertEquals(original, prefs.all)
+                assertTrue(session.isAccountAccessCurrent(authority))
+                assertTrue(session.hasSession)
+                assertFalse(session.retentionGuard.isLocked)
+                check(prefs.edit().clear().commit()) // Isolated fixture only.
+            }
+            val jpeg = byteArrayOf(1, 2, 3, 4)
+            val photo = PendingPhotoRepository(context).enqueue("pin", "vineyard", jpeg)
+            val original = context.getSharedPreferences("vinetrack_pending_photos", 0).all.toMap()
+            assertFalse(AuthRepository(session, client).signOut())
+            assertArrayEquals(jpeg, File(photo.localPath).readBytes())
+            assertEquals(original, context.getSharedPreferences("vinetrack_pending_photos", 0).all)
+            assertTrue(session.isAccountAccessCurrent(authority))
+            assertTrue(session.hasSession)
+            assertFalse(session.retentionGuard.isLocked)
+        } finally { client.close() }
+    }
+
+    @Test fun successfulExitCleanupCompletesDespiteCallerCancellationAndClosesLoginUntilDone() = runBlocking {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var cleaned = false
+        var revoked = false
+        val client = HttpClient(MockEngine { revoked = true; respond("{}", HttpStatusCode.OK) })
+        try {
+            val job = async {
+                AuthRepository(session, client).signOut {
+                    entered.complete(Unit)
+                    withTimeout(5_000) { release.await() }
+                    cleaned = true
+                }
+            }
+            withTimeout(5_000) { entered.await() }
+            assertTrue(session.retentionGuard.finishingCleanExit.value)
+            denied { session.save("access-B", "refresh-B", "account-B", null) }
+            assertFalse(revoked)
+            job.cancel()
+            release.complete(Unit)
+            withTimeout(5_000) { job.join() }
+            assertTrue(cleaned)
+            assertTrue(revoked)
+            assertFalse(session.retentionGuard.finishingCleanExit.value)
+            assertFalse(session.retentionGuard.isLocked)
+            session.save("access-B", "refresh-B", "account-B", null)
+            assertEquals("account-B", session.userId)
+        } finally { release.complete(Unit); client.close() }
+    }
+
+    @Test fun delayedSignOutIntentCannotExitALaterAccount() = runBlocking {
+        val session = SessionStore(context)
+        session.save("access-A", "refresh-A", "account-A", null)
+        val oldIntent = requireNotNull(session.accountAccess())
+        val client = HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) })
+        try {
+            val auth = AuthRepository(session, client)
+            assertTrue(auth.signOut(oldIntent))
+            session.save("access-B", "refresh-B", "account-B", null)
+            var cleaned = false
+            assertFalse(auth.signOut(oldIntent) { cleaned = true })
+            assertFalse(cleaned)
+            assertEquals("account-B", session.userId)
+            assertEquals("access-B", session.accessToken)
+            assertFalse(session.retentionGuard.isLocked)
+        } finally { client.close() }
+    }
+
     private fun mockAuthClient(
         response: suspend (String, String) -> Pair<Int, String>,
     ): HttpClient = HttpClient(MockEngine { request ->
