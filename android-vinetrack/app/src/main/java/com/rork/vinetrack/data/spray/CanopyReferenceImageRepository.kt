@@ -18,6 +18,7 @@ import io.ktor.http.encodeURLPathPart
 import io.ktor.http.isSuccess
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -81,6 +82,7 @@ class CanopyReferenceImageRepository(
     private val downloader: CanopyReferenceImageDownloader,
     private val validator: (ByteArray) -> Boolean,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
+    private val refreshAdmission: () -> RefreshAdmission? = { RefreshAdmission({ action -> action(); true }, {}) },
 ) {
     private val manifestFile = File(root, MANIFEST_NAME)
     private val mutex = Mutex()
@@ -89,36 +91,42 @@ class CanopyReferenceImageRepository(
     private val _localFiles = MutableStateFlow(resolveUsableFiles(manifest))
     val localFiles: StateFlow<Map<String, File>> = _localFiles.asStateFlow()
 
-    suspend fun refreshOncePerSession() = mutex.withLock {
-        if (hasAttemptedSessionRefresh) return@withLock
-        val configuration = runCatching { configSource.fetch() }.getOrElse { return@withLock }
-        if (configuration.bucket.isBlank()) return@withLock
-        hasAttemptedSessionRefresh = true
-        apply(configuration)
-    }
+    /** Shared system guide data, not vineyard records or unsynchronised user photographs. */
+    class RefreshAdmission(val commit: (() -> Unit) -> Boolean, val complete: () -> Unit)
 
-    suspend fun refresh() = mutex.withLock {
-        val configuration = runCatching { configSource.fetch() }.getOrElse { return@withLock }
-        if (configuration.bucket.isBlank()) return@withLock
-        hasAttemptedSessionRefresh = true
-        apply(configuration)
+    suspend fun refreshOncePerSession() = refreshInternal(once = true)
+    suspend fun refresh() = refreshInternal(once = false)
+
+    private suspend fun refreshInternal(once: Boolean) = mutex.withLock {
+        if (once && hasAttemptedSessionRefresh) return@withLock
+        val admission = refreshAdmission() ?: return@withLock
+        try {
+            val configuration = try { configSource.fetch() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { return@withLock }
+            if (configuration.bucket.isBlank()) return@withLock
+            if (!admission.commit { hasAttemptedSessionRefresh = true }) return@withLock
+            apply(configuration, admission)
+        } finally { admission.complete() }
     }
 
     fun localFile(slotKey: String): File? = _localFiles.value[slotKey]
 
     fun manifestEntry(slotKey: String): CanopyReferenceManifestEntry? = manifest.entries[slotKey]
 
-    private suspend fun apply(configuration: CanopyReferenceConfiguration) {
+    private suspend fun apply(configuration: CanopyReferenceConfiguration, admission: RefreshAdmission) {
         val remoteImages = configuration.images.filterKeys(SprayCanopyReferenceImages.slotKeys::contains)
 
         val removedKeys = manifest.entries.keys - remoteImages.keys
         if (removedKeys.isNotEmpty()) {
             val obsolete = removedKeys.mapNotNull(manifest.entries::get)
             val reset = manifest.copy(entries = manifest.entries - removedKeys)
-            if (saveManifest(reset)) {
-                manifest = reset
-                obsolete.forEach { File(root, it.localFilename).delete() }
-                publishFiles()
+            admission.commit {
+                if (saveManifest(reset)) {
+                    manifest = reset
+                    obsolete.forEach { File(root, it.localFilename).delete() }
+                    publishFiles()
+                }
             }
         }
 
@@ -128,10 +136,12 @@ class CanopyReferenceImageRepository(
             val existing = manifest.entries[slotKey]
             if (existing?.matches(remoteImage) == true && isUsable(existing.localFilename)) return@forEach
 
-            val bytes = runCatching { downloader.download(configuration.bucket, remoteImage.path) }.getOrNull()
-                ?: return@forEach
+            if (!admission.commit { }) return
+            val bytes = try { downloader.download(configuration.bucket, remoteImage.path) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { return@forEach }
             if (!validator(bytes)) return@forEach
-            persistReplacement(slotKey, remoteImage, bytes)
+            admission.commit { persistReplacement(slotKey, remoteImage, bytes) }
         }
     }
 
@@ -225,9 +235,17 @@ class CanopyReferenceImageRepository(
         private const val MANIFEST_NAME = "manifest.json"
 
         fun create(context: Context, session: SessionStore): CanopyReferenceImageRepository {
+            var operation: com.rork.vinetrack.data.auth.AuthRetentionGuard.FieldOperation? = null
+            fun capturedToken(): String {
+                if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+                val ticket = operation ?: throw BackendError.Unauthorized
+                var token: String? = null
+                if (!session.withFieldOperation(ticket) { token = session.accessToken }) throw BackendError.Unauthorized
+                return token ?: throw BackendError.Unauthorized
+            }
             val configSource = CanopyReferenceConfigSource {
                 withContext(Dispatchers.IO) {
-                    requireConfigAndToken(session).let { token ->
+                    capturedToken().let { token ->
                         val response = SupabaseClient.http.post(
                             SupabaseClient.rpcUrl("get_canopy_reference_images_v1")
                         ) {
@@ -248,7 +266,7 @@ class CanopyReferenceImageRepository(
             }
             val downloader = CanopyReferenceImageDownloader { bucket, path ->
                 withContext(Dispatchers.IO) {
-                    val token = requireConfigAndToken(session)
+                    val token = capturedToken()
                     val encodedPath = path.split('/').joinToString("/") { it.encodeURLPathPart() }
                     val response = SupabaseClient.http.get(
                         SupabaseClient.storageUrl("object/authenticated/${bucket.encodeURLPathPart()}/$encodedPath")
@@ -269,6 +287,15 @@ class CanopyReferenceImageRepository(
                 root = File(context.applicationContext.filesDir, DIRECTORY),
                 configSource = configSource,
                 downloader = downloader,
+                refreshAdmission = {
+                    session.fieldOperation()?.let { ticket ->
+                        operation = ticket
+                        RefreshAdmission(
+                            commit = { action -> session.withFieldOperation(ticket, action) },
+                            complete = { operation = null; ticket.complete() },
+                        )
+                    }
+                },
                 validator = { bytes ->
                     runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
                         .getOrNull()

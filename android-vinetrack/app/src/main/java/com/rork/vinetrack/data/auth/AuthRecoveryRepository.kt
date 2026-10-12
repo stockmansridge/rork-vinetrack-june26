@@ -21,18 +21,22 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /** Authentication only. No SessionStore, refresh hook, field client, persistence or unlock authority. */
-class AuthRecoveryRepository {
+class AuthRecoveryRepository(
+    private val clientFactory: () -> HttpClient = {
+        HttpClient(Android) {
+            expectSuccess = false
+            followRedirects = false
+            install(ContentNegotiation) { json(SupabaseClient.json) }
+        }
+    },
+) {
     @Serializable private data class Credentials(val email: String, val password: String)
     @Serializable private data class Token(@SerialName("access_token") val accessToken: String? = null)
 
     suspend fun verify(email: String, password: String): Unit = withContext(Dispatchers.IO) {
         check(SupabaseClient.isConfigured) { "Account verification is unavailable." }
         withTimeout(30_000) {
-            HttpClient(Android) {
-                expectSuccess = false
-                followRedirects = false
-                install(ContentNegotiation) { json(SupabaseClient.json) }
-            }.use { client ->
+            clientFactory().use { client ->
                 val response = client.post(SupabaseClient.authUrl("token?grant_type=password")) {
                     headers { append("apikey", SupabaseClient.anonKey) }
                     contentType(ContentType.Application.Json)

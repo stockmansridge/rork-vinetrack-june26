@@ -1238,10 +1238,14 @@ private fun GrowthDetailView(
         kind = if (record.isFromPin) PinPresentationTarget.Kind.LINKED_GROWTH else PinPresentationTarget.Kind.STANDALONE_GROWTH,
     )
     val photoCapture = rememberPhotoCaptureCoordinator(
-        onPhoto = { uri ->
+        onPhoto = { uri, receipt ->
             if (uri != null) {
                 pendingPhotoUri = uri
-                vm.attachPresentationPhoto(photoTarget, uri) { ok -> if (!ok) pendingPhotoUri = null }
+                vm.attachPresentationPhoto(photoTarget, uri) { ok ->
+                    receipt?.admitted {
+                        if (!ok || !receipt.persisted()) vm.reportGrowthError("Photo retained — couldn't finish its durable save.")
+                    }
+                }
             }
         },
         onError = { vm.reportGrowthError(it) },

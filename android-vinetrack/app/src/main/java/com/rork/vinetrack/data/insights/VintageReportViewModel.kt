@@ -13,6 +13,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +28,7 @@ import java.util.UUID
 /** Durable exact-operation recovery; loading, refresh and export never initiate generation. */
 class VintageReportViewModel(
     context: Context, private val account: String, private val vineyard: String, private val vintage: Int,
+    private val http: io.ktor.client.HttpClient = SupabaseClient.http,
     private val canAccess: () -> Boolean,
 ) : ViewModel() {
     private val session = SessionStore(context.applicationContext)
@@ -36,10 +38,17 @@ class VintageReportViewModel(
     private var selectedThrough: String? = null
     private val _ui = MutableStateFlow(VintageReportUiState())
     val ui: StateFlow<VintageReportUiState> = _ui.asStateFlow()
-    private fun scoped(): Boolean = session.userId == account && canAccess()
+    private val access = session.accountAccess()?.takeIf { it.userId == account }
+    private fun scoped(): Boolean = access?.let(session::isAccountAccessCurrent) == true && canAccess()
+    private fun admitted(action: () -> Unit) {
+        val captured = checkNotNull(access) { "Account access changed." }
+        check(session.withAccountAccess(captured) { check(canAccess()); action() }) { "Account access changed." }
+    }
+    private fun publish(state: VintageReportUiState) = admitted { _ui.value = state }
     init {
         if (scoped()) {
             try {
+                admitted {
                 val cached = try {
                     codec.decodeFromString<VintageReportCache>(file.openRead().bufferedReader().use { it.readText() })
                 } catch (missing: java.io.FileNotFoundException) {
@@ -47,25 +56,30 @@ class VintageReportViewModel(
                     VintageReportCache()
                 }
                 _ui.value = VintageReportUiState(cache = cached)
+                }
                 refresh()
             } catch (_: Exception) {
                 cacheUnreadable = true
-                _ui.value = VintageReportUiState(message = "Saved cache is unreadable and has been preserved. Use Refresh to recover server requests before any new generation.")
+                if (scoped()) publish(VintageReportUiState(message = "Saved cache is unreadable and has been preserved. Use Refresh to recover server requests before any new generation."))
             }
         }
     }
     private suspend fun persist(cache: VintageReportCache) = withContext(Dispatchers.IO) {
-        check(scoped())
-        check(file.baseFile.parentFile?.mkdirs() == true || file.baseFile.parentFile?.isDirectory == true)
-        val stream = file.startWrite()
-        try { stream.write(codec.encodeToString(cache).toByteArray()); file.finishWrite(stream) }
-        catch (error: Exception) { file.failWrite(stream); throw error }
+        val bytes = codec.encodeToString(cache).toByteArray()
+        admitted {
+            check(file.baseFile.parentFile?.mkdirs() == true || file.baseFile.parentFile?.isDirectory == true)
+            val stream = file.startWrite()
+            try { stream.write(bytes); file.finishWrite(stream) }
+            catch (error: Exception) { file.failWrite(stream); throw error }
+        }
     }
     private suspend fun transport(path: String, body: JsonObject): String {
         check(scoped())
-        val token = session.accessToken ?: error("No session")
-        val response = SupabaseClient.http.post("${SupabaseClient.baseUrl}$path") {
-            headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
+        var token: String? = null
+        admitted { token = session.accessToken }
+        val capturedToken = checkNotNull(token) { "No session" }
+        val response = http.post("${SupabaseClient.baseUrl}$path") {
+            headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $capturedToken") }
             contentType(ContentType.Application.Json); setBody(body.toString())
         }
         check(scoped())
@@ -97,9 +111,9 @@ class VintageReportViewModel(
         val cache = previous.copy(revisions = rows, history = result.revisions, currentID = pointer, coverage = coverage,
             pending = previous.pending ?: recoverable, request = previous.request ?: serverRequest)
         if (cacheUnreadable && file.baseFile.exists()) withContext(Dispatchers.IO) {
-            file.baseFile.copyTo(File(file.baseFile.parentFile, "${file.baseFile.name}.unreadable-${System.currentTimeMillis()}"))
+            admitted { file.baseFile.copyTo(File(file.baseFile.parentFile, "${file.baseFile.name}.unreadable-${System.currentTimeMillis()}")) }
         }
-        persist(cache); cacheUnreadable = false; _ui.value = _ui.value.copy(cache = cache, hasMoreHistory = result.revisions.size == 20)
+        persist(cache); admitted { cacheUnreadable = false; _ui.value = _ui.value.copy(cache = cache, hasMoreHistory = result.revisions.size == 20) }
     }
     fun refresh() = work { load() }
     fun loadMoreHistory() = work {
@@ -109,7 +123,7 @@ class VintageReportViewModel(
         val result: VintageReportRead = command(params("read", beforeRevision = before))
         val existing = _ui.value.history.map { it.id }.toSet()
         val cache = _ui.value.cache.copy(history = _ui.value.history + result.revisions.filter { it.id !in existing })
-        persist(cache); _ui.value = _ui.value.copy(cache = cache, hasMoreHistory = result.revisions.size == 20)
+        persist(cache); publish(_ui.value.copy(cache = cache, hasMoreHistory = result.revisions.size == 20))
     }
     fun selectRevision(id: String) = work {
         check(!cacheUnreadable)
@@ -117,57 +131,62 @@ class VintageReportViewModel(
         val saved: VintageReportRevision = command(params("revision", expected = id))
         check(saved.id == id)
         val cache = _ui.value.cache.copy(revisions = _ui.value.cache.revisions + saved)
-        persist(cache); _ui.value = _ui.value.copy(cache = cache)
+        persist(cache); publish(_ui.value.copy(cache = cache))
     }
     fun updateThrough(through: String) = work {
         check(!cacheUnreadable)
         val coverage: VintageReportCoverage = command(params("coverage", through = through))
-        selectedThrough = coverage.report_through
-        val cache = _ui.value.cache.copy(coverage = coverage); persist(cache); _ui.value = _ui.value.copy(cache = cache)
+        admitted { selectedThrough = coverage.report_through }
+        val cache = _ui.value.cache.copy(coverage = coverage); persist(cache); publish(_ui.value.copy(cache = cache))
     }
     private fun work(block: suspend () -> Unit) {
         if (_ui.value.busy || !scoped()) return
-        _ui.value = _ui.value.copy(busy = true, message = null)
-        viewModelScope.launch {
+        val operation = session.fieldOperation() ?: return
+        if (!scoped()) { operation.complete(); return }
+        try { publish(_ui.value.copy(busy = true, message = null)) }
+        catch (_: IllegalStateException) { operation.complete(); return }
+        val job = viewModelScope.launch {
             try { block() }
-            catch (_: Exception) { if (scoped()) _ui.value = _ui.value.copy(message = "Server request unavailable or uncertain. Keep downloaded reports and recover the same request; do not create a replacement.") }
-            finally { _ui.value = _ui.value.copy(busy = false) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { if (scoped()) publish(_ui.value.copy(message = "Server request unavailable or uncertain. Keep downloaded reports and recover the same request; do not create a replacement.")) }
+            finally { if (scoped()) publish(_ui.value.copy(busy = false)) }
         }
+        job.invokeOnCompletion { operation.complete() }
     }
     fun submit(action: String, through: String, narrative: String? = null, editingRevisionID: String? = null) = work {
         check(!cacheUnreadable && _ui.value.cache.pending == null)
         require(Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}").matches(through)) { "Use YYYY-MM-DD" }
         if (action == "edit" && (editingRevisionID == null || editingRevisionID != _ui.value.cache.currentID)) {
-            _ui.value = _ui.value.copy(message = "The current report changed since this draft was opened. Your wording is retained; review the newer revision before starting a new edit. Nothing was sent.")
+            publish(_ui.value.copy(message = "The current report changed since this draft was opened. Your wording is retained; review the newer revision before starting a new edit. Nothing was sent."))
             return@work
         }
-        selectedThrough = through
+        admitted { selectedThrough = through }
         val intent = VintageReportCommand(action, UUID.randomUUID().toString(), if (action == "edit") editingRevisionID else _ui.value.cache.currentID, through, narrative)
         val cache = _ui.value.cache.copy(pending = intent, request = null)
-        persist(cache); _ui.value = _ui.value.copy(cache = cache)
+        persist(cache); publish(_ui.value.copy(cache = cache))
         recoverRequest(intent)
     }
     fun recover() = work { _ui.value.cache.pending?.let { recoverRequest(it) } }
     private suspend fun recoverRequest(intent: VintageReportCommand) {
         var request: VintageReportRequest = command(params(intent.action, intent.operation, intent.expected, intent.through, intent.narrative))
-        var cache = _ui.value.cache.copy(request = request); persist(cache); _ui.value = _ui.value.copy(cache = cache)
+        var cache = _ui.value.cache.copy(request = request); persist(cache); publish(_ui.value.copy(cache = cache))
         if (intent.action != "edit" && request.status in listOf("queued", "running", "failed")) {
             request = codec.decodeFromString(transport("/functions/v1/vintage-report", buildJsonObject {
                 put("operation_id", intent.operation); put("action", if (request.status == "queued") "execute" else "status")
             }))
-            cache = _ui.value.cache.copy(request = request); persist(cache); _ui.value = _ui.value.copy(cache = cache)
+            cache = _ui.value.cache.copy(request = request); persist(cache); publish(_ui.value.copy(cache = cache))
         }
         load()
-        _ui.value = _ui.value.copy(message = when (request.status) {
+        publish(_ui.value.copy(message = when (request.status) {
             "unchanged" -> "No new information to add"
             "failed" -> "Request failed: ${request.error_code}. Previous report retained. No automatic paid retry."
             else -> "Request ${request.status}"
-        })
+        }))
     }
     fun acknowledge() = work {
         check(_ui.value.cache.request?.status in listOf("succeeded", "failed", "unchanged"))
         val cache = _ui.value.cache.copy(pending = null, request = null)
-        persist(cache); _ui.value = _ui.value.copy(cache = cache)
+        persist(cache); publish(_ui.value.copy(cache = cache))
     }
     fun abandon() = work {
         val intent = _ui.value.cache.pending ?: return@work
@@ -179,11 +198,11 @@ class VintageReportViewModel(
         val request = codec.decodeFromString<VintageReportRequest>(transport("/rest/v1/rpc/vintage_report_abandon", buildJsonObject {
             put("p_author_id", account); put("p_vineyard_id", vineyard); put("p_vintage", vintage); put("p_operation_id", intent.operation); put("p_input", input)
         }))
-        val cache = _ui.value.cache.copy(request = request); persist(cache); _ui.value = _ui.value.copy(cache = cache,
-            message = if (request.status == "running") "Already running. Recover its status; do not replace this paid call." else "Cancellation receipt saved. Acknowledge the result to start a corrected request.")
+        val cache = _ui.value.cache.copy(request = request); persist(cache); publish(_ui.value.copy(cache = cache,
+            message = if (request.status == "running") "Already running. Recover its status; do not replace this paid call." else "Cancellation receipt saved. Acknowledge the result to start a corrected request."))
     }
     fun activate(revision: VintageReportRevision) = work {
         val saved: VintageReportRevision = command(params("activate", revision.operation_id, _ui.value.cache.pending?.expected ?: _ui.value.cache.currentID))
-        val cache = _ui.value.cache.copy(currentID = saved.id); persist(cache); _ui.value = _ui.value.copy(cache = cache)
+        val cache = _ui.value.cache.copy(currentID = saved.id); persist(cache); publish(_ui.value.copy(cache = cache))
     }
 }

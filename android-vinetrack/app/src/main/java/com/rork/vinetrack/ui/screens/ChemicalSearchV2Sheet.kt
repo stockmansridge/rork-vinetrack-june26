@@ -202,6 +202,7 @@ private fun RetiredChemicalSearchV2Sheet(
     var requestId by remember { mutableStateOf<String?>(null) }
     var review by remember { mutableStateOf<ChemicalReviewV2Draft?>(null) }
     var photoBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var photoReceipt by remember { mutableStateOf<com.rork.vinetrack.data.auth.PhotoCaptureReceipt?>(null) }
     var externalBusy by remember { mutableStateOf(false) }
     var photoBusy by remember { mutableStateOf(false) }
     var proposedIdentity by remember { mutableStateOf<String?>(null) }
@@ -398,7 +399,7 @@ private fun RetiredChemicalSearchV2Sheet(
         }
     }
 
-    fun acceptPhoto(uri: Uri) {
+    fun acceptPhoto(uri: Uri, receipt: com.rork.vinetrack.data.auth.PhotoCaptureReceipt) {
         photoJob?.cancel()
         photoBusy = true
         photoBytes = null
@@ -408,9 +409,11 @@ private fun RetiredChemicalSearchV2Sheet(
         message = null
         photoJob = scope.launch {
             try {
-                photoBytes = PinPhotoImageUtil.compress(context, uri)
+                val bytes = PinPhotoImageUtil.compress(context, uri)
+                if (!receipt.admitted { photoBytes = bytes }) return@launch
                 val evidence = ChemicalLabelIdentityOCR.recognise(context, uri)
                 val name = runCatching { externalService.identifyLabel(evidence.text, country) }.getOrNull()
+                receipt.admitted {
                 photoRegistration = evidence.apvmaNumber
                 photoProductName = name
                 val identity = ChemicalLabelIdentityOCR.proposedQuery(evidence.apvmaNumber, name)
@@ -421,15 +424,16 @@ private fun RetiredChemicalSearchV2Sheet(
                     query = identity
                     message = "Confirm or edit the search text before searching VineTrack Master."
                 }
+                }
             } catch (_: CancellationException) {
             } catch (error: Exception) {
-                message = "Could not identify the label. Enter a product name or APVMA number to search."
-            } finally { photoBusy = false }
+                receipt.admitted { message = "Could not identify the label. The photograph is retained; enter a product name or APVMA number to search." }
+            } finally { receipt.admitted { photoBusy = false } }
         }
     }
 
     val capture = rememberPhotoCaptureCoordinator(
-        onPhoto = { uri -> if (uri != null) acceptPhoto(uri) },
+        onPhoto = { uri, receipt -> if (uri != null && receipt != null) { photoReceipt = receipt; acceptPhoto(uri, receipt) } },
         onError = { message = it },
     )
 
@@ -545,6 +549,7 @@ private fun RetiredChemicalSearchV2Sheet(
                     state = state,
                     vm = vm,
                     photoBytes = photoBytes,
+                    photoReceipt = photoReceipt,
                     onDraft = { review = it },
                     onBack = { review = null },
                     onDone = onDismiss,
@@ -562,6 +567,7 @@ private fun ChemicalReviewV2(
     state: AppUiState,
     vm: AppViewModel,
     photoBytes: ByteArray?,
+    photoReceipt: com.rork.vinetrack.data.auth.PhotoCaptureReceipt?,
     onDraft: (ChemicalReviewV2Draft) -> Unit,
     onBack: () -> Unit,
     onDone: () -> Unit,
@@ -911,7 +917,7 @@ private fun ChemicalReviewV2(
                     defaultRates = ChemicalSearchV2OperationalDefaults.storedDefaults(effectiveRates, java.time.Instant.now().toString(), draft.selectedOption),
                     entrySource = SavedChemicalEntrySource.reviewed(draft.isManual, draft.master != null || draft.masterMatch != null, canonicalIntelligence),
                 )
-                vm.createSavedChemicalV2(input, photoBytes) { created ->
+                vm.createSavedChemicalV2(input, photoBytes, onLabelPhotoPersisted = { durable -> if (durable) photoReceipt?.persisted() }) { created ->
                     saving = false
                     if (created == null) {
                         notice = "Couldn't save this chemical. Check your connection and try again."

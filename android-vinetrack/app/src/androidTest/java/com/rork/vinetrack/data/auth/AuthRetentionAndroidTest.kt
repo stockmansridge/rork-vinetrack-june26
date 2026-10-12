@@ -553,6 +553,257 @@ class AuthRetentionAndroidTest {
         names.forEach { assertEquals(before[it], context.getSharedPreferences(it, 0).all) }
     }
 
+    @Test fun photoAcquisitionSurvivesActivityRecreationUntilDurableAcknowledgement() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val receipt = requireNotNull(PhotoCaptureReceipt.begin(context, "camera"))
+        File(receipt.path).writeBytes(byteArrayOf(1, 2, 3))
+        assertTrue(session.retentionGuard.hasOutstandingOperations())
+        assertFalse(session.retentionGuard.transitionIfIdle { true })
+        val recreated = requireNotNull(PhotoCaptureReceipt.restore(context, receipt.id))
+        assertEquals(receipt.path, recreated.path)
+        assertFalse(recreated.cancelIfEmpty())
+        assertTrue(recreated.persisted())
+        assertFalse(session.retentionGuard.hasOutstandingOperations())
+        val raw = context.getSharedPreferences(PhotoCaptureReceipt.PREFERENCES, 0).getString(receipt.id, null)!!
+        assertTrue(raw.contains("\"completed\":true"))
+        assertArrayEquals(byteArrayOf(1, 2, 3), File(receipt.path).readBytes())
+    }
+
+    @Test fun revokedPhotoReturnAndLostLiveTicketPreserveUncertainEvidenceWithoutRebinding() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val receipt = requireNotNull(PhotoCaptureReceipt.begin(context, "gallery"))
+        assertTrue(receipt.recordExternalSource("content://synthetic/retained"))
+        val prefs = context.getSharedPreferences(PhotoCaptureReceipt.PREFERENCES, 0)
+        val before = prefs.all.toMap()
+        File(receipt.path).writeBytes(byteArrayOf(4, 5, 6))
+        requireNotNull(session.retentionGuard.operation(receipt.id)).complete()
+        assertNull(PhotoCaptureReceipt.restore(context, receipt.id))
+        session.clear()
+        assertFalse(receipt.admitted { fail("Old return must not be delivered") })
+        assertFalse(receipt.persisted())
+        assertNull(PhotoCaptureReceipt.restore(context, receipt.id))
+        assertEquals(before, prefs.all)
+        assertArrayEquals(byteArrayOf(4, 5, 6), File(receipt.path).readBytes())
+    }
+
+    @Test fun failedPhotoReceiptPersistenceKeepsAcquisitionOutstandingAndSourceBytes() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val receipt = requireNotNull(PhotoCaptureReceipt.begin(context, "camera"))
+        File(receipt.path).writeBytes(byteArrayOf(7, 8, 9))
+        val original = context.getSharedPreferences(PhotoCaptureReceipt.PREFERENCES, 0)
+        val before = original.all.toMap()
+        val failing = object : ContextWrapper(context) {
+            override fun getApplicationContext(): Context = this
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                val prefs = context.getSharedPreferences(name, mode)
+                if (name != PhotoCaptureReceipt.PREFERENCES) return prefs
+                return object : SharedPreferences by prefs {
+                    override fun edit(): SharedPreferences.Editor {
+                        val editor = prefs.edit()
+                        return object : SharedPreferences.Editor by editor { override fun commit(): Boolean = false }
+                    }
+                }
+            }
+        }
+        assertFalse(requireNotNull(PhotoCaptureReceipt.restore(failing, receipt.id)).persisted())
+        assertEquals(before, original.all)
+        assertTrue(session.retentionGuard.hasOutstandingOperations())
+        assertArrayEquals(byteArrayOf(7, 8, 9), File(receipt.path).readBytes())
+        assertTrue(receipt.persisted())
+    }
+
+    @Test fun delayedCanopyDownloadCannotPromoteManifestOrFilesAfterRevocation() = runBlocking {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val root = File(root, "canopy")
+        val slot = "canopy.vsp.small"
+        var version = "v1"
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val repository = com.rork.vinetrack.data.spray.CanopyReferenceImageRepository(
+            root = root,
+            configSource = com.rork.vinetrack.data.spray.CanopyReferenceConfigSource {
+                com.rork.vinetrack.data.spray.CanopyReferenceConfiguration("guide-images", images = mapOf(slot to
+                    com.rork.vinetrack.data.spray.CanopyReferenceRemoteImage("guide-$version", version)))
+            },
+            downloader = com.rork.vinetrack.data.spray.CanopyReferenceImageDownloader { _, _ ->
+                if (version == "v2") { entered.complete(Unit); release.await() }
+                "IMG-$version".toByteArray()
+            },
+            validator = { it.decodeToString().startsWith("IMG-") },
+            refreshAdmission = {
+                session.fieldOperation()?.let { operation ->
+                    com.rork.vinetrack.data.spray.CanopyReferenceImageRepository.RefreshAdmission(
+                        { action -> session.withFieldOperation(operation, action) }, { operation.complete() })
+                }
+            },
+        )
+        repository.refresh()
+        val image = requireNotNull(repository.localFile(slot))
+        val original = image.readBytes()
+        val manifest = File(root, "manifest.json").readBytes()
+        version = "v2"
+        val refresh = async { repository.refresh() }
+        withTimeout(5_000) { entered.await() }
+        assertFalse(session.retentionGuard.transitionIfIdle { true })
+        session.clear()
+        release.complete(Unit)
+        withTimeout(5_000) { refresh.await() }
+        assertArrayEquals(original, image.readBytes())
+        assertArrayEquals(manifest, File(root, "manifest.json").readBytes())
+        assertEquals(image, repository.localFile(slot))
+        assertFalse(session.retentionGuard.hasOutstandingOperations())
+    }
+
+    @Test fun vintageDelayedReadRetainsOriginalPendingOperationAndRejectsPostRevocationPublication() = runBlocking {
+        val session = SessionStore(context)
+        val account = "11111111-1111-4111-8111-111111111111"
+        session.save("access", "refresh", account, null)
+        val file = File(root, "vintage-reports/$account/vineyard/2026.json")
+        check(file.parentFile!!.mkdirs())
+        val cache = com.rork.vinetrack.data.insights.VintageReportCache(pending =
+            com.rork.vinetrack.data.insights.VintageReportCommand("generate", "original-operation", null, "2026-10-12", null))
+        val codec = kotlinx.serialization.json.Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
+        val raw = codec.encodeToString(com.rork.vinetrack.data.insights.VintageReportCache.serializer(), cache)
+        file.writeText(raw)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val client = HttpClient(MockEngine {
+            entered.complete(Unit)
+            release.await()
+            respond("{\"report\":null,\"revisions\":[],\"requests\":[]}", HttpStatusCode.OK)
+        })
+        lateinit var viewModel: com.rork.vinetrack.data.insights.VintageReportViewModel
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            viewModel = com.rork.vinetrack.data.insights.VintageReportViewModel(context, account, "vineyard", 2026, http = client, canAccess = { true })
+        }
+        assertNull("Production-format report cache must be readable before the delayed request", viewModel.ui.value.message)
+        withTimeout(5_000) { entered.await() }
+        val displayed = viewModel.ui.value
+        assertFalse(session.retentionGuard.transitionIfIdle { true })
+        session.clear()
+        release.complete(Unit)
+        withTimeout(5_000) {
+            while (session.retentionGuard.hasOutstandingOperations()) kotlinx.coroutines.delay(10)
+        }
+        assertEquals(raw, file.readText())
+        assertEquals("original-operation", viewModel.ui.value.cache.pending?.operation)
+        assertEquals(displayed, viewModel.ui.value)
+        client.close()
+    }
+
+    @Test fun concurrentTripTankPinPhotoAndDraftCommitRefusalsAreExplicitAndSameIntentCanBeRetried() = runBlocking {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val access = requireNotNull(session.accountAccess())
+        val trips = com.rork.vinetrack.data.ActiveTripStore(context)
+        val tanks = com.rork.vinetrack.data.SprayTankActualStore(context)
+        val pins = PendingWriteStore(context)
+        val pin = com.rork.vinetrack.data.model.PendingWrite("pin-operation", "pin", "create",
+            "{\"id\":\"pin\",\"vineyard_id\":\"vineyard\",\"created_by\":\"account-A\"}", "pin", 1L, 1L)
+        val photos = PendingPhotoRepository(context)
+        val drafts = com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context)
+        val trip = com.rork.vinetrack.data.model.Trip("trip", "vineyard", isActive = true)
+        val actual = com.rork.vinetrack.data.model.SprayTankActual(
+            "actual", "vineyard", "spray", "trip", "tank", 1, waterVolumeL = 123.45,
+            chemicals = emptyList(), confirmedAt = "2026-10-12T00:00:00Z", confirmedBy = "account-A")
+        val draft = com.rork.vinetrack.data.model.WorkTaskPlanningDraft(null, "vineyard", "account-A",
+            date = "2026-10-12T00:00:00Z", taskType = "pruning", notes = "recoverable-original-intent")
+        val jpeg = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888).let { image ->
+            try { ByteArrayOutputStream().use { out -> check(image.compress(Bitmap.CompressFormat.JPEG, 90, out)); out.toByteArray() } }
+            finally { image.recycle() }
+        }
+        val before = listOf("vinetrack_active_trip", "vinetrack_spray_tank_actuals", "vinetrack_pending_writes",
+            "vinetrack_pending_photos", "vinetrack_local_planning").associateWith { context.getSharedPreferences(it, 0).all.toMap() }
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val holder = async(kotlinx.coroutines.Dispatchers.Default) {
+            session.withAccountAccess(access) {
+                entered.complete(Unit)
+                runBlocking { withTimeout(5_000) { release.await() } }
+            }
+        }
+        withTimeout(5_000) { entered.await() }
+        try {
+            withTimeout(5_000) {
+                val attempts = listOf(
+                    async(kotlinx.coroutines.Dispatchers.Default) { assertTrue(runCatching { trips.saveDurably("account-A", "vineyard", trip) }.isFailure) },
+                    async(kotlinx.coroutines.Dispatchers.Default) { assertFalse(tanks.save(actual)) },
+                    async(kotlinx.coroutines.Dispatchers.Default) { assertFalse(pins.save(listOf(pin))) },
+                    async(kotlinx.coroutines.Dispatchers.Default) { assertTrue(runCatching { photos.enqueue("pin", "vineyard", jpeg) }.isFailure) },
+                    async(kotlinx.coroutines.Dispatchers.Default) { assertTrue(runCatching { drafts.save(draft) }.isFailure) },
+                )
+                attempts.forEach { it.await() }
+            }
+            before.forEach { (name, original) -> assertEquals(original, context.getSharedPreferences(name, 0).all) }
+        } finally { release.complete(Unit) }
+        withTimeout(5_000) { holder.await() }
+        assertTrue(trips.saveDurably("account-A", "vineyard", trip))
+        assertTrue(tanks.save(actual))
+        assertTrue(pins.save(listOf(pin)))
+        assertEquals(listOf(pin), pins.load())
+        val photo = photos.enqueue("pin", "vineyard", jpeg)
+        drafts.save(draft)
+        assertEquals(trip, trips.load()?.trip)
+        assertEquals(listOf(actual), tanks.pending())
+        assertArrayEquals(jpeg, File(photo.localPath).readBytes())
+        assertEquals(draft, drafts.load("account-A", "vineyard", null))
+    }
+
+    /** Characterises the still-unfinished product journey; this is not clean-exit acceptance. */
+    @Test fun authenticatedEmptyDeviceJourneyStopsAtProductionSignOutGate() = runBlocking {
+        val session = SessionStore(context)
+        val account = "11111111-1111-4111-8111-111111111111"
+        val client = HttpClient(MockEngine { request ->
+            check(request.url.encodedPath.endsWith("/auth/v1/token"))
+            respond("{\"access_token\":\"access\",\"refresh_token\":\"refresh\",\"user\":{\"id\":\"$account\"}}",
+                HttpStatusCode.OK, headersOf("Content-Type", "application/json"))
+        }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
+        try {
+            assertEquals(account, AuthRepository(session, client).signIn("synthetic@example.invalid", "synthetic-password").id)
+            assertTrue(session.hasSession)
+            assertFalse(com.rork.vinetrack.data.ActiveTripStore(context).hasActiveClaim())
+            assertTrue(PendingWriteStore(context).loadForRecovery().items.isEmpty())
+            assertTrue(PendingPhotoStore(context).load().isEmpty())
+            assertFalse(session.retentionGuard.hasOutstandingOperations())
+            assertFalse("The actual AppViewModel sign-out admission still blocks this clean fixture", session.retentionGuard.canSignOut())
+            assertTrue(SessionStore(context).hasSession)
+        } finally { client.close() }
+    }
+
+    /** Real recovery transport currently authenticates then discards the session; no business unlock claimed. */
+    @Test fun verifiedOriginalAccountRecoveryStillDiscardsSessionAndCannotReachBusinessAdmission() = runBlocking {
+        val session = SessionStore(context)
+        val account = "11111111-1111-4111-8111-111111111111"
+        session.save("original-access", "original-refresh", account, null)
+        val snapshot = com.rork.vinetrack.data.ActiveTripStore(context)
+        assertTrue(snapshot.saveDurably(account, "vineyard", com.rork.vinetrack.data.model.Trip(id = "trip", vineyardId = "vineyard", isActive = true)))
+        val evidence = context.getSharedPreferences("vinetrack_active_trip", 0).all.toMap()
+        session.clear()
+        val requests = mutableListOf<String>()
+        val client = HttpClient(MockEngine { request ->
+            requests.add(request.url.encodedPath)
+            val body = when {
+                request.url.encodedPath.endsWith("/token") -> "{\"access_token\":\"returning-access\",\"refresh_token\":\"returning-refresh\"}"
+                request.url.encodedPath.endsWith("/user") -> "{\"id\":\"$account\"}"
+                request.url.encodedPath.endsWith("/logout") -> "{}"
+                else -> error("Unexpected recovery request")
+            }
+            respond(body, HttpStatusCode.OK, headersOf("Content-Type", "application/json"))
+        }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
+        AuthRecoveryRepository { client }.verify("synthetic@example.invalid", "synthetic-password")
+        assertTrue(requests.any { it.endsWith("/user") })
+        assertTrue(requests.any { it.endsWith("/logout") })
+        assertEquals(account, session.recoveryPrincipal)
+        assertFalse("Verification did not create a usable returning session", session.hasSession)
+        assertTrue(session.retentionGuard.isLocked)
+        assertNull(session.accountAccess())
+        assertEquals(evidence, context.getSharedPreferences("vinetrack_active_trip", 0).all)
+    }
+
     private fun mockAuthClient(
         response: suspend (String, String) -> Pair<Int, String>,
     ): HttpClient = HttpClient(MockEngine { request ->

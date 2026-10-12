@@ -217,7 +217,7 @@ fun UnifiedPinComposerScreen(
     }
 
     val photoCapture = rememberPhotoCaptureCoordinator(
-        onPhoto = { uri: Uri? ->
+        onPhoto = { uri: Uri?, receipt ->
             val pinId = photoPinId
             val vineyardId = photoVineyardId
             if (uri == null) {
@@ -231,8 +231,11 @@ fun UnifiedPinComposerScreen(
                     if (growthId == null) PinPresentationTarget.Kind.PIN else PinPresentationTarget.Kind.LINKED_GROWTH,
                 )
                 vm.attachPresentationPhoto(target, uri) { ok ->
-                    scope.launch { snackbarHostState.showSnackbar(if (ok) "Photo saved" else "Couldn't save the photo") }
-                    if (ok) finish()
+                    receipt?.admitted {
+                        val durable = ok && receipt.persisted()
+                        scope.launch { snackbarHostState.showSnackbar(if (durable) "Photo saved" else "Photo retained — couldn't finish its save") }
+                        if (durable) finish()
+                    }
                 }
             } else {
                 scope.launch { snackbarHostState.showSnackbar("Couldn't resolve the saved pin for this photo.") }

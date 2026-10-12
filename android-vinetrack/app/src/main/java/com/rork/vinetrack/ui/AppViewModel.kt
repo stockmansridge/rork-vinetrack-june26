@@ -1728,6 +1728,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        val operation = session.fieldOperation() ?: run { onResult(false); return }
         // The fix request runs through the EXISTING validator first; only a
         // Success verdict can become coordinates.
         fetchCurrentFix { result ->
@@ -1739,30 +1740,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     measuredAtIso = java.time.Instant.ofEpochMilli(it.fix.fixTimeEpochMs).toString(),
                 )
             }
-            viewModelScope.launch {
-                val jpeg = runCatching { PinPhotoImageUtil.compress(getApplication(), uri) }
-                    .getOrNull()
-                if (jpeg == null) {
-                    _ui.update {
-                        it.copy(growthError = "Couldn't read that photograph. Try again.")
+            val job = viewModelScope.launch {
+                try {
+                    val jpeg = PinPhotoImageUtil.compress(getApplication(), uri)
+                    var saved = false
+                    check(session.withFieldOperation(operation) {
+                        saved = vineyardInsights.capturePhoto(
+                            visitId = visitId, assessmentId = assessmentId, item = item,
+                            jpeg = jpeg, fix = fix, capturedByUserId = operation.account.userId,
+                        ) != null
+                        onResult(saved)
+                    })
+                    if (saved && session.isAccountAccessCurrent(operation.account)) {
+                        vineyardInsights.retryPhotoUploads(vineyardId)
                     }
-                    onResult(false)
-                    return@launch
-                }
-                val saved = vineyardInsights.capturePhoto(
-                    visitId = visitId,
-                    assessmentId = assessmentId,
-                    item = item,
-                    jpeg = jpeg,
-                    fix = fix,
-                    capturedByUserId = session.userId,
-                )
-                onResult(saved != null)
-                // Bytes are already durable; this is the opportunistic upload.
-                if (saved != null) {
-                    runCatching { vineyardInsights.retryPhotoUploads(vineyardId) }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    session.withFieldOperation(operation) {
+                        _ui.update { it.copy(growthError = "Couldn't durably save that photograph. Its acquisition remains retained; retry before leaving.") }
+                        onResult(false)
+                    }
                 }
             }
+            job.invokeOnCompletion { operation.complete() }
         }
     }
 
@@ -7227,6 +7227,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // launcher's success card and auto-photo prompt have the concrete row to
         // work with. Independent of [onResult], which still reports save success.
         onCreatedPin: (Pin) -> Unit = {},
+        onPhotoPersisted: (Boolean) -> Unit = {},
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = captureContext?.vineyardId
@@ -7304,7 +7305,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         // Known-offline: queue immediately without attempting the network.
         if (!_ui.value.isOnline) {
-            val queued = enqueuePinCreate(input, photoUri = photoUri, segments = canonicalSegments)
+            val queued = enqueuePinCreate(input, photoUri = photoUri, segments = canonicalSegments, onPhotoPersisted = onPhotoPersisted)
             canonicalSegments?.let { customPinSync.enqueueSegments(queued.id, it) }
             onCreatedPin(queued)
             onResult(true)
@@ -7336,19 +7337,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         if (jpeg == null) error("Couldn't read the selected image.")
                         val path = pinPhotoRepo.upload(vineyardId, created.id, jpeg)
                         created = pinRepo.updatePhotoPath(created.id, path)
+                        onPhotoPersisted(true)
                     } catch (e: Exception) {
                         // Pin row exists but the photo upload failed — retain the
                         // compressed photo locally so it isn't lost (Stage 7B).
                         // Upload retry itself lands in a later slice.
                         if (jpeg != null) {
                             pendingPhotos.enqueue(created.id, vineyardId, jpeg)
+                            onPhotoPersisted(true)
                             _ui.update { it.copy(pinError = "Pin saved — photo saved and will retry when connection is available.") }
                             // The pin row exists, so attempt an immediate retry of
                             // the retained photo (Stage 7C). Best-effort — if it
                             // fails again it stays queued for the next trigger.
                             replayPendingPinPhotos()
                         } else {
-                            _ui.update { it.copy(pinError = "Pin saved, but the photo couldn't be read. Open the pin to add it again.") }
+                            onPhotoPersisted(false)
+                            _ui.update { it.copy(pinError = "Pin saved, but its photograph remains unfinished. Keep this installation and retry the photo save.") }
                         }
                     }
                 }
@@ -7365,7 +7369,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 // Clear network/transient failure — queue for automatic replay
                 // rather than dropping the pin.
-                val queued = enqueuePinCreate(input, photoUri = photoUri, segments = canonicalSegments)
+                val queued = enqueuePinCreate(input, photoUri = photoUri, segments = canonicalSegments, onPhotoPersisted = onPhotoPersisted)
                 canonicalSegments?.let { customPinSync.enqueueSegments(queued.id, it) }
                 onCreatedPin(queued)
                 onResult(true)
@@ -7530,6 +7534,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Structured ROW selection so the optimistic pin resolves the same
         // canonical placement (sql/171) as the record it replays into.
         segments: List<com.rork.vinetrack.data.model.ManualIssueSegment>? = null,
+        onPhotoPersisted: (Boolean) -> Unit = {},
     ): Pin {
         pinCreateSync.enqueue(input)
         val clientPinId = input.id ?: UUID.randomUUID().toString()
@@ -7568,7 +7573,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             st.copy(
                 pins = listOf(optimistic) + st.pins,
                 pinError = if (hasPhoto) {
-                    "Pin saved offline — photo saved and will upload when sync is available."
+                    "Pin saved offline — saving its photograph on this device…"
                 } else {
                     st.pinError
                 },
@@ -7576,25 +7581,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         // Retain the photo locally (compress + copy to app-private storage)
         // keyed by the same client pin id. No upload in this slice.
-        if (photoUri != null) persistPendingPhoto(clientPinId, input.vineyardId, photoUri)
+        if (photoUri != null) persistPendingPhoto(clientPinId, input.vineyardId, photoUri, onPhotoPersisted)
         return optimistic
     }
 
     /**
      * Compress [uri] and copy it into app-private storage as a pending photo
-     * attachment for [clientPinId] (Stage 7B). Best-effort: a compression
-     * failure is swallowed since there's nothing to upload anyway, and the pin
-     * itself is already queued. No upload/retry happens here.
+     * attachment for [clientPinId]. A failed save leaves the acquisition unfinished
+     * and reports that result; successful Pin persistence does not imply photo persistence.
+     * No upload/retry happens here.
      */
-    private fun persistPendingPhoto(clientPinId: String, vineyardId: String, uri: Uri) {
-        viewModelScope.launch {
+    private fun persistPendingPhoto(clientPinId: String, vineyardId: String, uri: Uri, onPersisted: (Boolean) -> Unit = {}) {
+        val operation = session.fieldOperation() ?: run { onPersisted(false); return }
+        val job = viewModelScope.launch {
             try {
                 val jpeg = PinPhotoImageUtil.compress(getApplication(), uri)
-                pendingPhotos.enqueue(clientPinId, vineyardId, jpeg)
-            } catch (e: Exception) {
-                // Couldn't read/compress the image — nothing retained, pin still queued.
+                check(session.withFieldOperation(operation) {
+                    pendingPhotos.enqueue(clientPinId, vineyardId, jpeg)
+                    _ui.update { it.copy(pinError = "Pin and photograph saved offline — they will upload when sync is available.") }
+                    onPersisted(true)
+                })
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                session.withFieldOperation(operation) {
+                    _ui.update { it.copy(pinError = "Pin saved, but its photograph couldn't be durably saved. The acquisition remains retained; retry before leaving.") }
+                    onPersisted(false)
+                }
             }
         }
+        job.invokeOnCompletion { operation.complete() }
     }
 
     /** Update an existing pin, optimistically reflecting edits then reconciling. */
@@ -7974,32 +7989,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * the actual pin, standalone growth row, or linked pair.
      */
     fun attachPresentationPhoto(target: PinPresentationTarget, uri: Uri, onResult: (Boolean) -> Unit) {
-        _ui.update { it.copy(pinPhotoBusy = true, pinError = null) }
-        viewModelScope.launch {
-            val jpeg = runCatching { PinPhotoImageUtil.compress(getApplication(), uri) }.getOrNull()
-            if (jpeg == null || jpeg.isEmpty()) {
-                _ui.update { it.copy(pinPhotoBusy = false, pinError = "Couldn't read the captured photo.") }
-                onResult(false)
-                return@launch
+        val operation = session.fieldOperation() ?: run { onResult(false); return }
+        session.withFieldOperation(operation) { _ui.update { it.copy(pinPhotoBusy = true, pinError = null) } }
+        val job = viewModelScope.launch {
+            try {
+                val jpeg = PinPhotoImageUtil.compress(getApplication(), uri)
+                check(jpeg.isNotEmpty())
+                check(session.withFieldOperation(operation) {
+                    val existingPaths = target.growthRecordId
+                        ?.let { id -> _ui.value.growthRecords.firstOrNull { it.id == id }?.photoPaths }.orEmpty()
+                    pendingPhotos.enqueue(target, jpeg, existingPaths)
+                    _ui.update {
+                        it.copy(pinPhotoBusy = false,
+                            pinError = if (it.isOnline) "Photo saved — finishing sync." else "Photo saved offline — it will upload when sync is available.")
+                    }
+                    onResult(true)
+                })
+                if (session.isAccountAccessCurrent(operation.account)) syncPendingPinPhotos()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                session.withFieldOperation(operation) {
+                    _ui.update { it.copy(pinPhotoBusy = false, pinError = "Couldn't durably save the photograph. Its acquisition remains retained; retry before leaving.") }
+                    onResult(false)
+                }
             }
-            val existingPaths = target.growthRecordId
-                ?.let { id -> _ui.value.growthRecords.firstOrNull { it.id == id }?.photoPaths }
-                .orEmpty()
-            val retained = runCatching { pendingPhotos.enqueue(target, jpeg, existingPaths) }.isSuccess
-            if (!retained) {
-                _ui.update { it.copy(pinPhotoBusy = false, pinError = "Couldn't save the photo on this device.") }
-                onResult(false)
-                return@launch
-            }
-            _ui.update {
-                it.copy(
-                    pinPhotoBusy = false,
-                    pinError = if (it.isOnline) "Photo saved — finishing sync." else "Photo saved offline — it will upload when sync is available.",
-                )
-            }
-            onResult(true)
-            syncPendingPinPhotos()
         }
+        job.invokeOnCompletion { operation.complete() }
     }
 
     fun photoDisplaySource(entityId: String, remotePath: String?, remoteIdentity: String?): PhotoDisplaySource =
@@ -9553,9 +9568,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         pointsSinceLocalSave++
         val now = System.currentTimeMillis()
         if (pointsSinceLocalSave < 4 && now - lastLocalSaveMs < 8_000L) return
-        pointsSinceLocalSave = 0
-        lastLocalSaveMs = now
-        persistActiveTripSnapshot()
+        if (persistActiveTripSnapshot()) {
+            pointsSinceLocalSave = 0
+            lastLocalSaveMs = now
+        }
     }
 
     /**
@@ -9564,26 +9580,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * the active trip scoped to the current user + selected vineyard; clears the
      * store when there is no active trip (e.g. after the trip is ended/deleted).
      */
-    private fun persistActiveTripSnapshot() {
+    private fun persistActiveTripSnapshot(): Boolean {
         val state = _ui.value
         // A trip the operator ended locally (Stage B-2-1) is excluded from
         // [AppUiState.activeTrip], but its snapshot must be preserved until the
         // queued TRIP_END marker syncs so the end replay and its GPS/row/tank
         // dependency replays still have the local source. Fall back to it here.
-        val snapshot = runCatching { activeTripStore.load() }.getOrNull() ?: return
+        val snapshot = runCatching { activeTripStore.load() }.getOrNull() ?: return false
         val vineyardId = state.selectedVineyardId
         val userId = session.userId
         // A vineyard switch or server refresh must never replace the owned snapshot
         // with another active trip, nor clear an offline end awaiting replay.
-        if (snapshot.ownerUserId != userId) return
-        if (snapshot.vineyardId != vineyardId) {
-            val live = tracker ?: return
-            runCatching { activeTripStore.save(userId, snapshot.vineyardId,
-                snapshot.trip.copy(pathPoints = live.points.toList(), totalDistance = live.distanceMetres)) }
-            return
+        if (snapshot.ownerUserId != userId) return false
+        val trip = if (snapshot.vineyardId != vineyardId) {
+            val live = tracker ?: return false
+            snapshot.trip.copy(pathPoints = live.points.toList(), totalDistance = live.distanceMetres)
+        } else state.trips.firstOrNull { it.id == snapshot.trip.id && it.isActive } ?: return false
+        val access = trackingOperation?.account ?: session.accountAccess() ?: return false
+        var durable = false
+        val admitted = runCatching {
+            session.withAccountAccess(access) {
+                durable = activeTripStore.saveDurably(access.userId, snapshot.vineyardId, trip)
+                if (!durable) _ui.update { it.copy(tripError = "Recent Trip progress couldn't be saved on this device. Keep the Trip open and retry; do not sign out or restart.") }
+            }
+        }.getOrDefault(false)
+        if (!durable && admitted.not()) {
+            session.withAccountAccess(access) {
+                _ui.update { it.copy(tripError = "Recent Trip progress couldn't be saved on this device. Keep the Trip open and retry; do not sign out or restart.") }
+            }
         }
-        val trip = state.trips.firstOrNull { it.id == snapshot.trip.id && it.isActive } ?: return
-        runCatching { activeTripStore.save(userId, vineyardId, trip) }
+        return admitted && durable
     }
 
     /**
@@ -12490,7 +12516,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { state -> CatalogueSavedHandoff.applying(state, saved) }
     }
 
-    fun createSavedChemicalV2(input: SavedChemicalRepository.ChemicalInput, labelJpeg: ByteArray? = null, onResult: (SavedChemical?) -> Unit) {
+    fun createSavedChemicalV2(input: SavedChemicalRepository.ChemicalInput, labelJpeg: ByteArray? = null, onLabelPhotoPersisted: (Boolean) -> Unit = {}, onResult: (SavedChemical?) -> Unit) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(null); return }
         viewModelScope.launch {
             _ui.update { it.copy(sprayError = null) }
@@ -12498,8 +12524,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val created = savedChemicalCreateSync.save(vineyardId, input)
                 labelJpeg?.let { jpeg ->
                     runCatching { chemicalLabelPhotos.enqueue(requireNotNull(session.userId), vineyardId, created.id, jpeg) }
-                        .onFailure { _ui.update { state -> state.copy(sprayError =
-                            "Chemical saved, but its label photo couldn't be kept. Please reattach the photo.") } }
+                        .onSuccess { onLabelPhotoPersisted(true) }
+                        .onFailure {
+                            onLabelPhotoPersisted(false)
+                            _ui.update { state -> state.copy(sprayError =
+                                "Chemical saved, but its label photograph remains unfinished. Keep this installation and retry its save.") }
+                        }
                 }
                 _ui.update { st ->
                     st.copy(savedChemicals = (st.savedChemicals.filterNot { it.id == created.id } + created)

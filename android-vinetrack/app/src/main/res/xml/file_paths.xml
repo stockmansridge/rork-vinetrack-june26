@@ -5,4 +5,5 @@
     <files-path name="vintage_report_exports" path="vintage-report-exports/" />
     <!-- Narrowly scoped output for ActivityResultContracts.TakePicture. -->
     <cache-path name="camera_captures" path="camera-captures/" />
+    <files-path name="photo_acquisitions" path="photo-acquisitions/" />
 </paths>

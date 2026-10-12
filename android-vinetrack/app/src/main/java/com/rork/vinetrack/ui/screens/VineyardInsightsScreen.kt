@@ -363,7 +363,7 @@ private fun ScoutWorkspace(
     var paddockToScrollTo by remember { mutableStateOf<String?>(null) }
     val scoutListState = rememberLazyListState()
     val camera = rememberPhotoCaptureCoordinator(
-        onPhoto = { uri ->
+        onPhoto = { uri, receipt ->
             val visitId = cameraVisitId
             val assessmentId = cameraAssessmentId
             val item = cameraItemCode?.let(ScoutItem::byCode)
@@ -372,7 +372,9 @@ private fun ScoutWorkspace(
             cameraItemCode = null
             if (uri != null && visitId != null && assessmentId != null && item != null) {
                 vm.captureScoutPhoto(visitId, assessmentId, item, uri) { saved ->
-                    if (!saved) cameraError = "The photograph could not be read or saved. Try again."
+                    receipt?.admitted {
+                        if (!saved || receipt.persisted().not()) cameraError = "The photograph is retained but its durable save is unfinished. Try again."
+                    }
                 }
             }
         },

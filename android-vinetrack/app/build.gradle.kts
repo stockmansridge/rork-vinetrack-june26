@@ -438,7 +438,7 @@ if (providers.gradleProperty("androidRecoveryPerformanceFocusedTests").orNull ==
                     "**/AccountScopedTankSafetyTest.kt", "**/WorkTaskReadBatchTest.kt", "**/AuthRecoverySurfaceTest.kt",
                     "**/ReplayVersionIntegrityTest.kt", "**/TripTankAuthorityQueueTest.kt",
                     "**/AtomicPendingReplacementTest.kt", "**/ReadTrafficLedgerTest.kt", "**/PinCreateConflictTest.kt",
-                    "**/TripStartReliabilityTest.kt", "**/ActiveTripStoreTest.kt")
+                    "**/TripStartReliabilityTest.kt", "**/ActiveTripStoreTest.kt", "**/CanopyReferenceImageRepositoryTest.kt")
             })
         }
     }

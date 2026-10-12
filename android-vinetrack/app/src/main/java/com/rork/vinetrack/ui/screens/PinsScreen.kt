@@ -525,7 +525,7 @@ fun PinsScreen(
     // Camera capture is distinct from gallery selection and routes using the
     // backing pin/growth identity rather than the synthesized display id.
     val photoCapture = rememberPhotoCaptureCoordinator(
-        onPhoto = { uri: Uri? ->
+        onPhoto = { uri: Uri?, receipt ->
             val displayId = photoTargetId
             photoTargetId = null
             if (uri != null && displayId != null) {
@@ -535,8 +535,11 @@ fun PinsScreen(
                 } else {
                     uploadingPinId = displayId
                     vm.attachPresentationPhoto(target, uri) { ok ->
-                        uploadingPinId = null
-                        scope.launch { snackbarHostState.showSnackbar(if (ok) "Photo saved" else "Couldn't save the photo") }
+                        receipt?.admitted {
+                            uploadingPinId = null
+                            val durable = ok && receipt.persisted()
+                            scope.launch { snackbarHostState.showSnackbar(if (durable) "Photo saved" else "Photo retained — couldn't finish its save") }
+                        }
                     }
                 }
             }
@@ -1478,7 +1481,7 @@ private fun PinEditSheetHost(
         target = target,
         paddocks = state.paddocks,
         onDismiss = onDismiss,
-        onSave = { fields, photoUri, onDone ->
+        onSave = { fields, photoUri, receipt, onDone ->
             // Automatic GPS coordinates exist only when a qualified fix was
             // captured. A manual block selection keeps its established block-only
             // meaning and is never disguised as a centroid GPS observation.
@@ -1544,6 +1547,7 @@ private fun PinEditSheetHost(
                     },
                     placement = placement,
                     photoUri = photoUri,
+                    onPhotoPersisted = { durable -> if (durable) receipt?.persisted() },
                 ) { ok ->
                     onDone(ok)
                     if (ok) {
@@ -1901,7 +1905,7 @@ fun PinCategoryLauncherScreen(
     }
 
     val autoPhotoCapture = rememberPhotoCaptureCoordinator(
-        onPhoto = { uri: Uri? ->
+        onPhoto = { uri: Uri?, receipt ->
             val pinId = autoPhotoPinId
             val pin = pinId?.let { id -> state.pins.firstOrNull { it.id == id } }
             autoPhotoPinId = null
@@ -1914,7 +1918,10 @@ fun PinCategoryLauncherScreen(
                     if (growthId == null) PinPresentationTarget.Kind.PIN else PinPresentationTarget.Kind.LINKED_GROWTH,
                 )
                 vm.attachPresentationPhoto(target, uri) { ok ->
-                    scope.launch { snackbarHostState.showSnackbar(if (ok) "Photo saved" else "Couldn't save the photo") }
+                    receipt?.admitted {
+                        val durable = ok && receipt.persisted()
+                        scope.launch { snackbarHostState.showSnackbar(if (durable) "Photo saved" else "Photo retained — couldn't finish its save") }
+                    }
                 }
             }
         },
@@ -3192,7 +3199,7 @@ private fun PinEditSheet(
     target: PinEditTarget,
     paddocks: List<Paddock>,
     onDismiss: () -> Unit,
-    onSave: (PinFields, Uri?, (Boolean) -> Unit) -> Unit,
+    onSave: (PinFields, Uri?, com.rork.vinetrack.data.auth.PhotoCaptureReceipt?, (Boolean) -> Unit) -> Unit,
 ) {
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
@@ -3211,10 +3218,12 @@ private fun PinEditSheet(
     // Photo selected for the new pin (uploaded after the pin is created).
     var pendingPhotoUri by remember { mutableStateOf<Uri?>(null) }
     var photoError by remember { mutableStateOf<String?>(null) }
+    var photoReceipt by remember { mutableStateOf<com.rork.vinetrack.data.auth.PhotoCaptureReceipt?>(null) }
     val photoCapture = rememberPhotoCaptureCoordinator(
-        onPhoto = { uri ->
+        onPhoto = { uri, receipt ->
             if (uri != null) {
                 pendingPhotoUri = uri
+                photoReceipt = receipt
                 photoError = null
             }
         },
@@ -3356,6 +3365,7 @@ private fun PinEditSheet(
                             isCompleted = isCompleted,
                         ),
                         pendingPhotoUri,
+                        photoReceipt,
                     ) { saving = false }
                 },
                 enabled = !saving && title.isNotBlank(),

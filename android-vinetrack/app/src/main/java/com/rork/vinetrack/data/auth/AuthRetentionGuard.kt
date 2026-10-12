@@ -30,6 +30,7 @@ class AuthRetentionGuard(
     class FieldOperation internal constructor(
         val account: AccountAccess,
         internal val guard: AuthRetentionGuard,
+        val id: String = java.util.UUID.randomUUID().toString(),
     ) {
         fun complete() = guard.completeOperation(this)
     }
@@ -57,6 +58,9 @@ class AuthRetentionGuard(
 
     private fun completeOperation(operation: FieldOperation) { serialized { operations.remove(operation) } }
     fun hasOutstandingOperations(): Boolean = serialized { operations.isNotEmpty() }
+
+    /** Activity recreation may recover the same live ticket, never mint authority for an old result. */
+    fun operation(id: String): FieldOperation? = serialized { operations.firstOrNull { it.id == id } }
 
     fun withOperation(operation: FieldOperation, currentUserId: () -> String?, action: () -> Unit): Boolean = serialized {
         if (operation.guard !== this || operation !in operations) false
