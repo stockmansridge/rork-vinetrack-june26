@@ -92,9 +92,17 @@ class AuthRetentionGuard(
     fun transitionIfIdle(checkAndCommit: () -> Boolean): Boolean {
         if (!authorityLock.tryLock()) return false
         return try {
-            if (isLocked || transitionClosed || finishing.value || commitDepth != 0) return false
+            if (isLocked || transitionClosed || finishing.value || commitDepth != 0) {
+                CleanExitDiagnostics.checkpoint("exit.guard.transition.busy")
+                return false
+            }
             transitionClosed = true
-            try { if (operations.isNotEmpty()) false else checkAndCommit() }
+            try {
+                if (operations.isNotEmpty()) {
+                    CleanExitDiagnostics.checkpoint("exit.guard.operations.pending")
+                    false
+                } else checkAndCommit()
+            }
             finally { transitionClosed = false }
         } finally { authorityLock.unlock() }
     }
@@ -103,9 +111,15 @@ class AuthRetentionGuard(
     fun canSignOut(): Boolean = false
 
     internal fun cleanExitIfIdle(account: AccountAccess, currentUserId: () -> String?, inspectAndCommit: () -> Boolean): Boolean {
-        if (!authorityLock.tryLock()) return false
+        if (!authorityLock.tryLock()) {
+            CleanExitDiagnostics.checkpoint("exit.guard.contended")
+            return false
+        }
         return try {
-            if (!isAccountCurrent(account, currentUserId())) false else cleanExitIfIdle(inspectAndCommit)
+            if (!isAccountCurrent(account, currentUserId())) {
+                CleanExitDiagnostics.checkpoint("exit.guard.obsolete")
+                false
+            } else cleanExitIfIdle(inspectAndCommit)
         } finally { authorityLock.unlock() }
     }
 

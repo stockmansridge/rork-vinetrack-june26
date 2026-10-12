@@ -192,10 +192,18 @@ class SessionStore(context: Context) {
         cleanExitRefusal = "Work is still completing. Wait briefly, then try signing out again."
         var exit: CleanExit? = null
         val committed = retentionGuard.cleanExitIfIdle(account, { userId }) {
-            val token = accessToken ?: return@cleanExitIfIdle false
-            if (!hasSession) return@cleanExitIfIdle false
+            CleanExitDiagnostics.checkpoint("exit.evidence.begin")
+            val token = accessToken ?: run {
+                CleanExitDiagnostics.checkpoint("exit.evidence.token.missing")
+                return@cleanExitIfIdle false
+            }
+            if (!hasSession) {
+                CleanExitDiagnostics.checkpoint("exit.evidence.session.missing")
+                return@cleanExitIfIdle false
+            }
             val evidence = AccountTransitionEvidence(appContext)
             if (evidence.inspectCleanExit() == null) {
+                CleanExitDiagnostics.checkpoint("exit.evidence.rejected.${evidence.failureCategory}")
                 cleanExitRefusal = when (evidence.failureCategory) {
                     "vinetrack_active_trip" -> "An active Trip is retained. Finish the Trip before signing out."
                     "vinetrack_spray_tank_actuals" -> "Tank actual records are retained. Check Sync Status before signing out."
@@ -208,6 +216,7 @@ class SessionStore(context: Context) {
                 return@cleanExitIfIdle false
             }
             // Removing every account-selection key in the same credential transaction makes restart unambiguous.
+            CleanExitDiagnostics.checkpoint("exit.evidence.accepted")
             if (!prefs.edit().clear().putBoolean(KEY_CLEAN_EXIT, true)
                     .putLong(KEY_IDENTITY_EPOCH, retentionGuard.identityEpoch.value + 1L).commit()) return@cleanExitIfIdle false
             exit = CleanExit(token)

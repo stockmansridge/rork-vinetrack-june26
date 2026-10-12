@@ -46,11 +46,15 @@ class PopulatedCleanExitActivityTest {
     private fun diagnostic(): String {
         val session = SessionStore(app)
         val identity = when (session.userId) { A -> "A"; B -> "B"; null -> "none"; else -> "unexpected" }
-        val tree = runCatching { compose.onRoot(useUnmergedTree = true).printToString() }
-            .getOrElse { "hierarchy unavailable: ${it.javaClass.simpleName}" }
+        val tree = runCatching {
+            val roots = compose.onAllNodes(isRoot(), useUnmergedTree = true)
+            roots.fetchSemanticsNodes().indices.joinToString("\n") { roots[it].printToString() }
+        }.getOrElse { "hierarchy unavailable: ${it.javaClass.simpleName}" }
+        val files = app.filesDir.walkTopDown().filter { it.isFile }.map { it.relativeTo(app.filesDir).path }.toList()
+        val preferences = java.io.File(app.applicationInfo.dataDir, "shared_prefs").listFiles()?.map { it.name }
         return "checkpoints=$checkpoints; session=${session.hasSession}; identity=$identity; " +
             "locked=${session.retentionGuard.isLocked}; finishing=${session.retentionGuard.finishingCleanExit.value}; " +
-            "epoch=${session.retentionGuard.identityEpoch.value}; refusal=${session.cleanExitRefusal}; " +
+            "epoch=${session.retentionGuard.identityEpoch.value}; files=$files; preferenceFiles=$preferences; " +
             "pending=$pending; responses=$responses; uncaught=${uncaught.get()}; tree=$tree"
     }
 
@@ -133,6 +137,7 @@ class PopulatedCleanExitActivityTest {
         compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
     }
     private fun signIn() {
+        val publicationsBefore = checkpoints.count { it == "vineyard.load.published" }
         awaitText("Email")
         compose.onNodeWithText("Email").performTextInput("synthetic@example.invalid")
         compose.onNodeWithText("Password").performTextInput("synthetic-password")
@@ -148,6 +153,10 @@ class PopulatedCleanExitActivityTest {
                 cache.loadTrips(account.get(), vineyard)?.isNotEmpty() == true &&
                 cache.loadGrowth(account.get(), vineyard)?.isNotEmpty() == true &&
                 cache.loadWorkTasks(account.get(), vineyard)?.isNotEmpty() == true
+        }
+        awaitStage("vineyard.load.published") {
+            checkpoints.count { it == "vineyard.load.published" } > publicationsBefore &&
+                pending.isEmpty() && !SessionStore(app).retentionGuard.hasOutstandingOperations()
         }
         assertTrue(SessionStore(app).hasSession)
     }
@@ -211,6 +220,9 @@ class PopulatedCleanExitActivityTest {
         val cache = app.getSharedPreferences("vinetrack_domain_cache", 0).all.toMap()
         settingsSignOut()
         awaitText("Sign-out paused")
+        awaitStage("refusal.$reason") {
+            compose.onAllNodesWithText(reason, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithText(reason, substring = true).assertExists()
         assertEquals(0, logouts.get())
         assertTrue(session.hasSession)

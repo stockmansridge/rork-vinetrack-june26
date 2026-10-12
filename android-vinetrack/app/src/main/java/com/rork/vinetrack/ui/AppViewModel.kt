@@ -5097,7 +5097,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
-            } catch (_: Exception) { false }
+            } catch (failure: Exception) {
+                com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("exit.exception.${failure.javaClass.simpleName}")
+                false
+            }
             if (!exited && session.hasSession) {
                 signOutProtectionReason.value = session.cleanExitRefusal
                 signOutProtectionNotice.value = true
@@ -17078,6 +17081,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 },
             )
         }
+        com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("vineyard.load.published")
         reconcileMissingBudburstFromGrowthRecords()
         prepareOptimalRipenessWeather(vineyardId)
         resumePendingGrowthCaptures(vineyardId)
