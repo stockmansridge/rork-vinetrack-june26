@@ -376,11 +376,16 @@ nonisolated enum SprayApplicationPlanner {
         bandWidth: SprayBandWidth? = nil,
         carrier: SprayCarrierVolume,
         tankCapacityLitres: Double,
-        productLines: [SprayProductLineInput]
+        productLines: [SprayProductLineInput],
+        plannedAreaHectares: Double? = nil
     ) -> SprayApplicationPlan {
         let geometry = SprayGeometryResolver.resolve(blocks)
 
         let treated: SprayTreatedArea = {
+            if plannedAreaHectares != nil {
+                return SprayTreatedArea(grossAreaHectares: geometry.grossAreaHectares,
+                    treatedAreaHectares: nil, method: .unavailable, bandWidth: nil, rowLengthMetres: nil)
+            }
             switch mode {
             case .wholeBlock:
                 return SprayBandedAreaCalculator.wholeBlock(geometry: geometry)
@@ -398,11 +403,14 @@ nonisolated enum SprayApplicationPlanner {
             }
         }()
 
-        let context = SprayQuantityContext(
-            geometry: geometry,
-            carrier: carrier,
-            treatedAreaHectares: treated.treatedAreaHectares
-        )
+        // Planning hectares feed the unchanged quantity engine without fabricating
+        // per-block row lengths or treated coverage. Physical-row products remain
+        // unresolved until actual rows are known for a partial-area plan.
+        let context = plannedAreaHectares.map { area in
+            SprayQuantityContext(grossAreaHectares: area, carrierLitres: carrier.totalLitres,
+                                 concentrationFactor: carrier.concentrationFactor)
+        } ?? SprayQuantityContext(geometry: geometry, carrier: carrier,
+                                  treatedAreaHectares: treated.treatedAreaHectares)
         let split = tankSplit(totalLitres: carrier.totalLitres, tankCapacityLitres: tankCapacityLitres)
 
         let lines = productLines.map { line -> SprayProductLineResult in

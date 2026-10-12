@@ -126,6 +126,10 @@ final class SprayRecordSyncService {
             var pushedIds: [UUID] = []
             for (recordId, ts) in dirty {
                 guard var record = byId[recordId], record.vineyardId == vineyardId else { continue }
+                if let blocker = record.operationalPlanningBlocker {
+                    metadata.markUpsertsFailed([recordId])
+                    throw SprayPlanningAdmissionError(message: blocker)
+                }
                 if let server = serverById[recordId] {
                     if server.deletedAt != nil {
                         applyRemote(server, vineyardId: vineyardId, store: store)

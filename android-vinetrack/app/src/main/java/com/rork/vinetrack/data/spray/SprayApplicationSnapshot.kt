@@ -134,6 +134,9 @@ data class SprayApplicationSnapshot(
      * normalised to null on every path, mirroring the sql/195 constraint.
      */
     val blocks: List<SprayApplicationBlockSnapshot>? = null,
+    /** Additive local-only intent; server writes remain gated pending migration review. */
+    val planningIntent: SprayPlanningIntent? = null,
+    val planningResolution: SprayPlanningResolution? = null,
 ) {
 
     /**
@@ -180,7 +183,7 @@ data class SprayApplicationSnapshot(
             carrierLitresPerHectare == null && diluteLitresPer100m == null &&
             appliedLitresPer100m == null && concentrationFactor == null &&
             targets == null && customTargets == null && sprayHeadTarget == null &&
-            groundTarget == null && carrierAreaBasis == null && blocks == null
+            groundTarget == null && carrierAreaBasis == null && blocks == null && planningIntent == null && planningResolution == null
 
     /**
      * True when the operator's target selection was genuinely recorded, so the
@@ -278,6 +281,7 @@ data class SprayApplicationSnapshot(
             sprayHeadTarget = sprayHeadTarget,
             groundTarget = groundTarget,
             carrierAreaBasis = carrierAreaBasis,
+            planningIntent = planningIntent,
             // Block IDENTITY is reusable intent — "my powdery spray on the home
             // blocks" is exactly what a template is for — but the per-block AREAS
             // and ROW LENGTHS are outputs and must be recalculated, for the same

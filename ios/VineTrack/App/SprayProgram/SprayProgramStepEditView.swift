@@ -543,7 +543,10 @@ struct SprayProgramStepEditView: View {
     /// Local Program Steps keep their existing persistence path, untouched.
     private func saveLocal() {
         let updated = draft.applied(to: step.record)
-        store.updateSprayRecord(updated)
+        guard store.updateSprayRecord(updated) else {
+            saveError = updated.operationalPlanningBlocker ?? "Couldn't save this spray. Keep the editor open and retry."
+            return
+        }
         onSaved(SprayProgramStep(record: updated, source: .local))
         dismiss()
     }

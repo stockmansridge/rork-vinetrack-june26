@@ -223,6 +223,7 @@ data class SprayGuidedInputs(
     val appliedLitresPer100Metres: Double? = null,
     val products: List<SprayProductLineInput> = emptyList(),
     val notes: String = "",
+    val planningIntent: SprayPlanningIntent? = null,
 )
 
 /**
@@ -400,8 +401,37 @@ data class SprayGuidedFlow(
      * Built only by [SprayCarrierVolumeCalculator]; the flow never does the
      * arithmetic itself.
      */
+    val planningResolution: SprayPlanningResolution?
+        get() {
+            var intent = inputs.planningIntent ?: return null
+            if (!supportsCanopySettings || !inputs.isCanopyConfirmed) return null
+            val dilute = volumeDecision?.recommendedLitresPerHectare ?: return null
+            if (intent.method == SprayPlanningMethod.FULL_TANK) {
+                val tank = intent.intendedTankLitres ?: return null
+                if (!inputs.tankCapacityLitres.isFinite() || inputs.tankCapacityLitres <= 0 || tank > inputs.tankCapacityLitres) return null
+            }
+            if (intent.method == SprayPlanningMethod.BY_AREA) intent = intent.copy(calibratedLitresPerHectare = volumeDecision?.actualLitresPerHectare)
+            val resolved = intent.resolve(geometry.grossAreaHectares, geometry.uniformRowSpacingMetres, dilute) ?: return null
+            if (intent.method == SprayPlanningMethod.BY_AREA) {
+                val existingCarrier = carrier ?: return null
+                return resolved.copy(intendedLitres = existingCarrier.totalLitres, concentrationFactor = existingCarrier.concentrationFactor)
+            }
+            return resolved
+        }
+
+    val operationalBlocker: String?
+        get() = SprayPlanningOperationalGate.blocker(inputs.planningIntent != null, carrier?.concentrationFactor,
+            inputs.products.any { it.basis == SprayProductRateBasis.PER_100_LITRES })
+
     val carrier: SprayCarrierVolume?
         get() {
+            if (supportsCanopySettings && inputs.planningIntent?.method == SprayPlanningMethod.FULL_TANK) {
+                val resolved = planningResolution ?: return null
+                return SprayCarrierVolumeCalculator.perHectare(resolved.litresPerHectare, resolved.plannedAreaHa,
+                    resolved.concentrationFactor, rowSpacingMetres = geometry.uniformRowSpacingMetres).copy(
+                        appliedLitresPer100Metres = resolved.physicalRowLitresPer100m,
+                        diluteLitresPer100Metres = volumeDecision?.recommendedLitresPer100Metres)
+            }
             val decision = volumeDecision
             if (inputs.operationType == SprayOperationType.FOLIAR_SPRAY) {
                 if (decision == null || !decision.isResolved) return null
@@ -507,6 +537,7 @@ data class SprayGuidedFlow(
             carrier = carrier ?: placeholderCarrier,
             tankCapacityLitres = inputs.tankCapacityLitres,
             productLines = inputs.products,
+            plannedAreaHectares = if (inputs.planningIntent?.method == SprayPlanningMethod.FULL_TANK) (planningResolution?.plannedAreaHa ?: 0.0) else null,
         )
 
     /**
@@ -524,7 +555,7 @@ data class SprayGuidedFlow(
     val snapshot: SprayApplicationSnapshot?
         get() {
             val plan = persistablePlan ?: return null
-            val snapshot = SprayApplicationSnapshot.from(
+            var snapshot = SprayApplicationSnapshot.from(
                 plan = plan,
                 targets = orderedTargets,
                 sprayHeadTarget = effectiveSprayHeadTarget,
@@ -533,6 +564,11 @@ data class SprayGuidedFlow(
                 carrierAreaBasis = inputs.carrierAreaBasis.takeIf { requiresGroundTarget },
                 carrierVolumeBasis = effectiveCarrierBasis,
             )
+            snapshot = snapshot.copy(planningIntent = inputs.planningIntent.takeIf { supportsCanopySettings }, planningResolution = planningResolution)
+            if (inputs.planningIntent?.method == SprayPlanningMethod.FULL_TANK) {
+                snapshot = snapshot.copy(treatedAreaHa = null, treatedAreaMethod = null,
+                    canonicalRowLengthMetres = null, geometrySource = null, geometryQuality = null, blocks = null)
+            }
             return if (snapshot.isEmpty) null else snapshot
         }
 
@@ -579,7 +615,13 @@ data class SprayGuidedFlow(
             else -> null
         }
 
-        SprayGuidedStep.CARRIER -> {
+        SprayGuidedStep.CARRIER -> if (supportsCanopySettings && inputs.planningIntent?.method == SprayPlanningMethod.FULL_TANK) {
+            when {
+                !inputs.isCanopyConfirmed -> SprayGuidedBlocker.CanopyConfirmationRequired
+                planningResolution == null -> SprayGuidedBlocker.CarrierRateRequired
+                else -> null
+            }
+        } else {
             if (inputs.operationType == SprayOperationType.FOLIAR_SPRAY) {
                 val decision = volumeDecision
                 when {

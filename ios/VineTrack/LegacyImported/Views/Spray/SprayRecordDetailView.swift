@@ -402,7 +402,9 @@ struct SprayRecordDetailView: View {
                 set: { newValue in
                     var updated = currentRecord
                     updated.isTemplate = newValue
-                    store.updateSprayRecord(updated)
+                    if !store.updateSprayRecord(updated) {
+                        correctionError = updated.operationalPlanningBlocker ?? "Couldn't save this change. Keep the record open and retry."
+                    }
                 }
             )
 

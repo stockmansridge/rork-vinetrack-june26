@@ -640,8 +640,7 @@ struct SprayProgramCSVService {
                 isTemplate: row.isTemplate,
                 operationType: row.operationType
             )
-            store.addSprayRecord(record)
-            imported += 1
+            if store.addSprayRecord(record) { imported += 1 }
         }
 
         return imported

@@ -276,6 +276,7 @@ nonisolated struct SprayGuidedInputs: Sendable {
 
     var products: [SprayProductLineInput] = []
     var notes: String = ""
+    var planningIntent: SprayPlanningIntent?
 
     init() {}
 }
@@ -440,6 +441,9 @@ nonisolated struct SprayGuidedFlow: Sendable {
         if mode == .banded {
             return inputs.carrierBasis == .manualTotalVolume ? .manualTotalVolume : .litresPerHectare
         }
+        if supportsCanopySettings, inputs.planningIntent?.method == .fullTank, inputs.carrierBasis == .manualTotalVolume {
+            return carrierPolicy.defaultBasis
+        }
         return carrierPolicy.allows(inputs.carrierBasis) ? inputs.carrierBasis : carrierPolicy.defaultBasis
     }
 
@@ -479,7 +483,43 @@ nonisolated struct SprayGuidedFlow: Sendable {
     ///
     /// Built only by `SprayCarrierVolumeCalculator`; the flow never does the
     /// arithmetic itself.
+    var planningResolution: SprayPlanningResolution? {
+        guard var intent = inputs.planningIntent, supportsCanopySettings,
+              isCanopyAnswered, let dilute = volumeDecision?.recommendedLitresPerHectare else { return nil }
+        if intent.method == .fullTank {
+            guard let tank = intent.intendedTankLitres, inputs.tankCapacityLitres.isFinite,
+                  inputs.tankCapacityLitres > 0, tank <= inputs.tankCapacityLitres else { return nil }
+        }
+        if intent.method == .byArea { intent.calibratedLitresPerHectare = volumeDecision?.actualLitresPerHectare }
+        guard let resolved = intent.resolve(selectedAreaHa: geometry.grossAreaHectares,
+                              physicalRowSpacingMetres: geometry.uniformRowSpacingMetres,
+                              diluteLitresPerHectare: dilute) else { return nil }
+        if intent.method == .byArea, let existingCarrier = carrier {
+            return SprayPlanningResolution(intendedLitres: existingCarrier.totalLitres,
+                plannedAreaHa: resolved.plannedAreaHa, litresPerHectare: resolved.litresPerHectare,
+                physicalRowLitresPer100m: resolved.physicalRowLitresPer100m,
+                controllerLitresPer100mTravel: resolved.controllerLitresPer100mTravel,
+                effectiveWorkingWidthMetres: resolved.effectiveWorkingWidthMetres,
+                concentrationFactor: existingCarrier.concentrationFactor)
+        }
+        return resolved
+    }
+
+    var operationalBlocker: String? {
+        SprayPlanningOperationalGate.blocker(hasPlanningIntent: inputs.planningIntent != nil,
+            concentrationFactor: carrier?.concentrationFactor,
+            hasDiluteRateProducts: inputs.products.contains { $0.basis == .per100Litres })
+    }
+
     var carrier: SprayCarrierVolume? {
+        if supportsCanopySettings, inputs.planningIntent?.method == .fullTank {
+            guard let resolved = planningResolution else { return nil }
+            return SprayCarrierVolumeCalculator.perHectare(
+                litresPerHectare: resolved.litresPerHectare, areaHectares: resolved.plannedAreaHa,
+                concentrationFactor: resolved.concentrationFactor,
+                diluteLitresPerHectare: volumeDecision?.recommendedLitresPerHectare,
+                rowSpacingMetres: geometry.uniformRowSpacingMetres)
+        }
         // THE foliar handoff: SprayVolumeDecision → SprayCarrierVolume.
         //
         // # Why this branch exists
@@ -600,7 +640,8 @@ nonisolated struct SprayGuidedFlow: Sendable {
             bandWidth: bandWidth,
             carrier: carrier ?? placeholderCarrier,
             tankCapacityLitres: inputs.tankCapacityLitres,
-            productLines: inputs.products
+            productLines: inputs.products,
+            plannedAreaHectares: inputs.planningIntent?.method == .fullTank ? (planningResolution?.plannedAreaHa ?? 0) : nil
         )
     }
 
@@ -616,7 +657,7 @@ nonisolated struct SprayGuidedFlow: Sendable {
     /// columns are never populated from individual UI state variables.
     var snapshot: SprayApplicationSnapshot? {
         guard let plan = persistablePlan else { return nil }
-        let snapshot = SprayApplicationSnapshot(
+        var snapshot = SprayApplicationSnapshot(
             plan: plan,
             carrierVolumeBasis: effectiveCarrierBasis,
             targets: orderedTargets,
@@ -625,6 +666,19 @@ nonisolated struct SprayGuidedFlow: Sendable {
             groundTarget: requiresGroundTarget ? inputs.groundTarget : nil,
             carrierAreaBasis: requiresGroundTarget ? inputs.carrierAreaBasis : nil
         )
+        snapshot.planningIntent = supportsCanopySettings ? inputs.planningIntent : nil
+        snapshot.planningResolution = planningResolution
+        if inputs.planningIntent?.method == .fullTank {
+            // Do not persist selected-block areas as measured partial coverage.
+            snapshot = SprayApplicationSnapshot(grossAreaHa: snapshot.grossAreaHa,
+                rowSpacingMetres: snapshot.rowSpacingMetres, carrierVolumeBasis: snapshot.carrierVolumeBasis,
+                totalCarrierLitres: snapshot.totalCarrierLitres, carrierLitresPerHectare: snapshot.carrierLitresPerHectare,
+                diluteLitresPer100m: snapshot.diluteLitresPer100m, appliedLitresPer100m: snapshot.appliedLitresPer100m,
+                concentrationFactor: snapshot.concentrationFactor, targets: snapshot.targets,
+                customTargets: snapshot.customTargets, sprayHeadTarget: snapshot.sprayHeadTarget)
+            snapshot.planningIntent = inputs.planningIntent
+            snapshot.planningResolution = planningResolution
+        }
         return snapshot.isEmpty ? nil : snapshot
     }
 
@@ -674,6 +728,10 @@ nonisolated struct SprayGuidedFlow: Sendable {
             return inputs.isEquipmentConfirmed ? nil : .equipmentConfirmationRequired
 
         case .carrier:
+            if supportsCanopySettings, inputs.planningIntent?.method == .fullTank {
+                if isCanopyOutstanding { return .canopyConfirmationRequired }
+                return planningResolution == nil ? .carrierRateRequired : nil
+            }
             // The canopy is asked FIRST because everything else in this step is
             // derived from it. Reporting "enter carrier volume" while the canopy
             // is still unanswered names the second question and hides the first.

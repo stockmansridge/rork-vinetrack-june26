@@ -19,6 +19,7 @@ struct SprayRecordFormView: View {
     @State private var date: Date
     @State private var startTime: Date
     @State private var sprayReference: String
+    @State private var saveError: String?
     @State private var inputFormatter: RegionFormatter?
     @State private var temperatureSeed: RegionalInput?
     @State private var windSeed: RegionalInput?
@@ -179,6 +180,9 @@ struct SprayRecordFormView: View {
                 }
             }
         }
+        .alert("Spray not saved", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+            Button("Keep editing", role: .cancel) { saveError = nil }
+        } message: { Text(saveError ?? "") }
         .sheet(item: $picker) { target in
             SprayLineChemicalPicker(
                 selectedId: tanks[target.tankIndex].chemicals[target.chemicalIndex].savedChemicalId
@@ -920,10 +924,10 @@ struct SprayRecordFormView: View {
             ),
             hasRecordedTripLink: existingRecord?.hasRecordedTripLink ?? store.trips.contains { $0.id == tripId }
         )
-        if existingRecord != nil {
-            store.updateSprayRecord(record)
-        } else {
-            store.addSprayRecord(record)
+        let saved = existingRecord != nil ? store.updateSprayRecord(record) : store.addSprayRecord(record)
+        guard saved else {
+            saveError = record.operationalPlanningBlocker ?? "Couldn't save the spray. Keep this editor open and retry."
+            return
         }
         dismiss()
     }

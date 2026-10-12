@@ -205,6 +205,8 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
     let sprayJobId: UUID?
     let createdBy: UUID?
     let clientUpdatedAt: Date
+    /// Client admission evidence only; deliberately excluded from the wire schema.
+    var planningIntent: SprayPlanningIntent? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -327,7 +329,8 @@ extension BackendSprayRecord {
             applicationBlocks: geometry?.blocks,
             sprayJobId: record.sprayJobId,
             createdBy: createdBy,
-            clientUpdatedAt: clientUpdatedAt
+            clientUpdatedAt: clientUpdatedAt,
+            planningIntent: geometry?.planningIntent ?? (geometry?.planningResolution != nil ? SprayPlanningIntent() : nil)
         )
     }
 

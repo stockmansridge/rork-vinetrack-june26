@@ -245,10 +245,14 @@ object SprayApplicationPlanner {
         carrier: SprayCarrierVolume,
         tankCapacityLitres: Double,
         productLines: List<SprayProductLineInput>,
+        plannedAreaHectares: Double? = null,
     ): SprayApplicationPlan {
         val geometry = SprayGeometryResolver.resolve(blocks)
 
-        val treated = when (mode) {
+        val treated = if (plannedAreaHectares != null) {
+            SprayTreatedArea(grossAreaHectares = geometry.grossAreaHectares, treatedAreaHectares = null,
+                method = SprayTreatedAreaMethod.UNAVAILABLE, bandWidth = null, rowLengthMetres = null)
+        } else when (mode) {
             SprayApplicationMode.WHOLE_BLOCK -> SprayBandedAreaCalculator.wholeBlock(geometry)
             SprayApplicationMode.BANDED -> if (bandWidth == null) {
                 SprayTreatedArea(
@@ -263,7 +267,12 @@ object SprayApplicationPlanner {
             }
         }
 
-        val context = SprayQuantityContext.of(geometry, carrier, treated.treatedAreaHectares)
+        // Intent is not block coverage. Partial-area row/treated-area products
+        // remain unresolved; the existing chemical arithmetic is unchanged.
+        val context = plannedAreaHectares?.let { area ->
+            SprayQuantityContext(grossAreaHectares = area, carrierLitres = carrier.totalLitres,
+                concentrationFactor = carrier.concentrationFactor)
+        } ?: SprayQuantityContext.of(geometry, carrier, treated.treatedAreaHectares)
         val split = tankSplit(carrier.totalLitres, tankCapacityLitres)
 
         val lines = productLines.map { line ->

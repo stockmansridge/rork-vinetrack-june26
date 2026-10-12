@@ -33,6 +33,7 @@ final class SupabaseSprayRecordSyncRepository: SprayRecordSyncRepositoryProtocol
     }
 
     func upsertSprayRecord(_ record: BackendSprayRecordUpsert) async throws {
+        if let blocker = record.operationalPlanningBlocker { throw SprayPlanningAdmissionError(message: blocker) }
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         let existing: [BackendSprayRecord] = try await provider.client.from("spray_records")
             .select().eq("id", value: record.id.uuidString).execute().value

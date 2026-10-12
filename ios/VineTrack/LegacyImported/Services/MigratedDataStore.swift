@@ -1526,21 +1526,27 @@ final class MigratedDataStore {
 
     // MARK: - SprayRecord CRUD
 
-    func addSprayRecord(_ record: SprayRecord) {
-        guard let vineyardId = selectedVineyardId else { return }
+    @discardableResult
+    func addSprayRecord(_ record: SprayRecord) -> Bool {
+        guard record.operationalPlanningBlocker == nil else { return false }
+        guard let vineyardId = selectedVineyardId else { return false }
         var item = record
         item.vineyardId = vineyardId
         sprayRecords.append(item)
         sprayRepo.saveRecordsSlice(sprayRecords, for: vineyardId)
         onSprayRecordChanged?(item.id)
+        return true
     }
 
-    func updateSprayRecord(_ record: SprayRecord) {
-        guard let vineyardId = selectedVineyardId else { return }
-        guard let index = sprayRecords.firstIndex(where: { $0.id == record.id }) else { return }
+    @discardableResult
+    func updateSprayRecord(_ record: SprayRecord) -> Bool {
+        guard record.operationalPlanningBlocker == nil else { return false }
+        guard let vineyardId = selectedVineyardId else { return false }
+        guard let index = sprayRecords.firstIndex(where: { $0.id == record.id }) else { return false }
         sprayRecords[index] = record
         sprayRepo.saveRecordsSlice(sprayRecords, for: vineyardId)
         onSprayRecordChanged?(record.id)
+        return true
     }
 
     func deleteSprayRecord(_ recordId: UUID) {

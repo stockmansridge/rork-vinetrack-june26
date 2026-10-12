@@ -411,6 +411,10 @@ final class TripTrackingService {
             return
         }
 
+        if let blocker = store.sprayRecords[recordIndex].operationalPlanningBlocker {
+            errorMessage = blocker
+            return
+        }
         var activated = savedTrip
         activated.startTime = activationTime
         if activated.operatorUserId == authService?.userId,
@@ -457,7 +461,10 @@ final class TripTrackingService {
         // Persist both linked operational records before GPS or sync callbacks
         // can observe the newly active trip. Planned tanks and frozen calculator
         // snapshots are deliberately untouched.
-        store.updateSprayRecord(record)
+        guard store.updateSprayRecord(record) else {
+            errorMessage = record.operationalPlanningBlocker ?? "Couldn't save the spray start. Keep this screen open and retry."
+            return
+        }
         store.updateTrip(activated)
         store.claimDeviceTrip(activated.id)
         errorMessage = nil
@@ -965,6 +972,10 @@ final class TripTrackingService {
             return false
         }
         let plannedTank = pending.tank
+        if let blocker = pending.record.operationalPlanningBlocker {
+            errorMessage = blocker
+            return false
+        }
         if let store, startTankCommitCoordinator.resume(
             sourceTrip: pending.sourceTrip,
             tankNumber: pending.result.tankNumber,

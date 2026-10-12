@@ -142,6 +142,11 @@ import com.rork.vinetrack.data.spray.SprayCarrierBasis
 import com.rork.vinetrack.data.spray.SprayCarrierAreaBasis
 import com.rork.vinetrack.data.spray.SprayVolumeChoice
 import com.rork.vinetrack.data.spray.SprayVolumeHelp
+import com.rork.vinetrack.ui.components.SprayPlanningCards
+import com.rork.vinetrack.data.spray.SprayPlanningIntent
+import com.rork.vinetrack.data.spray.SprayPassConfiguration
+import com.rork.vinetrack.data.spray.SprayPlanningMethod
+import com.rork.vinetrack.data.spray.SprayFullTankSpecification
 import com.rork.vinetrack.data.spray.SprayGuidedFlow
 import com.rork.vinetrack.data.spray.SprayGuidedInputs
 import com.rork.vinetrack.data.spray.SprayGuidedStep
@@ -514,6 +519,12 @@ fun SprayCalculatorScreen(
     var sprayHeadTarget by remember { mutableStateOf<SprayHeadTarget?>(null) }
     var groundTarget by remember { mutableStateOf<SprayGroundTarget?>(null) }
     var bandWidthText by remember { mutableStateOf("") }
+    var passConfiguration by rememberSaveable { mutableStateOf<SprayPassConfiguration?>(null) }
+    var planningMethod by rememberSaveable { mutableStateOf(SprayPlanningMethod.BY_AREA) }
+    var fullTankSpecification by rememberSaveable { mutableStateOf(SprayFullTankSpecification.TARGET_AREA) }
+    var planningTankText by rememberSaveable { mutableStateOf("") }
+    var planningAreaText by rememberSaveable { mutableStateOf("") }
+    var planningRateText by rememberSaveable { mutableStateOf("") }
     var carrierBasisChoice by remember { mutableStateOf(SprayCarrierBasis.LITRES_PER_HECTARE) }
     var carrierAreaBasis by rememberSaveable { mutableStateOf(SprayCarrierAreaBasis.TREATED_AREA) }
     var manualTotalLitresText by rememberSaveable { mutableStateOf("") }
@@ -743,6 +754,12 @@ fun SprayCalculatorScreen(
             appliedLitresPer100Metres = if (isGroundSpray) null else carrierFormat.resolveRate(appliedLitresPer100mText, SprayCarrierBasis.LITRES_PER_100_METRES),
             products = guidedProducts,
             notes = notes,
+            planningIntent = if (operationType == "Foliar Spray" && (passConfiguration != null || planningMethod == SprayPlanningMethod.FULL_TANK))
+                SprayPlanningIntent(configuration = passConfiguration, method = planningMethod,
+                    fullTankSpecification = fullTankSpecification.takeIf { planningMethod == SprayPlanningMethod.FULL_TANK },
+                    intendedTankLitres = planningTankText.toDoubleOrNull()?.let(fmt::volumeToCanonical),
+                    targetAreaHa = planningAreaText.toDoubleOrNull()?.let(fmt::areaToCanonical),
+                    calibratedLitresPerHectare = planningRateText.toDoubleOrNull()?.let(fmt::volumePerAreaToCanonical)) else null,
         ),
         profile = sprayProfile,
     )
@@ -923,6 +940,14 @@ fun SprayCalculatorScreen(
                     selectedPaddockIds.addAll(ids)
                 }
             }
+        }
+        r.applicationGeometry?.planningIntent?.let { intent ->
+            passConfiguration = intent.configuration
+            planningMethod = intent.method ?: SprayPlanningMethod.BY_AREA
+            fullTankSpecification = intent.fullTankSpecification ?: SprayFullTankSpecification.TARGET_AREA
+            planningTankText = intent.intendedTankLitres?.let { fmt.volumeValue(it).toString() }.orEmpty()
+            planningAreaText = intent.targetAreaHa?.let { fmt.areaValue(it).toString() }.orEmpty()
+            planningRateText = intent.calibratedLitresPerHectare?.let { fmt.volumePerAreaValue(it).toString() }.orEmpty()
         }
         r.applicationGeometry?.let { geometry ->
             sprayHeadTarget = geometry.sprayHeadTarget
@@ -1148,6 +1173,7 @@ fun SprayCalculatorScreen(
     }
 
     fun saveJobForLater() {
+        guidedFlow.operationalBlocker?.let { errorMessage = it; return }
         val r = runCalculation() ?: return
         if (saving) return
         saving = true
@@ -1166,6 +1192,7 @@ fun SprayCalculatorScreen(
     }
 
     fun startJobNow(startEngineHours: Double?) {
+        guidedFlow.operationalBlocker?.let { errorMessage = it; return }
         val r = result ?: return
         if (saving) return
         if (state.activeTrip != null) {
@@ -1230,10 +1257,10 @@ fun SprayCalculatorScreen(
             onPatternChange = { trackingPattern = it },
             onStartPathChange = { startPath = it },
             onDirectionChange = { directionHigherFirst = it },
-            errorMessage = errorMessage,
+            errorMessage = guidedFlow.operationalBlocker ?: errorMessage,
             saving = saving,
-            hasActiveTrip = state.activeTrip != null,
-            onStart = { showOperationalStartConfirmation = true },
+            hasActiveTrip = state.activeTrip != null || guidedFlow.operationalBlocker != null,
+            onStart = { if (guidedFlow.operationalBlocker == null) showOperationalStartConfirmation = true },
             onCancel = { if (!saving) showReview = false },
             modifier = modifier,
         )
@@ -1669,6 +1696,15 @@ fun SprayCalculatorScreen(
                     doneAccent = VineColors.Olive,
                     onToggle = { toggleStep(SprayGuidedStep.CARRIER) },
                 ) {
+                if (operationType == "Foliar Spray") {
+                    SprayPlanningCards(configuration = passConfiguration, onConfiguration = { passConfiguration = it; result = null },
+                        method = planningMethod, onMethod = { planningMethod = it; result = null },
+                        specification = fullTankSpecification, onSpecification = { fullTankSpecification = it; result = null },
+                        tankText = planningTankText, onTank = { planningTankText = it; result = null },
+                        areaText = planningAreaText, onArea = { planningAreaText = it; result = null },
+                        rateText = planningRateText, onRate = { planningRateText = it; result = null },
+                        region = fmt, resolution = guidedFlow.planningResolution)
+                }
                 if (guidedFlow.requiresBandWidth) {
                     Text("Rate applies to", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -1759,6 +1795,7 @@ fun SprayCalculatorScreen(
                                 Text(SprayVolumeHelp.RECOMMENDED_VOLUME, fontSize = 12.sp, color = vine.textSecondary)
                             }
                         }
+                        if (planningMethod == SprayPlanningMethod.BY_AREA) {
                         Text("Spray at the recommended volume?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                             val choices = listOf(
@@ -1826,6 +1863,7 @@ fun SprayCalculatorScreen(
                                     )
                                 }
                             }
+                        }
                         }
                     }
                 } else if (guidedFlow.requiresBandWidth && guidedFlow.effectiveCarrierBasis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) {
@@ -2164,6 +2202,21 @@ fun SprayCalculatorScreen(
                     onToggle = { toggleStep(SprayGuidedStep.REVIEW) },
                 ) {
                     val carrier = guidedPlan.carrier
+                    guidedFlow.inputs.planningIntent?.let { intent ->
+                        GuidedReviewGroup(title = "Spray planning", accent = VineColors.Olive, onEdit = { toggleStep(SprayGuidedStep.CARRIER) }) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                GuidedReviewRow("Configuration", intent.configuration?.title ?: "Not recorded")
+                                GuidedReviewRow("Planning method", intent.method?.title ?: "Not recorded")
+                                guidedFlow.planningResolution?.let { resolved ->
+                                    GuidedReviewRow("Planned area", fmt.formatArea(resolved.plannedAreaHa))
+                                    GuidedReviewRow("Intended water", fmt.formatVolume(resolved.intendedLitres))
+                                    resolved.controllerLitresPer100mTravel?.let { GuidedReviewRow("Controller / travel", fmt.formatVolumePer100Length(it)) }
+                                }
+                                Text("Actual Trip coverage is not allocated by this plan. CF is not label approval.", style = MaterialTheme.typography.bodySmall)
+                                guidedFlow.operationalBlocker?.let { Text(it, color = VineColors.Warning, style = MaterialTheme.typography.bodySmall) }
+                            }
+                        }
+                    }
 
                     GuidedReviewGroup(
                         title = "Application",
@@ -2357,7 +2410,7 @@ fun SprayCalculatorScreen(
                     }
 
                     val calculationReference = SprayCalculationReferenceBuilder.make(guidedFlow)
-                    if (!calculationReference.isEmpty) {
+                    if (!calculationReference.isEmpty && (operationType != "Foliar Spray" || planningMethod != SprayPlanningMethod.FULL_TANK)) {
                         GuidedReviewGroup(
                             title = "Calculation reference",
                             accent = VineColors.Olive,
@@ -2420,7 +2473,7 @@ fun SprayCalculatorScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
                     ) {
                         Icon(Icons.Filled.Science, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text("  Create Spray Job & View Tank Mix", fontWeight = FontWeight.SemiBold)
+                        Text(if (guidedFlow.inputs.planningIntent == null) "  Create Spray Job & View Tank Mix" else "  Review Spray Mix", fontWeight = FontWeight.SemiBold)
                     }
                     OutlinedButton(
                         onClick = { saveJobForLater() },

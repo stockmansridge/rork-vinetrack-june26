@@ -11405,6 +11405,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * which is not queued in I-1.
      */
     fun createSprayRecord(input: SprayRecordRepository.SprayInput, onResult: (Boolean) -> Unit) {
+        input.operationalBlocker()?.let { blocker -> _ui.update { it.copy(sprayError = blocker) }; onResult(false); return }
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
         val id = sprayRepo.newId()
         val clientUpdatedAt = Instant.now().toString()
@@ -11488,6 +11489,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         rowPlan: SprayJobRowPlan? = null,
         onResult: (Boolean) -> Unit,
     ) {
+        input.operationalBlocker()?.let { blocker -> _ui.update { it.copy(sprayError = blocker) }; onResult(false); return }
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
         viewModelScope.launch {
             _ui.update { it.copy(sprayBusy = true, sprayError = null) }
@@ -11581,6 +11583,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val linkedSpray = _ui.value.sprayRecords.firstOrNull {
             it.tripId == tripId && !it.isTemplate && it.endTime == null
         }
+        linkedSpray?.let { record ->
+            com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(record.applicationGeometry, record.tanks.orEmpty())?.let { blocker ->
+                _ui.update { it.copy(sprayError = blocker) }; onResult(false); return
+            }
+        }
         val activatedSpray = linkedSpray?.let {
             SavedTripActivation.activateLinkedSpray(it, tripId, operationalStart)
         }
@@ -11652,6 +11659,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         startEngineHours: Double? = null,
         onResult: (Boolean) -> Unit,
     ) {
+        input.operationalBlocker()?.let { blocker -> _ui.update { it.copy(sprayError = blocker) }; onResult(false); return }
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
         if (!canStartDeviceTrip { message -> _ui.update { it.copy(sprayError = message) } }) {
             onResult(false); return
@@ -11917,6 +11925,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val record = pending.record
         val tank = pending.tank
+        com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(record.applicationGeometry, record.tanks.orEmpty())?.let { blocker ->
+            _ui.update { it.copy(tripError = blocker) }; return false
+        }
         val userId = session.userId ?: return false
         val vineyardId = selectedVineyardId ?: return false
         val resumedTrip = startTankCommitCoordinator.resume(
@@ -12175,6 +12186,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun updateSprayRecord(id: String, input: SprayRecordRepository.SprayInput, onResult: (Boolean) -> Unit) {
+        input.operationalBlocker()?.let { blocker -> _ui.update { it.copy(sprayError = blocker) }; onResult(false); return }
         val previous = _ui.value.sprayRecords
         val clientUpdatedAt = Instant.now().toString()
         // Optimistic edit — the operator sees the change straight away. Preserve

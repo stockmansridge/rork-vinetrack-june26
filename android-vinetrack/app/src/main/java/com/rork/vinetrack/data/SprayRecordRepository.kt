@@ -202,7 +202,10 @@ class SprayRecordRepository(private val session: SessionStore) {
          * application result is written as a single coherent snapshot.
          */
         val applicationGeometry: SprayApplicationSnapshot? = null,
-    )
+    ) {
+        /** Shared admission guard for online save, offline enqueue and replay. */
+        fun operationalBlocker(): String? = com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(applicationGeometry, tanks)
+    }
 
     /**
      * The geometry actually written for this input.
@@ -237,6 +240,7 @@ class SprayRecordRepository(private val session: SessionStore) {
         clientUpdatedAt: String? = null,
     ): SprayRecord =
         withContext(Dispatchers.IO) {
+            input.operationalBlocker()?.let { throw IllegalStateException(it) }
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
             val now = clientUpdatedAt ?: nowIso()
@@ -315,6 +319,7 @@ class SprayRecordRepository(private val session: SessionStore) {
         clientUpdatedAt: String? = null,
     ): SprayRecord =
         withContext(Dispatchers.IO) {
+            input.operationalBlocker()?.let { throw IllegalStateException(it) }
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
             val geometry = input.geometryToPersist()

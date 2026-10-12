@@ -104,6 +104,12 @@ struct SprayCalculatorView: View {
     @State private var sprayHeadTarget: SprayHeadTarget?
     @State private var groundTarget: SprayGroundTarget?
     @State private var bandWidthText: String = ""
+    @State private var passConfiguration: SprayPassConfiguration?
+    @State private var planningMethod: SprayPlanningMethod = .byArea
+    @State private var fullTankSpecification: SprayFullTankSpecification = .targetArea
+    @State private var planningTankText: String = ""
+    @State private var planningAreaText: String = ""
+    @State private var planningRateText: String = ""
     @State private var carrierBasisChoice: SprayCarrierBasis = .litresPerHectare
     @State private var carrierAreaBasis: SprayCarrierAreaBasis = .treatedArea
     @State private var diluteLitresPer100mText: String = ""
@@ -623,6 +629,13 @@ struct SprayCalculatorView: View {
         }
         inputs.products = guidedProductLines
         inputs.notes = notes
+        if operationType == .foliarSpray, passConfiguration != nil || planningMethod == .fullTank {
+            inputs.planningIntent = SprayPlanningIntent(configuration: passConfiguration, method: planningMethod,
+                fullTankSpecification: planningMethod == .fullTank ? fullTankSpecification : nil,
+                intendedTankLitres: Double(planningTankText).map(region.volumeToCanonical),
+                targetAreaHa: Double(planningAreaText).map(region.areaToCanonical),
+                calibratedLitresPerHectare: Double(planningRateText).map(region.volumePerAreaToCanonical))
+        }
         return inputs
     }
 
@@ -1034,6 +1047,14 @@ struct SprayCalculatorView: View {
         let recordCustomTargets = r.applicationGeometry?.customTargets ?? []
         customSprayTargets = programCustomTargets.isEmpty ? recordCustomTargets : programCustomTargets
 
+        if let intent = r.applicationGeometry?.planningIntent {
+            passConfiguration = intent.configuration
+            planningMethod = intent.method ?? .byArea
+            fullTankSpecification = intent.fullTankSpecification ?? .targetArea
+            planningTankText = intent.intendedTankLitres.map { String(region.volumeValue(litres: $0)) } ?? ""
+            planningAreaText = intent.targetAreaHa.map { String(region.areaValue(hectares: $0)) } ?? ""
+            planningRateText = intent.calibratedLitresPerHectare.map { String(region.volumePerAreaValue(litresPerHectare: $0)) } ?? ""
+        }
         if let geometry = r.applicationGeometry {
             sprayHeadTarget = geometry.sprayHeadTarget
             groundTarget = geometry.groundTarget
@@ -2760,7 +2781,10 @@ struct SprayCalculatorView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(VineyardTheme.olive)
-                        .disabled(isStartingJob)
+                        .disabled(isStartingJob || flow.operationalBlocker != nil)
+                        if let blocker = flow.operationalBlocker {
+                            Text(blocker).font(.caption).foregroundStyle(.orange)
+                        }
 
                         Button("Cancel") {
                             showStartConfirmation = false
@@ -2775,7 +2799,7 @@ struct SprayCalculatorView: View {
                 }
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("Spray Tank Mixing")
+            .navigationTitle(guidedInputs.planningIntent == nil ? "Spray Tank Mixing" : "Review Spray Mix")
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(isStartingJob)
         }
@@ -2820,7 +2844,7 @@ struct SprayCalculatorView: View {
             Button {
                 saveAndStartJob()
             } label: {
-                Label("Create Spray Job & View Tank Mix", systemImage: "flask.fill")
+                Label(guidedInputs.planningIntent == nil ? "Create Spray Job & View Tank Mix" : "Review Spray Mix", systemImage: "flask.fill")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
@@ -3123,6 +3147,12 @@ struct SprayCalculatorView: View {
     @ViewBuilder
     private var carrierVolumeSection: some View {
         VStack(alignment: .leading, spacing: 14) {
+            if operationType == .foliarSpray {
+                SprayPlanningCardsView(configuration: $passConfiguration, method: $planningMethod,
+                    specification: $fullTankSpecification, tankText: $planningTankText,
+                    areaText: $planningAreaText, rateText: $planningRateText, region: region,
+                    resolution: flow.planningResolution)
+            }
             // Only offer a choice when the vineyard profile genuinely allows one.
             // An NZ/SWNZ vineyard is locked to L/100 m and sees no L/ha option.
             if flow.requiresBandWidth {
@@ -3151,7 +3181,7 @@ struct SprayCalculatorView: View {
                 // operator already knows the litres in the drum.
                 if !flow.requiresBandWidth {
                     Picker("Spray volume basis", selection: $carrierBasisChoice) {
-                        ForEach(availableCarrierBases, id: \.self) { basis in
+                        ForEach(availableCarrierBases.filter { planningMethod != .fullTank || $0 != .manualTotalVolume }, id: \.self) { basis in
                             Text(guidedFormat.volumeSourceLabel(basis)).tag(basis)
                         }
                     }
@@ -3238,8 +3268,8 @@ struct SprayCalculatorView: View {
 
             if let decision, let recommendation = decision.recommendation {
                 recommendedVolumePanel(recommendation)
-                sprayVolumeChoiceControls(decision)
-                if decision.isResolved {
+                if planningMethod == .byArea { sprayVolumeChoiceControls(decision) }
+                if decision.isResolved && planningMethod == .byArea {
                     concentrationFactorPanel(decision)
                 }
             }
@@ -3707,6 +3737,23 @@ struct SprayCalculatorView: View {
         let carrier = plan.carrier
 
         VStack(alignment: .leading, spacing: 10) {
+            if let intent = guidedInputs.planningIntent {
+                GuidedReviewGroup(title: "Spray planning", onEdit: { toggle(.carrier) }) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        GuidedReviewRow(label: "Configuration", value: intent.configuration?.title ?? "Not recorded")
+                        GuidedReviewRow(label: "Planning method", value: intent.method?.title ?? "Not recorded")
+                        if let resolved = flow.planningResolution {
+                            GuidedReviewRow(label: "Planned area", value: region.formatArea(hectares: resolved.plannedAreaHa))
+                            GuidedReviewRow(label: "Intended water", value: region.formatVolume(litres: resolved.intendedLitres))
+                            if let travel = resolved.controllerLitresPer100mTravel {
+                                GuidedReviewRow(label: "Controller / travel", value: region.formatVolumePer100Length(travel))
+                            }
+                        }
+                        Text("Actual Trip coverage is not allocated by this plan. CF is not label approval.").font(.caption).foregroundStyle(.secondary)
+                        if let blocker = flow.operationalBlocker { Text(blocker).font(.caption).foregroundStyle(.orange) }
+                    }
+                }
+            }
             GuidedReviewGroup(title: "Application", onEdit: { toggle(.application) }) {
                 VStack(alignment: .leading, spacing: 6) {
                     GuidedReviewRow(label: "Method", value: operationType.rawValue)
@@ -3856,7 +3903,7 @@ struct SprayCalculatorView: View {
                 }
             }
 
-            calculationReferenceGroup
+            if operationType != .foliarSpray || planningMethod != .fullTank { calculationReferenceGroup }
 
             if !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 GuidedReviewGroup(title: "Notes") {
@@ -4159,6 +4206,7 @@ struct SprayCalculatorView: View {
     }
 
     private func saveAndStartJob() {
+        if guidedInputs.planningIntent != nil, let blocker = flow.firstBlocker { errorMessage = blocker.message; return }
         guard formIsValid else { return }
         guard !accessControl.isLoading else { return }
         guard accessControl.canCreateOperationalRecords else {
@@ -4185,6 +4233,7 @@ struct SprayCalculatorView: View {
     }
 
     private func confirmAndStartJob() async {
+        if let blocker = flow.operationalBlocker { errorMessage = blocker; return }
         guard formIsValid, !isStartingJob else { return }
         guard let equipId = selectedEquipmentId,
               let equip = store.sprayEquipment.first(where: { $0.id == equipId }) else { return }
@@ -4312,6 +4361,7 @@ struct SprayCalculatorView: View {
     }
 
     private func saveForLater() {
+        if let blocker = flow.operationalBlocker { errorMessage = blocker; return }
         guard formIsValid else { return }
         guard accessControl.canCreateOperationalRecords else {
             errorMessage = "Your role does not allow creating spray records."

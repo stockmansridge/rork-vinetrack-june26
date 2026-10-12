@@ -36,6 +36,10 @@ import Foundation
 /// as a treated area invented from today's geometry. See `isEmpty`.
 nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
 
+    /// Additive local planning provenance. Absent in every historical snapshot.
+    var planningIntent: SprayPlanningIntent? = nil
+    var planningResolution: SprayPlanningResolution? = nil
+
     // MARK: Application geometry
 
     /// Total GROSS area of the selected blocks. Never replaced by treated area.
@@ -141,7 +145,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             && carrierLitresPerHectare == nil && diluteLitresPer100m == nil
             && appliedLitresPer100m == nil && concentrationFactor == nil
             && targets == nil && customTargets == nil && sprayHeadTarget == nil
-            && groundTarget == nil && carrierAreaBasis == nil && blocks == nil
+            && groundTarget == nil && carrierAreaBasis == nil && blocks == nil && planningIntent == nil && planningResolution == nil
     }
 
     /// Every selected target as the stable identifiers the `targets text[]`
@@ -208,7 +212,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         let reusableLitresPerHectare = carrierVolumeBasis == .litresPerHectare
             ? carrierLitresPerHectare
             : nil
-        let configuration = SprayApplicationSnapshot(
+        var configuration = SprayApplicationSnapshot(
             grossAreaHa: nil,
             treatedAreaHa: nil,
             applicationMode: applicationMode,
@@ -242,6 +246,9 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             // freezes whatever they finally chose.
             blocks: blocks?.map(\.identityOnly)
         )
+        configuration.planningIntent = planningIntent
+        // Working width/controller output are recalculated for a new application.
+        configuration.planningResolution = nil
         return configuration.isEmpty ? nil : configuration
     }
 
@@ -256,7 +263,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
     /// Returns `nil` when the result carries nothing at all, so "never recorded"
     /// keeps its single representation.
     func withBlocks(_ blocks: [SprayApplicationBlockSnapshot]?) -> SprayApplicationSnapshot? {
-        let updated = SprayApplicationSnapshot(
+        var updated = SprayApplicationSnapshot(
             grossAreaHa: grossAreaHa,
             treatedAreaHa: treatedAreaHa,
             applicationMode: applicationMode,
@@ -281,6 +288,8 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             carrierAreaBasis: carrierAreaBasis,
             blocks: blocks
         )
+        updated.planningIntent = planningIntent
+        updated.planningResolution = planningResolution
         return updated.isEmpty ? nil : updated
     }
 
@@ -441,7 +450,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         case carrierVolumeBasis, totalCarrierLitres, carrierLitresPerHectare
         case diluteLitresPer100m, appliedLitresPer100m, concentrationFactor
         case targets, customTargets, sprayHeadTarget, groundTarget, carrierAreaBasis
-        case blocks
+        case blocks, planningIntent, planningResolution
     }
 
     /// Tolerant decode: an unrecognised enum value (for example a
@@ -449,6 +458,8 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
     /// to `nil` instead of failing the whole spray record.
     nonisolated init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        planningIntent = try container.decodeIfPresent(SprayPlanningIntent.self, forKey: .planningIntent)
+        planningResolution = try container.decodeIfPresent(SprayPlanningResolution.self, forKey: .planningResolution)
         grossAreaHa = try container.decodeIfPresent(Double.self, forKey: .grossAreaHa)
         treatedAreaHa = try container.decodeIfPresent(Double.self, forKey: .treatedAreaHa)
         applicationMode = try? container.decodeIfPresent(SprayApplicationMode.self, forKey: .applicationMode)

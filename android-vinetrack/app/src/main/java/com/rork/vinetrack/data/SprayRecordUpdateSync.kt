@@ -103,6 +103,7 @@ class SprayRecordUpdateSync(
         input: SprayRecordRepository.SprayInput,
         clientUpdatedAt: String,
     ): PendingWrite {
+        input.operationalBlocker()?.let { throw IllegalStateException(it) }
         pending.list()
             .filter {
                 it.entityType == PendingEntityType.SPRAY_RECORD &&
@@ -185,6 +186,11 @@ class SprayRecordUpdateSync(
                         PendingWriteStatus.FAILED,
                         "Waiting for this spray record to finish saving first.",
                     )
+                    continue
+                }
+                val planningBlocker = com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(payload.applicationGeometry, payload.tanks)
+                if (planningBlocker != null) {
+                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, planningBlocker)
                     continue
                 }
                 try {
