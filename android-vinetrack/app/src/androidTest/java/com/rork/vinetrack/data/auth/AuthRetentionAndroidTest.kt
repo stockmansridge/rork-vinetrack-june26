@@ -54,7 +54,7 @@ class AuthRetentionAndroidTest {
         root.deleteRecursively()
     }
 
-    @Test fun legitimateAdmissionContentionRejectsTripAndPhotoWithoutRevokingAuthority() {
+    @Test fun legitimateAdmissionContentionPersistsTripAndPhotoWithoutRevokingAuthority() {
         val session = SessionStore(context)
         session.save("synthetic-access", "synthetic-refresh", "account-A", null)
         val authority = requireNotNull(session.accountAccess())
@@ -81,32 +81,58 @@ class AuthRetentionAndroidTest {
             } catch (failure: Throwable) { holderFailure.set(failure) }
         }
         val beforeSession = context.getSharedPreferences("vinetrack_session", 0).all.toMap()
-        var tripFailure: Throwable? = null
-        var photoFailure: Throwable? = null
+        val waiting = java.util.concurrent.CountDownLatch(2)
+        CleanExitDiagnostics.observer = { stage -> stages.add(stage); if (stage == "field.commit.waiting") waiting.countDown() }
+        val failures = java.util.concurrent.CopyOnWriteArrayList<Throwable>()
+        val done = java.util.concurrent.CountDownLatch(2)
+        val trip = com.rork.vinetrack.data.model.Trip(
+            "active", "vineyard", paddockId = "block", paddockName = "Original block", paddockIds = listOf("block", "block-2"),
+            isActive = true, startTime = "2026-10-12T00:00:00Z", operatorUserId = "account-A",
+            pathPoints = listOf(com.rork.vinetrack.data.model.CoordinatePoint(-33.12, 149.25), com.rork.vinetrack.data.model.CoordinatePoint(-33.13, 149.26)),
+            totalDistance = 143.567, completedPaths = listOf(1.5), skippedPaths = listOf(2.5),
+            rowSequence = listOf(1.5, 2.5, 3.5), sequenceIndex = 2, currentRowNumber = 3.5,
+            tankSessions = listOf(com.rork.vinetrack.data.model.TankSession(id = "original-tank", tankNumber = 1, startTime = "2026-10-12T00:03:00Z")),
+            activeTankNumber = 1, totalTanks = 2, startEngineHours = 123.45,
+            tripTitle = "Original metadata", completionNotes = "Original notes", workTaskId = "original-task", clientUpdatedAt = "2026-10-12T00:04:00Z",
+        )
+        val workers = listOf(
+            Thread { try { assertTrue(trips.saveDurably("account-A", "vineyard", trip)) } catch (failure: Throwable) { failures.add(failure) } finally { done.countDown() } },
+            Thread { try { photos.enqueue("pending-pin", "vineyard", jpeg) } catch (failure: Throwable) { failures.add(failure) } finally { done.countDown() } },
+        )
         try {
             holder.start()
             assertTrue("Authorised publication never acquired the lock", entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
-            tripFailure = runCatching {
-                trips.saveDurably("account-A", "vineyard", com.rork.vinetrack.data.model.Trip("active", "vineyard", isActive = true))
-            }.exceptionOrNull()
-            photoFailure = runCatching { photos.enqueue("pending-pin", "vineyard", jpeg) }.exceptionOrNull()
+            workers.forEach(Thread::start)
+            assertTrue("Original saves did not defer", waiting.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertEquals("A save reported completion before admission", 2L, done.count)
+            assertNull(trips.load())
+            assertTrue(photos.list().isEmpty())
         } finally {
             release.countDown()
             holder.join(5_000)
+            workers.forEach { it.join(5_000) }
             CleanExitDiagnostics.observer = previousObserver
         }
         assertFalse("Authorised publication did not finish", holder.isAlive)
         assertNull(holderFailure.get())
-        assertTrue(tripFailure is FieldAccessRevoked)
-        assertTrue(photoFailure is FieldAccessRevoked)
-        assertEquals(listOf("field.commit.contended", "field.commit.contended"), stages.toList())
+        assertTrue("Original field save failed: ${failures.map { it.javaClass.simpleName }}", failures.isEmpty())
+        assertTrue(workers.none(Thread::isAlive))
+        assertEquals(0L, done.count)
+        assertFalse(stages.contains("field.commit.obsolete"))
         assertTrue(session.isAccountAccessCurrent(authority))
         assertFalse(session.retentionGuard.isLocked)
         assertTrue(session.hasSession)
         assertEquals(beforeSession, context.getSharedPreferences("vinetrack_session", 0).all)
-        assertNull(trips.load())
-        assertTrue(photos.list().isEmpty())
-        assertFalse(File(root, "pending_pin_photos").exists())
+        val snapshot = requireNotNull(com.rork.vinetrack.data.ActiveTripStore(context).load())
+        assertEquals("account-A", snapshot.ownerUserId)
+        assertEquals("vineyard", snapshot.vineyardId)
+        assertEquals(trip, snapshot.trip)
+        val photo = PendingPhotoRepository(context).list().single()
+        assertEquals("pending-pin", photo.clientPinId)
+        assertEquals("vineyard", photo.vineyardId)
+        assertArrayEquals(jpeg, File(photo.localPath).readBytes())
+        assertEquals(photos.list().single(), photo)
+        assertTrue(File(root, "pending_pin_photos").listFiles().orEmpty().none { it.name.endsWith(".capture") })
     }
 
     @Test fun rejectedSessionPreservesRealQueuePhotoMetadataAndJpegAndBlocksReauthentication() {
@@ -451,8 +477,8 @@ class AuthRetentionAndroidTest {
         val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
         try {
             assertTrue(session.withAccountAccess(access) {
-                val result = executor.submit<Boolean> { editor.commit() }
-                assertFalse(result.get(5, java.util.concurrent.TimeUnit.SECONDS))
+                val result = executor.submit<Throwable?> { runCatching { editor.commit() }.exceptionOrNull() }
+                assertTrue(result.get(5, java.util.concurrent.TimeUnit.SECONDS) is FieldSaveBusy)
             })
             assertEquals("original", raw.getString("pending_writes_json", null))
             assertTrue(editor.commit())
@@ -547,8 +573,15 @@ class AuthRetentionAndroidTest {
         assertEquals(listOf(original), photos.list())
         assertArrayEquals(byteArrayOf(1, 2, 3), File(original.localPath).readBytes())
         val files = File(root, "pending_pin_photos").listFiles().orEmpty()
-        assertEquals(2, files.size)
+        assertEquals(2, files.count { it.name.endsWith(".jpg") })
+        assertEquals(1, files.count { it.name.endsWith(".capture") })
         assertTrue(files.any { it.readBytes().contentEquals(byteArrayOf(4, 5, 6)) })
+        failCommit = false
+        val recovered = PendingPhotoRepository(faultContext).list().single()
+        assertNotEquals(original.revision, recovered.revision)
+        assertArrayEquals(byteArrayOf(4, 5, 6), File(recovered.localPath).readBytes())
+        assertEquals(recovered, PendingPhotoRepository(faultContext).list().single())
+        assertTrue(File(root, "pending_pin_photos").listFiles().orEmpty().none { it.name.endsWith(".capture") })
     }
 
     @Test fun actualUnscopedLateTankAcknowledgementNowFailsAtDurableStorage() {
@@ -750,15 +783,17 @@ class AuthRetentionAndroidTest {
         client.close()
     }
 
-    @Test fun concurrentTripTankPinPhotoAndDraftCommitRefusalsAreExplicitAndSameIntentCanBeRetried() = runBlocking {
+    @Test fun concurrentTripTankPinPhotoAndDraftWritesCompleteDurablyAfterContention() = runBlocking {
         val session = SessionStore(context)
         session.save("access", "refresh", "account-A", null)
         val access = requireNotNull(session.accountAccess())
         val trips = com.rork.vinetrack.data.ActiveTripStore(context)
         val tanks = com.rork.vinetrack.data.SprayTankActualStore(context)
-        val pins = PendingWriteStore(context)
-        val pin = com.rork.vinetrack.data.model.PendingWrite("pin-operation", "pin", "create",
-            "{\"id\":\"pin\",\"vineyard_id\":\"vineyard\",\"created_by\":\"account-A\"}", "pin", 1L, 1L)
+        val pins = PendingWriteRepository(context)
+        val pinInput = PinRepository.PinInput("pin", "vineyard", createdBy = "account-A")
+        val growth = com.rork.vinetrack.data.model.GrowthStageRecord("growth", "vineyard", stageCode = "19", observedAt = "2026-10-12T00:00:00Z", notes = "original-growth", latitude = -33.12, longitude = 149.25)
+        val growthSync = com.rork.vinetrack.data.GrowthRecordCreateSync(pins, { error("No network in save regression") }, { _, _ -> false })
+        val tankSync = com.rork.vinetrack.data.TripTankSync(null, pins, trips)
         val photos = PendingPhotoRepository(context)
         val drafts = com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context)
         val trip = com.rork.vinetrack.data.model.Trip("trip", "vineyard", isActive = true)
@@ -782,30 +817,41 @@ class AuthRetentionAndroidTest {
             }
         }
         withTimeout(5_000) { entered.await() }
+        val waiting = java.util.concurrent.CountDownLatch(6)
+        val observer = CleanExitDiagnostics.observer
+        CleanExitDiagnostics.observer = { if (it == "field.commit.waiting") waiting.countDown() }
+        val attempts = listOf(
+            async(kotlinx.coroutines.Dispatchers.IO) { assertTrue(trips.saveDurably("account-A", "vineyard", trip)) },
+            async(kotlinx.coroutines.Dispatchers.IO) { assertTrue(tanks.save(actual)); tankSync.enqueue(trip) },
+            async(kotlinx.coroutines.Dispatchers.IO) { PinCreateSync(pins).enqueue(pinInput) },
+            async(kotlinx.coroutines.Dispatchers.IO) { growthSync.enqueue(growth, "2026-10-12T00:00:00Z") },
+            async(kotlinx.coroutines.Dispatchers.IO) { photos.enqueue("pin", "vineyard", jpeg) },
+            async(kotlinx.coroutines.Dispatchers.IO) { drafts.save(draft) },
+        )
         try {
-            withTimeout(5_000) {
-                val attempts = listOf(
-                    async(kotlinx.coroutines.Dispatchers.Default) { assertTrue(runCatching { trips.saveDurably("account-A", "vineyard", trip) }.isFailure) },
-                    async(kotlinx.coroutines.Dispatchers.Default) { assertFalse(tanks.save(actual)) },
-                    async(kotlinx.coroutines.Dispatchers.Default) { assertFalse(pins.save(listOf(pin))) },
-                    async(kotlinx.coroutines.Dispatchers.Default) { assertTrue(runCatching { photos.enqueue("pin", "vineyard", jpeg) }.isFailure) },
-                    async(kotlinx.coroutines.Dispatchers.Default) { assertTrue(runCatching { drafts.save(draft) }.isFailure) },
-                )
-                attempts.forEach { it.await() }
-            }
+            assertTrue(waiting.await(2, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(attempts.none { it.isCompleted })
             before.forEach { (name, original) -> assertEquals(original, context.getSharedPreferences(name, 0).all) }
         } finally { release.complete(Unit) }
-        withTimeout(5_000) { holder.await() }
-        assertTrue(trips.saveDurably("account-A", "vineyard", trip))
-        assertTrue(tanks.save(actual))
-        assertTrue(pins.save(listOf(pin)))
-        assertEquals(listOf(pin), pins.load())
-        val photo = photos.enqueue("pin", "vineyard", jpeg)
-        drafts.save(draft)
-        assertEquals(trip, trips.load()?.trip)
-        assertEquals(listOf(actual), tanks.pending())
+        try {
+            withTimeout(6_000) { holder.await(); attempts.forEach { it.await() } }
+        } finally { CleanExitDiagnostics.observer = observer }
+        assertEquals(trip, com.rork.vinetrack.data.ActiveTripStore(context).load()?.trip)
+        assertEquals(listOf(actual), com.rork.vinetrack.data.SprayTankActualStore(context).pending())
+        val retained = PendingWriteRepository(context).list()
+        assertEquals(3, retained.size)
+        assertEquals(3, retained.map { it.id }.distinct().size)
+        assertEquals(pins.list().toSet(), retained.toSet())
+        assertEquals("pin", retained.single { it.entityType == "pin" }.clientId)
+        val retainedGrowth = retained.single { it.clientId == "growth" }
+        val growthPayload = SupabaseClient.json.decodeFromString<com.rork.vinetrack.data.GrowthRecordCreateSync.Payload>(retainedGrowth.payloadJson)
+        assertEquals("original-growth", growthPayload.notes)
+        assertEquals(-33.12, requireNotNull(growthPayload.latitude), 0.0)
+        assertEquals("vineyard", growthPayload.vineyardId)
+        assertTrue(retained.any { it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK && it.clientId == trip.id })
+        val photo = PendingPhotoRepository(context).list().single()
         assertArrayEquals(jpeg, File(photo.localPath).readBytes())
-        assertEquals(draft, drafts.load("account-A", "vineyard", null))
+        assertEquals(draft, com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context).load("account-A", "vineyard", null))
     }
 
     /** Successful production repository transition on a strict-empty fixture; not Activity/live-service acceptance. */

@@ -14,6 +14,7 @@ class StartTankCommitCoordinator internal constructor(
     private val saveTrip: (String, String, Trip) -> Boolean,
     private val ensureTankMarker: (Trip) -> Boolean,
     private val hasTankMarker: (String) -> Boolean,
+    private val fieldAccess: com.rork.vinetrack.data.auth.FieldStoreAccess? = null,
 ) {
     @Serializable
     data class Journal(
@@ -61,10 +62,17 @@ class StartTankCommitCoordinator internal constructor(
             }
         },
         hasTankMarker = { tripId -> pendingWrites.list().any { it.clientId == tripId && it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK && it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved } },
+        fieldAccess = com.rork.vinetrack.data.auth.FieldStoreAccess(context),
     )
 
+    private fun <T> admitted(action: () -> T): T = if (fieldAccess == null) action() else fieldAccess.admitted(action)
+
+    fun commit(ownerUserId: String, vineyardId: String, sourceTrip: Trip, trip: Trip, actual: SprayTankActual): Boolean =
+        if (fieldAccess == null) commitLocked(ownerUserId, vineyardId, sourceTrip, trip, actual)
+        else fieldAccess.admittedForOwner(ownerUserId) { commitLocked(ownerUserId, vineyardId, sourceTrip, trip, actual) }
+
     @Synchronized
-    fun commit(ownerUserId: String, vineyardId: String, sourceTrip: Trip, trip: Trip, actual: SprayTankActual): Boolean {
+    private fun commitLocked(ownerUserId: String, vineyardId: String, sourceTrip: Trip, trip: Trip, actual: SprayTankActual): Boolean {
         require(sourceTrip.id == trip.id && actual.tripId == trip.id && actual.tankSessionId.isNotBlank())
         if (journalStorage.read() != null) return false
         val journal = Journal(
@@ -83,15 +91,25 @@ class StartTankCommitCoordinator internal constructor(
     }
 
     /** Completes the exact saved operation; every step is stable-ID idempotent. */
-    @Synchronized
     fun recover(): Journal? {
+        if (journalStorage.read() == null) return null
+        return admitted { recoverLocked() }
+    }
+
+    @Synchronized
+    private fun recoverLocked(): Journal? {
         val journal = journalStorage.read() ?: return null
+        fieldAccess?.commitForOwner(journal.ownerUserId) { }
         return if (finish(journal) != null) journal else null
     }
 
     /** Retries only the already-journaled confirmation and returns its durable merged trip. */
+    fun resume(ownerUserId: String, vineyardId: String, sourceTrip: Trip, currentTrip: Trip, tankNumber: Int): Trip? =
+        if (fieldAccess == null) resumeLocked(ownerUserId, vineyardId, sourceTrip, currentTrip, tankNumber)
+        else fieldAccess.admittedForOwner(ownerUserId) { resumeLocked(ownerUserId, vineyardId, sourceTrip, currentTrip, tankNumber) }
+
     @Synchronized
-    fun resume(
+    private fun resumeLocked(
         ownerUserId: String,
         vineyardId: String,
         sourceTrip: Trip,

@@ -19,7 +19,8 @@ import kotlinx.serialization.json.Json
  */
 class PendingWriteStore(context: Context) : PendingWriteStoring {
 
-    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+    internal val fieldAccess = com.rork.vinetrack.data.auth.FieldStoreAccess(context)
+    private val prefs = fieldAccess.preferences(
         context.applicationContext.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE),
     )
 

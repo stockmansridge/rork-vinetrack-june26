@@ -11,16 +11,20 @@ import kotlinx.serialization.Serializable
 class SprayTankActualStore internal constructor(
     private val readBytes: () -> String?,
     private val commitBytes: (String) -> Boolean,
+    private val fieldAccess: com.rork.vinetrack.data.auth.FieldStoreAccess? = null,
 ) {
-    private constructor(preferences: android.content.SharedPreferences) : this(
+    private constructor(preferences: android.content.SharedPreferences, access: com.rork.vinetrack.data.auth.FieldStoreAccess) : this(
         { preferences.getString("cache", null) },
         { bytes -> preferences.edit().putString("cache", bytes).commit() },
+        access,
     )
-    constructor(context: Context) : this(
-        com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
-            context.getSharedPreferences("vinetrack_spray_tank_actuals", Context.MODE_PRIVATE),
-        ),
+    private constructor(context: Context, access: com.rork.vinetrack.data.auth.FieldStoreAccess) : this(
+        access.preferences(context.getSharedPreferences("vinetrack_spray_tank_actuals", Context.MODE_PRIVATE)), access,
     )
+    constructor(context: Context) : this(context, com.rork.vinetrack.data.auth.FieldStoreAccess(context))
+    private fun admitted(action: () -> Boolean): Boolean = try {
+        if (fieldAccess == null) action() else fieldAccess.admitted(action)
+    } catch (_: com.rork.vinetrack.data.auth.FieldAccessRevoked) { false }
     @Serializable private data class Cache(
         val records: List<SprayTankActual> = emptyList(),
         val pendingIds: Set<String> = emptySet(),
@@ -47,7 +51,10 @@ class SprayTankActualStore internal constructor(
     }.getOrDefault(false)
 
     /** A server read cannot consume foreign, edited or unattributed pending confirmation evidence. */
-    @Synchronized fun mergeRemoteForAccount(remote: List<SprayTankActual>, access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess): Boolean {
+    fun mergeRemoteForAccount(remote: List<SprayTankActual>, access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess): Boolean =
+        admitted { mergeRemoteForAccountLocked(remote, access) }
+
+    @Synchronized private fun mergeRemoteForAccountLocked(remote: List<SprayTankActual>, access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess): Boolean {
         if (!hasReadableSyncEvidence()) return false
         val current = cache()
         val eligible = pendingOwned(access).mapTo(mutableSetOf()) { it.id }
@@ -91,7 +98,9 @@ class SprayTankActualStore internal constructor(
             .maxByOrNull { it.clientUpdatedAt }
 
     /** Commits record and pending marker in one synchronous SharedPreferences transaction. */
-    fun save(actual: SprayTankActual): Boolean {
+    fun save(actual: SprayTankActual): Boolean = admitted { saveAdmitted(actual) }
+
+    private fun saveAdmitted(actual: SprayTankActual): Boolean {
         // Capture before the storage monitor: callbacks acquire auth then storage, never invert them.
         val provider = synchronized(this) { accountProvider }
         val access = provider?.invoke()
@@ -117,7 +126,9 @@ class SprayTankActualStore internal constructor(
     }
 
     /** Removes a just-created local row when a coordinated trip commit fails. */
-    @Synchronized fun remove(id: String): Boolean {
+    fun remove(id: String): Boolean = admitted { removeLocked(id) }
+
+    @Synchronized private fun removeLocked(id: String): Boolean {
         val current = cache()
         return write(current.copy(records = current.records.filterNot { it.id == id }, pendingIds = current.pendingIds - id))
     }
@@ -128,7 +139,9 @@ class SprayTankActualStore internal constructor(
     }
 
     /** Merges server rows without replacing a newer pending local confirmation. */
-    @Synchronized fun mergeRemote(remote: List<SprayTankActual>): Boolean {
+    fun mergeRemote(remote: List<SprayTankActual>): Boolean = admitted { mergeRemoteLocked(remote) }
+
+    @Synchronized private fun mergeRemoteLocked(remote: List<SprayTankActual>): Boolean {
         val current = cache()
         val records = current.records.toMutableList()
         val pending = current.pendingIds.toMutableSet()
@@ -146,13 +159,17 @@ class SprayTankActualStore internal constructor(
         return write(current.copy(records = records, pendingIds = pending))
     }
 
-    @Synchronized fun markSynced(id: String): Boolean {
+    fun markSynced(id: String): Boolean = admitted { markSyncedLocked(id) }
+
+    @Synchronized private fun markSyncedLocked(id: String): Boolean {
         val current = cache()
         return write(current.copy(pendingIds = current.pendingIds - id))
     }
 
     /** Old upload responses never acknowledge a replacement confirmation for the same actual ID. */
-    @Synchronized fun markSyncedIfCurrent(expected: SprayTankActual): Boolean {
+    fun markSyncedIfCurrent(expected: SprayTankActual): Boolean = admitted { markSyncedIfCurrentLocked(expected) }
+
+    @Synchronized private fun markSyncedIfCurrentLocked(expected: SprayTankActual): Boolean {
         val current = cache()
         if (expected.id !in current.pendingIds || current.records.none { it == expected }) return false
         return write(current.copy(pendingIds = current.pendingIds - expected.id))

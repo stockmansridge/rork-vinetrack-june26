@@ -9617,16 +9617,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val live = tracker ?: return false
             snapshot.trip.copy(pathPoints = live.points.toList(), totalDistance = live.distanceMetres)
         } else state.trips.firstOrNull { it.id == snapshot.trip.id && it.isActive } ?: return false
-        val access = trackingOperation?.account ?: session.accountAccess() ?: return false
+        val access = trackingOperation?.account ?: session.snapshotAccountAccess() ?: return false
         var durable = false
         val admitted = runCatching {
-            session.withAccountAccess(access) {
+            session.withFieldCommit(access) {
                 durable = activeTripStore.saveDurably(access.userId, snapshot.vineyardId, trip)
                 if (!durable) _ui.update { it.copy(tripError = "Recent Trip progress couldn't be saved on this device. Keep the Trip open and retry; do not sign out or restart.") }
             }
         }.getOrDefault(false)
         if (!durable && admitted.not()) {
-            session.withAccountAccess(access) {
+            // This account-owned ViewModel retains the exact live Trip/GPS intent. Do not
+            // block again just to publish a recoverable failure, or claim a successful save.
+            val current = session.snapshotAccountAccess()
+            if (current?.userId == access.userId && current.generation == access.generation && current.authority === access.authority) {
                 _ui.update { it.copy(tripError = "Recent Trip progress couldn't be saved on this device. Keep the Trip open and retry; do not sign out or restart.") }
             }
         }

@@ -39,7 +39,8 @@ interface WorkTaskMaterialStoring {
 
 class WorkTaskMaterialStore(context: Context) : WorkTaskMaterialStoring {
 
-    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+    private val fieldAccess = com.rork.vinetrack.data.auth.FieldStoreAccess(context)
+    private val prefs = fieldAccess.preferences(
         context.applicationContext.getSharedPreferences("vinetrack_work_task_materials", Context.MODE_PRIVATE),
     )
 
@@ -47,6 +48,9 @@ class WorkTaskMaterialStore(context: Context) : WorkTaskMaterialStoring {
     private val catalogueSerializer = ListSerializer(MaterialCatalogueItem.serializer())
     private val vineyardSerializer = ListSerializer(VineyardMaterial.serializer())
     private val taskSerializer = ListSerializer(WorkTaskMaterial.serializer())
+
+    private fun admitted(action: () -> Boolean): Boolean = try { fieldAccess.admitted(action) }
+        catch (_: com.rork.vinetrack.data.auth.FieldAccessRevoked) { false }
 
     /** The cached SERVER catalogue, or null when nothing has ever synced. */
     override fun loadCatalogue(): List<MaterialCatalogueItem>? {
@@ -61,9 +65,9 @@ class WorkTaskMaterialStore(context: Context) : WorkTaskMaterialStoring {
      */
     override fun saveCatalogue(items: List<MaterialCatalogueItem>): Boolean {
         if (items.isEmpty()) return false
-        return prefs.edit()
+        return admitted { prefs.edit()
             .putString(KEY_CATALOGUE, json.encodeToString(catalogueSerializer, items))
-            .commit()
+            .commit() }
     }
 
     override fun loadVineyardMaterials(): List<VineyardMaterial> {
@@ -71,26 +75,28 @@ class WorkTaskMaterialStore(context: Context) : WorkTaskMaterialStoring {
         return runCatching { json.decodeFromString(vineyardSerializer, raw) }.getOrDefault(emptyList())
     }
 
-    override fun saveVineyardMaterials(items: List<VineyardMaterial>): Boolean =
+    override fun saveVineyardMaterials(items: List<VineyardMaterial>): Boolean = admitted {
         prefs.edit()
             .putString(KEY_VINEYARD_MATERIALS, json.encodeToString(vineyardSerializer, items))
             .commit()
+    }
 
     override fun loadTaskMaterials(): List<WorkTaskMaterial> {
         val raw = prefs.getString(KEY_TASK_MATERIALS, null) ?: return emptyList()
         return runCatching { json.decodeFromString(taskSerializer, raw) }.getOrDefault(emptyList())
     }
 
-    override fun saveTaskMaterials(items: List<WorkTaskMaterial>): Boolean =
+    override fun saveTaskMaterials(items: List<WorkTaskMaterial>): Boolean = admitted {
         prefs.edit()
             .putString(KEY_TASK_MATERIALS, json.encodeToString(taskSerializer, items))
             .commit()
+    }
 
-    override fun clear(): Boolean = prefs.edit()
+    override fun clear(): Boolean = admitted { prefs.edit()
         .remove(KEY_CATALOGUE)
         .remove(KEY_VINEYARD_MATERIALS)
         .remove(KEY_TASK_MATERIALS)
-        .commit()
+        .commit() }
 
     private companion object {
         const val KEY_CATALOGUE = "material_catalogue_json"

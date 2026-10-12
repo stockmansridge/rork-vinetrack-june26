@@ -33,7 +33,8 @@ interface PendingPhotoStoring {
 
 class PendingPhotoStore(context: Context) : PendingPhotoStoring {
 
-    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+    internal val fieldAccess = com.rork.vinetrack.data.auth.FieldStoreAccess(context)
+    private val prefs = fieldAccess.preferences(
         context.applicationContext.getSharedPreferences("vinetrack_pending_photos", Context.MODE_PRIVATE),
     )
 

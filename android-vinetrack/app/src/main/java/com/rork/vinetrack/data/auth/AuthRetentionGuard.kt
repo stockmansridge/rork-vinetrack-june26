@@ -1,6 +1,8 @@
 package com.rork.vinetrack.data.auth
 
 import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,7 +18,7 @@ class AuthRetentionGuard(
     private val locked = MutableStateFlow(runCatching(readLocked).getOrDefault(true))
     val state: StateFlow<Boolean> = locked.asStateFlow()
     val isLocked: Boolean get() = locked.value
-    private var generation: Long = 0
+    @Volatile private var generation: Long = 0
     private val epoch = MutableStateFlow(runCatching(readIdentityEpoch).getOrDefault(0L))
     /** Recreates account-bound UI holders after exit or recovery, never as record ownership. */
     val identityEpoch: StateFlow<Long> = epoch.asStateFlow()
@@ -25,7 +27,19 @@ class AuthRetentionGuard(
     val finishingCleanExit: StateFlow<Boolean> = finishing.asStateFlow()
     internal fun finishCleanExit() { serialized { finishing.value = false } }
     private var commitDepth: Int = 0
-    private var transitionClosed: Boolean = false
+    @Volatile private var transitionClosed: Boolean = false
+    private val waitingFieldCommits = AtomicInteger(0)
+
+    internal enum class Admission { ADMITTED, BUSY, REVOKED }
+
+    /** Captures an incarnation without waiting or admitting a write; commit must validate it. */
+    internal fun snapshotAccount(currentUserId: () -> String?): AccountAccess? {
+        // Sample generation BEFORE identity: a concurrent transition can only produce an
+        // obsolete candidate, never bind old payload to the new generation. Validation is locked.
+        val incarnation = generation
+        return currentUserId()?.takeIf { it.isNotBlank() }
+            ?.let { AccountAccess(it, this, incarnation) }
+    }
     private val operations = mutableSetOf<FieldOperation>()
 
     class AccountAccess internal constructor(
@@ -50,9 +64,16 @@ class AuthRetentionGuard(
             ?.let { AccountAccess(it, this, generation) }
     }
 
-    internal fun tryCaptureAccount(userId: String?): AccountAccess? {
-        if (!authorityLock.tryLock()) return null
-        return try { captureAccount(userId) } finally { authorityLock.unlock() }
+    internal sealed interface Capture {
+        data class Captured(val account: AccountAccess) : Capture
+        data object Busy : Capture
+        data object Revoked : Capture
+    }
+
+    internal fun tryCaptureAccount(userId: String?): Capture {
+        if (!authorityLock.tryLock()) return Capture.Busy
+        return try { captureAccount(userId)?.let { Capture.Captured(it) } ?: Capture.Revoked }
+        finally { authorityLock.unlock() }
     }
 
     internal fun isAccountCurrent(access: AccountAccess, userId: String?): Boolean = serialized {
@@ -83,16 +104,40 @@ class AuthRetentionGuard(
     }
 
     /** Low-level stores may already own their storage monitor; never invert auth → storage ordering. */
-    internal fun tryWithAccount(access: AccountAccess, currentUserId: () -> String?, action: () -> Unit): Boolean {
+    internal fun tryWithAccount(access: AccountAccess, currentUserId: () -> String?, action: () -> Unit): Admission {
         if (!authorityLock.tryLock()) {
             CleanExitDiagnostics.checkpoint("field.commit.contended")
-            return false
+            return Admission.BUSY
         }
         return try {
-            withAccount(access, currentUserId, action).also { admitted ->
-                if (!admitted) CleanExitDiagnostics.checkpoint("field.commit.obsolete")
+            if (withAccount(access, currentUserId, action)) Admission.ADMITTED else {
+                CleanExitDiagnostics.checkpoint("field.commit.obsolete")
+                Admission.REVOKED
             }
         } finally { authorityLock.unlock() }
+    }
+
+    /** Only call BEFORE storage monitors. A timeout never executes or acknowledges the action. */
+    internal fun awaitWithAccount(
+        access: AccountAccess,
+        currentUserId: () -> String?,
+        timeoutMillis: Long,
+        action: () -> Unit,
+    ): Admission {
+        if (authorityLock.isHeldByCurrentThread) return tryWithAccount(access, currentUserId, action)
+        waitingFieldCommits.incrementAndGet()
+        try {
+            CleanExitDiagnostics.checkpoint("field.commit.waiting")
+            val acquired = try { authorityLock.tryLock(timeoutMillis, TimeUnit.MILLISECONDS) }
+            catch (interrupted: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return Admission.BUSY
+            }
+            if (!acquired) return Admission.BUSY
+            return try {
+                if (withAccount(access, currentUserId, action)) Admission.ADMITTED else Admission.REVOKED
+            } finally { authorityLock.unlock() }
+        } finally { waitingFieldCommits.decrementAndGet() }
     }
 
     /** Closes new admission while inspecting and committing. Outstanding work defers without cancellation. */
@@ -105,7 +150,7 @@ class AuthRetentionGuard(
             }
             transitionClosed = true
             try {
-                if (operations.isNotEmpty()) {
+                if (operations.isNotEmpty() || waitingFieldCommits.get() != 0) {
                     CleanExitDiagnostics.checkpoint("exit.guard.operations.pending")
                     false
                 } else checkAndCommit()
@@ -143,7 +188,7 @@ class AuthRetentionGuard(
     internal fun recoverIfIdle(inspectAndCommit: () -> Boolean): Boolean {
         if (!authorityLock.tryLock()) return false
         return try {
-            if (!isLocked || transitionClosed || commitDepth != 0 || operations.isNotEmpty()) return false
+            if (!isLocked || transitionClosed || commitDepth != 0 || operations.isNotEmpty() || waitingFieldCommits.get() != 0) return false
             transitionClosed = true
             try {
                 if (!inspectAndCommit()) false else {

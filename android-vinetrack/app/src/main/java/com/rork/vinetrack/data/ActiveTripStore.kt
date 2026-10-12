@@ -65,7 +65,7 @@ class ActiveTripStore internal constructor(
                 if (hasActiveClaim()) false else saveDurably(ownerUserId, vineyardId, trip)
             }
         }
-        return if (fieldAccess == null) claim() else fieldAccess.commitForOwner(ownerUserId, claim)
+        return if (fieldAccess == null) claim() else fieldAccess.admittedForOwner(ownerUserId, claim)
     }
 
     /** Persist (replace) the active-trip snapshot for the given owner/vineyard. */
@@ -77,7 +77,7 @@ class ActiveTripStore internal constructor(
             storage.write(encoded)
         }
         if (fieldAccess == null) synchronized(this, write)
-        else fieldAccess.commitForOwner(ownerUserId) { synchronized(this, write) }
+        else fieldAccess.admittedForOwner(ownerUserId) { synchronized(this, write) }
     }
 
     /** Synchronous result-returning commit used by the Start Tank transaction. */
@@ -86,7 +86,7 @@ class ActiveTripStore internal constructor(
         val encoded = runCatching { json.encodeToString(Snapshot.serializer(), snapshot) }.getOrNull() ?: return false
         val write = { if (canReplace(ownerUserId)) storage.writeDurably(encoded) else false }
         return if (fieldAccess == null) synchronized(this, write)
-        else fieldAccess.commitForOwner(ownerUserId) { synchronized(this, write) }
+        else fieldAccess.admittedForOwner(ownerUserId) { synchronized(this, write) }
     }
 
     /** Read the persisted snapshot, or null when none is stored / it can't decode. */
@@ -116,6 +116,6 @@ class ActiveTripStore internal constructor(
                 Unit
             }
         }
-        if (fieldAccess == null) remove() else fieldAccess.commit(remove)
+        if (fieldAccess == null) remove() else fieldAccess.admitted(remove)
     }
 }

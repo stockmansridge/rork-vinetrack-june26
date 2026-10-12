@@ -72,16 +72,16 @@ class PinCaptureEvidenceStore(context: Context) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
     private val serializer = ListSerializer(Evidence.serializer())
 
-    fun save(evidence: Evidence): Boolean {
+    fun save(evidence: Evidence): Boolean = fieldAccess.admitted { synchronized(this) {
         val existing = load().filterNot { it.pinId == evidence.pinId && it.evidenceRevision == evidence.evidenceRevision }
-        return persist(existing + evidence)
-    }
+        persist(existing + evidence)
+    } }
 
-    fun markUploaded(pinId: String, evidenceRevision: Int): Boolean = persist(
-        load().map {
+    fun markUploaded(pinId: String, evidenceRevision: Int): Boolean = fieldAccess.admitted { synchronized(this) {
+        persist(load().map {
             if (it.pinId == pinId && it.evidenceRevision == evidenceRevision) it.copy(uploaded = true) else it
-        },
-    )
+        })
+    } }
 
     fun pending(): List<Evidence> = load().filterNot { it.uploaded }
 
@@ -89,7 +89,7 @@ class PinCaptureEvidenceStore(context: Context) {
         json.decodeFromString(serializer, raw)
     }.getOrElse { error("Saved capture evidence couldn't be read. Keep this installation and contact support.") }
 
-    fun load(): List<Evidence> = fieldAccess.commit {
+    fun load(): List<Evidence> = fieldAccess.admitted {
         val primary = preferences.getString(KEY, null)?.let(::decodeEvidence).orEmpty()
         val base = recoveryFile.baseFile
         check(!File(base.path + ".new").exists()) { "An interrupted capture needs recovery review." }
@@ -101,11 +101,11 @@ class PinCaptureEvidenceStore(context: Context) {
         groups.values.map { it.first() }
     }
 
-    private fun persist(records: List<Evidence>): Boolean = fieldAccess.commit {
+    private fun persist(records: List<Evidence>): Boolean = fieldAccess.admitted {
         val encoded = json.encodeToString(serializer, records)
         if (preferences.edit().putString(KEY, encoded).commit()) {
             runCatching { recoveryFile.delete() }
-            return@commit true
+            return@admitted true
         }
         runCatching {
             val stream = recoveryFile.startWrite()

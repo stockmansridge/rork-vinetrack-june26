@@ -74,16 +74,17 @@ class RetentionReviewTest {
         } finally { root.deleteRecursively() }
     }
 
-    @Test(timeout = 10000) fun photoClearPersistenceFailureDeletesBytesButLeavesPersistedMetadata() {
+    @Test(timeout = 10000) fun photoClearPersistenceFailurePreservesMetadataAndExactJpeg() {
         val root = directory()
         try {
             val store = ReviewPhotoDisk(root)
             val photos = PendingPhotoRepository(root, store)
             val original = photos.enqueue("pin", "vineyard-A", jpeg())
+            val originalBytes = File(original.localPath).readBytes()
             store.failClear = true
             try { photos.clearAll(); fail("Expected metadata commit failure") } catch (_: IllegalStateException) { }
             assertEquals(listOf(original), PendingPhotoRepository(root, ReviewPhotoDisk(root)).list())
-            assertFalse(File(original.localPath).exists())
+            assertArrayEquals(originalBytes, File(original.localPath).readBytes())
         } finally { root.deleteRecursively() }
     }
 
@@ -489,7 +490,7 @@ class RetentionReviewTest {
         } finally { root.deleteRecursively() }
     }
 
-    @Test(timeout = 10000) fun unreadableActiveTripEvidenceCanBeOverwrittenByNewClaim() {
+    @Test(timeout = 10000) fun unreadableActiveTripEvidenceRefusesNewClaimAndPreservesOriginalBytes() {
         val root = directory()
         try {
             val file = File(root, "active-trip")
@@ -504,11 +505,11 @@ class RetentionReviewTest {
             val recreated = ActiveTripStore(storage)
             assertNull(recreated.load())
             assertArrayEquals(originalBytes, file.readBytes())
-            assertFalse(recreated.hasActiveClaim())
-            assertTrue(recreated.claimIfAvailable("account-B", "other-vineyard",
+            assertTrue(recreated.hasActiveClaim())
+            assertFalse(recreated.claimIfAvailable("account-B", "other-vineyard",
                 reviewTrip().copy(id = "new-trip-B", vineyardId = "other-vineyard")))
-            assertFalse(originalBytes.contentEquals(file.readBytes()))
-            assertEquals("account-B", ActiveTripStore(storage).load()?.ownerUserId)
+            assertArrayEquals(originalBytes, file.readBytes())
+            assertNull(ActiveTripStore(storage).load())
         } finally { root.deleteRecursively() }
     }
 

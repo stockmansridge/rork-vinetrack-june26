@@ -167,6 +167,20 @@ class SessionStore(context: Context) {
         if (accessToken.isNullOrBlank()) null else retentionGuard.captureAccount(userId)
     }
 
+    /** Identity-only candidate for a synchronous field operation; locked admission must validate it. */
+    internal fun snapshotAccountAccess(): AuthRetentionGuard.AccountAccess? = retentionGuard.snapshotAccount {
+        userId?.takeIf { !accessToken.isNullOrBlank() }
+    }
+
+    /** Bounded field publication, called before storage locks and never rebinding the original handle. */
+    internal fun withFieldCommit(access: AuthRetentionGuard.AccountAccess, action: () -> Unit): Boolean =
+        when (retentionGuard.awaitWithAccount(access, { userId?.takeIf { !accessToken.isNullOrBlank() } },
+            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) 100L else 5_000L, action)) {
+            AuthRetentionGuard.Admission.ADMITTED -> true
+            AuthRetentionGuard.Admission.REVOKED -> false
+            AuthRetentionGuard.Admission.BUSY -> throw FieldSaveBusy()
+        }
+
     fun withAccountAccess(access: AuthRetentionGuard.AccountAccess, action: () -> Unit): Boolean =
         retentionGuard.withAccount(access, { userId?.takeIf { !accessToken.isNullOrBlank() } }, action)
 

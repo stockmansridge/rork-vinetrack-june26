@@ -21,6 +21,8 @@ import java.util.UUID
  * No replay, retry, or backoff logic lives here.
  */
 class PendingWriteRepository(private val store: PendingWriteStoring) {
+    private val fieldAccess = (store as? PendingWriteStore)?.fieldAccess
+    private fun <T> admitted(action: () -> T): T = if (fieldAccess == null) action() else fieldAccess.admitted(action)
 
     /** Production entry point — persists to SharedPreferences via [PendingWriteStore]. */
     constructor(context: Context) : this(PendingWriteStore(context))
@@ -98,8 +100,11 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     }
 
     /** Atomically replace one unresolved marker's payload, keeping its identity and earliest baseline. */
+    fun upsertCoalesced(entityType: String, clientId: String, payloadJson: String, opType: String = com.rork.vinetrack.data.model.PendingOpType.UPDATE): PendingWrite =
+        admitted { upsertCoalescedLocked(entityType, clientId, payloadJson, opType) }
+
     @Synchronized
-    fun upsertCoalesced(entityType: String, clientId: String, payloadJson: String, opType: String = com.rork.vinetrack.data.model.PendingOpType.UPDATE): PendingWrite {
+    private fun upsertCoalescedLocked(entityType: String, clientId: String, payloadJson: String, opType: String = com.rork.vinetrack.data.model.PendingOpType.UPDATE): PendingWrite {
         val now = System.currentTimeMillis()
         val existing = _writes.value.firstOrNull {
             it.entityType == entityType && it.clientId == clientId &&
@@ -123,8 +128,11 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
      * The payload factory reads the same locked snapshot used for replacement (tank baseline).
      * Failed persistence publishes nothing and retains every prior row unchanged.
      */
+    internal fun enqueueReplacingUnresolved(entityType: String, opType: String, clientId: String, payload: (List<PendingWrite>) -> String): PendingWrite =
+        admitted { enqueueReplacingUnresolvedLocked(entityType, opType, clientId, payload) }
+
     @Synchronized
-    internal fun enqueueReplacingUnresolved(
+    private fun enqueueReplacingUnresolvedLocked(
         entityType: String,
         opType: String,
         clientId: String,
@@ -255,8 +263,10 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
      * drops every persisted pending write and zeroes the observable count. No
      * server/replay side effects.
      */
+    fun clearAll(): Unit = admitted { clearAllLocked() }
+
     @Synchronized
-    fun clearAll() {
+    private fun clearAllLocked() {
         if (store.clear()) {
             _writes.value = emptyList()
             _pendingCount.value = 0
@@ -264,8 +274,11 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     }
 
     /** Claim exactly the preserved candidate; replacements and duplicate replay cannot claim it. */
+    fun claimReplay(expected: PendingWrite, permittedWrites: Map<String, PendingWrite>? = null): PendingWrite? =
+        admitted { claimReplayLocked(expected, permittedWrites) }
+
     @Synchronized
-    fun claimReplay(expected: PendingWrite, permittedWrites: Map<String, PendingWrite>? = null): PendingWrite? {
+    private fun claimReplayLocked(expected: PendingWrite, permittedWrites: Map<String, PendingWrite>? = null): PendingWrite? {
         if (permittedWrites != null && permittedWrites[expected.id] != expected) return null
         if (permittedWrites is FrozenVersions && permittedWrites.scope != scopeProvider?.invoke()) return null
         if (expected.status !in setOf(PendingWriteStatus.PENDING, PendingWriteStatus.FAILED)) return null
@@ -284,18 +297,18 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         (claimedScopes[expected]?.let { it == scopeProvider?.invoke() } ?: true)
 
     /** Durable compare-and-remove under the same lock as every queue write. */
-    @Synchronized
-    fun removeIfCurrent(expected: PendingWrite): Boolean = mutateIfCurrent(expected) { null }
+    fun removeIfCurrent(expected: PendingWrite): Boolean = admitted { mutateIfCurrent(expected) { null } }
 
     /** Durable compare-and-status: a stale response cannot fail or block newer intent. */
-    @Synchronized
     fun updateStatusIfCurrent(expected: PendingWrite, status: String, lastError: String? = null): Boolean =
-        mutateIfCurrent(expected) { it.copy(status = status, lastError = lastError,
-            updatedAt = System.currentTimeMillis()) }
+        admitted { mutateIfCurrent(expected) { it.copy(status = status, lastError = lastError,
+            updatedAt = System.currentTimeMillis()) } }
 
     /** One durable mutation for the attempt and outcome; no intermediate persistence window. */
-    @Synchronized
     fun retryIfCurrent(expected: PendingWrite, error: String, maxAttempts: Int = 8): Boolean =
+        admitted { retryIfCurrentLocked(expected, error, maxAttempts) }
+
+    private fun retryIfCurrentLocked(expected: PendingWrite, error: String, maxAttempts: Int): Boolean =
         mutateIfCurrent(expected) {
             val attempts = it.attemptCount + 1
             it.copy(attemptCount = attempts,
@@ -311,8 +324,10 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         return committed
     }
 
+    private fun update(transform: (List<PendingWrite>) -> List<PendingWrite>): Boolean = admitted { updateLocked(transform) }
+
     @Synchronized
-    private fun update(transform: (List<PendingWrite>) -> List<PendingWrite>): Boolean {
+    private fun updateLocked(transform: (List<PendingWrite>) -> List<PendingWrite>): Boolean {
         val next = transform(_writes.value)
         if (!store.save(next)) return false
         _writes.value = next

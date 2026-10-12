@@ -18,7 +18,9 @@ internal class ChemicalLabelPhotoRepository(
         com.rork.vinetrack.data.auth.FieldStoreAccess(context),
     )
 
-    private fun <T> fieldCommit(action: () -> T): T = if (fieldAccess == null) action() else fieldAccess.commit(action)
+    private fun <T> fieldCommit(action: () -> T): T =
+        if (fieldAccess == null) synchronized(this, action)
+        else fieldAccess.admitted { synchronized(this, action) }
 
     private val directory: File get() = File(root, "pending_chemical_label_photos")
     private var rows = store.load().map {
@@ -30,7 +32,7 @@ internal class ChemicalLabelPhotoRepository(
 
     @Synchronized fun list(): List<ChemicalLabelAttachment> = rows
 
-    @Synchronized fun enqueue(ownerId: String, vineyardId: String, chemicalId: String, jpeg: ByteArray): ChemicalLabelAttachment = fieldCommit {
+    fun enqueue(ownerId: String, vineyardId: String, chemicalId: String, jpeg: ByteArray): ChemicalLabelAttachment = fieldCommit {
         fieldAccess?.commitForOwner(ownerId) { }
         require(jpeg.isNotEmpty() && jpeg.size <= 10_485_760) { "Label JPEG must be nonempty and under 10 MB." }
         check(directory.exists() || directory.mkdirs()) { "Couldn't create label photo storage." }
@@ -55,7 +57,7 @@ internal class ChemicalLabelPhotoRepository(
         }
     }
 
-    @Synchronized fun update(id: String, transform: (ChemicalLabelAttachment) -> ChemicalLabelAttachment) = fieldCommit {
+    fun update(id: String, transform: (ChemicalLabelAttachment) -> ChemicalLabelAttachment) = fieldCommit {
         val next = rows.map { if (it.id == id) transform(it) else it }
         store.save(next)
         rows = next
@@ -63,7 +65,7 @@ internal class ChemicalLabelPhotoRepository(
     }
 
     /** Metadata removal precedes file deletion; a failed commit leaves the JPEG retryable. */
-    @Synchronized fun remove(id: String): Unit = fieldCommit {
+    fun remove(id: String): Unit = fieldCommit {
         val file = rows.firstOrNull { it.id == id }?.localPath ?: return@fieldCommit
         val next = rows.filterNot { it.id == id }
         store.save(next)
@@ -73,11 +75,11 @@ internal class ChemicalLabelPhotoRepository(
         Unit
     }
 
-    @Synchronized fun removeForChemical(id: String) {
+    fun removeForChemical(id: String): Unit = fieldCommit {
         rows.filter { it.chemicalId == id }.forEach { remove(it.id) }
     }
 
-    @Synchronized fun clearAll(): Unit = fieldCommit {
+    fun clearAll(): Unit = fieldCommit {
         store.save(emptyList())
         rows = emptyList()
         _attachments.value = rows
