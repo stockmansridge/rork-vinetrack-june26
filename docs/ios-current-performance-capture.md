@@ -10,6 +10,25 @@ The bounded correction adds exact-disk-byte decoded snapshot reuse for Trips, Wo
 
 Worker preparation now supports those audited collections and performs eligibility validation on the worker. Tests exercise it; ordinary startup still constructs stores synchronously. Do not describe test-driven preparation as automatic off-main startup hydration.
 
+## Build 166 attempted — archive failed before upload (2026-10-12)
+
+- Apple reauthentication completed; signing setup and distribution certificate ready. `ensureApp` reused ASC app6761143377 (`created:false`). Capability sync made no changes (`enabled:[]`, `disabled:[]`, `capabilitiesChanged:false`). Final exact166 lookup remained empty and entire iOS diff against the approved correction remained empty before submission.
+- One `submitBuild` invocation requested unchanged VineTrack iOS3.1.7/build166, original bundle/team/app and `xcodeProjectPath:ios`. Submission **`725a8394-eb31-4e67-bd81-29e2110744cc`**, workflow **`38199326271`**. Server reports `archiveSource:supplied-snapshot`; no immutable snapshot ID/content hash was returned. Pre-submit managed HEAD/iOS tree are recorded below; do not claim an independently verified artifact-to-source mapping or invent a publishing buildId. Actual source snapshot identifier must be supplied by build-service evidence if required.
+- Terminal status **error / failed**, updated2026-10-12T03:25:34.234Z. Release-iphoneos arm64 Swift compiler crash: Xcode26.4.1, Apple Swift6.3.1, effective Swift5.10, `EarlyPerfInliner`, generated `CatalogReadSingleFlight` deinit, `CatalogReadSingleFlight.swift:6:13`, `isCallerAndCalleeLayoutConstraintsCompatible`. Status metadata says xcodeMajor27 but actual compiler path says26.4.1; actual archive log is the observed toolchain evidence. No ordinary type-error or signing failure established.
+- Post-failure ASC exact3.1.7/166 query still returns zero builds. **166 is not uploaded, processing or available in TestFlight.** No completed IPA/archive/dSYM download returned. No retry or code/build-setting workaround under this unchanged-source approval. Prior simulator validation is not Release archive success.
+- Existing groups/public-link settings untouched; no testers added, external assignment, production review/release or Android work. Preserve installed165 and finish baseline captures where possible. Next requires separately approved narrow compatibility work or managed build-toolchain correction, not disabling Release optimisation or changing performance logic silently.
+
+## Approved build 166 — source verification and signing checkpoint (2026-10-12)
+
+User approves **iOS 3.1.7 (166), existing TestFlight testing only**, not production review/release. No application/performance code, diagnostics gates, bundle ID or data formats changed.
+
+- GitHub `stockmansridge/rork-vinetrack-june26` main resolved to `5dc1ad036c5450fb075c3a67ceebb0bbd1e09150`. All 12 manifest files are byte-identical to approved correction `64fbafb62960e198f5c637be1531846db0239105` (exact Git blob/content diff empty). Capture procedure also matches current managed document, blob `20f74291b583b8711bf058d336ade330f4c8d52d`, before this new checkpoint text. External GitHub delivery is now verified; different commit SHAs are not source differences.
+- Preflight managed HEAD `29dd78594eb9ac11ac0145baba04896ccd924515`; iOS tree `7c5a19decdbdaa3192569b424d17eb9ac7911fe2`; clean application tree and no iOS differences from the approved correction. External tree differs only by generated Config.swift, not performance code. The actual server-pinned submission snapshot will be recorded after signing readiness; these Git identifiers are not a fabricated publishing buildId.
+- ASC exact build166 query returned zero builds; no active managed duplicate. Recheck immediately before submitBuild with explicit buildNumber166. Existing Internal Testing group has all-build access; do not add testers/groups or assign166 externally. External Tester already has a public link; leave its configuration untouched, do not add this candidate to it.
+- Signing setup explicitly reported **expired Apple Developer session**. Reauthentication required before certificate/capability/build steps. Build166 is **not yet built/uploaded/available in TestFlight**. No archive/dSYM exposed yet; their absence will not block testing. Prior successful simulator validation covers unchanged app source, not signed-device availability.
+
+The preparation checkpoints below are historical; latest approval/source verification above supersedes their awaiting-approval/unverified-GitHub statements.
+
 ## Next physical-iPhone milestone — preparation checkpoint (2026-10-12)
 
 ### Source and delivery identity
