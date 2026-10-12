@@ -390,17 +390,18 @@ class AuthRepository internal constructor(
             true
         }
 
-    suspend fun signOut() = withContext(Dispatchers.IO) {
-        val token = session.accessToken
+    suspend fun signOut(): Boolean = withContext(Dispatchers.IO) {
+        val exit = session.cleanExit() ?: return@withContext false
+        val token = exit.accessToken
         if (SupabaseClient.isConfigured && !token.isNullOrBlank()) {
             try {
-                authHttp.post(SupabaseClient.authUrl("logout")) {
+                authHttp.post(SupabaseClient.authUrl("logout?scope=local")) {
                     anonHeaders()
                     headers { append(HttpHeaders.Authorization, "Bearer $token") }
                 }
             } catch (_: Exception) { /* best effort */ }
         }
-        session.clear()
+        true
     }
 
     private fun io.ktor.client.request.HttpRequestBuilder.anonHeaders() {

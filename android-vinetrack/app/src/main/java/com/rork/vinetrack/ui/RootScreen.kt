@@ -71,10 +71,29 @@ fun RootScreen() {
     val context = LocalContext.current
     val session = remember(context) { SessionStore(context) }
     val recoveryLocked by session.retentionGuard.state.collectAsStateWithLifecycle()
-    if (recoveryLocked) {
-        com.rork.vinetrack.ui.auth.ProtectedWorkRecoveryScreen()
-    } else {
-        NormalRootScreen()
+    val identityEpoch by session.retentionGuard.identityEpoch.collectAsStateWithLifecycle()
+    val parentLifecycle = LocalLifecycleOwner.current.lifecycle
+    androidx.compose.runtime.key(identityEpoch) {
+        val application = context.applicationContext as android.app.Application
+        val owner = rememberSaveable(saver = androidx.compose.runtime.saveable.Saver<com.rork.vinetrack.ui.auth.AccountViewModelOwner, android.os.Bundle>(
+            save = { it.save() },
+            restore = { com.rork.vinetrack.ui.auth.AccountViewModelOwner(application, it) },
+        )) { com.rork.vinetrack.ui.auth.AccountViewModelOwner(application) }
+        DisposableEffect(owner, parentLifecycle) {
+            owner.moveTo(parentLifecycle.currentState)
+            val observer = LifecycleEventObserver { _, _ -> owner.moveTo(parentLifecycle.currentState) }
+            parentLifecycle.addObserver(observer)
+            onDispose {
+                parentLifecycle.removeObserver(observer)
+                owner.close()
+            }
+        }
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner provides owner,
+        ) {
+            if (recoveryLocked) com.rork.vinetrack.ui.auth.ProtectedWorkRecoveryScreen()
+            else NormalRootScreen()
+        }
     }
 }
 

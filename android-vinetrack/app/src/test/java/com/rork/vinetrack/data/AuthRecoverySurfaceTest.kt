@@ -12,10 +12,10 @@ import kotlinx.coroutines.test.setMain
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Authentication-only UI acceptance with fake verification; no live credentials or server claims. */
+/** UI state tests with a fake admission result; not business recovery or live identity acceptance. */
 @OptIn(ExperimentalCoroutinesApi::class)
 class AuthRecoverySurfaceTest {
-    @Test fun verifiedIdentityShowsExplicitHoldAndDoesNotUnlockRecords() = runTest {
+    @Test fun successfulAdmissionShowsRestorationMessageWithoutExposingCredentials() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         try {
             val guard = AuthRetentionGuard({ true }, { true })
@@ -24,8 +24,8 @@ class AuthRecoverySurfaceTest {
             vm.verify("synthetic@example.invalid", "synthetic-password")
             assertEquals(1, requests)
             assertFalse(vm.state.value.isBusy)
-            assertTrue(vm.state.value.message!!.contains("Account verified"))
-            assertTrue(vm.state.value.message!!.contains("still protected"))
+            assertTrue(vm.state.value.message!!.contains("Original account restored"))
+            assertTrue(vm.state.value.message!!.contains("records were preserved"))
             assertTrue(guard.isLocked)
             assertNull(guard.captureAccount("verified-account"))
             assertFalse(vm.state.value.toString().contains("synthetic-password"))
@@ -46,7 +46,7 @@ class AuthRecoverySurfaceTest {
             assertFalse(vm.state.value.message!!.contains("private-server-detail"))
             vm.verify("synthetic@example.invalid", "synthetic-password")
             assertEquals(2, requests)
-            assertTrue(vm.state.value.message!!.contains("Account verified"))
+            assertTrue(vm.state.value.message!!.contains("Original account restored"))
         } finally { Dispatchers.resetMain() }
     }
 

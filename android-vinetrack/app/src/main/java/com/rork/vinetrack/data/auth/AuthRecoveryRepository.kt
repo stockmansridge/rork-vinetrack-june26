@@ -20,7 +20,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Authentication only. No SessionStore, refresh hook, field client, persistence or unlock authority. */
+/** Isolated authentication transport; ordinary field access is restored only by original-user admission. */
 class AuthRecoveryRepository(
     private val clientFactory: () -> HttpClient = {
         HttpClient(Android) {
@@ -31,7 +31,74 @@ class AuthRecoveryRepository(
     },
 ) {
     @Serializable private data class Credentials(val email: String, val password: String)
-    @Serializable private data class Token(@SerialName("access_token") val accessToken: String? = null)
+    @Serializable private data class Token(
+        @SerialName("access_token") val accessToken: String? = null,
+        @SerialName("refresh_token") val refreshToken: String? = null,
+    )
+    @Serializable private data class LiveVineyard(val id: String)
+    @Serializable private data class Membership(
+        @SerialName("vineyard_id") val vineyardId: String,
+        val role: String,
+    )
+
+    /** Uses /user identity and current membership, never typed email or cached vineyard membership. */
+    suspend fun recover(session: SessionStore, email: String, password: String): Boolean = withContext(Dispatchers.IO) {
+        check(SupabaseClient.isConfigured && session.recoveryPrincipal != null) { "Original account recovery is unavailable." }
+        withTimeout(30_000) {
+            clientFactory().use { client ->
+                val response = client.post(SupabaseClient.authUrl("token?grant_type=password")) {
+                    headers { append("apikey", SupabaseClient.anonKey) }
+                    contentType(ContentType.Application.Json)
+                    setBody(Credentials(email.trim(), password))
+                }
+                check(response.status.isSuccess()) { "Account verification failed." }
+                val token = response.body<Token>()
+                val access = token.accessToken ?: error("Additional authentication is required.")
+                var restored = false
+                try {
+                    val identity = client.get(SupabaseClient.authUrl("user")) {
+                        headers {
+                            append("apikey", SupabaseClient.anonKey)
+                            append("Authorization", "Bearer $access")
+                        }
+                    }
+                    check(identity.status.isSuccess()) { "Account verification failed." }
+                    val user = identity.body<AppUser>()
+                    check(user.id == session.recoveryPrincipal) { "The verified original account is required." }
+                    val membership = client.get(SupabaseClient.restUrl("vineyard_members?select=vineyard_id,role&user_id=eq.${user.id}")) {
+                        headers {
+                            append("apikey", SupabaseClient.anonKey)
+                            append("Authorization", "Bearer $access")
+                        }
+                    }
+                    check(membership.status.isSuccess()) { "Current vineyard access could not be verified." }
+                    val memberVineyards = membership.body<List<Membership>>()
+                        .filter { it.role in setOf("owner", "operator", "supervisor", "manager") }
+                        .mapTo(mutableSetOf()) { it.vineyardId }
+                    val vineyards = client.get(SupabaseClient.restUrl("vineyards?select=id&deleted_at=is.null")) {
+                        headers {
+                            append("apikey", SupabaseClient.anonKey)
+                            append("Authorization", "Bearer $access")
+                        }
+                    }
+                    check(vineyards.status.isSuccess()) { "Current vineyard access could not be verified." }
+                    val permitted = vineyards.body<List<LiveVineyard>>().map { it.id }.toSet() intersect memberVineyards
+                    val refresh = token.refreshToken ?: error("Additional authentication is required.")
+                    restored = session.restoreOriginal(access, refresh, user, permitted)
+                    restored
+                } finally {
+                    if (!restored) runCatching {
+                        client.post(SupabaseClient.authUrl("logout?scope=local")) {
+                            headers {
+                                append("apikey", SupabaseClient.anonKey)
+                                append("Authorization", "Bearer $access")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     suspend fun verify(email: String, password: String): Unit = withContext(Dispatchers.IO) {
         check(SupabaseClient.isConfigured) { "Account verification is unavailable." }

@@ -5043,24 +5043,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun dismissSignOutProtectionNotice() { signOutProtectionNotice.value = false }
 
     fun signOut(message: String? = null) {
-        if (session.hasSession && !session.retentionGuard.canSignOut()) {
-            signOutProtectionNotice.value = true
+        if (message != null || session.retentionGuard.isLocked) {
+            // Definitive rejection is never a voluntary clean exit or a field-store cleanup.
+            session.clear()
+            performanceCapture.revoke()
+            vineyardInsightsDebouncer.cancelAll()
             return
         }
-        // Definitive rejection is a locked recovery transition, never field cleanup or new login.
-        session.clear()
         performanceAuthorizationEpoch += 1
         performanceCapture.revoke()
         vineyardSelectionEpoch += 1
         vineyardDataLoadGeneration += 1
         viewModelScope.launch {
-            try { auth.signOut() } catch (_: Exception) {}
+            val exited = try { auth.signOut() } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) { false }
+            if (!exited) {
+                signOutProtectionNotice.value = true
+                return@launch
+            }
             // Reset RevenueCat identity so one user's subscription state never
             // leaks into another login (iOS parity: subscription.logout()).
             runCatching { revenueCat.logOut() }
             _subscription.value = SubscriptionUiState()
             rcPackages = emptyMap()
-            // Field stores, photo binaries and recovery evidence remain unchanged and locked.
+            // Clean exit changes only credentials; nonempty field evidence prevents this transition.
             // Keep the device-wide active-trip claim across account switches;
             // restore still checks ownerUserId before exposing trip controls.
             // Best-effort: clear Credential Manager sign-in state so a signed-out
@@ -9749,6 +9756,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         trackingOperation = null
         // A calibration attempt must never outlive the ViewModel.
         stopMapAlignmentFixUpdates()
+        vineyardInsightsDebouncer.cancelAll()
+        performanceCapture.revoke()
         super.onCleared()
     }
 

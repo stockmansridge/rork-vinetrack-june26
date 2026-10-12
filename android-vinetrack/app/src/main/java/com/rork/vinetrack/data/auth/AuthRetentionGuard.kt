@@ -10,12 +10,16 @@ import kotlinx.coroutines.flow.asStateFlow
 class AuthRetentionGuard(
     readLocked: () -> Boolean,
     private val persistLock: () -> Boolean,
+    readIdentityEpoch: () -> Long = { 0L },
 ) {
     private val authorityLock = ReentrantLock()
     private val locked = MutableStateFlow(runCatching(readLocked).getOrDefault(true))
     val state: StateFlow<Boolean> = locked.asStateFlow()
     val isLocked: Boolean get() = locked.value
     private var generation: Long = 0
+    private val epoch = MutableStateFlow(runCatching(readIdentityEpoch).getOrDefault(0L))
+    /** Recreates account-bound UI holders after exit or recovery, never as record ownership. */
+    val identityEpoch: StateFlow<Long> = epoch.asStateFlow()
     private var commitDepth: Int = 0
     private var transitionClosed: Boolean = false
     private val operations = mutableSetOf<FieldOperation>()
@@ -91,12 +95,40 @@ class AuthRetentionGuard(
         } finally { authorityLock.unlock() }
     }
 
-    /** Remains fail-closed until every production participant supplies a verified retained-state check. */
+    /** A Boolean query is not a cleanliness certificate; exits use the atomic transition below. */
     fun canSignOut(): Boolean = false
+
+    internal fun cleanExitIfIdle(inspectAndCommit: () -> Boolean): Boolean = transitionIfIdle {
+        if (!inspectAndCommit()) false else {
+            generation++
+            epoch.value++
+            true
+        }
+    }
+
+    /** Opens a fresh incarnation only after the original principal and retained evidence are checked. */
+    internal fun recoverIfIdle(inspectAndCommit: () -> Boolean): Boolean {
+        if (!authorityLock.tryLock()) return false
+        return try {
+            if (!isLocked || transitionClosed || commitDepth != 0 || operations.isNotEmpty()) return false
+            transitionClosed = true
+            try {
+                if (!inspectAndCommit()) false else {
+                    generation++
+                    epoch.value++
+                    locked.value = false
+                    true
+                }
+            } finally { transitionClosed = false }
+        } finally { authorityLock.unlock() }
+    }
 
     fun rejectSession(clearCredentials: () -> Unit): Boolean = serialized {
         check(commitDepth == 0) { "An account transition cannot run inside a field commit." }
-        if (!locked.value) generation++
+        if (!locked.value) {
+            generation++
+            epoch.value++
+        }
         locked.value = true
         val durable = runCatching(persistLock).getOrDefault(false)
         if (durable) clearCredentials()
@@ -107,6 +139,6 @@ class AuthRetentionGuard(
 
     companion object {
         const val RECOVERY_MESSAGE = "Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall."
-        const val SIGN_OUT_MESSAGE = "Sign-out is temporarily blocked to protect local vineyard work. Unsynchronised or unresolved vineyard work must be resolved first. Keep this installation; contact support if synchronising does not resolve it. Safe account switching is not yet available."
+        const val SIGN_OUT_MESSAGE = "Sign-out could not verify that this installation is clear of retained field work. Finish active work and check Sync Status. Unresolved drafts, photos or unreadable records remain protected; synchronising alone may not resolve them. Keep this installation and contact support if this persists."
     }
 }

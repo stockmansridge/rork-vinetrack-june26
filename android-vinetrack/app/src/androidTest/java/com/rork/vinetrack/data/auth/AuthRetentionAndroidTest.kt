@@ -753,35 +753,69 @@ class AuthRetentionAndroidTest {
         assertEquals(draft, drafts.load("account-A", "vineyard", null))
     }
 
-    /** Characterises the still-unfinished product journey; this is not clean-exit acceptance. */
-    @Test fun authenticatedEmptyDeviceJourneyStopsAtProductionSignOutGate() = runBlocking {
+    /** Successful production repository transition on a strict-empty fixture; not Activity/live-service acceptance. */
+    @Test fun cleanExitRecreationSameAccountThenDifferentAccountUsesFreshAuthority() = runBlocking {
         val session = SessionStore(context)
         val account = "11111111-1111-4111-8111-111111111111"
+        var returning = account
         val client = HttpClient(MockEngine { request ->
-            check(request.url.encodedPath.endsWith("/auth/v1/token"))
-            respond("{\"access_token\":\"access\",\"refresh_token\":\"refresh\",\"user\":{\"id\":\"$account\"}}",
-                HttpStatusCode.OK, headersOf("Content-Type", "application/json"))
+            val body = when {
+                request.url.encodedPath.endsWith("/auth/v1/token") ->
+                    "{\"access_token\":\"access-$returning\",\"refresh_token\":\"refresh-$returning\",\"user\":{\"id\":\"$returning\"}}"
+                request.url.encodedPath.endsWith("/auth/v1/logout") -> {
+                    assertEquals("local", request.url.parameters["scope"])
+                    "{}"
+                }
+                else -> error("Unexpected request")
+            }
+            respond(body, HttpStatusCode.OK, headersOf("Content-Type", "application/json"))
         }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
         try {
-            assertEquals(account, AuthRepository(session, client).signIn("synthetic@example.invalid", "synthetic-password").id)
+            val auth = AuthRepository(session, client)
+            assertEquals(account, auth.signIn("synthetic@example.invalid", "synthetic-password").id)
             assertTrue(session.hasSession)
             assertFalse(com.rork.vinetrack.data.ActiveTripStore(context).hasActiveClaim())
             assertTrue(PendingWriteStore(context).loadForRecovery().items.isEmpty())
             assertTrue(PendingPhotoStore(context).load().isEmpty())
             assertFalse(session.retentionGuard.hasOutstandingOperations())
-            assertFalse("The actual AppViewModel sign-out admission still blocks this clean fixture", session.retentionGuard.canSignOut())
-            assertTrue(SessionStore(context).hasSession)
+            val old = requireNotNull(session.accountAccess())
+            assertTrue(auth.signOut())
+            val restarted = SessionStore(context)
+            assertFalse(restarted.retentionGuard.isLocked)
+            assertFalse(restarted.hasSession)
+            assertNull(restarted.selectedVineyardId)
+            assertNull(restarted.defaultVineyardId)
+            assertEquals(AuthRepository.RestoreResult.SignedOut, AuthRepository(restarted, client).restoreSession())
+            assertEquals(account, AuthRepository(restarted, client).signIn("synthetic@example.invalid", "synthetic-password").id)
+            assertFalse(restarted.withAccountAccess(old) { fail("Old A authority was reused") })
+            assertTrue(AuthRepository(restarted, client).signOut())
+            returning = "22222222-2222-4222-8222-222222222222"
+            val next = SessionStore(context)
+            assertEquals(returning, AuthRepository(next, client).signIn("other@example.invalid", "synthetic-password").id)
+            assertTrue(next.hasSession)
+            assertFalse(next.retentionGuard.isLocked)
+            assertEquals(returning, next.userId)
+            assertNull(next.selectedVineyardId)
+            assertNull(next.defaultVineyardId)
+            assertFalse(next.withAccountAccess(old) { fail("A result entered B") })
         } finally { client.close() }
     }
 
-    /** Real recovery transport currently authenticates then discards the session; no business unlock claimed. */
-    @Test fun verifiedOriginalAccountRecoveryStillDiscardsSessionAndCannotReachBusinessAdmission() = runBlocking {
+    /** Successful owned-snapshot recovery through production token/user/membership/admission code. */
+    @Test fun originalAccountRecoveryRestoresFreshSessionAndPreservesOwnedTripBytes() = runBlocking {
         val session = SessionStore(context)
         val account = "11111111-1111-4111-8111-111111111111"
         session.save("original-access", "original-refresh", account, null)
         val snapshot = com.rork.vinetrack.data.ActiveTripStore(context)
         assertTrue(snapshot.saveDurably(account, "vineyard", com.rork.vinetrack.data.model.Trip(id = "trip", vineyardId = "vineyard", isActive = true)))
         val evidence = context.getSharedPreferences("vinetrack_active_trip", 0).all.toMap()
+        val tank = com.rork.vinetrack.data.model.SprayTankActual(
+            "actual", "vineyard", "spray", "trip", "tank", 1, waterVolumeL = 123.45,
+            chemicals = emptyList(), confirmedAt = "2026-10-12T00:00:00Z", confirmedBy = account,
+        )
+        assertTrue(com.rork.vinetrack.data.SprayTankActualStore(context).save(tank))
+        val tankEvidence = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0).all.toMap()
+        val obsolete = requireNotNull(session.accountAccess())
         session.clear()
         val requests = mutableListOf<String>()
         val client = HttpClient(MockEngine { request ->
@@ -789,19 +823,133 @@ class AuthRetentionAndroidTest {
             val body = when {
                 request.url.encodedPath.endsWith("/token") -> "{\"access_token\":\"returning-access\",\"refresh_token\":\"returning-refresh\"}"
                 request.url.encodedPath.endsWith("/user") -> "{\"id\":\"$account\"}"
+                request.url.encodedPath.endsWith("/vineyard_members") -> "[{\"vineyard_id\":\"vineyard\",\"role\":\"operator\"}]"
+                request.url.encodedPath.endsWith("/vineyards") -> "[{\"id\":\"vineyard\"}]"
                 request.url.encodedPath.endsWith("/logout") -> "{}"
                 else -> error("Unexpected recovery request")
             }
             respond(body, HttpStatusCode.OK, headersOf("Content-Type", "application/json"))
         }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
-        AuthRecoveryRepository { client }.verify("synthetic@example.invalid", "synthetic-password")
+        assertTrue(AuthRecoveryRepository { client }.recover(session, "synthetic@example.invalid", "synthetic-password"))
         assertTrue(requests.any { it.endsWith("/user") })
-        assertTrue(requests.any { it.endsWith("/logout") })
-        assertEquals(account, session.recoveryPrincipal)
-        assertFalse("Verification did not create a usable returning session", session.hasSession)
-        assertTrue(session.retentionGuard.isLocked)
-        assertNull(session.accountAccess())
+        assertTrue(requests.any { it.endsWith("/vineyard_members") })
+        assertFalse(requests.any { it.endsWith("/logout") })
+        assertNull(session.recoveryPrincipal)
+        assertTrue(session.hasSession)
+        assertFalse(session.retentionGuard.isLocked)
+        assertEquals(account, requireNotNull(session.accountAccess()).userId)
+        assertFalse(session.withAccountAccess(obsolete) { fail("Rejected-session callback was revived") })
         assertEquals(evidence, context.getSharedPreferences("vinetrack_active_trip", 0).all)
+        val reopened = SessionStore(context)
+        assertTrue(reopened.hasSession)
+        assertFalse(reopened.retentionGuard.isLocked)
+        assertEquals("trip", com.rork.vinetrack.data.ActiveTripStore(context).load()?.trip?.id)
+        assertEquals(tankEvidence, context.getSharedPreferences("vinetrack_spray_tank_actuals", 0).all)
+        assertEquals(listOf(tank), com.rork.vinetrack.data.SprayTankActualStore(context).pending())
+    }
+
+    @Test fun delayedCleanLogoutCannotClearTheNextAccountSession() = runBlocking {
+        val session = SessionStore(context)
+        val a = "11111111-1111-4111-8111-111111111111"
+        val b = "22222222-2222-4222-8222-222222222222"
+        session.save("access-A", "refresh-A", a, null)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val client = HttpClient(MockEngine { request ->
+            check(request.url.encodedPath.endsWith("/logout"))
+            entered.complete(Unit)
+            withTimeout(5_000) { release.await() }
+            respond("{}", HttpStatusCode.OK, headersOf("Content-Type", "application/json"))
+        }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
+        try {
+            val logout = async { AuthRepository(session, client).signOut() }
+            withTimeout(5_000) { entered.await() }
+            assertFalse(session.hasSession)
+            session.save("access-B", "refresh-B", b, null)
+            release.complete(Unit)
+            assertTrue(withTimeout(5_000) { logout.await() })
+            assertEquals(b, session.userId)
+            assertEquals("access-B", session.accessToken)
+            assertFalse(session.retentionGuard.isLocked)
+        } finally { release.complete(Unit); client.close() }
+    }
+
+    /** Refusal evidence only, not successful recovery acceptance. */
+    @Test fun wrongIdentityMissingPermissionAndAuthorlessQueueRemainProtected() = runBlocking {
+        val session = SessionStore(context)
+        val a = "11111111-1111-4111-8111-111111111111"
+        val b = "22222222-2222-4222-8222-222222222222"
+        session.save("access-A", "refresh-A", a, null)
+        assertTrue(com.rork.vinetrack.data.ActiveTripStore(context).saveDurably(a, "vineyard",
+            com.rork.vinetrack.data.model.Trip(id = "trip", vineyardId = "vineyard", isActive = true)))
+        session.clear()
+        val before = context.getSharedPreferences("vinetrack_active_trip", 0).all.toMap()
+        for (scenario in listOf("wrong-account", "missing-permission", "deleted-vineyard", "authorless-queue")) {
+            if (scenario == "authorless-queue") check(context.getSharedPreferences("vinetrack_pending_writes", 0)
+                .edit().putString("pending_writes_json", "[{\"id\":\"unattributed\"}]").commit())
+            val queueBefore = context.getSharedPreferences("vinetrack_pending_writes", 0).all.toMap()
+            var revoked = false
+            val client = HttpClient(MockEngine { request ->
+                val body = when {
+                    request.url.encodedPath.endsWith("/token") -> "{\"access_token\":\"new-access\",\"refresh_token\":\"new-refresh\"}"
+                    request.url.encodedPath.endsWith("/user") -> "{\"id\":\"${if (scenario == "wrong-account") b else a}\"}"
+                    request.url.encodedPath.endsWith("/vineyard_members") -> if (scenario == "missing-permission") "[]"
+                        else "[{\"vineyard_id\":\"vineyard\",\"role\":\"operator\"}]"
+                    request.url.encodedPath.endsWith("/vineyards") -> if (scenario == "deleted-vineyard") "[]" else "[{\"id\":\"vineyard\"}]"
+                    request.url.encodedPath.endsWith("/logout") -> { revoked = true; "{}" }
+                    else -> error("Unexpected request")
+                }
+                respond(body, HttpStatusCode.OK, headersOf("Content-Type", "application/json"))
+            }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
+            val restored = runCatching { AuthRecoveryRepository { client }.recover(session, "synthetic@example.invalid", "password") }.getOrDefault(false)
+            assertFalse(scenario, restored)
+            assertTrue(scenario, revoked)
+            assertTrue(session.retentionGuard.isLocked)
+            assertFalse(session.hasSession)
+            assertEquals(a, session.recoveryPrincipal)
+            assertEquals(before, context.getSharedPreferences("vinetrack_active_trip", 0).all)
+            assertEquals(queueBefore, context.getSharedPreferences("vinetrack_pending_writes", 0).all)
+        }
+    }
+
+    @Test fun retainedOutboxBlocksCleanExitWithoutDeletingAnything() = runBlocking {
+        val session = SessionStore(context)
+        session.save("access-A", "refresh-A", "11111111-1111-4111-8111-111111111111", null)
+        val prefs = context.getSharedPreferences("vinetrack_domain_cache", 0)
+        check(prefs.edit().putString("spray_target_outbox", "[{\"id\":\"unsent\"}]").commit())
+        val before = prefs.all.toMap()
+        val client = HttpClient(MockEngine { error("Blocked exit must not reach logout") })
+        try {
+            assertFalse(AuthRepository(session, client).signOut())
+            assertEquals(before, prefs.all)
+            assertTrue(session.hasSession)
+            assertFalse(session.retentionGuard.isLocked)
+        } finally { client.close() }
+    }
+
+    @Test fun accountViewModelLifetimeRestoresSameUserButDoesNotCarryAHandlesIntoB() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.runOnMainSync {
+            val app = instrumentation.targetContext.applicationContext as android.app.Application
+            val a = com.rork.vinetrack.ui.auth.AccountViewModelOwner(app)
+            val aWork = androidx.lifecycle.ViewModelProvider(a)[com.rork.vinetrack.ui.main.WorkContextViewModel::class.java]
+            aWork.bindIdentity("account-A", "vineyard-A")
+            aWork.setSelectedTripId("owned-trip")
+            val saved = a.save()
+            a.close()
+            val same = com.rork.vinetrack.ui.auth.AccountViewModelOwner(app, saved)
+            val sameWork = androidx.lifecycle.ViewModelProvider(same)[com.rork.vinetrack.ui.main.WorkContextViewModel::class.java]
+            sameWork.bindIdentity("account-A", "vineyard-A")
+            assertEquals("owned-trip", sameWork.selectedTripId.value)
+            same.close()
+            // An account transition creates a new owner, not an owner restored from A's bundle.
+            val b = com.rork.vinetrack.ui.auth.AccountViewModelOwner(app)
+            val bWork = androidx.lifecycle.ViewModelProvider(b)[com.rork.vinetrack.ui.main.WorkContextViewModel::class.java]
+            bWork.bindIdentity("account-B", "vineyard-B")
+            assertNull(bWork.selectedTripId.value)
+            assertNotSame(aWork, bWork)
+            b.close()
+        }
     }
 
     private fun mockAuthClient(
@@ -824,6 +972,10 @@ class AuthRetentionAndroidTest {
         val names = linkedSetOf<String>()
         override fun getApplicationContext(): Context = this
         override fun getFilesDir(): File = root
+        override fun getCacheDir(): File = File(root, "fixture-cache").also { check(it.mkdirs() || it.isDirectory) }
+        override fun getApplicationInfo(): android.content.pm.ApplicationInfo = android.content.pm.ApplicationInfo(base.applicationInfo).apply {
+            dataDir = root.absolutePath
+        }
         override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
             names.add(name)
             return base.getSharedPreferences(prefix + name, mode)

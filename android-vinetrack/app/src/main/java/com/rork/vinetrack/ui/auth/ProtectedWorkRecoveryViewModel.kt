@@ -8,11 +8,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** Recovery authentication is isolated from normal login and cannot unlock retained work. */
+/** Recovery stays pre-business until original identity, current access and every retained dependency pass. */
 class ProtectedWorkRecoveryViewModel internal constructor(
     private val verifyAccount: suspend (String, String) -> Unit,
 ) : ViewModel() {
-    constructor() : this({ email, password -> AuthRecoveryRepository().verify(email, password) })
+    constructor(context: android.content.Context) : this({ email, password ->
+        check(AuthRecoveryRepository().recover(com.rork.vinetrack.data.auth.SessionStore(context), email, password)) {
+            "Retained work needs further ownership review."
+        }
+    })
     private val mutableState = MutableStateFlow(RecoveryUiState())
     val state = mutableState.asStateFlow()
 
@@ -22,12 +26,12 @@ class ProtectedWorkRecoveryViewModel internal constructor(
         viewModelScope.launch {
             try {
                 verifyAccount(email, password)
-                mutableState.value = RecoveryUiState(message = "Account verified. Local work is still protected. Support must verify the original ownership of retained work before access can be restored.")
+                mutableState.value = RecoveryUiState(message = "Original account restored. Returning to vineyard access; existing field records were preserved.")
             } catch (cancelled: CancellationException) {
                 mutableState.value = RecoveryUiState()
                 throw cancelled
             } catch (_: Exception) {
-                mutableState.value = RecoveryUiState(message = "Couldn't verify the account. Check your credentials and connection, then retry. Local work remains protected.")
+                mutableState.value = RecoveryUiState(message = "Access was not restored. Check the original account credentials and connection. Unproven records, changed vineyard access or an unfinished operation can also prevent recovery. Local work remains protected; keep this installation and contact support if this persists.")
             }
         }
     }

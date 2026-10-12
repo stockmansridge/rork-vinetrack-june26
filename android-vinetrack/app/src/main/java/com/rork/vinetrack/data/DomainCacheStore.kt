@@ -52,8 +52,9 @@ import kotlinx.serialization.json.Json
  */
 class DomainCacheStore(context: Context) {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences("vinetrack_domain_cache", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_domain_cache", Context.MODE_PRIVATE),
+    )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val vineyardCodec = VineyardCacheCodec(if (BuildConfig.DEBUG) { timing ->
@@ -117,8 +118,8 @@ class DomainCacheStore(context: Context) {
 
     fun saveVineyards(vineyards: List<Vineyard>, syncedAt: Long) {
         val encoded = vineyardCodec.encode(vineyards, prefs.getString(KEY_VINEYARDS, null))
-        // Always retain the existing editor + timestamp transition, even when
-        // JSON is identical. This remains apply(), not a new durability claim.
+        // Retain the existing complete group + timestamp transition, including unchanged JSON.
+        // The admitted editor result is durable before an account can exit.
         prefs.edit {
             putString(KEY_VINEYARDS, encoded)
             putLong(KEY_VINEYARDS_AT, syncedAt)

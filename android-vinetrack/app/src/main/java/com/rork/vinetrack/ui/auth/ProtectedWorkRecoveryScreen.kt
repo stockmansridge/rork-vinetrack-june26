@@ -30,9 +30,18 @@ import com.rork.vinetrack.BuildConfig
 /** Pre-business recovery surface. Never constructs a business ViewModel or reads field stores. */
 @Composable
 fun ProtectedWorkRecoveryScreen(modifier: Modifier = Modifier) {
-    val vm: ProtectedWorkRecoveryViewModel = viewModel()
-    val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val factory = remember(context) {
+        object : androidx.lifecycle.ViewModelProvider.Factory {
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                require(modelClass == ProtectedWorkRecoveryViewModel::class.java)
+                @Suppress("UNCHECKED_CAST")
+                return ProtectedWorkRecoveryViewModel(context.applicationContext) as T
+            }
+        }
+    }
+    val vm: ProtectedWorkRecoveryViewModel = viewModel(factory = factory)
+    val state by vm.state.collectAsStateWithLifecycle()
     var email: String by remember { mutableStateOf("") }
     var password: String by remember { mutableStateOf("") }
     var supportMessage: String? by remember { mutableStateOf(null) }
@@ -42,13 +51,13 @@ fun ProtectedWorkRecoveryScreen(modifier: Modifier = Modifier) {
     ) {
         Text("Local work protected", style = MaterialTheme.typography.headlineMedium)
         Text("Unfinished or uncertain vineyard work is retained on this installation. Business access is paused to prevent another account from using it.")
-        Text("Verify your account below to confirm authentication only. This does not establish ownership of legacy work or unlock records. Support will need operation-specific ownership evidence; some authorless records cannot yet be recovered safely.")
+        Text("Sign in as the original account to request access restoration. The app checks your server-verified identity, current vineyard access and retained-work evidence before opening business access. Unknown, conflicting or authorless work remains protected; a matching account alone does not unlock it.")
         OutlinedTextField(email, { email = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Account email") }, singleLine = true, enabled = !state.isBusy)
         OutlinedTextField(password, { password = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Password") }, singleLine = true, enabled = !state.isBusy, visualTransformation = PasswordVisualTransformation())
         Button(enabled = !state.isBusy && email.isNotBlank() && password.isNotBlank(), onClick = {
             vm.verify(email, password)
             password = ""
-        }) { Text(if (state.isBusy) "Verifying account…" else "Verify account only") }
+        }) { Text(if (state.isBusy) "Verifying account…" else "Restore original account") }
         state.message?.let { Text(it) }
         TextButton(onClick = {
             val request = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:jonathan@stockmansridge.com.au")).apply {

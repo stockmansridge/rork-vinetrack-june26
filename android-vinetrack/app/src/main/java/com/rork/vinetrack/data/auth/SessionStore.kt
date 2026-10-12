@@ -10,6 +10,7 @@ import androidx.core.content.edit
  * launches, mirroring the iOS session restore behaviour.
  */
 class SessionStore(context: Context) {
+    private val appContext: Context = context.applicationContext
 
     private val prefs = context.applicationContext
         .getSharedPreferences("vinetrack_session", Context.MODE_PRIVATE)
@@ -19,6 +20,7 @@ class SessionStore(context: Context) {
             AuthRetentionGuard(
                 readLocked = { prefs.getBoolean(KEY_RECOVERY_LOCK, false) },
                 persistLock = { persistRecoveryClaimAndRevoke() },
+                readIdentityEpoch = { prefs.getLong(KEY_IDENTITY_EPOCH, 0L) },
             )
         }
     }
@@ -89,6 +91,12 @@ class SessionStore(context: Context) {
     ) {
         retentionGuard.serialized {
         retentionGuard.requireUnlocked()
+        if (prefs.getBoolean(KEY_CLEAN_EXIT, false)) {
+            val evidence = AccountTransitionEvidence(appContext)
+            check(evidence.inspect() != null) {
+                "Local state changed after sign-out (${evidence.failureCategory}). Keep this installation and contact support."
+            }
+        }
         // The cache owner is a switch detector only, never proof of pending-operation authorship.
         val previousAccount = prefs.getString(KEY_USER_ID, null) ?: prefs.getString(KEY_VINEYARD_CACHE_OWNER, null)
         if (previousAccount != null && previousAccount != userId) {
@@ -103,6 +111,7 @@ class SessionStore(context: Context) {
         val cacheOwner = prefs.getString(KEY_VINEYARD_CACHE_OWNER, null)
         val isDifferentUser = userId != null && cacheOwner != null && userId != cacheOwner
         check(prefs.edit().apply {
+            remove(KEY_CLEAN_EXIT)
             putString(KEY_ACCESS, accessToken)
             putString(KEY_REFRESH, refreshToken)
             putString(KEY_USER_ID, userId)
@@ -172,6 +181,50 @@ class SessionStore(context: Context) {
     fun withFieldOperation(operation: AuthRetentionGuard.FieldOperation, action: () -> Unit): Boolean =
         retentionGuard.withOperation(operation, { userId?.takeIf { !accessToken.isNullOrBlank() } }, action)
 
+    /** Opaque remote logout authority; a delayed logout never mutates a newer local session. */
+    internal class CleanExit internal constructor(val accessToken: String)
+
+    internal fun cleanExit(): CleanExit? {
+        var exit: CleanExit? = null
+        val committed = retentionGuard.cleanExitIfIdle {
+            val token = accessToken ?: return@cleanExitIfIdle false
+            if (!hasSession || AccountTransitionEvidence(appContext).inspect() == null) return@cleanExitIfIdle false
+            // Removing every account-selection key in the same credential transaction makes restart unambiguous.
+            if (!prefs.edit().clear().putBoolean(KEY_CLEAN_EXIT, true)
+                    .putLong(KEY_IDENTITY_EPOCH, retentionGuard.identityEpoch.value + 1L).commit()) return@cleanExitIfIdle false
+            exit = CleanExit(token)
+            true
+        }
+        return if (committed) exit else null
+    }
+
+    /** Caller must first verify /auth/user and current memberships using the isolated recovery client. */
+    internal fun restoreOriginal(
+        accessToken: String,
+        refreshToken: String,
+        user: com.rork.vinetrack.data.model.AppUser,
+        permittedVineyards: Set<String>,
+    ): Boolean = retentionGuard.recoverIfIdle {
+        if (user.id != recoveryPrincipal || accessToken.isBlank() || refreshToken.isBlank()) return@recoverIfIdle false
+        val evidence = AccountTransitionEvidence(appContext).inspect(user.id) ?: return@recoverIfIdle false
+        if (!permittedVineyards.containsAll(evidence.vineyards)) return@recoverIfIdle false
+        prefs.edit().apply {
+            putString(KEY_ACCESS, accessToken)
+            putString(KEY_REFRESH, refreshToken)
+            putString(KEY_USER_ID, user.id)
+            putString(KEY_EMAIL, user.email)
+            putString(KEY_NAME, user.displayName)
+            putString(KEY_CREATED_AT, user.createdAt)
+            putString(KEY_VINEYARD_CACHE_OWNER, user.id)
+            remove(KEY_RECOVERY_PRINCIPAL)
+            remove(KEY_CLEAN_EXIT)
+            putBoolean(KEY_RECOVERY_LOCK, false)
+            putLong(KEY_IDENTITY_EPOCH, retentionGuard.identityEpoch.value + 1L)
+            if (prefs.getString(KEY_SELECTED_VINEYARD, null) !in permittedVineyards) remove(KEY_SELECTED_VINEYARD)
+            if (prefs.getString(KEY_DEFAULT_VINEYARD, null) !in permittedVineyards) remove(KEY_DEFAULT_VINEYARD)
+        }.commit()
+    }
+
     /** Credential rejection locks local field access before any credential removal. */
     fun clear() {
         retentionGuard.rejectSession { }
@@ -184,6 +237,7 @@ class SessionStore(context: Context) {
         // credentials disappear. Historical tokenless cache context is deliberately not adopted.
         return prefs.edit().apply {
             putBoolean(KEY_RECOVERY_LOCK, true)
+            putLong(KEY_IDENTITY_EPOCH, retentionGuard.identityEpoch.value)
             if (existing == null && original != null) putString(KEY_RECOVERY_PRINCIPAL, original)
             remove(KEY_ACCESS)
             remove(KEY_REFRESH)
@@ -200,6 +254,8 @@ class SessionStore(context: Context) {
 
     private companion object {
         val retentionGuards = WeakHashMap<SharedPreferences, AuthRetentionGuard>()
+        const val KEY_IDENTITY_EPOCH = "account_ui_epoch_v1"
+        const val KEY_CLEAN_EXIT = "verified_clean_exit_v1"
         const val KEY_RECOVERY_LOCK = "field_recovery_locked_v1"
         const val KEY_RECOVERY_PRINCIPAL = "field_recovery_principal_v1"
         const val KEY_ACCESS = "access_token"
