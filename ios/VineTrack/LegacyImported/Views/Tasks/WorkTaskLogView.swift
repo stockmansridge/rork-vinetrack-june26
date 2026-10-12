@@ -55,6 +55,8 @@ struct WorkTaskLogView: View {
     }
 
     private var filtered: [WorkTask] {
+        let timing = PerformanceCapture.shared.beginComputation()
+        defer { PerformanceCapture.shared.endComputation(timing, label: "Work Tasks filter and sort", records: store.workTasks.count) }
         var items = store.workTasks.filter { !$0.isArchived }
         if !taskFilter.isEmpty {
             items = items.filter { $0.taskType == taskFilter }

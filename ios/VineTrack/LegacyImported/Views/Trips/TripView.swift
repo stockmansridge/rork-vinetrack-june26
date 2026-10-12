@@ -179,6 +179,8 @@ struct TripView: View {
     }
 
     private var filteredAndSortedTrips: [Trip] {
+        let timing = PerformanceCapture.shared.beginComputation()
+        defer { PerformanceCapture.shared.endComputation(timing, label: "Trips filter and sort", records: store.trips.count) }
         var trips = pastTrips
 
         switch tripTypeFilter {

@@ -26,9 +26,9 @@ struct PerformanceDiagnosticsView: View {
                             }
                         ))
                         .disabled(isVerifying)
-                        Text("Enable, return to Home, then open Trip and Program. For launch capture, leave enabled and reopen the app. A bounded numeric buffer can capture early launch; viewing and export still require fresh admin verification.")
+                        Text("Enable, return to Home, then open Trips, Pins, Growth Stage Records and Work Tasks; leave and reopen each once. For launch capture, leave enabled and reopen the app. A bounded numeric buffer can capture early launch; viewing and export still require fresh admin verification.")
                             .font(.footnote)
-                        Text("Captures elapsed operation durations and foreground main-queue delays. Async spans include network waits, not CPU attribution or peak memory.")
+                        Text("Captures dataset/operation counts, payload bytes, synchronous main-actor occupancy, worker preparation and foreground main-queue delays. View-preparation timings do not measure CoreText layout or usable frames. Async spans include network waits, not CPU attribution or peak memory.")
                             .font(.footnote)
                     }
                     Section {

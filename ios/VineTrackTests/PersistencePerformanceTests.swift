@@ -294,6 +294,129 @@ struct PersistencePerformanceTests {
         #expect(PersistenceDataset.classify("vinetrack_saved_spray_presets") == .sprayPresets)
     }
 
+    @Test func largeTripDecodePreparationReusesExactBytesAndPreservesRouteTanksAndOwnership() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let date = Date(timeIntervalSince1970: 1_700_000_000)
+        let points = (0..<60_000).map { CoordinatePoint(latitude: -33.123456789 + Double($0) * 0.00000001, longitude: 149.123456789) }
+        let trip = Trip(vineyardId: UUID(), startTime: date, pathPoints: points, isActive: true,
+            tankSessions: [TankSession(tankNumber: 2, startTime: date, pathsCovered: [0.5, 1.5])],
+            activeTankNumber: 2, totalTanks: 2, isPaused: true, operatorUserId: UUID(),
+            startEngineHours: 123.123456789, seedingDetails: SeedingDetails(mixLines: [SeedingMixLine(name: "Synthetic", kgPerHa: 1.23456789)]))
+        let disk = PersistenceStore(directory: directory)
+        try disk.saveOrThrow([trip], key: TripRepository.storageKey)
+        let file = directory.appendingPathComponent("\(TripRepository.storageKey).json")
+        let bytes = try Data(contentsOf: file)
+        #expect(bytes.count > 5 * 1024 * 1024 && bytes.count < 24 * 1024 * 1024)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let baselineStart = ProcessInfo.processInfo.systemUptime
+        let baseline = try decoder.decode([Trip].self, from: bytes)
+        let baselineMs = (ProcessInfo.processInfo.systemUptime - baselineStart) * 1000
+        #expect(baseline == [trip])
+        let candidate = PersistenceStore(directory: directory)
+        var measurements: [PersistenceMeasurement] = []
+        candidate.onPersistenceMeasurementForTesting = { measurements.append($0) }
+        await candidate.prepareDecode([Trip].self, key: TripRepository.storageKey)
+        #expect(measurements.last?.offMain == true && measurements.last?.succeeded == true)
+        let loaded: [Trip]? = candidate.load(key: TripRepository.storageKey)
+        #expect(loaded == [trip])
+        #expect(measurements.last?.reusedDecode == true)
+        #expect(measurements.last?.codecMilliseconds == 0)
+        print(String(format: "CURRENT_IOS_TRIP_BENCH points=60000 bytes=%d baselineCodecMain=%.2fms preparedReadMain=%.2fms workerCodec=%.2fms", bytes.count, baselineMs, measurements.last?.mainMilliseconds ?? -1, measurements.first?.codecMilliseconds ?? -1))
+        var newer = trip
+        newer.pathPoints.append(CoordinatePoint(latitude: -33.0123456789, longitude: 149.0123456789))
+        newer.activeTankNumber = 3
+        try disk.saveOrThrow([newer], key: TripRepository.storageKey)
+        let changed: [Trip]? = candidate.load(key: TripRepository.storageKey)
+        #expect(changed == [newer] && measurements.last?.reusedDecode == false)
+        let restart: [Trip]? = PersistenceStore(directory: directory).load(key: TripRepository.storageKey)
+        #expect(restart == [newer])
+        #expect(restart?.first?.operatorUserId == trip.operatorUserId)
+    }
+
+    @Test func workTaskAndGrowthMemoPreservesLinksCostsExternalUpdatesAndCorruption() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersistenceStore(directory: directory)
+        var measurement: PersistenceMeasurement?
+        store.onPersistenceMeasurementForTesting = { measurement = $0 }
+        let vineyard = UUID(), pinId = UUID(), date = Date(timeIntervalSince1970: 1_700_000_000)
+        let tasks = (0..<2_000).map { WorkTask(vineyardId: vineyard, date: date, taskType: "Synthetic \($0)") }
+        try store.saveOrThrow(tasks, key: WorkTaskRepository.storageKey)
+        let _: [WorkTask]? = store.load(key: WorkTaskRepository.storageKey)
+        let repeated: [WorkTask]? = store.load(key: WorkTaskRepository.storageKey)
+        #expect(repeated?.map(\.id) == tasks.map(\.id) && measurement?.reusedDecode == true)
+        let records = (0..<2_000).map { GrowthStageRecord(vineyardId: vineyard, pinId: pinId, stageCode: "EL35", observedAt: date, notes: "Synthetic \($0)", createdAt: date, updatedAt: date) }
+        try store.saveOrThrow(records, key: "vinetrack_growth_stage_records")
+        let _: [GrowthStageRecord]? = store.load(key: "vinetrack_growth_stage_records")
+        let growth: [GrowthStageRecord]? = store.load(key: "vinetrack_growth_stage_records")
+        #expect(growth == records && measurement?.reusedDecode == true)
+        var updated = records
+        updated[0].notes = "External update"
+        try PersistenceStore(directory: directory).saveOrThrow(updated, key: "vinetrack_growth_stage_records")
+        let refreshed: [GrowthStageRecord]? = store.load(key: "vinetrack_growth_stage_records")
+        #expect(refreshed == updated && measurement?.reusedDecode == false)
+        for key in [WorkTaskRepository.storageKey, "vinetrack_growth_stage_records"] {
+            let file = directory.appendingPathComponent("\(key).json")
+            try Data("corrupt".utf8).write(to: file, options: .atomic)
+            if key == WorkTaskRepository.storageKey {
+                let result: PersistenceStore.LoadOutcome<[WorkTask]> = store.loadOutcome(key: key)
+                guard case .failed = result else { Issue.record("Memo concealed task corruption"); return }
+            } else {
+                let result: PersistenceStore.LoadOutcome<[GrowthStageRecord]> = store.loadOutcome(key: key)
+                guard case .failed = result else { Issue.record("Memo concealed growth corruption"); return }
+            }
+            #expect(try Data(contentsOf: file) == Data("corrupt".utf8))
+        }
+    }
+
+    @Test func legacyTripIdentitiesAndWorkTaskMissingDatesAreNotFrozen() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersistenceStore(directory: directory)
+        var measurement: PersistenceMeasurement?
+        store.onPersistenceMeasurementForTesting = { measurement = $0 }
+        let tripBytes = Data("""
+        [{"id":"\(UUID())","vineyardId":"\(UUID())","paddockName":"Synthetic","startTime":"2023-11-14T22:13:20Z","pathPoints":[{"latitude":-33,"longitude":149}],"isActive":true}]
+        """.utf8)
+        let tripFile = directory.appendingPathComponent("vinetrack_trips.json")
+        try tripBytes.write(to: tripFile, options: .atomic)
+        let first: [Trip]? = store.load(key: TripRepository.storageKey)
+        let second: [Trip]? = store.load(key: TripRepository.storageKey)
+        #expect(first?.first?.pathPoints.first?.id != second?.first?.pathPoints.first?.id)
+        #expect(measurement?.reusedDecode == false)
+        #expect(try Data(contentsOf: tripFile) == tripBytes)
+        let taskBytes = Data("[{\"id\":\"\(UUID())\",\"vineyardId\":\"\(UUID())\"}]".utf8)
+        try taskBytes.write(to: directory.appendingPathComponent("vinetrack_work_tasks.json"), options: .atomic)
+        let _: [WorkTask]? = store.load(key: WorkTaskRepository.storageKey)
+        let _: [WorkTask]? = store.load(key: WorkTaskRepository.storageKey)
+        #expect(measurement?.reusedDecode == false)
+        let seedingBytes = Data("""
+        [{"pathPoints":[],"seedingDetails":{"mix_lines":[{"name":"Synthetic"}]}}]
+        """.utf8)
+        #expect(!PersistenceDecodeEligibility.permits(.trips, bytes: seedingBytes))
+    }
+
+    @Test func addedDecodeMemoDoesNotAddSaveComparisonReadsOrSkipDurability() throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = PersistenceStore(directory: directory)
+        var measurement: PersistenceMeasurement?
+        store.onPersistenceMeasurementForTesting = { measurement = $0 }
+        let trip = Trip(startTime: Date(timeIntervalSince1970: 1_700_000_000))
+        store.save([trip], key: TripRepository.storageKey)
+        store.save([trip], key: TripRepository.storageKey)
+        #expect(measurement?.readMilliseconds == 0 && measurement?.writeMilliseconds ?? 0 > 0)
+        try store.saveOrThrow([trip], key: TripRepository.storageKey)
+        #expect(measurement?.readMilliseconds == 0 && measurement?.mainMilliseconds ?? 0 > 0)
+        store.durableSaveFailureForTesting = { _ in CocoaError(.fileWriteUnknown) }
+        #expect(throws: (any Error).self) { try store.saveOrThrow([Trip()], key: TripRepository.storageKey) }
+        #expect(PersistenceStore(directory: directory).load(key: TripRepository.storageKey) as [Trip]? == [trip])
+        #expect(PersistenceDataset.classify("vinetrack_pending_pin_photos_v2") == .pinPhotos)
+        #expect(PersistenceDataset.classify("vinetrack_pending_growth_photos_v1") == .growthPhotos)
+    }
+
     private func temporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

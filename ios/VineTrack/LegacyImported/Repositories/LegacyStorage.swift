@@ -51,11 +51,14 @@ final class PersistenceStore {
         (key == "vinetrack_pins" && type == [VinePin].self)
             || (key == "vinetrack_paddocks" && type == [Paddock].self)
             || (key == "vinetrack_saved_chemicals" && type == [SavedChemical].self)
+            || (key == "vinetrack_trips" && type == [Trip].self)
+            || (key == "vinetrack_work_tasks" && type == [WorkTask].self)
+            || (key == "vinetrack_growth_stage_records" && type == [GrowthStageRecord].self)
     }
 
-    private func retainSnapshot<T>(_ value: T, bytes: Data, key: String) {
+    private func retainSnapshot<T>(_ value: T, bytes: Data, key: String, preparedEligibility: Bool? = nil) {
         guard canMemoize(T.self, key: key), bytes.count <= snapshotByteLimit,
-              PersistenceDecodeEligibility.permits(.classify(key), bytes: bytes) else { return }
+              (preparedEligibility ?? PersistenceDecodeEligibility.permits(.classify(key), bytes: bytes)) else { return }
         decodedSnapshots.removeValue(forKey: key)
         if decodedSnapshots.values.reduce(bytes.count + (pinEncodingMemo?.bytes.count ?? 0), { $0 + $1.bytes.count }) > snapshotByteLimit {
             decodedSnapshots.removeAll()
@@ -114,10 +117,10 @@ final class PersistenceStore {
         var measurement = PersistenceMeasurement(dataset: .classify(key), operation: .prepare)
         defer { report(measurement) }
         do {
-            let prepared = try await PersistenceDecodePreparation.read(type, url: fileURL(for: key))
+            let prepared = try await PersistenceDecodePreparation.read(type, url: fileURL(for: key), dataset: .classify(key))
             // Never replace a snapshot installed by a newer synchronous load.
             guard decodedSnapshots[key] == nil else { return }
-            retainSnapshot(prepared.value, bytes: prepared.bytes, key: key)
+            retainSnapshot(prepared.value, bytes: prepared.bytes, key: key, preparedEligibility: prepared.isReusable)
             measurement.readMilliseconds = prepared.readMilliseconds
             measurement.codecMilliseconds = prepared.decodeMilliseconds
             measurement.bytes = prepared.bytes.count
@@ -152,7 +155,11 @@ final class PersistenceStore {
         let performanceSpan = PerformanceCapture.shared.begin("persistence read and JSON decode")
         defer { PerformanceCapture.shared.end(performanceSpan) }
         var measurement = PersistenceMeasurement(dataset: .classify(key), operation: .read)
-        defer { report(measurement) }
+        let operationStart = ProcessInfo.processInfo.systemUptime
+        defer {
+            measurement.mainMilliseconds = (ProcessInfo.processInfo.systemUptime - operationStart) * 1000
+            report(measurement)
+        }
         let url = fileURL(for: key)
         guard FileManager.default.fileExists(atPath: url.path) else {
             decodedSnapshots.removeValue(forKey: key)
@@ -223,7 +230,11 @@ final class PersistenceStore {
     private func encodeAndSave<T: Encodable>(_ value: T, key: String, durable: Bool) throws {
         var measurement = PersistenceMeasurement(dataset: .classify(key), operation: durable ? .durableSave : .save)
         measurement.records = recordCount(value)
-        defer { report(measurement) }
+        let operationStart = ProcessInfo.processInfo.systemUptime
+        defer {
+            measurement.mainMilliseconds = (ProcessInfo.processInfo.systemUptime - operationStart) * 1000
+            report(measurement)
+        }
         let encodeStart = ProcessInfo.processInfo.systemUptime
         let data: Data
         do {
@@ -251,7 +262,7 @@ final class PersistenceStore {
         // redundant rewrite. Durable saves must write regardless; reading a
         // photo-heavy cache solely for diagnostics would add main-thread work.
         // Their changed flag remains unknown, not inferred from an encode memo.
-        if !durable && canMemoize(T.self, key: key) {
+        if !durable && (key == "vinetrack_pins" || key == "vinetrack_paddocks" || key == "vinetrack_saved_chemicals") && canMemoize(T.self, key: key) {
             let readStart = ProcessInfo.processInfo.systemUptime
             if let persisted = try? Data(contentsOf: url) {
                 measurement.changed = persisted != data

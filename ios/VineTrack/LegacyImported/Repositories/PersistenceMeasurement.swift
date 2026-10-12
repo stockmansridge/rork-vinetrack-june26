@@ -15,4 +15,6 @@ nonisolated struct PersistenceMeasurement: Sendable {
     var changed: Bool? = nil
     var succeeded: Bool = false
     var offMain: Bool = false
+    /// Full synchronous actor occupancy, including validation and disk IO; not CPU time.
+    var mainMilliseconds: Double = 0
 }

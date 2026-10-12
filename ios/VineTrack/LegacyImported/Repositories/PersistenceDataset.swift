@@ -8,11 +8,14 @@ nonisolated enum PersistenceDataset: String, Sendable {
     case workTaskTypes, workTaskLabour, workTaskMachines, workTaskBlocks, workTaskPieceRates, workTaskMaterials
     case materialCatalogue, vineyardMaterials, tripCostAllocations, pruningLabour, maintenance
     case yieldSessions, damageRecords, historicalYield, yieldDeterminations, pickingRecords, pruningSettings
-    case pinMetadata, blockMetadata, chemicalMetadata
+    case pinMetadata, blockMetadata, chemicalMetadata, pinPhotos, growthPhotos
 
     static func classify(_ key: String) -> Self {
         switch key {
         case "vinetrack_pins": return .pins
+        case "vinetrack_pending_pin_photos_v2": return .pinPhotos
+        case "vinetrack_pending_growth_photos_v1": return .growthPhotos
+        case "vinetrack_growth_stage_records": return .growth
         case "vinetrack_paddocks": return .blocks
         case "vinetrack_saved_chemicals": return .chemicals
         case "vinetrack_trips": return .trips

@@ -8,9 +8,10 @@ nonisolated enum PersistenceDecodePreparation {
         let readMilliseconds: Double
         let decodeMilliseconds: Double
         let offMain: Bool
+        let isReusable: Bool
     }
 
-    static func read<T: Decodable & Sendable>(_ type: T.Type, url: URL) async throws -> Prepared<T> {
+    static func read<T: Decodable & Sendable>(_ type: T.Type, url: URL, dataset: PersistenceDataset) async throws -> Prepared<T> {
         try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
@@ -21,10 +22,11 @@ nonisolated enum PersistenceDecodePreparation {
                     decoder.dateDecodingStrategy = .iso8601
                     let decodeStart = ProcessInfo.processInfo.systemUptime
                     let value = try decoder.decode(T.self, from: bytes)
+                    let isReusable = PersistenceDecodeEligibility.permits(dataset, bytes: bytes)
                     continuation.resume(returning: Prepared(bytes: bytes, value: value,
                         readMilliseconds: readMilliseconds,
                         decodeMilliseconds: (ProcessInfo.processInfo.systemUptime - decodeStart) * 1000,
-                        offMain: !Thread.isMainThread))
+                        offMain: !Thread.isMainThread, isReusable: isReusable))
                 } catch {
                     continuation.resume(throwing: error)
                 }

@@ -177,11 +177,7 @@ struct GrowthStageRecordsListView: View {
                 if feed.blocks.isEmpty {
                     Text("No blocks in this vineyard yet.").foregroundStyle(.secondary)
                 }
-                ForEach(feed.blocks.sorted { left, right in
-                    let leftEL = currentEL(for: left.id) ?? -1
-                    let rightEL = currentEL(for: right.id) ?? -1
-                    return leftEL == rightEL ? (left.name ?? "") < (right.name ?? "") : leftEL > rightEL
-                }, id: \.id) { block in
+                ForEach(sortedSummaryBlocks, id: \.id) { block in
                     let stage = currentEL(for: block.id)
                     NavigationLink {
                         GrowthStageBlockDetailView(
@@ -225,6 +221,16 @@ struct GrowthStageRecordsListView: View {
         .refreshable {
             await growthStageRecordSync.syncForSelectedVineyard()
             await load(force: true)
+        }
+    }
+
+    private var sortedSummaryBlocks: [ELRipeness.BlockInput] {
+        let timing = PerformanceCapture.shared.beginComputation()
+        defer { PerformanceCapture.shared.endComputation(timing, label: "Growth summary block ordering", records: feed.vintageObservations.count) }
+        return feed.blocks.sorted { left, right in
+            let leftEL = currentEL(for: left.id) ?? -1
+            let rightEL = currentEL(for: right.id) ?? -1
+            return leftEL == rightEL ? (left.name ?? "") < (right.name ?? "") : leftEL > rightEL
         }
     }
 

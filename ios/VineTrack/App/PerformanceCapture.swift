@@ -20,6 +20,7 @@ final class PerformanceCapture {
     private var dropped: Int = 0
     private var sequence: Int = 0
     private var active: [Int: String] = [:]
+    private var operationCounts: [String: Int] = [:]
 
     struct Span {
         let id: Int
@@ -133,11 +134,32 @@ final class PerformanceCapture {
         guard shouldCapture else { return }
         let count = measurement.records.map(String.init) ?? "unknown"
         let changed = measurement.changed.map { $0 ? "yes" : "no" } ?? "unknown"
+        let operation = measurement.dataset.rawValue + "." + measurement.operation.rawValue
+        let occurrence = (operationCounts[operation] ?? 0) + 1
+        operationCounts[operation] = occurrence
         append(String(format: "persistence dataset=%@ operation=%@ records=%@ bytes=%d read=%.1fms codec=%.1fms write=%.1fms changed=%@ decodeReused=%@ encodeReused=%@ success=%@ offMain=%@",
             measurement.dataset.rawValue, measurement.operation.rawValue, count, measurement.bytes,
             measurement.readMilliseconds, measurement.codecMilliseconds, measurement.writeMilliseconds, changed,
             measurement.reusedDecode ? "yes" : "no", measurement.reusedEncode ? "yes" : "no",
             measurement.succeeded ? "yes" : "no", measurement.offMain ? "yes" : "no"))
+        append(String(format: "occupancy operation=%@ occurrence=%d main=%.1fms longMain=%@", operation, occurrence,
+            measurement.mainMilliseconds, measurement.mainMilliseconds >= 100 ? "yes" : "no"))
+    }
+
+    /// Aggregate pure view preparation only. This is not SwiftUI/CoreText layout or a usable-frame marker.
+    func beginComputation() -> TimeInterval? {
+        shouldCapture ? ProcessInfo.processInfo.systemUptime : nil
+    }
+
+    func endComputation(_ start: TimeInterval?, label: StaticString, records: Int) {
+        guard let start, shouldCapture else { return }
+        let name = String(describing: label)
+        let occurrence = (operationCounts[name] ?? 0) + 1
+        operationCounts[name] = occurrence
+        let milliseconds = (ProcessInfo.processInfo.systemUptime - start) * 1000
+        append(String(format: "viewPreparation operation=%@ occurrence=%d records=%d main=%@ elapsed=%.1fms longMain=%@",
+            name, occurrence, records, Thread.isMainThread ? "yes" : "no", milliseconds,
+            Thread.isMainThread && milliseconds >= 100 ? "yes" : "no"))
     }
 
     func clear() {
@@ -146,6 +168,7 @@ final class PerformanceCapture {
         generation = UUID()
         dropped = 0
         sequence = 0
+        operationCounts.removeAll(keepingCapacity: true)
         origin = ProcessInfo.processInfo.systemUptime
         lastTick = nil
     }
@@ -155,11 +178,15 @@ final class PerformanceCapture {
         let info = Bundle.main.infoDictionary ?? [:]
         let version = info["CFBundleShortVersionString"] as? String ?? "unknown"
         let build = info["CFBundleVersion"] as? String ?? "unknown"
+        let lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+        let thermal = ProcessInfo.processInfo.thermalState.rawValue
+        let freeBytes = (try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory())[.systemFreeSize] as? NSNumber)?.int64Value
         let pending = active.sorted { $0.key < $1.key }.map { "#\($0.key) \($0.value)" }.joined(separator: ", ")
         return """
         VineTrack iOS performance timing report
         Version: \(version) (\(build))
         OS: \(UIDevice.current.systemVersion)
+        At export: Low Power Mode=\(lowPower); thermalState=\(thermal); freeBytes=\(freeBytes.map(String.init) ?? "unavailable")
         Capture enabled: \(isEnabled)
         Exported: \(Date().ISO8601Format())
         Retained events: \(rows.count); older events dropped: \(dropped)
@@ -170,6 +197,7 @@ final class PerformanceCapture {
         Prior verified opt-in permits a bounded numeric early-launch buffer. Viewing/export requires current system-admin verification. Earliest timings depend on when instrumentation is first reached.
         Reports are memory-only and lost on termination. The opt-in setting survives restart, but never grants admin access.
         No vineyard records, persistence keys, account IDs, credentials or raw errors are collected.
+        main occupancy is synchronous wall time, not CPU. prepare offMain refers to worker codec/IO, not report delivery. Occurrences count operations, not identical-payload fingerprints. View preparation is not text layout. Export power/storage describe export time, not every earlier event.
         Persistence categories are allowlisted; counts and bytes describe whole payloads. changed=unknown means no comparison was made. Durable saves are never skipped.
 
         \(rows.joined(separator: "\n"))

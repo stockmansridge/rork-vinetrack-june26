@@ -1175,6 +1175,8 @@ struct PinsListView: View {
     /// Closest silently falls back to that while no GPS fix is available
     /// (permission denied / location off) — the list never fails.
     private var sortedPins: [VinePin] {
+        let timing = PerformanceCapture.shared.beginComputation()
+        defer { PerformanceCapture.shared.endComputation(timing, label: "Pins list ordering", records: pins.count) }
         switch sort {
         case .newest:
             return pins
