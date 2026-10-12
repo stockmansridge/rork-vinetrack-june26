@@ -60,6 +60,7 @@ final class SupabaseSprayJobTemplateRepository {
         vineyardId: UUID,
         payload: BackendSprayJobTemplateUpdate
     ) async throws -> BackendSprayJobTemplate {
+        if payload.planningFields != nil { throw SprayPlanningAdmissionError(message: SprayPlanningOperationalGate.migrationMessage) }
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         if payload.operationType == "Fertigation" {
             guard try await SupabaseSystemAdminRepository().isSystemAdmin() else { throw FertigationDomain.Failure.systemAdminRequired }

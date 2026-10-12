@@ -31,7 +31,32 @@ data class SprayPlanningIntent(
     val intendedTankLitres: Double? = null,
     val targetAreaHa: Double? = null,
     val calibratedLitresPerHectare: Double? = null,
+    val inputProvenance: SprayPlanningInputProvenance? = null,
 ) {
+    /** Execution-only completeness boundary; do not apply to historical records or editable drafts. */
+    fun fullTankExecutionBlocker(resolution: SprayPlanningResolution?, selectedGrossAreaHa: Double?): String? {
+        if (method != SprayPlanningMethod.FULL_TANK) return null
+        val message = "Full Tank plan is incomplete or inconsistent. Recalculate before saving or starting."
+        val pass = configuration ?: return message
+        val tank = intendedTankLitres?.takeIf { it.isFinite() && it > 0 } ?: return message
+        val resolved = resolution ?: return message
+        val gross = selectedGrossAreaHa?.takeIf { it.isFinite() && it > 0 } ?: return message
+        fun matches(a: Double, b: Double): Boolean = a.isFinite() && b.isFinite() &&
+            kotlin.math.abs(a - b) <= maxOf(0.000001, maxOf(kotlin.math.abs(a), kotlin.math.abs(b)) * 0.00000001)
+        if (!resolved.plannedAreaHa.isFinite() || resolved.plannedAreaHa <= 0 ||
+            resolved.plannedAreaHa > gross + maxOf(0.000001, gross * 0.00000001) ||
+            !resolved.litresPerHectare.isFinite() || resolved.litresPerHectare <= 0 ||
+            !matches(tank, resolved.intendedLitres) || !matches(tank, resolved.plannedAreaHa * resolved.litresPerHectare)) return message
+        when (fullTankSpecification) {
+            SprayFullTankSpecification.TARGET_AREA -> if (targetAreaHa == null || targetAreaHa <= 0 || !matches(targetAreaHa, resolved.plannedAreaHa)) return message
+            SprayFullTankSpecification.CALIBRATED_RATE -> if (calibratedLitresPerHectare == null || calibratedLitresPerHectare <= 0 || !matches(calibratedLitresPerHectare, resolved.litresPerHectare)) return message
+            null -> return message
+        }
+        if (resolved.physicalRowLitresPer100m != null && resolved.controllerLitresPer100mTravel != null &&
+            !matches(resolved.controllerLitresPer100mTravel, resolved.physicalRowLitresPer100m * pass.rowEquivalents)) return message
+        return null
+    }
+
     fun resolve(selectedAreaHa: Double, physicalRowSpacingMetres: Double?, diluteLitresPerHectare: Double?): SprayPlanningResolution? {
         val pass = configuration ?: return null
         val planning = method ?: return null
@@ -73,6 +98,18 @@ data class SprayPlanningIntent(
     }
 }
 
+/** Frozen selected-unit typing, independent of the canonical calculation. */
+@Serializable
+data class SprayPlanningInputProvenance(
+    val tankText: String,
+    val areaText: String,
+    val rateText: String,
+    val volumeUnit: String,
+    val areaUnit: String,
+    val rateAreaUnit: String,
+    val countryCode: String,
+)
+
 @Serializable
 data class SprayPlanningResolution(
     val intendedLitres: Double,
@@ -88,7 +125,11 @@ data class SprayPlanningResolution(
 object SprayPlanningOperationalGate {
     const val MIGRATION_MESSAGE = "Calculation preview only. New spray planning save/start and replay are disabled until the schema and operational workflows are approved and validated."
     const val CONCENTRATE_MESSAGE = "Concentrate spraying permission and limits are unverified for this dilute-rate mix. Save/start is blocked. A displayed CF is not label approval."
-    fun blocker(snapshot: SprayApplicationSnapshot?, tanks: List<com.rork.vinetrack.data.model.SprayTank>): String? = blocker(
+    fun blocker(snapshot: SprayApplicationSnapshot?, tanks: List<com.rork.vinetrack.data.model.SprayTank>): String? {
+        if (snapshot?.planningResolution != null) {
+            snapshot.planningIntent?.fullTankExecutionBlocker(snapshot.planningResolution, snapshot.grossAreaHa)?.let { return it }
+        }
+        return blocker(
         snapshot?.planningIntent != null || snapshot?.planningResolution != null,
         tanks.firstOrNull { !it.concentrationFactor.isFinite() }?.concentrationFactor
             ?: (tanks.map { it.concentrationFactor } + listOfNotNull(snapshot?.concentrationFactor)).maxOrNull(),
@@ -96,9 +137,15 @@ object SprayPlanningOperationalGate {
             chemical.rateBasis == SprayProductRateBasis.PER_100_LITRES.raw ||
                 (chemical.rateBasis == null && chemical.ratePer100L > 0 && chemical.ratePerHa <= 0)
         } },
-    )
-    fun blocker(hasPlanningIntent: Boolean, concentrationFactor: Double?, hasDiluteRateProducts: Boolean): String? {
-        if (hasDiluteRateProducts && concentrationFactor != null && (!concentrationFactor.isFinite() || concentrationFactor > 1.000001)) return CONCENTRATE_MESSAGE
+        tanks.flatMap { it.chemicals }.filter { it.rateBasis == SprayProductRateBasis.PER_100_LITRES.raw ||
+            (it.rateBasis == null && it.ratePer100L > 0 && it.ratePerHa <= 0) }.map { it.name },
+        )
+    }
+    fun blocker(hasPlanningIntent: Boolean, concentrationFactor: Double?, hasDiluteRateProducts: Boolean, chemicalNames: List<String> = emptyList()): String? {
+        if (hasDiluteRateProducts && concentrationFactor != null && (!concentrationFactor.isFinite() || concentrationFactor > 1.000001)) {
+            val names = chemicalNames.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
+            return if (names.isEmpty()) CONCENTRATE_MESSAGE else CONCENTRATE_MESSAGE + " Products: " + names.joinToString(", ")
+        }
         return if (hasPlanningIntent) MIGRATION_MESSAGE else null
     }
 }

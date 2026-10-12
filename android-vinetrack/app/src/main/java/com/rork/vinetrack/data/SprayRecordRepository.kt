@@ -301,7 +301,8 @@ class SprayRecordRepository(private val session: SessionStore) {
                 authHeaders(token)
                 headers { append("Prefer", "return=representation") }
                 contentType(ContentType.Application.Json)
-                setBody(body)
+                val legacy = SupabaseClient.json.encodeToJsonElement(SprayInsert.serializer(), body) as kotlinx.serialization.json.JsonObject
+                setBody(com.rork.vinetrack.data.spray.SprayPlanningWireFields.from(geometry, input.isTemplate).merging(legacy, SupabaseClient.json))
             }
             firstRow(response)
         }
@@ -372,7 +373,8 @@ class SprayRecordRepository(private val session: SessionStore) {
                 authHeaders(token)
                 headers { append("Prefer", "return=representation") }
                 contentType(ContentType.Application.Json)
-                setBody(patch)
+                val legacy = SupabaseClient.json.encodeToJsonElement(SprayPatch.serializer(), patch) as kotlinx.serialization.json.JsonObject
+                setBody(com.rork.vinetrack.data.spray.SprayPlanningWireFields.from(geometry, input.isTemplate).merging(legacy, SupabaseClient.json))
             }
             firstRow(response)
         }

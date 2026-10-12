@@ -74,6 +74,14 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
     let deletedAt: Date?
     let clientUpdatedAt: Date?
     let syncVersion: Int?
+    var sprayerConfiguration: String? = nil
+    var sprayPlanningMethod: String? = nil
+    var fullTankSpecification: String? = nil
+    var plannedApplicationAreaHa: Double? = nil
+    var planningTankCapacityLitres: Double? = nil
+    var planningCalibratedLitresPerHectare: Double? = nil
+    var controllerLitresPer100mTravel: Double? = nil
+    var effectiveWorkingWidthMetres: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -132,6 +140,14 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
         case deletedAt = "deleted_at"
         case clientUpdatedAt = "client_updated_at"
         case syncVersion = "sync_version"
+        case sprayerConfiguration = "sprayer_configuration"
+        case sprayPlanningMethod = "spray_planning_method"
+        case fullTankSpecification = "full_tank_specification"
+        case plannedApplicationAreaHa = "planned_application_area_ha"
+        case planningTankCapacityLitres = "planning_tank_capacity_litres"
+        case planningCalibratedLitresPerHectare = "planning_calibrated_litres_per_hectare"
+        case controllerLitresPer100mTravel = "controller_litres_per_100m_travel"
+        case effectiveWorkingWidthMetres = "effective_working_width_metres"
     }
 }
 
@@ -207,6 +223,14 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
     let clientUpdatedAt: Date
     /// Client admission evidence only; deliberately excluded from the wire schema.
     var planningIntent: SprayPlanningIntent? = nil
+    var sprayerConfiguration: String? = nil
+    var sprayPlanningMethod: String? = nil
+    var fullTankSpecification: String? = nil
+    var plannedApplicationAreaHa: Double? = nil
+    var planningTankCapacityLitres: Double? = nil
+    var planningCalibratedLitresPerHectare: Double? = nil
+    var controllerLitresPer100mTravel: Double? = nil
+    var effectiveWorkingWidthMetres: Double? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -257,6 +281,14 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
         case sprayJobId = "spray_job_id"
         case createdBy = "created_by"
         case clientUpdatedAt = "client_updated_at"
+        case sprayerConfiguration = "sprayer_configuration"
+        case sprayPlanningMethod = "spray_planning_method"
+        case fullTankSpecification = "full_tank_specification"
+        case plannedApplicationAreaHa = "planned_application_area_ha"
+        case planningTankCapacityLitres = "planning_tank_capacity_litres"
+        case planningCalibratedLitresPerHectare = "planning_calibrated_litres_per_hectare"
+        case controllerLitresPer100mTravel = "controller_litres_per_100m_travel"
+        case effectiveWorkingWidthMetres = "effective_working_width_metres"
     }
 }
 
@@ -270,6 +302,7 @@ extension BackendSprayRecord {
         let geometry = record.isTemplate
             ? record.applicationGeometry?.templateConfiguration()
             : record.applicationGeometry
+        let planning = SprayPlanningWireFields(intent: geometry?.planningIntent, resolution: geometry?.planningResolution, isTemplate: record.isTemplate)
         return BackendSprayRecordUpsert(
             id: record.id,
             vineyardId: record.vineyardId,
@@ -330,7 +363,15 @@ extension BackendSprayRecord {
             sprayJobId: record.sprayJobId,
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt,
-            planningIntent: geometry?.planningIntent ?? (geometry?.planningResolution != nil ? SprayPlanningIntent() : nil)
+            planningIntent: geometry?.planningIntent ?? (geometry?.planningResolution != nil ? SprayPlanningIntent() : nil),
+            sprayerConfiguration: planning.sprayerConfiguration,
+            sprayPlanningMethod: planning.sprayPlanningMethod,
+            fullTankSpecification: planning.fullTankSpecification,
+            plannedApplicationAreaHa: planning.plannedApplicationAreaHa,
+            planningTankCapacityLitres: planning.planningTankCapacityLitres,
+            planningCalibratedLitresPerHectare: planning.planningCalibratedLitresPerHectare,
+            controllerLitresPer100mTravel: planning.controllerLitresPer100mTravel,
+            effectiveWorkingWidthMetres: planning.effectiveWorkingWidthMetres
         )
     }
 
@@ -377,7 +418,16 @@ extension BackendSprayRecord {
     /// edited. Returns nil when every column is null (a pre-sql/191 record), so
     /// "not recorded" stays distinguishable from "recorded as zero".
     private var applicationGeometrySnapshot: SprayApplicationSnapshot? {
-        let snapshot = SprayApplicationSnapshot(
+        var planning = SprayPlanningWireFields(intent: nil)
+        planning.sprayerConfiguration = sprayerConfiguration
+        planning.sprayPlanningMethod = sprayPlanningMethod
+        planning.fullTankSpecification = fullTankSpecification
+        planning.plannedApplicationAreaHa = plannedApplicationAreaHa
+        planning.planningTankCapacityLitres = planningTankCapacityLitres
+        planning.planningCalibratedLitresPerHectare = planningCalibratedLitresPerHectare
+        planning.controllerLitresPer100mTravel = controllerLitresPer100mTravel
+        planning.effectiveWorkingWidthMetres = effectiveWorkingWidthMetres
+        var snapshot = SprayApplicationSnapshot(
             grossAreaHa: grossAreaHa,
             treatedAreaHa: treatedAreaHa,
             applicationMode: applicationMode.flatMap { SprayApplicationMode(rawValue: $0) },
@@ -415,6 +465,9 @@ extension BackendSprayRecord {
             // like "no resistance issue on this block".
             blocks: applicationBlocks
         )
+        snapshot.planningIntent = planning.intent
+        snapshot.planningResolution = planning.resolution(totalLitres: totalCarrierLitres, rate: carrierLitresPerHectare,
+            physicalRowRate: appliedLitresPer100m, concentrationFactor: concentrationFactor)
         return snapshot.isEmpty ? nil : snapshot
     }
 }

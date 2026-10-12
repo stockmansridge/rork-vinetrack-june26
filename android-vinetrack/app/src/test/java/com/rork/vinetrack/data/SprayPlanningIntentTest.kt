@@ -74,7 +74,8 @@ class SprayPlanningIntentTest {
 
     @Test fun localSnapshotsAndOutboxPayloadsRetainIntentBasisAndFrozenOutputs() {
         val json = Json { encodeDefaults = true }
-        val intent = SprayPlanningIntent(SprayPassConfiguration.OVER_ROW, SprayPlanningMethod.FULL_TANK, SprayFullTankSpecification.TARGET_AREA, 1000.0, 2.0)
+        val intent = SprayPlanningIntent(SprayPassConfiguration.OVER_ROW, SprayPlanningMethod.FULL_TANK, SprayFullTankSpecification.TARGET_AREA, 1000.0, 2.0,
+            inputProvenance = SprayPlanningInputProvenance("264.172052", "4.9421076", "", "gallons", "acres", "acre", "US"))
         val snapshot = SprayApplicationSnapshot(rowSpacingMetres = 2.8, carrierVolumeBasis = SprayCarrierBasis.LITRES_PER_100_METRES,
             planningIntent = intent, planningResolution = intent.resolve(10.0, 2.8, 1000.0))
         val restored = json.decodeFromString(SprayApplicationSnapshot.serializer(), json.encodeToString(SprayApplicationSnapshot.serializer(), snapshot))
@@ -88,6 +89,52 @@ class SprayPlanningIntentTest {
         assertNull(historical.planningIntent)
         assertNull(historical.planningResolution)
         assertEquals(500.0, historical.totalCarrierLitres!!, 0.0)
+    }
+
+    @Test fun acceptanceNumbersAndTamperedFullTankResolution() {
+        val standard = SprayPlanningIntent(SprayPassConfiguration.STANDARD_PASS, SprayPlanningMethod.BY_AREA, calibratedLitresPerHectare = 600.0)
+        val a = requireNotNull(standard.resolve(3.0, 2.8, 600.0))
+        val b = requireNotNull(standard.copy(configuration = SprayPassConfiguration.OVER_ROW).resolve(3.0, 2.8, 600.0))
+        assertEquals(16.8, a.controllerLitresPer100mTravel!!, 0.00000001)
+        assertEquals(33.6, b.controllerLitresPer100mTravel!!, 0.00000001)
+        val target = SprayPlanningIntent(SprayPassConfiguration.OVER_ROW, SprayPlanningMethod.FULL_TANK, SprayFullTankSpecification.TARGET_AREA, 1500.0, 3.0)
+        val resolved = requireNotNull(target.resolve(10.0, 2.8, 600.0))
+        assertEquals(500.0, resolved.litresPerHectare, 0.0)
+        assertNull(target.fullTankExecutionBlocker(resolved, 10.0))
+        assertNotNull(target.fullTankExecutionBlocker(resolved.copy(litresPerHectare = 600.0), 10.0))
+        assertNotNull(target.fullTankExecutionBlocker(null, 10.0))
+        val calibrated = target.copy(fullTankSpecification = SprayFullTankSpecification.CALIBRATED_RATE, targetAreaHa = null, calibratedLitresPerHectare = 600.0)
+        assertEquals(2.5, calibrated.resolve(10.0, 2.8, 600.0)!!.plannedAreaHa, 0.0)
+        assertNull(SprayPlanningIntent().fullTankExecutionBlocker(null, null))
+    }
+
+    @Test fun reviewedFlatWireFieldsRoundTripAndLegacyColumnsStayAbsent() {
+        val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        val remote = json.decodeFromString(SprayRecord.serializer(), """{"id":"record","vineyard_id":"vineyard",
+            "sprayer_configuration":"over_row_two_rows","spray_planning_method":"full_tank",
+            "full_tank_specification":"target_area","planning_tank_capacity_litres":1500,
+            "planned_application_area_ha":3,"planning_calibrated_litres_per_hectare":500,
+            "gross_area_ha":10,"total_carrier_litres":1500,"carrier_litres_per_hectare":500,"applied_litres_per_100m":14,
+            "controller_litres_per_100m_travel":28,"effective_working_width_metres":5.6,"concentration_factor":1.2}""")
+        val snapshot = requireNotNull(remote.applicationGeometry)
+        assertEquals(SprayPassConfiguration.OVER_ROW, snapshot.planningIntent!!.configuration)
+        assertEquals(14.0, snapshot.appliedLitresPer100m!!, 0.0)
+        assertEquals(28.0, snapshot.planningResolution!!.controllerLitresPer100mTravel!!, 0.0)
+        assertEquals(remote, json.decodeFromString(SprayRecord.serializer(), json.encodeToString(SprayRecord.serializer(), remote)))
+        val fields = SprayPlanningWireFields.from(snapshot)
+        assertEquals(snapshot.planningIntent, fields.intent)
+        val empty = kotlinx.serialization.json.JsonObject(emptyMap())
+        assertEquals(empty, SprayPlanningWireFields.from(null).merging(empty, json))
+        assertNull(SprayPlanningWireFields.from(snapshot, template = true).controllerLitresPer100mTravel)
+        assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, SprayPlanningOperationalGate.blocker(snapshot, emptyList()))
+    }
+
+    @Test fun namedChemicalBlockerDoesNotBlockAreaOnlyMixes() {
+        val dilute = SprayChemical("dilute", name = "Unverified sulphur", ratePer100L = 100.0)
+        val tanks = listOf(SprayTank("tank", concentrationFactor = 2.0, chemicals = listOf(dilute)))
+        assertTrue(SprayPlanningOperationalGate.blocker(null, tanks)!!.contains("Unverified sulphur"))
+        val area = SprayChemical("area", name = "Area only", ratePerHa = 2000.0, rateBasis = SprayProductRateBasis.WHOLE_BLOCK_AREA.raw)
+        assertNull(SprayPlanningOperationalGate.blocker(null, listOf(tanks.single().copy(chemicals = listOf(area)))))
     }
 
     @Test fun cfNeverAuthorisesConcentrateAndUndeployedIntentAlwaysBlocks() {

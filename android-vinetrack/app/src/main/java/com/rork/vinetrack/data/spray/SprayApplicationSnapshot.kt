@@ -380,6 +380,8 @@ data class SprayApplicationSnapshot(
             groundTarget: String? = null,
             carrierAreaBasis: String? = null,
             blocks: List<SprayApplicationBlockSnapshot>? = null,
+            planningIntent: SprayPlanningIntent? = null,
+            planningResolution: SprayPlanningResolution? = null,
         ): SprayApplicationSnapshot? {
             val snapshot = SprayApplicationSnapshot(
                 // sql/193 deliberately puts NO value CHECK on `targets` so the
@@ -418,6 +420,8 @@ data class SprayApplicationSnapshot(
                 // which is precisely the guess that would make "blocks not
                 // recorded" look like "no resistance issue on this block".
                 blocks = SprayApplicationBlockSnapshot.normalised(blocks),
+                planningIntent = planningIntent,
+                planningResolution = planningResolution,
             )
             return if (snapshot.isEmpty) null else snapshot
         }

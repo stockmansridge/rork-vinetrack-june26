@@ -634,7 +634,10 @@ struct SprayCalculatorView: View {
                 fullTankSpecification: planningMethod == .fullTank ? fullTankSpecification : nil,
                 intendedTankLitres: Double(planningTankText).map(region.volumeToCanonical),
                 targetAreaHa: Double(planningAreaText).map(region.areaToCanonical),
-                calibratedLitresPerHectare: Double(planningRateText).map(region.volumePerAreaToCanonical))
+                calibratedLitresPerHectare: Double(planningRateText).map(region.volumePerAreaToCanonical),
+                inputProvenance: SprayPlanningInputProvenance(tankText: planningTankText, areaText: planningAreaText,
+                    rateText: planningRateText, volumeUnit: region.settings.volumeUnit, areaUnit: region.settings.areaUnit,
+                    rateAreaUnit: region.settings.sprayRateAreaUnit, countryCode: region.settings.countryCode))
         }
         return inputs
     }
@@ -1054,6 +1057,13 @@ struct SprayCalculatorView: View {
             planningTankText = intent.intendedTankLitres.map { String(region.volumeValue(litres: $0)) } ?? ""
             planningAreaText = intent.targetAreaHa.map { String(region.areaValue(hectares: $0)) } ?? ""
             planningRateText = intent.calibratedLitresPerHectare.map { String(region.volumePerAreaValue(litresPerHectare: $0)) } ?? ""
+            if let original = intent.inputProvenance, original.countryCode == region.settings.countryCode,
+               original.volumeUnit == region.settings.volumeUnit, original.areaUnit == region.settings.areaUnit,
+               original.rateAreaUnit == region.settings.sprayRateAreaUnit {
+                planningTankText = original.tankText
+                planningAreaText = original.areaText
+                planningRateText = original.rateText
+            }
         }
         if let geometry = r.applicationGeometry {
             sprayHeadTarget = geometry.sprayHeadTarget

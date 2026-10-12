@@ -1799,6 +1799,14 @@ data class SprayRecord(
     @SerialName("application_blocks")
     val applicationBlocks: List<SprayApplicationBlockSnapshot>? = null,
     @SerialName("block_ids") val blockIds: List<String>? = null,
+    @SerialName("sprayer_configuration") val sprayerConfiguration: String? = null,
+    @SerialName("spray_planning_method") val sprayPlanningMethod: String? = null,
+    @SerialName("full_tank_specification") val fullTankSpecification: String? = null,
+    @SerialName("planned_application_area_ha") val plannedApplicationAreaHa: Double? = null,
+    @SerialName("planning_tank_capacity_litres") val planningTankCapacityLitres: Double? = null,
+    @SerialName("planning_calibrated_litres_per_hectare") val planningCalibratedLitresPerHectare: Double? = null,
+    @SerialName("controller_litres_per_100m_travel") val controllerLitresPer100mTravel: Double? = null,
+    @SerialName("effective_working_width_metres") val effectiveWorkingWidthMetres: Double? = null,
     @SerialName("entry_source") val entrySource: String? = null,
     @SerialName("manual_entry_id") val manualEntryId: String? = null,
     @SerialName("sync_version") val syncVersion: Long? = null,
@@ -1851,7 +1859,13 @@ data class SprayRecord(
             groundTarget = groundApplicationTarget,
             carrierAreaBasis = carrierAreaBasis,
             blocks = applicationBlocks,
+            planningIntent = planningFields.intent,
+            planningResolution = planningFields.resolution(totalCarrierLitres, carrierLitresPerHectare, appliedLitresPer100m, concentrationFactor),
         )
+
+    private val planningFields get() = com.rork.vinetrack.data.spray.SprayPlanningWireFields(
+        sprayerConfiguration, sprayPlanningMethod, fullTankSpecification, plannedApplicationAreaHa,
+        planningTankCapacityLitres, planningCalibratedLitresPerHectare, controllerLitresPer100mTravel, effectiveWorkingWidthMetres)
 
     /** User-facing label: the spray reference, else operation type, else a fallback. */
     val displayLabel: String

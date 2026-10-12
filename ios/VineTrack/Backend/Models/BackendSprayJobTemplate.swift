@@ -36,6 +36,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
     let groundApplicationTarget: String?
     let carrierAreaBasis: String?
     let createdBy: UUID?
+    var planningFields: SprayPlanningWireFields = SprayPlanningWireFields(intent: nil)
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -81,7 +82,8 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         tractorId: UUID? = nil,
         groundApplicationTarget: String? = nil,
         carrierAreaBasis: String? = nil,
-        createdBy: UUID? = nil
+        createdBy: UUID? = nil,
+        planningFields: SprayPlanningWireFields = SprayPlanningWireFields(intent: nil)
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -102,6 +104,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         self.groundApplicationTarget = groundApplicationTarget
         self.carrierAreaBasis = carrierAreaBasis
         self.createdBy = createdBy
+        self.planningFields = planningFields
     }
 
     init(from decoder: Decoder) throws {
@@ -126,6 +129,31 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         groundApplicationTarget = try? container.decodeIfPresent(String.self, forKey: .groundApplicationTarget)
         carrierAreaBasis = try? container.decodeIfPresent(String.self, forKey: .carrierAreaBasis)
         createdBy = try? container.decodeIfPresent(UUID.self, forKey: .createdBy)
+        planningFields = try SprayPlanningWireFields(from: decoder)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try planningFields.encode(to: encoder)
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(vineyardId, forKey: .vineyardId)
+        try c.encode(name, forKey: .name)
+        try c.encodeIfPresent(status, forKey: .status)
+        try c.encodeIfPresent(plannedDate, forKey: .plannedDate)
+        try c.encode(chemicalLines, forKey: .chemicalLines)
+        try c.encodeIfPresent(waterVolume, forKey: .waterVolume)
+        try c.encodeIfPresent(sprayRatePerHa, forKey: .sprayRatePerHa)
+        try c.encodeIfPresent(concentrationFactor, forKey: .concentrationFactor)
+        try c.encodeIfPresent(operationType, forKey: .operationType)
+        try c.encodeIfPresent(target, forKey: .target)
+        try c.encodeIfPresent(targets, forKey: .targets)
+        try c.encodeIfPresent(notes, forKey: .notes)
+        try c.encodeIfPresent(growthStageCode, forKey: .growthStageCode)
+        try c.encodeIfPresent(equipmentId, forKey: .equipmentId)
+        try c.encodeIfPresent(tractorId, forKey: .tractorId)
+        try c.encodeIfPresent(groundApplicationTarget, forKey: .groundApplicationTarget)
+        try c.encodeIfPresent(carrierAreaBasis, forKey: .carrierAreaBasis)
+        try c.encodeIfPresent(createdBy, forKey: .createdBy)
     }
 
     /// Postgres `numeric` columns normally arrive as JSON numbers, but decode
@@ -371,6 +399,13 @@ extension BackendSprayJobTemplate {
         // operator the same words twice.
         let combinedNotes = notes ?? ""
 
+        var geometry = SprayApplicationSnapshot(
+            applicationMode: groundApplicationTarget == nil ? nil : .banded,
+            targets: mappedTargets.isEmpty ? nil : mappedTargets,
+            customTargets: customTargets.isEmpty ? nil : customTargets,
+            groundTarget: groundApplicationTarget.flatMap(SprayGroundTarget.init(rawValue:)),
+            carrierAreaBasis: carrierAreaBasis.flatMap(SprayCarrierAreaBasis.init(rawValue:)))
+        geometry.planningIntent = planningFields.intent
         return SprayRecord(
             id: id,
             vineyardId: vineyardId,
@@ -389,19 +424,7 @@ extension BackendSprayJobTemplate {
             // never reaches history. `blocks` stays nil, which reads as
             // "blocks not recorded", because a reusable step does not know
             // where it is going.
-            applicationGeometry: SprayApplicationSnapshot(
-                applicationMode: groundApplicationTarget == nil ? nil : .banded,
-                targets: mappedTargets.isEmpty ? nil : mappedTargets,
-                customTargets: customTargets.isEmpty ? nil : customTargets,
-                groundTarget: groundApplicationTarget.flatMap(SprayGroundTarget.init(rawValue:)),
-                carrierAreaBasis: carrierAreaBasis.flatMap(SprayCarrierAreaBasis.init(rawValue:))
-            ).isEmpty ? nil : SprayApplicationSnapshot(
-                applicationMode: groundApplicationTarget == nil ? nil : .banded,
-                targets: mappedTargets.isEmpty ? nil : mappedTargets,
-                customTargets: customTargets.isEmpty ? nil : customTargets,
-                groundTarget: groundApplicationTarget.flatMap(SprayGroundTarget.init(rawValue:)),
-                carrierAreaBasis: carrierAreaBasis.flatMap(SprayCarrierAreaBasis.init(rawValue:))
-            )
+            applicationGeometry: geometry.isEmpty ? nil : geometry
         )
     }
 }

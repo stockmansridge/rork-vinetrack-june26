@@ -1407,6 +1407,9 @@ private fun SprayDetailView(
                 VineyardCard {
                     DetailRowSP(Icons.Filled.Science, "Operation", record.operationType?.takeIf { it.isNotBlank() } ?: "—", VineColors.Indigo)
                     DividerSP(vine.cardBorder)
+                    DetailRowSP(Icons.Filled.Agriculture, "Sprayer configuration",
+                        record.applicationGeometry?.planningIntent?.configuration?.title ?: "Unknown — not recorded historically", VineColors.LeafGreen)
+                    DividerSP(vine.cardBorder)
                     DetailRowSP(Icons.Filled.Schedule, "Date", formatSprayDate(record.dateEpochMs) ?: "—", VineColors.Cyan)
                     record.sprayReference?.takeIf { it.isNotBlank() }?.let {
                         DividerSP(vine.cardBorder)

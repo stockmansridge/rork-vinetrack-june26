@@ -98,6 +98,12 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         @SerialName("vsp_canopy_density") val vspCanopyDensity: String? = null,
         @SerialName("created_at") val createdAt: String? = null,
         @SerialName("deleted_at") val deletedAt: String? = null,
+        @SerialName("sprayer_configuration") val sprayerConfiguration: String? = null,
+        @SerialName("spray_planning_method") val sprayPlanningMethod: String? = null,
+        @SerialName("full_tank_specification") val fullTankSpecification: String? = null,
+        @SerialName("planned_application_area_ha") val plannedApplicationAreaHa: Double? = null,
+        @SerialName("planning_tank_capacity_litres") val planningTankCapacityLitres: Double? = null,
+        @SerialName("planning_calibrated_litres_per_hectare") val planningCalibratedLitresPerHectare: Double? = null,
     )
 
     /**
@@ -119,6 +125,7 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         val groundApplicationTarget: String? = null,
         val carrierAreaBasis: String? = null,
         val chemicalLines: JsonArray?,
+        val planningFields: com.rork.vinetrack.data.spray.SprayPlanningWireFields? = null,
     )
 
     /** A `public.tractors` row, decoded tolerantly for the tractor picker. */
@@ -199,6 +206,10 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         payload: JsonObject,
     ): SprayRecord =
         withContext(Dispatchers.IO) {
+            if (payload.keys.any { it in setOf("sprayer_configuration", "spray_planning_method", "full_tank_specification",
+                    "planned_application_area_ha", "planning_tank_capacity_litres", "planning_calibrated_litres_per_hectare") }) {
+                throw IllegalStateException(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.MIGRATION_MESSAGE)
+            }
             requireConfig()
             if ((payload["operation_type"] as? JsonPrimitive)?.contentOrNull == "Fertigation") {
                 check(SystemAdminRepository(session).isSystemAdmin()) { "System Admin required." }
@@ -258,6 +269,8 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         groundApplicationTarget = groundApplicationTarget,
         carrierAreaBasis = carrierAreaBasis,
         chemicalLines = chemicalLines,
+        planningFields = com.rork.vinetrack.data.spray.SprayPlanningWireFields(sprayerConfiguration, sprayPlanningMethod,
+            fullTankSpecification, plannedApplicationAreaHa, planningTankCapacityLitres, planningCalibratedLitresPerHectare),
     )
 
     /** Deterministic ids so re-fetches don't churn Compose list identity. */
@@ -315,6 +328,12 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
             templateGrowthStageCode = growthStageCode?.trim()?.takeIf { it.isNotEmpty() },
             templateChemicalLines = chemicalLines,
             prefillCanopy = prefillCanopy,
+            sprayerConfiguration = sprayerConfiguration,
+            sprayPlanningMethod = sprayPlanningMethod,
+            fullTankSpecification = fullTankSpecification,
+            plannedApplicationAreaHa = plannedApplicationAreaHa,
+            planningTankCapacityLitres = planningTankCapacityLitres,
+            planningCalibratedLitresPerHectare = planningCalibratedLitresPerHectare,
         )
     }
 

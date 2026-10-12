@@ -506,9 +506,12 @@ nonisolated struct SprayGuidedFlow: Sendable {
     }
 
     var operationalBlocker: String? {
-        SprayPlanningOperationalGate.blocker(hasPlanningIntent: inputs.planningIntent != nil,
+        if let intent = inputs.planningIntent,
+           let blocker = intent.fullTankExecutionBlocker(resolution: planningResolution, selectedGrossAreaHa: geometry.grossAreaHectares) { return blocker }
+        return SprayPlanningOperationalGate.blocker(hasPlanningIntent: inputs.planningIntent != nil,
             concentrationFactor: carrier?.concentrationFactor,
-            hasDiluteRateProducts: inputs.products.contains { $0.basis == .per100Litres })
+            hasDiluteRateProducts: inputs.products.contains { $0.basis == .per100Litres },
+            chemicalNames: inputs.products.filter { $0.basis == .per100Litres }.map(\.name))
     }
 
     var carrier: SprayCarrierVolume? {

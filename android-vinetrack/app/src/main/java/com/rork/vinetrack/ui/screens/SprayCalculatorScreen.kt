@@ -144,6 +144,7 @@ import com.rork.vinetrack.data.spray.SprayVolumeChoice
 import com.rork.vinetrack.data.spray.SprayVolumeHelp
 import com.rork.vinetrack.ui.components.SprayPlanningCards
 import com.rork.vinetrack.data.spray.SprayPlanningIntent
+import com.rork.vinetrack.data.spray.SprayPlanningInputProvenance
 import com.rork.vinetrack.data.spray.SprayPassConfiguration
 import com.rork.vinetrack.data.spray.SprayPlanningMethod
 import com.rork.vinetrack.data.spray.SprayFullTankSpecification
@@ -759,7 +760,9 @@ fun SprayCalculatorScreen(
                     fullTankSpecification = fullTankSpecification.takeIf { planningMethod == SprayPlanningMethod.FULL_TANK },
                     intendedTankLitres = planningTankText.toDoubleOrNull()?.let(fmt::volumeToCanonical),
                     targetAreaHa = planningAreaText.toDoubleOrNull()?.let(fmt::areaToCanonical),
-                    calibratedLitresPerHectare = planningRateText.toDoubleOrNull()?.let(fmt::volumePerAreaToCanonical)) else null,
+                    calibratedLitresPerHectare = planningRateText.toDoubleOrNull()?.let(fmt::volumePerAreaToCanonical),
+                    inputProvenance = SprayPlanningInputProvenance(planningTankText, planningAreaText, planningRateText,
+                        fmt.settings.volumeUnit, fmt.settings.areaUnit, fmt.settings.sprayRateAreaUnit, fmt.settings.countryCode)) else null,
         ),
         profile = sprayProfile,
     )
@@ -948,6 +951,13 @@ fun SprayCalculatorScreen(
             planningTankText = intent.intendedTankLitres?.let { fmt.volumeValue(it).toString() }.orEmpty()
             planningAreaText = intent.targetAreaHa?.let { fmt.areaValue(it).toString() }.orEmpty()
             planningRateText = intent.calibratedLitresPerHectare?.let { fmt.volumePerAreaValue(it).toString() }.orEmpty()
+            intent.inputProvenance?.takeIf { it.countryCode == fmt.settings.countryCode &&
+                it.volumeUnit == fmt.settings.volumeUnit && it.areaUnit == fmt.settings.areaUnit &&
+                it.rateAreaUnit == fmt.settings.sprayRateAreaUnit }?.let { original ->
+                planningTankText = original.tankText
+                planningAreaText = original.areaText
+                planningRateText = original.rateText
+            }
         }
         r.applicationGeometry?.let { geometry ->
             sprayHeadTarget = geometry.sprayHeadTarget

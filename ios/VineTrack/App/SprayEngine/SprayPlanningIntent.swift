@@ -28,6 +28,34 @@ nonisolated struct SprayPlanningIntent: Codable, Sendable, Hashable {
     var intendedTankLitres: Double?
     var targetAreaHa: Double?
     var calibratedLitresPerHectare: Double?
+    var inputProvenance: SprayPlanningInputProvenance? = nil
+
+    /// Full-Tank execution validation only. Historical records and non-executable drafts do not call this.
+    func fullTankExecutionBlocker(resolution: SprayPlanningResolution?, selectedGrossAreaHa: Double?) -> String? {
+        guard method == .fullTank else { return nil }
+        let message = "Full Tank plan is incomplete or inconsistent. Recalculate before saving or starting."
+        guard let configuration, let tank = intendedTankLitres, tank.isFinite, tank > 0,
+              let resolution, let gross = selectedGrossAreaHa, gross.isFinite, gross > 0 else { return message }
+        func matches(_ a: Double, _ b: Double) -> Bool {
+            a.isFinite && b.isFinite && abs(a - b) <= max(0.000001, max(abs(a), abs(b)) * 0.00000001)
+        }
+        guard resolution.plannedAreaHa.isFinite, resolution.plannedAreaHa > 0,
+              resolution.plannedAreaHa <= gross + max(0.000001, gross * 0.00000001),
+              resolution.litresPerHectare.isFinite, resolution.litresPerHectare > 0,
+              matches(tank, resolution.intendedLitres),
+              matches(tank, resolution.plannedAreaHa * resolution.litresPerHectare) else { return message }
+        switch fullTankSpecification {
+        case .targetArea:
+            guard let targetAreaHa, targetAreaHa > 0, matches(targetAreaHa, resolution.plannedAreaHa) else { return message }
+        case .calibratedRate:
+            guard let calibratedLitresPerHectare, calibratedLitresPerHectare > 0,
+                  matches(calibratedLitresPerHectare, resolution.litresPerHectare) else { return message }
+        case nil: return message
+        }
+        if let physical = resolution.physicalRowLitresPer100m, let travel = resolution.controllerLitresPer100mTravel,
+           !matches(travel, physical * configuration.rowEquivalents) { return message }
+        return nil
+    }
 
     func resolve(selectedAreaHa: Double, physicalRowSpacingMetres: Double?, diluteLitresPerHectare: Double?) -> SprayPlanningResolution? {
         guard let configuration, let method, selectedAreaHa.isFinite, selectedAreaHa > 0 else { return nil }
@@ -68,6 +96,17 @@ nonisolated struct SprayPlanningIntent: Codable, Sendable, Hashable {
     }
 }
 
+/// Original display-unit inputs are retained separately from canonical numeric quantities.
+nonisolated struct SprayPlanningInputProvenance: Codable, Sendable, Hashable {
+    let tankText: String
+    let areaText: String
+    let rateText: String
+    let volumeUnit: String
+    let areaUnit: String
+    let rateAreaUnit: String
+    let countryCode: String
+}
+
 nonisolated struct SprayPlanningResolution: Codable, Sendable, Hashable {
     let intendedLitres: Double
     let plannedAreaHa: Double
@@ -82,8 +121,11 @@ nonisolated struct SprayPlanningResolution: Codable, Sendable, Hashable {
 nonisolated enum SprayPlanningOperationalGate {
     static let migrationMessage = "Calculation preview only. New spray planning save/start and replay are disabled until the schema and operational workflows are approved and validated."
     static let concentrateMessage = "Concentrate spraying permission and limits are unverified for this dilute-rate mix. Save/start is blocked. A displayed CF is not label approval."
-    static func blocker(hasPlanningIntent: Bool, concentrationFactor: Double?, hasDiluteRateProducts: Bool) -> String? {
-        if hasDiluteRateProducts, let factor = concentrationFactor, !factor.isFinite || factor > 1.000001 { return concentrateMessage }
+    static func blocker(hasPlanningIntent: Bool, concentrationFactor: Double?, hasDiluteRateProducts: Bool, chemicalNames: [String] = []) -> String? {
+        if hasDiluteRateProducts, let factor = concentrationFactor, !factor.isFinite || factor > 1.000001 {
+            let names = Array(Set(chemicalNames.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+            return names.isEmpty ? concentrateMessage : concentrateMessage + " Products: " + names.joined(separator: ", ")
+        }
         return hasPlanningIntent ? migrationMessage : nil
     }
 }

@@ -57,6 +57,14 @@ struct SprayRecordDetailView: View {
                 }
 
                 summaryCard
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Sprayer configuration").font(.headline)
+                    Text(record.applicationGeometry?.planningIntent?.configuration?.title ?? "Unknown — not recorded historically")
+                    if let method = record.applicationGeometry?.planningIntent?.method { Text(method.title) }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+                .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12))
                 timingCard
                 weatherCard
 

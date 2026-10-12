@@ -86,6 +86,8 @@ struct SprayPlanningIntentTests {
     @Test func localSnapshotRoundTripPreservesIntentBasisAndFrozenOutputs() throws {
         var snapshot = SprayApplicationSnapshot(rowSpacingMetres: 2.8, carrierVolumeBasis: .litresPer100Metres, totalCarrierLitres: 1000, concentrationFactor: 2)
         snapshot.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank, fullTankSpecification: .targetArea, intendedTankLitres: 1000, targetAreaHa: 2)
+        snapshot.planningIntent?.inputProvenance = SprayPlanningInputProvenance(tankText: "264.172052", areaText: "4.9421076",
+            rateText: "", volumeUnit: "gallons", areaUnit: "acres", rateAreaUnit: "acre", countryCode: "US")
         snapshot.planningResolution = snapshot.planningIntent?.resolve(selectedAreaHa: 10, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 1000)
         let data = try JSONEncoder().encode(snapshot)
         let restored = try JSONDecoder().decode(SprayApplicationSnapshot.self, from: data)
@@ -97,6 +99,58 @@ struct SprayPlanningIntentTests {
         #expect(historical.planningIntent == nil)
         #expect(historical.planningResolution == nil)
         #expect(historical.totalCarrierLitres == 500)
+    }
+
+    @Test func acceptanceNumbersAndTamperedFullTankResolution() throws {
+        let standard = SprayPlanningIntent(configuration: .standardPass, method: .byArea, calibratedLitresPerHectare: 600)
+        let a = try #require(standard.resolve(selectedAreaHa: 3, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 600))
+        var over = standard; over.configuration = .overRow
+        let b = try #require(over.resolve(selectedAreaHa: 3, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 600))
+        #expect(abs((a.controllerLitresPer100mTravel ?? 0) - 16.8) < 0.00000001)
+        #expect(abs((b.controllerLitresPer100mTravel ?? 0) - 33.6) < 0.00000001)
+        let target = SprayPlanningIntent(configuration: .overRow, method: .fullTank, fullTankSpecification: .targetArea, intendedTankLitres: 1500, targetAreaHa: 3)
+        let resolved = try #require(target.resolve(selectedAreaHa: 10, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 600))
+        #expect(resolved.litresPerHectare == 500)
+        #expect(target.fullTankExecutionBlocker(resolution: resolved, selectedGrossAreaHa: 10) == nil)
+        let tampered = SprayPlanningResolution(intendedLitres: 1500, plannedAreaHa: 3, litresPerHectare: 600,
+            physicalRowLitresPer100m: 16.8, controllerLitresPer100mTravel: 33.6, effectiveWorkingWidthMetres: 5.6, concentrationFactor: 1)
+        #expect(target.fullTankExecutionBlocker(resolution: tampered, selectedGrossAreaHa: 10) != nil)
+        let calibrated = SprayPlanningIntent(configuration: .standardPass, method: .fullTank, fullTankSpecification: .calibratedRate, intendedTankLitres: 1500, calibratedLitresPerHectare: 600)
+        #expect(calibrated.resolve(selectedAreaHa: 10, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 600)?.plannedAreaHa == 2.5)
+        #expect(SprayPlanningIntent().fullTankExecutionBlocker(resolution: nil, selectedGrossAreaHa: nil) == nil)
+    }
+
+    @Test func flatWireRecordAndSharedTemplatePreserveFrozenPlanning() throws {
+        let id = UUID(), vineyard = UUID()
+        let data = Data("""
+        {"id":"\(id)","vineyard_id":"\(vineyard)","name":"Draft",
+         "sprayer_configuration":"over_row_two_rows","spray_planning_method":"full_tank",
+         "full_tank_specification":"target_area","planning_tank_capacity_litres":1500,
+         "planned_application_area_ha":3,"planning_calibrated_litres_per_hectare":500,
+         "gross_area_ha":10,"total_carrier_litres":1500,"carrier_litres_per_hectare":500,"applied_litres_per_100m":14,
+         "controller_litres_per_100m_travel":28,"effective_working_width_metres":5.6,"concentration_factor":1.2}
+        """.utf8)
+        let remote = try JSONDecoder().decode(BackendSprayRecord.self, from: data)
+        let local = remote.toSprayRecord()
+        #expect(local.applicationGeometry?.planningIntent?.configuration == .overRow)
+        #expect(local.applicationGeometry?.planningResolution?.controllerLitresPer100mTravel == 28)
+        #expect(local.applicationGeometry?.appliedLitresPer100m == 14)
+        let payload = BackendSprayRecord.upsert(from: local, createdBy: nil, clientUpdatedAt: Date())
+        #expect(payload.planningTankCapacityLitres == 1500)
+        #expect(payload.operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
+        let job = try JSONDecoder().decode(BackendSprayJobTemplate.self, from: data)
+        #expect(job.toSprayRecord().applicationGeometry?.planningIntent?.intendedTankLitres == 1500)
+        let cache = try JSONDecoder().decode(BackendSprayJobTemplate.self, from: JSONEncoder().encode(job))
+        #expect(cache.planningFields == job.planningFields)
+        #expect(cache.toSprayRecord().applicationGeometry?.planningResolution == nil)
+    }
+
+    @Test func namedChemicalBlockerDoesNotBlockAreaOnlyMixes() {
+        let dilute = SprayChemical(name: "Unverified sulphur", ratePer100L: 100)
+        let record = SprayRecord(tanks: [SprayTank(concentrationFactor: 2, chemicals: [dilute])])
+        #expect(record.operationalPlanningBlocker?.contains("Unverified sulphur") == true)
+        let area = SprayChemical(name: "Area only", ratePerHa: 2000, rateBasis: .wholeBlockArea)
+        #expect(SprayRecord(tanks: [SprayTank(concentrationFactor: 2, chemicals: [area])]).operationalPlanningBlocker == nil)
     }
 
     @Test func concentrateCannotBeApprovedByANumericFactor() {
@@ -142,7 +196,7 @@ struct SprayPlanningIntentTests {
         #expect(store.sprayRecords == [record])
     }
 
-    @Test func backendMappingKeepsGateEvidenceButNeverEncodesUndeployedColumns() throws {
+    @Test func backendMappingProjectsReviewedFieldsButTransportAdmissionStaysDisabled() throws {
         var snapshot = SprayApplicationSnapshot()
         snapshot.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank)
         let record = SprayRecord(applicationGeometry: snapshot)
@@ -151,8 +205,11 @@ struct SprayPlanningIntentTests {
         #expect(record.operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
         let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(upsert)) as? [String: Any])
         #expect(object["planningIntent"] == nil)
-        #expect(object["sprayer_configuration"] == nil)
+        #expect(object["sprayer_configuration"] as? String == "over_row_two_rows")
         #expect(object["planned_application_area_ha"] == nil)
+        let old = BackendSprayRecord.upsert(from: SprayRecord(), createdBy: nil, clientUpdatedAt: Date())
+        let legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(old)) as? [String: Any])
+        #expect(legacy["sprayer_configuration"] == nil)
     }
 }
 
