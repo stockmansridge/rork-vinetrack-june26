@@ -71,8 +71,18 @@ class PopulatedCleanExitActivityTest {
 
     @Before fun setup() {
         app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as CleanExitFixtureApplication
+        val previousGuard = SessionStore(app).retentionGuard
+        val priorLocked = previousGuard.isLocked
+        val priorFinishing = previousGuard.finishingCleanExit.value
+        val priorOperations = previousGuard.hasOutstandingOperations()
         app.resetFixture()
         CleanExitDiagnostics.observer = ::checkpoint
+        val resetGuard = SessionStore(app).retentionGuard
+        checkpoint("fixture.reset.sameGuard.${previousGuard === resetGuard}")
+        checkpoint("fixture.beforeReset.locked.$priorLocked.finishing.$priorFinishing.operations.$priorOperations")
+        check(!resetGuard.isLocked && !resetGuard.finishingCleanExit.value && !resetGuard.hasOutstandingOperations()) {
+            "Fixture retained blocked in-memory admission after preference reset."
+        }
         previousUncaught = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             uncaught.set("${thread.name}:${error.javaClass.simpleName}")
@@ -223,7 +233,16 @@ class PopulatedCleanExitActivityTest {
 
     private fun assertRefused(name: String, reason: String, prepare: () -> Unit) {
         signIn()
-        prepare()
+        val setupSession = SessionStore(app)
+        val setupAuthority = requireNotNull(setupSession.accountAccess())
+        checkpoint("fixture.prepare.authority.current.${setupSession.isAccountAccessCurrent(setupAuthority)}")
+        try {
+            prepare()
+        } catch (failure: Throwable) {
+            checkpoint("fixture.prepare.failed.${failure.javaClass.simpleName}")
+            checkpoint("fixture.prepare.afterFailure.authority.current.${setupSession.isAccountAccessCurrent(setupAuthority)}")
+            throw AssertionError("Retained-record preparation: ${diagnostic()}", failure)
+        }
         val session = SessionStore(app)
         val authority = requireNotNull(session.accountAccess())
         val retained = app.getSharedPreferences(name, 0).all.toMap()

@@ -16,7 +16,10 @@ internal class FieldStoreAccess(context: Context) {
     }
 
     fun <T> commit(action: () -> T): T {
-        val access = captured() ?: throw FieldAccessRevoked()
+        val access = captured() ?: run {
+            CleanExitDiagnostics.checkpoint("field.commit.capture.unavailable")
+            throw FieldAccessRevoked()
+        }
         var result: T? = null
         if (!session.retentionGuard.tryWithAccount(access, { session.userId }) { result = action() }) throw FieldAccessRevoked()
         @Suppress("UNCHECKED_CAST")

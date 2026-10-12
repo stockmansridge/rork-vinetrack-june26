@@ -54,6 +54,61 @@ class AuthRetentionAndroidTest {
         root.deleteRecursively()
     }
 
+    @Test fun legitimateAdmissionContentionRejectsTripAndPhotoWithoutRevokingAuthority() {
+        val session = SessionStore(context)
+        session.save("synthetic-access", "synthetic-refresh", "account-A", null)
+        val authority = requireNotNull(session.accountAccess())
+        val trips = com.rork.vinetrack.data.ActiveTripStore(context)
+        val photos = PendingPhotoRepository(context)
+        val image = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888)
+        val jpeg = try {
+            ByteArrayOutputStream().use { bytes ->
+                check(image.compress(Bitmap.CompressFormat.JPEG, 90, bytes)); bytes.toByteArray()
+            }
+        } finally { image.recycle() }
+        val stages = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val previousObserver = CleanExitDiagnostics.observer
+        CleanExitDiagnostics.observer = stages::add
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val holderFailure = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+        val holder = Thread {
+            try {
+                check(session.withAccountAccess(authority) {
+                    entered.countDown()
+                    check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                })
+            } catch (failure: Throwable) { holderFailure.set(failure) }
+        }
+        val beforeSession = context.getSharedPreferences("vinetrack_session", 0).all.toMap()
+        var tripFailure: Throwable? = null
+        var photoFailure: Throwable? = null
+        try {
+            holder.start()
+            assertTrue("Authorised publication never acquired the lock", entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            tripFailure = runCatching {
+                trips.saveDurably("account-A", "vineyard", com.rork.vinetrack.data.model.Trip("active", "vineyard", isActive = true))
+            }.exceptionOrNull()
+            photoFailure = runCatching { photos.enqueue("pending-pin", "vineyard", jpeg) }.exceptionOrNull()
+        } finally {
+            release.countDown()
+            holder.join(5_000)
+            CleanExitDiagnostics.observer = previousObserver
+        }
+        assertFalse("Authorised publication did not finish", holder.isAlive)
+        assertNull(holderFailure.get())
+        assertTrue(tripFailure is FieldAccessRevoked)
+        assertTrue(photoFailure is FieldAccessRevoked)
+        assertEquals(listOf("field.commit.contended", "field.commit.contended"), stages.toList())
+        assertTrue(session.isAccountAccessCurrent(authority))
+        assertFalse(session.retentionGuard.isLocked)
+        assertTrue(session.hasSession)
+        assertEquals(beforeSession, context.getSharedPreferences("vinetrack_session", 0).all)
+        assertNull(trips.load())
+        assertTrue(photos.list().isEmpty())
+        assertFalse(File(root, "pending_pin_photos").exists())
+    }
+
     @Test fun rejectedSessionPreservesRealQueuePhotoMetadataAndJpegAndBlocksReauthentication() {
         val session = SessionStore(context)
         session.save("access-A", "refresh-A", "account-A", "synthetic@example.invalid")

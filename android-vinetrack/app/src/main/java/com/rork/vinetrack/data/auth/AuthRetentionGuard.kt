@@ -84,8 +84,15 @@ class AuthRetentionGuard(
 
     /** Low-level stores may already own their storage monitor; never invert auth → storage ordering. */
     internal fun tryWithAccount(access: AccountAccess, currentUserId: () -> String?, action: () -> Unit): Boolean {
-        if (!authorityLock.tryLock()) return false
-        return try { withAccount(access, currentUserId, action) } finally { authorityLock.unlock() }
+        if (!authorityLock.tryLock()) {
+            CleanExitDiagnostics.checkpoint("field.commit.contended")
+            return false
+        }
+        return try {
+            withAccount(access, currentUserId, action).also { admitted ->
+                if (!admitted) CleanExitDiagnostics.checkpoint("field.commit.obsolete")
+            }
+        } finally { authorityLock.unlock() }
     }
 
     /** Closes new admission while inspecting and committing. Outstanding work defers without cancellation. */
