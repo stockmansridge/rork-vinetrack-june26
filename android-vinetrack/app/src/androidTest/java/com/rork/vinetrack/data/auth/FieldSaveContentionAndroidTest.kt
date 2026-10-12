@@ -303,6 +303,57 @@ class FieldSaveContentionAndroidTest {
         assertArrayEquals(byteArrayOf(0, 0, 0), journal.readBytes())
     }
 
+    @Test fun signedOutUnfinishedJournalNeverReplaysOrDiscardsOriginalAccountEvidence() {
+        val session = SessionStore(context)
+        val photos = PendingPhotoRepository(context)
+        val original = photos.enqueue("pin", "vineyard", byteArrayOf(1, 2))
+        val directory = File(root, "pending_pin_photos")
+        val unfinished = original.copy(id = "unfinished", revision = "unfinished-revision",
+            localPath = File(directory, "unfinished.jpg").absolutePath)
+        val journal = PendingPhotoCaptureJournal(directory).retain("account-A",
+            session.retentionGuard.identityEpoch.value, unfinished, byteArrayOf(3, 4))
+        val metadata = context.getSharedPreferences("vinetrack_pending_photos", 0).all.toMap()
+        val envelope = journal.readBytes()
+        assertNull(session.cleanExit(requireNotNull(session.accountAccess())))
+        session.clear() // Simulate lost/rejected credentials, NOT a permitted clean exit.
+        assertFalse(session.hasSession)
+        assertTrue(runCatching { PendingPhotoRepository(context) }.exceptionOrNull() is FieldAccessRevoked)
+        assertArrayEquals(envelope, journal.readBytes())
+        assertArrayEquals(byteArrayOf(1, 2), File(original.localPath).readBytes())
+        assertEquals(metadata, context.getSharedPreferences("vinetrack_pending_photos", 0).all)
+        assertFalse(File(unfinished.localPath).exists())
+        assertTrue(runCatching { session.save("B-access", "B-refresh", "account-B", null) }.isFailure)
+        assertArrayEquals(envelope, journal.readBytes())
+    }
+
+    @Test fun signedOutCorruptPhotoJournalRemainsProtectedWithoutMetadataReplacement() {
+        val session = SessionStore(context)
+        val directory = File(root, "pending_pin_photos").also { check(it.mkdirs()) }
+        val evidence = File(directory, "unreadable.capture").also { it.writeBytes(byteArrayOf(0, 0, 0)) }
+        val metadata = context.getSharedPreferences("vinetrack_pending_photos", 0)
+        check(metadata.edit().putString("pending_photos_json", "unreadable-original-metadata").commit())
+        val before = metadata.all.toMap()
+        assertNull(session.cleanExit(requireNotNull(session.accountAccess())))
+        session.clear()
+        assertTrue(runCatching { PendingPhotoRepository(context) }.exceptionOrNull() is FieldAccessRevoked)
+        assertArrayEquals(byteArrayOf(0, 0, 0), evidence.readBytes())
+        assertEquals(before, metadata.all)
+        assertTrue(session.retentionGuard.isLocked)
+    }
+
+    @Test fun signedOutUnlistablePhotoLocationIsNotTreatedAsAnEmptyDirectory() {
+        val session = SessionStore(context)
+        val evidence = File(root, "pending_pin_photos").also { it.writeBytes(byteArrayOf(8, 9)) }
+        assertNull(evidence.listFiles())
+        assertNull(session.cleanExit(requireNotNull(session.accountAccess())))
+        session.clear()
+        val metadata = context.getSharedPreferences("vinetrack_pending_photos", 0).all.toMap()
+        assertTrue(runCatching { PendingPhotoRepository(context) }.exceptionOrNull() is FieldAccessRevoked)
+        assertArrayEquals(byteArrayOf(8, 9), evidence.readBytes())
+        assertEquals(metadata, context.getSharedPreferences("vinetrack_pending_photos", 0).all)
+        assertTrue(session.retentionGuard.isLocked)
+    }
+
     /** Holder runs actual session serialisation; workers must reach admission before its controlled release. */
     private fun contend(session: SessionStore, saves: List<() -> Unit>, beforeUnlock: () -> Unit = {}) {
         val entered = CountDownLatch(1)

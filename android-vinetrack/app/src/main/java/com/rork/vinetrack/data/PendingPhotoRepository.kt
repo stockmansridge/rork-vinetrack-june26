@@ -419,7 +419,11 @@ class PendingPhotoRepository internal constructor(
     /** Constructor-only recovery: no current-process replay can be active yet. */
     private fun recoverPreviousProcessWork(): List<PendingPhotoAttachment> {
         val directory = File(rootDir, PHOTO_DIR)
-        val loaded = if (admission != null && directory.exists()) admitted {
+        // A completed queue may leave this directory behind. Inspect emptiness without
+        // opening journals or mutating storage; unreadable/non-directory evidence is not empty.
+        val isVerifiedEmptyDirectory = directory.isDirectory &&
+            directory.canonicalFile == File(rootDir.canonicalFile, PHOTO_DIR) && directory.listFiles()?.isEmpty() == true
+        val loaded = if (admission != null && directory.exists() && !isVerifiedEmptyDirectory) admitted {
             val journal = PendingPhotoCaptureJournal(directory)
             var rows = store.load()
             journal.pending().forEach { (file, capture) ->
