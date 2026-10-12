@@ -98,6 +98,8 @@ class PopulatedCleanExitActivityTest {
                 path == "/rest/v1/vineyard_members" -> """[{"vineyard_id":"$v","role":"operator","user_id":"$uid"}]"""
                 path == "/rest/v1/vineyards" -> """[{"id":"$v","name":"Synthetic $v"}]"""
                 path == "/rest/v1/profiles" -> "[]"
+                path == "/rest/v1/saved_chemicals" && request.method == HttpMethod.Get ->
+                    """[{"id":"chemical-$uid","vineyard_id":"$v","name":"Private chemical $uid"}]"""
                 path == "/rest/v1/paddocks" -> """[{"id":"block-$uid","vineyard_id":"$v","name":"Private block $uid"}]"""
                 path == "/rest/v1/pins" -> """[{"id":"pin-$uid","vineyard_id":"$v","title":"Private pin $uid"}]"""
                 path == "/rest/v1/trips" -> """[{"id":"trip-$uid","vineyard_id":"$v","is_active":false,"trip_title":"Private trip $uid"}]"""
@@ -178,12 +180,15 @@ class PopulatedCleanExitActivityTest {
         assertEquals("pin-$A", cache.loadPins(A, "vineyard-A")!!.single().id)
         val before = app.getSharedPreferences("vinetrack_domain_cache", 0).all.toMap()
         val devicePrefs = app.getSharedPreferences("vinetrack_app_prefs", 0).all.toMap()
+        val chemicals = app.getSharedPreferences("vinetrack_saved_chemicals_local", 0).all.toMap()
+        assertEquals("chemical-$A", SavedChemicalLocalStore(app).load(A, "vineyard-A").single().id)
         settingsSignOut()
         awaitText("Email")
         assertFalse(session.hasSession)
         assertFalse(session.retentionGuard.isLocked)
         assertEquals(before, app.getSharedPreferences("vinetrack_domain_cache", 0).all)
         assertEquals(devicePrefs, app.getSharedPreferences("vinetrack_app_prefs", 0).all)
+        assertEquals(chemicals, app.getSharedPreferences("vinetrack_saved_chemicals_local", 0).all)
         checkpoint("activity.recreate.begin")
         scenario.recreate()
         checkpoint("activity.recreate.complete")
@@ -196,6 +201,7 @@ class PopulatedCleanExitActivityTest {
         assertNull(SessionStore(app).selectedVineyardId)
         signIn()
         assertFalse(session.withAccountAccess(old) { fail("A authority was revived") })
+        assertEquals("chemical-$A", SavedChemicalLocalStore(app).load(A, "vineyard-A").single().id)
         settingsSignOut()
         awaitText("Email")
         account.set(B)
@@ -204,6 +210,10 @@ class PopulatedCleanExitActivityTest {
         assertNull(bCache.loadPins(B, "vineyard-A"))
         assertNull(bCache.loadTrips(B, "vineyard-A"))
         assertEquals("pin-$B", bCache.loadPins(B, "vineyard-B")!!.single().id)
+        assertTrue(SavedChemicalLocalStore(app).load(B, "vineyard-A").isEmpty())
+        assertEquals("chemical-$B", SavedChemicalLocalStore(app).load(B, "vineyard-B").single().id)
+        chemicals.forEach { (key, raw) -> assertEquals(raw, app.getSharedPreferences("vinetrack_saved_chemicals_local", 0).all[key]) }
+        compose.onAllNodesWithText("Private chemical $A").assertCountEquals(0)
         assertFalse(session.withAccountAccess(old) { fail("A callback reached B") })
         compose.onAllNodesWithText("Private pin $A").assertCountEquals(0)
         compose.onAllNodesWithText("Private trip $A").assertCountEquals(0)

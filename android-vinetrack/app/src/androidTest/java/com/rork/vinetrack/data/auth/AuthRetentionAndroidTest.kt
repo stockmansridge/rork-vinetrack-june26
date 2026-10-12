@@ -1100,6 +1100,159 @@ class AuthRetentionAndroidTest {
         } finally { client.close() }
     }
 
+    @Test fun exactProfileVerifierMarkerIsPreservedAndRecoveryRulesStayStrict() {
+        val marker = File(root, "profileInstalled")
+        for (result in listOf(0, 1, 2, 3, 5 shl 16)) {
+            val bytes = profileMarkerBytes(result = result)
+            marker.writeBytes(bytes)
+            assertNotNull(AccountTransitionEvidence(context).inspectCleanExit())
+            assertNull(AccountTransitionEvidence(context).inspect())
+            assertArrayEquals(bytes, marker.readBytes())
+        }
+    }
+
+    @Test fun malformedOrLookalikeProfileMarkersRefuseWithoutChangingSessionOrBytes() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "11111111-1111-4111-8111-111111111111", null)
+        val authority = requireNotNull(session.accountAccess())
+        val marker = File(root, "profileInstalled")
+        val samples = listOf(
+            byteArrayOf(), profileMarkerBytes().copyOf(23), profileMarkerBytes() + byteArrayOf(0),
+            profileMarkerBytes(schema = 2), profileMarkerBytes(result = 4),
+            profileMarkerBytes(result = 1 shl 16), profileMarkerBytes(updated = 0),
+            profileMarkerBytes(updated = Long.MAX_VALUE), profileMarkerBytes(size = -1),
+        )
+        samples.forEach { bytes ->
+            marker.writeBytes(bytes)
+            assertNull(session.cleanExit(authority))
+            assertTrue(session.isAccountAccessCurrent(authority))
+            assertTrue(session.hasSession)
+            assertFalse(session.retentionGuard.isLocked)
+            assertArrayEquals(bytes, marker.readBytes())
+        }
+        check(marker.delete()) // Isolated test-owned files only.
+        val lookalike = File(root, "profileInstalled.bak")
+        lookalike.writeBytes(profileMarkerBytes())
+        assertNull(AccountTransitionEvidence(context).inspectCleanExit())
+        assertArrayEquals(profileMarkerBytes(), lookalike.readBytes())
+    }
+
+    @Test fun profileMarkerDirectoriesLinksAndSpecialFilesAreRejected() {
+        val marker = File(root, "profileInstalled")
+        check(marker.mkdir())
+        assertNull(AccountTransitionEvidence(context).inspectCleanExit())
+        check(marker.delete())
+        val target = File(root, "fixture-cache/framework-marker")
+        check(target.parentFile!!.mkdirs() || target.parentFile!!.isDirectory)
+        target.writeBytes(profileMarkerBytes())
+        android.system.Os.symlink(target.path, marker.path)
+        assertNull(AccountTransitionEvidence(context).inspectCleanExit())
+        assertArrayEquals(profileMarkerBytes(), target.readBytes())
+        check(marker.delete())
+        android.system.Os.link(target.path, marker.path)
+        assertNull(AccountTransitionEvidence(context).inspectCleanExit())
+        check(marker.delete())
+        android.system.Os.mkfifo(marker.path, 384)
+        assertNull(AccountTransitionEvidence(context).inspectCleanExit())
+        check(marker.delete())
+        val nested = File(root, "nested/profileInstalled")
+        check(nested.parentFile!!.mkdirs())
+        nested.writeBytes(profileMarkerBytes())
+        assertNull(AccountTransitionEvidence(context).inspectCleanExit())
+    }
+
+    @Test fun validPopulatedChemicalSnapshotsSurviveExitReloginAndRemainAccountScoped() {
+        val a = "11111111-1111-4111-8111-111111111111"
+        val b = "22222222-2222-4222-8222-222222222222"
+        val session = SessionStore(context)
+        session.save("access-A", "refresh-A", a, null)
+        val store = com.rork.vinetrack.data.SavedChemicalLocalStore(context)
+        val row = com.rork.vinetrack.data.model.SavedChemical("chemical-A", "vineyard-A", name = "Private A",
+            vineyardPreferredRate = com.rork.vinetrack.data.chemical.VineyardPreferredRate(2.0, "L", "per_hectare"))
+        assertTrue(store.save(a, "vineyard-A", listOf(row)))
+        assertTrue(store.save(a, "empty-vineyard", emptyList()))
+        val prefs = context.getSharedPreferences("vinetrack_saved_chemicals_local", 0)
+        val before = prefs.all.toMap()
+        assertNotNull(AccountTransitionEvidence(context).inspectCleanExit())
+        assertNull(AccountTransitionEvidence(context).inspect(a))
+        assertNotNull(session.cleanExit(requireNotNull(session.accountAccess())))
+        session.retentionGuard.finishCleanExit()
+        assertEquals(before, prefs.all)
+        session.save("new-access-A", "new-refresh-A", a, null)
+        assertEquals(listOf(row), com.rork.vinetrack.data.SavedChemicalLocalStore(context).load(a, "vineyard-A"))
+        assertNotNull(session.cleanExit(requireNotNull(session.accountAccess())))
+        session.retentionGuard.finishCleanExit()
+        session.save("access-B", "refresh-B", b, null)
+        val bStore = com.rork.vinetrack.data.SavedChemicalLocalStore(context)
+        assertTrue(bStore.load(b, "vineyard-A").isEmpty())
+        assertTrue(bStore.save(b, "vineyard-B", listOf(row.copy(id = "chemical-B", vineyardId = "vineyard-B", name = "Private B"))))
+        assertNotNull(AccountTransitionEvidence(context).inspectCleanExit())
+        before.forEach { (key, value) -> assertEquals(value, prefs.all[key]) }
+    }
+
+    @Test fun malformedUnknownOwnerAndMismatchedChemicalSnapshotsRefuseWithoutMutation() {
+        val a = "11111111-1111-4111-8111-111111111111"
+        val session = SessionStore(context)
+        session.save("access", "refresh", a, null)
+        val authority = requireNotNull(session.accountAccess())
+        val prefs = context.getSharedPreferences("vinetrack_saved_chemicals_local", 0)
+        val row = "{\"id\":\"chemical\",\"vineyard_id\":\"vineyard\"}"
+        val cases = listOf(
+            "vineyard" to "[]", "|vineyard" to "[]", "unknown|vineyard" to "[]", "$a|" to "[]", "$a|vineyard|extra" to "[]",
+            "$a|vineyard" to "corrupt", "$a|vineyard" to "{}", "$a|vineyard" to "[{}]",
+            "$a|vineyard" to "[{\"id\":\"chemical\",\"vineyard_id\":\"other\"}]",
+            "$a|vineyard" to "[$row,$row]",
+            "$a|vineyard" to "[{\"id\":\"chemical\",\"vineyard_id\":\"vineyard\",\"unknown_pending\":true}]",
+            "$a|vineyard" to "[{\"id\":\"chemical\",\"vineyard_id\":\"vineyard\",\"rates\":[{\"unreadable\":true}]}]",
+        )
+        cases.forEach { (key, raw) ->
+            check(prefs.edit().clear().putString(key, raw).commit())
+            val before = prefs.all.toMap()
+            assertNull(session.cleanExit(authority))
+            assertEquals(before, prefs.all)
+            assertTrue(session.isAccountAccessCurrent(authority))
+            assertTrue(session.hasSession)
+            assertFalse(session.retentionGuard.isLocked)
+        }
+        check(prefs.edit().clear().putInt("$a|vineyard", 1).commit())
+        assertNull(session.cleanExit(authority))
+        assertEquals(1, prefs.getInt("$a|vineyard", 0))
+    }
+
+    @Test fun unresolvedChemicalCreatesUpdatesAndUnreadableOutboxRefuseEvenWithValidSnapshot() {
+        val a = "11111111-1111-4111-8111-111111111111"
+        val session = SessionStore(context)
+        session.save("access", "refresh", a, null)
+        val authority = requireNotNull(session.accountAccess())
+        assertTrue(com.rork.vinetrack.data.SavedChemicalLocalStore(context).save(a, "vineyard",
+            listOf(com.rork.vinetrack.data.model.SavedChemical("chemical", "vineyard"))))
+        val snapshots = context.getSharedPreferences("vinetrack_saved_chemicals_local", 0).all.toMap()
+        val outbox = context.getSharedPreferences("vinetrack_pending_writes", 0)
+        for (operation in listOf("create", "update")) for (status in listOf("pending", "in_progress", "failed", "blocked", "synced")) {
+            check(PendingWriteStore(context).save(listOf(com.rork.vinetrack.data.model.PendingWrite(
+                "operation", "saved_chemical", operation, "{}", "chemical", 1, 1, status = status))))
+            val before = outbox.all.toMap()
+            assertNull(session.cleanExit(authority))
+            assertEquals(before, outbox.all)
+            assertEquals(snapshots, context.getSharedPreferences("vinetrack_saved_chemicals_local", 0).all)
+            assertTrue(session.isAccountAccessCurrent(authority))
+        }
+        check(outbox.edit().putString("pending_writes_json", "unreadable").commit())
+        assertNull(session.cleanExit(authority))
+        assertEquals("unreadable", outbox.getString("pending_writes_json", null))
+        assertEquals(snapshots, context.getSharedPreferences("vinetrack_saved_chemicals_local", 0).all)
+        assertTrue(session.hasSession)
+        assertFalse(session.retentionGuard.isLocked)
+    }
+
+    private fun profileMarkerBytes(schema: Int = 1, result: Int = 0, updated: Long = 1L, size: Long = 0L): ByteArray =
+        ByteArrayOutputStream().use { bytes ->
+            java.io.DataOutputStream(bytes).use { out ->
+                out.writeInt(schema); out.writeInt(result); out.writeLong(updated); out.writeLong(size)
+            }
+            bytes.toByteArray()
+        }
+
     private fun mockAuthClient(
         response: suspend (String, String) -> Pair<Int, String>,
     ): HttpClient = HttpClient(MockEngine { request ->

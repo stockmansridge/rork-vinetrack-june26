@@ -75,6 +75,37 @@ internal object CleanExitCacheContract {
         check(values.keys.all { it in known })
     }
 
+    /**
+     * Preserve scoped snapshots, not a claim that each row is server-synchronised. CREATE and
+     * preference UPDATE writers commit to the shared outbox before overlaying the snapshot.
+     * Any retained outbox row (including unreadable/unknown operations) therefore prevents exit.
+     */
+    fun validateSavedChemicals(values: Map<String, *>, pending: Map<String, *>) {
+        check(pending.keys.all { it == "pending_writes_json" })
+        pending.values.forEach { raw ->
+            check(raw is String && (json.parseToJsonElement(raw) as? JsonArray)?.isEmpty() == true)
+        }
+        val serializer = ListSerializer(SavedChemical.serializer())
+        values.forEach { (key, raw) ->
+            val scope = key.split('|')
+            check(scope.size == 2)
+            val (account, vineyard) = scope
+            check(account.isNotBlank() && java.util.UUID.fromString(account).toString() == account.lowercase(java.util.Locale.ROOT))
+            check(vineyard.isNotBlank() && vineyard == vineyard.trim() && vineyard.none { it.isISOControl() })
+            check(raw is String)
+            val encoded = json.parseToJsonElement(raw) as? JsonArray ?: error("Invalid chemical snapshot")
+            val rows = json.decodeFromJsonElement(serializer, encoded)
+            // Some legacy field codecs are permissive. Require lossless canonical store round-trip
+            // so malformed/unknown nested content cannot disappear during classification.
+            check(json.encodeToJsonElement(serializer, rows) == encoded)
+            check(rows.map { it.id }.distinct().size == rows.size)
+            rows.forEach { row ->
+                check(row.id.isNotBlank() && row.id == row.id.trim() && row.vineyardId == vineyard)
+                check(row.vineyardPreferredRate?.isValid != false)
+            }
+        }
+    }
+
     fun validatePreferences(name: String, values: Map<String, *>) {
         values.forEach { (key, value) ->
             val valid = when (name) {

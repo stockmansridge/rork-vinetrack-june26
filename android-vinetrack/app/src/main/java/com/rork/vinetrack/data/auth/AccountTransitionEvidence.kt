@@ -4,6 +4,10 @@ import android.content.Context
 import com.rork.vinetrack.data.ActiveTripStore
 import com.rork.vinetrack.data.model.SprayTankActual
 import java.io.File
+import java.io.DataInputStream
+import java.io.FileInputStream
+import android.system.Os
+import android.system.OsConstants
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -29,7 +33,7 @@ internal class AccountTransitionEvidence(private val context: Context) {
 
     private fun assess(original: String?, cleanExit: Boolean): Assessment? = runCatching {
         failureCategory = "file dependencies"
-        inspectLocations()
+        inspectLocations(cleanExit)
         val vineyards = mutableSetOf<String>()
         businessPreferences.forEach { name ->
             failureCategory = name
@@ -37,6 +41,9 @@ internal class AccountTransitionEvidence(private val context: Context) {
             when {
                 cleanExit && name in CleanExitCacheContract.devicePreferences -> CleanExitCacheContract.validatePreferences(name, values)
                 cleanExit && name == "vinetrack_domain_cache" -> CleanExitCacheContract.validate(values)
+                cleanExit && name == "vinetrack_saved_chemicals_local" -> CleanExitCacheContract.validateSavedChemicals(
+                    values, context.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).all,
+                )
                 cleanExit && name == "vinetrack_recovery_snapshots_v2" -> values.forEach { (key, raw) ->
                     check(key.startsWith("snapshot_") && raw is String)
                     val snapshot = codec.decodeFromString(com.rork.vinetrack.data.RecoverySnapshotStore.Snapshot.serializer(), raw)
@@ -87,7 +94,7 @@ internal class AccountTransitionEvidence(private val context: Context) {
         Assessment(vineyards)
     }.getOrNull()
 
-    private fun inspectLocations() {
+    private fun inspectLocations(cleanExit: Boolean) {
         // Android may expose its own data root through /data/user/0 -> /data/data aliases.
         // Anchor the trusted Context roots once; still reject links beneath those roots.
         val preferences = File(File(context.applicationInfo.dataDir).canonicalFile, "shared_prefs")
@@ -105,9 +112,35 @@ internal class AccountTransitionEvidence(private val context: Context) {
         val filesRoot = context.filesDir.canonicalFile
         if (filesRoot.exists()) checkNotNull(filesRoot.listFiles()).forEach { file ->
             // These mirrors contain shared public chemical/guide material, not private field work.
-            if (file.name !in sharedDirectories) check(noLeafFiles(file))
+            when {
+                cleanExit && file.name == "profileInstalled" -> validateProfileMarker(file, filesRoot)
+                file.name !in sharedDirectories -> check(noLeafFiles(file))
+            }
         }
         listOf("camera-captures").forEach { name -> check(noLeafFiles(File(context.cacheDir.canonicalFile, name))) }
+    }
+
+    /** AndroidX ProfileVerifier Cache schema 1: two ints and two longs, never business evidence. */
+    private fun validateProfileMarker(file: File, filesRoot: File) {
+        check(file.absoluteFile == File(filesRoot, "profileInstalled") && file.canonicalFile == file.absoluteFile)
+        val before = Os.lstat(file.path)
+        check(OsConstants.S_ISREG(before.st_mode) && before.st_size == 24L && before.st_nlink == 1L)
+        // NOFOLLOW and descriptor identity prevent a link/replacement between inspection and reading.
+        val descriptor = Os.open(file.path, OsConstants.O_RDONLY or OsConstants.O_NOFOLLOW or OsConstants.O_NONBLOCK, 0)
+        DataInputStream(FileInputStream(descriptor)).use { input ->
+            val opened = Os.fstat(descriptor)
+            check(OsConstants.S_ISREG(opened.st_mode) && opened.st_dev == before.st_dev &&
+                opened.st_ino == before.st_ino && opened.st_size == 24L && opened.st_nlink == 1L)
+            check(input.readInt() == 1)
+            // Only these results are persisted; the other error codes return before cache publication.
+            check(input.readInt() in setOf(0, 1, 2, 3, 5 shl 16))
+            val packageUpdate = input.readLong()
+            check(packageUpdate > 0L && packageUpdate <= context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime)
+            check(input.readLong() >= 0L && input.read() == -1)
+            val after = Os.lstat(file.path)
+            check(OsConstants.S_ISREG(after.st_mode) && after.st_dev == opened.st_dev &&
+                after.st_ino == opened.st_ino && after.st_size == opened.st_size && after.st_mtime == opened.st_mtime)
+        }
     }
 
     private fun noLeafFiles(file: File): Boolean {
