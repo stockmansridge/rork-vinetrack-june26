@@ -11,7 +11,9 @@ internal interface ChemicalLabelPhotoStoring {
 }
 
 internal class ChemicalLabelPhotoStore(context: Context) : ChemicalLabelPhotoStoring {
-    private val prefs = context.applicationContext.getSharedPreferences("vinetrack_chemical_label_photos", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_chemical_label_photos", Context.MODE_PRIVATE),
+    )
     private val serializer = ListSerializer(ChemicalLabelAttachment.serializer())
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -20,6 +22,7 @@ internal class ChemicalLabelPhotoStore(context: Context) : ChemicalLabelPhotoSto
     } ?: emptyList()
 
     override fun save(rows: List<ChemicalLabelAttachment>) {
+        prefs.getString("attachments", null)?.let { json.decodeFromString(serializer, it) }
         check(prefs.edit().putString("attachments", json.encodeToString(serializer, rows)).commit()) {
             "Couldn't persist chemical label photo metadata."
         }

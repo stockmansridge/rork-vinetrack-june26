@@ -87,7 +87,7 @@ class SessionStore(context: Context) {
         name: String? = null,
         createdAt: String? = null,
     ) {
-        synchronized(retentionGuard) {
+        retentionGuard.serialized {
         retentionGuard.requireUnlocked()
         // The cache owner is a switch detector only, never proof of pending-operation authorship.
         val previousAccount = prefs.getString(KEY_USER_ID, null) ?: prefs.getString(KEY_VINEYARD_CACHE_OWNER, null)
@@ -120,7 +120,7 @@ class SessionStore(context: Context) {
 
     /** Supabase UUID captured from the session being rejected, never from email/cache membership. */
     val recoveryPrincipal: String?
-        get() = synchronized(retentionGuard) {
+        get() = retentionGuard.serialized {
             if (!retentionGuard.isLocked) null else runCatching {
                 prefs.getString(KEY_RECOVERY_PRINCIPAL, null)?.takeIf(::isSupabaseUuid)
             }.getOrNull()
@@ -132,9 +132,9 @@ class SessionStore(context: Context) {
         val token: String,
     )
 
-    internal fun refreshAccess(): RefreshAccess? = synchronized(retentionGuard) {
-        val token = refreshToken?.takeIf { it.isNotBlank() } ?: return@synchronized null
-        val account = retentionGuard.captureAccount(userId) ?: return@synchronized null
+    internal fun refreshAccess(): RefreshAccess? = retentionGuard.serialized {
+        val token = refreshToken?.takeIf { it.isNotBlank() } ?: return@serialized null
+        val account = retentionGuard.captureAccount(userId) ?: return@serialized null
         RefreshAccess(account, token)
     }
 
@@ -144,9 +144,9 @@ class SessionStore(context: Context) {
         }, action)
 
     /** Reject only the exact refresh incarnation that the server evaluated. */
-    internal fun rejectRefreshIfCurrent(access: RefreshAccess): Boolean = synchronized(retentionGuard) {
+    internal fun rejectRefreshIfCurrent(access: RefreshAccess): Boolean = retentionGuard.serialized {
         if (refreshToken != access.token || !retentionGuard.isAccountCurrent(access.account, userId)) {
-            return@synchronized false
+            return@serialized false
         }
         retentionGuard.rejectSession { }
         // Runtime access is revoked even if disk persistence failed; original field bytes are untouched.
@@ -154,7 +154,7 @@ class SessionStore(context: Context) {
     }
 
     /** Captures this process's auth incarnation, not ownership of any existing field record. */
-    fun accountAccess(): AuthRetentionGuard.AccountAccess? = synchronized(retentionGuard) {
+    fun accountAccess(): AuthRetentionGuard.AccountAccess? = retentionGuard.serialized {
         if (accessToken.isNullOrBlank()) null else retentionGuard.captureAccount(userId)
     }
 
@@ -163,6 +163,14 @@ class SessionStore(context: Context) {
 
     fun isAccountAccessCurrent(access: AuthRetentionGuard.AccountAccess): Boolean =
         withAccountAccess(access) { }
+
+    /** Capture before a delayed location/capture/save begins; complete only after its durable outcome. */
+    fun fieldOperation(): AuthRetentionGuard.FieldOperation? = retentionGuard.serialized {
+        if (accessToken.isNullOrBlank()) null else retentionGuard.beginOperation(userId)
+    }
+
+    fun withFieldOperation(operation: AuthRetentionGuard.FieldOperation, action: () -> Unit): Boolean =
+        retentionGuard.withOperation(operation, { userId?.takeIf { !accessToken.isNullOrBlank() } }, action)
 
     /** Credential rejection locks local field access before any credential removal. */
     fun clear() {

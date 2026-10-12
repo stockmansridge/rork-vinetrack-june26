@@ -104,7 +104,9 @@ interface ManualSprayOperationStoring {
 }
 
 class ManualSprayOperationStore(context: Context) : ManualSprayOperationStoring {
-    private val preferences = context.applicationContext.getSharedPreferences("vinetrack_manual_spray_operations_v1", Context.MODE_PRIVATE)
+    private val preferences = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_manual_spray_operations_v1", Context.MODE_PRIVATE),
+    )
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     override fun load(): List<PendingManualSprayOperation> = preferences.getString("operations", null)?.let {
         runCatching { json.decodeFromString(ListSerializer(PendingManualSprayOperation.serializer()), it) }.getOrDefault(emptyList())

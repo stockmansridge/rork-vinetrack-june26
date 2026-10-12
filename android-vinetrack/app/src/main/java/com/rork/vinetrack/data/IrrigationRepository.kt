@@ -1152,8 +1152,9 @@ data class IrrigationCapabilities(
 class IrrigationRepository(private val session: SessionStore, context: Context) {
 
     private val json = SupabaseClient.json
-    private val prefs = context.applicationContext
-        .getSharedPreferences("vinetrack_irrigation", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_irrigation", Context.MODE_PRIVATE),
+    )
     private val pendingSerializer = ListSerializer(PendingIrrigationSession.serializer())
     val fertigationRepository = FertigationRepository(session)
     val fertigationStepCache = FertigationProgramStepCache(

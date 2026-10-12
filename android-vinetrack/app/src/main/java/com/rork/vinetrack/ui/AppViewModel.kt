@@ -1471,10 +1471,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val vineyardInsights = com.rork.vinetrack.data.insights.VineyardInsightsController(
         com.rork.vinetrack.data.insights.VineyardInsightsStore(
             com.rork.vinetrack.data.insights.SharedPreferencesKeyValueStore(
-                app.getSharedPreferences(
+                com.rork.vinetrack.data.auth.FieldStoreAccess(app).preferences(app.getSharedPreferences(
                     com.rork.vinetrack.data.insights.VineyardInsightsStore.PREFS_NAME,
                     android.content.Context.MODE_PRIVATE,
-                ),
+                )),
             ),
             com.rork.vinetrack.data.insights.AndroidInsightsLogger(),
         ),
@@ -2216,7 +2216,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val growthCreateSync = GrowthRecordCreateSync(growthRepo, pendingWrites)
     private val pairedGrowthJournalStore =
         com.rork.vinetrack.data.insights.SharedPreferencesPairedGrowthCaptureJournalStore(
-            app.getSharedPreferences("vinetrack_paired_growth_capture", android.content.Context.MODE_PRIVATE),
+            com.rork.vinetrack.data.auth.FieldStoreAccess(app).preferences(
+                app.getSharedPreferences("vinetrack_paired_growth_capture", android.content.Context.MODE_PRIVATE),
+            ),
         )
     private val pairedGrowthCoordinator =
         com.rork.vinetrack.data.insights.PairedGrowthCaptureCoordinator(pairedGrowthJournalStore)
@@ -8790,6 +8792,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val cleanNotes = notes?.ifBlank { null }
         tracker?.stop()
         tracker = null
+        trackingOperation?.complete()
+        trackingOperation = null
         _ui.update { it.copy(isTracking = false) }
         clearRowLockState()
         // Fold the final captured path/distance into the local trip + snapshot so
@@ -9006,6 +9010,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (isActiveTrip) {
             if (_ui.value.activeTrip?.id == tripId) {
                 tracker?.stop(); tracker = null
+                trackingOperation?.complete(); trackingOperation = null
                 _ui.update { it.copy(isTracking = false) }
                 clearRowLockState()
             }
@@ -9250,14 +9255,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * available, otherwise null. Automatic pin callers must never substitute a centroid.
      */
     fun fetchCurrentLocation(onResult: (Pair<Double, Double>?) -> Unit) {
+        val operation = session.fieldOperation() ?: return
         viewModelScope.launch {
             val point = try {
                 LocationTracker(getApplication()).currentLocation()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 null
             }
-            onResult(point?.let { it.latitude to it.longitude })
-        }
+            session.withFieldOperation(operation) { onResult(point?.let { it.latitude to it.longitude }) }
+        }.invokeOnCompletion { operation.complete() }
     }
 
     /**
@@ -9267,16 +9275,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * untouched.
      */
     fun fetchCurrentFix(onResult: (PinLocationResult) -> Unit) {
+        val operation = session.fieldOperation() ?: return
         viewModelScope.launch {
             val result = try {
                 LocationTracker(getApplication()).currentPinLocation()
-            } catch (_: kotlinx.coroutines.CancellationException) {
-                PinLocationResult.Cancelled
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 PinLocationResult.Invalid
             }
-            onResult(result)
-        }
+            session.withFieldOperation(operation) { onResult(result) }
+        }.invokeOnCompletion { operation.complete() }
     }
 
     /**
@@ -9284,6 +9293,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * calibration wizard only. Null while no calibration attempt is sampling.
      */
     private var mapAlignmentTracker: LocationTracker? = null
+    private var mapAlignmentOperation: com.rork.vinetrack.data.auth.AuthRetentionGuard.FieldOperation? = null
+    private var trackingOperation: com.rork.vinetrack.data.auth.AuthRetentionGuard.FieldOperation? = null
 
     /**
      * Start ONE live high-accuracy subscription for a calibration sampling
@@ -9302,24 +9313,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun startMapAlignmentFixUpdates(onFix: (PinLocationResult) -> Unit) {
         stopMapAlignmentFixUpdates()
+        val operation = session.fieldOperation() ?: return
         val tracker = LocationTracker(getApplication())
+        mapAlignmentOperation = operation
         mapAlignmentTracker = tracker
-        tracker.startPinFixUpdates(onFix)
+        tracker.startPinFixUpdates { fix -> session.withFieldOperation(operation) { onFix(fix) } }
     }
 
     /** Stop the calibration subscription. Safe to call when none is running. */
     fun stopMapAlignmentFixUpdates() {
         mapAlignmentTracker?.stopPinFixUpdates()
         mapAlignmentTracker = null
+        mapAlignmentOperation?.complete()
+        mapAlignmentOperation = null
     }
 
     /** Whether foreground location permission is currently granted. */
     fun hasLocationPermission(): Boolean = LocationTracker(getApplication()).hasPermission
 
     private fun beginTracking(trip: Trip) {
+        val operation = session.fieldOperation() ?: return
+        trackingOperation?.complete()
+        trackingOperation = operation
         beginSprayWeatherCapture(trip)
         val t = LocationTracker(getApplication())
         if (!t.hasPermission) {
+            operation.complete()
+            trackingOperation = null
             tracker = null
             _ui.update { it.copy(isTracking = false) }
             return
@@ -9344,12 +9364,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         t.start(seed = trip.pathPoints ?: emptyList()) { points, distance, sample ->
+            session.withFieldOperation(operation) {
             _ui.update { st ->
                 st.copy(trips = st.trips.map { if (it.id == trip.id) it.copy(pathPoints = points, totalDistance = distance) else it })
             }
             if (_ui.value.selectedVineyardId == trip.vineyardId) updateRowLockState(trip.id, sample)
             maybeAutosave(trip.id, points, distance)
             maybeAutosaveLocal()
+            }
         }
         // Capture the freshly-started/resumed trip locally straight away.
         persistActiveTripSnapshot()
@@ -9604,6 +9626,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (completedServer != null) {
             tracker?.stop()
             tracker = null
+            trackingOperation?.complete()
+            trackingOperation = null
             sprayWeatherJob?.cancel()
             sprayWeatherJob = null
             clearRowLockState()
@@ -9695,6 +9719,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         tracker?.stop()
         tracker = null
+        trackingOperation?.complete()
+        trackingOperation = null
         // A calibration attempt must never outlive the ViewModel.
         stopMapAlignmentFixUpdates()
         super.onCleared()

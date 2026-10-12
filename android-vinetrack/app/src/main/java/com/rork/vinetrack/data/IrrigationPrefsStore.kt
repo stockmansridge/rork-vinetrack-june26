@@ -27,8 +27,9 @@ data class IrrigationDefaults(
  */
 class IrrigationPrefsStore(context: Context) {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences("vinetrack_irrigation", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_irrigation", Context.MODE_PRIVATE),
+    )
 
     fun load(): IrrigationDefaults {
         val d = IrrigationDefaults.factory

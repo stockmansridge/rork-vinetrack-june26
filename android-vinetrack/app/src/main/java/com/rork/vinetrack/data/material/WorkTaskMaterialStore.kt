@@ -39,8 +39,9 @@ interface WorkTaskMaterialStoring {
 
 class WorkTaskMaterialStore(context: Context) : WorkTaskMaterialStoring {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences("vinetrack_work_task_materials", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_work_task_materials", Context.MODE_PRIVATE),
+    )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val catalogueSerializer = ListSerializer(MaterialCatalogueItem.serializer())

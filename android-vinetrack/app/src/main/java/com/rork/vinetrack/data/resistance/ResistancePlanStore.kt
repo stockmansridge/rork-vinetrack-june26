@@ -23,8 +23,9 @@ import kotlinx.serialization.json.Json
  */
 class ResistancePlanStore(context: Context) : ResistancePlanLocalStore {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences("resistance_plans", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("resistance_plans", Context.MODE_PRIVATE),
+    )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 

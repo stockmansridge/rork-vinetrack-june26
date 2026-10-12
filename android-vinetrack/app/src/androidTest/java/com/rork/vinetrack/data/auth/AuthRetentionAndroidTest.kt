@@ -319,6 +319,240 @@ class AuthRetentionAndroidTest {
         assertNull(raw.getString("refresh_token", null))
     }
 
+    @Test fun editAdmittedBeforeRevocationCannotCommitAfterItAndPreservesDraftBytes() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val raw = context.getSharedPreferences("vinetrack_manual_spray_drafts_v1", 0)
+        check(raw.edit().putString("draft", "original-authorless-draft").commit())
+        val guarded = FieldStoreAccess(context).preferences(raw)
+        val editor = guarded.edit().putString("draft", "late-replacement")
+        session.clear()
+        assertFalse(editor.commit())
+        assertEquals("original-authorless-draft", raw.getString("draft", null))
+        assertTrue(SessionStore(context).retentionGuard.isLocked)
+    }
+
+    @Test fun actualManualAndPlanningDraftCallbacksCannotDiscardAfterRevocation() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val manual = com.rork.vinetrack.data.ManualSprayDraftStore(context)
+        val planning = com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context)
+        val rawManual = context.getSharedPreferences("vinetrack_manual_spray_drafts_v1", 0)
+        val rawPlanning = context.getSharedPreferences("vinetrack_local_planning", 0)
+        check(rawManual.edit().putString("vineyard", "original-corrupt-draft").commit())
+        val key = "work-task-planning-account-A-vineyard-new"
+        check(rawPlanning.edit().putString(key, "original-corrupt-planning").commit())
+        val beforeManual = rawManual.all.toMap()
+        val beforePlanning = rawPlanning.all.toMap()
+        session.clear()
+        denied { manual.clear("vineyard") }
+        denied { planning.discardPlanningDraft("account-A", "vineyard", null) }
+        assertEquals(beforeManual, rawManual.all)
+        assertEquals(beforePlanning, rawPlanning.all)
+    }
+
+    @Test fun suspendedLocationAdmissionDefersExitThenDeniesItsRevokedCallback() = runBlocking {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val operation = requireNotNull(session.fieldOperation())
+        val release = CompletableDeferred<Unit>()
+        var callbacks = 0
+        val pending = async {
+            withTimeout(5_000) { release.await() }
+            session.withFieldOperation(operation) { callbacks++ }
+        }
+        var transitionChecks = 0
+        assertFalse(session.retentionGuard.transitionIfIdle { transitionChecks++; true })
+        assertEquals(0, transitionChecks)
+        session.clear()
+        release.complete(Unit)
+        assertFalse(withTimeout(5_000) { pending.await() })
+        operation.complete()
+        operation.complete()
+        assertFalse(session.retentionGuard.hasOutstandingOperations())
+        assertEquals(0, callbacks)
+    }
+
+    @Test fun exitInspectionClosesReentrantWriterAndCallbackAdmission() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val access = requireNotNull(session.accountAccess())
+        assertTrue(session.retentionGuard.transitionIfIdle {
+            assertNull(session.fieldOperation())
+            assertNull(session.accountAccess())
+            assertFalse(session.withAccountAccess(access) { fail("Writer entered during inspection") })
+            true
+        })
+        assertNotNull(session.accountAccess())
+    }
+
+    @Test fun busyAuthorityCannotDeadlockAnAlreadyLockedStorageCommit() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val raw = context.getSharedPreferences("vinetrack_pending_writes", 0)
+        check(raw.edit().putString("pending_writes_json", "original").commit())
+        val editor = FieldStoreAccess(context).preferences(raw).edit().putString("pending_writes_json", "replacement")
+        val access = requireNotNull(session.accountAccess())
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        try {
+            assertTrue(session.withAccountAccess(access) {
+                val result = executor.submit<Boolean> { editor.commit() }
+                assertFalse(result.get(5, java.util.concurrent.TimeUnit.SECONDS))
+            })
+            assertEquals("original", raw.getString("pending_writes_json", null))
+            assertTrue(editor.commit())
+            assertEquals("replacement", raw.getString("pending_writes_json", null))
+        } finally { executor.shutdownNow() }
+    }
+
+    @Test fun realPhotoFileAndQueueSaveRemainIntactAfterRevocation() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val photos = PendingPhotoRepository(context)
+        val photo = photos.enqueue("pin", "vineyard", byteArrayOf(1, 2, 3))
+        val writes = PendingWriteStore(context)
+        val raw = context.getSharedPreferences("vinetrack_pending_writes", 0)
+        check(raw.edit().putString("pending_writes_json", "[]").commit())
+        val metadata = context.getSharedPreferences("vinetrack_pending_photos", 0).all.toMap()
+        session.clear()
+        denied { photos.enqueue("pin", "vineyard", byteArrayOf(4, 5, 6)) }
+        denied { photos.remove(photo.id) }
+        assertFalse(writes.save(emptyList()))
+        assertArrayEquals(byteArrayOf(1, 2, 3), File(photo.localPath).readBytes())
+        assertEquals(metadata, context.getSharedPreferences("vinetrack_pending_photos", 0).all)
+        assertEquals("[]", raw.getString("pending_writes_json", null))
+    }
+
+    @Test fun corruptActiveClaimCannotBeOverwrittenThroughProductionClaim() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val prefs = context.getSharedPreferences("vinetrack_active_trip", 0)
+        check(prefs.edit().putString("active_trip_snapshot_json", "corrupt-original").commit())
+        val store = com.rork.vinetrack.data.ActiveTripStore(context)
+        assertTrue(store.hasActiveClaim())
+        val replacement = com.rork.vinetrack.data.model.Trip(id = "new", vineyardId = "vineyard")
+        assertFalse(store.claimIfAvailable("account-A", "vineyard", replacement))
+        assertFalse(store.saveDurably("account-A", "vineyard", replacement))
+        denied { store.clear() }
+        assertEquals("corrupt-original", prefs.getString("active_trip_snapshot_json", null))
+    }
+
+    @Test fun actualScoutPhotoWriteAndCleanupAfterRevocationRetainOriginalBytes() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val files = com.rork.vinetrack.data.insights.ScoutPhotoFileStore(context)
+        val path = requireNotNull(files.write(byteArrayOf(7, 8, 9), "vineyard", "observation", "photo"))
+        val original = files.file(path)
+        session.clear()
+        assertNull(files.write(byteArrayOf(1, 2, 3), "vineyard", "observation", "photo"))
+        files.remove(path)
+        assertNull(files.read(path))
+        assertArrayEquals(byteArrayOf(7, 8, 9), original.readBytes())
+    }
+
+    @Test fun corruptCaptureFallbackCannotDecodeToEmptyOrBeDeletedByAnAcknowledgement() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val prefs = context.getSharedPreferences("vinetrack_pin_capture_evidence", 0)
+        check(prefs.edit().putString("pin_capture_evidence_json", "[]").commit())
+        val backup = File(root, "pin_capture_evidence_recovery_v2.json.bak")
+        backup.writeText("corrupt-capture-original")
+        val store = com.rork.vinetrack.data.PinCaptureEvidenceStore(context)
+        denied { store.markUploaded("pin", 1) }
+        assertEquals("corrupt-capture-original", backup.readText())
+        assertFalse(File(root, "pin_capture_evidence_recovery_v2.json").exists())
+        assertEquals("[]", prefs.getString("pin_capture_evidence_json", null))
+    }
+
+    @Test fun failedRealPhotoMetadataCommitRetainsPriorAttachmentAndBothCapturedByteSets() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val raw = context.getSharedPreferences("vinetrack_pending_photos", 0)
+        var failCommit = false
+        val wrapped = object : SharedPreferences by raw {
+            override fun edit(): SharedPreferences.Editor {
+                val editor = raw.edit()
+                return object : SharedPreferences.Editor by editor {
+                    override fun commit(): Boolean = if (failCommit) false else editor.commit()
+                }
+            }
+        }
+        val faultContext = object : ContextWrapper(context) {
+            override fun getApplicationContext(): Context = this
+            override fun getFilesDir(): File = root
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+                if (name == "vinetrack_pending_photos") wrapped else context.getSharedPreferences(name, mode)
+        }
+        val photos = PendingPhotoRepository(faultContext)
+        val original = photos.enqueue("pin", "vineyard", byteArrayOf(1, 2, 3))
+        val before = raw.all.toMap()
+        failCommit = true
+        denied { photos.enqueue("pin", "vineyard", byteArrayOf(4, 5, 6)) }
+        assertEquals(before, raw.all)
+        assertEquals(listOf(original), photos.list())
+        assertArrayEquals(byteArrayOf(1, 2, 3), File(original.localPath).readBytes())
+        val files = File(root, "pending_pin_photos").listFiles().orEmpty()
+        assertEquals(2, files.size)
+        assertTrue(files.any { it.readBytes().contentEquals(byteArrayOf(4, 5, 6)) })
+    }
+
+    @Test fun actualUnscopedLateTankAcknowledgementNowFailsAtDurableStorage() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val store = com.rork.vinetrack.data.SprayTankActualStore(context)
+        val actual = com.rork.vinetrack.data.model.SprayTankActual(
+            "actual", "vineyard", "spray", "trip", "tank", 1, waterVolumeL = 123.45,
+            chemicals = emptyList(), confirmedAt = "2026-10-12T00:00:00Z", confirmedBy = "account-A")
+        assertTrue(store.save(actual))
+        val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
+        val before = prefs.all.toMap()
+        session.clear()
+        assertFalse(store.markSyncedIfCurrent(actual))
+        assertEquals(before, prefs.all)
+        assertEquals(listOf(actual), com.rork.vinetrack.data.SprayTankActualStore(context).pending())
+    }
+
+    @Test fun productionActiveSnapshotCannotBeSavedUnderAnotherActor() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val store = com.rork.vinetrack.data.ActiveTripStore(context)
+        val trip = com.rork.vinetrack.data.model.Trip(id = "trip", vineyardId = "vineyard", isActive = true)
+        assertTrue(store.saveDurably("account-A", "vineyard", trip))
+        val prefs = context.getSharedPreferences("vinetrack_active_trip", 0)
+        val before = prefs.all.toMap()
+        denied { store.saveDurably("account-B", "vineyard", trip.copy(tripTitle = "foreign")) }
+        assertEquals(before, prefs.all)
+    }
+
+    @Test fun actualAuxiliaryWritersCannotPersistAfterTheirAccountIsRevoked() {
+        val session = SessionStore(context)
+        session.save("access", "refresh", "account-A", null)
+        val manual = com.rork.vinetrack.data.ManualSprayOperationStore(context)
+        val materials = com.rork.vinetrack.data.material.WorkTaskMaterialStore(context)
+        val irrigation = com.rork.vinetrack.data.IrrigationPrefsStore(context)
+        val pruning = com.rork.vinetrack.data.PruningStore(context)
+        val fertiliser = com.rork.vinetrack.data.FertiliserStore(context)
+        val chemicals = com.rork.vinetrack.data.SavedChemicalLocalStore(context)
+        val resistance = com.rork.vinetrack.data.resistance.ResistancePlanStore(context)
+        val names = listOf("vinetrack_manual_spray_operations_v1", "vinetrack_work_task_materials",
+            "vinetrack_irrigation", "vinetrack_pruning", "vinetrack_fertiliser",
+            "vinetrack_saved_chemicals_local", "resistance_plans")
+        val before = names.associateWith { name ->
+            val prefs = context.getSharedPreferences(name, 0)
+            check(prefs.edit().putString("unknown-original", "retained-$name").commit())
+            prefs.all.toMap()
+        }
+        session.clear()
+        assertFalse(manual.save(emptyList()))
+        assertFalse(materials.clear())
+        denied { irrigation.save(com.rork.vinetrack.data.IrrigationDefaults.factory) }
+        denied { pruning.saveSetups("vineyard", emptyList()) }
+        denied { fertiliser.saveRecords("vineyard", emptyList()) }
+        assertFalse(chemicals.save("account-A", "vineyard", emptyList()))
+        denied { resistance.savePending("vineyard", setOf("late")) }
+        names.forEach { assertEquals(before[it], context.getSharedPreferences(it, 0).all) }
+    }
+
     private fun mockAuthClient(
         response: suspend (String, String) -> Pair<Int, String>,
     ): HttpClient = HttpClient(MockEngine { request ->

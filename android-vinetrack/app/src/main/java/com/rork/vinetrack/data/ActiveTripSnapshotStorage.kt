@@ -16,8 +16,9 @@ internal interface ActiveTripSnapshotStorage {
 internal class SharedPreferencesActiveTripSnapshotStorage(
     context: Context,
 ) : ActiveTripSnapshotStorage {
-    private val prefs = context.applicationContext
-        .getSharedPreferences("vinetrack_active_trip", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_active_trip", Context.MODE_PRIVATE),
+    )
 
     override fun read(): String? = prefs.getString(KEY_SNAPSHOT, null)
 

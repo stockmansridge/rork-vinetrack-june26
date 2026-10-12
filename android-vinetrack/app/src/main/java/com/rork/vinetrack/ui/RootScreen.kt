@@ -81,6 +81,8 @@ fun RootScreen() {
 @Composable
 private fun NormalRootScreen() {
     val vm: AppViewModel = viewModel()
+    val work: WorkContextViewModel = viewModel()
+    val state by vm.ui.collectAsStateWithLifecycle()
     val signOutBlocked by vm.signOutProtectionNotice.collectAsStateWithLifecycle()
     if (signOutBlocked) {
         AlertDialog(
@@ -90,14 +92,20 @@ private fun NormalRootScreen() {
             confirmButton = {
                 TextButton(onClick = vm::dismissSignOutProtectionNotice) { Text("Keep working") }
             },
+            dismissButton = {
+                if (state.route == AppRoute.Main) {
+                    TextButton(onClick = {
+                        vm.dismissSignOutProtectionNotice()
+                        work.setTool(com.rork.vinetrack.ui.main.ToolRoute.SyncStatus)
+                    }) { Text("Sync Status") }
+                }
+            },
         )
     }
     // Created here rather than inside MainScaffold so its SavedStateHandle is
     // registered for the whole Activity lifetime. MainScaffold is not in
     // composition during the Restoring phase after a process restart, so a
     // ViewModel created there would miss the saved state it needs to restore.
-    val work: WorkContextViewModel = viewModel()
-    val state by vm.ui.collectAsStateWithLifecycle()
     val authState by vm.authState.collectAsStateWithLifecycle()
     val subscriptionState by vm.subscription.collectAsStateWithLifecycle()
     val pinWorkflow by work.pinWorkflow.collectAsStateWithLifecycle()

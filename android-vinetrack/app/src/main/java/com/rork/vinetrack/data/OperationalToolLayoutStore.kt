@@ -31,8 +31,9 @@ class OperationalToolLayoutStore(
     private val repository: OperationalToolPreferencesRepository = OperationalToolPreferencesRepository(session),
 ) {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences("vinetrack_operational_tools", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_operational_tools", Context.MODE_PRIVATE),
+    )
 
     private val _layout = MutableStateFlow(OperationalToolLayout())
     val layout: StateFlow<OperationalToolLayout> = _layout.asStateFlow()

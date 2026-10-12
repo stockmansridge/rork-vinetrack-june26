@@ -65,8 +65,9 @@ class MapAlignmentLocalStore(
     installationId: String,
 ) {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE),
+    )
 
     private val records = MapAlignmentRecordStore(
         raw = object : MapAlignmentRawStore {

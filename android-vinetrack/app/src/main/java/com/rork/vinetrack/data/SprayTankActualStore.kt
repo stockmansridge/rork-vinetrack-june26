@@ -12,10 +12,14 @@ class SprayTankActualStore internal constructor(
     private val readBytes: () -> String?,
     private val commitBytes: (String) -> Boolean,
 ) {
+    private constructor(preferences: android.content.SharedPreferences) : this(
+        { preferences.getString("cache", null) },
+        { bytes -> preferences.edit().putString("cache", bytes).commit() },
+    )
     constructor(context: Context) : this(
-        { context.getSharedPreferences("vinetrack_spray_tank_actuals", Context.MODE_PRIVATE).getString("cache", null) },
-        { bytes -> context.getSharedPreferences("vinetrack_spray_tank_actuals", Context.MODE_PRIVATE)
-            .edit().putString("cache", bytes).commit() },
+        com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+            context.getSharedPreferences("vinetrack_spray_tank_actuals", Context.MODE_PRIVATE),
+        ),
     )
     @Serializable private data class Cache(
         val records: List<SprayTankActual> = emptyList(),

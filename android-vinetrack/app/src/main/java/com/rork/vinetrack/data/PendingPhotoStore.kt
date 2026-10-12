@@ -33,8 +33,9 @@ interface PendingPhotoStoring {
 
 class PendingPhotoStore(context: Context) : PendingPhotoStoring {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences("vinetrack_pending_photos", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_pending_photos", Context.MODE_PRIVATE),
+    )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val serializer = ListSerializer(PendingPhotoAttachment.serializer())
@@ -48,6 +49,7 @@ class PendingPhotoStore(context: Context) : PendingPhotoStoring {
 
     /** Persist the full attachment list, replacing any previous contents. */
     override fun save(attachments: List<PendingPhotoAttachment>) {
+        prefs.getString(KEY_PHOTOS, null)?.let { json.decodeFromString(serializer, it) }
         val encoded = json.encodeToString(serializer, attachments)
         check(prefs.edit().putString(KEY_PHOTOS, encoded).commit()) {
             "Couldn't persist pending photo metadata."
@@ -60,6 +62,7 @@ class PendingPhotoStore(context: Context) : PendingPhotoStoring {
     }
 
     override fun saveCompletedCache(entries: List<CompletedPhotoCacheEntry>) {
+        prefs.getString(KEY_COMPLETED_CACHE, null)?.let { json.decodeFromString(cacheSerializer, it) }
         val encoded = json.encodeToString(cacheSerializer, entries)
         check(prefs.edit().putString(KEY_COMPLETED_CACHE, encoded).commit()) {
             "Couldn't persist offline photo cache metadata."

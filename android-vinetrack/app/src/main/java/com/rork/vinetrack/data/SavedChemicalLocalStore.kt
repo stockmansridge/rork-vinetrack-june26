@@ -12,7 +12,9 @@ interface SavedChemicalLocalStoring {
 }
 
 class SavedChemicalLocalStore(context: Context) : SavedChemicalLocalStoring {
-    private val prefs = context.applicationContext.getSharedPreferences("vinetrack_saved_chemicals_local", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_saved_chemicals_local", Context.MODE_PRIVATE),
+    )
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val serializer = ListSerializer(SavedChemical.serializer())
 

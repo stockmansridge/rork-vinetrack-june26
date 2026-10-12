@@ -21,8 +21,9 @@ import kotlinx.serialization.json.Json
  */
 class PruningStore(context: Context) {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences("vinetrack_pruning", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_pruning", Context.MODE_PRIVATE),
+    )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 

@@ -106,7 +106,9 @@ internal fun displayManualAmount(value: Double, unit: String): Double = if (unit
 
 /** Vineyard-scoped durable form draft, separate from the mutation outbox. */
 class ManualSprayDraftStore(context: Context) {
-    private val preferences = context.applicationContext.getSharedPreferences("vinetrack_manual_spray_drafts_v1", Context.MODE_PRIVATE)
+    private val preferences = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_manual_spray_drafts_v1", Context.MODE_PRIVATE),
+    )
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     fun load(vineyardId: String): ManualSprayFormDraft? = preferences.getString(vineyardId, null)?.let { encoded ->

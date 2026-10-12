@@ -66,7 +66,8 @@ class PinCaptureEvidenceStore(context: Context) {
     )
 
     private val appContext = context.applicationContext
-    private val preferences = appContext.getSharedPreferences("vinetrack_pin_capture_evidence", Context.MODE_PRIVATE)
+    private val fieldAccess = com.rork.vinetrack.data.auth.FieldStoreAccess(context)
+    private val preferences = fieldAccess.preferences(appContext.getSharedPreferences("vinetrack_pin_capture_evidence", Context.MODE_PRIVATE))
     private val recoveryFile = AtomicFile(File(appContext.filesDir, "pin_capture_evidence_recovery_v2.json"))
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
     private val serializer = ListSerializer(Evidence.serializer())
@@ -84,24 +85,29 @@ class PinCaptureEvidenceStore(context: Context) {
 
     fun pending(): List<Evidence> = load().filterNot { it.uploaded }
 
-    fun load(): List<Evidence> {
-        val primary = preferences.getString(KEY, null)?.let { raw ->
-            runCatching { json.decodeFromString(serializer, raw) }.getOrDefault(emptyList())
-        }.orEmpty()
-        val recovery = runCatching {
-            if (!recoveryFile.baseFile.exists()) emptyList()
-            else recoveryFile.openRead().use { input -> json.decodeFromString(serializer, input.readBytes().decodeToString()) }
-        }.getOrDefault(emptyList())
-        return (primary + recovery).associateBy { "${it.pinId}#${it.evidenceRevision}" }.values.toList()
+    private fun decodeEvidence(raw: String): List<Evidence> = runCatching {
+        json.decodeFromString(serializer, raw)
+    }.getOrElse { error("Saved capture evidence couldn't be read. Keep this installation and contact support.") }
+
+    fun load(): List<Evidence> = fieldAccess.commit {
+        val primary = preferences.getString(KEY, null)?.let(::decodeEvidence).orEmpty()
+        val base = recoveryFile.baseFile
+        check(!File(base.path + ".new").exists()) { "An interrupted capture needs recovery review." }
+        val recovery = listOf(base, File(base.path + ".bak")).flatMap { file ->
+            if (!file.exists()) emptyList() else decodeEvidence(file.readText())
+        }
+        val groups = (primary + recovery).groupBy { "${it.pinId}#${it.evidenceRevision}" }
+        check(groups.values.all { it.distinct().size == 1 }) { "Conflicting capture evidence needs recovery review." }
+        groups.values.map { it.first() }
     }
 
-    private fun persist(records: List<Evidence>): Boolean {
+    private fun persist(records: List<Evidence>): Boolean = fieldAccess.commit {
         val encoded = json.encodeToString(serializer, records)
         if (preferences.edit().putString(KEY, encoded).commit()) {
             runCatching { recoveryFile.delete() }
-            return true
+            return@commit true
         }
-        return runCatching {
+        runCatching {
             val stream = recoveryFile.startWrite()
             try {
                 stream.write(encoded.encodeToByteArray())

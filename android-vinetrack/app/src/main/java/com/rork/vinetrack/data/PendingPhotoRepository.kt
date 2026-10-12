@@ -32,14 +32,22 @@ import java.util.UUID
 class PendingPhotoRepository internal constructor(
     private val rootDir: File,
     private val store: PendingPhotoStoring,
+    private val fileAccess: com.rork.vinetrack.data.auth.FieldStoreAccess? = null,
 ) {
     constructor(context: Context) : this(
         context.applicationContext.filesDir,
         PendingPhotoStore(context.applicationContext),
+        com.rork.vinetrack.data.auth.FieldStoreAccess(context),
     )
 
     private val photoDir: File
-        get() = File(rootDir, PHOTO_DIR).apply { if (!exists()) mkdirs() }
+        get() = fileCommit { File(rootDir, PHOTO_DIR).apply { check(exists() || mkdirs()) } }
+
+    private fun <T> fileCommit(action: () -> T): T = if (fileAccess == null) action() else fileAccess.commit(action)
+
+    private fun writeJpeg(file: File, bytes: ByteArray) = fileCommit {
+        java.io.FileOutputStream(file).use { it.write(bytes); it.fd.sync() }
+    }
 
     private var scopeProvider: (() -> PendingWriteRepository.ReplayScope?)? = null
     private val claimedScopes = mutableMapOf<Pair<String, String>, PendingWriteRepository.ReplayScope>()
@@ -113,7 +121,7 @@ class PendingPhotoRepository internal constructor(
         val entityId = target.pinId ?: requireNotNull(target.growthRecordId)
         val revision = UUID.randomUUID().toString()
         val file = fileFor(entityId, revision)
-        file.writeBytes(jpeg)
+        writeJpeg(file, jpeg)
         val now = System.currentTimeMillis()
         val kind = when (target.kind) {
             PinPresentationTarget.Kind.PIN -> PendingPhotoEntityKind.PIN
@@ -136,7 +144,7 @@ class PendingPhotoRepository internal constructor(
             it.clientPinId == attachment.clientPinId && it.growthRecordId == attachment.growthRecordId
         }
         update { list -> list - replaced.toSet() + attachment }
-        replaced.forEach { runCatching { File(it.localPath).delete() } }
+        replaced.forEach { runCatching { fileCommit { File(it.localPath).delete() } } }
         return attachment
     }
 
@@ -167,12 +175,16 @@ class PendingPhotoRepository internal constructor(
         check(source.exists() && source.canRead() && source.length() > 0L) {
             "The retained photo couldn't be preserved for offline display."
         }
-        val directory = File(rootDir, DISPLAY_DIR).apply {
+        val directory = fileCommit { File(rootDir, DISPLAY_DIR).apply {
             check(exists() || mkdirs()) { "Couldn't create offline photo storage." }
-        }
+        } }
         val entityId = attachment.growthRecordId ?: attachment.clientPinId
         val destination = File(directory, "${entityId.lowercase()}__${attachment.revision.lowercase()}.jpg")
-        source.copyTo(destination, overwrite = true)
+        fileCommit {
+            source.inputStream().use { input ->
+                java.io.FileOutputStream(destination).use { output -> input.copyTo(output); output.fd.sync() }
+            }
+        }
         val next = completedCache.filterNot { it.entityId == entityId } + CompletedPhotoCacheEntry(
             entityId = entityId,
             localPath = destination.absolutePath,
@@ -182,7 +194,7 @@ class PendingPhotoRepository internal constructor(
         )
         store.saveCompletedCache(next)
         completedCache.filter { it.entityId == entityId && it.localPath != destination.absolutePath }
-            .forEach { runCatching { File(it.localPath).delete() } }
+            .forEach { runCatching { fileCommit { File(it.localPath).delete() } } }
         completedCache = next
         return destination
     }
@@ -190,11 +202,11 @@ class PendingPhotoRepository internal constructor(
     fun cacheRemoteDisplay(entityId: String, remotePath: String, remoteIdentity: String, bytes: ByteArray): File {
         require(bytes.isNotEmpty()) { "Downloaded photo was empty." }
         check(latestAttachment(entityId) == null) { "A newer local capture is pending." }
-        val directory = File(rootDir, DISPLAY_DIR).apply {
+        val directory = fileCommit { File(rootDir, DISPLAY_DIR).apply {
             check(exists() || mkdirs()) { "Couldn't create offline photo storage." }
-        }
+        } }
         val destination = File(directory, "${entityId.lowercase()}__remote-${remoteIdentity.hashCode()}.jpg")
-        destination.writeBytes(bytes)
+        writeJpeg(destination, bytes)
         val next = completedCache.filterNot { it.entityId == entityId } + CompletedPhotoCacheEntry(
             entityId = entityId,
             localPath = destination.absolutePath,
@@ -204,7 +216,7 @@ class PendingPhotoRepository internal constructor(
         )
         store.saveCompletedCache(next)
         completedCache.filter { it.entityId == entityId && it.localPath != destination.absolutePath }
-            .forEach { runCatching { File(it.localPath).delete() } }
+            .forEach { runCatching { fileCommit { File(it.localPath).delete() } } }
         completedCache = next
         return destination
     }
@@ -273,7 +285,7 @@ class PendingPhotoRepository internal constructor(
         val attachment = _attachments.value.firstOrNull { it.id == id && it.revision == revision } ?: return false
         if (claimedScopes[id to revision]?.let { it != scopeProvider?.invoke() } == true) return false
         update { rows -> rows.filterNot { it.id == id && it.revision == revision } }
-        runCatching { File(attachment.localPath).delete() }
+        runCatching { fileCommit { File(attachment.localPath).delete() } }
         return true
     }
 
@@ -307,15 +319,16 @@ class PendingPhotoRepository internal constructor(
 
     /** Mark an attachment uploaded and delete its local file. */
     fun markUploaded(id: String) {
-        deleteFileFor(id)
         updateStatus(id, PendingPhotoStatus.UPLOADED)
+        deleteFileFor(id)
     }
 
     /** Remove an attachment entirely and delete its local file. */
     @Synchronized
     fun remove(id: String) {
-        deleteFileFor(id)
+        val attachment = _attachments.value.firstOrNull { it.id == id }
         update { list -> list.filterNot { it.id == id } }
+        attachment?.let { runCatching { fileCommit { File(it.localPath).delete() } } }
     }
 
     /** Drop all uploaded rows (their files are already deleted on markUploaded). */
@@ -331,18 +344,18 @@ class PendingPhotoRepository internal constructor(
      */
     @Synchronized
     fun clearAll() {
-        runCatching {
-            photoDir.listFiles()?.forEach { runCatching { it.delete() } }
-        }
         store.clear()
-        completedCache.forEach { runCatching { File(it.localPath).delete() } }
+        runCatching {
+            fileCommit { photoDir.listFiles()?.forEach { runCatching { it.delete() } } }
+        }
+        completedCache.forEach { runCatching { fileCommit { File(it.localPath).delete() } } }
         completedCache = emptyList()
         _attachments.value = emptyList()
         _pendingCount.value = 0
     }
 
     private fun deleteFileFor(id: String) {
-        _attachments.value.firstOrNull { it.id == id }?.let { runCatching { File(it.localPath).delete() } }
+        _attachments.value.firstOrNull { it.id == id }?.let { runCatching { fileCommit { File(it.localPath).delete() } } }
     }
 
     @Synchronized

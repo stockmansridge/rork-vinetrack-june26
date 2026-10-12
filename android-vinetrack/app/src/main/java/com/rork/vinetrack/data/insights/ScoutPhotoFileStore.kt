@@ -38,6 +38,7 @@ import java.io.File
 class ScoutPhotoFileStore(context: Context) : ScoutPhotoFiles {
 
     private val root: File = File(context.applicationContext.filesDir, DIR_NAME)
+    private val fieldAccess = com.rork.vinetrack.data.auth.FieldStoreAccess(context)
 
     override fun relativePath(
         vineyardId: String,
@@ -79,30 +80,30 @@ class ScoutPhotoFileStore(context: Context) : ScoutPhotoFiles {
     ): String? {
         val relative = relativePath(vineyardId, observationId, photoId)
         val target = file(relative)
-        return runCatching {
+        return runCatching { fieldAccess.commit {
             target.parentFile?.mkdirs()
             val temp = File(target.parentFile, "${target.name}.part")
-            temp.writeBytes(jpeg)
+            java.io.FileOutputStream(temp).use { it.write(jpeg); it.fd.sync() }
             if (!temp.renameTo(target)) {
                 // Fall back to a direct write rather than reporting success on
                 // a file that is not actually in place.
-                target.writeBytes(jpeg)
+                java.io.FileOutputStream(target).use { it.write(jpeg); it.fd.sync() }
                 temp.delete()
             }
             relative
-        }.onFailure {
+        } }.onFailure {
             Log.w(TAG, "Scout photo write failed: ${it.javaClass.simpleName}")
         }.getOrNull()
     }
 
     override fun read(relativePath: String): ByteArray? =
-        runCatching { file(relativePath).takeIf { it.exists() }?.readBytes() }
+        runCatching { fieldAccess.commit { file(relativePath).takeIf { it.exists() }?.readBytes() } }
             .onFailure { Log.w(TAG, "Scout photo read failed: ${it.javaClass.simpleName}") }
             .getOrNull()
 
     /** Remove one photograph's bytes. Used when the operator deletes a photo. */
     override fun remove(relativePath: String) {
-        runCatching { file(relativePath).delete() }
+        runCatching { fieldAccess.commit { file(relativePath).delete() } }
             .onFailure { Log.w(TAG, "Scout photo delete failed: ${it.javaClass.simpleName}") }
     }
 
@@ -113,7 +114,7 @@ class ScoutPhotoFileStore(context: Context) : ScoutPhotoFiles {
      * the next person who signs in on the same handset.
      */
     override fun clearForSignOut() {
-        runCatching { root.deleteRecursively() }
+        runCatching { fieldAccess.commit { root.deleteRecursively() } }
             .onFailure { Log.w(TAG, "Scout photo clear failed: ${it.javaClass.simpleName}") }
     }
 

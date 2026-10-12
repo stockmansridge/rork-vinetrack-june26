@@ -19,8 +19,9 @@ import kotlinx.serialization.json.Json
  */
 class PendingWriteStore(context: Context) : PendingWriteStoring {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE),
+    )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val serializer = ListSerializer(PendingWrite.serializer())
@@ -42,8 +43,11 @@ class PendingWriteStore(context: Context) : PendingWriteStoring {
     }
 
     /** Persist the full outbox, replacing any previous contents. */
-    override fun save(writes: List<PendingWrite>): Boolean =
-        prefs.edit().putString(KEY_WRITES, json.encodeToString(serializer, writes)).commit()
+    override fun save(writes: List<PendingWrite>): Boolean {
+        val readable = runCatching { prefs.getString(KEY_WRITES, null)?.let { json.decodeFromString(serializer, it) } }.isSuccess
+        if (!readable) return false
+        return prefs.edit().putString(KEY_WRITES, json.encodeToString(serializer, writes)).commit()
+    }
 
     /** Clear the entire outbox (used by tooling / future sign-out cleanup). */
     override fun clear(): Boolean = prefs.edit().remove(KEY_WRITES).commit()

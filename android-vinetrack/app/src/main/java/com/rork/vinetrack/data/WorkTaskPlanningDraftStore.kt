@@ -10,10 +10,15 @@ class WorkTaskPlanningDraftStore(
     private val write: (String, String) -> Boolean,
     private val remove: (String) -> Boolean = { false },
 ) {
+    private constructor(preferences: android.content.SharedPreferences) : this(
+        { key -> preferences.getString(key, null) },
+        { key, value -> preferences.edit().putString(key, value).commit() },
+        { key -> preferences.edit().remove(key).commit() },
+    )
     constructor(context: Context) : this(
-        { key -> context.applicationContext.getSharedPreferences("vinetrack_local_planning", Context.MODE_PRIVATE).getString(key, null) },
-        { key, value -> context.applicationContext.getSharedPreferences("vinetrack_local_planning", Context.MODE_PRIVATE).edit().putString(key, value).commit() },
-        { key -> context.applicationContext.getSharedPreferences("vinetrack_local_planning", Context.MODE_PRIVATE).edit().remove(key).commit() },
+        com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+            context.applicationContext.getSharedPreferences("vinetrack_local_planning", Context.MODE_PRIVATE),
+        ),
     )
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = true }
     fun save(draft: WorkTaskPlanningDraft) {

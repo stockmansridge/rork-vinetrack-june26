@@ -198,7 +198,9 @@ internal interface StartTankJournalStorage {
 }
 
 private class SharedPreferencesStartTankJournalStorage(context: Context) : StartTankJournalStorage {
-    private val prefs = context.applicationContext.getSharedPreferences("vinetrack_start_tank_journal", Context.MODE_PRIVATE)
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_start_tank_journal", Context.MODE_PRIVATE),
+    )
 
     override fun read(): StartTankCommitCoordinator.Journal? = prefs.getString(KEY, null)?.let { raw ->
         runCatching { SupabaseClient.json.decodeFromString(StartTankCommitCoordinator.Journal.serializer(), raw) }.getOrNull()
