@@ -1,6 +1,7 @@
 package com.rork.vinetrack.data.insights
 
 import com.rork.vinetrack.data.VintageResolver
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -155,7 +156,9 @@ class VineyardInsightsController(
             scoutNameSnapshot = scoutName,
             clientUpdatedAtIso = nowIso(),
         )
-        if (persist(visit)) _openVisitId.value = visit.id
+        persist(visit)
+        // Keep the same mounted identity if the disk write needs Retry.
+        _openVisitId.value = visit.id
         return visit
     }
 
@@ -215,10 +218,16 @@ class VineyardInsightsController(
     }
 
     suspend fun captureStopWeather(visitId: String, stopId: String) {
+        val generation = syncGeneration
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
         val visit = visit(visitId) ?: return
         val original = visit.assessments.firstOrNull { it.id == stopId }?.stopContext ?: return
-        val weather = runCatching { weatherLoader?.invoke(visit.vineyardId, original.capturedAt) }.getOrNull()
+        val weather = try { weatherLoader?.invoke(visit.vineyardId, original.capturedAt) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
             ?: ScoutWeatherSnapshot.unavailable(original.capturedAt, "Configured vineyard weather source")
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        if (generation != syncGeneration) return
         val current = this.visit(visitId) ?: return
         val stop = current.assessments.firstOrNull { it.id == stopId } ?: return
         if (!current.isEditable || deletionPending(visitId) || stop.stopContext?.capturedAt != original.capturedAt) return
@@ -253,6 +262,8 @@ class VineyardInsightsController(
 
     /** Capture current configured-source weather only for a visit dated today. */
     suspend fun captureWeather(visitId: String) {
+        val generation = syncGeneration
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
         val visit = visit(visitId) ?: return
         if (!visit.isEditable || deletionPending(visitId)) return
         val capturedAt = nowIso()
@@ -270,9 +281,12 @@ class VineyardInsightsController(
             }
             return
         }
-        val snapshot = runCatching { weatherLoader?.invoke(visit.vineyardId, capturedAt) }
-            .getOrNull()
+        val snapshot = try { weatherLoader?.invoke(visit.vineyardId, capturedAt) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
             ?: ScoutWeatherSnapshot.unavailable(capturedAt, "Configured vineyard weather source")
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        if (generation != syncGeneration) return
         setWeather(visitId, snapshot)
     }
 
@@ -776,32 +790,41 @@ class VineyardInsightsController(
      * end so pulled work becomes visible.
      */
     suspend fun sync(vineyardId: String, refreshGraph: Boolean = true) {
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
         val requestGeneration = syncGeneration
         val worker = worker(requestGeneration) ?: return
         if (refreshGraph) requestedFullPulls.add(vineyardId)
         syncCoordinator.request(vineyardId) {
             if (requestGeneration != syncGeneration) return@request
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
             val fullPullRequested = requestedFullPulls.remove(vineyardId)
-            processLocalFileCleanup(vineyardId)
-            val deletionError = flushPhotoDeletions(worker, vineyardId)
-            val pullGraph = fullPullRequested || lastGraphPull[vineyardId]?.let { java.time.Duration.between(it, clock()).seconds >= 60 } != false
-            val pullCatalogue = fullPullRequested || lastCataloguePull[vineyardId]?.let { java.time.Duration.between(it, clock()).seconds >= 300 } != false
-            val outcome = worker.sync(vineyardId, pullGraph, pullCatalogue)
-            if (requestGeneration != syncGeneration) return@request
-            if (outcome.error == null) {
-                if (pullGraph) lastGraphPull[vineyardId] = clock()
-                if (pullCatalogue) lastCataloguePull[vineyardId] = clock()
+            var fullPullFinished = false
+            try {
+                processLocalFileCleanup(vineyardId)
+                val deletionError = flushPhotoDeletions(worker, vineyardId)
+                val pullGraph = fullPullRequested || lastGraphPull[vineyardId]?.let { java.time.Duration.between(it, clock()).seconds >= 60 } != false
+                val pullCatalogue = fullPullRequested || lastCataloguePull[vineyardId]?.let { java.time.Duration.between(it, clock()).seconds >= 300 } != false
+                val outcome = worker.sync(vineyardId, pullGraph, pullCatalogue)
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (requestGeneration != syncGeneration) return@request
+                if (outcome.error == null) {
+                    if (pullGraph) lastGraphPull[vineyardId] = clock()
+                    if (pullCatalogue) lastCataloguePull[vineyardId] = clock()
+                }
+                if (requestGeneration != syncGeneration) return@request
+                processLocalFileCleanup(vineyardId)
+                reloadVisits()
+                _notes.value = store.loadNotes()
+                _noteTypesByVineyard.value = _noteTypesByVineyard.value + (vineyardId to store.noteTypes(vineyardId))
+                _pendingPhotoCount.value = store.loadPhotoQueue().size
+                val unresolved = store.loadQueue().isNotEmpty() || store.loadPhotoQueue().isNotEmpty() ||
+                    store.photoDeletionRevisions().isNotEmpty() || store.loadObjectCleanup().isNotEmpty() ||
+                    store.pendingNoteTypeVineyards().isNotEmpty()
+                _lastSyncError.value = deletionError ?: outcome.error ?: if (unresolved) _lastSyncError.value else null
+                fullPullFinished = outcome.error == null && deletionError == null
+            } finally {
+                if (fullPullRequested && !fullPullFinished && requestGeneration == syncGeneration) requestedFullPulls.add(vineyardId)
             }
-            if (requestGeneration != syncGeneration) return@request
-            processLocalFileCleanup(vineyardId)
-            reloadVisits()
-            _notes.value = store.loadNotes()
-            _noteTypesByVineyard.value = _noteTypesByVineyard.value + (vineyardId to store.noteTypes(vineyardId))
-            _pendingPhotoCount.value = store.loadPhotoQueue().size
-            val unresolved = store.loadQueue().isNotEmpty() || store.loadPhotoQueue().isNotEmpty() ||
-                store.photoDeletionRevisions().isNotEmpty() || store.loadObjectCleanup().isNotEmpty() ||
-                store.pendingNoteTypeVineyards().isNotEmpty()
-            _lastSyncError.value = deletionError ?: outcome.error ?: if (unresolved) _lastSyncError.value else null
         }
     }
 
@@ -820,7 +843,7 @@ class VineyardInsightsController(
     fun pendingVineyards(): Set<String> = (store.loadQueue().map { it.vineyardId } +
         store.loadPhotoQueue().map { it.vineyardId } + store.photoDeletionRevisions().map { it.vineyardId } +
         store.loadObjectCleanup().map { it.vineyardId } + store.loadLocalFileCleanup().map { it.vineyardId }).toSet() +
-        store.pendingNoteTypeVineyards()
+        store.pendingNoteTypeVineyards() + requestedFullPulls.toSet()
 
     /**
      * Apply deletions that could only be finished server-side.

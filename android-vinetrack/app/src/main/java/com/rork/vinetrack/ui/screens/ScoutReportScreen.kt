@@ -190,24 +190,28 @@ private fun WeatherReportCard(visit: ScoutVisit, state: AppUiState, modifier: Mo
 }
 
 @Composable
-fun ScoutWorkspaceMap(visit: ScoutVisit, blocks: List<Paddock>, pins: List<Pin>, photoBytes: (String) -> ByteArray?, growthRecords: List<GrowthStageRecord>, locationBlocks: List<Paddock>, currentFix: com.rork.vinetrack.data.insights.ScoutPhotoFix? = null, onBlockSelected: ((String) -> Unit)? = null, modifier: Modifier = Modifier) {
+fun ScoutWorkspaceMap(visit: ScoutVisit?, blocks: List<Paddock>, pins: List<Pin>, photoBytes: (String) -> ByteArray?, growthRecords: List<GrowthStageRecord>, locationBlocks: List<Paddock>, currentFix: com.rork.vinetrack.data.insights.ScoutPhotoFix? = null, onBlockSelected: ((String) -> Unit)? = null, modifier: Modifier = Modifier) {
     var selected by remember { mutableStateOf<ScoutMapMarker?>(null) }
-    val locations = ScoutReportPresentation.locations(visit, locationBlocks, growthRecords, pins)
-    val markers = reportMarkers(locations)
+    val locations = visit?.let { ScoutReportPresentation.locations(it, locationBlocks, growthRecords, pins) }
+    val markers = locations?.let(::reportMarkers).orEmpty()
+    val vineyardBlocks = blocks.filter { visit == null || it.vineyardId == visit.vineyardId }
     var selectedBlock by remember { mutableStateOf<String?>(null) }
     Column(modifier) {
-        ScoutVisitMap(blocks.distinctBy { it.id }, markers, currentFix = currentFix, onBlockSelected = {
+        ScoutVisitMap(vineyardBlocks.distinctBy { it.id }, markers, currentFix = currentFix, onBlockSelected = {
             selectedBlock = it; onBlockSelected?.invoke(it)
         }) { selected = it }
-        blocks.firstOrNull { it.id == selectedBlock }?.let { block ->
-            Text(block.name + " • " + block.varietyAllocations.orEmpty().mapNotNull { it.displayName }.joinToString(), fontWeight = FontWeight.Bold)
+        vineyardBlocks.firstOrNull { it.id == selectedBlock }?.let { block ->
+            ScoutBlockDetails(block)
         }
-        Text("Tap a boundary or block label for details. Boundaries remain available without imagery. Location is optional.", fontSize = 12.sp)
-        LocationReferences(markers) { selected = it }
-        locations.boundaryUnavailable.forEach { Text(it, fontSize = 12.sp) }
-        if (locations.unavailable.isNotEmpty()) {
-            Text("Location unavailable", fontWeight = FontWeight.Bold)
-            locations.unavailable.forEach { Text(it, fontSize = 12.sp) }
+        if (locations != null) {
+            LocationReferences(markers) { selected = it }
+            locations.boundaryUnavailable.forEach { Text(it, fontSize = 12.sp) }
+            if (locations.unavailable.isNotEmpty()) {
+                Text("Location unavailable", fontWeight = FontWeight.Bold)
+                locations.unavailable.forEach { Text(it, fontSize = 12.sp) }
+            }
+        } else if (currentFix == null) {
+            Text("Location unavailable — choose a block manually.", fontSize = 12.sp)
         }
     }
     selected?.let { marker ->
@@ -223,9 +227,23 @@ private fun ScoutVisitMap(blocks: List<Paddock>, markers: List<ScoutMapMarker>, 
     val points = blocks.flatMap { block -> block.polygonPoints.orEmpty().filter { ScoutReportPresentation.valid(it.latitude, it.longitude) }.map { LatLng(it.latitude, it.longitude) } } + markers.map { it.point }
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
     var recenter by remember { mutableStateOf(0) }
-    androidx.compose.material3.TextButton(onClick = { recenter++ }) { Text("Recenter vineyard") }
+    var showMyLocation by remember { mutableStateOf(false) }
+    var detailBlockId by remember { mutableStateOf<String?>(null) }
+    val selectBlock: (String) -> Unit = { id ->
+        if (onBlockSelected != null) onBlockSelected(id) else detailBlockId = id
+    }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val labelWidth = with(density) { 120.dp.toPx() }
+    val labelHeight = with(density) { 44.dp.toPx() }
+    val textSize = with(density) { 12.sp.toPx() }
+    Row {
+        androidx.compose.material3.TextButton(onClick = { showMyLocation = false; recenter++ }) { Text("Recenter") }
+        if (currentFix != null) androidx.compose.material3.TextButton(onClick = { showMyLocation = true; recenter++ }) { Text("My location") }
+    }
     androidx.compose.runtime.LaunchedEffect(points, mapSize, recenter) {
-        if (mapSize.width > 0 && mapSize.height > 0 && points.isNotEmpty()) {
+        if (showMyLocation && currentFix != null) {
+            camera.animate(CameraUpdateFactory.newLatLngZoom(LatLng(currentFix.latitude, currentFix.longitude), 18f))
+        } else if (mapSize.width > 0 && mapSize.height > 0 && points.isNotEmpty()) {
             val builder = LatLngBounds.builder(); points.forEach(builder::include)
             runCatching {
                 val bounds = builder.build()
@@ -235,15 +253,39 @@ private fun ScoutVisitMap(blocks: List<Paddock>, markers: List<ScoutMapMarker>, 
         }
     }
     GoogleMap(modifier = modifier.fillMaxWidth().height(380.dp).onSizeChanged { mapSize = it }, cameraPositionState = camera, properties = MapProperties(mapType = MapType.HYBRID)) {
-        blocks.distinctBy { it.id }.forEach { block ->
+        val occupied = (markers.map { it.point } + listOfNotNull(currentFix?.let { LatLng(it.latitude, it.longitude) })).mapNotNull { point -> camera.projection?.toScreenLocation(point)?.let {
+            android.graphics.RectF(it.x - labelHeight / 2, it.y - labelHeight / 2, it.x + labelHeight / 2, it.y + labelHeight / 2)
+        } }.toMutableList()
+        val viewport = android.graphics.RectF(4f, 4f, mapSize.width - 4f, mapSize.height - 4f)
+        val detailed = camera.position.zoom >= 17f
+        blocks.distinctBy { it.id }.sortedBy { it.id }.forEach { block ->
             val polygon = block.polygonPoints.orEmpty().filter { ScoutReportPresentation.valid(it.latitude, it.longitude) }.map { LatLng(it.latitude, it.longitude) }
             if (polygon.size >= 3 && polygon.size == block.polygonPoints.orEmpty().size) {
                 Polygon(points = polygon, fillColor = VineColors.LeafGreen.copy(alpha = 0.18f), strokeColor = VineColors.LeafGreen,
-                    clickable = onBlockSelected != null, onClick = { onBlockSelected?.invoke(block.id) })
-                // Centre is only a block label anchor, never observation/photo GPS.
-                Marker(state = MarkerState(LatLng(polygon.map { it.latitude }.average(), polygon.map { it.longitude }.average())),
-                    title = block.name, snippet = block.varietyAllocations.orEmpty().mapNotNull { it.displayName }.joinToString(),
-                    onClick = { onBlockSelected?.invoke(block.id); false })
+                    clickable = true, onClick = { selectBlock(block.id) })
+                // Projected collision boxes and marker anchors are display-only offsets.
+                val centre = LatLng(polygon.map { it.latitude }.average(), polygon.map { it.longitude }.average())
+                val screen = camera.projection?.toScreenLocation(centre)
+                if (screen != null && viewport.contains(screen.x.toFloat(), screen.y.toFloat())) {
+                    val offsets = listOf(0f to 0f, 0f to -labelHeight * 1.1f, 0f to labelHeight * 1.1f,
+                        -labelWidth * 1.1f to 0f, labelWidth * 1.1f to 0f)
+                    val offset = offsets.firstOrNull { (dx, dy) ->
+                        val rect = android.graphics.RectF(screen.x + dx - labelWidth / 2, screen.y + dy - labelHeight / 2,
+                            screen.x + dx + labelWidth / 2, screen.y + dy + labelHeight / 2)
+                        viewport.contains(rect) && occupied.none { android.graphics.RectF.intersects(it, rect) }
+                    }
+                    if (offset != null) {
+                        val (dx, dy) = offset
+                        occupied += android.graphics.RectF(screen.x + dx - labelWidth / 2 - 4, screen.y + dy - labelHeight / 2 - 4,
+                            screen.x + dx + labelWidth / 2 + 4, screen.y + dy + labelHeight / 2 + 4)
+                        val icon = remember(block.name, block.varietyAllocations, detailed, labelWidth, labelHeight, textSize) {
+                            blockLabelIcon(block, detailed, labelWidth.toInt(), labelHeight.toInt(), textSize)
+                        }
+                        Marker(state = MarkerState(centre), icon = icon,
+                            anchor = androidx.compose.ui.geometry.Offset(0.5f - dx / labelWidth, 0.5f - dy / labelHeight),
+                            onClick = { selectBlock(block.id); true })
+                    }
+                }
             }
         }
         currentFix?.let { fix ->
@@ -259,6 +301,52 @@ private fun ScoutVisitMap(blocks: List<Paddock>, markers: List<ScoutMapMarker>, 
             }
         }
     }
+    blocks.firstOrNull { it.id == detailBlockId }?.let { block ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { detailBlockId = null }, title = { Text("Block details") },
+            text = { LazyColumn { item { ScoutBlockDetails(block) } } },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { detailBlockId = null }) { Text("Done") } })
+    }
+}
+
+@Composable
+private fun ScoutBlockDetails(block: Paddock, modifier: Modifier = Modifier) {
+    VineyardCard(modifier = modifier) {
+        Text(block.name, fontWeight = FontWeight.Bold)
+        Text("Year planted: ${block.plantingYear ?: "Not recorded"}")
+        if (block.varietyAllocations.isNullOrEmpty()) {
+            Text("Varieties: Not recorded")
+            Text("Clone: Not recorded • Rootstock: Not recorded")
+        }
+        block.varietyAllocations.orEmpty().forEach { allocation ->
+            Text(allocation.displayName?.trim()?.takeIf { it.isNotEmpty() } ?: "Not recorded", fontWeight = FontWeight.SemiBold)
+            val clone = if (allocation.cloneKey == com.rork.vinetrack.data.model.CloneRootstockSentinels.MASS_SELECTION)
+                com.rork.vinetrack.data.model.CloneRootstockSentinels.MASS_SELECTION_DISPLAY else allocation.clone?.trim()?.takeIf { it.isNotEmpty() }
+            val rootstock = if (allocation.rootstockKey == com.rork.vinetrack.data.model.CloneRootstockSentinels.OWN_ROOTS)
+                com.rork.vinetrack.data.model.CloneRootstockSentinels.OWN_ROOTS_DISPLAY else allocation.rootstock?.trim()?.takeIf { it.isNotEmpty() }
+            Text("Clone: ${clone ?: "Not recorded"}")
+            Text("Rootstock: ${rootstock ?: "Not recorded"}")
+        }
+    }
+}
+
+private fun blockLabelIcon(block: Paddock, detailed: Boolean, width: Int, height: Int, textSize: Float): com.google.android.gms.maps.model.BitmapDescriptor {
+    val bitmap = android.graphics.Bitmap.createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bitmap)
+    val paint = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    paint.color = android.graphics.Color.WHITE
+    canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), 8f, 8f, paint)
+    paint.color = android.graphics.Color.BLACK; paint.textSize = textSize
+    paint.typeface = android.graphics.Typeface.DEFAULT_BOLD
+    val name = android.text.TextUtils.ellipsize(block.name, paint, width - 12f, android.text.TextUtils.TruncateAt.END).toString()
+    canvas.drawText(name, 6f, height * (if (detailed) 0.42f else 0.6f), paint)
+    if (detailed) {
+        paint.typeface = android.graphics.Typeface.DEFAULT; paint.textSize = textSize * 0.85f
+        val varieties = block.varietyAllocations.orEmpty().mapNotNull { it.displayName }.joinToString()
+        val line = android.text.TextUtils.ellipsize(varieties, paint, width - 12f, android.text.TextUtils.TruncateAt.END).toString()
+        canvas.drawText(line, 6f, height * 0.8f, paint)
+    }
+    return BitmapDescriptorFactory.fromBitmap(bitmap)
 }
 
 private fun reportMarkers(locations: ScoutReportPresentation.Locations): List<ScoutMapMarker> = locations.markers.map {

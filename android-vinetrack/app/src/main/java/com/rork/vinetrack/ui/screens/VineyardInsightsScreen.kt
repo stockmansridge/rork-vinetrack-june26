@@ -341,6 +341,8 @@ private fun ScoutWorkspace(
     var confirmsLeaveObservation by remember { mutableStateOf(false) }
     var observationError by remember { mutableStateOf<String?>(null) }
     var creatingStop by remember { mutableStateOf(false) }
+    var preparingNewTrip by rememberSaveable(state.currentUserId, state.selectedVineyardId) { mutableStateOf(false) }
+    var observationVineyardId by remember { mutableStateOf<String?>(null) }
     var stopFix by remember { mutableStateOf<com.rork.vinetrack.data.insights.ScoutPhotoFix?>(null) }
     var observationFix by remember { mutableStateOf<com.rork.vinetrack.data.insights.ScoutPhotoFix?>(null) }
     var detectedBlockId by remember { mutableStateOf<String?>(null) }
@@ -387,7 +389,7 @@ private fun ScoutWorkspace(
     )
     fun cancelBlockSelection() {
         showBlockSelection = false; detectedBlockId = null; observationFix = null
-        observationRequestId = null; observationTripId = null; observationAuthorId = null
+        observationRequestId = null; observationTripId = null; observationAuthorId = null; observationVineyardId = null
         locatingBlock = false; blockCorrectionStopId = null; blockSelectionReason = null
     }
     LaunchedEffect(current?.id, state.currentUserId, state.selectedVineyardId) {
@@ -409,14 +411,24 @@ private fun ScoutWorkspace(
     DisposableEffect(Unit) { onDispose { observationRequestId = null } }
     fun beginObservation() {
         if (!showBlockSelection || creatingStop || locatingBlock || editingStopId != null) return
-        val visit = current ?: return
         val blockId = selectedMapBlockId ?: return
         val latest = vm.ui.value
-        if (observationRequestId == null || observationTripId != visit.id ||
-            insights.openVisitId.value != visit.id || latest.currentUserId != observationAuthorId ||
-            latest.selectedVineyardId != visit.vineyardId || !visit.isEditable ||
-            insights.deletionPending(visit.id) || latest.paddocks.none { it.id == blockId && it.vineyardId == visit.vineyardId }) return
+        val vineyardId = observationVineyardId ?: return
+        if (observationRequestId == null || observationTripId != insights.openVisitId.value ||
+            latest.currentUserId != observationAuthorId || latest.selectedVineyardId != vineyardId ||
+            latest.paddocks.none { it.id == blockId && it.vineyardId == vineyardId }) return
         creatingStop = true
+        val isNewTrip = insights.openVisit == null
+        val visit = insights.openVisit ?: run {
+            if (!preparingNewTrip) { creatingStop = false; return }
+            insights.startVisit(vineyardId, observationAuthorId, latest.userDisplayName,
+                latest.seasonStartMonth, latest.seasonStartDay).also { preparingNewTrip = false }
+        }
+        if (!visit.isEditable || insights.deletionPending(visit.id) || !insights.saveObservationDraft(visit.id)) {
+            observationError = "The trip draft could not be saved. Retry before collecting observations."
+            cancelBlockSelection(); creatingStop = false; return
+        }
+        if (isNewTrip) vm.captureScoutWeather(visit.id)
         val id = insights.beginStop(visit.id, blockId, observationAuthorId, latest.userDisplayName,
             if (detectedBlockId == blockId) observationFix else null)
         if (id != null) {
@@ -428,22 +440,24 @@ private fun ScoutWorkspace(
     }
     fun prepareObservation() {
         if (showBlockSelection || locatingBlock || creatingStop || editingStopId != null) return
-        val visit = current ?: return
-        if (!visit.isEditable || insights.deletionPending(visit.id)) return
+        val visit = current
+        val vineyardId = state.selectedVineyardId ?: return
+        if (visit == null && !preparingNewTrip) return
+        if (visit != null && (!visit.isEditable || insights.deletionPending(visit.id))) return
         val requestId = java.util.UUID.randomUUID().toString()
         val authorId = state.currentUserId
-        observationRequestId = requestId; observationTripId = visit.id; observationAuthorId = authorId
+        observationRequestId = requestId; observationTripId = visit?.id; observationAuthorId = authorId; observationVineyardId = vineyardId
         selectedMapBlockId = null; detectedBlockId = null; observationFix = null; stopFix = null
         blockCorrectionStopId = null; observationError = null
         locatingBlock = true; blockSelectionReason = "Checking your current GPS position…"; showBlockSelection = true
         vm.scoutStopFix { fix ->
             val latest = vm.ui.value
             if (observationRequestId != requestId || !showBlockSelection ||
-                insights.openVisitId.value != visit.id || latest.selectedVineyardId != visit.vineyardId ||
+                insights.openVisitId.value != visit?.id || latest.selectedVineyardId != vineyardId ||
                 latest.currentUserId != authorId) return@scoutStopFix
             locatingBlock = false; stopFix = fix
             val matches = if (fix == null) emptyList() else latest.paddocks.filter { block ->
-                block.vineyardId == visit.vineyardId && com.rork.vinetrack.data.RowAttachment.containsPoint(block, fix.latitude, fix.longitude)
+                block.vineyardId == vineyardId && com.rork.vinetrack.data.RowAttachment.containsPoint(block, fix.latitude, fix.longitude)
             }
             if (matches.size == 1) {
                 detectedBlockId = matches.single().id; selectedMapBlockId = detectedBlockId
@@ -458,10 +472,11 @@ private fun ScoutWorkspace(
     fun leaveTripOrObservation() {
         if (showBlockSelection) cancelBlockSelection()
         else if (editingStopId != null) confirmsLeaveObservation = true
+        else if (preparingNewTrip) preparingNewTrip = false
         else if (current != null) insights.openVisit(null)
         else onBack()
     }
-    BackHandler(enabled = reportVisit != null || current != null) {
+    BackHandler(enabled = reportVisit != null || current != null || preparingNewTrip || showBlockSelection) {
         if (reportVisit != null) reportVisit = null else leaveTripOrObservation()
     }
 
@@ -494,7 +509,7 @@ private fun ScoutWorkspace(
         modifier = modifier,
         topBar = {
             TopAppBar(
-                title = { Text(if (editingStopId == null) "Scout Trip" else "Observation") },
+                title = { Text(if (preparingNewTrip && current == null) "New Scout Trip" else if (editingStopId == null) "Scout Trip" else "Observation") },
                 navigationIcon = {
                     BackNavIcon { leaveTripOrObservation() }
                 },
@@ -507,7 +522,7 @@ private fun ScoutWorkspace(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            item { PreviewBadge() }
+            if (!preparingNewTrip || current != null) item { PreviewBadge() }
 
             cameraError?.let { error ->
                 item { VineyardCard { Text(error, color = VineColors.Destructive); TextButton(onClick = { cameraError = null }) { Text("Dismiss") } } }
@@ -543,11 +558,26 @@ private fun ScoutWorkspace(
                             fontSize = 12.sp,
                             color = vine.textSecondary,
                         )
+                        if (current != null && current.isEditable && !insights.deletionPending(current.id)) {
+                            TextButton(onClick = { insights.saveObservationDraft(current.id) }) { Text("Retry saving draft") }
+                        }
                     }
                 }
             }
 
-            if (current == null) {
+            if (current == null && preparingNewTrip) {
+                item {
+                    Button(onClick = { prepareObservation() }, enabled = !showBlockSelection && !locatingBlock && !creatingStop,
+                        modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen)) {
+                        Text("Make observation")
+                    }
+                }
+                item {
+                    ScoutWorkspaceMap(visit = null, blocks = observationBlocks, pins = state.pins,
+                        growthRecords = state.growthRecords, locationBlocks = observationBlocks, currentFix = stopFix,
+                        onBlockSelected = { selectedMapBlockId = it }, photoBytes = { null })
+                }
+            } else if (current == null) {
                 item {
                     VineyardCard {
                         Text("Start a Scout", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
@@ -561,15 +591,14 @@ private fun ScoutWorkspace(
                         Spacer(Modifier.height(12.dp))
                         Button(
                             onClick = {
-                                val vineyardId = state.selectedVineyardId ?: return@Button
-                                val visit = insights.startVisit(
-                                    vineyardId = vineyardId,
-                                    scoutUserId = state.currentUserId,
-                                    scoutName = state.userDisplayName,
-                                    seasonStartMonth = state.seasonStartMonth,
-                                    seasonStartDay = state.seasonStartDay,
-                                )
-                                vm.captureScoutWeather(visit.id)
+                                if (state.selectedVineyardId == null) return@Button
+                                selectedMapBlockId = null; observationError = null; preparingNewTrip = true
+                                val vineyardId = state.selectedVineyardId
+                                val authorId = state.currentUserId
+                                vm.scoutStopFix { fix ->
+                                    if (preparingNewTrip && vm.ui.value.selectedVineyardId == vineyardId &&
+                                        vm.ui.value.currentUserId == authorId) stopFix = fix
+                                }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
                         ) {
@@ -662,7 +691,7 @@ private fun ScoutWorkspace(
                         paddock = state.paddocks.firstOrNull { it.id == assessment.paddockId },
                         visitId = current.id,
                         assessmentId = assessment.id,
-                        enabled = current.isEditable && !insights.deletionPending(current.id),
+                        enabled = current.isEditable && !insights.deletionPending(current.id) && !writeFailed,
                         observations = assessment.observations,
                         onRequestGrowthStage = {
                             stageRequest = ScoutStageRequest(current.id, assessment.id, assessment.paddockId)
@@ -717,7 +746,7 @@ private fun ScoutWorkspace(
         dismissButton = { TextButton(onClick = { confirmsLeaveObservation = false }) { Text("Continue editing") } })
 
     val detectedBlock = observationBlocks.firstOrNull { it.id == detectedBlockId }
-    if (showBlockSelection && current != null && detectedBlock != null) AlertDialog(
+    if (showBlockSelection && (current != null || preparingNewTrip) && detectedBlock != null) AlertDialog(
         onDismissRequest = { cancelBlockSelection() },
         title = { Text("Are you observing ${detectedBlock.name}?") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -732,7 +761,7 @@ private fun ScoutWorkspace(
             }) { Text("Choose another block") }
             TextButton(onClick = { cancelBlockSelection() }) { Text("Cancel") }
         } })
-    if (showBlockSelection && current != null && detectedBlock == null) AlertDialog(
+    if (showBlockSelection && (current != null || preparingNewTrip) && detectedBlock == null) AlertDialog(
         onDismissRequest = { cancelBlockSelection() }, title = { Text("Confirm observation block") },
         text = { LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             item { Text(blockSelectionReason ?: "Choose and confirm the block you are observing. Location is optional.") }
@@ -748,7 +777,7 @@ private fun ScoutWorkspace(
             val blockId = selectedMapBlockId ?: return@TextButton
             val correctionId = blockCorrectionStopId
             if (correctionId != null) {
-                if (insights.correctStopBlock(current.id, correctionId, blockId)) cancelBlockSelection()
+                if (current != null && insights.correctStopBlock(current.id, correctionId, blockId)) cancelBlockSelection()
                 else observationError = "The block correction could not be saved. Retry; canonical linked evidence cannot be moved."
             } else beginObservation()
         }) { Text(if (blockCorrectionStopId == null) "Confirm block and continue" else "Save block correction") } },

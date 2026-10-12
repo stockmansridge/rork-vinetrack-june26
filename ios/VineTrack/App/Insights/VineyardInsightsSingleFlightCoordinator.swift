@@ -13,22 +13,24 @@ final class VineyardInsightsSingleFlightCoordinator {
 
     var hasRunningPass: Bool { states.values.contains { $0.isRunning } }
 
-    func request(vineyardID: UUID, runPass: @escaping () async -> Void) async {
+    func request(vineyardID: UUID, shouldContinue: () -> Bool = { !Task.isCancelled }, runPass: @escaping () async -> Void) async {
+        guard !Task.isCancelled else { return }
         let requestGeneration = generation
         if states[vineyardID]?.isRunning == true {
             states[vineyardID]?.needsAnotherPass = true
             return
         }
         states[vineyardID] = State(isRunning: true, needsAnotherPass: false)
+        defer {
+            if requestGeneration == generation { states[vineyardID] = nil }
+        }
 
         repeat {
-            guard requestGeneration == generation else { return }
+            guard requestGeneration == generation, !Task.isCancelled else { return }
             states[vineyardID]?.needsAnotherPass = false
             await runPass()
-        } while requestGeneration == generation && states[vineyardID]?.needsAnotherPass == true
-
-        guard requestGeneration == generation else { return }
-        states[vineyardID] = nil
+        } while requestGeneration == generation && !Task.isCancelled && shouldContinue()
+            && states[vineyardID]?.needsAnotherPass == true
     }
 
     func invalidateAll() {

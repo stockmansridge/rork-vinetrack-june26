@@ -158,26 +158,63 @@ struct ScoutReportMarker: Identifiable {
 struct ScoutWorkspaceMap: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(GrowthStageRecordSyncService.self) private var growthSync
-    let visit: ScoutVisit
+    let visit: ScoutVisit?
+    @Environment(LocationService.self) private var locationService
     @Binding var selectedBlockID: UUID?
     @State private var selectedMarker: ScoutReportMarker?
-    init(visit: ScoutVisit, selectedBlockID: Binding<UUID?> = .constant(nil)) {
+    init(visit: ScoutVisit?, selectedBlockID: Binding<UUID?> = .constant(nil)) {
         self.visit = visit
         self._selectedBlockID = selectedBlockID
     }
     var body: some View {
-        let blocks = store.paddocks
-        let locations = ScoutReportPresentation.locations(visit: visit, blocks: store.paddocks, records: growthSync.records, pins: store.pins)
+        let blocks = store.paddocks.filter { $0.vineyardId == (visit?.vineyardID ?? store.selectedVineyardId) }
+        let locations = visit.map { ScoutReportPresentation.locations(visit: $0, blocks: blocks, records: growthSync.records, pins: store.pins) }
         VStack(alignment: .leading, spacing: 6) {
-            ScoutReportMap(blocks: blocks, markers: locations.markers, selectedMarker: $selectedMarker,
+            ScoutReportMap(blocks: blocks, markers: locations?.markers ?? [], selectedMarker: $selectedMarker,
                 onSelectBlock: { selectedBlockID = $0 }, showsUserLocation: true)
                 .frame(height: 380).clipShape(.rect(cornerRadius: 14))
             if let block = blocks.first(where: { $0.id == selectedBlockID }) {
-                Text(block.name + " • " + block.varietyAllocations.compactMap(\.name).joined(separator: ", ")).font(.subheadline.bold())
+                ScoutBlockDetails(block: block)
             }
-            Text("Tap a block label to select it. Boundaries remain usable without imagery; GPS permission is optional.").font(.caption).foregroundStyle(.secondary)
-            ScoutLocationReferences(locations: locations, selectedMarker: $selectedMarker)
+            if let locations {
+                ScoutLocationReferences(locations: locations, selectedMarker: $selectedMarker)
+            } else if locationService.freshLocation().1 != .fresh {
+                Text("Location unavailable — choose a block manually.").font(.caption).foregroundStyle(.secondary)
+            }
         }.sheet(item: $selectedMarker) { marker in ScoutMarkerDetail(marker: marker) }
+    }
+}
+
+private struct ScoutBlockDetails: View {
+    @Environment(MigratedDataStore.self) private var store
+    let block: Paddock
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(block.name).font(.headline)
+            LabeledContent("Year planted", value: block.plantingYear.map { String($0) } ?? "Not recorded")
+            if block.varietyAllocations.isEmpty {
+                Text("Varieties: Not recorded")
+                Text("Clone: Not recorded • Rootstock: Not recorded")
+            }
+            ForEach(block.varietyAllocations) { allocation in
+                let name = PaddockVarietyResolver.resolve(allocation: allocation, varieties: store.grapeVarieties).displayName
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(recorded(name)).font(.subheadline.bold())
+                    LabeledContent("Clone", value: allocation.cloneKey == CloneRootstockSentinels.massSelectionKey
+                        ? CloneRootstockSentinels.massSelectionDisplay : recorded(allocation.clone))
+                    LabeledContent("Rootstock", value: allocation.rootstockKey == CloneRootstockSentinels.ownRootsKey
+                        ? CloneRootstockSentinels.ownRootsDisplay : recorded(allocation.rootstock))
+                }
+            }
+        }.font(.subheadline).padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 12))
+    }
+
+    private func recorded(_ value: String?) -> String {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "Not recorded" : trimmed
     }
 }
 
@@ -223,31 +260,33 @@ private struct ScoutReportMap: View {
     var onSelectBlock: ((UUID) -> Void)? = nil
     var showsUserLocation: Bool = false
     @State private var position: MapCameraPosition = .automatic
+    @State private var cameraDistance: Double = 10_000
+    @State private var cameraRevision: Int = 0
+    @State private var detailBlockID: UUID?
+    @Environment(MigratedDataStore.self) private var store
+
+    private struct BlockLabel: Identifiable {
+        let block: Paddock
+        let point: CGPoint
+        var id: UUID { block.id }
+    }
     private var points: [CLLocationCoordinate2D] {
         blocks.flatMap(\.polygonPoints).compactMap { ScoutReportPresentation.coordinate($0.latitude, $0.longitude) } + markers.map(\.coordinate)
     }
     private var boundsKey: String { points.map { "\($0.latitude),\($0.longitude)" }.joined(separator: ";") }
     var body: some View {
+        MapReader { proxy in
         Map(position: $position) {
             ForEach(blocks) { block in
                 let polygon = block.polygonPoints.compactMap { ScoutReportPresentation.coordinate($0.latitude, $0.longitude) }
                 if polygon.count >= 3 && polygon.count == block.polygonPoints.count {
                     MapPolygon(coordinates: polygon).foregroundStyle(VineyardTheme.leafGreen.opacity(0.18)).stroke(VineyardTheme.leafGreen, lineWidth: 2)
-                    Annotation(block.name, coordinate: CLLocationCoordinate2D(
-                        latitude: polygon.map(\.latitude).reduce(0, +) / Double(polygon.count),
-                        longitude: polygon.map(\.longitude).reduce(0, +) / Double(polygon.count))) {
-                        Button { onSelectBlock?(block.id) } label: {
-                            VStack(spacing: 2) {
-                                Text(block.name).font(.caption.bold())
-                                Text(block.varietyAllocations.compactMap(\.name).joined(separator: ", ")).font(.caption2)
-                            }.padding(6).foregroundStyle(.primary).background(.regularMaterial, in: .rect(cornerRadius: 8))
-                        }.frame(minHeight: 44)
-                    }
+
                 }
             }
             if showsUserLocation { UserAnnotation() }
             ForEach(markers) { marker in
-                Annotation(marker.reference + " • " + marker.title, coordinate: marker.coordinate) {
+                Annotation("", coordinate: marker.coordinate) {
                     Button { selectedMarker = marker } label: {
                         Image(systemName: marker.photo != nil ? "camera.fill" : (marker.reference.hasPrefix("E") ? "leaf.fill" : "mappin"))
                             .foregroundStyle(.white).frame(width: 44, height: 44).background(marker.color, in: .circle)
@@ -255,14 +294,81 @@ private struct ScoutReportMap: View {
                 }
             }
         }.mapStyle(.hybrid)
+            .onMapCameraChange(frequency: .continuous) { context in
+                cameraDistance = context.camera.distance; cameraRevision += 1
+            }
+            .onTapGesture { point in
+                guard let coordinate = proxy.convert(point, from: .local) else { return }
+                if let block = blocks.first(where: { $0.polygonPoints.count >= 3 &&
+                    RowGuidance.isPointInPolygon(point: coordinate, polygon: $0.polygonPoints.map(\.coordinate)) }) {
+                    selectBlock(block.id)
+                }
+            }
+            .overlay {
+                GeometryReader { geometry in
+                    ForEach(blockLabels(proxy: proxy, size: geometry.size)) { label in
+                        Button { selectBlock(label.block.id) } label: {
+                            VStack(spacing: 2) {
+                                Text(label.block.name).font(.caption.bold()).lineLimit(1)
+                                if cameraDistance < 1_500 {
+                                    Text(label.block.varietyAllocations.compactMap {
+                                        PaddockVarietyResolver.resolve(allocation: $0, varieties: store.grapeVarieties).displayName
+                                    }.joined(separator: ", ")).font(.caption2).lineLimit(1)
+                                }
+                            }.padding(.horizontal, 6).frame(width: 120, height: 44)
+                                .foregroundStyle(.primary).background(.regularMaterial, in: .rect(cornerRadius: 8))
+                        }.buttonStyle(.plain).position(label.point)
+                    }
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 VStack {
-                    Button("Recenter") { fitAllLocations() }.buttonStyle(.borderedProminent)
-                    if showsUserLocation { Button("My location") { position = .userLocation(fallback: .automatic) }.buttonStyle(.bordered) }
+                    Button { fitAllLocations() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right").frame(width: 44, height: 44) }
+                        .accessibilityLabel("Recenter vineyard").buttonStyle(.bordered)
+                    if showsUserLocation {
+                        Button { position = .userLocation(fallback: .automatic) } label: { Image(systemName: "location.fill").frame(width: 44, height: 44) }
+                            .accessibilityLabel("My location").buttonStyle(.bordered)
+                    }
                 }.padding(10)
             }
             .onAppear { fitAllLocations() }.onChange(of: boundsKey) { _, _ in fitAllLocations() }
+            .sheet(isPresented: Binding(get: { detailBlockID != nil }, set: { if !$0 { detailBlockID = nil } })) {
+                if let block = blocks.first(where: { $0.id == detailBlockID }) {
+                    ScrollView { ScoutBlockDetails(block: block).padding() }
+                }
+            }
+        }
     }
+
+    private func selectBlock(_ id: UUID) {
+        if let onSelectBlock { onSelectBlock(id) } else { detailBlockID = id }
+    }
+
+    // Offsets are screen-only. Polygon vertices and recorded GPS are never changed.
+    private func blockLabels(proxy: MapProxy, size: CGSize) -> [BlockLabel] {
+        _ = cameraRevision
+        var occupied = [CGRect(x: size.width - 84, y: 0, width: 84, height: 140)]
+        occupied += markers.compactMap { marker in
+            proxy.convert(marker.coordinate, to: .local).map { CGRect(x: $0.x - 24, y: $0.y - 24, width: 48, height: 48) }
+        }
+        var labels: [BlockLabel] = []
+        let viewport = CGRect(origin: .zero, size: size).insetBy(dx: 4, dy: 4)
+        for block in blocks.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            let polygon = block.polygonPoints.compactMap { ScoutReportPresentation.coordinate($0.latitude, $0.longitude) }
+            guard polygon.count >= 3, polygon.count == block.polygonPoints.count else { continue }
+            let centre = CLLocationCoordinate2D(latitude: polygon.map(\.latitude).reduce(0, +) / Double(polygon.count),
+                longitude: polygon.map(\.longitude).reduce(0, +) / Double(polygon.count))
+            guard let point = proxy.convert(centre, to: .local), viewport.contains(point) else { continue }
+            for offset in [CGPoint.zero, CGPoint(x: 0, y: -48), CGPoint(x: 0, y: 48), CGPoint(x: -128, y: 0), CGPoint(x: 128, y: 0)] {
+                let anchor = CGPoint(x: point.x + offset.x, y: point.y + offset.y)
+                let rect = CGRect(x: anchor.x - 60, y: anchor.y - 22, width: 120, height: 44)
+                guard viewport.contains(rect), !occupied.contains(where: { $0.intersects(rect.insetBy(dx: -4, dy: -4)) }) else { continue }
+                labels.append(BlockLabel(block: block, point: anchor)); occupied.append(rect); break
+            }
+        }
+        return labels
+    }
+
     private func fitAllLocations() {
         var rect = MKMapRect.null
         for coordinate in points {

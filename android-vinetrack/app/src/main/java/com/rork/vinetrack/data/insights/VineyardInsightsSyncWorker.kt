@@ -1,6 +1,9 @@
 package com.rork.vinetrack.data.insights
 
 import java.time.Instant
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 /**
  * Replay worker for Scout and Vintage Notes.
@@ -33,6 +36,24 @@ class VineyardInsightsSyncWorker(
     private val canApplyServerResults: () -> Boolean = { true },
 ) {
 
+    private suspend fun checkActive() {
+        currentCoroutineContext().ensureActive()
+        if (!canApplyServerResults()) throw CancellationException("Insights session changed")
+    }
+
+    private suspend fun <T> attempt(block: suspend () -> T): Result<T> {
+        checkActive()
+        return try {
+            val result = block()
+            checkActive()
+            Result.success(result)
+        } catch (error: Exception) {
+            checkActive()
+            if (error is CancellationException) throw error
+            Result.failure(error)
+        }
+    }
+
     /** What one sync attempt did, for the caller to surface. */
     data class Outcome(
         val pushed: Int = 0,
@@ -43,6 +64,7 @@ class VineyardInsightsSyncWorker(
     )
 
     suspend fun sync(vineyardId: String, refreshGraph: Boolean = true, refreshCatalogue: Boolean = true): Outcome {
+        checkActive()
         if (!store.repairMissingObligations()) {
             return Outcome(error = "Local changes could not be prepared safely for sync.")
         }
@@ -68,6 +90,7 @@ class VineyardInsightsSyncWorker(
     // ------------------------------------------------------------ Deletions
 
     suspend fun pullDeletions(vineyardId: String): Outcome = try {
+        checkActive()
         val cursor = store.deletionCursor(vineyardId)
         val rows = repository.fetchDeletions(vineyardId, cursor?.deletedAt)
             .filter { row ->
@@ -77,8 +100,9 @@ class VineyardInsightsSyncWorker(
                     deletedAt > previous ||
                     (deletedAt == previous && cursor != null && row.id > cursor.ledgerId))
             }
-        if (!canApplyServerResults()) return Outcome()
+        checkActive()
         for (row in rows) {
+            checkActive()
             val localPaths = if (row.entityType == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT.code) {
                 val visitPaths = store.loadVisits().firstOrNull {
                     it.id == row.entityId && it.vineyardId == vineyardId
@@ -108,6 +132,8 @@ class VineyardInsightsSyncWorker(
         }
         Outcome()
     } catch (e: Exception) {
+        checkActive()
+        if (e is CancellationException) throw e
         Outcome(error = e.message ?: "Could not refresh deletions yet.")
     }
 
@@ -115,9 +141,13 @@ class VineyardInsightsSyncWorker(
         var error: String? = null
         store.loadObjectCleanup().filter { it.vineyardId == vineyardId }.forEach { item ->
             try {
+                checkActive()
                 repository.removePhotoObject(item.storagePath)
+                checkActive()
                 store.acknowledgeObjectCleanup(item.storagePath)
             } catch (e: Exception) {
+                checkActive()
+                if (e is CancellationException) throw e
                 store.recordObjectCleanupFailure(item.storagePath)
                 error = e.message ?: "Could not clean up a photograph yet."
             }
@@ -126,13 +156,20 @@ class VineyardInsightsSyncWorker(
     }
 
     suspend fun processServerPhotoCleanup(vineyardId: String): Outcome = try {
+        checkActive()
         var error: String? = null
-        repository.claimPhotoCleanup(vineyardId).forEach { item ->
+        val items = repository.claimPhotoCleanup(vineyardId)
+        checkActive()
+        items.forEach { item ->
             try {
+                checkActive()
                 repository.removePhotoObject(item.storagePath)
+                checkActive()
                 repository.acknowledgePhotoCleanup(item.id, item.leaseToken)
             } catch (e: Exception) {
-                runCatching {
+                checkActive()
+                if (e is CancellationException) throw e
+                attempt {
                     repository.failPhotoCleanup(
                         item.id,
                         item.leaseToken,
@@ -144,14 +181,17 @@ class VineyardInsightsSyncWorker(
         }
         Outcome(error = error)
     } catch (e: Exception) {
+        checkActive()
+        if (e is CancellationException) throw e
         Outcome(error = e.message ?: "Could not load photograph cleanup work yet.")
     }
 
     // ------------------------------------------------------------ Push
 
     suspend fun pullNoteTypes(vineyardId: String): Outcome = try {
+        checkActive()
         val rows = repository.fetchNoteTypes(vineyardId)
-        if (!canApplyServerResults()) return Outcome()
+        checkActive()
         val types = rows.filter { it.deletedAt == null }
             .mapNotNull { row ->
                 VintageNoteGroup.byCode(row.groupCode)?.let { group ->
@@ -165,6 +205,8 @@ class VineyardInsightsSyncWorker(
             Outcome()
         }
     } catch (e: Exception) {
+        checkActive()
+        if (e is CancellationException) throw e
         Outcome(error = e.message ?: "Could not load note types yet.")
     }
 
@@ -172,6 +214,7 @@ class VineyardInsightsSyncWorker(
         var pushed = 0
         var error: String? = null
         for (type in store.pendingNoteTypes(vineyardId)) {
+            checkActive()
             val id = type.databaseId ?: continue
             try {
                 repository.upsertNoteType(
@@ -181,10 +224,12 @@ class VineyardInsightsSyncWorker(
                         sortOrder = type.sortOrder, isActive = type.isActive,
                     ),
                 )
-                check(canApplyServerResults()) { "Session changed during note type sync." }
+                checkActive()
                 check(store.markNoteTypeSynced(id)) { "Could not save the note type acknowledgement." }
                 pushed += 1
             } catch (e: Exception) {
+                checkActive()
+                if (e is CancellationException) throw e
                 error = e.message ?: "Could not sync a custom note type yet."
             }
         }
@@ -195,6 +240,7 @@ class VineyardInsightsSyncWorker(
         var pushed = 0
         var error: String? = null
         for (entry in store.loadQueue().filter { vineyardId == null || it.vineyardId == vineyardId }) {
+            checkActive()
             if (entry.entity == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT &&
                 entry.operation != VineyardInsightsStore.QueuedOperation.Operation.DELETE &&
                 store.loadQueue().any { it.entity == entry.entity && it.recordId == entry.recordId &&
@@ -207,10 +253,12 @@ class VineyardInsightsSyncWorker(
                         null
                     }
                 }
-                check(canApplyServerResults()) { "Session changed during Insights sync." }
+                checkActive()
                 check(store.dequeue(entry.id, acknowledgedVersion)) { "Could not save the sync acknowledgement." }
                 pushed += 1
             } catch (e: Exception) {
+                checkActive()
+                if (e is CancellationException) throw e
                 // Left queued deliberately: the local record is intact, so a
                 // later attempt can still deliver it.
                 error = e.message ?: "Could not sync yet."
@@ -221,15 +269,15 @@ class VineyardInsightsSyncWorker(
     }
 
     private suspend fun pushVisit(entry: VineyardInsightsStore.QueuedOperation): Long? {
+        checkActive()
         if (entry.operation == VineyardInsightsStore.QueuedOperation.Operation.DELETE) {
-            check(canApplyServerResults()) { "Session changed; local Scout retained." }
             repository.hardDeleteVisit(
                 entry.recordId,
                 entry.vineyardId,
                 entry.id,
                 entry.clientUpdatedAtIso,
             )
-            check(canApplyServerResults()) { "Session changed; local Scout retained." }
+            checkActive()
             // Cleanup is durable and eligible only AFTER the canonical RPC succeeds.
             val visitPaths = store.loadVisits().firstOrNull { it.id == entry.recordId && it.vineyardId == entry.vineyardId }
                 ?.assessments?.flatMap { it.observations }?.flatMap { it.photos }?.mapNotNull { it.localPath }.orEmpty()
@@ -337,6 +385,7 @@ class VineyardInsightsSyncWorker(
     }
 
     private suspend fun pushNote(entry: VineyardInsightsStore.QueuedOperation) {
+        checkActive()
         if (entry.operation == VineyardInsightsStore.QueuedOperation.Operation.DELETE) {
             repository.hardDeleteNote(
                 entry.recordId,
@@ -371,7 +420,7 @@ class VineyardInsightsSyncWorker(
         check(returned != null && returned.id == entry.recordId && returned.vineyardId == entry.vineyardId) {
             "The server did not acknowledge this Vintage Note."
         }
-        check(canApplyServerResults()) { "Session changed during Vintage Note sync." }
+        checkActive()
         applyNoteRow(returned)
     }
 
@@ -399,6 +448,7 @@ class VineyardInsightsSyncWorker(
         var uploaded = 0
         var error: String? = null
         for (entry in store.loadPhotoQueue().filter { it.vineyardId == vineyardId }) {
+            checkActive()
             if (store.loadQueue().any { it.recordId == entry.visitId &&
                     it.entity == VineyardInsightsStore.QueuedOperation.Entity.SCOUT_VISIT &&
                     it.operation == VineyardInsightsStore.QueuedOperation.Operation.DELETE }) continue
@@ -416,13 +466,16 @@ class VineyardInsightsSyncWorker(
                 // referenced by nothing, so it is removed rather than left as
                 // unreachable clutter; a committed row is tombstoned instead.
                 step.orphanedStoragePath?.let { orphan ->
-                    runCatching { repository.removePhotoObject(orphan) }
+                    if (!store.queueObjectCleanup(vineyardId, orphan)) return Outcome(error = "Could not preserve photograph cleanup. Retry sync.")
+                    if (attempt { repository.removePhotoObject(orphan) }.isSuccess) store.acknowledgeObjectCleanup(orphan)
+                    else error = "Photograph cleanup is still pending. Retry sync."
                 }
                 if (entry.rowCommitted) {
-                    store.photoDeletionRevision(entry.id, entry.vineyardId, nowIso())?.let { revision ->
-                        runCatching { repository.softDeletePhoto(revision) }
-                    }
+                    val revision = store.photoDeletionRevision(entry.id, entry.vineyardId, nowIso())
+                        ?: return Outcome(error = "Could not preserve photograph deletion. Retry sync.")
+                    if (attempt { repository.softDeletePhoto(revision) }.isFailure) error = "Photograph deletion is still pending. Retry sync."
                 }
+                checkActive()
                 store.dequeuePhoto(entry.id)
                 continue
             }
@@ -448,8 +501,10 @@ class VineyardInsightsSyncWorker(
                     // Refuses if the operator deleted the photograph while this
                     // upload was in flight — the entry is gone and must not be
                     // recreated by its own callback.
+                    checkActive()
                     if (!store.markPhotoObjectUploaded(entry.id, path)) {
-                        runCatching { repository.removePhotoObject(path) }
+                        check(store.queueObjectCleanup(vineyardId, path)) { "Could not preserve photograph cleanup." }
+                        if (attempt { repository.removePhotoObject(path) }.isSuccess) store.acknowledgeObjectCleanup(path)
                         continue
                     }
                 }
@@ -474,6 +529,7 @@ class VineyardInsightsSyncWorker(
                         clientRevisionId = entry.id,
                     ),
                 )
+                checkActive()
                 if (!store.markPhotoRowCommitted(entry.id)) continue
 
                 // ---- completed ------------------------------------------------
@@ -482,6 +538,8 @@ class VineyardInsightsSyncWorker(
                 store.dequeuePhoto(entry.id)
                 uploaded += 1
             } catch (e: Exception) {
+                checkActive()
+                if (e is CancellationException) throw e
                 // The local photograph and its queue entry are both retained, so
                 // a half-finished upload stays retryable. A failed upload must
                 // never present as a lost photograph.
@@ -502,7 +560,7 @@ class VineyardInsightsSyncWorker(
      * object nobody can ever see or clean up.
      */
     suspend fun removeOrphanedPhotoObject(storagePath: String): Boolean =
-        runCatching { repository.removePhotoObject(storagePath) }.isSuccess
+        attempt { repository.removePhotoObject(storagePath) }.isSuccess
 
     /**
      * Tombstone a fully stored photograph's metadata row. The storage object is
@@ -510,7 +568,7 @@ class VineyardInsightsSyncWorker(
      * rather than destroying the record of a real observation.
      */
     suspend fun tombstonePhoto(revision: VineyardInsightsStore.PhotoDeletionRevision): Boolean =
-        runCatching { repository.softDeletePhoto(revision) }.isSuccess
+        attempt { repository.softDeletePhoto(revision) }.isSuccess
 
     private fun findPhoto(photoId: String): ScoutPhoto? =
         store.loadVisits().asSequence()
@@ -563,22 +621,23 @@ class VineyardInsightsSyncWorker(
     /** Pull the server's view so another device's or session's work appears. */
     suspend fun pull(vineyardId: String): Outcome {
         return try {
+            checkActive()
             // System Admin preview uses a complete active-graph pull. This is
             // server-authoritative and cannot miss a changed child because its
             // parent row did not change or because a client clock was skewed.
             var downloadError: String? = null
             val noteRows = repository.fetchNotes(vineyardId, null)
-            if (!canApplyServerResults()) return Outcome()
+            checkActive()
             val visitRows = repository.fetchVisits(vineyardId, null)
-            if (!canApplyServerResults()) return Outcome()
+            checkActive()
             if (visitRows.isNotEmpty()) {
                 val assessmentRows = repository.fetchAssessments(vineyardId, visitRows.map { it.id })
-                if (!canApplyServerResults()) return Outcome()
+                checkActive()
                 val observationRows =
                     repository.fetchObservations(vineyardId, assessmentRows.map { it.id })
-                if (!canApplyServerResults()) return Outcome()
+                checkActive()
                 val photoRows = repository.fetchPhotos(vineyardId, observationRows.map { it.id })
-                if (!canApplyServerResults()) return Outcome()
+                checkActive()
                 val deletionIntents = store.photoDeletionIntents()
                 photoRows.filter { it.id in deletionIntents && it.deletedAt == null }.forEach { photo ->
                     store.photoDeletionRevision(photo.id, photo.vineyardId, nowIso())
@@ -588,9 +647,9 @@ class VineyardInsightsSyncWorker(
                     val files = photoFiles
                     val localPath = files?.relativePath(photo.vineyardId, photo.observationId, photo.id)
                     if (files != null && localPath != null && !files.exists(localPath)) {
-                        runCatching { repository.downloadPhotoBytes(photo.storagePath) }
+                        attempt { repository.downloadPhotoBytes(photo.storagePath) }
                             .onSuccess { bytes ->
-                                if (!canApplyServerResults()) return@onSuccess
+                                checkActive()
                                 if (files.write(bytes, photo.vineyardId, photo.observationId, photo.id) == null) {
                                     failedDownloads += photo.id
                                 }
@@ -598,7 +657,7 @@ class VineyardInsightsSyncWorker(
                             .onFailure { failedDownloads += photo.id }
                     }
                 }
-                if (!canApplyServerResults()) return Outcome()
+                checkActive()
                 if (failedDownloads.isNotEmpty()) downloadError = "Some Scout photographs could not be downloaded. Retry sync; local photographs are retained."
                 visitRows.forEach { row ->
                     applyVisitRow(
@@ -610,10 +669,12 @@ class VineyardInsightsSyncWorker(
                     )
                 }
             }
-            if (!canApplyServerResults()) return Outcome()
+            checkActive()
             noteRows.forEach { applyNoteRow(it) }
             Outcome(pulledVisits = visitRows.size, pulledNotes = noteRows.size, error = downloadError)
         } catch (e: Exception) {
+            checkActive()
+            if (e is CancellationException) throw e
             Outcome(error = e.message ?: "Could not refresh yet.")
         }
     }

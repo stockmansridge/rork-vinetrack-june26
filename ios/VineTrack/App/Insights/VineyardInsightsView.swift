@@ -36,7 +36,7 @@ struct VineyardInsightsView: View {
         }
         .navigationTitle(VineyardInsightsCatalog.toolTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: store.selectedVineyardId) {
+        .task(id: "\(auth.userId?.uuidString ?? "signed-out"):\(store.selectedVineyardId?.uuidString ?? "none"):\(access.isAllowed)") {
             guard access.isAllowed, let vineyardID = store.selectedVineyardId else { return }
             await insights.sync(vineyardID: vineyardID)
         }
@@ -219,6 +219,8 @@ struct ScoutWorkspaceView: View {
     @State private var observationUserID: UUID?
     @State private var blockSelectionReason: String?
     @State private var creatingStop: Bool = false
+    @State private var preparingNewTrip: Bool = false
+    @State private var observationVineyardID: UUID?
 
     private var observationBlocks: [Paddock] {
         store.paddocks.filter { $0.vineyardId == store.selectedVineyardId }
@@ -268,6 +270,9 @@ struct ScoutWorkspaceView: View {
                         Text("Earlier work is still saved. Try the change again before leaving this Scout.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        if let visit = openVisit, visit.isEditable, !insights.deletionPending(visitID: visit.id) {
+                            Button("Retry saving draft") { _ = insights.saveObservationDraft(visitID: visit.id) }
+                        }
                     }
                 }
             }
@@ -281,27 +286,41 @@ struct ScoutWorkspaceView: View {
                 }
                 visitSections(visit)
                     .disabled(insights.deletionPending(visitID: visit.id))
+            } else if preparingNewTrip {
+                Section {
+                    Button { prepareObservation() } label: {
+                        Text("Make observation").frame(maxWidth: .infinity, minHeight: 48)
+                    }
+                    .buttonStyle(.borderedProminent).tint(VineyardTheme.leafGreen)
+                    .disabled(showsBlockSelection || creatingStop)
+                    ScoutWorkspaceMap(visit: nil, selectedBlockID: $selectedMapBlockID)
+                        .listRowInsets(EdgeInsets())
+                }
             } else {
                 listSections
             }
         }
-        .navigationTitle(editingStopID == nil ? "Scout Trip" : "Observation")
+        .navigationTitle(preparingNewTrip && openVisit == nil ? "New Scout Trip" : (editingStopID == nil ? "Scout Trip" : "Observation"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if openVisit != nil {
+            if openVisit != nil || preparingNewTrip {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         if editingStopID != nil { confirmsLeaveObservation = true }
-                        else { insights.openVisit(nil) }
+                        else { preparingNewTrip = false; cancelBlockSelection(); insights.openVisit(nil) }
                     } label: {
                         Label("Scout history", systemImage: "chevron.left")
                     }
                 }
             }
         }
-        .navigationBarBackButtonHidden(openVisit != nil)
-        .onChange(of: openVisit?.id) { _, _ in editingStopID = nil; selectedMapBlockID = nil; cancelBlockSelection() }
-        .onChange(of: auth.userId) { _, _ in cancelBlockSelection() }
+        .navigationBarBackButtonHidden(openVisit != nil || preparingNewTrip)
+        .onChange(of: openVisit?.id) { _, _ in
+            if openVisit?.assessments.contains(where: { $0.id == editingStopID }) != true { editingStopID = nil }
+            selectedMapBlockID = nil; cancelBlockSelection()
+        }
+        .onChange(of: auth.userId) { _, _ in preparingNewTrip = false; cancelBlockSelection() }
+        .onChange(of: store.selectedVineyardId) { _, _ in preparingNewTrip = false; editingStopID = nil; cancelBlockSelection() }
         .onAppear { locationService.startUpdating() }
         .confirmationDialog("Return to Scout Trip?", isPresented: $confirmsLeaveObservation, titleVisibility: .visible) {
             Button("Keep draft and return") {
@@ -465,15 +484,9 @@ struct ScoutWorkspaceView: View {
     private var listSections: some View {
         Section {
             Button {
-                guard let vineyardID = store.selectedVineyardId else { return }
-                let visit = insights.startVisit(
-                    vineyardID: vineyardID,
-                    scoutUserID: auth.userId,
-                    scoutName: auth.userName,
-                    seasonStartMonth: store.settings.seasonStartMonth,
-                    seasonStartDay: store.settings.seasonStartDay
-                )
-                Task { await insights.captureWeather(visitID: visit.id) }
+                guard store.selectedVineyardId != nil else { return }
+                selectedMapBlockID = nil; observationError = nil
+                preparingNewTrip = true
             } label: {
                 Label("New Scout Trip", systemImage: "plus.circle.fill")
             }
@@ -585,7 +598,7 @@ struct ScoutWorkspaceView: View {
             }
             ScoutAssessmentSection(visitID: visit.id, assessment: assessment,
                 paddock: store.paddocks.first { $0.id == assessment.paddockID }, vintageYear: visit.vintageYear,
-                isEditable: visit.isEditable,
+                isEditable: visit.isEditable && !insights.lastWriteFailed,
                 onRequestGrowthStage: { growthPickerRequest = .init(visitID: visit.id, assessment: assessment, paddockID: assessment.paddockID) },
                 onRequestPhoto: { cameraRequest = .init(visitID: visit.id, assessmentID: assessment.id, item: $0) })
             Section {
@@ -652,16 +665,18 @@ struct ScoutWorkspaceView: View {
 
     private func cancelBlockSelection() {
         showsBlockSelection = false; detectedBlockID = nil; observationFix = nil
-        observationVisitID = nil; observationUserID = nil; blockCorrectionStopID = nil
+        observationVisitID = nil; observationUserID = nil; observationVineyardID = nil; blockCorrectionStopID = nil
         blockSelectionReason = nil
     }
 
     private func prepareObservation() {
         guard !showsBlockSelection, !creatingStop, editingStopID == nil,
-              let visit = openVisit, visit.isEditable, !insights.deletionPending(visitID: visit.id) else { return }
+              let vineyardID = store.selectedVineyardId,
+              preparingNewTrip || openVisit != nil else { return }
+        if let visit = openVisit, !visit.isEditable || insights.deletionPending(visitID: visit.id) { return }
         selectedMapBlockID = nil; detectedBlockID = nil; blockCorrectionStopID = nil
         observationError = nil; observationFix = nil
-        observationVisitID = visit.id; observationUserID = auth.userId
+        observationVisitID = openVisit?.id; observationUserID = auth.userId; observationVineyardID = vineyardID
         locationService.startUpdating()
         if locationService.authorizationStatus == .authorizedAlways || locationService.authorizationStatus == .authorizedWhenInUse,
            let fix = qualifyingFix() {
@@ -685,11 +700,27 @@ struct ScoutWorkspaceView: View {
 
     private func beginObservation() {
         guard showsBlockSelection, !creatingStop, editingStopID == nil,
-              let visit = openVisit, visit.id == observationVisitID, auth.userId == observationUserID,
-              visit.isEditable, !insights.deletionPending(visitID: visit.id),
+              openVisit?.id == observationVisitID, auth.userId == observationUserID,
+              let vineyardID = observationVineyardID, vineyardID == store.selectedVineyardId,
               let blockID = selectedMapBlockID, observationBlocks.contains(where: { $0.id == blockID }) else { return }
         creatingStop = true
         defer { creatingStop = false }
+        let isNewTrip = openVisit == nil
+        let visit: ScoutVisit
+        if let existing = openVisit { visit = existing }
+        else {
+            guard preparingNewTrip else { return }
+            visit = insights.startVisit(vineyardID: vineyardID, scoutUserID: auth.userId,
+                scoutName: auth.userName, seasonStartMonth: store.settings.seasonStartMonth,
+                seasonStartDay: store.settings.seasonStartDay)
+            preparingNewTrip = false
+        }
+        guard visit.isEditable, !insights.deletionPending(visitID: visit.id),
+              insights.saveObservationDraft(visitID: visit.id) else {
+            observationError = "The trip draft could not be saved. Retry before collecting observations."
+            cancelBlockSelection(); return
+        }
+        if isNewTrip { Task { await insights.captureWeather(visitID: visit.id) } }
         if let id = insights.beginStop(visitID: visit.id, paddockID: blockID, observerID: auth.userId,
             observerName: auth.userName, fix: detectedBlockID == blockID ? observationFix : nil) {
             editingStopID = id; cancelBlockSelection()

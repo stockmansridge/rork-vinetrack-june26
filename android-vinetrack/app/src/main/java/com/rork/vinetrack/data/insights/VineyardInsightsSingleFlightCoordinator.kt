@@ -1,5 +1,9 @@
 package com.rork.vinetrack.data.insights
 
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -12,7 +16,9 @@ class VineyardInsightsSingleFlightCoordinator {
     private var generation: Long = 0
 
     suspend fun request(vineyardId: String, runPass: suspend () -> Unit) {
+        currentCoroutineContext().ensureActive()
         val requestGeneration: Long
+        val ownedState = State(isRunning = true)
         val shouldRun = mutex.withLock {
             requestGeneration = generation
             val state = states.getOrPut(vineyardId) { State() }
@@ -20,29 +26,36 @@ class VineyardInsightsSingleFlightCoordinator {
                 state.needsAnotherPass = true
                 false
             } else {
-                state.isRunning = true
+                states[vineyardId] = ownedState
                 true
             }
         }
         if (!shouldRun) return
 
-        while (true) {
-            val failure = runCatching { runPass() }.exceptionOrNull()
-            val continueRunning = mutex.withLock {
-                if (requestGeneration != generation) return@withLock false
-                val state = states[vineyardId] ?: return@withLock false
-                if (state.needsAnotherPass) {
-                    state.needsAnotherPass = false
-                    true
-                } else {
-                    state.isRunning = false
-                    states.remove(vineyardId)
-                    false
+        try {
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                runPass()
+                currentCoroutineContext().ensureActive()
+                val continueRunning = mutex.withLock {
+                    if (requestGeneration != generation) return@withLock false
+                    val state = states[vineyardId] ?: return@withLock false
+                    if (state.needsAnotherPass) {
+                        state.needsAnotherPass = false
+                        true
+                    } else {
+                        states.remove(vineyardId)
+                        false
+                    }
                 }
+                if (!continueRunning) return
             }
-            if (!continueRunning) {
-                if (failure != null) throw failure
-                return
+        } finally {
+            // Only release bookkeeping; never finish network/storage work in a cancelled job.
+            withContext(NonCancellable) {
+                mutex.withLock {
+                    if (requestGeneration == generation && states[vineyardId] === ownedState) states.remove(vineyardId)
+                }
             }
         }
     }
