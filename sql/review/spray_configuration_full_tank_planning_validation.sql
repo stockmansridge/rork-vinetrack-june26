@@ -1,3 +1,6 @@
+-- OBSOLETE v1 HARNESS: intentionally disabled after the unapplied v2 draft amendment.
+-- Do not cite prior v1 runs as v2 validation. Review/update this harness before use.
+\quit
 -- LOCAL NON-PRODUCTION CONTRACT HARNESS ONLY. Never run on an existing database.
 -- Invoke psql on a fresh disposable database with ON_ERROR_STOP=1.
 -- These representative tables test the draft's additive contract, not a staging clone.

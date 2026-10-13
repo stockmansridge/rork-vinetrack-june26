@@ -1,39 +1,52 @@
--- REVIEW DRAFT ONLY. Not applied; not registered as an automatic migration.
--- New calculator intent belongs to the existing records and shared job/template rows.
--- No backfill/default: NULL means historical configuration or planning intent unknown.
--- Existing applied_litres_per_100m remains PER PHYSICAL VINE ROW, not controller travel.
--- Existing geometry, tanks, chemical snapshots, actuals, inventory and RLS are untouched.
--- Agreed partial-area policy: store target as PLANNED area only; collect actual
--- block/row coverage during the Trip. Do not proportionally invent block coverage.
--- Agreed concentrate policy: comparison/warning may be displayed, but affected
--- dilute-rate concentrated recipes must block save/start until label permission
--- and limits are verified. This draft does not create chemical label authority.
--- Schema approval and application integration are required before deployment.
--- A numeric concentration_factor is never label authorisation.
+-- REVIEW DRAFT v2 ONLY. DO NOT APPLY ANYWHERE WITHOUT REVIEW/APPROVAL.
+-- Supersedes the unapplied v1 draft; NOT an upgrade for a database containing v1.
+-- No automatic migration registration, backfill, default, policy, grant or trigger.
+-- NULL means unknown, not Standard Pass. Planned hectares are NOT Trip actuals.
+-- CF and raw operator text are evidence, NEVER verified chemical label authority.
+-- Existing geometry/tanks/chemical quantities/actuals remain untouched.
+-- Current v1 client adapters and validation harness MUST change before acceptance.
+-- Restore the current full schema + custom roles, not migration history, for staging.
 
 begin;
 
+-- Inputs, resolved values and controller outputs have distinct storage locations.
+-- 'intended' is the operator's requested fill, NOT equipment maximum tank capacity.
 alter table public.spray_records
   add column if not exists sprayer_configuration text,
   add column if not exists spray_planning_method text,
   add column if not exists full_tank_specification text,
-  add column if not exists planned_application_area_ha numeric,
-  add column if not exists planning_tank_capacity_litres numeric,
+  add column if not exists planning_input_provenance jsonb,
+  add column if not exists planning_intended_tank_litres numeric,
+  add column if not exists planning_target_area_ha numeric,
   add column if not exists planning_calibrated_litres_per_hectare numeric,
+  add column if not exists planned_application_area_ha numeric,
+  add column if not exists resolved_planning_carrier_litres numeric,
+  add column if not exists resolved_planning_litres_per_hectare numeric,
+  add column if not exists resolved_planning_physical_row_litres_per_100m numeric,
+  add column if not exists resolved_planning_concentration_factor numeric,
   add column if not exists controller_litres_per_100m_travel numeric,
   add column if not exists effective_working_width_metres numeric;
 
+-- Reusable jobs/templates carry INPUTS only. New execution resolves fresh outputs;
+-- historical record outputs must never be reconstructed from a mutable job.
 alter table public.spray_jobs
   add column if not exists sprayer_configuration text,
   add column if not exists spray_planning_method text,
   add column if not exists full_tank_specification text,
-  add column if not exists planned_application_area_ha numeric,
-  add column if not exists planning_tank_capacity_litres numeric,
+  add column if not exists planning_input_provenance jsonb,
+  add column if not exists planning_intended_tank_litres numeric,
+  add column if not exists planning_target_area_ha numeric,
   add column if not exists planning_calibrated_litres_per_hectare numeric;
 
--- These constraints validate new intent values only, not chemical label compliance.
--- IS TRUE is deliberate: SQL CHECK otherwise accepts unknown/NULL predicates.
--- NaN and infinities are not valid operator inputs.
+-- Raw text is retained verbatim (including blank inactive/draft fields), not parsed
+-- by PostgreSQL. Units are unambiguous contract identifiers, not localized labels:
+-- volume_unit = litres/us_gallons/imperial_gallons; area_unit = hectares/acres;
+-- rate_area_unit = hectare/acre. Current local 'gallons' must be mapped explicitly
+-- using its captured country, never the current account's country on reopen.
+-- Provenance version 1: {schema_version:1,tank_text,area_text,rate_text,volume_unit,area_unit,
+--            rate_area_unit,country_code}; all seven non-version values are strings.
+-- Input canonicals belong to the three planning_* numeric input columns above.
+-- Positive/finite checks validate values, NOT operational completeness/permission.
 do $review$
 declare
   table_name text;
@@ -53,15 +66,39 @@ begin
     if not exists (select 1 from pg_constraint where conrelid = ('public.' || table_name)::regclass and conname = constraint_name) then
       execute format('alter table public.%I add constraint %I check (full_tank_specification is null or (spray_planning_method = ''full_tank'' and full_tank_specification in (''target_area'', ''calibrated_rate'')) is true)', table_name, constraint_name);
     end if;
-    foreach column_name in array array['planned_application_area_ha', 'planning_tank_capacity_litres', 'planning_calibrated_litres_per_hectare'] loop
+    constraint_name := table_name || '_planning_input_provenance_check';
+    if not exists (select 1 from pg_constraint where conrelid = ('public.' || table_name)::regclass and conname = constraint_name) then
+      execute format($shape$
+        alter table public.%I add constraint %I check (
+          planning_input_provenance is null or (
+            jsonb_typeof(planning_input_provenance) = 'object'
+            and planning_input_provenance -> 'schema_version' = '1'::jsonb
+            and planning_input_provenance ?& array['schema_version','tank_text','area_text','rate_text','volume_unit','area_unit','rate_area_unit','country_code']
+            and planning_input_provenance - array['schema_version','tank_text','area_text','rate_text','volume_unit','area_unit','rate_area_unit','country_code'] = '{}'::jsonb
+            and jsonb_typeof(planning_input_provenance -> 'tank_text') = 'string'
+            and jsonb_typeof(planning_input_provenance -> 'area_text') = 'string'
+            and jsonb_typeof(planning_input_provenance -> 'rate_text') = 'string'
+            and jsonb_typeof(planning_input_provenance -> 'volume_unit') = 'string'
+            and jsonb_typeof(planning_input_provenance -> 'area_unit') = 'string'
+            and jsonb_typeof(planning_input_provenance -> 'rate_area_unit') = 'string'
+            and jsonb_typeof(planning_input_provenance -> 'country_code') = 'string'
+            and planning_input_provenance ->> 'volume_unit' in ('litres','us_gallons','imperial_gallons')
+            and planning_input_provenance ->> 'area_unit' in ('hectares','acres')
+            and planning_input_provenance ->> 'rate_area_unit' in ('hectare','acre')
+            and length(btrim(planning_input_provenance ->> 'country_code')) > 0
+          ) is true
+        )
+      $shape$, table_name, constraint_name);
+    end if;
+    foreach column_name in array array['planning_intended_tank_litres', 'planning_target_area_ha', 'planning_calibrated_litres_per_hectare'] loop
       constraint_name := table_name || '_' || column_name || '_check';
       if not exists (select 1 from pg_constraint where conrelid = ('public.' || table_name)::regclass and conname = constraint_name) then
         execute format('alter table public.%I add constraint %I check (%I is null or (%I > 0 and %I::text not in (''NaN'', ''Infinity'', ''-Infinity'')) is true)', table_name, constraint_name, column_name, column_name, column_name);
       end if;
     end loop;
   end loop;
-  foreach column_name in array array['controller_litres_per_100m_travel', 'effective_working_width_metres'] loop
-    constraint_name := 'spray_records_' || column_name || '_check';
+  foreach column_name in array array['planned_application_area_ha', 'resolved_planning_carrier_litres', 'resolved_planning_litres_per_hectare', 'resolved_planning_physical_row_litres_per_100m', 'resolved_planning_concentration_factor', 'controller_litres_per_100m_travel', 'effective_working_width_metres'] loop
+    constraint_name := left('spray_records_' || column_name || '_check', 63);
     if not exists (select 1 from pg_constraint where conrelid = 'public.spray_records'::regclass and conname = constraint_name) then
       execute format('alter table public.spray_records add constraint %I check (%I is null or (%I > 0 and %I::text not in (''NaN'', ''Infinity'', ''-Infinity'')) is true)', constraint_name, column_name, column_name, column_name);
     end if;
@@ -69,11 +106,27 @@ begin
 end;
 $review$;
 
-comment on column public.spray_records.sprayer_configuration is 'Declared calculator configuration; NULL means not recorded, never infer Standard Pass for historical records.';
-comment on column public.spray_records.planned_application_area_ha is 'Planned area, distinct from selected-block gross area and actual applied area. Not proof of actual coverage or partial-block attribution.';
-comment on column public.spray_records.controller_litres_per_100m_travel is 'Frozen machine controller rate per 100m travelled. Do not replace the canopy/physical-vine-row applied_litres_per_100m snapshot.';
-comment on column public.spray_records.effective_working_width_metres is 'Frozen physical row spacing times declared complete-row equivalents per pass. Never modifies vineyard row spacing.';
-comment on column public.spray_jobs.sprayer_configuration is 'Reusable declared configuration; NULL means not recorded. Derive working width from current geometry for each new application.';
-comment on column public.spray_jobs.planned_application_area_ha is 'Reusable planned-area intent, not historical actual coverage; must be revalidated against selected blocks for a new application.';
+comment on column public.spray_records.planning_input_provenance is 'Versioned original operator text and selected unit/country identifiers; not resolved values, label permission or actual coverage.';
+comment on column public.spray_jobs.planning_input_provenance is 'Reusable original input evidence only; do not persist calculated execution outputs in this object.';
+comment on column public.spray_records.planning_target_area_ha is 'Canonical operator target-area input. NULL when no area input was supplied; never populate from a calculated area.';
+comment on column public.spray_jobs.planning_target_area_ha is 'Reusable canonical operator target-area input; revalidate for every execution.';
+comment on column public.spray_records.planned_application_area_ha is 'Frozen RESOLVED planned area; distinct from operator target, selected gross area, treated area and Trip actual coverage.';
+comment on column public.spray_records.planning_intended_tank_litres is 'Canonical requested fill INPUT, not equipment capacity and not resolved carrier output.';
+comment on column public.spray_jobs.planning_intended_tank_litres is 'Reusable requested fill INPUT, not equipment capacity.';
+comment on column public.spray_records.resolved_planning_carrier_litres is 'Frozen resolved carrier output; reopen verbatim, never infer from current equipment or Trip actuals.';
+comment on column public.spray_records.resolved_planning_litres_per_hectare is 'Frozen resolved canonical rate; may be derived rather than operator-entered.';
+comment on column public.spray_records.resolved_planning_physical_row_litres_per_100m is 'Frozen physical-vine-row rate, NOT travel-controller output; does not redefine applied_litres_per_100m.';
+comment on column public.spray_records.resolved_planning_concentration_factor is 'Frozen calculated CF only. Not verified label permission or a maximum concentration limit.';
+comment on column public.spray_records.controller_litres_per_100m_travel is 'Frozen controller output per 100m travelled; separate from physical-vine-row rate.';
+comment on column public.spray_records.effective_working_width_metres is 'Frozen spacing times declared row equivalents. Never modifies vineyard spacing.';
+comment on column public.spray_records.sprayer_configuration is 'Declared configuration; NULL means not recorded, never assume Standard Pass.';
 
+-- PATCH contract for future adapters: omitted = unchanged; SQL NULL = explicit clear.
+-- Edit a plan atomically: update raw + canonical INPUTS, invalidate all old OUTPUTS,
+-- then store freshly resolved outputs only after validation; never relabel outputs
+-- as inputs. Historical NULL rows remain NULL. Templates strip all outputs.
+-- Freeze/history protections, old SELECT */RPC consumers, column grants and
+-- malformed/mismatched-input execution admission MUST be tested on the full clone.
+-- Existing job four-field provenance-freeze trigger is NOT a freeze of these fields.
+-- No CHECK here approves execution or prevents privileged bypass of client gates.
 commit;
