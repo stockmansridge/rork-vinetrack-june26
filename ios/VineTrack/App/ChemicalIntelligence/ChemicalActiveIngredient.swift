@@ -51,6 +51,8 @@ nonisolated struct ChemicalActiveIngredient: Codable, Sendable, Hashable, Identi
     var concentration: Double?
     /// The unit the concentration is expressed in.
     var concentrationUnit: ChemicalConcentrationUnit?
+    /// Original unsupported/ambiguous stored wording. Never treated as an executable unit.
+    var unresolvedConcentrationUnit: String? = nil
     /// The resistance/activity group this active belongs to.
     /// `nil` = unknown, which is a legitimate and visible state.
     var activityGroup: ChemicalActivityGroup?
@@ -65,6 +67,7 @@ nonisolated struct ChemicalActiveIngredient: Codable, Sendable, Hashable, Identi
         name: String,
         concentration: Double? = nil,
         concentrationUnit: ChemicalConcentrationUnit? = nil,
+        unresolvedConcentrationUnit: String? = nil,
         activityGroup: ChemicalActivityGroup? = nil,
         groupSource: ChemicalDataSourceKind? = nil,
         identitySource: ChemicalDataSourceKind? = nil
@@ -72,6 +75,7 @@ nonisolated struct ChemicalActiveIngredient: Codable, Sendable, Hashable, Identi
         self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         self.concentration = concentration
         self.concentrationUnit = concentrationUnit
+        self.unresolvedConcentrationUnit = unresolvedConcentrationUnit
         self.activityGroup = activityGroup
         self.groupSource = groupSource
         self.identitySource = identitySource
@@ -91,8 +95,10 @@ nonisolated struct ChemicalActiveIngredient: Codable, Sendable, Hashable, Identi
             .trimmingCharacters(in: .whitespacesAndNewlines)
         concentration = try c.decodeIfPresent(Double.self, forKey: .concentration)
         if let rawUnit = try c.decodeIfPresent(String.self, forKey: .concentrationUnit) {
-            concentrationUnit = ChemicalConcentrationUnit(rawValue: rawUnit)
-                ?? ChemicalConcentrationUnit.parse(rawUnit)
+            let ambiguousPercent = ["%", "percent"].contains(rawUnit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+            concentrationUnit = ambiguousPercent ? nil : (ChemicalConcentrationUnit(rawValue: rawUnit)
+                ?? ChemicalConcentrationUnit.parse(rawUnit))
+            unresolvedConcentrationUnit = concentrationUnit == nil ? rawUnit : nil
         } else {
             concentrationUnit = nil
         }
@@ -109,8 +115,26 @@ nonisolated struct ChemicalActiveIngredient: Codable, Sendable, Hashable, Identi
         }
     }
 
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encodeIfPresent(concentration, forKey: .concentration)
+        if let concentrationUnit {
+            try c.encode(concentrationUnit, forKey: .concentrationUnit)
+        } else {
+            try c.encodeIfPresent(unresolvedConcentrationUnit, forKey: .concentrationUnit)
+        }
+        try c.encodeIfPresent(activityGroup, forKey: .activityGroup)
+        try c.encodeIfPresent(groupSource, forKey: .groupSource)
+        try c.encodeIfPresent(identitySource, forKey: .identitySource)
+    }
+
     /// `"Tebuconazole 200 g/L"`, or just the name when no concentration is known.
     nonisolated var displayLabel: String {
+        if let raw = unresolvedConcentrationUnit {
+            let amount = concentration.map { " \(Self.formatConcentration($0))" } ?? ""
+            return "\(name)\(amount) \(raw) — unit requires review"
+        }
         guard let concentration, let concentrationUnit else { return name }
         return "\(name) \(ChemicalActiveIngredient.formatConcentration(concentration)) \(concentrationUnit.label)"
     }

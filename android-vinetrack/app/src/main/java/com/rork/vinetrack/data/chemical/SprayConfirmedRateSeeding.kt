@@ -31,6 +31,7 @@ object SprayConfirmedRateSeeding {
      * ```
      */
     fun seedFor(chemical: SavedChemical): Seed? {
+        if (SprayRegisteredUseRates.productUnitReviewMessage(chemical) != null) return null
         val resolution = ChemicalSprayDefaultHandoff.resolutionFor(chemical.defaultRates) ?: return null
         if (SprayRegisteredUseRates.hasStructuredRates(chemical)) {
             val operationalUses = chemical.registeredUses.orEmpty().filter {

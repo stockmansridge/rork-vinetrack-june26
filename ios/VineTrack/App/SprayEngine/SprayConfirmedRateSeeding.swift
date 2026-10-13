@@ -84,6 +84,11 @@ nonisolated enum SprayConfirmedRateSeeding {
         line.overrideRate = nil
         line.operationalRateSource = nil
         line.operationalRateUnit = nil
+        if SprayRegisteredUseRates.productUnitReviewMessage(chemical) != nil {
+            line.selectedRateId = UUID()
+            line.basis = fallbackBasis
+            return
+        }
         if let selection = OperationalRateResolver.resolve(chemical: chemical), selection.source == .vineyardPreferred {
             applyOperational(selection, to: &line)
             return

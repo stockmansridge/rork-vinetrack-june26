@@ -554,7 +554,8 @@ struct SprayCalculatorView: View {
                 : (line.basis == .perHectare
                     ? chemical.ratePerHa.map { chemical.unit.toBase($0) }
                     : nil)
-            let hasInvalidStoredRate = line.operationalRateSource == nil && SprayRegisteredUseRates.hasInvalidStructuredRates(chemical)
+            let hasInvalidStoredRate = SprayRegisteredUseRates.productUnitReviewMessage(chemical) != nil
+                || (line.operationalRateSource == nil && SprayRegisteredUseRates.hasInvalidStructuredRates(chemical))
             let rate = hasInvalidStoredRate ? 0 : (line.overrideRate ?? seededRate ?? legacyScalarRate ?? 0)
             let chosenAreaBasis = productAreaBasis[line.id]
             let basis: SprayProductRateBasis = {
@@ -4583,7 +4584,8 @@ private struct CalcChemicalLineCard: View {
     }
 
     private var hasInvalidStoredRate: Bool {
-        line.operationalRateSource == nil && (selectedChemical.map(SprayRegisteredUseRates.hasInvalidStructuredRates) ?? false)
+        selectedChemical.flatMap(SprayRegisteredUseRates.productUnitReviewMessage) != nil
+            || (line.operationalRateSource == nil && (selectedChemical.map(SprayRegisteredUseRates.hasInvalidStructuredRates) ?? false))
     }
 
     // MARK: - P6 — rate basis as a primary control
@@ -5308,8 +5310,12 @@ private struct CalcChemicalLineCard: View {
     /// (`basis:"other"`) entry says so in the label's own words.
     @ViewBuilder
     private func rateGuidanceText(chem: SavedChemical, basisLabel: String) -> some View {
+        if let review = SprayRegisteredUseRates.concentrationUnitReviewMessage(chem) {
+            Text(review).foregroundStyle(.orange)
+        }
         if hasInvalidStoredRate {
-            Text("Invalid stored rate\nReview this chemical in Chemical Store before calculating.")
+            Text(SprayRegisteredUseRates.productUnitReviewMessage(chem)
+                 ?? "Invalid stored rate\nReview this chemical in Chemical Store before calculating.")
                 .foregroundStyle(.orange)
         } else if confirmedRange != nil {
             Text("This product's confirmed rate is a range. Type the rate you are "

@@ -72,7 +72,7 @@ enum class ChemicalConcentrationUnit(val raw: String) {
  * Mirrors the iOS `ChemicalActiveIngredient` JSON keys exactly so the value
  * round-trips across platforms.
  */
-@Serializable
+@Serializable(with = ChemicalActiveIngredientSerializer::class)
 data class ChemicalActiveIngredient(
     /** The active's common (ISO) name, e.g. `"Tebuconazole"`. */
     val name: String = "",
@@ -92,12 +92,18 @@ data class ChemicalActiveIngredient(
      */
     @SerialName("group_source") val groupSource: ChemicalDataSourceKind? = null,
     @SerialName("identity_source") val identitySource: ChemicalDataSourceKind? = null,
+    /** Original unsupported stored wording; preserved, never interpreted as a usable unit. */
+    val unresolvedConcentrationUnit: String? = null,
 ) {
     val id: String get() = name.lowercase()
 
     /** `"Tebuconazole 200 g/L"`, or just the name when no concentration is known. */
     val displayLabel: String
         get() {
+            unresolvedConcentrationUnit?.let { raw ->
+                val amount = concentration?.let { " ${formatConcentration(it)}" }.orEmpty()
+                return "$name$amount $raw — unit requires review"
+            }
             val c = concentration
             val u = concentrationUnit
             return if (c != null && u != null) "$name ${formatConcentration(c)} ${u.label}" else name

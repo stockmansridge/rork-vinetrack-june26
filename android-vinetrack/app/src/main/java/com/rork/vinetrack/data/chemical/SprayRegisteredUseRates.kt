@@ -89,8 +89,31 @@ object SprayRegisteredUseRates {
     fun selectableVineyardRates(chemical: SavedChemical): List<SpraySelectableRate> =
         vineyardRates(chemical).filter { it.isSelectable }
 
+    /** Unsupported active concentration units remain reference evidence, separate from application rates. */
+    fun concentrationUnitReviewMessage(chemical: SavedChemical): String? {
+        val units = chemical.activeIngredients.orEmpty().mapNotNull { it.unresolvedConcentrationUnit }.distinct().sorted()
+        if (units.isEmpty()) return null
+        return "Stored active concentration units ${units.joinToString(", ")} require independent review. No concentration basis inferred."
+    }
+
+    /** Dimensional disagreements remain intact and require independent review, not conversion. */
+    fun productUnitReviewMessage(chemical: SavedChemical): String? {
+        val units = chemical.registeredUses.orEmpty()
+            .filter { ChemicalManualEntry.isProductRateCarrier(it) || it.isViticultural }
+            .flatMap { it.rates }.mapNotNull(ChemicalLabelRateNormalizer::normalize)
+            .filter { it.basis != ChemicalLabelRateBasis.OTHER }.map { it.unit }.distinct().sorted()
+        if (units.none { !compatibleUnit(it, chemical.unit) }) return null
+        return "Product unit ${chemical.unit} conflicts with registered rate units ${units.joinToString(", ")}. Independent review required; no conversion applied."
+    }
+
+    private fun compatibleUnit(rateUnit: String, productUnit: String): Boolean {
+        val product = ChemicalDefaultRateValidity.canonicalUnit(productUnit) ?: return false
+        val rate = ChemicalDefaultRateValidity.canonicalUnit(rateUnit) ?: return false
+        return (rate in setOf("L", "mL")) == (product in setOf("L", "mL"))
+    }
+
     fun hasInvalidStructuredRates(chemical: SavedChemical): Boolean =
-        chemical.registeredUses.orEmpty()
+        productUnitReviewMessage(chemical) != null || chemical.registeredUses.orEmpty()
             .filter { ChemicalManualEntry.isProductRateCarrier(it) || it.isViticultural }
             .flatMap { it.rates }
             .any { ChemicalLabelRateNormalizer.normalize(it) == null }
@@ -120,10 +143,11 @@ object SprayRegisteredUseRates {
         }
     }
 
-    /** First actual offered row on a basis; ranges remain unresolved until the operator chooses a value. */
-    fun firstOffered(chemical: SavedChemical, basis: SprayCalculator.RateBasis): SpraySelectableRate? =
-        selectableVineyardRates(chemical).firstOrNull { it.basis == basis && it.preset == null }
-            ?: selectableVineyardRates(chemical).firstOrNull { it.basis == basis }
+    /** Basis selection cannot choose between distinct registered application conditions. */
+    fun firstOffered(chemical: SavedChemical, basis: SprayCalculator.RateBasis): SpraySelectableRate? {
+        val offered = selectableVineyardRates(chemical).filter { it.basis == basis && it.preset == null }
+        return if (hasStructuredRates(chemical)) offered.singleOrNull() else offered.firstOrNull()
+    }
 
     /** Validates a manual value against the selected label range in the label's own unit. */
     fun validateManual(text: String, rate: SpraySelectableRate?): Double? {
@@ -140,7 +164,10 @@ object SprayRegisteredUseRates {
         return buildList {
             for (use in uses) {
                 val entries = use.rates.mapNotNull { labelRate ->
-                    selectable(labelRate, use)?.takeIf { seen.add(it.id) }
+                    selectable(labelRate, use)?.let { entry ->
+                        if (compatibleUnit(entry.unit, chemical.unit)) entry
+                        else entry.copy(amount = SprayRateAmount.Unresolved, labelRange = null, labelRangeText = null)
+                    }?.takeIf { seen.add(it.id) }
                 }
                 addAll(entries)
                 for (only in entries.filter { it.isSelectable }) {

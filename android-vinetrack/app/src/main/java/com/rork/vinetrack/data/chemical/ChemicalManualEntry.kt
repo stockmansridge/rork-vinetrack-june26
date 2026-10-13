@@ -23,6 +23,7 @@ data class ChemicalManualActiveDraft(
      */
     val scheme: ChemicalActivityGroupScheme? = null,
     val groupCode: String = "",
+    val unresolvedConcentrationUnit: String? = null,
 )
 
 /** One label rate as the operator is typing it. */
@@ -298,6 +299,7 @@ object ChemicalManualEntry {
                 concentrationText = active.concentration
                     ?.let { formatChemicalNumber(it) } ?: "",
                 concentrationUnit = active.concentrationUnit,
+                unresolvedConcentrationUnit = active.unresolvedConcentrationUnit,
                 scheme = active.activityGroup?.scheme,
                 groupCode = active.activityGroup?.code ?: "",
             )
@@ -427,6 +429,7 @@ object ChemicalManualEntry {
             // A bare number with no unit is not a concentration, and guessing
             // g/L would silently mis-state a solid product's loading.
             concentrationUnit = if (concentration == null) null else draft.concentrationUnit,
+            unresolvedConcentrationUnit = if (draft.concentrationUnit == null) draft.unresolvedConcentrationUnit else null,
             activityGroup = group,
             // Left unset on purpose so [ChemicalEditReconciler] assigns provenance
             // per value: MANUAL_ENTRY for anything new or changed, and the prior

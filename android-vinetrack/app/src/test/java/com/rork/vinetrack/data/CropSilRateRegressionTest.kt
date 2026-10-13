@@ -142,6 +142,42 @@ class CropSilRateRegressionTest {
         }
     }
 
+    private fun captured(): List<SavedChemical> = SupabaseClient.json.decodeFromString(
+        java.io.File("src/androidTest/assets/production_chemical_registered_uses.json").readText())
+
+    @Test fun `unresolved captured concentration units must not be discarded or inferred`() {
+        val chemical = captured()[0]
+        val encoded = SupabaseClient.json.parseToJsonElement(SupabaseClient.json.encodeToString(chemical)).jsonObject
+        val actives = encoded["active_ingredients"]!!.jsonArray
+        assertEquals("% (±1%)", actives[0].jsonObject["concentration_unit"]?.toString()?.trim('"'))
+        assertEquals("%", actives[1].jsonObject["concentration_unit"]?.toString()?.trim('"'))
+        assertNull(chemical.activeIngredients!![0].concentrationUnit)
+        assertNull(chemical.activeIngredients!![1].concentrationUnit)
+    }
+
+    @Test fun `captured competing fixed rates never choose on basis alone`() {
+        val chemical = captured()[1]
+        val rates = SprayRegisteredUseRates.vineyardRates(chemical)
+        assertEquals(listOf("40 mL/100 L", "60 mL/100 L"), rates.map { it.displayText })
+        assertEquals(listOf(40.0, 60.0), rates.map { it.appliedValue })
+        assertEquals(2, rates.map { it.id }.toSet().size)
+        assertTrue(rates.all { it.menuText.contains(it.registeredRate!!.condition!!) })
+        assertNull(SprayConfirmedRateSeeding.seedFor(chemical))
+        assertNull(SprayRegisteredUseRates.firstOffered(chemical, SprayCalculator.RateBasis.PER_100L))
+    }
+
+    @Test fun `captured incompatible product unit requires independent review`() {
+        val chemical = captured()[2]
+        assertEquals("Litres", chemical.unit)
+        val original = chemical.registeredUses!!.single().rates
+        assertEquals(listOf("kg/ha", "g/100 L", "g/100L"), original.map { it.unit })
+        assertEquals(listOf(null, "Dilute Spraying (to the point of run-off)", "Concentrate Spraying"), original.map { it.condition })
+        assertTrue(SprayRegisteredUseRates.hasInvalidStructuredRates(chemical))
+        val rates = SprayRegisteredUseRates.vineyardRates(chemical)
+        assertEquals(3, rates.size)
+        assertTrue(rates.all { !it.isSelectable && it.appliedValue == null })
+    }
+
     @Test fun `only explicit equivalent notations are accepted`() {
         for (text in listOf("500–1000 mL/100 L water", "500–1000 mL per 100 litres of water", "500–1000 mL / 100\tL water")) {
             assertEquals(ChemicalLabelRateBasis.RANGE_PER_100_LITRES, ChemicalLabelRateNormalizer.parse(text)?.basis)

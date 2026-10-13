@@ -11,6 +11,7 @@ nonisolated struct ChemicalManualActiveDraft: Sendable, Hashable, Identifiable {
     var name: String
     var concentrationText: String
     var concentrationUnit: ChemicalConcentrationUnit?
+    var unresolvedConcentrationUnit: String? = nil
     /// `nil` means the operator has not said which classification system
     /// applies. That is a real state — "I don't know" — and is not the same as
     /// `.notApplicable`, which asserts the product HAS no resistance group.
@@ -22,6 +23,7 @@ nonisolated struct ChemicalManualActiveDraft: Sendable, Hashable, Identifiable {
         name: String = "",
         concentrationText: String = "",
         concentrationUnit: ChemicalConcentrationUnit? = nil,
+        unresolvedConcentrationUnit: String? = nil,
         scheme: ChemicalActivityGroupScheme? = nil,
         groupCode: String = ""
     ) {
@@ -29,6 +31,7 @@ nonisolated struct ChemicalManualActiveDraft: Sendable, Hashable, Identifiable {
         self.name = name
         self.concentrationText = concentrationText
         self.concentrationUnit = concentrationUnit
+        self.unresolvedConcentrationUnit = unresolvedConcentrationUnit
         self.scheme = scheme
         self.groupCode = groupCode
     }
@@ -396,6 +399,7 @@ nonisolated enum ChemicalManualEntry {
                 concentrationText: active.concentration
                     .map { ChemicalActiveIngredient.formatConcentration($0) } ?? "",
                 concentrationUnit: active.concentrationUnit,
+                unresolvedConcentrationUnit: active.unresolvedConcentrationUnit,
                 scheme: active.activityGroup?.scheme,
                 groupCode: active.activityGroup?.code ?? ""
             )
@@ -532,6 +536,7 @@ nonisolated enum ChemicalManualEntry {
             // A bare number with no unit is not a concentration, and guessing
             // g/L would silently mis-state a solid product's loading.
             concentrationUnit: concentration == nil ? nil : draft.concentrationUnit,
+            unresolvedConcentrationUnit: draft.concentrationUnit == nil ? draft.unresolvedConcentrationUnit : nil,
             activityGroup: group,
             // Left unset on purpose so `ChemicalEditReconciler` assigns provenance
             // per value: `.manualEntry` for anything new or changed, and the prior

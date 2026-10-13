@@ -331,6 +331,7 @@ private fun lineCostPerUnit(chem: SavedChemical, rateUnit: String, prices: List<
 
 /** Effective rate: manual override (when valid) else the recommended rate. */
 private fun effectiveRateDisplay(chem: SavedChemical, line: CalcChemLine): Double {
+    if (SprayRegisteredUseRates.productUnitReviewMessage(chem) != null) return Double.NaN
     if (line.operationalSource != null) return line.overrideText.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 } ?: recommendedRateDisplay(chem, line)
     if (SprayRegisteredUseRates.hasInvalidStructuredRates(chem)) return Double.NaN
     val selected = SprayRegisteredUseRates.rate(chem, line.selectedRateId)
@@ -3296,10 +3297,15 @@ private fun CalcChemicalLineCard(
     }
     // A structured product whose rate nobody confirmed. The line is genuinely
     // unresolved and says so, rather than showing a borrowed zero.
-    val hasInvalidStoredRate = line.operationalSource == null && chem?.let(SprayRegisteredUseRates::hasInvalidStructuredRates) == true
+    val hasInvalidStoredRate = chem?.let(SprayRegisteredUseRates::productUnitReviewMessage) != null ||
+        (line.operationalSource == null && chem?.let(SprayRegisteredUseRates::hasInvalidStructuredRates) == true)
     val needsRate = chem != null && !hasInvalidStoredRate && recommended <= 0 && !isOverridden && confirmedRange == null
 
     VineyardCard {
+        chem?.let(SprayRegisteredUseRates::concentrationUnitReviewMessage)?.let { review ->
+            Text(review, style = MaterialTheme.typography.bodySmall, color = VineColors.Orange,
+                modifier = Modifier.semantics { contentDescription = "chemicalEvidenceReview" })
+        }
         line.operationalSource?.let { source ->
             Text(if (source == com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.PROGRAM_STEP) "Program Step rate" else "Preferred vineyard rate — vineyard-defined", style = MaterialTheme.typography.bodySmall)
             if (chem != null) line.rateAmount?.let { amount ->
@@ -3507,7 +3513,8 @@ private fun CalcChemicalLineCard(
                 )
             } else if (hasInvalidStoredRate) {
                 Text(
-                    "Invalid stored rate\nReview this chemical in Chemical Store before calculating.",
+                    SprayRegisteredUseRates.productUnitReviewMessage(chem)
+                        ?: "Invalid stored rate\nReview this chemical in Chemical Store before calculating.",
                     fontSize = 11.sp,
                     color = VineColors.Orange,
                     modifier = Modifier.padding(top = 4.dp),
@@ -3538,7 +3545,7 @@ private fun SuggestedRateBasisRow(
     line: CalcChemLine,
     onChanged: () -> Unit,
 ) {
-    val available = remember(chem.registeredUses, chem.rates) {
+    val available = remember(chem.registeredUses, chem.rates, chem.unit) {
         SprayRegisteredUseRates.availableBases(chem)
     }
     SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
@@ -3550,8 +3557,17 @@ private fun SuggestedRateBasisRow(
                 selected = line.basis == basis && (line.selectedRateId != null || line.rateAmount != null),
                 enabled = basis in available,
                 onClick = {
-                    val offered = SprayRegisteredUseRates.firstOffered(chem, basis) ?: return@SegmentedButton
-                    applySuggestedRate(line, offered)
+                    val offered = SprayRegisteredUseRates.firstOffered(chem, basis)
+                    if (offered != null) {
+                        applySuggestedRate(line, offered)
+                    } else {
+                        line.basis = basis
+                        line.selectedRateId = null
+                        line.rateAmount = null
+                        line.rateUnit = null
+                        line.overrideText = ""
+                        line.operationalSource = null
+                    }
                     onChanged()
                 },
                 shape = SegmentedButtonDefaults.itemShape(index = index, count = 2),
@@ -3567,8 +3583,8 @@ private fun SuggestedRegisteredRatePickerRow(
     onChanged: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val rates = remember(chem.registeredUses, chem.rates) {
-        SprayRegisteredUseRates.selectableVineyardRates(chem)
+    val rates = remember(chem.registeredUses, chem.rates, chem.unit) {
+        SprayRegisteredUseRates.vineyardRates(chem)
     }
     val selected = rates.firstOrNull { it.id == line.selectedRateId }
     Box {
@@ -3615,6 +3631,7 @@ private fun SuggestedRegisteredRatePickerRow(
                                 }
                             }
                         },
+                        enabled = rate.isSelectable,
                         onClick = {
                             applySuggestedRate(line, rate)
                             onChanged()

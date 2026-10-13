@@ -277,8 +277,26 @@ nonisolated enum SprayRegisteredUseRates {
         vineyardRates(for: chemical).filter(\.isSelectable)
     }
 
+    /// Unsupported active concentration units are reference evidence only; label rates remain separate.
+    static func concentrationUnitReviewMessage(_ chemical: SavedChemical) -> String? {
+        let units = chemical.chemicalIntelligence?.activeIngredients.compactMap(\.unresolvedConcentrationUnit) ?? []
+        guard !units.isEmpty else { return nil }
+        return "Stored active concentration units \(Array(Set(units)).sorted().joined(separator: ", ")) require independent review. No concentration basis inferred."
+    }
+
+    /// A dimensional disagreement is a data-review issue, never a conversion request.
+    static func productUnitReviewMessage(_ chemical: SavedChemical) -> String? {
+        let units = chemical.chemicalIntelligence?.registeredUses
+            .filter { includes($0, scope: .vineyardOnly) }.flatMap(\.rates)
+            .compactMap { ChemicalLabelRateNormalizer.normalize($0) }
+            .filter { $0.basis != .other }.map(\.unit) ?? []
+        guard units.contains(where: { baseValue(1, labelUnit: $0, chemical: chemical) == nil }) else { return nil }
+        return "Product unit \(chemical.unit.rawValue) conflicts with registered rate units \(Array(Set(units)).sorted().joined(separator: ", ")). Independent review required; no conversion applied."
+    }
+
     static func hasInvalidStructuredRates(_ chemical: SavedChemical) -> Bool {
-        chemical.chemicalIntelligence?.registeredUses
+        if productUnitReviewMessage(chemical) != nil { return true }
+        return chemical.chemicalIntelligence?.registeredUses
             .filter { includes($0, scope: .vineyardOnly) }
             .flatMap(\.rates)
             .contains { ChemicalLabelRateNormalizer.normalize($0) == nil } ?? false
@@ -388,9 +406,8 @@ nonisolated enum SprayRegisteredUseRates {
     /// is hidden — a basis that the label does not state simply finds no
     /// candidate and the next preference is tried.
     ///
-    /// Within a basis, a directly usable single rate beats a range, so opening
-    /// a product does not immediately demand a manual entry when the label
-    /// offers a plain rate as well. A range still wins over a rate on a
+    /// Multiple registered directions on the same basis require explicit choice.
+    /// Basis preference cannot decide application conditions for the operator. A range still wins over a rate on a
     /// less-preferred basis: `range_per_100_litres` is the right starting point
     /// for a runoff job even though the operator must still pick a point inside
     /// the band.
@@ -414,11 +431,14 @@ nonisolated enum SprayRegisteredUseRates {
         let seedable = candidates.filter { !$0.isRangePreset }
         for basis in order {
             let matching = seedable.filter { $0.basis == basis }
+            if hasStructuredRates(chemical), matching.count > 1 { return nil }
             if let single = matching.first(where: { $0.seed.seedableValue != nil }) { return single }
             if let first = matching.first { return first }
         }
-        if let single = seedable.first(where: { $0.seed.seedableValue != nil }) { return single }
-        return seedable.first ?? candidates.first
+        let fallback = seedable.first(where: { $0.seed.seedableValue != nil }) ?? seedable.first ?? candidates.first
+        if hasStructuredRates(chemical), let fallback,
+           seedable.filter({ $0.basis == fallback.basis }).count > 1 { return nil }
+        return fallback
     }
 
     /// The default selection for a carrier workflow.

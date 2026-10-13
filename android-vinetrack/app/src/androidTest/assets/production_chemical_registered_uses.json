@@ -1,0 +1,555 @@
+[
+  {
+    "id": "ae9a8166-a052-41d4-af07-d7bc4de01c9a",
+    "use": "Liquid fertiliser",
+    "crop": "Vineyards",
+    "name": "Crop Sil",
+    "unit": "Litres",
+    "notes": "",
+    "rates": {
+      "per_hectare": [
+        {
+          "unit": "L/ha",
+          "basis": "range_per_hectare",
+          "value": null,
+          "methods": [
+            "Foliar spray or fertigate. Dilute with 70-100+L water/HA."
+          ],
+          "targets": [
+            "Reinforce plants against pests and diseases",
+            "Enhance photosynthetic activity"
+          ],
+          "raw_text": "3-5L",
+          "condition": "Monthly as required",
+          "max_value": 5,
+          "min_value": 3
+        }
+      ],
+      "per_100_litres": [
+        {
+          "unit": "mL/100 L water",
+          "basis": "range_per_100_litres",
+          "value": null,
+          "methods": [
+            "Foliar spray or fertigate. Dilute with 70-100+L water/HA."
+          ],
+          "targets": [
+            "Reinforce plants against pests and diseases",
+            "Enhance photosynthetic activity"
+          ],
+          "raw_text": "500-1000mls/100L water",
+          "condition": "If using high volumes of water for foliar sprays",
+          "max_value": 1000,
+          "min_value": 500
+        }
+      ]
+    },
+    "density": null,
+    "problem": "",
+    "purchase": null,
+    "is_active": true,
+    "label_url": "https://switchag.au/wp-content/uploads/2025/02/Microsoil-Crop-Sil_DIGITAL.pdf",
+    "pack_size": null,
+    "pack_unit": "",
+    "created_at": "2026-10-02T13:13:18.322008+00:00",
+    "created_by": "22222222-2222-4222-8222-222222222222",
+    "deleted_at": null,
+    "registrant": null,
+    "updated_at": "2026-10-02T13:34:27.390798+00:00",
+    "updated_by": "22222222-2222-4222-8222-222222222222",
+    "product_url": "https://switchag.au/product/crop-sil/",
+    "rate_per_ha": null,
+    "verified_at": "2026-10-02T13:12:52.788+00:00",
+    "vineyard_id": "11111111-1111-4111-8111-111111111111",
+    "entry_source": "chemical_v3_catalogue",
+    "manufacturer": "Switch Ag Pty Ltd",
+    "product_form": "liquid",
+    "restrictions": "",
+    "sync_version": 1,
+    "default_rates": null,
+    "label_version": null,
+    "analysis_basis": "elemental",
+    "chemical_group": "",
+    "inventory_unit": "Litres",
+    "mode_of_action": "",
+    "price_per_pack": null,
+    "activity_groups": [],
+    "label_reference": "https://switchag.au/wp-content/uploads/2025/02/Microsoil-Crop-Sil_DIGITAL.pdf",
+    "registered_uses": [
+      {
+        "crop": "Grapevines (viticulture)",
+        "rates": [
+          {
+            "unit": "L/ha",
+            "basis": "range_per_hectare",
+            "value": null,
+            "raw_text": "3-5L",
+            "condition": "Monthly as required",
+            "max_value": 5,
+            "min_value": 3
+          },
+          {
+            "unit": "mL/100 L water",
+            "basis": "range_per_100_litres",
+            "value": null,
+            "raw_text": "500-1000mls/100L water",
+            "condition": "If using high volumes of water for foliar sprays",
+            "max_value": 1000,
+            "min_value": 500
+          }
+        ],
+        "method": "Foliar spray or fertigate. Dilute with 70-100+L water/HA.",
+        "targets": [
+          "Reinforce plants against pests and diseases",
+          "Enhance photosynthetic activity"
+        ],
+        "restrictions": "Do not apply with Copper Fungicide. Product requires agitation prior to application. Generally not compatible with calcium products. Always conduct a ‘jar test’ prior to tank mixing. Caution needs to be taken when mixing with pesticides as potential crop damage could occur. Thoroughly decontaminate tanks and spray equipment before use, particularly before applying to sensitive crops. Clean the entire sprayer system, not just the tank.",
+        "re_entry_statement": null,
+        "withholding_statement": null
+      }
+    ],
+    "label_rate_bases": [
+      "per_hectare",
+      "per_100_litres"
+    ],
+    "nitrogen_percent": null,
+    "product_category": "liquidFertiliser",
+    "active_ingredient": "Silicic acid 10 % (±1%); Potassium (K) 7.5 %; Kelp; Organic acids",
+    "application_notes": "",
+    "client_updated_at": null,
+    "organic_certified": false,
+    "potassium_percent": null,
+    "active_ingredients": [
+      {
+        "name": "Silicic acid",
+        "concentration": 10,
+        "concentration_unit": "% (±1%)"
+      },
+      {
+        "name": "Potassium (K)",
+        "concentration": 7.5,
+        "concentration_unit": "%"
+      },
+      {
+        "name": "Kelp",
+        "concentration": null,
+        "concentration_unit": null
+      },
+      {
+        "name": "Organic acids",
+        "concentration": null,
+        "concentration_unit": null
+      }
+    ],
+    "inventory_quantity": null,
+    "master_chemical_id": null,
+    "phosphorus_percent": null,
+    "registration_number": null,
+    "registration_scheme": null,
+    "verification_status": "verified",
+    "registration_country": "AU",
+    "verification_sources": [
+      {
+        "kind": "chemical_v3",
+        "product_id": "16a6be72-2342-441f-9d37-615d920187a6",
+        "revision_id": "1fa361b9-5df5-4866-b5f3-fbd750bafe38",
+        "label_sha256": null,
+        "retrieved_at": "2026-10-02T13:12:52.788+00:00",
+        "review_status": "approved",
+        "manufacturer_label_url": "https://switchag.au/wp-content/uploads/2025/02/Microsoil-Crop-Sil_DIGITAL.pdf"
+      }
+    ],
+    "activity_group_scheme": "not_applicable",
+    "chemical_v3_product_id": "16a6be72-2342-441f-9d37-615d920187a6",
+    "master_source_revision": null,
+    "verification_conflicts": null,
+    "chemical_v3_revision_id": "1fa361b9-5df5-4866-b5f3-fbd750bafe38",
+    "registered_product_name": "Crop Sil",
+    "vineyard_preferred_rate": null,
+    "intelligence_schema_version": 3,
+    "activity_group_table_version": null,
+    "verification_unresolved_fields": [],
+    "resistance_classification_state": "not_applicable",
+    "chemical_v3_review_status_snapshot": "approved"
+  },
+  {
+    "id": "a135e1cf-8dc1-48ee-8998-ecc50219109e",
+    "use": "Fungicide",
+    "crop": "Vineyards",
+    "name": "REVUS Fungicide",
+    "unit": "Litres",
+    "notes": "",
+    "rates": {
+      "per_hectare": [],
+      "per_100_litres": [
+        {
+          "unit": "mL/100 L",
+          "basis": "per_100_litres",
+          "value": 40,
+          "methods": [
+            "Dilute application; preventative foliar application."
+          ],
+          "targets": [
+            "Downy mildew (Plasmopara viticola)"
+          ],
+          "raw_text": "40mL/100L, Dilute application rate",
+          "condition": "For periods of rapid leaf growth; use at 10–14 day intervals as part of a downy mildew control program applied prior to an infection event.",
+          "max_value": null,
+          "min_value": null
+        },
+        {
+          "unit": "mL/100 L",
+          "basis": "per_100_litres",
+          "value": 60,
+          "methods": [
+            "Dilute application; preventative foliar application."
+          ],
+          "targets": [
+            "Downy mildew (Plasmopara viticola)"
+          ],
+          "raw_text": "60mL/100L, Dilute application rate",
+          "condition": "For conditions more conducive to downy mildew infection and where longer control is desired; use at 10–21 day intervals. Intervals longer than 14 days should only be used once significant new growth has ceased.",
+          "max_value": null,
+          "min_value": null
+        }
+      ]
+    },
+    "density": null,
+    "problem": "",
+    "purchase": null,
+    "is_active": true,
+    "label_url": "https://syngenta.my.salesforce.com/sfc/p/24000000Yk1o/a/3V000000PrY4/bxXgVQ1P5jRv4Wvv8oamPlzAeT4qz7D.5igo7uOnISE",
+    "pack_size": null,
+    "pack_unit": "",
+    "created_at": "2026-10-05T09:12:12.99049+00:00",
+    "created_by": "22222222-2222-4222-8222-222222222222",
+    "deleted_at": null,
+    "registrant": "Syngenta Australia Pty Ltd",
+    "updated_at": "2026-10-05T09:16:27.675958+00:00",
+    "updated_by": "22222222-2222-4222-8222-222222222222",
+    "product_url": "https://www.syngenta.com.au/revus",
+    "rate_per_ha": null,
+    "verified_at": "2026-10-05T09:12:06.533+00:00",
+    "vineyard_id": "11111111-1111-4111-8111-111111111111",
+    "entry_source": "chemical_v3_catalogue",
+    "manufacturer": "Syngenta Australia Pty Ltd",
+    "product_form": "liquid",
+    "restrictions": "",
+    "sync_version": 1,
+    "default_rates": null,
+    "label_version": "63052/103469",
+    "analysis_basis": "elemental",
+    "chemical_group": "40",
+    "inventory_unit": "Litres",
+    "mode_of_action": "",
+    "price_per_pack": null,
+    "activity_groups": [
+      "40"
+    ],
+    "label_reference": "https://syngenta.my.salesforce.com/sfc/p/24000000Yk1o/a/3V000000PrY4/bxXgVQ1P5jRv4Wvv8oamPlzAeT4qz7D.5igo7uOnISE",
+    "registered_uses": [
+      {
+        "crop": "Grapes",
+        "rates": [
+          {
+            "unit": "mL/100 L",
+            "basis": "per_100_litres",
+            "value": 40,
+            "raw_text": "40mL/100L, Dilute application rate",
+            "condition": "For periods of rapid leaf growth; use at 10–14 day intervals as part of a downy mildew control program applied prior to an infection event.",
+            "max_value": null,
+            "min_value": null
+          },
+          {
+            "unit": "mL/100 L",
+            "basis": "per_100_litres",
+            "value": 60,
+            "raw_text": "60mL/100L, Dilute application rate",
+            "condition": "For conditions more conducive to downy mildew infection and where longer control is desired; use at 10–21 day intervals. Intervals longer than 14 days should only be used once significant new growth has ceased.",
+            "max_value": null,
+            "min_value": null
+          }
+        ],
+        "method": "Dilute application; preventative foliar application.",
+        "targets": [
+          "Downy mildew (Plasmopara viticola)"
+        ],
+        "restrictions": "In high-pressure regions, mix REVUS with a protectant fungicide from a different fungicide group; a maximum of 4 REVUS sprays may be applied per season when used in such a tank mix. In low- to medium-risk areas, apply a maximum of 2 solo sprays, with no more than 2 consecutive REVUS sprays. REVUS should not be the final downy mildew spray of the season and should comprise no more than 50% of the season's total downy mildew sprays.",
+        "re_entry_statement": null,
+        "withholding_statement": null
+      }
+    ],
+    "label_rate_bases": [
+      "per_100_litres"
+    ],
+    "nitrogen_percent": null,
+    "product_category": "fungicide",
+    "active_ingredient": "Mandipropamid 250 g/L",
+    "application_notes": "",
+    "client_updated_at": null,
+    "organic_certified": false,
+    "potassium_percent": null,
+    "active_ingredients": [
+      {
+        "name": "Mandipropamid",
+        "concentration": 250,
+        "concentration_unit": "g/L"
+      }
+    ],
+    "inventory_quantity": null,
+    "master_chemical_id": null,
+    "phosphorus_percent": null,
+    "registration_number": "63052",
+    "registration_scheme": "apvma",
+    "verification_status": "verified",
+    "registration_country": "AU",
+    "verification_sources": [
+      {
+        "kind": "chemical_v3",
+        "product_id": "f5122abb-ac39-4f6d-ad17-7ccf62cfd0a7",
+        "revision_id": "3dfc1a80-cd6a-4018-a511-cdd704aead12",
+        "label_sha256": null,
+        "retrieved_at": "2026-10-05T09:12:06.533+00:00",
+        "review_status": "approved",
+        "manufacturer_label_url": "https://syngenta.my.salesforce.com/sfc/p/24000000Yk1o/a/3V000000PrY4/bxXgVQ1P5jRv4Wvv8oamPlzAeT4qz7D.5igo7uOnISE"
+      }
+    ],
+    "activity_group_scheme": "frac",
+    "chemical_v3_product_id": "f5122abb-ac39-4f6d-ad17-7ccf62cfd0a7",
+    "master_source_revision": null,
+    "verification_conflicts": null,
+    "chemical_v3_revision_id": "3dfc1a80-cd6a-4018-a511-cdd704aead12",
+    "registered_product_name": "REVUS Fungicide",
+    "vineyard_preferred_rate": null,
+    "intelligence_schema_version": 3,
+    "activity_group_table_version": null,
+    "verification_unresolved_fields": [],
+    "resistance_classification_state": "classified",
+    "chemical_v3_review_status_snapshot": "approved"
+  },
+  {
+    "id": "f0244e28-c065-4124-a48f-a19994c7f236",
+    "use": "Insecticide",
+    "crop": "Vineyards",
+    "name": "DiPel® DF",
+    "unit": "Litres",
+    "notes": "",
+    "rates": {
+      "per_hectare": [
+        {
+          "unit": "kg/ha",
+          "basis": "range_per_hectare",
+          "value": null,
+          "methods": [
+            "Crops must be monitored regularly for lepidopteran eggs or first instar larvae (caterpillar stage). If DiPel® DF is suitable, time the commencement of spraying to coincide with egg hatch or first instar larvae and before damage to the plant. Under continual pest pressure or rapid plant growth, a minimum of 2 sprays separated by no more than 3 days initially, and then reapply at 3–5 day intervals. Use the higher rates of DiPel® DF for higher egg laying activity, longer residual or larger first instar larvae. Higher rates should be used against Helicoverpa spp. Spray late in the afternoon or early evening (before dew begins to settle) when larvae are actively feeding. Reapplication after rainfall or overhead sprinkler irrigation may be necessary. Ensure complete and thorough coverage of all plant surfaces. A non-ionic wetting agent such as Agral may need to be used on difficult to wet plants. DiPel® DF can be applied with 0.01% wetting agent to assist in coverage of certain plants (eg crucifers)."
+          ],
+          "targets": [
+            "Lepidopteran larvae susceptible to DiPel® DF",
+            "Armyworm (Spodoptera spp.)",
+            "Cotton bollworm (Helicoverpa armigera)",
+            "Native budworm (Helicoverpa punctigera)",
+            "Cabbage moth (Plutella xylostella)",
+            "Cabbage white butterfly (Pieris rapae)",
+            "Green looper (Chrysodeixis eriosoma)",
+            "Lightbrown apple moth (Epiphyas postvittana)",
+            "Pear looper (Ectropis excursaria)",
+            "Soybean looper (Thysanoplusia orichalcea)",
+            "Vine moth (Phalaenoides glycinae, Agarista agricola)",
+            "Tobacco looper (Chrysodeixis argentifera)"
+          ],
+          "raw_text": "Hectare 0.5 to 2.0 kg/ha",
+          "condition": null,
+          "max_value": 2,
+          "min_value": 0.5
+        }
+      ],
+      "per_100_litres": [
+        {
+          "unit": "g/100 L",
+          "basis": "range_per_100_litres",
+          "value": null,
+          "methods": [
+            "Crops must be monitored regularly for lepidopteran eggs or first instar larvae (caterpillar stage). If DiPel® DF is suitable, time the commencement of spraying to coincide with egg hatch or first instar larvae and before damage to the plant. Under continual pest pressure or rapid plant growth, a minimum of 2 sprays separated by no more than 3 days initially, and then reapply at 3–5 day intervals. Use the higher rates of DiPel® DF for higher egg laying activity, longer residual or larger first instar larvae. Higher rates should be used against Helicoverpa spp. Spray late in the afternoon or early evening (before dew begins to settle) when larvae are actively feeding. Reapplication after rainfall or overhead sprinkler irrigation may be necessary. Ensure complete and thorough coverage of all plant surfaces. A non-ionic wetting agent such as Agral may need to be used on difficult to wet plants. DiPel® DF can be applied with 0.01% wetting agent to assist in coverage of certain plants (eg crucifers)."
+          ],
+          "targets": [
+            "Lepidopteran larvae susceptible to DiPel® DF",
+            "Armyworm (Spodoptera spp.)",
+            "Cotton bollworm (Helicoverpa armigera)",
+            "Native budworm (Helicoverpa punctigera)",
+            "Cabbage moth (Plutella xylostella)",
+            "Cabbage white butterfly (Pieris rapae)",
+            "Green looper (Chrysodeixis eriosoma)",
+            "Lightbrown apple moth (Epiphyas postvittana)",
+            "Pear looper (Ectropis excursaria)",
+            "Soybean looper (Thysanoplusia orichalcea)",
+            "Vine moth (Phalaenoides glycinae, Agarista agricola)",
+            "Tobacco looper (Chrysodeixis argentifera)"
+          ],
+          "raw_text": "Dilute Spraying (to the point of run-off) 25 – 100 g/100 L",
+          "condition": "Dilute Spraying (to the point of run-off)",
+          "max_value": 100,
+          "min_value": 25
+        },
+        {
+          "unit": "g/100L",
+          "basis": "range_per_100_litres",
+          "value": null,
+          "methods": [
+            "Crops must be monitored regularly for lepidopteran eggs or first instar larvae (caterpillar stage). If DiPel® DF is suitable, time the commencement of spraying to coincide with egg hatch or first instar larvae and before damage to the plant. Under continual pest pressure or rapid plant growth, a minimum of 2 sprays separated by no more than 3 days initially, and then reapply at 3–5 day intervals. Use the higher rates of DiPel® DF for higher egg laying activity, longer residual or larger first instar larvae. Higher rates should be used against Helicoverpa spp. Spray late in the afternoon or early evening (before dew begins to settle) when larvae are actively feeding. Reapplication after rainfall or overhead sprinkler irrigation may be necessary. Ensure complete and thorough coverage of all plant surfaces. A non-ionic wetting agent such as Agral may need to be used on difficult to wet plants. DiPel® DF can be applied with 0.01% wetting agent to assist in coverage of certain plants (eg crucifers)."
+          ],
+          "targets": [
+            "Lepidopteran larvae susceptible to DiPel® DF",
+            "Armyworm (Spodoptera spp.)",
+            "Cotton bollworm (Helicoverpa armigera)",
+            "Native budworm (Helicoverpa punctigera)",
+            "Cabbage moth (Plutella xylostella)",
+            "Cabbage white butterfly (Pieris rapae)",
+            "Green looper (Chrysodeixis eriosoma)",
+            "Lightbrown apple moth (Epiphyas postvittana)",
+            "Pear looper (Ectropis excursaria)",
+            "Soybean looper (Thysanoplusia orichalcea)",
+            "Vine moth (Phalaenoides glycinae, Agarista agricola)",
+            "Tobacco looper (Chrysodeixis argentifera)"
+          ],
+          "raw_text": "Concentrate Spraying 100 – 1000 g/100L",
+          "condition": "Concentrate Spraying",
+          "max_value": 1000,
+          "min_value": 100
+        }
+      ]
+    },
+    "density": null,
+    "problem": "",
+    "purchase": null,
+    "is_active": true,
+    "label_url": "https://www.sumitomo-chem.com.au/sites/default/files/sds-label/dipel_df_web_label_0222.pdf",
+    "pack_size": null,
+    "pack_unit": "L",
+    "created_at": "2026-10-02T12:50:09.02407+00:00",
+    "created_by": "22222222-2222-4222-8222-222222222222",
+    "deleted_at": null,
+    "registrant": "Valent BioSciences, a division of Sumitomo Chemical Australia Pty Ltd",
+    "updated_at": "2026-10-02T12:53:35.110601+00:00",
+    "updated_by": "22222222-2222-4222-8222-222222222222",
+    "product_url": "https://www.sumitomo-chem.com.au/dipel-df",
+    "rate_per_ha": 0,
+    "verified_at": "2026-10-02T12:48:51.698+00:00",
+    "vineyard_id": "11111111-1111-4111-8111-111111111111",
+    "entry_source": "chemical_v3_catalogue",
+    "manufacturer": "Valent BioSciences LLC",
+    "product_form": "liquid",
+    "restrictions": "",
+    "sync_version": 1,
+    "default_rates": null,
+    "label_version": "Publication date: 04/02/2022",
+    "analysis_basis": "elemental",
+    "chemical_group": "11",
+    "inventory_unit": "",
+    "mode_of_action": "",
+    "price_per_pack": null,
+    "activity_groups": [
+      "11"
+    ],
+    "label_reference": "https://www.sumitomo-chem.com.au/sites/default/files/sds-label/dipel_df_web_label_0222.pdf",
+    "registered_uses": [
+      {
+        "crop": "Vines",
+        "rates": [
+          {
+            "unit": "kg/ha",
+            "basis": "range_per_hectare",
+            "value": null,
+            "raw_text": "Hectare 0.5 to 2.0 kg/ha",
+            "condition": null,
+            "max_value": 2,
+            "min_value": 0.5
+          },
+          {
+            "unit": "g/100 L",
+            "basis": "range_per_100_litres",
+            "value": null,
+            "raw_text": "Dilute Spraying (to the point of run-off) 25 – 100 g/100 L",
+            "condition": "Dilute Spraying (to the point of run-off)",
+            "max_value": 100,
+            "min_value": 25
+          },
+          {
+            "unit": "g/100L",
+            "basis": "range_per_100_litres",
+            "value": null,
+            "raw_text": "Concentrate Spraying 100 – 1000 g/100L",
+            "condition": "Concentrate Spraying",
+            "max_value": 1000,
+            "min_value": 100
+          }
+        ],
+        "method": "Crops must be monitored regularly for lepidopteran eggs or first instar larvae (caterpillar stage). If DiPel® DF is suitable, time the commencement of spraying to coincide with egg hatch or first instar larvae and before damage to the plant. Under continual pest pressure or rapid plant growth, a minimum of 2 sprays separated by no more than 3 days initially, and then reapply at 3–5 day intervals. Use the higher rates of DiPel® DF for higher egg laying activity, longer residual or larger first instar larvae. Higher rates should be used against Helicoverpa spp. Spray late in the afternoon or early evening (before dew begins to settle) when larvae are actively feeding. Reapplication after rainfall or overhead sprinkler irrigation may be necessary. Ensure complete and thorough coverage of all plant surfaces. A non-ionic wetting agent such as Agral may need to be used on difficult to wet plants. DiPel® DF can be applied with 0.01% wetting agent to assist in coverage of certain plants (eg crucifers).",
+        "targets": [
+          "Lepidopteran larvae susceptible to DiPel® DF",
+          "Armyworm (Spodoptera spp.)",
+          "Cotton bollworm (Helicoverpa armigera)",
+          "Native budworm (Helicoverpa punctigera)",
+          "Cabbage moth (Plutella xylostella)",
+          "Cabbage white butterfly (Pieris rapae)",
+          "Green looper (Chrysodeixis eriosoma)",
+          "Lightbrown apple moth (Epiphyas postvittana)",
+          "Pear looper (Ectropis excursaria)",
+          "Soybean looper (Thysanoplusia orichalcea)",
+          "Vine moth (Phalaenoides glycinae, Agarista agricola)",
+          "Tobacco looper (Chrysodeixis argentifera)"
+        ],
+        "restrictions": "DO NOT use the product if rain is forecast within 8 hours. Control of Helicoverpa is most effective if larvae are less than 8 mm long. Control of Spodoptera is most effective if larvae are less than 15 mm long. Larvae in sheltered positions will not be controlled; in these cases spraying to achieve run-off may be desirable for the DiPel® DF to reach the target area to achieve efficacy. Avoid the use of broad spectrum insecticides before and during the use of DiPel DF. DiPel® DF should be used in an Insecticide Resistance Management Strategy. NOT TO BE USED FOR ANY PURPOSE OR IN ANY MANNER CONTRARY TO THIS LABEL UNLESS AUTHORISED UNDER APPROPRIATE LEGISLATION.",
+        "re_entry_statement": null,
+        "withholding_statement": "NOT REQUIRED WHEN USED AS DIRECTED."
+      }
+    ],
+    "label_rate_bases": [
+      "per_hectare",
+      "per_100_litres"
+    ],
+    "nitrogen_percent": null,
+    "product_category": "insecticide",
+    "active_ingredient": "Bacillus thuringiensis subsp. kurstaki, Strain ABTS-351, fermentation solids and solubles",
+    "application_notes": "",
+    "client_updated_at": "2026-10-02T12:50:19.672+00:00",
+    "organic_certified": false,
+    "potassium_percent": null,
+    "active_ingredients": [
+      {
+        "name": "Bacillus thuringiensis subsp. kurstaki, Strain ABTS-351, fermentation solids and solubles",
+        "concentration": null,
+        "concentration_unit": null
+      }
+    ],
+    "inventory_quantity": null,
+    "master_chemical_id": null,
+    "phosphorus_percent": null,
+    "registration_number": "53431/101018",
+    "registration_scheme": "apvma",
+    "verification_status": "verified",
+    "registration_country": "AU",
+    "verification_sources": [
+      {
+        "kind": "chemical_v3",
+        "product_id": "4b5db706-309d-41a2-b907-e1a5bf1507c3",
+        "revision_id": "c34a3445-3845-4141-ab04-c17fcf6f26c3",
+        "label_sha256": "ccdf2fd02d534e528c23f1997c15ee6100cbb665935e86c183e855396974de26",
+        "retrieved_at": "2026-10-02T12:48:51.698+00:00",
+        "review_status": "approved",
+        "manufacturer_label_url": "https://www.sumitomo-chem.com.au/sites/default/files/sds-label/dipel_df_web_label_0222.pdf"
+      }
+    ],
+    "activity_group_scheme": "irac",
+    "chemical_v3_product_id": "4b5db706-309d-41a2-b907-e1a5bf1507c3",
+    "master_source_revision": null,
+    "verification_conflicts": [],
+    "chemical_v3_revision_id": "c34a3445-3845-4141-ab04-c17fcf6f26c3",
+    "registered_product_name": "DiPel® DF",
+    "vineyard_preferred_rate": null,
+    "intelligence_schema_version": 1,
+    "activity_group_table_version": 2,
+    "verification_unresolved_fields": [],
+    "resistance_classification_state": "classified",
+    "chemical_v3_review_status_snapshot": "approved"
+  }
+]
