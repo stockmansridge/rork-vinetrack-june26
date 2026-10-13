@@ -45,12 +45,12 @@ struct SprayProgramStepEditingTests {
           "unit": "mL/100L",
           "water_rate": 500,
           "chemical_snapshot": {
-            "productName": "Wettable Sulphur",
-            "activeIngredients": [],
-            "activityGroupCodes": ["M2"],
-            "verificationStatus": "verified",
-            "schemaVersion": 1,
-            "activityGroupTableVersion": 1
+            "product_name": "Wettable Sulphur",
+            "active_ingredients": [],
+            "activity_groups": ["M2"],
+            "verification_status": "verified",
+            "schema_version": 1,
+            "activity_group_table_version": 1
           }
         }
       ]
@@ -67,7 +67,8 @@ struct SprayProgramStepEditingTests {
             record: row.toSprayRecord(),
             source: .portal,
             growthStageCode: row.growthStageCode,
-            targetRaw: row.target
+            targetRaw: row.target,
+            portalChemicalLines: row.chemicalLines
         )
     }
 
@@ -295,6 +296,12 @@ struct SprayProgramStepEditingTests {
         #expect(line.unit == "mL/100L")
         #expect(line.rate == 45)
         #expect(line.chemicalSnapshot?.activityGroupCodes == ["M2"])
+        let original = try portalRow().chemicalLines[1]
+        #expect(line.chemicalSnapshot == original.chemicalSnapshot)
+        #expect(line.waterRate == original.waterRate)
+        #expect(line.notes == original.notes)
+        #expect(line.activeIngredient == original.activeIngredient)
+        #expect(line.rawLine == original.rawLine)
     }
 
     /// A snapshot describes ONE product. Carrying it onto a different product
@@ -413,20 +420,25 @@ struct SprayProgramStepEditingTests {
         #expect(draft.chemicalLines()[1].chemicalId == nil)
     }
 
-    /// Restating "2" from litres into kilograms would change what the step
-    /// applies. The number is converted through base units instead.
-    @Test("Replacing a product restates the rate in the new product's unit")
-    func replacementConvertsTheRate() throws {
+    /// A new product requires its own rate, even when its units have the same dimension.
+    /// Neither changing unit nor sharing a scale proves a dose applies to another product.
+    @Test("Replacing an unrelated product clears its rate rather than borrowing the previous dose", arguments: [ChemicalUnit.grams, .millilitres])
+    func replacementConvertsTheRate(_ replacementUnit: ChemicalUnit) throws {
         var draft = SprayProgramStepDraft(step: try portalStep())
-        let solid = SavedChemical(vineyardId: Self.vineyardId, name: "Sulphur WG", unit: .grams)
+        let replacement = SavedChemical(vineyardId: Self.vineyardId, name: "Unrelated synthetic product", unit: replacementUnit)
 
         // 2 L = 2000 base units.
         #expect(draft.products[0].baseRate == 2_000)
-        draft.products[0].replaceProduct(with: solid, seedRate: nil)
+        draft.products[0].replaceProduct(with: replacement, seedRate: nil)
 
-        #expect(draft.products[0].unit == .grams)
-        #expect(draft.products[0].rate == 2_000)
-        #expect(draft.products[0].baseRate == 2_000)
+        #expect(draft.products[0].unit == replacementUnit)
+        #expect(draft.products[0].savedChemicalId == replacement.id)
+        #expect(draft.products[0].rate == 0)
+        #expect(draft.products[0].baseRate == 0)
+        #expect(draft.products[0].rateSource == nil)
+        #expect(draft.products[0].chemicalSnapshot == nil)
+        #expect(draft.chemicalLines()[0].rate == 0)
+        #expect(try portalRow().chemicalLines[0].rate == 2)
     }
 
     // MARK: - 10. Cancel

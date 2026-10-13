@@ -1,6 +1,6 @@
 # Spray label admission — separate review proposal
 
-Status: DESIGN ONLY, 2026-10-13. No deployment, authority data seeding, workflow activation or production DDL authorised. This is separate from `sql/review/spray_configuration_full_tank_planning_draft.sql`. Application and chemical quantity engines stay frozen.
+Status: NOT IMPLEMENTED, 2026-10-13. No production deployment, authority data seeding, workflow activation or production DDL authorised. Owner authorises separate gate implementation and synthetic testing only AFTER complete restoration has been verified in an approved isolated staging environment. This is separate from `sql/review/spray_configuration_full_tank_planning_draft.sql`. Application and chemical quantity engines stay frozen.
 
 ## Inspected evidence and reuse
 
@@ -66,12 +66,14 @@ Preserve Manual factual-entry RPCs for already-applied history, using their exis
 
 ## Error contract
 
+After product identity/applicability and trusted reference setup, classify contradictory CF/quantity or ambiguous basis as `SPRAY_LABEL_RECIPE_INCONSISTENT` before evaluating permission. A consistent concentrate recipe with unknown permission returns `SPRAY_LABEL_AUTHORITY_UNVERIFIED`; explicit prohibition returns `SPRAY_LABEL_CONCENTRATE_PROHIBITED`; a verified allowed recipe outside reviewed limits returns `SPRAY_LABEL_LIMIT_EXCEEDED`. Missing trusted reference itself remains unverified, not a claim that inconsistency was proven. This ordering makes the synthetic acceptance scenarios deterministic without trusting client CF.
+
 SQLSTATE `23514`; MESSAGE prefix `SPRAY_LABEL_AUTHORITY_UNVERIFIED` (unknown), `SPRAY_LABEL_CONCENTRATE_PROHIBITED`, `SPRAY_LABEL_LIMIT_EXCEEDED` or `SPRAY_LABEL_RECIPE_INCONSISTENT`. Safe structured DETAIL identifies line/tank/product IDs, approved product display name, reason, applicable rule and remedy; HINT says, for example: “Wettable product: concentrate spraying permission is not verified for this label/use. Select a verified applicable label/use or a supported dilute application and submit a new plan.” Do not imply any arbitrary carrier increase automatically makes the application compliant. No token/customer personal information in errors. Clients preserve original rejected payload/id/retry metadata and publish no success; expose product-specific actionable error without automatically altering quantities.
 
 ## Required isolated acceptance before installation approval
 
 Synthetic label documents/revisions/options for allowed/bounded, expressly prohibited, unknown, stale hash, wrong jurisdiction/method/target, generic-verified-only, max-rate-only, ambiguous old client, spoofed CF1 and unsupported rules. Positive area-only/manual/historical controls. Verify required_CF1.426 from713/500 and CF1 from713/750; enforce label limits at boundary values.
 
-Prove actor can legitimately edit fixture BEFORE chemical denial. Test record INSERT/UPDATE, jobs, direct Trip/tank, all RPC variants, concurrent recipe/policy replacement, offline original payload replay and exact zero-side-effect counts after rejection. Existing `spray_label_server_admission_acceptance.sql` is only a first direct UPDATE assertion, not the full matrix or the enforcement itself.
+Prove actor can legitimately edit fixture BEFORE chemical denial. Test record INSERT/UPDATE, jobs, direct Trip/tank, all RPC variants, concurrent recipe/policy replacement, offline original payload replay and exact zero-side-effect counts after rejection. `spray_label_server_admission_acceptance.sql` tests four separately classified direct UPDATE rejections (unknown, spoofed, ambiguous old client, prohibited), requires trusted synthetic reference/product fixtures, product-identifying DETAIL and actionable HINT, and compares exact full public-table state across each rejection, including audit fields and RLS-hidden rows. Its no-op owner edit probe rolls back before the baseline comparison. It is unexecuted and not the full boundary matrix or enforcement itself.
 
 No server gate should be deployed until reviewed evidence semantics, trusted application-reference contract, full route coverage, native-auth/RLS/role restoration and these assertions pass in an approved isolated environment. SQL v2 persistence can be tested independently; it never grants chemical permission.

@@ -210,8 +210,18 @@ struct SprayProgramRound2Tests {
         defer { try? FileManager.default.removeItem(at: url) }
         let pdf = try #require(PDFDocument(url: url))
         #expect(pdf.pageCount > 0)
-        #expect(pdf.string?.contains("40.00 mL/100 L") == true,
-            "Synthetic PDF extracted text: \(pdf.string?.debugDescription ?? "nil"); per100L cells: \(rows.compactMap { $0.pdfProduct?.per100L })")
+        #expect(rows[0].pdfProduct?.perHa == "120.00 mL/ha")
+        #expect(rows[0].pdfProduct?.per100L == "")
+        #expect(rows[1].pdfProduct?.per100L == "40.00 mL/100 L")
+        #expect(rows[1].pdfProduct?.perHa == "")
+        let extracted = try #require(pdf.string)
+        // PDF line wrapping is layout, not a dose delimiter. Ignore whitespace only:
+        // exact amounts, decimal precision, unit, slash and denominator must survive.
+        let tokens = extracted.filter { !$0.isWhitespace }
+        #expect(tokens.contains("40.00mL/100L"))
+        #expect(tokens.contains("120.00mL/ha"))
+        #expect(extracted.contains("Volume") && extracted.contains("Area"))
+        #expect(!extracted.contains("Operator") && !extracted.contains("Tank"))
     }
 
     @Test func registeredFallbackKeepsAllMatchingRangesWithoutBorrowing() {
