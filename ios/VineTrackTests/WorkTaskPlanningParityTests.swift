@@ -116,4 +116,18 @@ struct WorkTaskPlanningParityTests {
         var historical = resource; historical.isActive = false
         #expect(ResourceWrite(resource) != ResourceWrite(historical))
     }
+    @Test func upcomingHubKeepsPlannedTasksButNotHistoricalOrCompleted() throws {
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-10-14T00:00:00Z"))
+        let zone = try #require(TimeZone(identifier: "Australia/Sydney"))
+        let vineyard = UUID()
+        let today = WorkTask(vineyardId: vineyard, date: now)
+        let later = WorkTask(vineyardId: vineyard, date: now.addingTimeInterval(86400))
+        let old = WorkTask(vineyardId: vineyard, date: now.addingTimeInterval(-86400))
+        let completed = WorkTask(vineyardId: vineyard, date: now, isFinalized: true)
+        let archived = WorkTask(vineyardId: vineyard, date: now, isArchived: true)
+        let stage = WorkTask(vineyardId: vineyard, date: now.addingTimeInterval(-86400), scheduleBasis: "el_stage", targetELStage: 35)
+        #expect(WorkTaskPlanning.upcoming([old, completed, later, archived, today, stage], now: now, timeZone: zone).map(\.id) ==
+            [stage.id, today.id, later.id])
+    }
+
 }
