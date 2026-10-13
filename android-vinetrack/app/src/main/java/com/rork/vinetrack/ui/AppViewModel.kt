@@ -2404,6 +2404,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val sprayTankActualRepo = com.rork.vinetrack.data.SprayTankActualRepository(session)
     private val startTankCommitCoordinator = com.rork.vinetrack.data.StartTankCommitCoordinator(
         app, activeTripStore, sprayTankActualStore, pendingWrites, tripTankSync,
+        canEstablishOperation = { actual ->
+            val state = _ui.value
+            val record = state.sprayRecords.firstOrNull {
+                it.id == actual.sprayRecordId && it.tripId == actual.tripId && it.vineyardId == actual.vineyardId
+            }
+            session.userId == actual.confirmedBy && state.selectedVineyardId == actual.vineyardId &&
+                record != null && com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(record.applicationGeometry, record.tanks.orEmpty()) == null
+        },
     )
 
     /**
@@ -11925,7 +11933,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val record = pending.record
         val tank = pending.tank
-        com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(record.applicationGeometry, record.tanks.orEmpty())?.let { blocker ->
+        com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.tankConfirmationBlocker(currentRecord, record)?.let { blocker ->
             _ui.update { it.copy(tripError = blocker) }; return false
         }
         val userId = session.userId ?: return false
@@ -12000,6 +12008,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun startTankWithoutRecordedMix(tripId: String) {
         if (_ui.value.activeTrip?.id != tripId) return
         val trip = reconciledTankTripForStart(tripId) ?: return
+        val record = TankMixPresentation.linkedRecord(trip.id, _ui.value.sprayRecords)
+        com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(record?.applicationGeometry, record?.tanks.orEmpty())?.let { blocker ->
+            _ui.update { it.copy(tripError = blocker) }; return
+        }
+        if (pendingTankStart(tripId) != null) {
+            _ui.update { it.copy(tripError = "The planned mix is now available. Reopen Start Tank and confirm it.") }
+            return
+        }
         val result = TankSessionLifecycle.startResult(
             trip, java.time.Instant.now().toString(),
             trip.currentRowNumber ?: trip.rowSequence.getOrNull(trip.sequenceIndex), null
@@ -16494,6 +16510,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 isUsingCachedFieldData = state.isUsingCachedFieldData || hasCachedData,
             )
         }
+        startTankCommitCoordinator.recover()
         if (hasCachedData) performanceCapture.mark(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.CACHED_DATA_PUBLISHED)
         return prepared
     }
@@ -17096,6 +17113,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 },
             )
         }
+        startTankCommitCoordinator.recover()
         com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("vineyard.load.published")
         reconcileMissingBudburstFromGrowthRecords()
         prepareOptimalRipenessWeather(vineyardId)

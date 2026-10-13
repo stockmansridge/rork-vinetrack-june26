@@ -5,6 +5,16 @@ nonisolated struct SprayPlanningAdmissionError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+extension SprayPlanningOperationalGate {
+    /// A delayed confirmation must still describe the exact current frozen record.
+    nonisolated static func tankConfirmationBlocker(current: SprayRecord?, captured: SprayRecord) -> String? {
+        guard let current, current == captured else {
+            return "The planned mix changed while this tank was open. Reopen Start Tank and confirm again."
+        }
+        return current.operationalPlanningBlocker
+    }
+}
+
 extension SprayRecord {
     nonisolated var operationalPlanningBlocker: String? {
         if !isTemplate, let geometry = applicationGeometry, let intent = geometry.planningIntent,

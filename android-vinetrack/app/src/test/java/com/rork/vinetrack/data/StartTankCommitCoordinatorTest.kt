@@ -41,6 +41,7 @@ class StartTankCommitCoordinatorTest {
         var actualSaveCount: Int = 0,
         var tripSaveCount: Int = 0,
         var markerSaveCount: Int = 0,
+        var recipeAdmitted: Boolean = true,
     ) {
         fun coordinator(): StartTankCommitCoordinator = StartTankCommitCoordinator(
             journalStorage = journals,
@@ -50,6 +51,7 @@ class StartTankCommitCoordinatorTest {
             saveTrip = { _, _, value -> tripSaveCount++; if (failTrip) false else { trip = value; true } },
             ensureTankMarker = { value -> markerSaveCount++; if (failMarker) false else { markerTripId = value.id; true } },
             hasTankMarker = { id -> markerTripId == id },
+            canEstablishOperation = { recipeAdmitted },
         )
     }
 
@@ -70,6 +72,32 @@ class StartTankCommitCoordinatorTest {
         chemicals = listOf(SprayTankActualChemical("line", "planned", null, "Product", 0.0, "mL")),
         confirmedAt = "2026-09-05T01:00:00Z", confirmedBy = "user",
     )
+
+    @Test fun preparedRecoveryCannotEstablishBlockedRecipeAndRetainsExactJournal() {
+        val h = Harness(failActual = true)
+        assertFalse(h.coordinator().commit("user", "vineyard", sourceTrip, trip, actual))
+        val original = h.journals.journal
+        h.failActual = false
+        h.recipeAdmitted = false
+        assertNull(h.coordinator().recover())
+        assertNull(h.coordinator().resume("user", "vineyard", sourceTrip, sourceTrip, 1))
+        assertEquals(original, h.journals.journal)
+        assertNull(h.actual)
+        assertEquals(sourceTrip, h.trip)
+        assertNull(h.markerTripId)
+    }
+
+    @Test fun alreadyDurableActualRecoveryIsFactualNotNewRecipeAdmission() {
+        val h = Harness(failTrip = true)
+        assertFalse(h.coordinator().commit("user", "vineyard", sourceTrip, trip, actual))
+        h.failTrip = false
+        h.recipeAdmitted = false
+        assertNotNull(h.coordinator().recover())
+        assertEquals(actual, h.actual)
+        assertEquals(trip, h.trip)
+        assertEquals(1, h.actualSaveCount)
+        assertNull(h.journals.journal)
+    }
 
     @Test fun gpsProgressDuringConfirmationIsRetainedByTankOperationMerge() {
         val current = sourceTrip.copy(

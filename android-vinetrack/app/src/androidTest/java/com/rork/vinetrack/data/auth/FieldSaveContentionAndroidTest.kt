@@ -106,7 +106,7 @@ class FieldSaveContentionAndroidTest {
         assertTrue(trips.saveDurably("account-A", "vineyard", source))
         val intended = source.copy(tankSessions = listOf(com.rork.vinetrack.data.model.TankSession("session-1", 1, startTime = "2026-10-12T01:00:00Z", startRow = 1.5)), activeTankNumber = 1)
         val actual = com.rork.vinetrack.data.model.SprayTankActual("actual-1", "vineyard", "spray", "trip", "session-1", 1, waterVolumeL = 123.45, chemicals = emptyList(), confirmedAt = "2026-10-12T01:00:00Z", confirmedBy = "account-A")
-        val coordinator = com.rork.vinetrack.data.StartTankCommitCoordinator(context, trips, actuals, pending, sync)
+        val coordinator = com.rork.vinetrack.data.StartTankCommitCoordinator(context, trips, actuals, pending, sync, canEstablishOperation = { true })
         contend(session, listOf({ assertTrue(coordinator.commit("account-A", "vineyard", source, intended, actual)) }))
         assertEquals(intended, ActiveTripStore(context).load()?.trip)
         assertEquals(listOf(actual), com.rork.vinetrack.data.SprayTankActualStore(context).pending())

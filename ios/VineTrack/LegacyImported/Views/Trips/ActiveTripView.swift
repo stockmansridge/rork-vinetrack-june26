@@ -2093,7 +2093,7 @@ struct ActiveTripView: View {
         .background(Color(.secondarySystemGroupedBackground))
         .confirmationDialog("Planned tank mix unavailable", isPresented: $showStartWithoutMixConfirmation) {
             Button("Start without recorded mix") {
-                tracking.startTankWithoutRecordedMix()
+                tracking.startTankWithoutRecordedMix(expectedTripId: trip.id)
             }
             Button("Cancel", role: .cancel) {}
         } message: {

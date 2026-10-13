@@ -29,6 +29,27 @@ final class StartTankCommitCoordinatorTests: XCTestCase {
         return (directory, persistence, store, SprayTankActualStore(persistence: persistence), original, updated, actual)
     }
 
+    func testUnestablishedRecoveryRechecksCurrentRecipeWithoutDiscardingJournal() throws {
+        let (directory, persistence, store, actualStore, source, updated, actual) = try makeHarness()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let interrupted = StartTankCommitCoordinator(persistence: persistence, actualStore: actualStore, failurePoint: .beforeActual)
+        XCTAssertThrowsError(try interrupted.commit(sourceTrip: source, updatedTrip: updated, actual: actual, store: store))
+        let original: StartTankCommitCoordinator.Journal? = persistence.load(key: StartTankCommitCoordinator.persistenceKey)
+        var geometry = SprayApplicationSnapshot()
+        geometry.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank,
+            fullTankSpecification: .targetArea, intendedTankLitres: 1500, targetAreaHa: 3)
+        store.sprayRecords = [SprayRecord(id: actual.sprayRecordId, tripId: source.id, vineyardId: vineyardId,
+            applicationGeometry: geometry)]
+        let recovery = StartTankCommitCoordinator(persistence: persistence, actualStore: actualStore)
+        XCTAssertFalse(recovery.recover(store: store))
+        XCTAssertFalse(recovery.resume(sourceTrip: source, tankNumber: 1, store: store))
+        XCTAssertTrue(actualStore.records.isEmpty)
+        XCTAssertEqual(store.trips.first, source)
+        let retained: StartTankCommitCoordinator.Journal? = persistence.load(key: StartTankCommitCoordinator.persistenceKey)
+        XCTAssertEqual(retained?.actualRecordId, original?.actualRecordId)
+        XCTAssertEqual(retained?.state, original?.state)
+    }
+
     func testSameScreenRetryResumesFrozenJournal() throws {
         let (directory, persistence, store, actualStore, source, updated, actual) = try makeHarness()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -4,6 +4,20 @@ import Testing
 
 @MainActor
 struct SprayPlanningIntentTests {
+    @Test func delayedTankConfirmationRequiresCurrentFrozenRecipe() {
+        let captured = SprayRecord(sprayReference: "Original frozen mix")
+        #expect(SprayPlanningOperationalGate.tankConfirmationBlocker(current: captured, captured: captured) == nil)
+        var changed = captured
+        var geometry = SprayApplicationSnapshot()
+        geometry.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank,
+            fullTankSpecification: .targetArea, intendedTankLitres: 1500, targetAreaHa: 3)
+        changed.applicationGeometry = geometry
+        #expect(changed.id == captured.id)
+        #expect(SprayPlanningOperationalGate.tankConfirmationBlocker(current: changed, captured: captured) != nil)
+        #expect(SprayPlanningOperationalGate.tankConfirmationBlocker(current: nil, captured: captured) != nil)
+        #expect(SprayPlanningOperationalGate.tankConfirmationBlocker(current: changed, captured: changed) == SprayPlanningOperationalGate.migrationMessage)
+    }
+
     @Test func clearedPlanningSurvivesDiskReloadAndEncodesOnlyPlanningNulls() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

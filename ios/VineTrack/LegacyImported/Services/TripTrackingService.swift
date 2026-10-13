@@ -972,7 +972,8 @@ final class TripTrackingService {
             return false
         }
         let plannedTank = pending.tank
-        if let blocker = pending.record.operationalPlanningBlocker {
+        let currentRecord = TankMixPresentation.linkedRecord(for: trip.id, in: store?.sprayRecords ?? [])
+        if let blocker = SprayPlanningOperationalGate.tankConfirmationBlocker(current: currentRecord, captured: pending.record) {
             errorMessage = blocker
             return false
         }
@@ -1036,8 +1037,17 @@ final class TripTrackingService {
     }
 
     /// Explicit legacy fallback. It creates no fabricated actual-use record.
-    func startTankWithoutRecordedMix() {
-        guard let trip = reconciledActiveTankTrip() else { return }
+    func startTankWithoutRecordedMix(expectedTripId: UUID) {
+        guard let trip = reconciledActiveTankTrip(), trip.id == expectedTripId else { return }
+        if let record = TankMixPresentation.linkedRecord(for: trip.id, in: store?.sprayRecords ?? []),
+           let blocker = record.operationalPlanningBlocker {
+            errorMessage = blocker
+            return
+        }
+        guard pendingTankStart() == nil else {
+            errorMessage = "The planned mix is now available. Reopen Start Tank and confirm it."
+            return
+        }
         let operationRow = trip.trackingPattern == .freeDrive
             ? currentRowNumber
             : currentRowNumber ?? trip.currentRowNumber

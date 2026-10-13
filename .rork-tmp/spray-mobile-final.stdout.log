@@ -1,0 +1,159 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig FROM-CACHE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:processDebugNavigationResources FROM-CACHE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug FROM-CACHE
+> Task :app:processDebugMainManifest FROM-CACHE
+> Task :app:processDebugManifest FROM-CACHE
+> Task :app:processDebugManifestForPackage FROM-CACHE
+> Task :app:processDebugResources FROM-CACHE
+> Task :app:compileDebugKotlin FROM-CACHE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac FROM-CACHE
+> Task :app:bundleDebugClassesToRuntimeJar UP-TO-DATE
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :app:processDebugJavaRes
+> Task :app:bundleDebugClassesToCompileJar
+
+> Task :app:compileDebugUnitTestKotlin
+w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayPlanningProcessRestartTest.kt:26:24 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'String?'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayPlanningProcessRestartTest.kt:88:21 Redundant creation of Json format. Creating instances for each usage can be slow.
+
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes UP-TO-DATE
+
+> Task :app:testDebugUnitTest FAILED
+
+SprayPlanningIntentTest > byAreaCardUsesExistingMappedRowCarrierNotAnIndependentAreaTotal PASSED
+
+SprayPlanningIntentTest > acceptanceNumbersAndTamperedFullTankResolution PASSED
+
+SprayPlanningIntentTest > capturedGallonsNeverUseCurrentAccountCountry PASSED
+
+SprayPlanningIntentTest > clearedPlanningRetainsUnrelatedFieldsAndDurableNullIntent PASSED
+
+SprayPlanningIntentTest > unrelatedPortalEditsPreserveTargetWordingWithoutChangingCanonicalIdentifiers PASSED
+
+SprayPlanningIntentTest > cfNeverAuthorisesConcentrateAndUndeployedIntentAlwaysBlocks PASSED
+
+SprayPlanningIntentTest > targetAreaAndCalibrationAgreeForFullTank PASSED
+
+SprayPlanningIntentTest > physicalRowAndControllerTravelNeverShareAnOverRowMultiplier PASSED
+
+SprayPlanningIntentTest > localSnapshotsAndOutboxPayloadsRetainIntentBasisAndFrozenOutputs PASSED
+
+SprayPlanningIntentTest > reviewedFlatWireFieldsRoundTripAndLegacyColumnsStayAbsent PASSED
+
+SprayPlanningIntentTest > namedChemicalBlockerDoesNotBlockAreaOnlyMixes PASSED
+
+SprayPlanningIntentTest > fullTankUsesUnchangedChemicalEngineAndDoesNotAllocatePartialBlocks PASSED
+
+SprayPlanningIntentTest > complianceIsPerTankAndRejectsMissingInvalidAndAmbiguousDiluteEvidence PASSED
+
+SprayPlanningIntentTest > blockedReplayRetainsExactOriginalPayloadWithoutCallingAnyRepository PASSED
+
+SprayPlanningIntentTest > templateEditorRetainsPlanningAndOnlyExplicitEditsReplaceInputs PASSED
+
+SprayPlanningIntentTest > selectedControllerEntryConvertsToOnePhysicalRateAcrossConfigurationChanges PASSED
+
+SprayPlanningIntentTest > canopyComparisonHasMinimumOneWithoutAuthorisingConcentrate PASSED
+
+SprayPlanningIntentTest > invalidAndUnrecordedInputsNeverBecomeKnownDefaults PASSED
+
+SprayPlanningIntentTest > v2ProjectionSeparatesInputsOutputsAndClearsStaleResolution PASSED
+
+SprayPlanningProcessRestartTest > abruptProcessTerminationRetainsBlockedOriginalPayloadAndRetryCount PASSED
+
+SprayProgramRound2Test > provenance supplies canonical stage when application reference is unstaged PASSED
+
+SprayProgramRound2Test > registered fallback includes all target-matched grapevine ranges without midpoint or other crops PASSED
+
+SprayProgramRound2Test > RPC errors preserve operator instructions PASSED
+
+SprayProgramRound2Test > EL9 completion preserves same stage repeat and higher stages PASSED
+
+SprayProgramRound2Test > status follows explicit completion then ended inactive Trip then active PASSED
+
+SprayProgramRound2Test > reference rows preserve rates and exclude operational fields PASSED
+
+SprayProgramRound2Test > small precise programmed rates never round to zero PASSED
+
+SprayProgramRound2Test > no deterministic rate uses planning wording in shared export rows and CSV PASSED
+
+SprayProgramRound2Test > explicit provenance wins and fallback is not fuzzy PASSED
+
+SprayProgramRound2Test > both canonical RPC sources retain exact timestamp and form fields PASSED
+
+SprayProgramRound2Test > vintage dataset uses local half-open season event date and completed only PASSED
+
+SprayProgramStepDraftTest > permissions mirror the database rule PASSED
+
+SprayProgramStepDraftTest > portal wire line round-trips keys the draft does not model PASSED
+
+SprayProgramStepDraftTest > custom targets ride the local snapshot instead of being dropped PASSED
+
+SprayProgramStepDraftTest > composeLineUnit is the exact inverse of parseLineUnit PASSED
+
+SprayProgramStepDraftTest > toLocalInput preserves every operational field verbatim PASSED
+
+SprayProgramStepDraftTest > editing a Program Step never rewrites a completed record PASSED
+
+SprayProgramStepDraftTest > clearing every target persists as no snapshot, not a stale one PASSED
+
+SprayProgramStepDraftTest > write messages are pinned to the iOS wording PASSED
+
+SprayProgramStepDraftTest > targets write structured identifiers plus the display projection PASSED
+
+SprayProgramStepDraftTest > portal payload carries exactly the columns the step owns FAILED
+    java.lang.AssertionError at SprayProgramStepDraftTest.kt:98
+
+SprayProgramStepDraftTest > every line returns to the tank it came from PASSED
+
+SprayProgramStepDraftTest > cleared optional columns encode as explicit JSON null, not absence PASSED
+
+SprayProgramStepDraftTest > replacing the product drops the snapshot and restates the rate in the new unit FAILED
+    java.lang.AssertionError at SprayProgramStepDraftTest.kt:199
+
+SprayProgramStepDraftTest > validation mirrors iOS word for word PASSED
+
+SprayProgramStepDraftTest > fromPortalRow reads the raw row including verbatim target wording PASSED
+
+SprayProgramStepDraftTest > update filter path pins the safety contract PASSED
+
+StartTankCommitCoordinatorTest > crashBeforeJournalClearIsRecoveredIdempotently PASSED
+
+StartTankCommitCoordinatorTest > fillOnlySessionIdentityIsTransitionedRatherThanMistakenForCompletedStart PASSED
+
+StartTankCommitCoordinatorTest > endedOrTankConflictedTripRefusesOperation PASSED
+
+StartTankCommitCoordinatorTest > laterTankConflictIsPreservedAndUnresolvedJournalIsNotOverwritten PASSED
+
+StartTankCommitCoordinatorTest > recoveryAfterTripSaveCompletesMarker PASSED
+
+StartTankCommitCoordinatorTest > sameScreenRetryResumesFrozenJournalWithoutReplacingValues PASSED
+
+StartTankCommitCoordinatorTest > firstCommitRequiresAndVerifiesDurableTripWrite PASSED
+
+StartTankCommitCoordinatorTest > firstCommitMergesLiveRouteAheadOfStoredSnapshotAndRelaunchRetainsIt PASSED
+
+StartTankCommitCoordinatorTest > recoveryAfterActualSaveKeepsNewerRouteAndStableIds PASSED
+
+StartTankCommitCoordinatorTest > gpsProgressDuringConfirmationIsRetainedByTankOperationMerge PASSED
+
+StartTankCommitCoordinatorTest > repeatedRecoveryFromEachIncompleteStoreStateNeverDuplicates PASSED
+
+StartTankCommitCoordinatorTest > failedJournalWriteMutatesNothing PASSED
+26 actionable tasks: 4 executed, 9 from cache, 13 up-to-date

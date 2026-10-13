@@ -99,6 +99,7 @@ class SprayProgramStepDraftTest {
             setOf(
                 "name", "chemical_lines", "operation_type", "targets", "target",
                 "notes", "growth_stage_code", "equipment_id", "tractor_id", "updated_by",
+                "ground_application_target", "carrier_area_basis",
             ),
             payload.keys,
         )
@@ -176,7 +177,7 @@ class SprayProgramStepDraftTest {
     }
 
     @Test
-    fun `replacing the product drops the snapshot and restates the rate in the new unit`() {
+    fun `replacing an unrelated product drops snapshot and leaves its rate unseeded`() {
         val raw = buildJsonObject {
             put("name", JsonPrimitive("Old Product"))
             put("rate", JsonPrimitive(2.0))
@@ -194,14 +195,16 @@ class SprayProgramStepDraftTest {
         val replaced = line.replacedWith(replacement)
         assertEquals("chem-9", replaced.savedChemicalId)
         assertEquals("Kg", replaced.unitRaw)
-        // 2 L = 2000 mL base -> restated as 2 kg, so "2" never silently
-        // changes meaning.
-        assertEquals(2.0, replaced.rate, 1e-9)
+        // A different product requires its own deliberate rate, not a borrowed dose or density conversion.
+        assertEquals(0.0, replaced.rate, 0.0)
+        assertNull(replaced.rateSource)
         assertNull(replaced.rawLine)
         val wire = replaced.toWireLine()
         // A snapshot describes a specific product — replaced means gone.
         assertEquals(JsonNull, wire["chemical_snapshot"])
         assertEquals("kg/ha", (wire["unit"] as JsonPrimitive).contentOrNull)
+        assertEquals(JsonPrimitive(0.0), wire["rate"])
+        assertEquals("chem-9", (wire["chemical_id"] as JsonPrimitive).contentOrNull)
     }
 
     // MARK: - Unit string round trip

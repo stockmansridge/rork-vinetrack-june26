@@ -95,6 +95,18 @@ final class StartTankCommitCoordinator {
               )
         else { throw SprayTankActualValidationError.localSaveFailed }
 
+        let actualIsDurable = actualStore.records.contains { $0.id == journal.actualRecordId && $0.tripId == journal.actual.tripId && $0.tankSessionId == journal.tankSessionId }
+        let operationIsDurable = Self.operationIsEstablished(in: current, intended: journal.updatedTrip,
+            tankSessionId: journal.tankSessionId, tankNumber: journal.tankNumber)
+        if !actualIsDurable && !operationIsDurable {
+            let record = store.sprayRecords.first { $0.id == journal.actual.sprayRecordId && $0.tripId == current.id && $0.vineyardId == current.vineyardId }
+            if let blocker = record?.operationalPlanningBlocker {
+                throw SprayPlanningAdmissionError(message: blocker)
+            }
+            if record == nil && !journal.actual.chemicals.isEmpty {
+                throw SprayPlanningAdmissionError(message: "The planned mix is unavailable. Reopen Start Tank before starting this operation.")
+            }
+        }
         try failIfRequested(.beforeActual)
         if !actualStore.records.contains(where: { $0.id == journal.actualRecordId && $0.tripId == journal.actual.tripId && $0.tankSessionId == journal.tankSessionId }) {
             try actualStore.saveLocally(journal.actual)

@@ -123,6 +123,11 @@ data class SprayPlanningResolution(
 
 /** Fail closed; activation requires separately reviewed schema and workflow integration. */
 object SprayPlanningOperationalGate {
+    /** Delayed confirmation cannot execute an earlier recipe with the same record ID. */
+    fun tankConfirmationBlocker(current: com.rork.vinetrack.data.model.SprayRecord?, captured: com.rork.vinetrack.data.model.SprayRecord): String? {
+        if (current == null || current != captured) return "The planned mix changed while this tank was open. Reopen Start Tank and confirm again."
+        return blocker(current.applicationGeometry, current.tanks.orEmpty())
+    }
     const val MIGRATION_MESSAGE = "Calculation preview only. New spray planning save/start and replay are disabled until the schema and operational workflows are approved and validated."
     const val CONCENTRATE_MESSAGE = "Concentrate spraying permission and limits are unverified for this dilute-rate mix. Save/start is blocked. A displayed CF is not label approval."
     fun blocker(snapshot: SprayApplicationSnapshot?, tanks: List<com.rork.vinetrack.data.model.SprayTank>): String? {

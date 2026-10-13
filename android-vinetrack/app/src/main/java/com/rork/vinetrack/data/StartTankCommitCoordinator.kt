@@ -15,6 +15,7 @@ class StartTankCommitCoordinator internal constructor(
     private val ensureTankMarker: (Trip) -> Boolean,
     private val hasTankMarker: (String) -> Boolean,
     private val fieldAccess: com.rork.vinetrack.data.auth.FieldStoreAccess? = null,
+    private val canEstablishOperation: (SprayTankActual) -> Boolean = { true },
 ) {
     @Serializable
     data class Journal(
@@ -43,6 +44,7 @@ class StartTankCommitCoordinator internal constructor(
         actualStore: SprayTankActualStore,
         pendingWrites: PendingWriteRepository,
         tripTankSync: TripTankSync,
+        canEstablishOperation: (SprayTankActual) -> Boolean,
     ) : this(
         journalStorage = SharedPreferencesStartTankJournalStorage(context),
         saveActual = actualStore::save,
@@ -63,6 +65,7 @@ class StartTankCommitCoordinator internal constructor(
         },
         hasTankMarker = { tripId -> pendingWrites.list().any { it.clientId == tripId && it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK && it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved } },
         fieldAccess = com.rork.vinetrack.data.auth.FieldStoreAccess(context),
+        canEstablishOperation = canEstablishOperation,
     )
 
     private fun <T> admitted(action: () -> T): T = if (fieldAccess == null) action() else fieldAccess.admitted(action)
@@ -140,6 +143,10 @@ class StartTankCommitCoordinator internal constructor(
             tankSessionId = journal.tankSessionId,
             tankNumber = journal.tankNumber,
         ) ?: return null
+        // Already durable actuals/session starts are factual recovery, not a new recipe authorisation.
+        if (!hasActual(journal.actual) &&
+            !StartTankOperationMerge.isEstablished(current, journal.updatedTrip, journal.tankSessionId, journal.tankNumber) &&
+            !canEstablishOperation(journal.actual)) return null
         if (!hasActual(journal.actual)) {
             if (!saveActual(journal.actual)) return null
         }

@@ -8,6 +8,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SprayPlanningIntentTest {
+    @Test fun delayedTankConfirmationRequiresCurrentFrozenRecipe() {
+        val captured = SprayRecord(id = "record", vineyardId = "vineyard")
+        assertNull(SprayPlanningOperationalGate.tankConfirmationBlocker(captured, captured))
+        val changed = captured.copy(sprayerConfiguration = "over_row_two_rows", sprayPlanningMethod = "full_tank",
+            fullTankSpecification = "target_area", planningIntendedTankLitres = 1500.0, planningTargetAreaHa = 3.0)
+        assertEquals(captured.id, changed.id)
+        assertNotNull(SprayPlanningOperationalGate.tankConfirmationBlocker(changed, captured))
+        assertNotNull(SprayPlanningOperationalGate.tankConfirmationBlocker(null, captured))
+        assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, SprayPlanningOperationalGate.tankConfirmationBlocker(changed, changed))
+    }
+
     @Test fun clearedPlanningRetainsUnrelatedFieldsAndDurableNullIntent() {
         val snapshot = SprayApplicationSnapshot(grossAreaHa = 10.0, rowSpacingMetres = 2.8, totalCarrierLitres = 1500.0,
             planningIntent = SprayPlanningIntent(SprayPassConfiguration.OVER_ROW, SprayPlanningMethod.FULL_TANK, SprayFullTankSpecification.TARGET_AREA, 1500.0, 3.0))
