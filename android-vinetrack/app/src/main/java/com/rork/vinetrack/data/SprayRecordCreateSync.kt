@@ -28,14 +28,15 @@ import kotlinx.serialization.json.Json
  *
  * Idempotency: the client mints the final spray-record UUID up front and uses it
  * as both [PendingWrite.clientId] and the inserted row id, so a retried insert is
- * safe — if the server reports a duplicate primary key (409) the row is already
- * there and we treat it as synced rather than inserting a second record. The
+ * identity-stable. HTTP 409 alone never proves the same operation was accepted;
+ * without a reviewed scoped payload/revision receipt it remains blocked. The
  * original [Payload.clientUpdatedAt] travels in the payload so replay preserves
  * the moment the operator actually saved the record, not when it later synced.
  */
 class SprayRecordCreateSync(
-    private val sprayRepo: SprayRecordRepository,
+    private val sprayRepo: SprayRecordRepository?,
     private val pending: PendingWriteRepository,
+    private val createRemote: (suspend (Payload) -> SprayRecord)? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -183,8 +184,8 @@ class SprayRecordCreateSync(
      * Replay every retry-eligible queued spray-record create. No-ops (returns) if
      * a replay is already running. For each item: mark in-progress, POST it, then
      * resolve the outcome:
-     *  - success / duplicate (409) -> removed from the outbox; [onSynced] fires
-     *    with the server row (success only) so callers can reconcile state,
+     *  - successful insert -> removed and reconciled with the server row,
+     *  - conflict/unverified duplicate -> retained blocked, never acknowledged,
      *  - transient (network / 5xx / expired session) -> back to failed for a
      *    later attempt, attempt counter bumped,
      *  - permanent (validation / forbidden / corrupt) or attempt cap hit ->
@@ -215,7 +216,7 @@ class SprayRecordCreateSync(
                     continue
                 }
                 try {
-                    val created = sprayRepo.createSprayRecord(
+                    val created = createRemote?.invoke(payload) ?: requireNotNull(sprayRepo).createSprayRecord(
                         vineyardId = payload.vineyardId,
                         input = SprayRecordRepository.SprayInput(
                             date = payload.date,
@@ -251,10 +252,14 @@ class SprayRecordCreateSync(
                     retryOrBlock(write, "Sign-in needed to sync this spray record.")
                 } catch (e: BackendError.Server) {
                     when {
-                        // Duplicate primary key — the client id is already on the
-                        // server, so the spray record exists. Idempotent success;
-                        // the optimistic row stays as-is.
-                        e.code == 409 -> pending.remove(write.id)
+                        SprayOperationalFailure.isComplianceRejection(e) -> pending.updateStatus(
+                            write.id, PendingWriteStatus.BLOCKED, "The spray was rejected by server safety validation. Review the original recipe before retrying.")
+                        e.code == 409 -> pending.updateStatus(write.id, PendingWriteStatus.BLOCKED,
+                            when (SprayOperationalFailure.createConflict(e)) {
+                                SprayOperationalFailure.CreateConflict.COMPLIANCE_REJECTION -> "The spray was rejected by server safety validation."
+                                SprayOperationalFailure.CreateConflict.REVISION_OR_DATA_CONFLICT -> "The saved spray conflicts with server data. The original operation is retained for review."
+                                SprayOperationalFailure.CreateConflict.UNVERIFIED -> "The server response did not verify this exact operation. The original save is retained; it has not been acknowledged."
+                            })
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
                         else -> pending.updateStatus(
                             write.id,

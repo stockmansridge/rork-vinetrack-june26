@@ -1526,14 +1526,46 @@ final class MigratedDataStore {
 
     // MARK: - SprayRecord CRUD
 
+    /// Saves the validated recipe before publishing its inactive placeholder. Retry keeps both IDs.
+    func saveSprayForLater(record: SprayRecord, trip: Trip) throws {
+        guard selectedVineyardId == record.vineyardId else {
+            throw SprayTankActualValidationError.localSaveFailed
+        }
+        try SpraySaveForLaterCoordinator.save(record: record, trip: trip, saveRecord: { item in
+            var next = self.sprayRecords
+            if let index = next.firstIndex(where: { $0.id == item.id }) {
+                guard next[index] == item else { throw SprayTankActualValidationError.localSaveFailed }
+            } else {
+                next.append(item)
+            }
+            try self.sprayRepo.saveRecordsSliceOrThrow(next, for: item.vineyardId)
+            self.sprayRecords = next
+            self.onSprayRecordChanged?(item.id)
+        }, saveTrip: { item in
+            var next = self.trips
+            if let index = next.firstIndex(where: { $0.id == item.id }) {
+                guard next[index] == item else { throw SprayTankActualValidationError.localSaveFailed }
+            } else {
+                next.append(item)
+            }
+            try self.tripRepo.saveSliceOrThrow(next, for: item.vineyardId)
+            self.trips = next
+            self.onTripChanged?(item.id)
+        })
+    }
+
     @discardableResult
     func addSprayRecord(_ record: SprayRecord) -> Bool {
         guard record.operationalPlanningBlocker == nil else { return false }
         guard let vineyardId = selectedVineyardId else { return false }
         var item = record
         item.vineyardId = vineyardId
-        sprayRecords.append(item)
-        sprayRepo.saveRecordsSlice(sprayRecords, for: vineyardId)
+        var next = sprayRecords
+        next.append(item)
+        do {
+            try sprayRepo.saveRecordsSliceOrThrow(next, for: vineyardId)
+        } catch { return false }
+        sprayRecords = next
         onSprayRecordChanged?(item.id)
         return true
     }

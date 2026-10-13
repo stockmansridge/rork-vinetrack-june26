@@ -1,0 +1,13 @@
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    app.tasks.named('compileDebugUnitTestKotlin').configure {
+        setSource(app.fileTree('src/test/java') {
+            include '**/SprayPlanningIntentTest.kt', '**/SprayPlanningProcessRestartTest.kt'
+            include '**/SprayProgramStepDraftTest.kt', '**/SprayProgramRound2Test.kt'
+            include '**/StartTankCommitCoordinatorTest.kt', '**/SprayMobileSafetyTest.kt'
+        })
+    }
+    app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        testLogging { events 'passed', 'failed', 'skipped' }
+    }
+}

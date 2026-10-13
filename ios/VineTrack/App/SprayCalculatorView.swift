@@ -148,6 +148,7 @@ struct SprayCalculatorView: View {
     @State private var summaryMode: SprayCalculationSummaryMode = .savedForLater
     @State private var pendingTanks: [SprayTank] = []
     @State private var savedFeedback: Bool = false
+    @State private var pendingLaterSave: (record: SprayRecord, trip: Trip)? = nil
     @State private var errorMessage: String?
     @State private var showStartConfirmation: Bool = false
     @State private var startEngineHoursText: String = ""
@@ -4360,31 +4361,6 @@ struct SprayCalculatorView: View {
             return
         }
 
-        tracking.startTrip(
-            type: .spray,
-            primaryPaddockId: firstPaddock?.id,
-            paddockIds: paddockIds,
-            paddockName: paddockNames,
-            trackingPattern: trackingPatternChoice,
-            rowSequence: sequence,
-            sequenceIndex: 0,
-            currentRowNumber: initialPath,
-            nextRowNumber: sequence.dropFirst().first ?? initialPath,
-            totalTanks: tanks.count,
-            personName: auth.userName ?? "",
-            tripFunction: TripFunction.spraying.rawValue,
-            tripTitle: TripFunction.spraying.displayName,
-            tractorId: selectedTractorId,
-            operatorUserId: auth.userId,
-            operatorCategoryId: accessControl.loadedVineyardId == vineyardId ? accessControl.currentWorkerTypeId : nil,
-            startEngineHours: parsedStartEngineHours
-        )
-
-        guard let activeTrip = tracking.activeTrip else {
-            errorMessage = tracking.errorMessage ?? "Could not start trip."
-            return
-        }
-
         let weather = currentWeatherSnapshot()
 
         let tractorName = selectedTractorId.flatMap { id in
@@ -4392,7 +4368,6 @@ struct SprayCalculatorView: View {
         } ?? ""
 
         let record = SprayRecord(
-            tripId: activeTrip.id,
             vineyardId: vineyardId,
             date: Date(),
             startTime: Date(),
@@ -4414,8 +4389,28 @@ struct SprayCalculatorView: View {
             // Job-originated completion: the record fulfils this spray job.
             sprayJobId: originSprayJobId
         )
-        guard store.addSprayRecord(record) else {
-            errorMessage = "The spray record was not saved. Keep this screen open and resolve the save failure before continuing."
+        tracking.startTrip(
+            type: .spray,
+            primaryPaddockId: firstPaddock?.id,
+            paddockIds: paddockIds,
+            paddockName: paddockNames,
+            trackingPattern: trackingPatternChoice,
+            rowSequence: sequence,
+            sequenceIndex: 0,
+            currentRowNumber: initialPath,
+            nextRowNumber: sequence.dropFirst().first ?? initialPath,
+            totalTanks: tanks.count,
+            personName: auth.userName ?? "",
+            tripFunction: TripFunction.spraying.rawValue,
+            tripTitle: TripFunction.spraying.displayName,
+            tractorId: selectedTractorId,
+            operatorUserId: auth.userId,
+            operatorCategoryId: accessControl.loadedVineyardId == vineyardId ? accessControl.currentWorkerTypeId : nil,
+            startEngineHours: parsedStartEngineHours,
+            sprayRecord: record
+        )
+        guard tracking.activeTrip != nil else {
+            errorMessage = tracking.errorMessage ?? "Could not start trip."
             return
         }
 
@@ -4472,7 +4467,6 @@ struct SprayCalculatorView: View {
             tractorId: selectedTractorId,
             operatorUserId: auth.userId
         )
-        store.addInactiveTrip(placeholderTrip)
 
         let weather = currentWeatherSnapshot()
 
@@ -4502,8 +4496,15 @@ struct SprayCalculatorView: View {
             // Job-originated completion: the record fulfils this spray job.
             sprayJobId: originSprayJobId
         )
-        store.addSprayRecord(record)
-
+        let attempt = pendingLaterSave ?? (record: record, trip: placeholderTrip)
+        pendingLaterSave = attempt
+        do {
+            try store.saveSprayForLater(record: attempt.record, trip: attempt.trip)
+        } catch {
+            errorMessage = "Couldn't confirm the saved spray job. Your original save is retained for retry; no spray has started."
+            return
+        }
+        pendingLaterSave = nil
         savedFeedback.toggle()
         summaryMode = .savedForLater
         showSummary = true

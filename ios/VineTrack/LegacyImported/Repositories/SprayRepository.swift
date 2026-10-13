@@ -34,6 +34,13 @@ final class SprayRepository {
         persistence.save(all, key: Self.recordsKey)
     }
 
+    func saveRecordsSliceOrThrow(_ items: [SprayRecord], for vineyardId: UUID) throws {
+        var all = loadAllRecords()
+        all.removeAll { $0.vineyardId == vineyardId }
+        all.append(contentsOf: items)
+        try persistence.saveOrThrow(all, key: Self.recordsKey)
+    }
+
     func replaceRecords(_ remote: [SprayRecord], for vineyardId: UUID) {
         var all = loadAllRecords()
         all.removeAll { $0.vineyardId == vineyardId }

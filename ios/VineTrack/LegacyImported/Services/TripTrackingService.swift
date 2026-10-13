@@ -306,7 +306,8 @@ final class TripTrackingService {
         operatorUserId: UUID? = nil,
         operatorCategoryId: UUID? = nil,
         startEngineHours: Double? = nil,
-        seedingDetails: SeedingDetails? = nil
+        seedingDetails: SeedingDetails? = nil,
+        sprayRecord: SprayRecord? = nil
     ) {
         guard let store else { return }
         guard let vineyardId = store.selectedVineyardId else {
@@ -315,6 +316,12 @@ final class TripTrackingService {
         }
         if store.deviceActiveTripId != nil {
             errorMessage = deviceTripConflictMessage(in: store)
+            return
+        }
+
+        let isSpray = type == .spray || tripFunction == TripFunction.spraying.rawValue
+        if let blocker = SprayTripStartAdmission.blocker(isSpray: isSpray, vineyardId: vineyardId, record: sprayRecord) {
+            errorMessage = blocker
             return
         }
 
@@ -357,6 +364,17 @@ final class TripTrackingService {
             startEngineHours: startEngineHours,
             seedingDetails: seedingDetails
         )
+        if isSpray, var record = sprayRecord {
+            record.tripId = trip.id
+            var inactive = trip
+            inactive.isActive = false
+            do {
+                try store.saveSprayForLater(record: record, trip: inactive)
+            } catch {
+                errorMessage = "Couldn't durably save the spray recipe. No spray has started."
+                return
+            }
+        }
         let category = operatorCategoryId.flatMap { id in
             store.operatorCategories.first { $0.id == id && $0.vineyardId == trip.vineyardId }
         }
@@ -372,7 +390,14 @@ final class TripTrackingService {
         }
         // Persist one complete snapshot before GPS, sync callbacks, or any
         // dependent trip event can observe it.
-        store.startTrip(trip)
+        if isSpray {
+            do { try store.updateTripOrThrow(trip) } catch {
+                errorMessage = "Couldn't durably start the spray Trip. The saved job remains inactive."
+                return
+            }
+        } else {
+            store.startTrip(trip)
+        }
         store.claimDeviceTrip(trip.id)
         errorMessage = nil
         beginSprayWeatherCapture(for: trip)

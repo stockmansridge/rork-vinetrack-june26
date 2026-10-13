@@ -8502,6 +8502,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!canStartDeviceTrip { message -> _ui.update { it.copy(tripError = message) } }) {
             onResult(false); return
         }
+        if (tripFunction?.trim()?.lowercase() in setOf("spraying", "spray")) {
+            _ui.update { it.copy(tripError = com.rork.vinetrack.data.SprayOperationalFailure.SPRAY_START_MESSAGE) }
+            onResult(false); return
+        }
         // Final id + start instant generated up front so an offline/transient
         // fallback provisional trip shares the eventual server row's identity.
         val tripId = java.util.UUID.randomUUID().toString()
@@ -8536,9 +8540,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
         // Write original facts to the durable financial journal before network work.
         // A missing catalogue rate remains null, never a fabricated zero.
-        recordTripLabourAtStart(provisional)
         // Known offline: start locally and queue the create marker; no network.
         if (!_ui.value.isOnline) {
+            recordTripLabourAtStart(provisional)
             startTripLocally(provisional)
             onResult(_ui.value.activeTrip?.id == provisional.id)
             return
@@ -8568,6 +8572,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     rowSequence = rowSequence,
                     sequenceIndex = 0,
                 )
+                recordTripLabourAtStart(created)
                 if (!claimDeviceTrip(created)) {
                     _ui.update { it.copy(tripBusy = false, tripError = "Couldn't save this device's trip. Please retry.") }
                     onResult(false); return@launch
@@ -8580,11 +8585,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(tripBusy = false) }
                 onUnauthorized("startTrip"); onResult(false)
             } catch (e: Exception) {
-                // Transient (network / server) while we believed we were online:
-                // fall back to the local provisional start with the same id and
-                // queue the create marker rather than lose the attempted trip.
-                startTripLocally(provisional)
-                onResult(true)
+                if (com.rork.vinetrack.data.SprayOperationalFailure.canStartOffline(tripFunction, e)) {
+                    recordTripLabourAtStart(provisional)
+                    startTripLocally(provisional)
+                    onResult(_ui.value.activeTrip?.id == provisional.id)
+                } else {
+                    _ui.update { it.copy(tripBusy = false, tripError = "Trip start was not authorised. Review the request before retrying; no local Trip was started.") }
+                    onResult(false)
+                }
             }
         }
     }

@@ -1,5 +1,7 @@
 # VineTrack mobile acceptance — 2026-10-13
 
+Historical checkpoint. The subsequently authorised corrections, new final test results,40-case classification and handset/internal-artifact status are in `docs/reviews/spray-device-testing-readiness-2026-10-13.md`. In particular the three source risks below have since received client containment corrections; their server-dependent acceptance remains open.
+
 ## Ownership and scope
 
 Backend ownership (Supabase, SQL v2, Chemical V3 authority, RLS, triggers/RPCs and server validation) belongs to the owner's separate ChatGPT review. This mobile checkpoint performs no backend changes, operational activation or release. Calculator cards, illustrations, quantities, CF equations/minimum, Trip actual calculations and historical snapshots are frozen.
