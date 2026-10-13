@@ -35,6 +35,28 @@ nonisolated enum WorkTaskPlanning {
         }
     }
 
+    /// Hub-only projection; the full Task Log retains all history.
+    static func upcoming(_ tasks: [WorkTask], now: Date, timeZone: TimeZone) -> [WorkTask] {
+        let calendar = WorkTaskCompletion.calendar(timeZone)
+        let today = calendar.startOfDay(for: now)
+        return tasks.filter { task in
+            guard !task.isArchived && !task.isFinalized else { return false }
+            if task.isStageScheduled { return true }
+            guard let date = task.plannedDate else { return false }
+            return WorkTaskCompletion.businessDay(date, timeZone: timeZone) >= today
+        }.sorted { lhs, rhs in
+            if lhs.isStageScheduled != rhs.isStageScheduled { return lhs.isStageScheduled }
+            if lhs.isStageScheduled {
+                if lhs.targetELStage != rhs.targetELStage { return (lhs.targetELStage ?? 0) > (rhs.targetELStage ?? 0) }
+            } else {
+                let left = WorkTaskCompletion.businessDay(lhs.plannedDate!, timeZone: timeZone)
+                let right = WorkTaskCompletion.businessDay(rhs.plannedDate!, timeZone: timeZone)
+                if left != right { return left < right }
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
     static func completingUser(_ task: WorkTask, trips: [Trip], verifiedMemberIDs: Set<UUID>) -> UUID? {
         guard task.isFinalized else { return nil }
         if let recorded = task.completedBy { return recorded }

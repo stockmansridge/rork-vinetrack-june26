@@ -112,4 +112,17 @@ class WorkTaskPlanningParityTest {
         assertFalse(payload.containsKey("hourly_rate"))
         assertNotEquals(payload, ExternalResourceRepository.payload(resource.copy(isActive = false)))
     }
+    @Test fun `upcoming hub excludes old completed and archived without hiding stage plans`() {
+        val now = Instant.parse("2026-10-14T00:00:00Z")
+        val zone = ZoneId.of("Australia/Sydney")
+        val today = WorkTask("today", "vineyard", date = "2026-10-14T00:00:00Z")
+        val later = today.copy(id = "later", date = "2026-10-15T00:00:00Z")
+        val old = today.copy(id = "old", date = "2026-10-13T00:00:00Z")
+        val completed = today.copy(id = "completed", isFinalized = true)
+        val archived = today.copy(id = "archived", isArchived = true)
+        val stage = today.copy(id = "stage", scheduleBasis = "el_stage", targetELStage = 35, date = "2000-01-01T00:00:00Z")
+        assertEquals(listOf("stage", "today", "later"),
+            WorkTaskPlanning.upcoming(listOf(old, completed, later, archived, today, stage), now, zone).map { it.id })
+    }
+
 }

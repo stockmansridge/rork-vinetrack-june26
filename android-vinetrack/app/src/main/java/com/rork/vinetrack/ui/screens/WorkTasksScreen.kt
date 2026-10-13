@@ -148,7 +148,7 @@ fun WorkTasksScreen(
     var nav by remember { mutableStateOf(WTNav.Hub) }
     val selected = state.workTasks.firstOrNull { it.id == selectedId }
 
-    // Auto-sync on open so Recent Tasks and the season total are current
+    // Auto-sync on open so Upcoming Tasks and the season total are current
     // without a manual refresh. Existing data stays visible while it runs.
     LaunchedEffect(Unit) { vm.refreshWorkTasks() }
 
@@ -353,7 +353,7 @@ private fun WorkTasksHub(
 ) {
     val vine = LocalVineColors.current
     val tasks = remember(state.workTasks) { state.workTasks.filterNot { it.isArchived } }
-    val recent = remember(tasks) { WorkTaskPlanning.ordered(tasks, Instant.now(), state.seasonZone).take(5) }
+    val upcoming = remember(tasks, state.seasonZone) { WorkTaskPlanning.upcoming(tasks, Instant.now(), state.seasonZone).take(5) }
 
     // Season-to-date total uses the same component roll-up as task detail.
     val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
@@ -466,12 +466,12 @@ private fun WorkTasksHub(
 
             // Recent
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                SectionHeader("Recent Tasks", onLight = true)
+                SectionHeader("Upcoming Tasks", onLight = true)
                 if (state.isLoadingVineyardData && tasks.isEmpty()) {
                     Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = VineColors.Primary)
                     }
-                } else if (recent.isEmpty()) {
+                } else if (upcoming.isEmpty()) {
                     VineyardCard {
                         Column(
                             Modifier.fillMaxWidth().padding(vertical = 20.dp),
@@ -479,12 +479,12 @@ private fun WorkTasksHub(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(36.dp))
-                            Text("No tasks yet", fontSize = 14.sp, color = vine.textSecondary)
-                            Text("Tap + to log your first task.", fontSize = 12.sp, color = vine.textSecondary)
+                            Text("No upcoming tasks", fontSize = 14.sp, color = vine.textSecondary)
+                            Text("Plan a task using a date or E-L growth stage.", fontSize = 12.sp, color = vine.textSecondary)
                         }
                     }
                 } else {
-                    recent.forEach { task ->
+                    upcoming.forEach { task ->
                         WorkTaskListRow(
                             task = task,
                             state = state,

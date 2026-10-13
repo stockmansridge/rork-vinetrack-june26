@@ -1,6 +1,7 @@
 package com.rork.vinetrack.data.model
 
 import kotlinx.serialization.Serializable
+import com.rork.vinetrack.data.WorkTaskCompletion
 import java.time.Instant
 import java.time.ZoneId
 
@@ -20,6 +21,21 @@ object WorkTaskPlanning {
         val operators = linked.mapNotNull { it.operatorUserId }.toSet()
         if (linked.isNotEmpty() && linked.all { it.operatorUserId != null } && operators.size == 1) return operators.single()
         return task.finalizedBy?.takeIf { it in verifiedMemberIds }
+    }
+
+    /** Hub-only projection; Task Log retains completed, archived, and overdue history. */
+    fun upcoming(tasks: List<WorkTask>, now: Instant, zone: ZoneId): List<WorkTask> {
+        val today = now.atZone(zone).toLocalDate()
+        return tasks.filter { task ->
+            !task.isArchived && !task.isFinalized &&
+                (task.isStageScheduled || (WorkTaskCompletion.workDate(task, zone)?.let { !it.isBefore(today) } == true))
+        }.sortedWith { lhs, rhs ->
+            when {
+                lhs.isStageScheduled != rhs.isStageScheduled -> if (lhs.isStageScheduled) -1 else 1
+                lhs.isStageScheduled -> compareValues(rhs.targetELStage ?: 0, lhs.targetELStage ?: 0).takeIf { it != 0 } ?: lhs.id.compareTo(rhs.id)
+                else -> compareValues(WorkTaskCompletion.workDate(lhs, zone), WorkTaskCompletion.workDate(rhs, zone)).takeIf { it != 0 } ?: lhs.id.compareTo(rhs.id)
+            }
+        }
     }
 
     fun ordered(tasks: List<WorkTask>, now: Instant, zone: ZoneId): List<WorkTask> {
