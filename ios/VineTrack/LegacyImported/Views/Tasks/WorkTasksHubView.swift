@@ -63,7 +63,7 @@ struct WorkTasksHubView: View {
                     .font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                 summaryCard
                 toolsSection
-                recentSection
+                upcomingSection
             }
             .padding(.horizontal)
             .padding(.bottom, 24)
@@ -92,7 +92,7 @@ struct WorkTasksHubView: View {
         .refreshable {
             await syncWorkTaskData()
         }
-        // Auto-sync on open so Recent Tasks and the season total are current
+        // Auto-sync on open so Upcoming Tasks and the season total are current
         // without requiring a manual pull-to-refresh. Cached data (if any)
         // stays visible while the sync runs.
         .task {
@@ -197,20 +197,20 @@ struct WorkTasksHubView: View {
 
     private var recentSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Recent Tasks")
+            Text("Upcoming Tasks")
                 .font(.headline)
 
-            let recent = Array(WorkTaskPlanning.ordered(visibleTasks, now: Date(), timeZone: store.settings.resolvedTimeZone).prefix(5))
+            let upcoming = Array(WorkTaskPlanning.upcoming(visibleTasks, now: Date(), timeZone: store.settings.resolvedTimeZone).prefix(5))
 
-            if recent.isEmpty {
+            if upcoming.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "checkmark.seal")
                         .font(.system(size: 36))
                         .foregroundStyle(.tertiary)
-                    Text("No tasks yet")
+                    Text("No upcoming tasks")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Text("Tap + to log your first task.")
+                    Text("Plan a task using a date or E-L growth stage.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -219,7 +219,7 @@ struct WorkTasksHubView: View {
                 .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
             } else {
                 VStack(spacing: 8) {
-                    ForEach(recent) { task in
+                    ForEach(upcoming) { task in
                         WorkTaskRow(task: task, includeMaterials: materialCostsAllowed)
                     }
                 }
