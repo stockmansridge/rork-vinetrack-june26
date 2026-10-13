@@ -227,6 +227,8 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
     var products: [SprayProgramProductDraft]
     var planningIntent: SprayPlanningIntent?
     private let originalPlanningIntent: SprayPlanningIntent?
+    private let originalTargets: [SprayTargetTag]
+    private let originalTargetWording: String?
 
     // MARK: - Load
 
@@ -238,6 +240,8 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
         name = step.name
         growthStageCode = step.growthStageCode ?? step.elStageLabel
         targets = step.targetTags(labels: targetLabels)
+        originalTargets = targets
+        originalTargetWording = step.targetRaw
         operationType = step.operationType
         equipmentId = step.record.sprayEquipmentId
         tractorId = step.record.tractorId
@@ -298,7 +302,10 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
     var recognisedTargets: [SprayTarget] { SprayTargetVocabulary.builtIns(targets) }
 
     /// The display line, also written to the legacy `target` column.
-    var targetDisplay: String? { SprayTargetVocabulary.displayString(targets) }
+    var targetDisplay: String? {
+        if targets == originalTargets, let originalTargetWording { return originalTargetWording }
+        return SprayTargetVocabulary.displayString(targets)
+    }
 
     /// Add a tag, ignoring one this step already has.
     ///
@@ -433,12 +440,26 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
         // step carries no geometry because it does not know where it is going.
         let typed = recognisedTargets
         let custom = SprayTargetVocabulary.customs(targets).map(\.identifier)
+        let reusable = record.applicationGeometry?.templateConfiguration()
+        let mode: SprayApplicationMode? = groundTarget != record.applicationGeometry?.groundTarget
+            ? (groundTarget == nil ? nil : .banded)
+            : (groundTarget == nil ? reusable?.applicationMode : .banded)
         var intent = SprayApplicationSnapshot(
-            applicationMode: groundTarget == nil ? nil : .banded,
+            applicationMode: mode,
+            bandWidthTotalMetres: reusable?.bandWidthTotalMetres,
+            bandWidthLeftMetres: reusable?.bandWidthLeftMetres,
+            bandWidthRightMetres: reusable?.bandWidthRightMetres,
+            carrierVolumeBasis: reusable?.carrierVolumeBasis,
+            carrierLitresPerHectare: reusable?.carrierLitresPerHectare,
+            diluteLitresPer100m: reusable?.diluteLitresPer100m,
+            appliedLitresPer100m: reusable?.appliedLitresPer100m,
+            concentrationFactor: reusable?.concentrationFactor,
             targets: typed.isEmpty ? nil : typed,
             customTargets: custom.isEmpty ? nil : custom,
+            sprayHeadTarget: reusable?.sprayHeadTarget,
             groundTarget: groundTarget,
-            carrierAreaBasis: carrierAreaBasis
+            carrierAreaBasis: carrierAreaBasis,
+            blocks: reusable?.blocks
         )
         intent.planningIntent = planningIntent
         intent.planningFieldsCleared = record.applicationGeometry?.planningFieldsCleared

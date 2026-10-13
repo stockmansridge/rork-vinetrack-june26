@@ -210,7 +210,8 @@ struct SprayProgramRound2Tests {
         defer { try? FileManager.default.removeItem(at: url) }
         let pdf = try #require(PDFDocument(url: url))
         #expect(pdf.pageCount > 0)
-        #expect(pdf.string?.contains("40.00 mL/100 L") == true)
+        #expect(pdf.string?.contains("40.00 mL/100 L") == true,
+            "Synthetic PDF extracted text: \(pdf.string?.debugDescription ?? "nil"); per100L cells: \(rows.compactMap { $0.pdfProduct?.per100L })")
     }
 
     @Test func registeredFallbackKeepsAllMatchingRangesWithoutBorrowing() {

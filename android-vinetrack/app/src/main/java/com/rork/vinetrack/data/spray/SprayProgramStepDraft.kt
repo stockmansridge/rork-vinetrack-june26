@@ -263,6 +263,8 @@ data class SprayProgramStepDraft(
     val products: List<SprayProgramProductDraft> = emptyList(),
     val planningIntent: SprayPlanningIntent? = null,
     private val originalPlanningIntent: SprayPlanningIntent? = null,
+    private val originalTargets: List<SprayTargetTag> = targets,
+    private val originalTargetWording: String? = null,
 ) {
     val trimmedName: String get() = name.trim()
     val trimmedNotes: String get() = notes.trim()
@@ -271,7 +273,9 @@ data class SprayProgramStepDraft(
     val normalisedTargets: List<SprayTargetTag> get() = SprayTargetVocabulary.normalised(targets)
 
     /** The display line, also written to the legacy `target` column. */
-    val targetDisplay: String? get() = SprayTargetVocabulary.displayString(targets)
+    val targetDisplay: String? get() =
+        if (targets == originalTargets && originalTargetWording != null) originalTargetWording
+        else SprayTargetVocabulary.displayString(targets)
 
     /** Add a tag, ignoring one this step already has (by identifier). */
     fun addingTarget(tag: SprayTargetTag): SprayProgramStepDraft =
@@ -378,8 +382,12 @@ data class SprayProgramStepDraft(
     fun toLocalInput(existing: SprayRecord): SprayRecordRepository.SprayInput {
         val typed = SprayTargetVocabulary.builtIns(targets)
         val custom = SprayTargetVocabulary.customs(targets).map { it.identifier }
-        val snapshot = SprayApplicationSnapshot(
-            applicationMode = groundTarget?.let { SprayApplicationMode.BANDED },
+        val reusable = existing.applicationGeometry?.templateConfiguration() ?: SprayApplicationSnapshot()
+        val mode = if (groundTarget != existing.applicationGeometry?.groundTarget) {
+            groundTarget?.let { SprayApplicationMode.BANDED }
+        } else if (groundTarget != null) SprayApplicationMode.BANDED else reusable.applicationMode
+        val snapshot = reusable.copy(
+            applicationMode = mode,
             targets = typed.takeIf { it.isNotEmpty() },
             customTargets = custom.takeIf { it.isNotEmpty() },
             groundTarget = groundTarget,
@@ -504,6 +512,7 @@ data class SprayProgramStepDraft(
             notes = row.notes.orEmpty(),
             planningIntent = row.planningFields?.intent,
             originalPlanningIntent = row.planningFields?.intent,
+            originalTargetWording = row.target,
             products = row.chemicalLines.orEmpty().mapIndexedNotNull { index, element ->
                 (element as? JsonObject)?.let { SprayProgramProductDraft.fromWireLine(index, it) }
             },

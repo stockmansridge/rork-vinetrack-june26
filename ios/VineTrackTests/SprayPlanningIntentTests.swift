@@ -34,7 +34,8 @@ struct SprayPlanningIntentTests {
     }
 
     @Test func templateEditorPreservesPlanningAndDeclaresOnlyDeliberateChanges() throws {
-        var snapshot = SprayApplicationSnapshot()
+        var snapshot = SprayApplicationSnapshot(carrierVolumeBasis: .litresPerHectare,
+            carrierLitresPerHectare: 500, sprayHeadTarget: .fullCanopy)
         snapshot.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank, fullTankSpecification: .targetArea, intendedTankLitres: 1500, targetAreaHa: 3,
             inputProvenance: SprayPlanningInputProvenance(tankText: "1,500", areaText: "3.00", rateText: "28", volumeUnit: "litres", areaUnit: "hectares", rateAreaUnit: "100m_travel", countryCode: "NZ"))
         let record = SprayRecord(sprayReference: "Synthetic step", isTemplate: true, applicationGeometry: snapshot)
@@ -43,6 +44,9 @@ struct SprayPlanningIntentTests {
         let unchanged = draft.applied(to: record)
         #expect(unchanged.applicationGeometry?.planningIntent == snapshot.planningIntent)
         #expect(unchanged.applicationGeometry?.planningResolution == nil)
+        #expect(unchanged.applicationGeometry?.carrierVolumeBasis == snapshot.carrierVolumeBasis)
+        #expect(unchanged.applicationGeometry?.carrierLitresPerHectare == snapshot.carrierLitresPerHectare)
+        #expect(unchanged.applicationGeometry?.sprayHeadTarget == snapshot.sprayHeadTarget)
         #expect(draft.portalPayload(updatedBy: nil).planningFields == nil)
         draft.planningIntent?.targetAreaHa = 2
         #expect(draft.portalPayload(updatedBy: nil).planningFields?.planningTargetAreaHa == 2)
@@ -52,6 +56,67 @@ struct SprayPlanningIntentTests {
         #expect(object["planning_target_area_ha"] is NSNull)
         #expect(object["resolved_planning_carrier_litres"] == nil)
         #expect(draft.applied(to: record).applicationGeometry?.planningFieldsCleared == true)
+        #expect(draft.applied(to: record).applicationGeometry?.carrierLitresPerHectare == snapshot.carrierLitresPerHectare)
+        #expect(draft.applied(to: record).applicationGeometry?.sprayHeadTarget == snapshot.sprayHeadTarget)
+    }
+
+    @Test func portalAdapterPreservesTheCanonicalFrozenChemicalSnapshot() throws {
+        let snapshot = ChemicalLineSnapshot(productName: "Synthetic sulphur", activityGroupCodes: ["M2"], verificationStatus: .unverified)
+        let object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot))
+        let rowObject: [String: Any] = ["id": UUID().uuidString, "vineyard_id": UUID().uuidString, "name": "Synthetic step",
+            "chemical_lines": [["name": "Synthetic sulphur", "rate": 45, "unit": "mL/100L", "chemical_snapshot": object]]]
+        let row = try JSONDecoder().decode(BackendSprayJobTemplate.self, from: JSONSerialization.data(withJSONObject: rowObject))
+        #expect(row.toSprayRecord().tanks.first?.chemicals.first?.chemicalSnapshot == snapshot)
+        let draft = SprayProgramStepDraft(step: SprayProgramStep(record: row.toSprayRecord(), source: .portal))
+        #expect(draft.chemicalLines().first?.chemicalSnapshot == snapshot)
+    }
+
+    @Test func sharedProgramReplacementAndClearingPreserveEveryNonPlanningPatchField() throws {
+        let row = try JSONDecoder().decode(BackendSprayJobTemplate.self, from: Data("""
+        {"id":"dddddddd-0000-0000-0000-0000000000a1","vineyard_id":"22222222-2222-2222-2222-222222222222",
+         "name":"Synthetic step","status":"draft","is_template":true,"notes":"Keep notes",
+         "water_volume":1500,"spray_rate_per_ha":500,"concentration_factor":1,"chemical_lines":[],
+         "sprayer_configuration":"over_row_two_rows","spray_planning_method":"full_tank",
+         "full_tank_specification":"target_area","planning_intended_tank_litres":1500,"planning_target_area_ha":3}
+        """.utf8))
+        var draft = SprayProgramStepDraft(step: SprayProgramStep(record: row.toSprayRecord(), source: .portal))
+        let original = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(draft.portalPayload(updatedBy: nil))) as? NSDictionary)
+        draft.planningIntent = SprayPlanningIntent(configuration: .standardPass, method: .fullTank,
+            fullTankSpecification: .calibratedRate, intendedTankLitres: 1200, calibratedLitresPerHectare: 600)
+        let replacement = draft.portalPayload(updatedBy: nil)
+        let replacedRow = row.applying(replacement)
+        #expect(replacedRow.planningFields.planningTargetAreaHa == nil)
+        #expect(replacedRow.planningFields.planningCalibratedLitresPerHectare == 600)
+        #expect(replacedRow.toSprayRecord().applicationGeometry?.planningResolution == nil)
+        draft.planningIntent = nil
+        let cleared = draft.portalPayload(updatedBy: nil)
+        let clearedObject = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(cleared)) as? [String: Any])
+        let keys = ["sprayer_configuration", "spray_planning_method", "full_tank_specification", "planning_input_provenance", "planning_intended_tank_litres", "planning_target_area_ha", "planning_calibrated_litres_per_hectare"]
+        for key in keys { #expect(clearedObject[key] is NSNull) }
+        let nonPlanning = clearedObject.filter { !keys.contains($0.key) } as NSDictionary
+        #expect(nonPlanning == original)
+        let clearedRow = replacedRow.applying(cleared)
+        #expect(clearedRow.id == row.id && clearedRow.vineyardId == row.vineyardId)
+        #expect(clearedRow.status == row.status && clearedRow.waterVolume == row.waterVolume)
+        #expect(clearedRow.sprayRatePerHa == row.sprayRatePerHa && clearedRow.concentrationFactor == row.concentrationFactor)
+        #expect(clearedRow.notes == row.notes && clearedRow.chemicalLines == row.chemicalLines)
+        #expect(clearedRow.toSprayRecord().applicationGeometry?.planningIntent == nil)
+    }
+
+    @Test func clearingOnlyChangesPlanningKeysInCompleteRecordProjection() throws {
+        var snapshot = SprayApplicationSnapshot(grossAreaHa: 10, rowSpacingMetres: 2.8, totalCarrierLitres: 1500)
+        snapshot.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank,
+            fullTankSpecification: .targetArea, intendedTankLitres: 1500, targetAreaHa: 3)
+        let time = Date(timeIntervalSince1970: 1_800_000_000)
+        let record = SprayRecord(date: time, startTime: time, sprayReference: "Keep name", notes: "Keep notes", applicationGeometry: snapshot)
+        var cleared = record
+        cleared.applicationGeometry = snapshot.clearingPlanning()
+        let before = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(BackendSprayRecord.upsert(from: record, createdBy: nil, clientUpdatedAt: time))) as? [String: Any])
+        let after = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(BackendSprayRecord.upsert(from: cleared, createdBy: nil, clientUpdatedAt: time))) as? [String: Any])
+        let keys = Set(["sprayer_configuration", "spray_planning_method", "full_tank_specification", "planning_input_provenance", "planning_intended_tank_litres", "planning_target_area_ha", "planning_calibrated_litres_per_hectare", "planned_application_area_ha", "resolved_planning_carrier_litres", "resolved_planning_litres_per_hectare", "resolved_planning_physical_row_litres_per_100m", "resolved_planning_concentration_factor", "controller_litres_per_100m_travel", "effective_working_width_metres"])
+        #expect((before.filter { !keys.contains($0.key) } as NSDictionary) == (after.filter { !keys.contains($0.key) } as NSDictionary))
+        for key in keys { #expect(after[key] is NSNull) }
+        #expect(cleared.id == record.id && cleared.tanks == record.tanks)
     }
 
     @Test func selectedControllerEntryConvertsToOnePhysicalRateAcrossConfigurationChanges() throws {

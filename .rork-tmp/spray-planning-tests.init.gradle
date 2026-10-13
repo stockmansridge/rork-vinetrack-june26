@@ -2,7 +2,7 @@ gradle.projectsEvaluated {
     def app = gradle.rootProject.project(':app')
     app.tasks.named('compileDebugUnitTestKotlin').configure {
         setSource(app.fileTree('src/test/java') {
-            include '**/SprayPlanningIntentTest.kt', '**/SprayVolumeDecisionTest.kt', '**/SprayApplicationSnapshotTest.kt'
+            include '**/SprayPlanningIntentTest.kt', '**/SprayPlanningProcessRestartTest.kt', '**/SprayVolumeDecisionTest.kt', '**/SprayApplicationSnapshotTest.kt'
             include '**/SprayApplicationGeometryTest.kt', '**/SprayGuidedFlowTest.kt', '**/SprayGuidedWorkflowParityTest.kt'
             include '**/SprayCarrierProvenanceTest.kt', '**/SprayCarrierRegionalFormatTest.kt'
             include '**/SprayBandedGroundCarrierTest.kt', '**/SprayRegisteredUseRatesTest.kt'

@@ -32,19 +32,46 @@ class SprayPlanningIntentTest {
     @Test fun templateEditorRetainsPlanningAndOnlyExplicitEditsReplaceInputs() {
         val intent = SprayPlanningIntent(SprayPassConfiguration.OVER_ROW, SprayPlanningMethod.FULL_TANK, SprayFullTankSpecification.TARGET_AREA, 1500.0, 3.0)
         val record = SprayRecord(id = "synthetic", vineyardId = "synthetic-vineyard", sprayReference = "Synthetic step", isTemplate = true,
+            notes = "Unrelated edit", temperature = 20.0, windSpeed = 5.0, tripId = "retained-trip", date = "2026-10-13", startTime = "2026-10-13",
+            tanks = listOf(SprayTank(id = "retained-tank", waterVolume = 1500.0, sprayRatePerHa = 500.0)),
+            carrierVolumeBasis = "l_per_ha", carrierLitresPerHectare = 500.0, sprayHeadTarget = SprayHeadTarget.FULL_CANOPY.raw,
             sprayerConfiguration = intent.configuration?.wireValue, sprayPlanningMethod = intent.method?.wireValue,
             fullTankSpecification = intent.fullTankSpecification?.wireValue, planningIntendedTankLitres = 1500.0, planningTargetAreaHa = 3.0)
         val draft = SprayProgramStepDraft.fromLocal(record).copy(notes = "Unrelated edit")
         assertEquals(intent, draft.toLocalInput(record).applicationGeometry?.planningIntent)
         assertNull(draft.toLocalInput(record).applicationGeometry?.planningResolution)
+        assertEquals(record.applicationGeometry?.carrierVolumeBasis, draft.toLocalInput(record).applicationGeometry?.carrierVolumeBasis)
+        assertEquals(record.applicationGeometry?.sprayHeadTarget, draft.toLocalInput(record).applicationGeometry?.sprayHeadTarget)
         assertFalse(draft.portalPayload(null).containsKey("planning_target_area_ha"))
         val edited = draft.copy(planningIntent = intent.copy(targetAreaHa = 2.0))
         assertEquals(kotlinx.serialization.json.JsonPrimitive(2.0), edited.portalPayload(null)["planning_target_area_ha"])
+        val replacement = draft.copy(planningIntent = intent.copy(fullTankSpecification = SprayFullTankSpecification.CALIBRATED_RATE,
+            targetAreaHa = null, calibratedLitresPerHectare = 600.0))
+        assertEquals(kotlinx.serialization.json.JsonNull, replacement.portalPayload(null)["planning_target_area_ha"])
+        assertEquals(kotlinx.serialization.json.JsonPrimitive(600.0), replacement.portalPayload(null)["planning_calibrated_litres_per_hectare"])
         val cleared = draft.copy(planningIntent = null)
         val body = cleared.portalPayload(null)
+        assertEquals(draft.portalPayload(null), kotlinx.serialization.json.JsonObject(body.filterKeys { it !in SprayPlanningWireFields.INPUT_KEYS }))
+        assertEquals(draft.toLocalInput(record).copy(applicationGeometry = null), cleared.toLocalInput(record).copy(applicationGeometry = null))
         SprayPlanningWireFields.INPUT_KEYS.forEach { assertEquals(kotlinx.serialization.json.JsonNull, body[it]) }
         assertFalse(body.containsKey("resolved_planning_carrier_litres"))
         assertEquals(true, cleared.toLocalInput(record).applicationGeometry?.planningFieldsCleared)
+        assertEquals(record.applicationGeometry?.carrierLitresPerHectare, cleared.toLocalInput(record).applicationGeometry?.carrierLitresPerHectare)
+        assertEquals(record.applicationGeometry?.sprayHeadTarget, cleared.toLocalInput(record).applicationGeometry?.sprayHeadTarget)
+    }
+
+    @Test fun unrelatedPortalEditsPreserveTargetWordingWithoutChangingCanonicalIdentifiers() {
+        val row = SprayJobTemplateRepository.PortalProgramStepRow(id = "synthetic", vineyardId = "vineyard", name = "Synthetic step",
+            growthStageCode = null, operationType = "Foliar Spray", target = "Phomopsis · Powdery Mildew", targets = null,
+            notes = "Keep notes", equipmentId = null, tractorId = null, chemicalLines = null)
+        val draft = SprayProgramStepDraft.fromPortalRow(row)
+        val edited = draft.copy(notes = "Unrelated change")
+        assertEquals("Phomopsis · Powdery Mildew", edited.targetDisplay)
+        assertEquals(draft.portalPayload(null)["targets"], edited.portalPayload(null)["targets"])
+        assertEquals(kotlinx.serialization.json.JsonPrimitive(row.target), edited.portalPayload(null)["target"])
+        val cleared = edited.copy(targets = emptyList())
+        assertNull(cleared.targetDisplay)
+        assertEquals(kotlinx.serialization.json.JsonNull, cleared.portalPayload(null)["target"])
     }
 
     @Test fun selectedControllerEntryConvertsToOnePhysicalRateAcrossConfigurationChanges() {

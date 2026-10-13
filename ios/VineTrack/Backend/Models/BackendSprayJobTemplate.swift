@@ -371,7 +371,8 @@ extension BackendSprayJobTemplate {
                 // of defect P10 fixed on the CSV import path. A line with no
                 // rate at all stays nil: an honest "not stated".
                 rateBasis: baseRate > 0 ? (parsed.per100L ? .per100Litres : .wholeBlockArea) : nil,
-                savedChemicalId: line.chemicalId
+                savedChemicalId: line.chemicalId,
+                chemicalSnapshot: line.chemicalSnapshot
             )
         }
 
