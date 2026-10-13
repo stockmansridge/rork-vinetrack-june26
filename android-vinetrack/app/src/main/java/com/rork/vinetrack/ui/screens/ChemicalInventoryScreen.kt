@@ -25,9 +25,14 @@ internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, mod
     val context = LocalContext.current
     val repository = remember { CatalogueRepository(context) }
     val overviewScope = rememberCoroutineScope()
-    val vineyardChemicals = state.savedChemicals.filter { it.vineyardId == state.selectedVineyardId }
+    // Use the same active-only projection as Chemicals; retain archived rows in storage for history.
+    val vineyardChemicals = remember(state.savedChemicals, state.selectedVineyardId) {
+        com.rork.vinetrack.data.chemical.ChemicalStorePresentation.active(state.savedChemicals)
+            .filter { it.vineyardId == state.selectedVineyardId }
+    }
     var loading by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf(false) }
     var summaries by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf<Map<String, CatalogueRow>>(emptyMap()) }
+    val visibleSummaries = vineyardChemicals.mapNotNull { summaries[it.id] }
     var selected by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf<SavedChemical?>(vineyardChemicals.firstOrNull { it.id == initialChemicalId }) }
     var search by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("All") }
@@ -40,16 +45,20 @@ internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, mod
         loading = true; error = null
         try { vineyardChemicals.forEach { refresh(it.id) } } finally { loading = false }
     }
-    LaunchedEffect(state.selectedVineyardId, state.currentRole, vineyardChemicals.map { it.id }) { summaries = emptyMap(); loadSummaries() }
+    LaunchedEffect(state.selectedVineyardId, state.currentRole, vineyardChemicals.map { it.id }) {
+        if (selected != null && vineyardChemicals.none { it.id == selected?.id }) selected = null
+        summaries = emptyMap()
+        loadSummaries()
+    }
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(if (recordPurchase) "Chemical Purchase" else "Chemical Inventory", style = MaterialTheme.typography.headlineSmall)
         if (recordPurchase && state.canRecordInventoryPurchase) Text("Select a chemical to record a purchase.")
         TextButton(onClick = onClose) { Text("Close") }
         if (!recordPurchase) {
-            Text("Tracked chemicals: ${summaries.values.count { it.bool("tracked") }}")
-            Text("Low stock: ${summaries.values.count { it.bool("low_stock") }} · Out of stock: ${summaries.values.count { it.bool("out_of_stock") }}")
+            Text("Tracked chemicals: ${visibleSummaries.count { it.bool("tracked") }}")
+            Text("Low stock: ${visibleSummaries.count { it.bool("low_stock") }} · Out of stock: ${visibleSummaries.count { it.bool("out_of_stock") }}")
             if (state.canViewInventoryCosts) {
-            val stockValues = summaries.values.mapNotNull { row -> row.number("estimated_stock_value")?.let { (row.text("currency") ?: "") to it } }
+            val stockValues = visibleSummaries.mapNotNull { row -> row.number("estimated_stock_value")?.let { (row.text("currency") ?: "") to it } }
             if (stockValues.isEmpty()) Text("Estimated stock value: —")
             else stockValues.groupBy { it.first }.forEach { (currency, values) -> Text("Estimated stock value: ${values.sumOf { it.second }} $currency") }
             }
@@ -85,7 +94,7 @@ internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, mod
             TextButton(onClick = { overviewScope.launch { loadSummaries() } }) { Text("Retry") }
         }
     }
-    selected?.takeIf { it.vineyardId == state.selectedVineyardId }?.let { chemical -> InventoryActions(chemical, summaries[chemical.id], canViewInventory = state.canViewInventory, canRecordInventoryPurchase = state.canRecordInventoryPurchase, canManageInventory = state.canManageInventory, canViewInventoryCosts = state.canViewInventoryCosts, onDismiss = { selected = null }, onMutation = { refresh(chemical.id) }, recordPurchase = recordPurchase) }
+    selected?.takeIf { candidate -> vineyardChemicals.any { it.id == candidate.id } }?.let { chemical -> InventoryActions(chemical, summaries[chemical.id], canViewInventory = state.canViewInventory, canRecordInventoryPurchase = state.canRecordInventoryPurchase, canManageInventory = state.canManageInventory, canViewInventoryCosts = state.canViewInventoryCosts, onDismiss = { selected = null }, onMutation = { refresh(chemical.id) }, recordPurchase = recordPurchase) }
 }
 
 @Composable
