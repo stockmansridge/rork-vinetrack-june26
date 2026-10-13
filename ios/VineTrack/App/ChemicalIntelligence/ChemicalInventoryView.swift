@@ -13,10 +13,18 @@ struct ChemicalInventoryView: View {
     @State private var filter: String = "All"
     @State private var error: String?
     @State private var loading: Bool = false
+    // Archived chemicals stay in the store for historical ID resolution, never inventory.
+    private var inventoryChemicals: [SavedChemical] {
+        ChemicalStorePresentation.active(store.savedChemicals)
+            .filter { $0.vineyardId == store.selectedVineyardId }
+    }
+    private var visibleSummaries: [CatalogueWire] {
+        inventoryChemicals.compactMap { summaries[$0.id] }
+    }
     private var rows: [SavedChemical] {
-        store.savedChemicals.filter { chemical in
+        inventoryChemicals.filter { chemical in
             let status = summaries[chemical.id]?.inventoryStatus
-            return chemical.vineyardId == store.selectedVineyardId && (filter == "All" || status == filter) && (search.isEmpty || (chemical.name + " " + chemical.manufacturer).localizedStandardContains(search))
+            return (filter == "All" || status == filter) && (search.isEmpty || (chemical.name + " " + chemical.manufacturer).localizedStandardContains(search))
         }
     }
     var body: some View {
@@ -28,11 +36,11 @@ struct ChemicalInventoryView: View {
                     }
                     if !recordPurchase {
                         Section("Overview") {
-                            LabeledContent("Tracked chemicals", value: "\(summaries.values.filter { $0.bool("tracked") }.count)")
-                            LabeledContent("Low stock", value: "\(summaries.values.filter { $0.bool("low_stock") }.count)")
-                            LabeledContent("Out of stock", value: "\(summaries.values.filter { $0.bool("out_of_stock") }.count)")
+                            LabeledContent("Tracked chemicals", value: "\(visibleSummaries.filter { $0.bool("tracked") }.count)")
+                            LabeledContent("Low stock", value: "\(visibleSummaries.filter { $0.bool("low_stock") }.count)")
+                            LabeledContent("Out of stock", value: "\(visibleSummaries.filter { $0.bool("out_of_stock") }.count)")
                             if canViewInventoryCosts {
-                            let values = summaries.values.compactMap { row -> (String, Double)? in
+                            let values = visibleSummaries.compactMap { row -> (String, Double)? in
                                 guard let value = row.number("estimated_stock_value") else { return nil }
                                 return (row.text("currency") ?? "", value)
                             }
@@ -77,7 +85,12 @@ struct ChemicalInventoryView: View {
                     summaries = [:]
                     await loadSummaries()
                 }
-                .onChange(of: store.savedChemicals.map(\.id)) { _, _ in Task { await loadSummaries() } }
+                .onChange(of: inventoryChemicals.map(\.id)) { _, ids in
+                    let visibleIDs = Set(ids)
+                    summaries = summaries.filter { visibleIDs.contains($0.key) }
+                    if let selected, !visibleIDs.contains(selected.id) { self.selected = nil }
+                    Task { await loadSummaries() }
+                }
                 .sheet(item: $selected) { chemical in
                     ChemicalInventoryActionsView(chemical: chemical, summary: summaries[chemical.id], recordPurchase: recordPurchase) { await refresh(chemical.id) }
                 }
@@ -87,14 +100,15 @@ struct ChemicalInventoryView: View {
     private func loadSummaries() async {
         loading = true; error = nil
         defer { loading = false }
-        for chemical in store.savedChemicals where chemical.vineyardId == store.selectedVineyardId { await refresh(chemical.id) }
+        for chemical in inventoryChemicals { await refresh(chemical.id) }
     }
     private func refresh(_ id: UUID) async {
         guard canViewInventory, let vineyardId = store.selectedVineyardId,
-              store.savedChemicals.contains(where: { $0.id == id && $0.vineyardId == vineyardId }) else { return }
+              inventoryChemicals.contains(where: { $0.id == id }) else { return }
         do {
             let row = try await CatalogueRepository().rpc("chemical_inventory_summary", ["p_saved_chemical_id": .string(id.uuidString)]).first
-            guard !Task.isCancelled, canViewInventory, store.selectedVineyardId == vineyardId else { return }
+            guard !Task.isCancelled, canViewInventory, store.selectedVineyardId == vineyardId,
+                  inventoryChemicals.contains(where: { $0.id == id }) else { return }
             summaries[id] = row
         }
         catch { self.error = "Unable to load inventory. Check access and try again." }
