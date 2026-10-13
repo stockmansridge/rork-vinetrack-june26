@@ -280,7 +280,8 @@ nonisolated enum SprayConfirmedRateSeeding {
             unit: provenance.unit,
             basis: provenance.basis,
             entryMethod: provenance.entryMethod,
-            confirmedRange: provenance.confirmedRange
+            confirmedRange: provenance.confirmedRange,
+            selectedRate: SprayRegisteredUseRates.vineyardRates(for: chemical).first { $0.id == line.selectedRateId }
         )
     }
 }

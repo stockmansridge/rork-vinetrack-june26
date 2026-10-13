@@ -40,6 +40,7 @@ data class ChemicalManualRateDraft(
     val unit: String = "L",
     /** Verbatim label wording, for a basis VineTrack has no shape for. */
     val rawText: String = "",
+    val originalRate: ChemicalLabelRate? = null,
 )
 
 /** One registered use as the operator is typing it. */
@@ -55,6 +56,7 @@ data class ChemicalManualUseDraft(
     val withholdingPeriodDaysText: String = "",
     val reEntryPeriodHoursText: String = "",
     val restrictions: String = "",
+    val originalUse: ChemicalRegisteredUse? = null,
 )
 
 /**
@@ -456,13 +458,27 @@ object ChemicalManualEntry {
         drafts.mapNotNull { labelRate(it) }
 
     private fun labelRate(draft: ChemicalManualRateDraft): ChemicalLabelRate? {
+        draft.originalRate?.let { original ->
+            if (rateDraft(original).copy(id = draft.id) == draft) return original
+        }
+        val result = editedLabelRate(draft) ?: return null
+        val original = draft.originalRate ?: return result
+        return result.copy(condition = original.condition, rateId = original.rateId,
+            unknownFields = original.unknownFields, conditionAmbiguous = original.conditionAmbiguous,
+            rawText = draft.rawText.takeIf { it.isNotEmpty() } ?: original.rawText)
+    }
+
+    private fun validatedStoredRate(rate: ChemicalLabelRate): ChemicalLabelRate? =
+        if (ChemicalLabelRateNormalizer.normalize(rate) == null) null else rate
+
+    private fun editedLabelRate(draft: ChemicalManualRateDraft): ChemicalLabelRate? {
         val unit = draft.unit.trim()
         val label = draft.label.trim()
         val raw = draft.rawText.trim()
         return when (draft.basis) {
             ChemicalLabelRateBasis.PER_HECTARE, ChemicalLabelRateBasis.PER_100_LITRES -> {
                 val value = parseDouble(draft.valueText) ?: return null
-                ChemicalLabelRateNormalizer.normalize(
+                validatedStoredRate(
                     ChemicalLabelRate(label = label, basis = draft.basis, value = value, unit = unit),
                 )
             }
@@ -474,7 +490,7 @@ object ChemicalManualEntry {
                 val high = parseDouble(draft.maxText) ?: return null
                 // Stored low-to-high whichever way round it was typed, so
                 // `proposedValue` cannot hand a calculation the top of the band.
-                ChemicalLabelRateNormalizer.normalize(
+                validatedStoredRate(
                     ChemicalLabelRate(
                         label = label,
                         basis = draft.basis,
@@ -502,17 +518,21 @@ object ChemicalManualEntry {
         val target = draft.targetRaw.trim()
         // Both blank would be indistinguishable from the product-rate carrier.
         if (crop.isEmpty() && target.isEmpty()) return null
-        return ChemicalRegisteredUse(
-            crop = crop,
-            targetRaw = target,
+        val original = draft.originalUse
+        return (original ?: ChemicalRegisteredUse()).copy(
+            crop = if (original?.crop == draft.crop) original.crop else crop,
+            targetRaw = if (original?.targetRaw == draft.targetRaw) original.targetRaw else target,
             // `target` is left to the model's own conservative mapping. Forcing
             // VineTrack's six targets onto label wording they do not match would
             // tell the Resistance Engine the wrong disease was managed.
-            target = ChemicalRegisteredUse.mapTarget(target),
+            target = if (original?.targetRaw == draft.targetRaw) original.target else ChemicalRegisteredUse.mapTarget(target),
             rates = labelRates(draft.rates),
+            unknownFields = draft.originalUse?.unknownFields.orEmpty().filterKeys { key ->
+                key != "target" || original?.targetRaw == draft.targetRaw
+            },
             withholdingPeriodDays = parseInt(draft.withholdingPeriodDaysText),
             reEntryPeriodHours = parseInt(draft.reEntryPeriodHoursText),
-            restrictions = draft.restrictions.trim().takeIf { it.isNotEmpty() },
+            restrictions = if (draft.restrictions == original?.restrictions.orEmpty()) original?.restrictions else draft.restrictions.trim().takeIf { it.isNotEmpty() },
         )
     }
 
@@ -525,6 +545,7 @@ object ChemicalManualEntry {
             maxText = rate.maxValue?.let { formatChemicalNumber(it) } ?: "",
             unit = rate.unit,
             rawText = rate.rawText ?: "",
+            originalRate = rate,
         )
 
     private fun useDraft(use: ChemicalRegisteredUse): ChemicalManualUseDraft =
@@ -535,6 +556,7 @@ object ChemicalManualEntry {
             withholdingPeriodDaysText = use.withholdingPeriodDays?.toString() ?: "",
             reEntryPeriodHoursText = use.reEntryPeriodHours?.toString() ?: "",
             restrictions = use.restrictions ?: "",
+            originalUse = use,
         )
 
     // ---- Parsing ----

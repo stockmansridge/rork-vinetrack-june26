@@ -491,7 +491,7 @@ nonisolated enum ChemicalDefaultRate {
     /// The condition wording for a rate: the label's own condition, falling
     /// back to the verbatim row when the parser bound no separate condition.
     static func conditionText(for rate: ChemicalLabelRate) -> String {
-        let label = rate.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = rate.applicationCondition ?? ""
         if !label.isEmpty { return label }
         return (rate.rawText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }

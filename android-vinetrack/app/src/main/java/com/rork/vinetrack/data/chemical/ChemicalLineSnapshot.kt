@@ -102,6 +102,8 @@ data class ChemicalLineSnapshot(
     @SerialName("rate_preset") val ratePreset: String? = null,
     /** Label condition retained for named choices such as disease pressure. */
     @SerialName("rate_condition") val rateCondition: String? = null,
+    @SerialName("registered_rate") val registeredRate: ChemicalLabelRate? = null,
+    @SerialName("registered_use") val registeredUse: ChemicalRegisteredUse? = null,
 ) {
     /** Whether this snapshot carries anything the Resistance Engine could use. */
     val hasResistanceData: Boolean
@@ -138,6 +140,8 @@ data class ChemicalLineSnapshot(
         rateOrigin = selectedRate?.origin?.raw,
         ratePreset = selectedRate?.preset?.raw,
         rateCondition = selectedRate?.condition,
+        registeredRate = selectedRate?.registeredRate,
+        registeredUse = selectedRate?.registeredUse,
     )
 
     companion object {

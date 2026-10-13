@@ -33,6 +33,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -613,6 +614,9 @@ private fun ManualRateEditor(
             }
         }
 
+        rate.originalRate?.condition?.takeIf { it.isNotBlank() }?.let { condition ->
+            Text(condition, style = MaterialTheme.typography.bodySmall)
+        }
         OutlinedTextField(
             value = rate.label,
             onValueChange = { onChange(rate.copy(label = it)) },

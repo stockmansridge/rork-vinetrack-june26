@@ -680,6 +680,6 @@ nonisolated enum ChemicalIntelligenceDiffer {
     /// Rates are identified by basis + label, so "Low disease pressure" and
     /// "High disease pressure" on the same basis stay distinct rates.
     private static func rateKey(_ rate: ChemicalLabelRate) -> String {
-        "\(rate.basis.rawValue)|\(key(rate.label))|\(key(rate.unit))"
+        "\(rate.basis.rawValue)|\(key(rate.applicationCondition ?? rate.label))|\(key(rate.unit))"
     }
 }

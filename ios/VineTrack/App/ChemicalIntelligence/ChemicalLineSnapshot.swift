@@ -75,6 +75,11 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
     /// Absent for a single confirmed rate.
     var rateRangeMin: Double?
     var rateRangeMax: Double?
+    var selectedRateId: String? = nil
+    var rateCondition: String? = nil
+    var ratePreset: String? = nil
+    var registeredRate: ChemicalLabelRate? = nil
+    var registeredUse: ChemicalRegisteredUse? = nil
 
     init(
         savedChemicalId: String? = nil,
@@ -140,6 +145,11 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         case rateEntryMethod = "rate_entry_method"
         case rateRangeMin = "rate_range_min"
         case rateRangeMax = "rate_range_max"
+        case selectedRateId = "selected_rate_id"
+        case rateCondition = "rate_condition"
+        case ratePreset = "rate_preset"
+        case registeredRate = "registered_rate"
+        case registeredUse = "registered_use"
     }
 
     /// One wire format for `captured_at` on both platforms: an ISO-8601 string.
@@ -181,6 +191,11 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         try c.encodeIfPresent(rateEntryMethod, forKey: .rateEntryMethod)
         try c.encodeIfPresent(rateRangeMin, forKey: .rateRangeMin)
         try c.encodeIfPresent(rateRangeMax, forKey: .rateRangeMax)
+        try c.encodeIfPresent(selectedRateId, forKey: .selectedRateId)
+        try c.encodeIfPresent(rateCondition, forKey: .rateCondition)
+        try c.encodeIfPresent(ratePreset, forKey: .ratePreset)
+        try c.encodeIfPresent(registeredRate, forKey: .registeredRate)
+        try c.encodeIfPresent(registeredUse, forKey: .registeredUse)
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -210,6 +225,11 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         rateEntryMethod = try c.decodeIfPresent(String.self, forKey: .rateEntryMethod)
         rateRangeMin = try c.decodeIfPresent(Double.self, forKey: .rateRangeMin)
         rateRangeMax = try c.decodeIfPresent(Double.self, forKey: .rateRangeMax)
+        selectedRateId = try c.decodeIfPresent(String.self, forKey: .selectedRateId)
+        rateCondition = try c.decodeIfPresent(String.self, forKey: .rateCondition)
+        ratePreset = try c.decodeIfPresent(String.self, forKey: .ratePreset)
+        registeredRate = try c.decodeIfPresent(ChemicalLabelRate.self, forKey: .registeredRate)
+        registeredUse = try c.decodeIfPresent(ChemicalRegisteredUse.self, forKey: .registeredUse)
     }
 
     /// Records what was actually applied, and where the rate came from.
@@ -222,7 +242,8 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         unit: String,
         basis: ChemicalDefaultRateBasis,
         entryMethod: String,
-        confirmedRange: (min: Double, max: Double)? = nil
+        confirmedRange: (min: Double, max: Double)? = nil,
+        selectedRate: SpraySelectableRate? = nil
     ) -> ChemicalLineSnapshot {
         var copy = self
         copy.appliedRate = rate
@@ -231,6 +252,11 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         copy.rateEntryMethod = entryMethod
         copy.rateRangeMin = confirmedRange?.min
         copy.rateRangeMax = confirmedRange?.max
+        copy.selectedRateId = selectedRate?.id.uuidString
+        copy.rateCondition = selectedRate?.condition
+        copy.ratePreset = selectedRate?.preset?.rawValue
+        copy.registeredRate = selectedRate?.registeredRate
+        copy.registeredUse = selectedRate?.registeredUse
         return copy
     }
 

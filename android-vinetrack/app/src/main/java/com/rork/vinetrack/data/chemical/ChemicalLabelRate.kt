@@ -76,10 +76,13 @@ enum class ChemicalLabelRateBasis(val raw: String, val label: String) {
 }
 
 /** One rate option from a registered label. */
-@Serializable
+@Serializable(with = ChemicalLabelRateSerializer::class)
 data class ChemicalLabelRate(
     /** What the label calls this rate, e.g. `"Low disease pressure"`. */
     val label: String = "",
+    val condition: String? = null,
+    val unknownFields: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
+    val unsupportedBasis: String? = null,
     val basis: ChemicalLabelRateBasis = ChemicalLabelRateBasis.OTHER,
     /** A single rate value, for the non-range bases. */
     val value: Double? = null,
@@ -122,6 +125,9 @@ data class ChemicalLabelRate(
      * identity across re-extraction and array reordering, and falls back to the
      * legacy composed key for records minted before ids existed.
      */
+    val applicationCondition: String?
+        get() = condition?.trim()?.takeIf { it.isNotEmpty() } ?: label.trim().takeIf { it.isNotEmpty() }
+
     val id: String
         get() = rateId ?: "${basis.raw}|$label|${minValue ?: value ?: 0.0}"
 
@@ -134,7 +140,8 @@ data class ChemicalLabelRate(
                 rawText != null -> return rawText
                 else -> return "Rate not established"
             }
-            return "$number $unit${basis.suffix}".trim()
+            val displayUnit = ChemicalLabelRateNormalizer.normalize(this)?.unit ?: unit
+            return "$number $displayUnit${basis.suffix}".trim()
         }
 
     /**
@@ -155,7 +162,7 @@ data class ChemicalLabelRate(
  * evaluate chemistry against the disease actually being targeted, and that
  * mapping only exists on the label.
  */
-@Serializable
+@Serializable(with = ChemicalRegisteredUseSerializer::class)
 data class ChemicalRegisteredUse(
     /** e.g. `"Grapes"`. Kept as label text because registrations distinguish
      *  winegrapes from tablegrapes. */
@@ -218,6 +225,7 @@ data class ChemicalRegisteredUse(
      */
     @Serializable(with = ChemicalProvenanceMapSerializer::class)
     val provenance: Map<String, String>? = null,
+    val unknownFields: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
 ) {
     val id: String get() = "$crop|$targetRaw"
 

@@ -47,11 +47,14 @@ nonisolated enum ChemicalLabelRateNormalizer {
     }
 
     static func normalize(_ rate: ChemicalLabelRate) -> ChemicalLabelRate? {
+        guard rate.unsupportedBasis == nil else { return nil }
         if rate.basis == .other {
             guard var parsed = rate.rawText.flatMap(parse) else { return rate }
             parsed.label = rate.label; parsed.rateId = rate.rateId
             parsed.conditionIsAmbiguous = rate.conditionIsAmbiguous
             parsed.rawText = rate.rawText
+            parsed.condition = rate.condition
+            parsed.unknownFields = rate.unknownFields
             return parsed
         }
         let ns = rate.unit as NSString
@@ -97,8 +100,9 @@ nonisolated enum ChemicalLabelRateNormalizer {
         for var use in intelligence.registeredUses {
             var rates: [ChemicalLabelRate] = []
             for rate in use.rates {
-                guard let normalized = normalize(rate) else { return nil }
-                rates.append(normalized)
+                guard normalize(rate) != nil else { return nil }
+                // Persistence validates the projection but retains original label evidence.
+                rates.append(rate)
             }
             use.rates = rates
             uses.append(use)

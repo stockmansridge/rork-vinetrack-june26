@@ -55,6 +55,7 @@ nonisolated struct ChemicalManualRateDraft: Sendable, Hashable, Identifiable {
     /// unproven rate into a confirmed one the moment a record was opened and
     /// saved — laundering an ambiguity the label never resolved.
     var conditionIsAmbiguous: Bool
+    var originalRate: ChemicalLabelRate? = nil
 
     init(
         id: UUID = UUID(),
@@ -65,7 +66,8 @@ nonisolated struct ChemicalManualRateDraft: Sendable, Hashable, Identifiable {
         maxText: String = "",
         unit: String = "L",
         rawText: String = "",
-        conditionIsAmbiguous: Bool = false
+        conditionIsAmbiguous: Bool = false,
+        originalRate: ChemicalLabelRate? = nil
     ) {
         self.id = id
         self.label = label
@@ -76,6 +78,7 @@ nonisolated struct ChemicalManualRateDraft: Sendable, Hashable, Identifiable {
         self.unit = unit
         self.rawText = rawText
         self.conditionIsAmbiguous = conditionIsAmbiguous
+        self.originalRate = originalRate
     }
 
     /// Whether the operator has answered the question the flag asks.
@@ -105,6 +108,7 @@ nonisolated struct ChemicalManualUseDraft: Sendable, Hashable, Identifiable {
     var withholdingPeriodDaysText: String
     var reEntryPeriodHoursText: String
     var restrictions: String
+    var originalUse: ChemicalRegisteredUse? = nil
 
     init(
         id: UUID = UUID(),
@@ -113,7 +117,8 @@ nonisolated struct ChemicalManualUseDraft: Sendable, Hashable, Identifiable {
         rates: [ChemicalManualRateDraft] = [],
         withholdingPeriodDaysText: String = "",
         reEntryPeriodHoursText: String = "",
-        restrictions: String = ""
+        restrictions: String = "",
+        originalUse: ChemicalRegisteredUse? = nil
     ) {
         self.id = id
         self.crop = crop
@@ -122,6 +127,7 @@ nonisolated struct ChemicalManualUseDraft: Sendable, Hashable, Identifiable {
         self.withholdingPeriodDaysText = withholdingPeriodDaysText
         self.reEntryPeriodHoursText = reEntryPeriodHoursText
         self.restrictions = restrictions
+        self.originalUse = originalUse
     }
 
     /// Whether this use concerns grapevines.
@@ -575,6 +581,26 @@ nonisolated enum ChemicalManualEntry {
     }
 
     private static func labelRate(_ draft: ChemicalManualRateDraft) -> ChemicalLabelRate? {
+        if let original = draft.originalRate {
+            var comparison = rateDraft(original)
+            comparison = ChemicalManualRateDraft(id: draft.id, label: comparison.label, basis: comparison.basis, valueText: comparison.valueText, minText: comparison.minText, maxText: comparison.maxText, unit: comparison.unit, rawText: comparison.rawText, conditionIsAmbiguous: comparison.conditionIsAmbiguous, originalRate: original)
+            if comparison == draft { return original }
+        }
+        guard var result = editedLabelRate(draft) else { return nil }
+        if let original = draft.originalRate {
+            result.condition = original.condition
+            result.rateId = original.rateId
+            result.unknownFields = original.unknownFields
+            result.rawText = draft.rawText.isEmpty ? original.rawText : draft.rawText
+        }
+        return result
+    }
+
+    private static func validatedStoredRate(_ rate: ChemicalLabelRate) -> ChemicalLabelRate? {
+        ChemicalLabelRateNormalizer.normalize(rate) == nil ? nil : rate
+    }
+
+    private static func editedLabelRate(_ draft: ChemicalManualRateDraft) -> ChemicalLabelRate? {
         let unit = draft.unit.trimmingCharacters(in: .whitespacesAndNewlines)
         let label = draft.label.trimmingCharacters(in: .whitespacesAndNewlines)
         let raw = draft.rawText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -583,7 +609,7 @@ nonisolated enum ChemicalManualEntry {
         switch draft.basis {
         case .perHectare, .per100Litres:
             guard let value = parseDouble(draft.valueText) else { return nil }
-            return ChemicalLabelRateNormalizer.normalize(ChemicalLabelRate(
+            return validatedStoredRate(ChemicalLabelRate(
                 label: label,
                 basis: draft.basis,
                 value: value,
@@ -595,7 +621,7 @@ nonisolated enum ChemicalManualEntry {
                   let high = parseDouble(draft.maxText) else { return nil }
             // Stored low-to-high whichever way round it was typed, so
             // `proposedValue` cannot hand a calculation the top of the band.
-            return ChemicalLabelRateNormalizer.normalize(ChemicalLabelRate(
+            return validatedStoredRate(ChemicalLabelRate(
                 label: label,
                 basis: draft.basis,
                 minValue: min(low, high),
@@ -620,17 +646,20 @@ nonisolated enum ChemicalManualEntry {
         let target = draft.targetRaw.trimmingCharacters(in: .whitespacesAndNewlines)
         // Both blank would be indistinguishable from the product-rate carrier.
         guard !crop.isEmpty || !target.isEmpty else { return nil }
-        return ChemicalRegisteredUse(
-            crop: crop,
-            targetRaw: target,
-            // `target` is left to the model's own conservative mapping. Forcing
-            // VineTrack's six targets onto label wording it does not match would
-            // tell the Resistance Engine the wrong disease was managed.
-            rates: labelRates(from: draft.rates),
-            withholdingPeriodDays: parseInt(draft.withholdingPeriodDaysText),
-            reEntryPeriodHours: parseInt(draft.reEntryPeriodHoursText),
-            restrictions: draft.restrictions.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
+        var result = draft.originalUse ?? ChemicalRegisteredUse(crop: crop, targetRaw: target)
+        if draft.originalUse?.crop != draft.crop { result.crop = crop }
+        if draft.originalUse?.targetRaw != draft.targetRaw {
+            result.targetRaw = target
+            result.target = ChemicalRegisteredUse.mapTarget(target)
+            result.unknownFields.removeValue(forKey: "target")
+        }
+        result.rates = labelRates(from: draft.rates)
+        result.withholdingPeriodDays = parseInt(draft.withholdingPeriodDaysText)
+        result.reEntryPeriodHours = parseInt(draft.reEntryPeriodHoursText)
+        if draft.restrictions != (draft.originalUse?.restrictions ?? "") {
+            result.restrictions = draft.restrictions.trimmingCharacters(in: .whitespacesAndNewlines).trimmedNonEmpty
+        }
+        return result
     }
 
     private static func rateDraft(_ rate: ChemicalLabelRate) -> ChemicalManualRateDraft {
@@ -642,7 +671,8 @@ nonisolated enum ChemicalManualEntry {
             maxText: rate.maxValue.map { ChemicalActiveIngredient.formatConcentration($0) } ?? "",
             unit: rate.unit,
             rawText: rate.rawText ?? "",
-            conditionIsAmbiguous: rate.conditionIsAmbiguous
+            conditionIsAmbiguous: rate.conditionIsAmbiguous,
+            originalRate: rate
         )
     }
 
@@ -653,7 +683,8 @@ nonisolated enum ChemicalManualEntry {
             rates: use.rates.map(rateDraft),
             withholdingPeriodDaysText: use.withholdingPeriodDays.map(String.init) ?? "",
             reEntryPeriodHoursText: use.reEntryPeriodHours.map(String.init) ?? "",
-            restrictions: use.restrictions ?? ""
+            restrictions: use.restrictions ?? "",
+            originalUse: use
         )
     }
 

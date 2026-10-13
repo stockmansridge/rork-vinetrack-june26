@@ -40,9 +40,10 @@ object ChemicalLabelRateNormalizer {
     }
 
     fun normalize(rate: ChemicalLabelRate): ChemicalLabelRate? {
+        if (rate.unsupportedBasis != null) return null
         if (rate.basis == ChemicalLabelRateBasis.OTHER) {
             val parsed = rate.rawText?.let(::parse) ?: return rate
-            return parsed.copy(label = rate.label, rateId = rate.rateId, conditionAmbiguous = rate.conditionAmbiguous, rawText = rate.rawText)
+            return parsed.copy(label = rate.label, condition = rate.condition, unknownFields = rate.unknownFields, rateId = rate.rateId, conditionAmbiguous = rate.conditionAmbiguous, rawText = rate.rawText)
         }
         val unitMatch = unitPattern.matchEntire(rate.unit) ?: return null
         val unit = canonicalBareUnit(unitMatch.groupValues[1]) ?: return null
@@ -75,7 +76,10 @@ object ChemicalLabelRateNormalizer {
 
     fun normalize(intelligence: ChemicalIntelligence): ChemicalIntelligence? {
         val uses = intelligence.registeredUses.map { use ->
-            val rates = use.rates.map { normalize(it) ?: return null }
+            val rates = use.rates.map { rate ->
+                normalize(rate) ?: return null
+                rate
+            }
             use.copy(rates = rates)
         }
         return intelligence.copy(registeredUses = uses)

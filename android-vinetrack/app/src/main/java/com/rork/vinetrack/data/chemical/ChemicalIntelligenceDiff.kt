@@ -561,5 +561,5 @@ object ChemicalIntelligenceDiffer {
      * disease pressure" on the same basis stay distinct rates.
      */
     private fun rateKey(rate: ChemicalLabelRate): String =
-        "${rate.basis.raw}|${key(rate.label)}|${key(rate.unit)}"
+        "${rate.basis.raw}|${key(rate.applicationCondition ?: rate.label)}|${key(rate.unit)}"
 }

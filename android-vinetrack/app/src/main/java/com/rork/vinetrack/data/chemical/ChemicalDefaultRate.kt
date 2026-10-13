@@ -485,7 +485,7 @@ object ChemicalDefaultRate {
      * back to the verbatim row when the parser bound no separate condition.
      */
     fun conditionText(rate: ChemicalLabelRate): String {
-        val label = rate.label.trim()
+        val label = rate.applicationCondition.orEmpty()
         if (label.isNotEmpty()) return label
         return rate.rawText.orEmpty().trim()
     }

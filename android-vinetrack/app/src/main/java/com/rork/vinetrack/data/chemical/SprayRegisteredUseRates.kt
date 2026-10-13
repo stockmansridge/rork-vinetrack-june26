@@ -43,6 +43,8 @@ data class SpraySelectableRate(
     val labelRange: ClosedFloatingPointRange<Double>? = null,
     val labelRangeText: String? = null,
     val preset: SprayRatePreset? = null,
+    val registeredRate: ChemicalLabelRate? = null,
+    val registeredUse: ChemicalRegisteredUse? = null,
 ) {
     val isSelectable: Boolean
         get() = basis != null && (amount is SprayRateAmount.Fixed || amount is SprayRateAmount.Range)
@@ -61,12 +63,15 @@ data class SpraySelectableRate(
         }
 
     val menuText: String
-        get() = preset?.let {
+        get() {
+            val caption = listOfNotNull(label.trim().takeIf { it.isNotEmpty() }, condition?.trim()?.takeIf { it.isNotEmpty() }).distinct().joinToString(" — ")
+            return preset?.let {
             val choice = "$displayText (${it.qualifier})"
-            if (label.isBlank()) choice else "$label: $choice"
+            if (caption.isBlank()) choice else "$caption: $choice"
         }
-            ?: label.trim().takeIf { it.isNotEmpty() }?.let { "$it: $displayText" }
+            ?: caption.takeIf { it.isNotEmpty() }?.let { "$it: $displayText" }
             ?: displayText
+        }
 }
 
 /** Pure Kotlin port of iOS `SprayRegisteredUseRates`. */
@@ -201,7 +206,9 @@ object SprayRegisteredUseRates {
             crop = use.crop,
             targetRaw = use.targetRaw,
             label = rate.label,
-            condition = rate.label.trim().takeIf { it.isNotEmpty() },
+            condition = rate.applicationCondition,
+            registeredRate = rate,
+            registeredUse = use,
             basis = basis,
             amount = amount,
             unit = normalized.unit,

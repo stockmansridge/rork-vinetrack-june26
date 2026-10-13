@@ -136,6 +136,12 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
     /// spraying"`, `"Early season"`, `"High disease pressure"`. Read verbatim
     /// from the label; never synthesised.
     var label: String
+    var condition: String? = nil
+    var unknownFields: [String: ChemicalStoredJSON] = [:]
+    var unsupportedBasis: String? = nil
+
+    var applicationCondition: String? { condition?.trimmedNonEmpty ?? label.trimmedNonEmpty }
+
     var basis: ChemicalLabelRateBasis
     /// A single rate value, for the non-range bases.
     var value: Double?
@@ -166,8 +172,10 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
         unit: String = "",
         rawText: String? = nil,
         conditionIsAmbiguous: Bool = false,
-        rateId: String? = nil
+        rateId: String? = nil,
+        condition: String? = nil
     ) {
+        self.condition = condition
         self.rateId = rateId?.trimmedNonEmpty
         self.label = label.trimmingCharacters(in: .whitespacesAndNewlines)
         self.basis = basis
@@ -181,7 +189,7 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case label, basis, value, unit
+        case label, condition, basis, value, unit
         case minValue = "min_value"
         case maxValue = "max_value"
         case rawText = "raw_text"
@@ -191,9 +199,14 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
 
     nonisolated init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let all = try decoder.container(keyedBy: ChemicalStoredKey.self)
+        let known = Set(["label", "condition", "basis", "value", "unit", "min_value", "max_value", "raw_text", "condition_ambiguous", "rate_id"])
+        unknownFields = try Dictionary(uniqueKeysWithValues: all.allKeys.filter { !known.contains($0.stringValue) }.map { ($0.stringValue, try all.decode(ChemicalStoredJSON.self, forKey: $0)) })
+        condition = try c.decodeIfPresent(String.self, forKey: .condition)
         label = try c.decodeIfPresent(String.self, forKey: .label) ?? ""
         let raw = try c.decodeIfPresent(String.self, forKey: .basis) ?? ""
         basis = ChemicalLabelRateBasis(rawValue: raw) ?? .other
+        unsupportedBasis = !raw.isEmpty && ChemicalLabelRateBasis(rawValue: raw) == nil ? raw : nil
         value = try c.decodeIfPresent(Double.self, forKey: .value)
         minValue = try c.decodeIfPresent(Double.self, forKey: .minValue)
         maxValue = try c.decodeIfPresent(Double.self, forKey: .maxValue)
@@ -201,12 +214,31 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
         rawText = try c.decodeIfPresent(String.self, forKey: .rawText)
         // Additive and tolerant: a historical rate carries none, and a record
         // without one must keep decoding exactly as it always did.
-        rateId = ((try? c.decodeIfPresent(String.self, forKey: .rateId)) ?? nil)?.trimmedNonEmpty
+        rateId = (try? c.decodeIfPresent(String.self, forKey: .rateId)) ?? nil
+        if rateId == nil, all.contains(ChemicalStoredKey("rate_id")) {
+            unknownFields["rate_id"] = try all.decode(ChemicalStoredJSON.self, forKey: ChemicalStoredKey("rate_id"))
+        }
         // Additive and tolerant: absence means "the association is sound",
         // which is the correct reading for every record written before the
         // multi-rate contract existed.
         conditionIsAmbiguous =
             ((try? c.decodeIfPresent(Bool.self, forKey: .conditionIsAmbiguous)) ?? nil) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var all = encoder.container(keyedBy: ChemicalStoredKey.self)
+        for (key, value) in unknownFields { try all.encode(value, forKey: ChemicalStoredKey(key)) }
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(label, forKey: .label)
+        try c.encodeIfPresent(condition, forKey: .condition)
+        try c.encode(unsupportedBasis ?? basis.rawValue, forKey: .basis)
+        try c.encodeIfPresent(value, forKey: .value)
+        try c.encodeIfPresent(minValue, forKey: .minValue)
+        try c.encodeIfPresent(maxValue, forKey: .maxValue)
+        try c.encode(unit, forKey: .unit)
+        try c.encodeIfPresent(rawText, forKey: .rawText)
+        try c.encodeIfPresent(rateId, forKey: .rateId)
+        try c.encode(conditionIsAmbiguous, forKey: .conditionIsAmbiguous)
     }
 
     /// `"1.5 L/ha"` or `"1.0–2.0 L/ha"`.
@@ -221,7 +253,8 @@ nonisolated struct ChemicalLabelRate: Codable, Sendable, Hashable, Identifiable 
         } else {
             return "Rate not established"
         }
-        return "\(number) \(unit)\(basis.suffix)".trimmingCharacters(in: .whitespaces)
+        let displayUnit = ChemicalLabelRateNormalizer.normalize(self)?.unit ?? unit
+        return "\(number) \(displayUnit)\(basis.suffix)".trimmingCharacters(in: .whitespaces)
     }
 
     /// The value a calculation should start from: a range proposes its LOW
@@ -376,6 +409,7 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
     /// the server published provenance — absence means "unknown", never
     /// "authoritative".
     var provenance: [String: String]?
+    var unknownFields: [String: ChemicalStoredJSON] = [:]
 
     init(
         crop: String,
@@ -414,10 +448,16 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
 
     nonisolated init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        let all = try decoder.container(keyedBy: ChemicalStoredKey.self)
+        let known = Set(["crop", "target", "rates", "restrictions", "provenance", "target_raw", "withholding_period_days", "re_entry_period_hours", "re_entry_statement", "direction_id"])
+        unknownFields = try Dictionary(uniqueKeysWithValues: all.allKeys.filter { !known.contains($0.stringValue) }.map { ($0.stringValue, try all.decode(ChemicalStoredJSON.self, forKey: $0)) })
         crop = try c.decodeIfPresent(String.self, forKey: .crop) ?? ""
         targetRaw = try c.decodeIfPresent(String.self, forKey: .targetRaw) ?? ""
         if let raw = try c.decodeIfPresent(String.self, forKey: .target) {
             target = SprayTarget(rawValue: raw) ?? ChemicalRegisteredUse.mapTarget(targetRaw)
+            if SprayTarget(rawValue: raw) == nil {
+                unknownFields["target"] = .string(raw)
+            }
         } else {
             target = ChemicalRegisteredUse.mapTarget(targetRaw)
         }
@@ -433,11 +473,32 @@ nonisolated struct ChemicalRegisteredUse: Codable, Sendable, Hashable, Identifia
         // Additive and tolerant: a malformed or missing provenance map reads
         // as nil so the use itself always loads; the value is never guessed.
         provenance = try? c.decodeIfPresent([String: String].self, forKey: .provenance)
+        if provenance == nil, all.contains(ChemicalStoredKey("provenance")) {
+            unknownFields["provenance"] = try all.decode(ChemicalStoredJSON.self, forKey: ChemicalStoredKey("provenance"))
+        }
         // Additive and tolerant: absent on every record saved before printed-
         // direction identity existed, and such a record must keep decoding
         // exactly as it always did.
-        directionId = ((try? c.decodeIfPresent(String.self, forKey: .directionId)) ?? nil)?
-            .trimmedNonEmpty
+        directionId = (try? c.decodeIfPresent(String.self, forKey: .directionId)) ?? nil
+        if directionId == nil, all.contains(ChemicalStoredKey("direction_id")) {
+            unknownFields["direction_id"] = try all.decode(ChemicalStoredJSON.self, forKey: ChemicalStoredKey("direction_id"))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var all = encoder.container(keyedBy: ChemicalStoredKey.self)
+        for (key, value) in unknownFields { try all.encode(value, forKey: ChemicalStoredKey(key)) }
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(crop, forKey: .crop)
+        try c.encode(targetRaw, forKey: .targetRaw)
+        if unknownFields["target"] == nil { try c.encodeIfPresent(target, forKey: .target) }
+        try c.encode(rates, forKey: .rates)
+        try c.encodeIfPresent(restrictions, forKey: .restrictions)
+        try c.encodeIfPresent(provenance, forKey: .provenance)
+        try c.encodeIfPresent(withholdingPeriodDays, forKey: .withholdingPeriodDays)
+        try c.encodeIfPresent(reEntryPeriodHours, forKey: .reEntryPeriodHours)
+        try c.encodeIfPresent(reEntryStatement, forKey: .reEntryStatement)
+        try c.encodeIfPresent(directionId, forKey: .directionId)
     }
 
     /// Trimmed, or nil when empty — whitespace is not a statement.

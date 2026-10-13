@@ -79,6 +79,9 @@ nonisolated struct SpraySelectableRate: Identifiable, Sendable, Hashable {
     let targetRaw: String?
     /// The label's own wording for this rate, e.g. `"Dilute"`.
     let label: String
+    let condition: String?
+    let registeredRate: ChemicalLabelRate?
+    let registeredUse: ChemicalRegisteredUse?
     /// The spray-side basis. `nil` when the label basis maps to no application
     /// basis at all (`basis:"other"`), which is what makes it unselectable.
     let basis: ChemicalRateBasis?
@@ -119,13 +122,19 @@ nonisolated struct SpraySelectableRate: Identifiable, Sendable, Hashable {
         labelUnit: String = "",
         labelRange: ClosedRange<Double>? = nil,
         labelRangeText: String? = nil,
-        preset: SprayRatePreset? = nil
+        preset: SprayRatePreset? = nil,
+        condition: String? = nil,
+        registeredRate: ChemicalLabelRate? = nil,
+        registeredUse: ChemicalRegisteredUse? = nil
     ) {
         self.id = id
         self.origin = origin
         self.crop = crop
         self.targetRaw = targetRaw
         self.label = label
+        self.condition = condition
+        self.registeredRate = registeredRate
+        self.registeredUse = registeredUse
         self.basis = basis
         self.seed = seed
         self.displayText = displayText
@@ -171,11 +180,12 @@ nonisolated struct SpraySelectableRate: Identifiable, Sendable, Hashable {
     /// `"175 g/100 L (mid-range)"` — so the operator can tell at a glance which
     /// numbers the label printed and which one is arithmetic.
     var menuText: String {
+        let caption = [label.trimmedNonEmpty, condition?.trimmedNonEmpty].compactMap { $0 }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.joined(separator: " — ")
         if let preset {
             let choice = "\(displayText) (\(preset.qualifier))"
-            return label.isEmpty ? choice : "\(label): \(choice)"
+            return caption.isEmpty ? choice : "\(caption): \(choice)"
         }
-        let name = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = caption
         return name.isEmpty ? displayText : "\(name): \(displayText)"
     }
 }
@@ -496,7 +506,10 @@ nonisolated enum SprayRegisteredUseRates {
                     labelUnit: only.entry.labelUnit,
                     labelRange: minimum...maximum,
                     labelRangeText: only.entry.displayText,
-                    preset: point.preset
+                    preset: point.preset,
+                    condition: only.labelRate.applicationCondition,
+                    registeredRate: only.labelRate,
+                    registeredUse: use
                 ))
             }
         }
@@ -583,7 +596,10 @@ nonisolated enum SprayRegisteredUseRates {
             displayText: normalized.displayRate,
             labelUnit: normalized.unit,
             labelRange: range,
-            labelRangeText: range == nil ? nil : normalized.displayRate
+            labelRangeText: range == nil ? nil : normalized.displayRate,
+            condition: rate.applicationCondition,
+            registeredRate: rate,
+            registeredUse: use
         )
     }
 

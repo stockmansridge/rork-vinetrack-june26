@@ -183,6 +183,9 @@ struct ChemicalManualRateEditor: View {
                     .font(.subheadline)
             }
 
+            if let condition = rate.originalRate?.condition?.trimmedNonEmpty {
+                Text(condition).font(.caption).foregroundStyle(.secondary)
+            }
             TextField("Rate name, e.g. High disease pressure (optional)", text: $rate.label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
