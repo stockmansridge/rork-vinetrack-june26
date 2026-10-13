@@ -280,7 +280,7 @@ struct SprayProgramRound2Tests {
     }
 }
 
-private actor CompletionReplayRepository: SprayRecordSyncRepositoryProtocol {
+@MainActor private final class CompletionReplayRepository: SprayRecordSyncRepositoryProtocol {
     let server: BackendSprayRecord
     let fails: Bool
     var pushed: [BackendSprayRecordUpsert] = []

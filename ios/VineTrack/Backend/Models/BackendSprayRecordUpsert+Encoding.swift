@@ -68,6 +68,6 @@ extension BackendSprayRecordUpsert {
         fields.resolvedPlanningConcentrationFactor = resolvedPlanningConcentrationFactor
         fields.controllerLitresPer100mTravel = controllerLitresPer100mTravel
         fields.effectiveWorkingWidthMetres = effectiveWorkingWidthMetres
-        try fields.encode(to: encoder)
+        try fields.encode(to: encoder, inputsOnly: false, explicitClear: planningFieldsCleared)
     }
 }

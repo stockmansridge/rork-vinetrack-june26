@@ -137,6 +137,8 @@ data class SprayApplicationSnapshot(
     /** Additive local-only intent; server writes remain gated pending migration review. */
     val planningIntent: SprayPlanningIntent? = null,
     val planningResolution: SprayPlanningResolution? = null,
+    /** Durable local mutation intent, not a database column. Null preserves historical omission. */
+    val planningFieldsCleared: Boolean? = null,
 ) {
 
     /**
@@ -183,7 +185,7 @@ data class SprayApplicationSnapshot(
             carrierLitresPerHectare == null && diluteLitresPer100m == null &&
             appliedLitresPer100m == null && concentrationFactor == null &&
             targets == null && customTargets == null && sprayHeadTarget == null &&
-            groundTarget == null && carrierAreaBasis == null && blocks == null && planningIntent == null && planningResolution == null
+            groundTarget == null && carrierAreaBasis == null && blocks == null && planningIntent == null && planningResolution == null && planningFieldsCleared != true
 
     /**
      * True when the operator's target selection was genuinely recorded, so the
@@ -240,6 +242,9 @@ data class SprayApplicationSnapshot(
      * Returns null when the result carries nothing at all, so "never recorded"
      * keeps its single representation.
      */
+    /** Clear only planning evidence; retain all unrelated factual snapshot fields. */
+    fun clearingPlanning(): SprayApplicationSnapshot = copy(planningIntent = null, planningResolution = null, planningFieldsCleared = true)
+
     fun withBlocks(blocks: List<SprayApplicationBlockSnapshot>?): SprayApplicationSnapshot? {
         val updated = copy(blocks = SprayApplicationBlockSnapshot.normalised(blocks))
         return if (updated.isEmpty) null else updated
@@ -282,6 +287,7 @@ data class SprayApplicationSnapshot(
             groundTarget = groundTarget,
             carrierAreaBasis = carrierAreaBasis,
             planningIntent = planningIntent,
+            planningFieldsCleared = planningFieldsCleared,
             // Block IDENTITY is reusable intent — "my powdery spray on the home
             // blocks" is exactly what a template is for — but the per-block AREAS
             // and ROW LENGTHS are outputs and must be recalculated, for the same

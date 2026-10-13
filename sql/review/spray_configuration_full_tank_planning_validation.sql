@@ -123,6 +123,17 @@ begin
    foreach col in array array['full_tank_specification','planning_intended_tank_litres','planning_target_area_ha','planning_calibrated_litres_per_hectare','planning_input_provenance'] || case when t='spray_records' then outputs else array[]::text[] end loop
      if new_row -> col is distinct from 'null'::jsonb then raise exception 'Explicit clearing did not persist: % %',t,col; end if;
    end loop;
+   -- Complete return to no-intent, including configuration/method, in one statement.
+   execute format('update public.%I set %s where id=$1',t,
+     (select string_agg(format('%I=null',k),',') from unnest(keys) k)) using fixture;
+   execute format('select to_jsonb(r) from public.%I r where id=$1',t) into new_row using fixture;
+   foreach col in array keys loop
+     if new_row -> col is distinct from 'null'::jsonb then raise exception 'No-intent clear failed: % %',t,col; end if;
+   end loop;
+   if new_row - keys - array['updated_at','client_updated_at','sync_version'] is distinct from
+      (select row_value - keys - array['updated_at','client_updated_at','sync_version'] from review_rows_before where table_name=t and id=fixture) then
+     raise exception 'Planning edits/clear changed unrelated record fields: %',t;
+   end if;
    -- Storage CHECKs intentionally permit incomplete drafts. This is NOT admission success.
  end loop;
  if exists ((select * from review_policies_before except select * from pg_policies where schemaname='public' and tablename in ('spray_records','spray_jobs')) union all (select * from pg_policies where schemaname='public' and tablename in ('spray_records','spray_jobs') except select * from review_policies_before)) then raise exception 'Existing RLS changed'; end if;

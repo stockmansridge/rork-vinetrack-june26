@@ -73,6 +73,44 @@ class SprayPlanningAndroidTest {
         assertEquals(0, restored.attemptCount)
     }
 
+    @Test fun clearedPlanningSurvivesFileStoreRecreationAndReplayKeepsExactBytes() = runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val file = java.io.File.createTempFile("spray-clear-preview-", ".json", context.cacheDir)
+        val json = Json { encodeDefaults = true }
+        val serializer = kotlinx.serialization.builtins.ListSerializer(PendingWrite.serializer())
+        fun fileStore(): PendingWriteStoring = object : PendingWriteStoring {
+            override fun load(): List<PendingWrite> = if (file.length() == 0L) emptyList() else json.decodeFromString(serializer, file.readText())
+            override fun save(writes: List<PendingWrite>): Boolean {
+                java.io.FileOutputStream(file).use { stream ->
+                    stream.write(json.encodeToString(serializer, writes).toByteArray())
+                    stream.fd.sync()
+                }
+                return true
+            }
+            override fun clear(): Boolean = save(emptyList())
+        }
+        try {
+            val snapshot = SprayApplicationSnapshot(grossAreaHa = 10.0, planningIntent = SprayPlanningIntent(configuration = SprayPassConfiguration.OVER_ROW)).clearingPlanning()
+            val payload = SprayRecordUpdateSync.Payload("original", "2026-10-13", "2026-10-13", notes = "Unrelated notes", applicationGeometry = snapshot, clientUpdatedAt = "original-revision")
+            val bytes = json.encodeToString(SprayRecordUpdateSync.Payload.serializer(), payload)
+            // Seed pre-existing evidence only; ordinary enqueue must remain disabled.
+            val original = PendingWriteRepository(fileStore()).enqueue(PendingEntityType.SPRAY_RECORD, PendingOpType.UPDATE, bytes, "original")
+            val reopened = PendingWriteRepository(fileStore())
+            val restoredPayload = json.decodeFromString(SprayRecordUpdateSync.Payload.serializer(), reopened.list().single().payloadJson)
+            assertEquals(true, restoredPayload.applicationGeometry?.planningFieldsCleared)
+            assertEquals("Unrelated notes", restoredPayload.notes)
+            var published = false
+            SprayRecordUpdateSync(reopened).replayAll { published = true }
+            val retained = PendingWriteRepository(fileStore()).list().single()
+            assertFalse(published)
+            assertEquals(original.id, retained.id)
+            assertEquals(bytes, retained.payloadJson)
+            assertEquals(PendingWriteStatus.BLOCKED, retained.status)
+            assertEquals(0, retained.attemptCount)
+            assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, retained.lastError)
+        } finally { file.delete() }
+    }
+
     @Test fun concentrateReplayBlocksEvenWithoutNewConfiguration() = runBlocking {
         val tank = SprayTank(id = "tank", concentrationFactor = 2.0, chemicals = listOf(SprayChemical("chemical", ratePer100L = 100.0)))
         val payload = SprayRecordUpdateSync.Payload("original", "2026-10-12", "2026-10-12", tanks = listOf(tank), clientUpdatedAt = "original-revision")

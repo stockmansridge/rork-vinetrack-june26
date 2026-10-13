@@ -5,7 +5,7 @@ import XCTest
 /// Records what the sync layer actually sent, so the dependency order
 /// `Trip parent -> Spray Record -> Tank Actuals -> final Trip state` is asserted
 /// against real pushed payloads rather than helper return values.
-actor FakeTripSyncRepository: TripSyncRepositoryProtocol {
+@MainActor final class FakeTripSyncRepository: TripSyncRepositoryProtocol {
     private(set) var batches: [[BackendTripUpsert]] = []
     /// Persistent, because SyncQueuePush retries each item individually after a
     /// failed batch — a one-shot failure would silently succeed on retry.

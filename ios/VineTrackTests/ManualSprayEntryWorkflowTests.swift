@@ -125,7 +125,7 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
     }
 }
 
-private actor ManualSprayRepositoryDouble: ManualSprayEntryRepositoryProtocol {
+@MainActor private final class ManualSprayRepositoryDouble: ManualSprayEntryRepositoryProtocol {
     struct Call: Sendable { let operationId: UUID; let payload: ManualSprayPayload }
     private var remainingSaveFailures: Int
     private var remainingDeleteFailures: Int
@@ -147,7 +147,7 @@ private actor ManualSprayRepositoryDouble: ManualSprayEntryRepositoryProtocol {
     }
 }
 
-private actor ManualSprayTerminalRepositoryDouble: ManualSprayEntryRepositoryProtocol {
+@MainActor private final class ManualSprayTerminalRepositoryDouble: ManualSprayEntryRepositoryProtocol {
     let error: ManualSprayMutationError
     init(error: ManualSprayMutationError) { self.error = error }
     func save(operationId: UUID, payload: ManualSprayPayload, expectedVersion: Int?) async throws -> ManualSpraySaveResponse { throw error }

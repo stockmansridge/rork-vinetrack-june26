@@ -54,7 +54,8 @@ nonisolated struct BackendSprayJobTemplateUpdate: Encodable, Sendable, Equatable
         tractorId: UUID?,
         groundApplicationTarget: String? = nil,
         carrierAreaBasis: String? = nil,
-        updatedBy: UUID?
+        updatedBy: UUID?,
+        planningFields: SprayPlanningWireFields? = nil
     ) {
         self.name = name
         self.chemicalLines = chemicalLines
@@ -68,6 +69,7 @@ nonisolated struct BackendSprayJobTemplateUpdate: Encodable, Sendable, Equatable
         self.groundApplicationTarget = groundApplicationTarget
         self.carrierAreaBasis = carrierAreaBasis
         self.updatedBy = updatedBy
+        self.planningFields = planningFields
     }
 
     enum CodingKeys: String, CodingKey {

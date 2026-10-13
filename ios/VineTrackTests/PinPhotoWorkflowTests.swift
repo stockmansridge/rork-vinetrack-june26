@@ -115,7 +115,7 @@ final class PinPhotoWorkflowTests: XCTestCase {
     }
 }
 
-private actor PinRepositoryDouble: PinSyncRepositoryProtocol {
+@MainActor private final class PinRepositoryDouble: PinSyncRepositoryProtocol {
     private var upserts: Int = 0
     private var path: String?
     private var remainingPhotoFailures: Int
@@ -143,7 +143,7 @@ private actor PinRepositoryDouble: PinSyncRepositoryProtocol {
     func upsertCount() -> Int { upserts }
 }
 
-private actor PhotoStorageDouble: PinPhotoStorageProtocol {
+@MainActor private final class PhotoStorageDouble: PinPhotoStorageProtocol {
     private let shouldFail: Bool
     private var uploads: Int = 0
     private var path: String?

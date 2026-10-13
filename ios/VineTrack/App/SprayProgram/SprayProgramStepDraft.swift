@@ -225,6 +225,8 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
     var carrierAreaBasis: SprayCarrierAreaBasis?
     var notes: String
     var products: [SprayProgramProductDraft]
+    var planningIntent: SprayPlanningIntent?
+    private let originalPlanningIntent: SprayPlanningIntent?
 
     // MARK: - Load
 
@@ -242,6 +244,8 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
         groundTarget = step.record.applicationGeometry?.groundTarget
         carrierAreaBasis = step.record.applicationGeometry?.carrierAreaBasis
         notes = step.notes
+        planningIntent = step.record.applicationGeometry?.planningIntent
+        originalPlanningIntent = planningIntent
 
         var lines: [SprayProgramProductDraft] = []
         for (tankIndex, tank) in step.record.tanks.enumerated() {
@@ -390,7 +394,8 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
             tractorId: operationType == .fertigation ? nil : tractorId,
             groundApplicationTarget: operationType == .fertigation ? nil : groundTarget?.rawValue,
             carrierAreaBasis: operationType == .fertigation ? nil : carrierAreaBasis?.rawValue,
-            updatedBy: updatedBy
+            updatedBy: updatedBy,
+            planningFields: planningIntent != originalPlanningIntent ? SprayPlanningWireFields(intent: planningIntent, isTemplate: true) : nil
         )
     }
 
@@ -428,13 +433,16 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
         // step carries no geometry because it does not know where it is going.
         let typed = recognisedTargets
         let custom = SprayTargetVocabulary.customs(targets).map(\.identifier)
-        let intent = SprayApplicationSnapshot(
+        var intent = SprayApplicationSnapshot(
             applicationMode: groundTarget == nil ? nil : .banded,
             targets: typed.isEmpty ? nil : typed,
             customTargets: custom.isEmpty ? nil : custom,
             groundTarget: groundTarget,
             carrierAreaBasis: carrierAreaBasis
         )
+        intent.planningIntent = planningIntent
+        intent.planningFieldsCleared = record.applicationGeometry?.planningFieldsCleared
+        if planningIntent == nil && originalPlanningIntent != nil { intent = intent.clearingPlanning() }
         updated.applicationGeometry = intent.isEmpty ? nil : intent
         return updated
     }

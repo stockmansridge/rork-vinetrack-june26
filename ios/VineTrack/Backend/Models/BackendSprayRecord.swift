@@ -235,6 +235,7 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
     let clientUpdatedAt: Date
     /// Client admission evidence only; deliberately excluded from the wire schema.
     var planningIntent: SprayPlanningIntent? = nil
+    var planningFieldsCleared: Bool = false
     var sprayerConfiguration: String? = nil
     var sprayPlanningMethod: String? = nil
     var fullTankSpecification: String? = nil
@@ -388,6 +389,7 @@ extension BackendSprayRecord {
             createdBy: createdBy,
             clientUpdatedAt: clientUpdatedAt,
             planningIntent: geometry?.planningIntent ?? (geometry?.planningResolution != nil ? SprayPlanningIntent() : nil),
+            planningFieldsCleared: geometry?.planningFieldsCleared == true,
             sprayerConfiguration: planning.sprayerConfiguration,
             sprayPlanningMethod: planning.sprayPlanningMethod,
             fullTankSpecification: planning.fullTankSpecification,

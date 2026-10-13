@@ -39,6 +39,16 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
     /// Additive local planning provenance. Absent in every historical snapshot.
     var planningIntent: SprayPlanningIntent? = nil
     var planningResolution: SprayPlanningResolution? = nil
+    /// Local durable mutation intent, never a database column. Nil means historical omission.
+    var planningFieldsCleared: Bool? = nil
+
+    func clearingPlanning() -> SprayApplicationSnapshot {
+        var cleared = self
+        cleared.planningIntent = nil
+        cleared.planningResolution = nil
+        cleared.planningFieldsCleared = true
+        return cleared
+    }
 
     // MARK: Application geometry
 
@@ -145,7 +155,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             && carrierLitresPerHectare == nil && diluteLitresPer100m == nil
             && appliedLitresPer100m == nil && concentrationFactor == nil
             && targets == nil && customTargets == nil && sprayHeadTarget == nil
-            && groundTarget == nil && carrierAreaBasis == nil && blocks == nil && planningIntent == nil && planningResolution == nil
+            && groundTarget == nil && carrierAreaBasis == nil && blocks == nil && planningIntent == nil && planningResolution == nil && planningFieldsCleared != true
     }
 
     /// Every selected target as the stable identifiers the `targets text[]`
@@ -247,6 +257,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
             blocks: blocks?.map(\.identityOnly)
         )
         configuration.planningIntent = planningIntent
+        configuration.planningFieldsCleared = planningFieldsCleared
         // Working width/controller output are recalculated for a new application.
         configuration.planningResolution = nil
         return configuration.isEmpty ? nil : configuration
@@ -290,6 +301,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         )
         updated.planningIntent = planningIntent
         updated.planningResolution = planningResolution
+        updated.planningFieldsCleared = planningFieldsCleared
         return updated.isEmpty ? nil : updated
     }
 
@@ -450,7 +462,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         case carrierVolumeBasis, totalCarrierLitres, carrierLitresPerHectare
         case diluteLitresPer100m, appliedLitresPer100m, concentrationFactor
         case targets, customTargets, sprayHeadTarget, groundTarget, carrierAreaBasis
-        case blocks, planningIntent, planningResolution
+        case blocks, planningIntent, planningResolution, planningFieldsCleared
     }
 
     /// Tolerant decode: an unrecognised enum value (for example a
@@ -460,6 +472,7 @@ nonisolated struct SprayApplicationSnapshot: Codable, Sendable, Hashable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         planningIntent = try container.decodeIfPresent(SprayPlanningIntent.self, forKey: .planningIntent)
         planningResolution = try container.decodeIfPresent(SprayPlanningResolution.self, forKey: .planningResolution)
+        planningFieldsCleared = try container.decodeIfPresent(Bool.self, forKey: .planningFieldsCleared)
         grossAreaHa = try container.decodeIfPresent(Double.self, forKey: .grossAreaHa)
         treatedAreaHa = try container.decodeIfPresent(Double.self, forKey: .treatedAreaHa)
         applicationMode = try? container.decodeIfPresent(SprayApplicationMode.self, forKey: .applicationMode)

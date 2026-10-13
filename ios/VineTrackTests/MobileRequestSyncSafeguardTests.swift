@@ -136,7 +136,7 @@ private nonisolated struct SafeguardResponseError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-private actor SafeguardWorkerRepository: OperatorCategorySyncRepositoryProtocol {
+@MainActor private final class SafeguardWorkerRepository: OperatorCategorySyncRepositoryProtocol {
     let outcome: String
     private(set) var deleteCalls = 0
     init(outcome: String) { self.outcome = outcome }
@@ -148,7 +148,7 @@ private actor SafeguardWorkerRepository: OperatorCategorySyncRepositoryProtocol 
     }
 }
 
-private actor SafeguardGrowthRepository: GrowthStageRecordSyncRepositoryProtocol {
+@MainActor private final class SafeguardGrowthRepository: GrowthStageRecordSyncRepositoryProtocol {
     private(set) var uploaded: [BackendGrowthStageRecordUpsert] = []
     func fetchGrowthStageRecords(vineyardId: UUID, since: Date?) async throws -> [BackendGrowthStageRecord] { [] }
     func upsertGrowthStageRecord(_ record: BackendGrowthStageRecordUpsert) async throws { uploaded.append(record) }

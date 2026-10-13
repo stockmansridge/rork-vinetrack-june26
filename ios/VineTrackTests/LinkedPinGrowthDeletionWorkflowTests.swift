@@ -144,7 +144,7 @@ private nonisolated struct DeletionFixtureError: LocalizedError, CustomStringCon
     var description: String { "Deletion fixture error" }
 }
 
-private actor DeletionPinRepository: PinSyncRepositoryProtocol {
+@MainActor private final class DeletionPinRepository: PinSyncRepositoryProtocol {
     private var deletes = 0
     private var missingDeletes: Int
 
@@ -168,7 +168,7 @@ private actor DeletionPinRepository: PinSyncRepositoryProtocol {
     func deleteCount() -> Int { deletes }
 }
 
-private actor DeletionGrowthRepository: GrowthStageRecordSyncRepositoryProtocol {
+@MainActor private final class DeletionGrowthRepository: GrowthStageRecordSyncRepositoryProtocol {
     private var deletes = 0
     private let failure: (any Error)?
     init(failure: (any Error)? = nil) { self.failure = failure }
@@ -185,7 +185,7 @@ private actor DeletionGrowthRepository: GrowthStageRecordSyncRepositoryProtocol 
     func deleteCount() -> Int { deletes }
 }
 
-private actor DeletionPhotoStorage: PinPhotoStorageProtocol {
+@MainActor private final class DeletionPhotoStorage: PinPhotoStorageProtocol {
     func uploadPhoto(vineyardId: UUID, pinId: UUID, revision: UUID, imageData: Data) async throws -> String { "pin.jpg" }
     func uploadGrowthPhoto(vineyardId: UUID, recordId: UUID, revision: UUID, imageData: Data) async throws -> String { "growth.jpg" }
     func downloadPhoto(path: String, vineyardId: UUID, pinId: UUID) async throws -> Data { Data() }

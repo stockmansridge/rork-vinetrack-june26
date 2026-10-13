@@ -8,6 +8,45 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SprayPlanningIntentTest {
+    @Test fun clearedPlanningRetainsUnrelatedFieldsAndDurableNullIntent() {
+        val snapshot = SprayApplicationSnapshot(grossAreaHa = 10.0, rowSpacingMetres = 2.8, totalCarrierLitres = 1500.0,
+            planningIntent = SprayPlanningIntent(SprayPassConfiguration.OVER_ROW, SprayPlanningMethod.FULL_TANK, SprayFullTankSpecification.TARGET_AREA, 1500.0, 3.0))
+        val cleared = snapshot.clearingPlanning()
+        val json = Json { encodeDefaults = false; explicitNulls = false }
+        val reloaded = json.decodeFromString(SprayApplicationSnapshot.serializer(), json.encodeToString(SprayApplicationSnapshot.serializer(), cleared))
+        assertEquals(cleared, reloaded)
+        assertNull(reloaded.planningIntent)
+        assertNull(reloaded.planningResolution)
+        assertEquals(10.0, reloaded.grossAreaHa!!, 0.0)
+        assertEquals(1500.0, reloaded.totalCarrierLitres!!, 0.0)
+        assertEquals(true, reloaded.templateConfiguration()?.planningFieldsCleared)
+        val base = kotlinx.serialization.json.buildJsonObject { put("notes", kotlinx.serialization.json.JsonPrimitive("Retained notes")) }
+        val body = SprayPlanningWireFields.from(reloaded).merging(base, json, explicitClear = reloaded.planningFieldsCleared == true)
+        SprayPlanningWireFields.RECORD_KEYS.forEach { assertEquals(kotlinx.serialization.json.JsonNull, body[it]) }
+        assertEquals(base["notes"], body["notes"])
+        assertFalse(body.containsKey("planningFieldsCleared"))
+        assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, SprayPlanningOperationalGate.blocker(reloaded, emptyList()))
+        assertEquals(base, SprayPlanningWireFields.from(null).merging(base, json))
+    }
+
+    @Test fun templateEditorRetainsPlanningAndOnlyExplicitEditsReplaceInputs() {
+        val intent = SprayPlanningIntent(SprayPassConfiguration.OVER_ROW, SprayPlanningMethod.FULL_TANK, SprayFullTankSpecification.TARGET_AREA, 1500.0, 3.0)
+        val record = SprayRecord(id = "synthetic", vineyardId = "synthetic-vineyard", sprayReference = "Synthetic step", isTemplate = true,
+            sprayerConfiguration = intent.configuration?.wireValue, sprayPlanningMethod = intent.method?.wireValue,
+            fullTankSpecification = intent.fullTankSpecification?.wireValue, planningIntendedTankLitres = 1500.0, planningTargetAreaHa = 3.0)
+        val draft = SprayProgramStepDraft.fromLocal(record).copy(notes = "Unrelated edit")
+        assertEquals(intent, draft.toLocalInput(record).applicationGeometry?.planningIntent)
+        assertNull(draft.toLocalInput(record).applicationGeometry?.planningResolution)
+        assertFalse(draft.portalPayload(null).containsKey("planning_target_area_ha"))
+        val edited = draft.copy(planningIntent = intent.copy(targetAreaHa = 2.0))
+        assertEquals(kotlinx.serialization.json.JsonPrimitive(2.0), edited.portalPayload(null)["planning_target_area_ha"])
+        val cleared = draft.copy(planningIntent = null)
+        val body = cleared.portalPayload(null)
+        SprayPlanningWireFields.INPUT_KEYS.forEach { assertEquals(kotlinx.serialization.json.JsonNull, body[it]) }
+        assertFalse(body.containsKey("resolved_planning_carrier_litres"))
+        assertEquals(true, cleared.toLocalInput(record).applicationGeometry?.planningFieldsCleared)
+    }
+
     @Test fun selectedControllerEntryConvertsToOnePhysicalRateAcrossConfigurationChanges() {
         val standard = requireNotNull(SprayControllerRateEntry.canonical(16.8, SprayCarrierBasis.LITRES_PER_100_METRES, SprayPassConfiguration.STANDARD_PASS, 2.8))
         assertEquals(600.0, standard, 0.00000001)

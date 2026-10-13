@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import VineTrack
 
-actor AuthoritativeCompletionRepository: TripSyncRepositoryProtocol {
+@MainActor final class AuthoritativeCompletionRepository: TripSyncRepositoryProtocol {
     private let completed: BackendTrip
     private(set) var uploaded: [BackendTripUpsert] = []
 

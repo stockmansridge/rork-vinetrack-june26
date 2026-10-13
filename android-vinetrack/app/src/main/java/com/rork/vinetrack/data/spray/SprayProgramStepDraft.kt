@@ -261,6 +261,8 @@ data class SprayProgramStepDraft(
     val carrierAreaBasis: SprayCarrierAreaBasis? = null,
     val notes: String = "",
     val products: List<SprayProgramProductDraft> = emptyList(),
+    val planningIntent: SprayPlanningIntent? = null,
+    private val originalPlanningIntent: SprayPlanningIntent? = null,
 ) {
     val trimmedName: String get() = name.trim()
     val trimmedNotes: String get() = notes.trim()
@@ -342,6 +344,11 @@ data class SprayProgramStepDraft(
         put("tractor_id", tractorId?.let(::JsonPrimitive) ?: JsonNull)
         put("ground_application_target", groundTarget?.raw?.let(::JsonPrimitive) ?: JsonNull)
         put("carrier_area_basis", carrierAreaBasis?.raw?.let(::JsonPrimitive) ?: JsonNull)
+        if (planningIntent != originalPlanningIntent) {
+            SprayPlanningWireFields.from(SprayApplicationSnapshot(planningIntent = planningIntent), template = true)
+                .merging(JsonObject(emptyMap()), com.rork.vinetrack.data.SupabaseClient.json, template = true, explicitClear = true)
+                .forEach { (key, value) -> put(key, value) }
+        }
         // The signed-in user, for the row's audit column. Never `created_by`.
         put("updated_by", updatedById?.let(::JsonPrimitive) ?: JsonNull)
         if (operationType == "Fertigation") {
@@ -377,6 +384,8 @@ data class SprayProgramStepDraft(
             customTargets = custom.takeIf { it.isNotEmpty() },
             groundTarget = groundTarget,
             carrierAreaBasis = carrierAreaBasis,
+            planningIntent = planningIntent,
+            planningFieldsCleared = if (planningIntent == null && originalPlanningIntent != null) true else existing.applicationGeometry?.planningFieldsCleared,
         ).takeUnless { it.isEmpty }
         return SprayRecordRepository.SprayInput(
             date = existing.date ?: existing.startTime ?: existing.createdAt.orEmpty(),
@@ -464,6 +473,8 @@ data class SprayProgramStepDraft(
                 carrierAreaBasis = record.applicationGeometry?.carrierAreaBasis,
                 notes = record.notes.orEmpty(),
                 products = products,
+                planningIntent = record.applicationGeometry?.planningIntent,
+                originalPlanningIntent = record.applicationGeometry?.planningIntent,
             )
         }
 
@@ -491,6 +502,8 @@ data class SprayProgramStepDraft(
             groundTarget = SprayGroundTarget.from(row.groundApplicationTarget),
             carrierAreaBasis = SprayCarrierAreaBasis.from(row.carrierAreaBasis),
             notes = row.notes.orEmpty(),
+            planningIntent = row.planningFields?.intent,
+            originalPlanningIntent = row.planningFields?.intent,
             products = row.chemicalLines.orEmpty().mapIndexedNotNull { index, element ->
                 (element as? JsonObject)?.let { SprayProgramProductDraft.fromWireLine(index, it) }
             },

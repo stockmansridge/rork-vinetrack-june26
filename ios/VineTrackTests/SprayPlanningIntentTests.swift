@@ -4,6 +4,56 @@ import Testing
 
 @MainActor
 struct SprayPlanningIntentTests {
+    @Test func clearedPlanningSurvivesDiskReloadAndEncodesOnlyPlanningNulls() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var snapshot = SprayApplicationSnapshot(grossAreaHa: 10, rowSpacingMetres: 2.8, totalCarrierLitres: 1500)
+        snapshot.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank, fullTankSpecification: .targetArea, intendedTankLitres: 1500, targetAreaHa: 3)
+        snapshot.planningResolution = snapshot.planningIntent?.resolve(selectedAreaHa: 10, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 500)
+        let cleared = snapshot.clearingPlanning()
+        #expect(cleared.grossAreaHa == snapshot.grossAreaHa)
+        #expect(cleared.totalCarrierLitres == snapshot.totalCarrierLitres)
+        #expect(cleared.planningIntent == nil && cleared.planningResolution == nil)
+        let file = directory.appendingPathComponent("snapshot.json")
+        try JSONEncoder().encode(cleared).write(to: file, options: .atomic)
+        let reloaded = try JSONDecoder().decode(SprayApplicationSnapshot.self, from: Data(contentsOf: file))
+        #expect(reloaded == cleared)
+        #expect(reloaded.templateConfiguration()?.planningFieldsCleared == true)
+        let record = SprayRecord(sprayReference: "Retained name", notes: "Retained notes", applicationGeometry: reloaded)
+        let payload = BackendSprayRecord.upsert(from: record, createdBy: nil, clientUpdatedAt: Date())
+        let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(payload)) as? [String: Any])
+        for key in ["sprayer_configuration", "spray_planning_method", "full_tank_specification", "planning_input_provenance", "planning_intended_tank_litres", "planning_target_area_ha", "planning_calibrated_litres_per_hectare", "planned_application_area_ha", "resolved_planning_carrier_litres", "resolved_planning_litres_per_hectare", "resolved_planning_physical_row_litres_per_100m", "resolved_planning_concentration_factor", "controller_litres_per_100m_travel", "effective_working_width_metres"] {
+            #expect(object[key] is NSNull)
+        }
+        #expect(object["notes"] as? String == "Retained notes")
+        #expect(object["gross_area_ha"] as? Double == 10)
+        #expect(object["planningFieldsCleared"] == nil)
+        #expect(record.operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
+        #expect(payload.operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
+    }
+
+    @Test func templateEditorPreservesPlanningAndDeclaresOnlyDeliberateChanges() throws {
+        var snapshot = SprayApplicationSnapshot()
+        snapshot.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank, fullTankSpecification: .targetArea, intendedTankLitres: 1500, targetAreaHa: 3,
+            inputProvenance: SprayPlanningInputProvenance(tankText: "1,500", areaText: "3.00", rateText: "28", volumeUnit: "litres", areaUnit: "hectares", rateAreaUnit: "100m_travel", countryCode: "NZ"))
+        let record = SprayRecord(sprayReference: "Synthetic step", isTemplate: true, applicationGeometry: snapshot)
+        var draft = SprayProgramStepDraft(step: SprayProgramStep(record: record, source: .local))
+        draft.notes = "Unrelated edit"
+        let unchanged = draft.applied(to: record)
+        #expect(unchanged.applicationGeometry?.planningIntent == snapshot.planningIntent)
+        #expect(unchanged.applicationGeometry?.planningResolution == nil)
+        #expect(draft.portalPayload(updatedBy: nil).planningFields == nil)
+        draft.planningIntent?.targetAreaHa = 2
+        #expect(draft.portalPayload(updatedBy: nil).planningFields?.planningTargetAreaHa == 2)
+        draft.planningIntent = nil
+        let payload = draft.portalPayload(updatedBy: nil)
+        let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(payload)) as? [String: Any])
+        #expect(object["planning_target_area_ha"] is NSNull)
+        #expect(object["resolved_planning_carrier_litres"] == nil)
+        #expect(draft.applied(to: record).applicationGeometry?.planningFieldsCleared == true)
+    }
+
     @Test func selectedControllerEntryConvertsToOnePhysicalRateAcrossConfigurationChanges() throws {
         let standard = try #require(SprayControllerRateEntry.canonical(16.8, basis: .litresPer100Metres, configuration: .standardPass, spacing: 2.8))
         #expect(abs(standard - 600) < 0.00000001)
@@ -236,8 +286,9 @@ struct SprayPlanningIntentTests {
         #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: 1, hasDiluteRateProducts: true) == nil)
     }
 
-    @Test(arguments: [false, true])
-    func persistedQueuedIntentAndUnverifiedConcentrateStayBlockedAcrossReplay(_ concentrated: Bool) async throws {
+    @Test(arguments: [0, 1, 2])
+    func persistedQueuedIntentAndUnverifiedConcentrateStayBlockedAcrossReplay(_ scenario: Int) async throws {
+        let concentrated = scenario == 1
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -245,6 +296,7 @@ struct SprayPlanningIntentTests {
         let store = MigratedDataStore(persistence: persistence)
         var snapshot = SprayApplicationSnapshot(carrierVolumeBasis: .litresPer100Metres, concentrationFactor: concentrated ? 2 : 1)
         if !concentrated { snapshot.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank, fullTankSpecification: .targetArea, intendedTankLitres: 1000, targetAreaHa: 2) }
+        if scenario == 2 { snapshot = snapshot.clearingPlanning() }
         let tanks: [SprayTank] = concentrated ? [SprayTank(concentrationFactor: 2, chemicals: [SprayChemical(ratePer100L: 100)])] : []
         let eventTime = Date(timeIntervalSince1970: 1_800_000_000)
         let record = SprayRecord(date: eventTime, startTime: eventTime, tanks: tanks, applicationGeometry: snapshot)
@@ -291,7 +343,7 @@ struct SprayPlanningIntentTests {
     }
 }
 
-private actor PlanningReplayRepository: SprayRecordSyncRepositoryProtocol {
+@MainActor private final class PlanningReplayRepository: SprayRecordSyncRepositoryProtocol {
     var writeCalls: Int = 0
     func fetchAllSprayRecords(vineyardId: UUID) async throws -> [BackendSprayRecord] { [] }
     func fetchSprayRecords(vineyardId: UUID, since: Date?) async throws -> [BackendSprayRecord] { [] }

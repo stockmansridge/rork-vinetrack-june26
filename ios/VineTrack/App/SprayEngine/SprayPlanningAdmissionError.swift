@@ -12,7 +12,7 @@ extension SprayRecord {
            let blocker = intent.fullTankExecutionBlocker(resolution: geometry.planningResolution, selectedGrossAreaHa: geometry.grossAreaHa) { return blocker }
         if let blocker = SprayPlanningOperationalGate.tankComplianceBlocker(tanks) { return blocker }
         return SprayPlanningOperationalGate.blocker(
-            hasPlanningIntent: applicationGeometry?.planningIntent != nil || applicationGeometry?.planningResolution != nil,
+            hasPlanningIntent: applicationGeometry?.planningFieldsCleared == true || applicationGeometry?.planningIntent != nil || applicationGeometry?.planningResolution != nil,
             concentrationFactor: nil, hasDiluteRateProducts: false)
     }
 }
@@ -29,7 +29,7 @@ extension BackendSprayRecordUpsert {
         }
         if let blocker = SprayPlanningOperationalGate.tankComplianceBlocker(tanks) { return blocker }
         return SprayPlanningOperationalGate.blocker(
-            hasPlanningIntent: planningIntent != nil || sprayerConfiguration != nil || sprayPlanningMethod != nil ||
+            hasPlanningIntent: planningFieldsCleared || planningIntent != nil || sprayerConfiguration != nil || sprayPlanningMethod != nil ||
                 plannedApplicationAreaHa != nil || planningIntendedTankLitres != nil || controllerLitresPer100mTravel != nil ||
                 effectiveWorkingWidthMetres != nil || fullTankSpecification != nil || planningCalibratedLitresPerHectare != nil ||
                 planningInputProvenance != nil || planningTargetAreaHa != nil || resolvedPlanningCarrierLitres != nil ||
