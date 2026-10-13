@@ -1,7 +1,8 @@
 package com.rork.vinetrack.data.model
 
 import kotlinx.serialization.Serializable
-import com.rork.vinetrack.data.WorkTaskCompletion\nimport java.time.Instant
+import com.rork.vinetrack.data.WorkTaskCompletion
+import java.time.Instant
 import java.time.ZoneId
 
 /** Portal order, without interpreting an E-L compatibility date as a plan. */
@@ -22,7 +23,22 @@ object WorkTaskPlanning {
         return task.finalizedBy?.takeIf { it in verifiedMemberIds }
     }
 
-    /** Hub-only projection; Task Log retains completed, archived, and overdue history. */\n    fun upcoming(tasks: List<WorkTask>, now: Instant, zone: ZoneId): List<WorkTask> {\n        val today = now.atZone(zone).toLocalDate()\n        return tasks.filter { task ->\n            !task.isArchived && !task.isFinalized &&\n                (task.isStageScheduled || (WorkTaskCompletion.workDate(task, zone)?.let { !it.isBefore(today) } == true))\n        }.sortedWith { lhs, rhs ->\n            when {\n                lhs.isStageScheduled != rhs.isStageScheduled -> if (lhs.isStageScheduled) -1 else 1\n                lhs.isStageScheduled -> compareValues(rhs.targetELStage ?: 0, lhs.targetELStage ?: 0).takeIf { it != 0 } ?: lhs.id.compareTo(rhs.id)\n                else -> compareValues(WorkTaskCompletion.workDate(lhs, zone), WorkTaskCompletion.workDate(rhs, zone)).takeIf { it != 0 } ?: lhs.id.compareTo(rhs.id)\n            }\n        }\n    }\n\n    fun ordered(tasks: List<WorkTask>, now: Instant, zone: ZoneId): List<WorkTask> {
+    /** Hub-only projection; Task Log retains completed, archived, and overdue history. */
+    fun upcoming(tasks: List<WorkTask>, now: Instant, zone: ZoneId): List<WorkTask> {
+        val today = now.atZone(zone).toLocalDate()
+        return tasks.filter { task ->
+            !task.isArchived && !task.isFinalized &&
+                (task.isStageScheduled || (WorkTaskCompletion.workDate(task, zone)?.let { !it.isBefore(today) } == true))
+        }.sortedWith { lhs, rhs ->
+            when {
+                lhs.isStageScheduled != rhs.isStageScheduled -> if (lhs.isStageScheduled) -1 else 1
+                lhs.isStageScheduled -> compareValues(rhs.targetELStage ?: 0, lhs.targetELStage ?: 0).takeIf { it != 0 } ?: lhs.id.compareTo(rhs.id)
+                else -> compareValues(WorkTaskCompletion.workDate(lhs, zone), WorkTaskCompletion.workDate(rhs, zone)).takeIf { it != 0 } ?: lhs.id.compareTo(rhs.id)
+            }
+        }
+    }
+
+    fun ordered(tasks: List<WorkTask>, now: Instant, zone: ZoneId): List<WorkTask> {
         val today = now.atZone(zone).toLocalDate().atStartOfDay(zone).toInstant().toEpochMilli()
         return tasks.sortedWith { lhs, rhs ->
             val lc = lhs.isFinalized
