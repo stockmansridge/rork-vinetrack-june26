@@ -97,7 +97,7 @@ nonisolated struct BackendSprayJobTemplateUpdate: Encodable, Sendable, Equatable
     /// silently turn "the operator removed the tractor" into "leave the tractor
     /// alone" — a save that appears to work and changes nothing.
     func encode(to encoder: Encoder) throws {
-        if let planningFields { try planningFields.encode(to: encoder) }
+        if let planningFields { try planningFields.encode(to: encoder, inputsOnly: true, explicitClear: true) }
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(name, forKey: .name)
         try container.encode(chemicalLines, forKey: .chemicalLines)

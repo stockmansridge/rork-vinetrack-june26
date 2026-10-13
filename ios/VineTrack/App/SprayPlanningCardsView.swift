@@ -9,6 +9,8 @@ struct SprayPlanningCardsView: View {
     @Binding var areaText: String
     @Binding var rateText: String
     let region: RegionFormatter
+    var rateUnit: String? = nil
+    var rowSpacingMetres: Double? = nil
     let resolution: SprayPlanningResolution?
 
     var body: some View {
@@ -30,6 +32,15 @@ struct SprayPlanningCardsView: View {
                     Text("Choose the configuration for this application. Historical configuration is not assumed.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                if let rowSpacingMetres {
+                    LabeledContent("Vineyard row spacing", value: region.formatLength(metres: rowSpacingMetres))
+                }
+                if let width = resolution?.effectiveWorkingWidthMetres {
+                    LabeledContent("Effective working width", value: region.formatLength(metres: width))
+                }
+                if let travel = resolution?.controllerLitresPer100mTravel {
+                    LabeledContent("Controller application", value: region.formatVolumePer100Length(travel))
+                }
                 Text("Physical vineyard row spacing stays unchanged. Controller travel and physical vine-row rates are different measures.")
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(14).background(Color(.secondarySystemGroupedBackground)).clipShape(.rect(cornerRadius: 14))
@@ -47,7 +58,7 @@ struct SprayPlanningCardsView: View {
                     if specification == .targetArea {
                         field("Planned area (\(region.areaUnitAbbreviation))", text: $areaText)
                     } else {
-                        field("Calibrated rate (\(region.volumePerAreaUnit))", text: $rateText)
+                        field("Calibrated rate (\(rateUnit ?? region.volumePerAreaUnit))", text: $rateText)
                     }
                     Text("Planned area only. Actual block and row coverage is recorded during the Trip; no partial-block allocation is assumed.")
                         .font(.caption).foregroundStyle(.secondary)

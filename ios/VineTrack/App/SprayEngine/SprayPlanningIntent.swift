@@ -121,10 +121,27 @@ nonisolated struct SprayPlanningResolution: Codable, Sendable, Hashable {
 nonisolated enum SprayPlanningOperationalGate {
     static let migrationMessage = "Calculation preview only. New spray planning save/start and replay are disabled until the schema and operational workflows are approved and validated."
     static let concentrateMessage = "Concentrate spraying permission and limits are unverified for this dilute-rate mix. Save/start is blocked. A displayed CF is not label approval."
+    /// Evaluate each chemical against its own tank, not the maximum CF of unrelated tanks.
+    static func tankComplianceBlocker(_ tanks: [SprayTank]) -> String? {
+        for tank in tanks {
+            let ambiguous = tank.chemicals.filter { $0.rateBasis == nil && $0.ratePer100L > 0 && $0.ratePerHa > 0 }
+            if !ambiguous.isEmpty {
+                return concentrateMessage + " Ambiguous rate basis: " + ambiguous.map(\.name).joined(separator: ", ")
+            }
+            let dilute = tank.chemicals.filter { $0.rateBasis == .per100Litres || ($0.rateBasis == nil && $0.ratePer100L > 0) }
+            if let message = blocker(hasPlanningIntent: false, concentrationFactor: tank.concentrationFactor,
+                hasDiluteRateProducts: !dilute.isEmpty, chemicalNames: dilute.map(\.name)) { return message }
+        }
+        return nil
+    }
+
     static func blocker(hasPlanningIntent: Bool, concentrationFactor: Double?, hasDiluteRateProducts: Bool, chemicalNames: [String] = []) -> String? {
-        if hasDiluteRateProducts, let factor = concentrationFactor, !factor.isFinite || factor > 1.000001 {
-            let names = Array(Set(chemicalNames.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
-            return names.isEmpty ? concentrateMessage : concentrateMessage + " Products: " + names.joined(separator: ", ")
+        if hasDiluteRateProducts {
+            let factorIsSafe = concentrationFactor.map { $0.isFinite && $0 >= 1 && $0 <= 1.000001 } ?? false
+            if !factorIsSafe {
+                let names = Array(Set(chemicalNames.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
+                return names.isEmpty ? concentrateMessage : concentrateMessage + " Products: " + names.joined(separator: ", ")
+            }
         }
         return hasPlanningIntent ? migrationMessage : nil
     }

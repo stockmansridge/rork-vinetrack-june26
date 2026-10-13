@@ -440,11 +440,48 @@ struct SprayCalculatorView: View {
             : sprayProfile.defaultCarrierBasis
     }
 
-    /// The unit of the machine-calibration field. Australian/either-basis
-    /// vineyards retain the historical L/ha contract even when this job's
-    /// carrier is expressed per 100 m; SWNZ remains explicitly L/100 m.
     private var customSprayerInputBasis: SprayCarrierBasis {
-        sprayProfile.customSprayerInputBasis
+        effectiveCarrierBasis == .manualTotalVolume ? sprayProfile.customSprayerInputBasis : effectiveCarrierBasis
+    }
+
+    private var planningRateCanonical: Double? {
+        let value = Double(planningRateText).map { customSprayerInputBasis == .litresPer100Metres
+            ? region.volumePer100LengthToCanonical($0) : region.volumePerAreaToCanonical($0) }
+        return SprayControllerRateEntry.canonical(value, basis: customSprayerInputBasis,
+            configuration: passConfiguration, spacing: resolvedRowSpacingMetres)
+    }
+
+    /// Re-express both entries before changing display/configuration; preserve physical L/ha.
+    private func changeRateDisplay(basis: SprayCarrierBasis, configuration: SprayPassConfiguration?) {
+        let oldBasis = customSprayerInputBasis
+        let newBasis = basis == .manualTotalVolume ? sprayProfile.customSprayerInputBasis : basis
+        let custom = Double(customSprayerRateText)
+        let customCanonical = SprayControllerRateEntry.canonical(custom, basis: oldBasis,
+            configuration: passConfiguration, spacing: resolvedRowSpacingMetres)
+        let planning = planningRateCanonical
+        let newCustom = SprayControllerRateEntry.displayed(customCanonical, basis: newBasis,
+            configuration: configuration, spacing: resolvedRowSpacingMetres)
+        let newPlanning = SprayControllerRateEntry.displayed(planning, basis: newBasis,
+            configuration: configuration, spacing: resolvedRowSpacingMetres)
+        if (custom != nil && newCustom == nil) || (Double(planningRateText) != nil && newPlanning == nil) {
+            errorMessage = "Matching row spacing is required to change application-rate units without changing the intended dose."
+            return
+        }
+        if let newCustom { customSprayerRateText = String(newCustom) }
+        if let newPlanning {
+            planningRateText = String(newBasis == .litresPer100Metres
+                ? region.volumePer100LengthValue(newPlanning) : region.volumePerAreaValue(litresPerHectare: newPlanning))
+        }
+        carrierBasisChoice = basis
+        passConfiguration = configuration
+    }
+
+    private var carrierChoiceBinding: Binding<SprayCarrierBasis> {
+        Binding(get: { carrierBasisChoice }, set: { changeRateDisplay(basis: $0, configuration: passConfiguration) })
+    }
+
+    private var passConfigurationBinding: Binding<SprayPassConfiguration?> {
+        Binding(get: { passConfiguration }, set: { changeRateDisplay(basis: effectiveCarrierBasis, configuration: $0) })
     }
 
     /// The label rate bases this vineyard's workflow starts from, strongest
@@ -604,10 +641,10 @@ struct SprayCalculatorView: View {
         inputs.customSprayerRate = Double(
             customSprayerRateText.trimmingCharacters(in: .whitespaces)
         )
-        // Machine calibration has its own unit contract. In Australia, "Set my
-        // own rate" remains L/ha even when the job carrier is L/100 m; the
-        // decision engine converts it centrally. A row-length-only profile such
-        // as SWNZ keeps its explicit L/100 m input.
+        // The entry is controller travel; the existing decision engine consumes physical vine-row rate.
+        if customSprayerInputBasis == .litresPer100Metres, let value = inputs.customSprayerRate {
+            inputs.customSprayerRate = value / (passConfiguration?.rowEquivalents ?? 1)
+        }
         inputs.customSprayerBasis = customSprayerInputBasis
         inputs.carrierBasis = carrierBasisChoice
         inputs.carrierAreaBasis = carrierAreaBasis
@@ -632,12 +669,12 @@ struct SprayCalculatorView: View {
         if operationType == .foliarSpray, passConfiguration != nil || planningMethod == .fullTank {
             inputs.planningIntent = SprayPlanningIntent(configuration: passConfiguration, method: planningMethod,
                 fullTankSpecification: planningMethod == .fullTank ? fullTankSpecification : nil,
-                intendedTankLitres: Double(planningTankText).map(region.volumeToCanonical),
-                targetAreaHa: Double(planningAreaText).map(region.areaToCanonical),
-                calibratedLitresPerHectare: Double(planningRateText).map(region.volumePerAreaToCanonical),
+                intendedTankLitres: planningMethod == .fullTank ? Double(planningTankText).map(region.volumeToCanonical) : nil,
+                targetAreaHa: planningMethod == .fullTank && fullTankSpecification == .targetArea ? Double(planningAreaText).map(region.areaToCanonical) : nil,
+                calibratedLitresPerHectare: planningMethod == .fullTank && fullTankSpecification == .calibratedRate ? planningRateCanonical : nil,
                 inputProvenance: SprayPlanningInputProvenance(tankText: planningTankText, areaText: planningAreaText,
                     rateText: planningRateText, volumeUnit: region.settings.volumeUnit, areaUnit: region.settings.areaUnit,
-                    rateAreaUnit: region.settings.sprayRateAreaUnit, countryCode: region.settings.countryCode))
+                    rateAreaUnit: customSprayerInputBasis == .litresPer100Metres ? (region.lengthUnitAbbreviation == "ft" ? "100ft_travel" : "100m_travel") : region.settings.sprayRateAreaUnit, countryCode: region.settings.countryCode))
         }
         return inputs
     }
@@ -1056,10 +1093,19 @@ struct SprayCalculatorView: View {
             fullTankSpecification = intent.fullTankSpecification ?? .targetArea
             planningTankText = intent.intendedTankLitres.map { String(region.volumeValue(litres: $0)) } ?? ""
             planningAreaText = intent.targetAreaHa.map { String(region.areaValue(hectares: $0)) } ?? ""
-            planningRateText = intent.calibratedLitresPerHectare.map { String(region.volumePerAreaValue(litresPerHectare: $0)) } ?? ""
+            if let original = intent.inputProvenance {
+                let recordedBasis: SprayCarrierBasis = ["100m_travel", "100ft_travel"].contains(original.rateAreaUnit) ? .litresPer100Metres : .litresPerHectare
+                if sprayProfile.allows(recordedBasis) { carrierBasisChoice = recordedBasis }
+            }
+            planningRateText = SprayControllerRateEntry.displayed(intent.calibratedLitresPerHectare, basis: customSprayerInputBasis,
+                configuration: passConfiguration, spacing: resolvedRowSpacingMetres).map {
+                    String(customSprayerInputBasis == .litresPer100Metres ? region.volumePer100LengthValue($0) : region.volumePerAreaValue(litresPerHectare: $0))
+                } ?? ""
+            let selectedVolumeUnit = region.settings.volumeUnit == "gallons"
+                ? (["US", "CA"].contains(region.settings.countryCode.uppercased()) ? "us_gallons" : "imperial_gallons") : region.settings.volumeUnit
             if let original = intent.inputProvenance, original.countryCode == region.settings.countryCode,
-               original.volumeUnit == region.settings.volumeUnit, original.areaUnit == region.settings.areaUnit,
-               original.rateAreaUnit == region.settings.sprayRateAreaUnit {
+               SprayPlanningWireProvenance(original).volumeUnit == selectedVolumeUnit, original.areaUnit == region.settings.areaUnit,
+               original.rateAreaUnit == (customSprayerInputBasis == .litresPer100Metres ? (region.lengthUnitAbbreviation == "ft" ? "100ft_travel" : "100m_travel") : region.settings.sprayRateAreaUnit) {
                 planningTankText = original.tankText
                 planningAreaText = original.areaText
                 planningRateText = original.rateText
@@ -3158,10 +3204,11 @@ struct SprayCalculatorView: View {
     private var carrierVolumeSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             if operationType == .foliarSpray {
-                SprayPlanningCardsView(configuration: $passConfiguration, method: $planningMethod,
+                SprayPlanningCardsView(configuration: passConfigurationBinding, method: $planningMethod,
                     specification: $fullTankSpecification, tankText: $planningTankText,
                     areaText: $planningAreaText, rateText: $planningRateText, region: region,
-                    resolution: flow.planningResolution)
+                    rateUnit: customSprayerInputBasis == .litresPer100Metres ? region.volumePer100LengthUnit : region.volumePerAreaUnit,
+                    rowSpacingMetres: resolvedRowSpacingMetres, resolution: flow.planningResolution)
             }
             // Only offer a choice when the vineyard profile genuinely allows one.
             // An NZ/SWNZ vineyard is locked to L/100 m and sees no L/ha option.
@@ -3190,7 +3237,7 @@ struct SprayCalculatorView: View {
                 // vineyard may use; it has no say over a knapsack job where the
                 // operator already knows the litres in the drum.
                 if !flow.requiresBandWidth {
-                    Picker("Spray volume basis", selection: $carrierBasisChoice) {
+                    Picker("Spray volume basis", selection: carrierChoiceBinding) {
                         ForEach(availableCarrierBases.filter { planningMethod != .fullTank || $0 != .manualTotalVolume }, id: \.self) { basis in
                             Text(guidedFormat.volumeSourceLabel(basis)).tag(basis)
                         }
@@ -3207,7 +3254,7 @@ struct SprayCalculatorView: View {
                     .pickerStyle(.segmented)
                 }
                 if flow.requiresBandWidth {
-                    Picker("Spray volume", selection: $carrierBasisChoice) {
+                    Picker("Spray volume", selection: carrierChoiceBinding) {
                         Text(region.volumePerAreaUnit).tag(SprayCarrierBasis.litresPerHectare)
                         Text("Manual total water").tag(SprayCarrierBasis.manualTotalVolume)
                     }
@@ -4305,6 +4352,12 @@ struct SprayCalculatorView: View {
             : pendingTanks
         let sequence = pathSequencePreview
         let initialPath = sequence.first
+        // Final frozen mix admission must precede Trip/marker side effects.
+        let admissionRecord = SprayRecord(vineyardId: vineyardId, tanks: tanks, applicationGeometry: flow.snapshot)
+        if let blocker = flow.operationalBlocker ?? admissionRecord.operationalPlanningBlocker {
+            errorMessage = blocker
+            return
+        }
 
         tracking.startTrip(
             type: .spray,
@@ -4360,7 +4413,10 @@ struct SprayCalculatorView: View {
             // Job-originated completion: the record fulfils this spray job.
             sprayJobId: originSprayJobId
         )
-        store.addSprayRecord(record)
+        guard store.addSprayRecord(record) else {
+            errorMessage = "The spray record was not saved. Keep this screen open and resolve the save failure before continuing."
+            return
+        }
 
         savedFeedback.toggle()
         showSummary = false

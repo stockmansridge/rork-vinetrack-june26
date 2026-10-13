@@ -4,7 +4,7 @@
 -- NULL means unknown, not Standard Pass. Planned hectares are NOT Trip actuals.
 -- CF and raw operator text are evidence, NEVER verified chemical label authority.
 -- Existing geometry/tanks/chemical quantities/actuals remain untouched.
--- Current v1 client adapters and validation harness MUST change before acceptance.
+-- v2 client projections do not authorize execution; full clone/replay acceptance remains required.
 -- Restore the current full schema + custom roles, not migration history, for staging.
 
 begin;
@@ -41,7 +41,9 @@ alter table public.spray_jobs
 -- Raw text is retained verbatim (including blank inactive/draft fields), not parsed
 -- by PostgreSQL. Units are unambiguous contract identifiers, not localized labels:
 -- volume_unit = litres/us_gallons/imperial_gallons; area_unit = hectares/acres;
--- rate_area_unit = hectare/acre. Current local 'gallons' must be mapped explicitly
+-- rate_area_unit = hectare/acre/100m_travel/100ft_travel. Travel identifiers retain a controller-travel
+-- entry, NOT a physical-vine-row dilute reference. Canonical numeric input stays L/ha.
+-- Current local 'gallons' must be mapped explicitly
 -- using its captured country, never the current account's country on reopen.
 -- Provenance version 1: {schema_version:1,tank_text,area_text,rate_text,volume_unit,area_unit,
 --            rate_area_unit,country_code}; all seven non-version values are strings.
@@ -84,7 +86,7 @@ begin
             and jsonb_typeof(planning_input_provenance -> 'country_code') = 'string'
             and planning_input_provenance ->> 'volume_unit' in ('litres','us_gallons','imperial_gallons')
             and planning_input_provenance ->> 'area_unit' in ('hectares','acres')
-            and planning_input_provenance ->> 'rate_area_unit' in ('hectare','acre')
+            and planning_input_provenance ->> 'rate_area_unit' in ('hectare','acre','100m_travel','100ft_travel')
             and length(btrim(planning_input_provenance ->> 'country_code')) > 0
           ) is true
         )

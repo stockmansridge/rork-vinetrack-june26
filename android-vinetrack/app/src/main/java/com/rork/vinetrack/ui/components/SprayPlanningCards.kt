@@ -31,6 +31,7 @@ fun SprayPlanningCards(
     tankText: String, onTank: (String) -> Unit, areaText: String, onArea: (String) -> Unit,
     rateText: String, onRate: (String) -> Unit, region: RegionFormatter,
     resolution: SprayPlanningResolution?, modifier: Modifier = Modifier,
+    rateUnit: String = region.volumePerAreaUnit, rowSpacingMetres: Double? = null,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
@@ -48,6 +49,9 @@ fun SprayPlanningCards(
                         "Two adjacent half-row faces: one complete-row equivalent per pass."
                         else "Both sides of two complete vine rows per pass.", style = MaterialTheme.typography.bodySmall)
                 } else Text("Choose the configuration. Historical configuration is not assumed.", style = MaterialTheme.typography.bodySmall)
+                rowSpacingMetres?.let { Text("Vineyard row spacing: ${region.formatLength(it)}") }
+                resolution?.effectiveWorkingWidthMetres?.let { Text("Effective working width: ${region.formatLength(it)}") }
+                resolution?.controllerLitresPer100mTravel?.let { Text("Controller application: ${region.formatVolumePer100Length(it)}") }
                 Text("Physical row spacing stays unchanged. Controller travel and physical vine-row rates are different measures.", style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -70,7 +74,7 @@ fun SprayPlanningCards(
                     }
                     if (specification == SprayFullTankSpecification.TARGET_AREA)
                         PlanningField("Planned area (${region.areaUnitAbbreviation})", areaText, onArea)
-                    else PlanningField("Calibrated rate (${region.volumePerAreaUnit})", rateText, onRate)
+                    else PlanningField("Calibrated rate ($rateUnit)", rateText, onRate)
                     Text("Planned area only. Actual block/row coverage is recorded during the Trip; no partial-block allocation is assumed.", style = MaterialTheme.typography.bodySmall)
                 } else Text("Use selected block area and the spray-volume decision below.", style = MaterialTheme.typography.bodySmall)
                 if (resolution != null) {

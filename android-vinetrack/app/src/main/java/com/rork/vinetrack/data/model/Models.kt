@@ -1802,8 +1802,14 @@ data class SprayRecord(
     @SerialName("sprayer_configuration") val sprayerConfiguration: String? = null,
     @SerialName("spray_planning_method") val sprayPlanningMethod: String? = null,
     @SerialName("full_tank_specification") val fullTankSpecification: String? = null,
+    @SerialName("planning_input_provenance") val planningInputProvenance: com.rork.vinetrack.data.spray.SprayPlanningWireProvenance? = null,
+    @SerialName("planning_target_area_ha") val planningTargetAreaHa: Double? = null,
+    @SerialName("resolved_planning_carrier_litres") val resolvedPlanningCarrierLitres: Double? = null,
+    @SerialName("resolved_planning_litres_per_hectare") val resolvedPlanningLitresPerHectare: Double? = null,
+    @SerialName("resolved_planning_physical_row_litres_per_100m") val resolvedPlanningPhysicalRowLitresPer100m: Double? = null,
+    @SerialName("resolved_planning_concentration_factor") val resolvedPlanningConcentrationFactor: Double? = null,
     @SerialName("planned_application_area_ha") val plannedApplicationAreaHa: Double? = null,
-    @SerialName("planning_tank_capacity_litres") val planningTankCapacityLitres: Double? = null,
+    @SerialName("planning_intended_tank_litres") val planningIntendedTankLitres: Double? = null,
     @SerialName("planning_calibrated_litres_per_hectare") val planningCalibratedLitresPerHectare: Double? = null,
     @SerialName("controller_litres_per_100m_travel") val controllerLitresPer100mTravel: Double? = null,
     @SerialName("effective_working_width_metres") val effectiveWorkingWidthMetres: Double? = null,
@@ -1860,12 +1866,19 @@ data class SprayRecord(
             carrierAreaBasis = carrierAreaBasis,
             blocks = applicationBlocks,
             planningIntent = planningFields.intent,
-            planningResolution = planningFields.resolution(totalCarrierLitres, carrierLitresPerHectare, appliedLitresPer100m, concentrationFactor),
+            planningResolution = planningFields.resolution(),
         )
 
     private val planningFields get() = com.rork.vinetrack.data.spray.SprayPlanningWireFields(
-        sprayerConfiguration, sprayPlanningMethod, fullTankSpecification, plannedApplicationAreaHa,
-        planningTankCapacityLitres, planningCalibratedLitresPerHectare, controllerLitresPer100mTravel, effectiveWorkingWidthMetres)
+        sprayerConfiguration = sprayerConfiguration, sprayPlanningMethod = sprayPlanningMethod,
+        fullTankSpecification = fullTankSpecification, planningInputProvenance = planningInputProvenance,
+        planningIntendedTankLitres = planningIntendedTankLitres, planningTargetAreaHa = planningTargetAreaHa,
+        planningCalibratedLitresPerHectare = planningCalibratedLitresPerHectare,
+        plannedApplicationAreaHa = plannedApplicationAreaHa, resolvedPlanningCarrierLitres = resolvedPlanningCarrierLitres,
+        resolvedPlanningLitresPerHectare = resolvedPlanningLitresPerHectare,
+        resolvedPlanningPhysicalRowLitresPer100m = resolvedPlanningPhysicalRowLitresPer100m,
+        resolvedPlanningConcentrationFactor = resolvedPlanningConcentrationFactor,
+        controllerLitresPer100mTravel = controllerLitresPer100mTravel, effectiveWorkingWidthMetres = effectiveWorkingWidthMetres)
 
     /** User-facing label: the spray reference, else operation type, else a fallback. */
     val displayLabel: String

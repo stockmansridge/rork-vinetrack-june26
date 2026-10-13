@@ -77,8 +77,14 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
     var sprayerConfiguration: String? = nil
     var sprayPlanningMethod: String? = nil
     var fullTankSpecification: String? = nil
+    var planningInputProvenance: SprayPlanningWireProvenance? = nil
+    var planningTargetAreaHa: Double? = nil
+    var resolvedPlanningCarrierLitres: Double? = nil
+    var resolvedPlanningLitresPerHectare: Double? = nil
+    var resolvedPlanningPhysicalRowLitresPer100m: Double? = nil
+    var resolvedPlanningConcentrationFactor: Double? = nil
     var plannedApplicationAreaHa: Double? = nil
-    var planningTankCapacityLitres: Double? = nil
+    var planningIntendedTankLitres: Double? = nil
     var planningCalibratedLitresPerHectare: Double? = nil
     var controllerLitresPer100mTravel: Double? = nil
     var effectiveWorkingWidthMetres: Double? = nil
@@ -143,8 +149,14 @@ nonisolated struct BackendSprayRecord: Codable, Sendable, Identifiable {
         case sprayerConfiguration = "sprayer_configuration"
         case sprayPlanningMethod = "spray_planning_method"
         case fullTankSpecification = "full_tank_specification"
+        case planningInputProvenance = "planning_input_provenance"
+        case planningTargetAreaHa = "planning_target_area_ha"
+        case resolvedPlanningCarrierLitres = "resolved_planning_carrier_litres"
+        case resolvedPlanningLitresPerHectare = "resolved_planning_litres_per_hectare"
+        case resolvedPlanningPhysicalRowLitresPer100m = "resolved_planning_physical_row_litres_per_100m"
+        case resolvedPlanningConcentrationFactor = "resolved_planning_concentration_factor"
         case plannedApplicationAreaHa = "planned_application_area_ha"
-        case planningTankCapacityLitres = "planning_tank_capacity_litres"
+        case planningIntendedTankLitres = "planning_intended_tank_litres"
         case planningCalibratedLitresPerHectare = "planning_calibrated_litres_per_hectare"
         case controllerLitresPer100mTravel = "controller_litres_per_100m_travel"
         case effectiveWorkingWidthMetres = "effective_working_width_metres"
@@ -226,8 +238,14 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
     var sprayerConfiguration: String? = nil
     var sprayPlanningMethod: String? = nil
     var fullTankSpecification: String? = nil
+    var planningInputProvenance: SprayPlanningWireProvenance? = nil
+    var planningTargetAreaHa: Double? = nil
+    var resolvedPlanningCarrierLitres: Double? = nil
+    var resolvedPlanningLitresPerHectare: Double? = nil
+    var resolvedPlanningPhysicalRowLitresPer100m: Double? = nil
+    var resolvedPlanningConcentrationFactor: Double? = nil
     var plannedApplicationAreaHa: Double? = nil
-    var planningTankCapacityLitres: Double? = nil
+    var planningIntendedTankLitres: Double? = nil
     var planningCalibratedLitresPerHectare: Double? = nil
     var controllerLitresPer100mTravel: Double? = nil
     var effectiveWorkingWidthMetres: Double? = nil
@@ -284,8 +302,14 @@ nonisolated struct BackendSprayRecordUpsert: Encodable, Sendable {
         case sprayerConfiguration = "sprayer_configuration"
         case sprayPlanningMethod = "spray_planning_method"
         case fullTankSpecification = "full_tank_specification"
+        case planningInputProvenance = "planning_input_provenance"
+        case planningTargetAreaHa = "planning_target_area_ha"
+        case resolvedPlanningCarrierLitres = "resolved_planning_carrier_litres"
+        case resolvedPlanningLitresPerHectare = "resolved_planning_litres_per_hectare"
+        case resolvedPlanningPhysicalRowLitresPer100m = "resolved_planning_physical_row_litres_per_100m"
+        case resolvedPlanningConcentrationFactor = "resolved_planning_concentration_factor"
         case plannedApplicationAreaHa = "planned_application_area_ha"
-        case planningTankCapacityLitres = "planning_tank_capacity_litres"
+        case planningIntendedTankLitres = "planning_intended_tank_litres"
         case planningCalibratedLitresPerHectare = "planning_calibrated_litres_per_hectare"
         case controllerLitresPer100mTravel = "controller_litres_per_100m_travel"
         case effectiveWorkingWidthMetres = "effective_working_width_metres"
@@ -367,8 +391,14 @@ extension BackendSprayRecord {
             sprayerConfiguration: planning.sprayerConfiguration,
             sprayPlanningMethod: planning.sprayPlanningMethod,
             fullTankSpecification: planning.fullTankSpecification,
+            planningInputProvenance: planning.planningInputProvenance,
+            planningTargetAreaHa: planning.planningTargetAreaHa,
+            resolvedPlanningCarrierLitres: planning.resolvedPlanningCarrierLitres,
+            resolvedPlanningLitresPerHectare: planning.resolvedPlanningLitresPerHectare,
+            resolvedPlanningPhysicalRowLitresPer100m: planning.resolvedPlanningPhysicalRowLitresPer100m,
+            resolvedPlanningConcentrationFactor: planning.resolvedPlanningConcentrationFactor,
             plannedApplicationAreaHa: planning.plannedApplicationAreaHa,
-            planningTankCapacityLitres: planning.planningTankCapacityLitres,
+            planningIntendedTankLitres: planning.planningIntendedTankLitres,
             planningCalibratedLitresPerHectare: planning.planningCalibratedLitresPerHectare,
             controllerLitresPer100mTravel: planning.controllerLitresPer100mTravel,
             effectiveWorkingWidthMetres: planning.effectiveWorkingWidthMetres
@@ -422,8 +452,14 @@ extension BackendSprayRecord {
         planning.sprayerConfiguration = sprayerConfiguration
         planning.sprayPlanningMethod = sprayPlanningMethod
         planning.fullTankSpecification = fullTankSpecification
+        planning.planningInputProvenance = planningInputProvenance
+        planning.planningTargetAreaHa = planningTargetAreaHa
+        planning.resolvedPlanningCarrierLitres = resolvedPlanningCarrierLitres
+        planning.resolvedPlanningLitresPerHectare = resolvedPlanningLitresPerHectare
+        planning.resolvedPlanningPhysicalRowLitresPer100m = resolvedPlanningPhysicalRowLitresPer100m
+        planning.resolvedPlanningConcentrationFactor = resolvedPlanningConcentrationFactor
         planning.plannedApplicationAreaHa = plannedApplicationAreaHa
-        planning.planningTankCapacityLitres = planningTankCapacityLitres
+        planning.planningIntendedTankLitres = planningIntendedTankLitres
         planning.planningCalibratedLitresPerHectare = planningCalibratedLitresPerHectare
         planning.controllerLitresPer100mTravel = controllerLitresPer100mTravel
         planning.effectiveWorkingWidthMetres = effectiveWorkingWidthMetres
@@ -466,8 +502,7 @@ extension BackendSprayRecord {
             blocks: applicationBlocks
         )
         snapshot.planningIntent = planning.intent
-        snapshot.planningResolution = planning.resolution(totalLitres: totalCarrierLitres, rate: carrierLitresPerHectare,
-            physicalRowRate: appliedLitresPer100m, concentrationFactor: concentrationFactor)
+        snapshot.planningResolution = planning.resolution()
         return snapshot.isEmpty ? nil : snapshot
     }
 }

@@ -129,11 +129,12 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         groundApplicationTarget = try? container.decodeIfPresent(String.self, forKey: .groundApplicationTarget)
         carrierAreaBasis = try? container.decodeIfPresent(String.self, forKey: .carrierAreaBasis)
         createdBy = try? container.decodeIfPresent(UUID.self, forKey: .createdBy)
-        planningFields = try SprayPlanningWireFields(from: decoder)
+        let decodedPlanning = try SprayPlanningWireFields(from: decoder)
+        planningFields = SprayPlanningWireFields(intent: decodedPlanning.intent, isTemplate: true)
     }
 
     func encode(to encoder: Encoder) throws {
-        try planningFields.encode(to: encoder)
+        try planningFields.encode(to: encoder, inputsOnly: true)
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
         try c.encode(vineyardId, forKey: .vineyardId)

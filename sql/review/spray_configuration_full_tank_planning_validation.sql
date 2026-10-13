@@ -1,93 +1,134 @@
--- OBSOLETE v1 HARNESS: intentionally disabled after the unapplied v2 draft amendment.
--- Do not cite prior v1 runs as v2 validation. Review/update this harness before use.
-\quit
--- LOCAL NON-PRODUCTION CONTRACT HARNESS ONLY. Never run on an existing database.
--- Invoke psql on a fresh disposable database with ON_ERROR_STOP=1.
--- These representative tables test the draft's additive contract, not a staging clone.
+-- V2 FULL-CLONE REVIEW HARNESS. Never run against production.
+-- Restore the complete current schema, extensions and password-free custom roles first.
+-- Seed synthetic historical and editable record/job fixtures using the restored contracts.
+-- Required psql variables: clone_schema_sha256, clone_roles_sha256, record_id, job_id.
+-- Database name MUST start vinetrack_spray_v2_review_. Artifact hashes are attestation,
+-- not proof of catalog parity: compare the restore manifest separately before running.
+-- This validates additive storage/constraints; it does NOT certify execution authority,
+-- RLS actor scenarios, successful replay or old RPC consumers. Those remain separate gates.
 \set ON_ERROR_STOP on
-begin;
+\if :{?clone_schema_sha256}
+\else
+  \echo 'BLOCKED: full schema artifact fingerprint is required'
+  \quit 3
+\endif
+\if :{?clone_roles_sha256}
+\else
+  \echo 'BLOCKED: custom-role artifact fingerprint is required'
+  \quit 3
+\endif
+\if :{?record_id}
+\else
+  \echo 'BLOCKED: synthetic editable record fixture is required'
+  \quit 3
+\endif
+\if :{?job_id}
+\else
+  \echo 'BLOCKED: synthetic editable job fixture is required'
+  \quit 3
+\endif
+select set_config('vinetrack.review_schema_hash', :'clone_schema_sha256', false),
+       set_config('vinetrack.review_roles_hash', :'clone_roles_sha256', false),
+       set_config('vinetrack.review_record_id', :'record_id', false),
+       set_config('vinetrack.review_job_id', :'job_id', false);
 do $$ begin
-  if to_regclass('public.spray_records') is not null or to_regclass('public.spray_jobs') is not null then
-    raise exception 'Validation requires an empty disposable database';
+  if current_database() !~ '^vinetrack_spray_v2_review_' then
+    raise exception 'Refusing non-review database';
+  end if;
+  if current_setting('vinetrack.review_schema_hash') !~ '^[a-f0-9]{64}$'
+     or current_setting('vinetrack.review_roles_hash') !~ '^[a-f0-9]{64}$' then
+    raise exception 'Missing valid artifact fingerprints';
+  end if;
+  if to_regclass('public.spray_records') is null or to_regclass('public.spray_jobs') is null
+     or to_regclass('auth.users') is null then raise exception 'Full native-auth schema restore is required'; end if;
+  if not exists (select 1 from pg_trigger where tgrelid='public.spray_records'::regclass and not tgisinternal)
+     or not exists (select 1 from pg_trigger where tgrelid='public.spray_jobs'::regclass and not tgisinternal) then
+    raise exception 'Required existing trigger inventory is absent';
+  end if;
+  if not exists (select 1 from public.spray_records where id=current_setting('vinetrack.review_record_id')::uuid)
+     or not exists (select 1 from public.spray_jobs where id=current_setting('vinetrack.review_job_id')::uuid) then
+    raise exception 'Synthetic fixture IDs not found';
   end if;
 end $$;
-create table public.spray_records (
-  id uuid primary key, vineyard_id uuid not null, tanks jsonb,
-  row_spacing_metres numeric, applied_litres_per_100m numeric,
-  date timestamptz, updated_at timestamptz, sync_version integer
-);
-create table public.spray_jobs (
-  id uuid primary key, vineyard_id uuid not null, chemical_lines jsonb,
-  water_volume numeric, spray_rate_per_ha numeric, is_template boolean,
-  updated_at timestamptz
-);
-alter table public.spray_records enable row level security;
-alter table public.spray_jobs enable row level security;
-create policy fixture_record_scope on public.spray_records using (vineyard_id = '00000000-0000-0000-0000-000000000001'::uuid);
-create policy fixture_job_scope on public.spray_jobs using (vineyard_id = '00000000-0000-0000-0000-000000000001'::uuid);
-insert into public.spray_records values ('00000000-0000-0000-0000-000000000010', '00000000-0000-0000-0000-000000000001', '[{"frozen":true}]', 2.8, 20, '2020-01-01', '2020-01-02', 4);
-insert into public.spray_jobs values ('00000000-0000-0000-0000-000000000020', '00000000-0000-0000-0000-000000000001', '[{"frozen":true}]', 1000, 500, true, '2020-01-02');
-create table review_before as
- select 'spray_records' as table_name, to_jsonb(r) as row_value from public.spray_records r
- union all select 'spray_jobs', to_jsonb(j) from public.spray_jobs j;
-create table review_policies_before as select * from pg_policies where tablename in ('spray_records','spray_jobs');
-create table review_permissions_before as select oid, relacl, relrowsecurity, relforcerowsecurity from pg_class where oid in ('public.spray_records'::regclass, 'public.spray_jobs'::regclass);
-commit;
+
+create temp table review_rows_before as
+ select 'spray_records'::text as table_name, id, to_jsonb(r) as row_value from public.spray_records r
+ union all select 'spray_jobs', id, to_jsonb(j) from public.spray_jobs j;
+create temp table review_policies_before as select * from pg_policies where schemaname='public' and tablename in ('spray_records','spray_jobs');
+create temp table review_permissions_before as select oid, relacl, relrowsecurity, relforcerowsecurity from pg_class where oid in ('public.spray_records'::regclass,'public.spray_jobs'::regclass);
+create temp table review_triggers_before as
+ select oid, tgrelid, pg_get_triggerdef(oid) as definition from pg_trigger where tgrelid in ('public.spray_records'::regclass,'public.spray_jobs'::regclass);
+
 \ir spray_configuration_full_tank_planning_draft.sql
 \ir spray_configuration_full_tank_planning_draft.sql
 
+begin;
 do $validation$
 declare
- t text; col text; val text; rejected boolean; checks integer := 0;
- keys text[] := array['sprayer_configuration','spray_planning_method','full_tank_specification','planned_application_area_ha','planning_tank_capacity_litres','planning_calibrated_litres_per_hectare','controller_litres_per_100m_travel','effective_working_width_metres'];
- old_row jsonb; new_row jsonb;
+ t text; col text; val text; rejected boolean; invalid_writes integer := 0;
+ fixture uuid; count_columns integer; old_row record; new_row jsonb;
+ inputs text[] := array['sprayer_configuration','spray_planning_method','full_tank_specification','planning_input_provenance','planning_intended_tank_litres','planning_target_area_ha','planning_calibrated_litres_per_hectare'];
+ outputs text[] := array['planned_application_area_ha','resolved_planning_carrier_litres','resolved_planning_litres_per_hectare','resolved_planning_physical_row_litres_per_100m','resolved_planning_concentration_factor','controller_litres_per_100m_travel','effective_working_width_metres'];
+ keys text[]; numeric_keys text[];
+ provenance jsonb := '{"schema_version":1,"tank_text":" 1500.00 ","area_text":"3.00","rate_text":"","volume_unit":"litres","area_unit":"hectares","rate_area_unit":"hectare","country_code":"AU"}'::jsonb;
+ malformed jsonb;
 begin
  foreach t in array array['spray_records','spray_jobs'] loop
-   select row_value into old_row from review_before where table_name=t;
-   execute format('select to_jsonb(r) - $1 from public.%I r', t) into new_row using keys;
-   if new_row <> old_row then raise exception 'Historical row changed: %', t; end if;
-   execute format('select count(*) from public.%I where sprayer_configuration is not null or spray_planning_method is not null or full_tank_specification is not null or planned_application_area_ha is not null or planning_tank_capacity_litres is not null or planning_calibrated_litres_per_hectare is not null',t) into checks;
-   if checks <> 0 then raise exception 'Historical unknown intent defaulted'; end if;
-   if exists (select 1 from information_schema.columns where table_schema='public' and table_name=t and column_name=any(keys) and (is_nullable <> 'YES' or column_default is not null)) then raise exception 'Nullable/no-default contract failed'; end if;
-   foreach col in array array['planned_application_area_ha','planning_tank_capacity_litres','planning_calibrated_litres_per_hectare'] loop
+   keys := inputs || case when t='spray_records' then outputs else array[]::text[] end;
+   select count(*) into count_columns from information_schema.columns where table_schema='public' and table_name=t and column_name=any(keys);
+   if count_columns <> cardinality(keys) then raise exception 'Wrong v2 column inventory: %', t; end if;
+   if exists (select 1 from information_schema.columns where table_schema='public' and table_name=t and column_name=any(keys) and (is_nullable<>'YES' or column_default is not null)) then raise exception 'Nullable/no-default contract failed'; end if;
+   if t='spray_jobs' and exists (select 1 from information_schema.columns where table_schema='public' and table_name=t and column_name=any(outputs)) then raise exception 'Job has record-only v1/output columns; not a clean pre-v2 clone'; end if;
+   for old_row in select * from review_rows_before where table_name=t loop
+     execute format('select to_jsonb(r) - $1 from public.%I r where id=$2', t) into new_row using keys, old_row.id;
+     if new_row is distinct from old_row.row_value - keys then raise exception 'Historical fields changed: % %', t,old_row.id; end if;
+   end loop;
+   fixture := current_setting(case when t='spray_records' then 'vinetrack.review_record_id' else 'vinetrack.review_job_id' end)::uuid;
+   numeric_keys := array['planning_intended_tank_litres','planning_target_area_ha','planning_calibrated_litres_per_hectare'] || case when t='spray_records' then outputs else array[]::text[] end;
+   foreach col in array numeric_keys loop
      foreach val in array array['0','-1','NaN','Infinity','-Infinity'] loop
        rejected := false;
-       begin execute format('update public.%I set %I = %L::numeric', t,col,val);
+       begin execute format('update public.%I set %I=$1::numeric where id=$2',t,col) using val,fixture;
        exception when check_violation then rejected := true; end;
-       if not rejected then raise exception 'Invalid % accepted: % %',t,col,val; end if;
+       if not rejected then raise exception 'Invalid numeric accepted: % % %',t,col,val; end if;
+       invalid_writes := invalid_writes + 1;
      end loop;
    end loop;
-   rejected := false;
-   begin execute format('update public.%I set sprayer_configuration = ''unknown''',t);
-   exception when check_violation then rejected := true; end;
-   if not rejected then raise exception 'Invalid configuration accepted'; end if;
-   rejected := false;
-   begin execute format('update public.%I set spray_planning_method = ''unknown''',t);
-   exception when check_violation then rejected := true; end;
-   if not rejected then raise exception 'Invalid method accepted'; end if;
-   rejected := false;
-   begin execute format('update public.%I set full_tank_specification = ''target_area''',t);
-   exception when check_violation then rejected := true; end;
-   if not rejected then raise exception 'Full-tank spec with NULL method accepted'; end if;
-   execute format('update public.%I set sprayer_configuration = ''over_row_two_rows'', spray_planning_method = ''full_tank'', full_tank_specification = ''target_area'', planned_application_area_ha=2, planning_tank_capacity_litres=1000',t);
-   rejected := false;
-   begin execute format('update public.%I set spray_planning_method = ''by_area''',t);
-   exception when check_violation then rejected := true; end;
-   if not rejected then raise exception 'Full-tank spec with by-area accepted'; end if;
-   execute format('update public.%I set full_tank_specification=''calibrated_rate'', planning_calibrated_litres_per_hectare=500',t);
- end loop;
- foreach col in array array['controller_litres_per_100m_travel','effective_working_width_metres'] loop
-   foreach val in array array['0','-1','NaN','Infinity','-Infinity'] loop
+   foreach malformed in array array[
+      '{}'::jsonb, '[]'::jsonb, 'null'::jsonb,
+      provenance - 'schema_version', provenance || '{"schema_version":2}',
+      provenance || '{"tank_text":1500}', provenance || '{"volume_unit":"gallons"}',
+      provenance || '{"area_unit":"unknown"}', provenance || '{"rate_area_unit":"unknown"}',
+      provenance || '{"country_code":" "}', provenance || '{"unexplained":true}'
+   ] loop
      rejected := false;
-     begin execute format('update public.spray_records set %I = %L::numeric',col,val);
+     begin execute format('update public.%I set planning_input_provenance=$1 where id=$2',t) using malformed,fixture;
      exception when check_violation then rejected := true; end;
-     if not rejected then raise exception 'Invalid % accepted: %',col,val; end if;
+     if not rejected then raise exception 'Malformed provenance accepted on %: %',t,malformed; end if;
    end loop;
+   foreach val in array array['litres','us_gallons','imperial_gallons'] loop
+     execute format('update public.%I set sprayer_configuration=''standard_pass'',spray_planning_method=''full_tank'',full_tank_specification=''target_area'',planning_intended_tank_litres=1500,planning_target_area_ha=3,planning_input_provenance=$1 where id=$2',t)
+       using provenance || jsonb_build_object('volume_unit',val),fixture;
+   end loop;
+   foreach val in array array['100m_travel','100ft_travel'] loop
+     execute format('update public.%I set planning_input_provenance=$1 where id=$2',t)
+       using provenance || jsonb_build_object('rate_area_unit',val,'rate_text','16.8'),fixture;
+   end loop;
+   -- Clear obsolete inputs and every output atomically. Omission is not SQL NULL.
+   execute format('update public.%I set spray_planning_method=''by_area'',full_tank_specification=null,planning_intended_tank_litres=null,planning_target_area_ha=null,planning_calibrated_litres_per_hectare=null,planning_input_provenance=null where id=$1',t) using fixture;
+   if t='spray_records' then
+     execute 'update public.spray_records set planned_application_area_ha=null,resolved_planning_carrier_litres=null,resolved_planning_litres_per_hectare=null,resolved_planning_physical_row_litres_per_100m=null,resolved_planning_concentration_factor=null,controller_litres_per_100m_travel=null,effective_working_width_metres=null where id=$1' using fixture;
+   end if;
+   execute format('select to_jsonb(r) from public.%I r where id=$1',t) into new_row using fixture;
+   foreach col in array array['full_tank_specification','planning_intended_tank_litres','planning_target_area_ha','planning_calibrated_litres_per_hectare','planning_input_provenance'] || case when t='spray_records' then outputs else array[]::text[] end loop
+     if new_row -> col is distinct from 'null'::jsonb then raise exception 'Explicit clearing did not persist: % %',t,col; end if;
+   end loop;
+   -- Storage CHECKs intentionally permit incomplete drafts. This is NOT admission success.
  end loop;
- if exists ((select * from review_policies_before except select * from pg_policies where tablename in ('spray_records','spray_jobs')) union all (select * from pg_policies where tablename in ('spray_records','spray_jobs') except select * from review_policies_before)) then raise exception 'RLS policies changed'; end if;
- if exists (select 1 from review_permissions_before b join pg_class c on c.oid=b.oid where c.relacl is distinct from b.relacl or c.relrowsecurity<>b.relrowsecurity or c.relforcerowsecurity<>b.relforcerowsecurity) then raise exception 'Permissions/RLS flags changed'; end if;
- select count(*) into checks from pg_constraint where conrelid in ('public.spray_records'::regclass,'public.spray_jobs'::regclass) and (conname like '%sprayer_configuration_check' or conname like '%spray_planning_method_check' or conname like '%full_tank_specification_check' or conname like '%planned_application_area_ha_check' or conname like '%planning_tank_capacity_litres_check' or conname like '%planning_calibrated_litres_per_hectare_check' or conname like '%controller_litres_per_100m_travel_check' or conname like '%effective_working_width_metres_check');
- if checks <> 14 then raise exception 'Expected 14 constraints, found %',checks; end if;
- raise notice 'PASS: repeatability, 14 nullable/no-default columns, frozen historical rows, 40 invalid numeric writes, enums/specification dependencies, unchanged RLS policies and table privileges';
+ if exists ((select * from review_policies_before except select * from pg_policies where schemaname='public' and tablename in ('spray_records','spray_jobs')) union all (select * from pg_policies where schemaname='public' and tablename in ('spray_records','spray_jobs') except select * from review_policies_before)) then raise exception 'Existing RLS changed'; end if;
+ if exists (select 1 from review_permissions_before b join pg_class c on c.oid=b.oid where c.relacl is distinct from b.relacl or c.relrowsecurity<>b.relrowsecurity or c.relforcerowsecurity<>b.relforcerowsecurity) then raise exception 'Privileges/RLS flags changed'; end if;
+ if exists (select 1 from review_triggers_before b left join pg_trigger t on t.oid=b.oid where t.oid is null or pg_get_triggerdef(t.oid)<>b.definition) then raise exception 'Existing triggers changed'; end if;
+ raise notice 'V2 STORAGE CHECKS PASS: 21 nullable columns, repeated draft, historical preservation, % invalid numeric assignments, malformed provenance, gallon variants and explicit clearing. NOT actor/RPC/compliance/replay acceptance.',invalid_writes;
 end;
 $validation$;
+rollback;

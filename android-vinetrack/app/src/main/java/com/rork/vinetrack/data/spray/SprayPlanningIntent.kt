@@ -129,20 +129,17 @@ object SprayPlanningOperationalGate {
         if (snapshot?.planningResolution != null) {
             snapshot.planningIntent?.fullTankExecutionBlocker(snapshot.planningResolution, snapshot.grossAreaHa)?.let { return it }
         }
-        return blocker(
-        snapshot?.planningIntent != null || snapshot?.planningResolution != null,
-        tanks.firstOrNull { !it.concentrationFactor.isFinite() }?.concentrationFactor
-            ?: (tanks.map { it.concentrationFactor } + listOfNotNull(snapshot?.concentrationFactor)).maxOrNull(),
-        tanks.any { tank -> tank.chemicals.any { chemical ->
-            chemical.rateBasis == SprayProductRateBasis.PER_100_LITRES.raw ||
-                (chemical.rateBasis == null && chemical.ratePer100L > 0 && chemical.ratePerHa <= 0)
-        } },
-        tanks.flatMap { it.chemicals }.filter { it.rateBasis == SprayProductRateBasis.PER_100_LITRES.raw ||
-            (it.rateBasis == null && it.ratePer100L > 0 && it.ratePerHa <= 0) }.map { it.name },
-        )
+        for (tank in tanks) {
+            val ambiguous = tank.chemicals.filter { it.rateBasis == null && it.ratePer100L > 0 && it.ratePerHa > 0 }
+            if (ambiguous.isNotEmpty()) return CONCENTRATE_MESSAGE + " Ambiguous rate basis: " + ambiguous.joinToString(", ") { it.name }
+            val dilute = tank.chemicals.filter { it.rateBasis == SprayProductRateBasis.PER_100_LITRES.raw ||
+                (it.rateBasis == null && it.ratePer100L > 0) }
+            blocker(false, tank.concentrationFactor, dilute.isNotEmpty(), dilute.map { it.name })?.let { return it }
+        }
+        return blocker(snapshot?.planningIntent != null || snapshot?.planningResolution != null, null, false)
     }
     fun blocker(hasPlanningIntent: Boolean, concentrationFactor: Double?, hasDiluteRateProducts: Boolean, chemicalNames: List<String> = emptyList()): String? {
-        if (hasDiluteRateProducts && concentrationFactor != null && (!concentrationFactor.isFinite() || concentrationFactor > 1.000001)) {
+        if (hasDiluteRateProducts && (concentrationFactor == null || !concentrationFactor.isFinite() || concentrationFactor < 1.0 || concentrationFactor > 1.000001)) {
             val names = chemicalNames.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
             return if (names.isEmpty()) CONCENTRATE_MESSAGE else CONCENTRATE_MESSAGE + " Products: " + names.joinToString(", ")
         }

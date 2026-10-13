@@ -101,8 +101,9 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         @SerialName("sprayer_configuration") val sprayerConfiguration: String? = null,
         @SerialName("spray_planning_method") val sprayPlanningMethod: String? = null,
         @SerialName("full_tank_specification") val fullTankSpecification: String? = null,
-        @SerialName("planned_application_area_ha") val plannedApplicationAreaHa: Double? = null,
-        @SerialName("planning_tank_capacity_litres") val planningTankCapacityLitres: Double? = null,
+        @SerialName("planning_input_provenance") val planningInputProvenance: com.rork.vinetrack.data.spray.SprayPlanningWireProvenance? = null,
+        @SerialName("planning_target_area_ha") val planningTargetAreaHa: Double? = null,
+        @SerialName("planning_intended_tank_litres") val planningIntendedTankLitres: Double? = null,
         @SerialName("planning_calibrated_litres_per_hectare") val planningCalibratedLitresPerHectare: Double? = null,
     )
 
@@ -206,8 +207,7 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         payload: JsonObject,
     ): SprayRecord =
         withContext(Dispatchers.IO) {
-            if (payload.keys.any { it in setOf("sprayer_configuration", "spray_planning_method", "full_tank_specification",
-                    "planned_application_area_ha", "planning_tank_capacity_litres", "planning_calibrated_litres_per_hectare") }) {
+            if (payload.keys.any { it in com.rork.vinetrack.data.spray.SprayPlanningWireFields.RECORD_KEYS || it == "planning_tank_capacity_litres" }) {
                 throw IllegalStateException(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.MIGRATION_MESSAGE)
             }
             requireConfig()
@@ -269,8 +269,11 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         groundApplicationTarget = groundApplicationTarget,
         carrierAreaBasis = carrierAreaBasis,
         chemicalLines = chemicalLines,
-        planningFields = com.rork.vinetrack.data.spray.SprayPlanningWireFields(sprayerConfiguration, sprayPlanningMethod,
-            fullTankSpecification, plannedApplicationAreaHa, planningTankCapacityLitres, planningCalibratedLitresPerHectare),
+        planningFields = com.rork.vinetrack.data.spray.SprayPlanningWireFields(
+            sprayerConfiguration = sprayerConfiguration, sprayPlanningMethod = sprayPlanningMethod,
+            fullTankSpecification = fullTankSpecification, planningTargetAreaHa = planningTargetAreaHa,
+            planningInputProvenance = planningInputProvenance, planningIntendedTankLitres = planningIntendedTankLitres,
+            planningCalibratedLitresPerHectare = planningCalibratedLitresPerHectare),
     )
 
     /** Deterministic ids so re-fetches don't churn Compose list identity. */
@@ -331,8 +334,9 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
             sprayerConfiguration = sprayerConfiguration,
             sprayPlanningMethod = sprayPlanningMethod,
             fullTankSpecification = fullTankSpecification,
-            plannedApplicationAreaHa = plannedApplicationAreaHa,
-            planningTankCapacityLitres = planningTankCapacityLitres,
+            planningInputProvenance = planningInputProvenance,
+            planningTargetAreaHa = planningTargetAreaHa,
+            planningIntendedTankLitres = planningIntendedTankLitres,
             planningCalibratedLitresPerHectare = planningCalibratedLitresPerHectare,
         )
     }

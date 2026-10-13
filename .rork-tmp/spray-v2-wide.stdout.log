@@ -1,0 +1,388 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:compileDebugKotlin UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac UP-TO-DATE
+> Task :app:bundleDebugClassesToCompileJar UP-TO-DATE
+> Task :app:compileDebugUnitTestKotlin UP-TO-DATE
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:processDebugUnitTestJavaRes UP-TO-DATE
+> Task :app:bundleDebugClassesToRuntimeJar
+
+> Task :app:testDebugUnitTest FAILED
+
+SprayApplicationGeometryTest > banded area is never a fixed fraction of block area PASSED
+
+SprayApplicationGeometryTest > whole block application treats the entire block PASSED
+
+SprayApplicationGeometryTest > carrier volume is refused without a row length PASSED
+
+SprayApplicationGeometryTest > litres per 100 metres total carrier PASSED
+
+SprayApplicationGeometryTest > legacy per hectare maps to whole block area PASSED
+
+SprayApplicationGeometryTest > derived litres per hectare from row spacing PASSED
+
+SprayApplicationGeometryTest > carrier basis and product rate basis stay independent PASSED
+
+SprayApplicationGeometryTest > banded fallback from area and spacing PASSED
+
+SprayApplicationGeometryTest > unmapped block with spacing but no area is incomplete PASSED
+
+SprayApplicationGeometryTest > per 100 litres product PASSED
+
+SprayApplicationGeometryTest > whole block area product PASSED
+
+SprayApplicationGeometryTest > australian vineyard defaults to either basis PASSED
+
+SprayApplicationGeometryTest > spraying dilute gives a concentration factor of one PASSED
+
+SprayApplicationGeometryTest > per 100 metres product PASSED
+
+SprayApplicationGeometryTest > existing per 100 litres product with concentration factor PASSED
+
+SprayApplicationGeometryTest > carrier volume uses the same geometry as banded area PASSED
+
+SprayApplicationGeometryTest > row length is derived from area and spacing PASSED
+
+SprayApplicationGeometryTest > paddock with no stored row spacing is incomplete not defaulted to 2 point 5 PASSED
+
+SprayApplicationGeometryTest > costing uses gross and treated hectares separately PASSED
+
+SprayApplicationGeometryTest > mixed row spacings report no uniform spacing PASSED
+
+SprayApplicationGeometryTest > operator override is used when nothing is mapped PASSED
+
+SprayApplicationGeometryTest > stored profile overrides the country default PASSED
+
+SprayApplicationGeometryTest > treated area product PASSED
+
+SprayApplicationGeometryTest > one incomplete block invalidates the whole selection PASSED
+
+SprayApplicationGeometryTest > multiple blocks sum their row lengths PASSED
+
+SprayApplicationGeometryTest > band width can be split left and right PASSED
+
+SprayApplicationGeometryTest > per tank quantities split proportionally PASSED
+
+SprayApplicationGeometryTest > all three bases coexist in the same tank mix PASSED
+
+SprayApplicationGeometryTest > new zealand vineyard defaults to SWNZ and litres per 100 metres PASSED
+
+SprayApplicationGeometryTest > canonical engine agrees with legacy effectiveTotalRowLength PASSED
+
+SprayApplicationGeometryTest > existing litres per hectare foliar spray is unchanged PASSED
+
+SprayApplicationGeometryTest > treated area product is unresolved without a band width PASSED
+
+SprayApplicationGeometryTest > mapped row geometry is authoritative PASSED
+
+SprayApplicationGeometryTest > mixed sources degrade quality to derived PASSED
+
+SprayApplicationGeometryTest > operator override wins over mapped geometry PASSED
+
+SprayApplicationGeometryTest > multi block banded area is summed per block PASSED
+
+SprayApplicationGeometryTest > existing tank split arithmetic is unchanged PASSED
+
+SprayApplicationGeometryTest > derived litres per hectare is unavailable without spacing PASSED
+
+SprayApplicationGeometryTest > missing row spacing is incomplete not defaulted to 2 point 5 PASSED
+
+SprayApplicationGeometryTest > deprecated stored row length source still decodes PASSED
+
+SprayApplicationGeometryTest > concentration factor from dilute and applied PASSED
+
+SprayApplicationGeometryTest > unknown or missing country defaults to australia PASSED
+
+SprayApplicationGeometryTest > banded fallback agrees with canonical form PASSED
+
+SprayApplicationGeometryTest > legacy per hectare is never reinterpreted as treated area PASSED
+
+SprayApplicationGeometryTest > banded treated area from canonical row length PASSED
+
+SprayApplicationSnapshotTest > a banded job with no band width records gross but refuses to invent treated PASSED
+
+SprayApplicationSnapshotTest > completed record is unchanged when block geometry is edited afterwards PASSED
+
+SprayApplicationSnapshotTest > one tank preserves a different rate basis on every chemical line PASSED
+
+SprayApplicationSnapshotTest > L per 100m carrier snapshot is reproducible without current block geometry PASSED
+
+SprayApplicationSnapshotTest > whole block L per ha foliar records treated equals gross and no L per 100m values PASSED
+
+SprayApplicationSnapshotTest > a pre sql 191 record decodes with a null snapshot not a guessed one PASSED
+
+SprayApplicationSnapshotTest > template inputs plus current geometry produce a fresh calculation snapshot PASSED
+
+SprayApplicationSnapshotTest > deprecated stored_row_length geometry source still decodes from storage PASSED
+
+SprayApplicationSnapshotTest > an all null snapshot normalises to null so absence has one representation PASSED
+
+SprayApplicationSnapshotTest > banded spray persists BOTH gross and treated area PASSED
+
+SprayApplicationSnapshotTest > snapshot survives the offline outbox payload round trip PASSED
+
+SprayApplicationSnapshotTest > a legacy chemical line resolves to whole block area never treated area PASSED
+
+SprayApplicationSnapshotTest > zero valued measurements persist as null honouring the sql 191 positivity checks PASSED
+
+SprayApplicationSnapshotTest > template in L per 100m mode drops the derived L per ha but keeps entered rates PASSED
+
+SprayApplicationSnapshotTest > banded snapshot survives a full record round trip PASSED
+
+SprayApplicationSnapshotTest > template keeps configuration and drops geometry dependent totals PASSED
+
+SprayApplicationSnapshotTest > mixed bases produce the spec quantities from one shared snapshot PASSED
+
+SprayBandedGroundCarrierTest > product rate bases remain independent PASSED
+
+SprayBandedGroundCarrierTest > Full Canopy carrier regression remains unchanged PASSED
+
+SprayBandedGroundCarrierTest > treated-area carrier uses three treated hectares PASSED
+
+SprayBandedGroundCarrierTest > Undervine and Midrow do not require canopy FAILED
+    java.lang.AssertionError at SprayBandedGroundCarrierTest.kt:101
+
+SprayBandedGroundCarrierTest > explicit whole-block basis uses gross hectares PASSED
+
+SprayBandedGroundCarrierTest > manual total derives treated-hectare sprayer rate PASSED
+
+SprayCarrierProvenanceTest > entry provenance survives physical normalisation and server round trip PASSED
+
+SprayCarrierRegionalFormatTest > imperialCarrierConvertsBothDimensionsNotJustSuffixes PASSED
+
+SprayCarrierRegionalFormatTest > metricCarrierTextRetainsItsValues PASSED
+
+SprayCarrierRegionalFormatTest > customCarrierEditedAndUntouchedValuesRoundTripThroughCache PASSED
+
+SprayCarrierRegionalFormatTest > independentLandSprayFuelAndCurrencySettingsStayIndependent PASSED
+
+SprayCarrierRegionalFormatTest > registeredChemicalRateBasesRemainAuthoritativeBesideRegionalCarrier PASSED
+
+SprayGuidedFlowTest > the persisted snapshot is a projection of the plan Review displays FAILED
+    java.lang.AssertionError at SprayGuidedFlowTest.kt:578
+
+SprayGuidedFlowTest > targets persist as stable identifiers, not display text PASSED
+
+SprayGuidedFlowTest > changing band width recalculates treated area and treated-area products PASSED
+
+SprayGuidedFlowTest > adding a block recalculates geometry, carrier and every product total PASSED
+
+SprayGuidedFlowTest > banded whole-block product doses against gross hectares FAILED
+    java.lang.AssertionError at SprayGuidedFlowTest.kt:210
+
+SprayGuidedFlowTest > custom targets ride the inputs into the persisted snapshot PASSED
+
+SprayGuidedFlowTest > whole-block L per ha still needs spacing for a canopy recommendation conversion PASSED
+
+SprayGuidedFlowTest > foliar L per ha dilute reference above applied rate concentrates PASSED
+
+SprayGuidedFlowTest > foliar L per 100m spec example gives 2x, 6250 L and 625 L per ha PASSED
+
+SprayGuidedFlowTest > before a carrier exists treated area previews but per-100 L stays unresolved PASSED
+
+SprayGuidedFlowTest > switching to L per 100m introduces the geometry requirement PASSED
+
+SprayGuidedFlowTest > steps unlock strictly in order as each decision is made PASSED
+
+SprayGuidedFlowTest > foliar L per ha uses whole-block treated area and hectare carrier PASSED
+
+SprayGuidedFlowTest > mixed bases in one tank give 20 L, 5 L and 6 point 25 L from a single plan FAILED
+    java.lang.AssertionError at SprayGuidedFlowTest.kt:286
+
+SprayGuidedFlowTest > resistance check applicability is flagged but ships no rules or warnings PASSED
+
+SprayGuidedFlowTest > mixed row spacings refuse a uniform spacing rather than averaging PASSED
+
+SprayGuidedFlowTest > banded treated-area product doses against the 2 point 5 ha band PASSED
+
+SprayGuidedFlowTest > a treated-area product with no band width is unresolved, never silently zero PASSED
+
+SprayGuidedFlowTest > per-100 L rates are written against dilute so concentrating keeps the dose PASSED
+
+SprayGuidedFlowTest > changing applied L per 100m recalculates carrier, concentration and dose PASSED
+
+SprayGuidedFlowTest > L per 100m without row spacing resolves carrier but not derived L per ha PASSED
+
+SprayGuidedFlowTest > australian profile allows either basis and offers the choice PASSED
+
+SprayGuidedFlowTest > banded per-100 L product doses against carrier litres PASSED
+
+SprayGuidedFlowTest > completed steps behind the active step collapse to summaries PASSED
+
+SprayGuidedFlowTest > banded without a band width blocks the target step and leaves treated area null FAILED
+    java.lang.AssertionError at SprayGuidedFlowTest.kt:509
+
+SprayGuidedFlowTest > progress fraction reflects completed gated steps PASSED
+
+SprayGuidedFlowTest > SWNZ profile locks carrier entry to L per 100m with no choice offered PASSED
+
+SprayGuidedFlowTest > an explicitly entered 2 point 5 m spacing is a real measurement PASSED
+
+SprayGuidedFlowTest > spreader shows neither a spray head target nor a band width PASSED
+
+SprayGuidedFlowTest > banded with no spacing and no rows blocks progression at the blocks step PASSED
+
+SprayGuidedWorkflowParityTest > switching foliar to banded clears the spray head target at flow level PASSED
+
+SprayGuidedWorkflowParityTest > a stored L per 100 m only policy locks the basis to row length FAILED
+    java.lang.AssertionError at SprayGuidedWorkflowParityTest.kt:341
+
+SprayGuidedWorkflowParityTest > a whole block pass never asks the area question PASSED
+
+SprayGuidedWorkflowParityTest > a stored L per ha only policy locks the basis to hectares PASSED
+
+SprayGuidedWorkflowParityTest > country fallback applies only when no profile is stored PASSED
+
+SprayGuidedWorkflowParityTest > changing the applied L per 100 m moves only carrier-dependent quantities FAILED
+    java.lang.AssertionError at SprayGuidedWorkflowParityTest.kt:538
+
+SprayGuidedWorkflowParityTest > changing the selected blocks recalculates every derived figure FAILED
+    java.lang.AssertionError at SprayGuidedWorkflowParityTest.kt:566
+
+SprayGuidedWorkflowParityTest > a per 100 L product without a carrier names the carrier step PASSED
+
+SprayGuidedWorkflowParityTest > one banded mix calculates whole block treated band and per 100 L independently FAILED
+    java.lang.AssertionError at SprayGuidedWorkflowParityTest.kt:387
+
+SprayGuidedWorkflowParityTest > changing the band width moves only the treated-area product FAILED
+    java.lang.NullPointerException at SprayGuidedWorkflowParityTest.kt:526
+
+SprayGuidedWorkflowParityTest > switching banded to foliar drops the band width and treats the whole block PASSED
+
+SprayGuidedWorkflowParityTest > an unrecognised target identifier degrades without failing the record PASSED
+
+SprayGuidedWorkflowParityTest > editing the targets replaces them rather than accumulating PASSED
+
+SprayGuidedWorkflowParityTest > a per 100 L product is never asked the area question FAILED
+    java.lang.AssertionError at SprayGuidedWorkflowParityTest.kt:459
+
+SprayGuidedWorkflowParityTest > each foliar spray head target persists and reloads PASSED
+
+SprayGuidedWorkflowParityTest > the review the operator signs off is the record that gets persisted FAILED
+    java.lang.AssertionError at SprayGuidedWorkflowParityTest.kt:581
+
+SprayGuidedWorkflowParityTest > an NZ SWNZ vineyard cannot be switched onto L per ha FAILED
+    java.lang.AssertionError at SprayGuidedWorkflowParityTest.kt:358
+
+SprayGuidedWorkflowParityTest > a single target persists and reloads as the same stable identifier PASSED
+
+SprayGuidedWorkflowParityTest > a historical record with no targets column stays null and is never inferred PASSED
+
+SprayGuidedWorkflowParityTest > the decision order is Application Blocks Target Growth Equipment Carrier Products Review FAILED
+    java.lang.AssertionError at SprayGuidedWorkflowParityTest.kt:624
+
+SprayGuidedWorkflowParityTest > a new banded area product will not proceed on an unconfirmed area basis PASSED
+
+SprayGuidedWorkflowParityTest > a treated area product without band geometry names the missing input PASSED
+
+SprayGuidedWorkflowParityTest > product quantities and bases survive persist and reload unchanged FAILED
+    java.lang.AssertionError at SprayGuidedWorkflowParityTest.kt:415
+
+SprayGuidedWorkflowParityTest > a stored AU profile allowing either basis leaves the choice with the operator PASSED
+
+SprayGuidedWorkflowParityTest > multiple targets persist in presentation order regardless of tap order PASSED
+
+SprayPlanningIntentTest > byAreaCardUsesExistingMappedRowCarrierNotAnIndependentAreaTotal PASSED
+
+SprayPlanningIntentTest > acceptanceNumbersAndTamperedFullTankResolution PASSED
+
+SprayPlanningIntentTest > capturedGallonsNeverUseCurrentAccountCountry PASSED
+
+SprayPlanningIntentTest > cfNeverAuthorisesConcentrateAndUndeployedIntentAlwaysBlocks PASSED
+
+SprayPlanningIntentTest > targetAreaAndCalibrationAgreeForFullTank PASSED
+
+SprayPlanningIntentTest > physicalRowAndControllerTravelNeverShareAnOverRowMultiplier PASSED
+
+SprayPlanningIntentTest > localSnapshotsAndOutboxPayloadsRetainIntentBasisAndFrozenOutputs PASSED
+
+SprayPlanningIntentTest > reviewedFlatWireFieldsRoundTripAndLegacyColumnsStayAbsent PASSED
+
+SprayPlanningIntentTest > namedChemicalBlockerDoesNotBlockAreaOnlyMixes PASSED
+
+SprayPlanningIntentTest > fullTankUsesUnchangedChemicalEngineAndDoesNotAllocatePartialBlocks PASSED
+
+SprayPlanningIntentTest > complianceIsPerTankAndRejectsMissingInvalidAndAmbiguousDiluteEvidence PASSED
+
+SprayPlanningIntentTest > blockedReplayRetainsExactOriginalPayloadWithoutCallingAnyRepository PASSED
+
+SprayPlanningIntentTest > selectedControllerEntryConvertsToOnePhysicalRateAcrossConfigurationChanges PASSED
+
+SprayPlanningIntentTest > canopyComparisonHasMinimumOneWithoutAuthorisingConcentrate PASSED
+
+SprayPlanningIntentTest > invalidAndUnrecordedInputsNeverBecomeKnownDefaults PASSED
+
+SprayPlanningIntentTest > v2ProjectionSeparatesInputsOutputsAndClearsStaleResolution PASSED
+
+SprayRegisteredUseRatesTest > multiple named conditions do not manufacture range presets PASSED
+
+SprayRegisteredUseRatesTest > Dithane plain range offers minimum midpoint maximum in label grams PASSED
+
+SprayRegisteredUseRatesTest > unconfirmed structured rate is offered but never becomes confirmed default PASSED
+
+SprayRegisteredUseRatesTest > Dithane per-100-L rate uses actual carrier and concentration without changing 3000 litres PASSED
+
+SprayRegisteredUseRatesTest > basis availability follows genuine offered label bases without conversion PASSED
+
+SprayRegisteredUseRatesTest > preset and identical manual value calculate equally but retain distinct provenance PASSED
+
+SprayRegisteredUseRatesTest > confirmed default seeds only its exact amount unit and basis PASSED
+
+SprayRegisteredUseRatesTest > structured vineyard picker excludes tobacco citrus and unrelated crops PASSED
+
+SprayRegisteredUseRatesTest > legacy rates are used only when structured rates are absent PASSED
+
+SprayRegisteredUseRatesTest > structured non-vineyard rates suppress legacy fallback PASSED
+
+SprayRegisteredUseRatesTest > product-level rates are included but rates assigned to another crop are not PASSED
+
+SprayRegisteredUseRatesTest > a confirmed default citing another crop never seeds a vineyard line PASSED
+
+SprayRegisteredUseRatesTest > Dithane manual range validation accepts 175 and rejects empty 149 and 201 PASSED
+
+SprayRegisteredUseRatesTest > fixed registered rate is directly selectable with stable identity and grouping PASSED
+
+SprayVolumeDecisionTest > recommended choice tracks canopy and is always CF one PASSED
+
+SprayVolumeDecisionTest > L per 100m recommendation remains available without row spacing PASSED
+
+SprayVolumeDecisionTest > custom above recommendation clamps CF to one PASSED
+
+SprayVolumeDecisionTest > conversion blocker requires canonical spacing PASSED
+
+SprayVolumeDecisionTest > custom survives canopy change and recalculates CF PASSED
+
+SprayVolumeDecisionTest > switching display basis does not create a second custom rate PASSED
+
+SprayVolumeDecisionTest > choice and custom blockers are explicit PASSED
+
+SprayVolumeDecisionTest > 600 litres per hectare equals 16 point 8 litres per 100m PASSED
+
+SprayVolumeDecisionTest > exact 2 point 8 metre custom fixture uses actual water not dilute equivalent PASSED
+26 actionable tasks: 2 executed, 24 up-to-date
+
+V2_WIDE_GRADLE_EXIT=1

@@ -145,6 +145,8 @@ import com.rork.vinetrack.data.spray.SprayVolumeHelp
 import com.rork.vinetrack.ui.components.SprayPlanningCards
 import com.rork.vinetrack.data.spray.SprayPlanningIntent
 import com.rork.vinetrack.data.spray.SprayPlanningInputProvenance
+import com.rork.vinetrack.data.spray.SprayPlanningWireProvenance
+import com.rork.vinetrack.data.spray.SprayControllerRateEntry
 import com.rork.vinetrack.data.spray.SprayPassConfiguration
 import com.rork.vinetrack.data.spray.SprayPlanningMethod
 import com.rork.vinetrack.data.spray.SprayFullTankSpecification
@@ -531,7 +533,6 @@ fun SprayCalculatorScreen(
     var manualTotalLitresText by rememberSaveable { mutableStateOf("") }
     var sprayVolumeChoice by rememberSaveable { mutableStateOf(SprayVolumeChoice.UNDECIDED) }
     var customSprayerRateText by rememberSaveable { mutableStateOf("") }
-    var customSprayerBasis by rememberSaveable { mutableStateOf(SprayCarrierBasis.LITRES_PER_HECTARE) }
     var diluteLitresPer100mText by remember { mutableStateOf("") }
     var appliedLitresPer100mText by remember { mutableStateOf("") }
     /**
@@ -628,6 +629,29 @@ fun SprayCalculatorScreen(
     val selectedVineyard = state.selectedVineyard
     val sprayProfile = remember(selectedVineyard, regionCountryCode) {
         selectedVineyard?.sprayProfile ?: SprayVineyardProfile(countryCode = regionCountryCode)
+    }
+    val effectiveEntryBasis = if (sprayProfile.allows(carrierBasisChoice)) carrierBasisChoice else sprayProfile.defaultCarrierBasis
+    val customSprayerBasis = if (effectiveEntryBasis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) SprayCarrierBasis.LITRES_PER_HECTARE else effectiveEntryBasis
+    fun planningRateCanonical(): Double? = SprayControllerRateEntry.canonical(
+        carrierFormat.resolveRate(planningRateText, customSprayerBasis), customSprayerBasis, passConfiguration, resolvedRowSpacing)
+    fun displayRate(value: Double, basis: SprayCarrierBasis): String =
+        (if (basis == SprayCarrierBasis.LITRES_PER_100_METRES) fmt.volumePer100LengthValue(value) else fmt.volumePerAreaValue(value)).toString()
+    fun changeRateDisplay(basis: SprayCarrierBasis, configuration: SprayPassConfiguration?) {
+        val newBasis = if (basis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) SprayCarrierBasis.LITRES_PER_HECTARE else basis
+        val custom = carrierFormat.resolveRate(customSprayerRateText, customSprayerBasis)
+        val canonicalCustom = SprayControllerRateEntry.canonical(custom, customSprayerBasis, passConfiguration, resolvedRowSpacing)
+        val canonicalPlanning = planningRateCanonical()
+        val newCustom = SprayControllerRateEntry.displayed(canonicalCustom, newBasis, configuration, resolvedRowSpacing)
+        val newPlanning = SprayControllerRateEntry.displayed(canonicalPlanning, newBasis, configuration, resolvedRowSpacing)
+        if ((custom != null && newCustom == null) || (planningRateText.toDoubleOrNull() != null && newPlanning == null)) {
+            errorMessage = "Matching row spacing is required to change application-rate units without changing the intended dose."
+            return
+        }
+        newCustom?.let { customSprayerRateText = displayRate(it, newBasis) }
+        newPlanning?.let { planningRateText = displayRate(it, newBasis) }
+        carrierBasisChoice = basis
+        passConfiguration = configuration
+        result = null
     }
     // Canopy confirmation belongs only to the chosen type/size/density answer.
     // Carrier basis and block geometry may change its equivalent recommendation,
@@ -741,7 +765,9 @@ fun SprayCalculatorScreen(
             canopy = canopySelection,
             canopyWaterRates = canopyRates,
             sprayVolumeChoice = sprayVolumeChoice,
-            customSprayerRate = carrierFormat.resolveRate(customSprayerRateText, customSprayerBasis),
+            customSprayerRate = carrierFormat.resolveRate(customSprayerRateText, customSprayerBasis)?.let {
+                if (customSprayerBasis == SprayCarrierBasis.LITRES_PER_100_METRES) it / (passConfiguration?.rowEquivalents ?: 1.0) else it
+            },
             customSprayerBasis = customSprayerBasis,
             // Ground carrier is direct operator input only. No canopy-derived
             // fallback may enter a banded plan.
@@ -758,11 +784,12 @@ fun SprayCalculatorScreen(
             planningIntent = if (operationType == "Foliar Spray" && (passConfiguration != null || planningMethod == SprayPlanningMethod.FULL_TANK))
                 SprayPlanningIntent(configuration = passConfiguration, method = planningMethod,
                     fullTankSpecification = fullTankSpecification.takeIf { planningMethod == SprayPlanningMethod.FULL_TANK },
-                    intendedTankLitres = planningTankText.toDoubleOrNull()?.let(fmt::volumeToCanonical),
-                    targetAreaHa = planningAreaText.toDoubleOrNull()?.let(fmt::areaToCanonical),
-                    calibratedLitresPerHectare = planningRateText.toDoubleOrNull()?.let(fmt::volumePerAreaToCanonical),
+                    intendedTankLitres = if (planningMethod == SprayPlanningMethod.FULL_TANK) planningTankText.toDoubleOrNull()?.let(fmt::volumeToCanonical) else null,
+                    targetAreaHa = if (planningMethod == SprayPlanningMethod.FULL_TANK && fullTankSpecification == SprayFullTankSpecification.TARGET_AREA) planningAreaText.toDoubleOrNull()?.let(fmt::areaToCanonical) else null,
+                    calibratedLitresPerHectare = if (planningMethod == SprayPlanningMethod.FULL_TANK && fullTankSpecification == SprayFullTankSpecification.CALIBRATED_RATE) planningRateCanonical() else null,
                     inputProvenance = SprayPlanningInputProvenance(planningTankText, planningAreaText, planningRateText,
-                        fmt.settings.volumeUnit, fmt.settings.areaUnit, fmt.settings.sprayRateAreaUnit, fmt.settings.countryCode)) else null,
+                        fmt.settings.volumeUnit, fmt.settings.areaUnit,
+                        if (customSprayerBasis == SprayCarrierBasis.LITRES_PER_100_METRES) (if (fmt.lengthUnitAbbreviation == "ft") "100ft_travel" else "100m_travel") else fmt.settings.sprayRateAreaUnit, fmt.settings.countryCode)) else null,
         ),
         profile = sprayProfile,
     )
@@ -950,10 +977,17 @@ fun SprayCalculatorScreen(
             fullTankSpecification = intent.fullTankSpecification ?: SprayFullTankSpecification.TARGET_AREA
             planningTankText = intent.intendedTankLitres?.let { fmt.volumeValue(it).toString() }.orEmpty()
             planningAreaText = intent.targetAreaHa?.let { fmt.areaValue(it).toString() }.orEmpty()
-            planningRateText = intent.calibratedLitresPerHectare?.let { fmt.volumePerAreaValue(it).toString() }.orEmpty()
+            val recordedBasis = if (intent.inputProvenance?.rateAreaUnit in setOf("100m_travel", "100ft_travel")) SprayCarrierBasis.LITRES_PER_100_METRES else SprayCarrierBasis.LITRES_PER_HECTARE
+            val restoredBasis = if (sprayProfile.allows(recordedBasis)) recordedBasis else sprayProfile.defaultCarrierBasis
+            carrierBasisChoice = restoredBasis
+            planningRateText = SprayControllerRateEntry.displayed(intent.calibratedLitresPerHectare, restoredBasis, intent.configuration, resolvedRowSpacing)
+                ?.let { displayRate(it, restoredBasis) }.orEmpty()
+            val selectedVolumeUnit = if (fmt.settings.volumeUnit == "gallons") {
+                if (fmt.settings.countryCode.uppercase() in setOf("US", "CA")) "us_gallons" else "imperial_gallons"
+            } else fmt.settings.volumeUnit
             intent.inputProvenance?.takeIf { it.countryCode == fmt.settings.countryCode &&
-                it.volumeUnit == fmt.settings.volumeUnit && it.areaUnit == fmt.settings.areaUnit &&
-                it.rateAreaUnit == fmt.settings.sprayRateAreaUnit }?.let { original ->
+                SprayPlanningWireProvenance(it).volumeUnit == selectedVolumeUnit && it.areaUnit == fmt.settings.areaUnit &&
+                it.rateAreaUnit == (if (restoredBasis == SprayCarrierBasis.LITRES_PER_100_METRES) (if (fmt.lengthUnitAbbreviation == "ft") "100ft_travel" else "100m_travel") else fmt.settings.sprayRateAreaUnit) }?.let { original ->
                 planningTankText = original.tankText
                 planningAreaText = original.areaText
                 planningRateText = original.rateText
@@ -1707,13 +1741,14 @@ fun SprayCalculatorScreen(
                     onToggle = { toggleStep(SprayGuidedStep.CARRIER) },
                 ) {
                 if (operationType == "Foliar Spray") {
-                    SprayPlanningCards(configuration = passConfiguration, onConfiguration = { passConfiguration = it; result = null },
+                    SprayPlanningCards(configuration = passConfiguration, onConfiguration = { changeRateDisplay(effectiveEntryBasis, it) },
                         method = planningMethod, onMethod = { planningMethod = it; result = null },
                         specification = fullTankSpecification, onSpecification = { fullTankSpecification = it; result = null },
                         tankText = planningTankText, onTank = { planningTankText = it; result = null },
                         areaText = planningAreaText, onArea = { planningAreaText = it; result = null },
                         rateText = planningRateText, onRate = { planningRateText = it; result = null },
-                        region = fmt, resolution = guidedFlow.planningResolution)
+                        region = fmt, rateUnit = carrierFormat.carrierBasisLabel(customSprayerBasis), rowSpacingMetres = resolvedRowSpacing,
+                        resolution = guidedFlow.planningResolution)
                 }
                 if (guidedFlow.requiresBandWidth) {
                     Text("Rate applies to", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
@@ -1732,7 +1767,7 @@ fun SprayCalculatorScreen(
                         bases.forEachIndexed { index, basis ->
                             SegmentedButton(
                                 selected = guidedFlow.effectiveCarrierBasis == basis,
-                                onClick = { carrierBasisChoice = basis; result = null },
+                                onClick = { changeRateDisplay(basis, passConfiguration) },
                                 shape = SegmentedButtonDefaults.itemShape(index, bases.size),
                             ) { Text(if (basis == SprayCarrierBasis.LITRES_PER_HECTARE) fmt.volumePerAreaUnit else "Manual total water", fontSize = 12.sp) }
                         }
@@ -1764,7 +1799,7 @@ fun SprayCalculatorScreen(
                         bases.forEachIndexed { i, basis ->
                             SegmentedButton(
                                 selected = guidedFlow.effectiveCarrierBasis == basis,
-                                onClick = { carrierBasisChoice = basis; result = null },
+                                onClick = { changeRateDisplay(basis, passConfiguration) },
                                 shape = SegmentedButtonDefaults.itemShape(i, bases.size),
                             ) { Text(carrierFormat.carrierBasisLabel(basis), fontSize = 13.sp) }
                         }
@@ -1822,15 +1857,6 @@ fun SprayCalculatorScreen(
                         }
                         if (sprayVolumeChoice == SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE) {
                             Text("What is your sprayer set to apply?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                                listOf(SprayCarrierBasis.LITRES_PER_HECTARE, SprayCarrierBasis.LITRES_PER_100_METRES).forEachIndexed { index, basis ->
-                                    SegmentedButton(
-                                        selected = customSprayerBasis == basis,
-                                        onClick = { customSprayerBasis = basis; result = null },
-                                        shape = SegmentedButtonDefaults.itemShape(index, 2),
-                                    ) { Text(carrierFormat.carrierBasisLabel(basis), fontSize = 13.sp) }
-                                }
-                            }
                             OutlinedTextField(
                                 value = customSprayerRateText,
                                 onValueChange = { customSprayerRateText = it.filter { c -> c.isDigit() || c == '.' }; result = null },
