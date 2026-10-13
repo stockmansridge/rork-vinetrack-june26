@@ -35,7 +35,7 @@ nonisolated enum WorkTaskPlanning {
         }
     }
 
-    static func completingUser(_ task: WorkTask, trips: [Trip], verifiedMemberIDs: Set<UUID>) -> UUID? {
+    /// Hub-only projection; the full Task Log retains all history.\n    static func upcoming(_ tasks: [WorkTask], now: Date, timeZone: TimeZone) -> [WorkTask] {\n        let calendar = WorkTaskCompletion.calendar(timeZone)\n        let today = calendar.startOfDay(for: now)\n        return tasks.filter { task in\n            guard !task.isArchived && !task.isFinalized else { return false }\n            if task.isStageScheduled { return true }\n            guard let date = task.plannedDate else { return false }\n            return WorkTaskCompletion.businessDay(date, timeZone: timeZone) >= today\n        }.sorted { lhs, rhs in\n            if lhs.isStageScheduled != rhs.isStageScheduled { return lhs.isStageScheduled }\n            if lhs.isStageScheduled {\n                if lhs.targetELStage != rhs.targetELStage { return (lhs.targetELStage ?? 0) > (rhs.targetELStage ?? 0) }\n            } else {\n                let left = WorkTaskCompletion.businessDay(lhs.plannedDate!, timeZone: timeZone)\n                let right = WorkTaskCompletion.businessDay(rhs.plannedDate!, timeZone: timeZone)\n                if left != right { return left < right }\n            }\n            return lhs.id.uuidString < rhs.id.uuidString\n        }\n    }\n\n    static func completingUser(_ task: WorkTask, trips: [Trip], verifiedMemberIDs: Set<UUID>) -> UUID? {
         guard task.isFinalized else { return nil }
         if let recorded = task.completedBy { return recorded }
         let linked = trips.filter { $0.vineyardId == task.vineyardId && $0.workTaskId == task.id && !$0.isActive && $0.endTime != nil }
