@@ -17,6 +17,8 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
 import java.util.UUID
 
 /**
@@ -48,6 +50,9 @@ class SprayProgramStepNotPermitted : Exception(SprayProgramStepWriteMessages.NOT
  * point.
  */
 object SprayProgramStepPermissions {
+    fun canCreate(canManageSprayProgram: Boolean, method: String?, isSystemAdmin: Boolean): Boolean =
+        canManageSprayProgram && (SprayProgramLanding.canPlanSpray(method) || (method == "Fertigation" && isSystemAdmin))
+
     fun canEdit(
         isPortalManaged: Boolean,
         canManageSprayProgram: Boolean,
@@ -361,6 +366,21 @@ data class SprayProgramStepDraft(
         }
     }
 
+    /** Insert-only envelope; no local record or inferred irrigation basis. */
+    fun createPayload(vineyardId: String, createdById: String): JsonObject = buildJsonObject {
+        require(isPortalManaged && isValid)
+        portalPayload(createdById).forEach { (key, value) ->
+            if (operationType == "Fertigation" && key == "chemical_lines") {
+                put(key, JsonArray(value.jsonArray.map { line -> JsonObject(line.jsonObject.filterKeys { it !in setOf("unit", "water_rate", "rate_basis") }) }))
+            } else if (operationType != "Fertigation" || key !in SPRAY_ONLY_CREATE_KEYS) put(key, value)
+        }
+        put("id", JsonPrimitive(stepId))
+        put("vineyard_id", JsonPrimitive(vineyardId))
+        put("created_by", JsonPrimitive(createdById))
+        put("is_template", JsonPrimitive(true))
+        put("status", JsonPrimitive("draft"))
+    }
+
     fun chemicalLines(): JsonArray = buildJsonArray {
         products.forEach { add(it.toWireLine(operationType == "Fertigation")) }
     }
@@ -434,6 +454,12 @@ data class SprayProgramStepDraft(
     }
 
     companion object {
+        val SPRAY_ONLY_CREATE_KEYS: Set<String> = setOf("targets", "target", "equipment_id", "tractor_id", "ground_application_target", "carrier_area_basis", "water_volume", "spray_rate_per_ha", "concentration_factor", "canopy_size", "canopy_density", "resistance_plan_id")
+
+        fun newShared(): SprayProgramStepDraft = SprayProgramStepDraft(
+            stepId = UUID.randomUUID().toString(), isPortalManaged = true, operationType = "Foliar Spray",
+        )
+
         /** Load a draft from a LOCAL Program Step (`spray_records`, `is_template`). */
         fun fromLocal(record: SprayRecord, labels: Map<String, String> = emptyMap()): SprayProgramStepDraft {
             val products = mutableListOf<SprayProgramProductDraft>()

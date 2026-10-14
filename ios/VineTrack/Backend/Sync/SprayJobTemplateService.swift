@@ -36,6 +36,7 @@ final class SprayJobTemplateService {
     private let repository: SupabaseSprayJobTemplateRepository
     private let persistence: PersistenceStore
     private var hydratedVineyardId: UUID?
+    private(set) var mutationRevision: UInt64 = 0
 
     init(
         repository: SupabaseSprayJobTemplateRepository = SupabaseSprayJobTemplateRepository(),
@@ -65,10 +66,10 @@ final class SprayJobTemplateService {
         guard let store, let auth, auth.isSignedIn,
               let vineyardId = store.selectedVineyardId else { return }
         loadCached(for: vineyardId)
+        let revision = mutationRevision
         do {
             let remote = try await repository.fetchTemplates(vineyardId: vineyardId)
-            apply(remote, vineyardId: vineyardId)
-            persistence.save(remote, key: Self.cacheKey(vineyardId))
+            guard applyFetchedSnapshot(remote, vineyardId: vineyardId, startedAtRevision: revision) else { return }
             lastSyncDate = Date()
             errorMessage = nil
         } catch {
@@ -77,6 +78,44 @@ final class SprayJobTemplateService {
             print("[SprayJobTemplateService] fetch failed: \(error.localizedDescription)")
             #endif
         }
+    }
+
+    /// Publish only the acknowledged canonical row; never add a local spray-record copy.
+    @discardableResult
+    func createProgramStep(draft: SprayProgramStepDraft, vineyardId: UUID) async throws -> BackendSprayJobTemplate {
+        guard store?.selectedVineyardId == vineyardId, let auth, auth.isSignedIn, let userId = auth.userId else {
+            throw SprayProgramStepWriteError.noVineyardSelected
+        }
+        if let error = draft.validationError { throw SprayProgramStepWriteError.invalid(error) }
+        let saved = try await repository.createTemplate(payload: BackendSprayJobTemplateCreate(
+            id: draft.stepId, vineyardId: vineyardId, createdBy: userId,
+            configuration: draft.portalPayload(updatedBy: userId)
+        ))
+        guard store?.selectedVineyardId == vineyardId, auth.userId == userId, auth.isSignedIn else {
+            throw SprayProgramStepWriteError.notPermitted
+        }
+        applyConfirmedCreation(saved, vineyardId: vineyardId)
+        return saved
+    }
+
+    func applyConfirmedCreation(_ row: BackendSprayJobTemplate, vineyardId: UUID) {
+        mutationRevision += 1
+        let rows = Self.insertingConfirmed(templates, row: row)
+        apply(rows, vineyardId: vineyardId)
+        persistence.save(rows, key: Self.cacheKey(vineyardId))
+    }
+
+    /// An older in-flight read cannot erase an acknowledged create/update.
+    @discardableResult
+    func applyFetchedSnapshot(_ rows: [BackendSprayJobTemplate], vineyardId: UUID, startedAtRevision: UInt64) -> Bool {
+        guard mutationRevision == startedAtRevision else { return false }
+        apply(rows, vineyardId: vineyardId)
+        persistence.save(rows, key: Self.cacheKey(vineyardId))
+        return true
+    }
+
+    nonisolated static func insertingConfirmed(_ rows: [BackendSprayJobTemplate], row: BackendSprayJobTemplate) -> [BackendSprayJobTemplate] {
+        rows.filter { $0.id != row.id } + [row]
     }
 
     /// Update one existing portal Program Step and reflect it locally.
@@ -113,6 +152,7 @@ final class SprayJobTemplateService {
     func applyLocalUpdate(_ row: BackendSprayJobTemplate, vineyardId: UUID) {
         let rows = Self.patched(templates, with: row)
         guard rows.count == templates.count else { return }
+        mutationRevision += 1
         apply(rows, vineyardId: vineyardId)
         persistence.save(rows, key: Self.cacheKey(vineyardId))
     }

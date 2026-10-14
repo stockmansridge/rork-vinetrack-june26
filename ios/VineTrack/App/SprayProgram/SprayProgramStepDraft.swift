@@ -40,6 +40,10 @@ nonisolated enum SprayProgramStepWriteError: LocalizedError, Equatable {
 /// restrictive half of the pair — RLS remains the enforcement point, and a
 /// supervisor who somehow reached the editor would still be refused by Postgres.
 nonisolated enum SprayProgramStepPermissions {
+    static func canCreate(canManageSprayProgram: Bool, method: OperationType, isSystemAdmin: Bool) -> Bool {
+        canManageSprayProgram && (method.canPlanSpray || (method == .fertigation && isSystemAdmin))
+    }
+
     /// - Parameters:
     ///   - canManageSprayProgram: owner/manager, mirroring the UPDATE policy.
     ///   - canEditRecords: the existing local-step rule, preserved verbatim.
@@ -229,6 +233,26 @@ nonisolated struct SprayProgramStepDraft: Sendable, Hashable {
     private let originalPlanningIntent: SprayPlanningIntent?
     private let originalTargets: [SprayTargetTag]
     private let originalTargetWording: String?
+
+    /// A blank shared draft owns one UUID for its entire editor lifetime.
+    init(newId: UUID = UUID()) {
+        stepId = newId
+        source = .portal
+        name = ""
+        growthStageCode = nil
+        targets = []
+        originalTargets = []
+        originalTargetWording = nil
+        operationType = .foliarSpray
+        equipmentId = nil
+        tractorId = nil
+        groundTarget = nil
+        carrierAreaBasis = nil
+        notes = ""
+        products = []
+        planningIntent = nil
+        originalPlanningIntent = nil
+    }
 
     // MARK: - Load
 

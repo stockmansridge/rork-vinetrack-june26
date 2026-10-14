@@ -365,11 +365,13 @@ struct SprayProgramView: View {
             }
             .sheet(isPresented: $showProgramStepForm) {
                 NavigationStack {
-                    SprayRecordFormView(
-                        tripId: UUID(),
-                        paddockIds: [],
-                        createsProgramStep: true
-                    )
+                    if let vineyardId = store.selectedVineyardId {
+                        SprayProgramStepEditView(vineyardId: vineyardId) { _ in
+                            tab = .program
+                            searchText = ""
+                            showProgramStepForm = false
+                        }
+                    }
                 }
             }
             .sheet(isPresented: $showManualRecordForm) {
@@ -509,6 +511,7 @@ struct SprayProgramView: View {
             } label: {
                 Label("Add Program Step", systemImage: "plus.rectangle.on.folder")
             }
+            .disabled(accessControl?.canManageSprayProgram != true || store.selectedVineyardId == nil)
 
             if accessControl?.canManageManualSprays == true {
                 Button {
@@ -599,6 +602,7 @@ struct SprayProgramView: View {
                         Label("Add Program Step", systemImage: "plus")
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(accessControl?.canManageSprayProgram != true || store.selectedVineyardId == nil)
                 }
             }
         } else if tab == .sprays && filteredSprays.isEmpty && (spraysStatus != .upcoming || nextProgramSteps.isEmpty) {

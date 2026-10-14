@@ -26,6 +26,9 @@ struct SprayProgramStepEditView: View {
     @Environment(\.accessControl) private var accessControl
 
     let step: SprayProgramStep
+    let creationVineyardId: UUID?
+
+    var isCreating: Bool { creationVineyardId != nil }
     /// The step as it reads AFTER a successful save, so the detail screen can
     /// show the new configuration immediately instead of waiting for a sync.
     let onSaved: (SprayProgramStep) -> Void
@@ -43,8 +46,18 @@ struct SprayProgramStepEditView: View {
 
     init(step: SprayProgramStep, onSaved: @escaping (SprayProgramStep) -> Void) {
         self.step = step
+        self.creationVineyardId = nil
         self.onSaved = onSaved
         _draft = State(initialValue: SprayProgramStepDraft(step: step))
+    }
+
+    init(vineyardId: UUID, onSaved: @escaping (SprayProgramStep) -> Void) {
+        let blank = SprayProgramStepDraft()
+        let row = BackendSprayJobTemplate(id: blank.stepId, vineyardId: vineyardId, name: "", operationType: blank.operationType.rawValue)
+        self.step = SprayProgramStep(record: row.toSprayRecord(), source: .portal)
+        self.creationVineyardId = vineyardId
+        self.onSaved = onSaved
+        _draft = State(initialValue: blank)
     }
 
     /// A portal Program Step is the shared row. There is no offline mutation
@@ -55,7 +68,15 @@ struct SprayProgramStepEditView: View {
     }
 
     private var canSave: Bool {
-        draft.isValid && !isSaving && !requiresConnection
+        draft.isValid && !isSaving && !requiresConnection && canWrite
+    }
+
+    private var canWrite: Bool {
+        if isCreating {
+            return SprayProgramStepPermissions.canCreate(canManageSprayProgram: accessControl?.canManageSprayProgram ?? false, method: draft.operationType, isSystemAdmin: systemAdmin.isSystemAdmin)
+                && store.selectedVineyardId == creationVineyardId
+        }
+        return SprayProgramStepPermissions.canEdit(step: step, canManageSprayProgram: accessControl?.canManageSprayProgram ?? false, canEditRecords: accessControl?.canEditRecords ?? false)
     }
 
     /// The vineyard's spray profile, read from the vineyard and never
@@ -118,7 +139,7 @@ struct SprayProgramStepEditView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .navigationTitle("Edit Program Step")
+        .navigationTitle(isCreating ? "Create Program Step" : "Edit Program Step")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -530,6 +551,7 @@ struct SprayProgramStepEditView: View {
     // MARK: - Save
 
     private func save() {
+        guard canWrite else { saveError = SprayProgramStepWriteError.notPermitted.localizedDescription; return }
         guard draft.operationType != .fertigation || (systemAdmin.isSystemAdmin && step.isPortalManaged && step.record.isTemplate) else {
             saveError = "System Admin required."; return
         }
@@ -565,7 +587,12 @@ struct SprayProgramStepEditView: View {
         let payload = draft.portalPayload(updatedBy: auth.userId)
         Task {
             do {
-                let saved = try await portalTemplates.updateProgramStep(id: step.id, payload: payload)
+                let saved: BackendSprayJobTemplate
+                if let vineyardId = creationVineyardId {
+                    saved = try await portalTemplates.createProgramStep(draft: draft, vineyardId: vineyardId)
+                } else {
+                    saved = try await portalTemplates.updateProgramStep(id: step.id, payload: payload)
+                }
                 isSaving = false
                 onSaved(
                     SprayProgramStep(

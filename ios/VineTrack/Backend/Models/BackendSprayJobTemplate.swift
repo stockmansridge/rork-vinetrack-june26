@@ -11,6 +11,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
     let id: UUID
     let vineyardId: UUID
     let name: String
+    let isTemplate: Bool
     let status: String?
     /// Kept as a raw `yyyy-MM-dd` string (Postgres `date`) — templates have no
     /// planned date and the value is display-irrelevant on mobile.
@@ -42,6 +43,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         case id
         case vineyardId = "vineyard_id"
         case name
+        case isTemplate = "is_template"
         case status
         case plannedDate = "planned_date"
         case chemicalLines = "chemical_lines"
@@ -67,6 +69,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         id: UUID,
         vineyardId: UUID,
         name: String,
+        isTemplate: Bool = true,
         status: String? = nil,
         plannedDate: String? = nil,
         chemicalLines: [SprayJobChemicalLine] = [],
@@ -88,6 +91,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         self.id = id
         self.vineyardId = vineyardId
         self.name = name
+        self.isTemplate = isTemplate
         self.status = status
         self.plannedDate = plannedDate
         self.chemicalLines = chemicalLines
@@ -112,6 +116,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         id = try container.decode(UUID.self, forKey: .id)
         vineyardId = try container.decode(UUID.self, forKey: .vineyardId)
         name = (try? container.decodeIfPresent(String.self, forKey: .name)) ?? ""
+        isTemplate = (try? container.decode(Bool.self, forKey: .isTemplate)) ?? false
         status = try? container.decodeIfPresent(String.self, forKey: .status)
         plannedDate = try? container.decodeIfPresent(String.self, forKey: .plannedDate)
         let lossyLines = (try? container.decodeIfPresent([LossyChemicalLine].self, forKey: .chemicalLines)) ?? nil
@@ -139,6 +144,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         try c.encode(id, forKey: .id)
         try c.encode(vineyardId, forKey: .vineyardId)
         try c.encode(name, forKey: .name)
+        try c.encode(isTemplate, forKey: .isTemplate)
         try c.encodeIfPresent(status, forKey: .status)
         try c.encodeIfPresent(plannedDate, forKey: .plannedDate)
         try c.encode(chemicalLines, forKey: .chemicalLines)

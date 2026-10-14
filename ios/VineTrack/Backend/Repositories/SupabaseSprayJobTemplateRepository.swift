@@ -38,6 +38,33 @@ final class SupabaseSprayJobTemplateRepository {
             .value
     }
 
+    /// Online-authoritative insert. RLS remains the vineyard-role authority.
+    func createTemplate(payload: BackendSprayJobTemplateCreate) async throws -> BackendSprayJobTemplate {
+        guard payload.configuration.planningFields == nil else {
+            throw SprayPlanningAdmissionError(message: SprayPlanningOperationalGate.migrationMessage)
+        }
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        if payload.configuration.operationType == "Fertigation" {
+            guard try await SupabaseSystemAdminRepository().isSystemAdmin() else { throw FertigationDomain.Failure.systemAdminRequired }
+        }
+        return try await Self.insertConfirmed(payload: payload) { insert in
+            try await self.provider.client
+                .from("spray_jobs")
+                .insert(insert)
+                .select()
+                .execute()
+                .value
+        }
+    }
+
+    /// Transport seam retains the production encoding and exact-row acknowledgement checks.
+    static func insertConfirmed(
+        payload: BackendSprayJobTemplateCreate,
+        insert: (BackendSprayJobTemplateCreate) async throws -> [BackendSprayJobTemplate]
+    ) async throws -> BackendSprayJobTemplate {
+        try payload.validated(await insert(payload))
+    }
+
     /// Update one existing Program Step row and return it as the server now
     /// holds it.
     ///

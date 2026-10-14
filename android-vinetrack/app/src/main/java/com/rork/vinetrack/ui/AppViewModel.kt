@@ -12320,6 +12320,38 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *
      * @param onResult null on success, otherwise the operator-facing error.
      */
+    private var sprayProgramMutationRevision: Long = 0L
+
+    /** Insert one shared step; never queue or publish an optimistic local template. */
+    fun createProgramStep(draft: com.rork.vinetrack.data.spray.SprayProgramStepDraft, vineyardId: String?, onResult: (String?) -> Unit) {
+        val current = _ui.value
+        val owner = session.userId ?: return onResult(SprayProgramStepWriteMessages.NOT_PERMITTED)
+        if (vineyardId == null || current.selectedVineyardId != vineyardId) return onResult(SprayProgramStepWriteMessages.NO_VINEYARD)
+        if (!com.rork.vinetrack.data.spray.SprayProgramStepPermissions.canCreate(current.canManageSprayProgram, draft.operationType, current.isSystemAdmin)) {
+            return onResult(SprayProgramStepWriteMessages.NOT_PERMITTED)
+        }
+        draft.validationError?.let { return onResult(it) }
+        if (!current.isOnline) return onResult(SprayProgramStepWriteMessages.OFFLINE)
+        val epoch = session.retentionGuard.identityEpoch.value
+        viewModelScope.launch {
+            try {
+                val saved = sprayJobTemplateRepo.createTemplate(draft.stepId, vineyardId, draft.createPayload(vineyardId, owner))
+                if (session.userId != owner || session.retentionGuard.identityEpoch.value != epoch || _ui.value.selectedVineyardId != vineyardId) {
+                    onResult(SprayProgramStepWriteMessages.NOT_PERMITTED)
+                    return@launch
+                }
+                sprayProgramMutationRevision += 1
+                _ui.update { st -> st.copy(sprayJobTemplates = st.sprayJobTemplates.filterNot { it.id == saved.id } + saved) }
+                domainCache.saveSprayTemplates(owner, vineyardId, _ui.value.sprayJobTemplates)
+                onResult(null)
+            } catch (_: BackendError.Unauthorized) {
+                onResult(SprayProgramStepWriteMessages.NOT_PERMITTED)
+            } catch (_: Exception) {
+                onResult("Couldn't create the Program Step. Your draft is kept; check your connection and permissions, then retry.")
+            }
+        }
+    }
+
     fun updateProgramStep(id: String, payload: JsonObject, onResult: (String?) -> Unit) {
         val vineyardId = _ui.value.selectedVineyardId
             ?: return onResult(SprayProgramStepWriteMessages.NO_VINEYARD)
@@ -12327,6 +12359,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val saved = sprayJobTemplateRepo.updateTemplate(id, vineyardId, payload)
+                sprayProgramMutationRevision += 1
                 // A replacement, never an append: an id already in the list IS
                 // this Program Step, and a second entry would be the duplicate
                 // this design exists to prevent.
@@ -16737,6 +16770,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // reference list created in the Lovable admin portal; soft-fail to the
         // existing list, then to the server-snapshot cache so templates stay
         // available offline after first sync.
+        val sprayProgramFetchRevision = sprayProgramMutationRevision
         var sprayTemplatesFromServer = false
         val sprayJobTemplates = try {
             sprayJobTemplateRepo.listTemplates(vineyardId).also { sprayTemplatesFromServer = true }
@@ -16966,7 +17000,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (yieldSessionsFromServer) domainCache.saveYieldSessions(userId, vineyardId, yieldSessions)
         if (fuelFromServer) domainCache.saveFuel(userId, vineyardId, fuelLogs)
         if (sprayFromServer) domainCache.saveSpray(userId, vineyardId, sprayRecords)
-        if (sprayTemplatesFromServer) domainCache.saveSprayTemplates(userId, vineyardId, sprayJobTemplates)
+        if (sprayTemplatesFromServer && sprayProgramFetchRevision == sprayProgramMutationRevision) domainCache.saveSprayTemplates(userId, vineyardId, sprayJobTemplates)
         if (sprayTargetsFromServer) domainCache.saveSprayTargets(userId, vineyardId, sprayTargetLibrary)
         if (workTasksFromServer) domainCache.saveWorkTasks(userId, vineyardId, workTasks)
         if (pickingFromServer) domainCache.savePicking(userId, vineyardId, pickingRecords)
@@ -17059,7 +17093,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 operatorCategoriesError = operatorCategoriesError,
                 vineyardTripFunctions = vineyardTripFunctions,
                 sprayRecords = PendingWriteOverlay.overlaySpray(sprayRecords, latestPending, vineyardId),
-                sprayJobTemplates = sprayJobTemplates,
+                sprayJobTemplates = com.rork.vinetrack.data.spray.SprayProgramLanding.refreshedTemplates(sprayJobTemplates, it.sprayJobTemplates, sprayProgramFetchRevision, sprayProgramMutationRevision),
                 sprayTargetLibrary = sprayTargetLibrary,
                 sprayEquipment = sprayEquipment,
                 savedChemicals = savedChemicals,

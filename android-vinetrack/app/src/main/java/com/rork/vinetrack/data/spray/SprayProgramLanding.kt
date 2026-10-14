@@ -38,6 +38,10 @@ data class SprayResumeSection(
 }
 
 object SprayProgramLanding {
+    /** Older reads must not erase rows acknowledged after that fetch started. */
+    fun refreshedTemplates(fetched: List<SprayRecord>, current: List<SprayRecord>, startedAtRevision: Long, currentRevision: Long): List<SprayRecord> =
+        if (startedAtRevision == currentRevision) fetched else current
+
     /** Closed allow-list: unknown future methods never enter spray execution. */
     fun canPlanSpray(operation: String?): Boolean = operation in listOf("Foliar Spray", "Banded Spray", "Spreader")
     fun programMethods(isSystemAdmin: Boolean, isPortalTemplate: Boolean): List<String> =

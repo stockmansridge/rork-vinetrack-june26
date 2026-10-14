@@ -13,6 +13,7 @@ import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.get
 import io.ktor.client.request.headers
 import io.ktor.client.request.patch
+import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
@@ -182,6 +183,38 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
                 else -> throw BackendError.Server(response.status.value, response.bodyAsText())
             }
         }
+
+    /** Online-authoritative canonical insert, using the same table and row decoder as updates. */
+    suspend fun createTemplate(id: String, vineyardId: String, payload: JsonObject): SprayRecord = withContext(Dispatchers.IO) {
+        check(payload["id"] == JsonPrimitive(id) && payload["vineyard_id"] == JsonPrimitive(vineyardId) && payload["is_template"] == JsonPrimitive(true))
+        if (payload.keys.any { it in com.rork.vinetrack.data.spray.SprayPlanningWireFields.RECORD_KEYS || it == "planning_tank_capacity_litres" }) {
+            throw IllegalStateException(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.MIGRATION_MESSAGE)
+        }
+        requireConfig()
+        if ((payload["operation_type"] as? JsonPrimitive)?.contentOrNull == "Fertigation") {
+            check(SystemAdminRepository(session).isSystemAdmin()) { "System Admin required." }
+        }
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(SupabaseClient.restUrl("spray_jobs")) {
+            authHeaders(token)
+            headers { append("Prefer", "return=representation") }
+            contentType(ContentType.Application.Json)
+            setBody(payload)
+        }
+        when {
+            response.status.isSuccess() -> {
+                val rows = response.body<List<SprayJobRow>>()
+                val row = rows.singleOrNull() ?: throw SprayProgramStepNotPermitted()
+                check(row.id == id && row.vineyardId == vineyardId && row.isTemplate && row.deletedAt == null &&
+                    row.operationType == (payload["operation_type"] as? JsonPrimitive)?.contentOrNull) {
+                    "The server did not confirm this Program Step. Keep the draft and retry."
+                }
+                row.toSprayRecord()
+            }
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
 
     /**
      * Update one existing Program Step row IN PLACE and return it as the

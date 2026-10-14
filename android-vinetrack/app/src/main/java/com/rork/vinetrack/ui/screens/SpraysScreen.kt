@@ -197,6 +197,7 @@ fun SpraysScreen(
     var selectedId by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
     var creatingTemplate by remember { mutableStateOf(false) }
+    var programCreationRevision by remember { mutableStateOf(0) }
     var calculating by remember { mutableStateOf(false) }
     // Template/record id the Spray Calculator should be pre-filled from.
     var calculatorPrefillId by remember { mutableStateOf<String?>(null) }
@@ -251,7 +252,8 @@ fun SpraysScreen(
                 onBack = onBack,
                 onSelect = { selectedId = it.id },
                 onAdd = { if (com.rork.vinetrack.data.model.canManageManualSprays(state.currentRole)) creating = true },
-                onAddTemplate = { creatingTemplate = true },
+                onAddTemplate = { if (state.canManageSprayProgram && state.selectedVineyardId != null) creatingTemplate = true },
+                programCreationRevision = programCreationRevision,
                 onOpenCalculator = { calculatorPrefillId = null; calculating = true },
                 onPlanFromProgram = { step -> if (SprayProgramLanding.canPlanSpray(step.operationType)) { calculatorPrefillId = step.id; calculating = true } },
             )
@@ -287,7 +289,7 @@ fun SpraysScreen(
         ManualSprayEntrySheet(vm = vm, state = state, onDismiss = { creating = false }, onSaved = { creating = false })
     }
     if (creatingTemplate) {
-        SpraySheet(vm = vm, state = state, existing = null, asTemplate = true, onDismiss = { creatingTemplate = false }, onSaved = { creatingTemplate = false })
+        SprayProgramStepEditSheet(vm = vm, state = state, onDismiss = { creatingTemplate = false }, onSaved = { creatingTemplate = false; programCreationRevision += 1 })
     }
     prefillFromTemplate?.let { tmpl ->
         SpraySheet(vm = vm, state = state, existing = tmpl, asTemplate = false, fromTemplate = true, onDismiss = { prefillFromTemplate = null }, onSaved = { prefillFromTemplate = null })
@@ -339,6 +341,7 @@ private fun SprayListView(
     onSelect: (SprayRecord) -> Unit,
     onAdd: () -> Unit,
     onAddTemplate: () -> Unit,
+    programCreationRevision: Int,
     onOpenCalculator: () -> Unit,
     onPlanFromProgram: (SprayRecord) -> Unit,
 ) {
@@ -355,6 +358,12 @@ private fun SprayListView(
     var recordChemicalPurchase by remember { mutableStateOf(false) }
     val canAddChemical = state.currentRole == "owner" || state.currentRole == "manager"
     var search by remember { mutableStateOf("") }
+    LaunchedEffect(programCreationRevision) {
+        if (programCreationRevision > 0) {
+            tab = SprayProgramTabChoice.PROGRAM
+            search = ""
+        }
+    }
     // Survives leaving/re-entering the tab and rotation while working in the
     // Spray Program (iOS persists the same choices via AppStorage).
     var sort by rememberSaveable { mutableStateOf(SprayProgramSort.DATE_NEWEST) }
@@ -531,6 +540,7 @@ private fun SprayListView(
                             HorizontalDivider()
                             DropdownMenuItem(
                                 text = { Text(SprayProgramTerminology.ADD_PROGRAM_STEP) },
+                                enabled = state.canManageSprayProgram && state.selectedVineyardId != null,
                                 leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null) },
                                 onClick = { addMenu = false; onAddTemplate() },
                             )
@@ -708,7 +718,7 @@ private fun SprayListView(
                                 icon = Icons.Filled.ContentCopy,
                                 title = "No Program Steps",
                                 message = "Build your vineyard spray program by adding reusable spray steps, or create them in the Admin Portal.",
-                                actionLabel = SprayProgramTerminology.ADD_PROGRAM_STEP,
+                                actionLabel = if (state.canManageSprayProgram && state.selectedVineyardId != null) SprayProgramTerminology.ADD_PROGRAM_STEP else null,
                                 onAction = onAddTemplate,
                             )
                         }

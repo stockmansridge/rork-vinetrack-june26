@@ -94,8 +94,8 @@ import com.rork.vinetrack.ui.theme.VineColors
 fun SprayProgramStepEditSheet(
     vm: AppViewModel,
     state: AppUiState,
-    record: SprayRecord,
-    isPortal: Boolean,
+    record: SprayRecord? = null,
+    isPortal: Boolean = true,
     onDismiss: () -> Unit,
     onSaved: () -> Unit,
 ) {
@@ -105,8 +105,10 @@ fun SprayProgramStepEditSheet(
     val labels = remember(state.sprayTargetLibrary, state.selectedVineyardId) {
         SprayTargetLibrary.labels(state.sprayTargetLibrary, state.selectedVineyardId)
     }
+    val isCreating = record == null
+    val creationVineyardId = remember { state.selectedVineyardId }
     var draft by remember {
-        mutableStateOf(if (isPortal) null else SprayProgramStepDraft.fromLocal(record, labels))
+        mutableStateOf<SprayProgramStepDraft?>(if (record == null) SprayProgramStepDraft.newShared() else if (isPortal) null else SprayProgramStepDraft.fromLocal(record, labels))
     }
     var tractors by remember { mutableStateOf<List<SprayJobTemplateRepository.SprayTractor>>(emptyList()) }
     var saving by remember { mutableStateOf(false) }
@@ -117,7 +119,7 @@ fun SprayProgramStepEditSheet(
     LaunchedEffect(Unit) {
         vm.refreshSprayTargetLibrary()
         vm.fetchSprayTractors { tractors = it }
-        if (isPortal) {
+        if (isPortal && record != null) {
             // Start from the row the SERVER currently holds — raw lines
             // included — so every key the draft does not model round-trips
             // verbatim. Offline, fall back to the mapped cache for viewing;
@@ -149,6 +151,9 @@ fun SprayProgramStepEditSheet(
 
     fun save() {
         val d = draft ?: return
+        if (isCreating && !com.rork.vinetrack.data.spray.SprayProgramStepPermissions.canCreate(state.canManageSprayProgram, d.operationType, state.isSystemAdmin)) {
+            saveError = SprayProgramStepWriteMessages.NOT_PERMITTED; return
+        }
         if (d.operationType == "Fertigation" && !(state.isSystemAdmin && isPortal)) { saveError = "System Admin required."; return }
         d.validationError?.let { saveError = it; return }
         if (requiresConnection) {
@@ -156,12 +161,17 @@ fun SprayProgramStepEditSheet(
             return
         }
         saving = true
-        if (isPortal) {
+        if (isCreating) {
+            vm.createProgramStep(d, creationVineyardId) { error ->
+                saving = false
+                if (error == null) onSaved() else saveError = error
+            }
+        } else if (isPortal && record != null) {
             vm.updateProgramStep(record.id, d.portalPayload(state.currentUserId)) { error ->
                 saving = false
                 if (error == null) onSaved() else saveError = error
             }
-        } else {
+        } else if (record != null) {
             vm.updateSprayRecord(record.id, d.toLocalInput(record)) { ok ->
                 saving = false
                 if (ok) onSaved() else saveError = "Couldn't save the Program Step. Please try again."
@@ -180,7 +190,7 @@ fun SprayProgramStepEditSheet(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                SprayProgramTerminology.EDIT_PROGRAM_STEP,
+                if (isCreating) "Create Program Step" else SprayProgramTerminology.EDIT_PROGRAM_STEP,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = vine.textPrimary,
@@ -266,7 +276,7 @@ fun SprayProgramStepEditSheet(
                     )
                 } else {
                     Text(
-                        SprayProgramLanding.elStageLabel(record) ?: "Not stated",
+                        record?.let(SprayProgramLanding::elStageLabel) ?: "Not stated",
                         fontSize = 14.sp,
                         color = vine.textSecondary,
                     )
@@ -387,7 +397,7 @@ fun SprayProgramStepEditSheet(
                 SimpleDropdown(
                     label = "Method",
                     value = current.operationType ?: "Not set",
-                    options = com.rork.vinetrack.data.spray.SprayProgramLanding.programMethods(state.isSystemAdmin, isPortal && record.isTemplate),
+                    options = com.rork.vinetrack.data.spray.SprayProgramLanding.programMethods(state.isSystemAdmin, isPortal && (isCreating || record?.isTemplate == true)),
                     optionLabel = { it },
                     onSelect = { method -> draft = if (method == "Fertigation") current.copy(operationType = method, targets = emptyList(), equipmentId = null, tractorId = null, groundTarget = null, carrierAreaBasis = null, products = current.products.map { it.copy(rate = 0.0, waterRate = null, fertigationRateBasis = null, fertigationRateUnit = null) }) else current.copy(operationType = method) },
                 )
@@ -449,7 +459,7 @@ fun SprayProgramStepEditSheet(
                     }
                     Button(
                         onClick = { save() },
-                        enabled = !saving && current.isValid && !requiresConnection,
+                        enabled = !saving && current.isValid && !requiresConnection && (!isCreating || (state.selectedVineyardId == creationVineyardId && com.rork.vinetrack.data.spray.SprayProgramStepPermissions.canCreate(state.canManageSprayProgram, current.operationType, state.isSystemAdmin))),
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                     ) {
