@@ -1,0 +1,4 @@
+[submodule "linked-repos/vinetrack-review"]
+	path = linked-repos/vinetrack-review
+	url = https://github.com/stockmansridge/rork-vinetrack-june26.git
+	branch = fix/inventory-active-and-upcoming-work-20261014
