@@ -53,17 +53,20 @@ object TripOccurrencePlanner {
         }
         val refs = candidates.distinctBy { it.key }.associate { candidate -> candidate.key to buildJsonObject {
             put("pathId", UUID.randomUUID().toString())
-            val resolved = candidate.rows.isNotEmpty() && candidate.rows.all { it.id != null }
+            val resolved = candidate.rows.isNotEmpty() && candidate.rows.all { row ->
+                row.id != null && runCatching { UUID.fromString(row.id).toString().equals(row.id, ignoreCase = true) }.getOrDefault(false) &&
+                    listOf(row.startPoint, row.endPoint).all { point -> point != null &&
+                        point.latitude.isFinite() && point.longitude.isFinite() && abs(point.latitude) <= 90 && abs(point.longitude) <= 180 }
+            }
             put("rowIds", JsonArray(if (resolved) candidate.rows.map { JsonPrimitive(it.stableId.lowercase()) } else emptyList()))
             put("geometryRevision", if (resolved) "native-snapshot-v1" else "unresolved")
             // Derived legacy IDs retain binding context but never masquerade as admitted geometry.
             put("candidateRowIds", JsonArray(candidate.rows.map { JsonPrimitive(it.stableId.lowercase()) }))
             if (resolved) put("rowSnapshots", JsonArray(candidate.rows.map {
                 buildJsonObject {
-                    put("id", requireNotNull(it.id)); put("number", it.calculationRowNumber)
-                    it.startPoint?.let { point -> put("startPoint", Json.encodeToJsonElement(com.rork.vinetrack.data.model.CoordinatePoint.serializer(), point)) }
-                    it.endPoint?.let { point -> put("endPoint", Json.encodeToJsonElement(com.rork.vinetrack.data.model.CoordinatePoint.serializer(), point)) }
-                    it.vineCountOverride?.let { count -> put("vineCountOverride", count) }
+                    put("id", requireNotNull(it.id).lowercase()); put("number", it.calculationRowNumber)
+                    it.startPoint?.let { point -> put("startPoint", buildJsonObject { put("latitude", point.latitude); put("longitude", point.longitude) }) }
+                    it.endPoint?.let { point -> put("endPoint", buildJsonObject { put("latitude", point.latitude); put("longitude", point.longitude) }) }
                 }
             }))
             put("boundarySide", when {

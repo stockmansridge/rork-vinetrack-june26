@@ -10,13 +10,24 @@ import Supabase
 final class TripTrackingService {
     private let startTankCommitCoordinator = StartTankCommitCoordinator()
 
+    var canOperateOccurrences: Bool {
+        guard let trip = activeTrip, trip.coverageBasis == .occurrence else { return false }
+        do {
+            let journal = try occurrenceJournal(for: trip)
+            guard let state = try journal.load() else { return false }
+            return journal.canOperate(state)
+        } catch { return false }
+    }
+
     var occurrenceActivationMessage: String? {
         guard let trip = activeTrip, trip.coverageBasis != .legacy else { return nil }
         do {
             guard let state = try occurrenceJournal(for: trip).load() else { throw TripOccurrenceCoverage.Failure.missing }
             if let held = state.heldReason { return held }
             if state.creationConfirmed == false || state.serverActive != true || state.pending.contains(where: { $0.rpc == "activate_trip_occurrences_v1" }) {
-                return "Locally activated · server sync pending. Done/Skip/Undo await confirmation."
+                return try occurrenceJournal(for: trip).canOperate(state)
+                    ? "Local occurrence authority · server sync pending. Actions saved on this device."
+                    : "Occurrence activation unresolved. Recording and actions require recovery."
             }
             return "Server-confirmed active"
         } catch { return "Occurrence activation held · recovery/update required. Saved identities retained." }
@@ -465,6 +476,7 @@ final class TripTrackingService {
                       state.pending.contains(where: { $0.rpc == "activate_trip_occurrences_v1" }) || state.serverActive == true else {
                     throw TripOccurrenceCoverage.Failure.reconciliation
                 }
+                ready = try intended.withOccurrenceProjection(state.projected)
                 if NetworkMonitor.shared.isOnline {
                     let repo = SupabaseTripSyncRepository()
                     try await repo.upsertTrip(BackendTrip.upsert(from: intended, createdBy: owner, clientUpdatedAt: intended.startTime))
@@ -543,7 +555,7 @@ final class TripTrackingService {
                     vineyardId: savedTrip.vineyardId.uuidString.lowercased(), tripId: savedTrip.id.uuidString.lowercased()))
                 if NetworkMonitor.shared.isOnline {
                     let retained = try journal.load()
-                    if retained?.creationConfirmed != false {
+                    if retained?.creationConfirmed != false || retained?.pending.contains(where: { $0.rpc == "create_trip_with_occurrences_v1" }) != true {
                         let recovery = try await SupabaseTripSyncRepository().fetchOccurrenceRecovery(tripId: savedTrip.id, operationIds: retained?.pending.map(\.id) ?? [])
                         guard authService?.userId == owner else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                         try journal.recover(recovery)
@@ -1316,7 +1328,7 @@ final class TripTrackingService {
                 let committed = try TripOccurrenceCoverage.requireDocument(state.projected)
                 let blocks = Set(trip.paddockIds + (trip.paddockId.map { [$0] } ?? []))
                 let labels = d.activeOrder.compactMap { id in d.items.first { $0.occurrenceId == id }?.pathNumber }
-                let localActivation = state.pending.contains { $0.rpc == "activate_trip_occurrences_v1" } && state.pending.allSatisfy { ["create_trip_with_occurrences_v1", "activate_trip_occurrences_v1"].contains($0.rpc) }
+                let localActivation = try occurrenceJournal(for: trip).canOperate(state) && state.pending.contains { $0.rpc == "activate_trip_occurrences_v1" }
                 guard state.heldReason == nil, d.planId == committed.planId, d.planRevision == committed.planRevision,
                       labels == trip.rowSequence, d.items.allSatisfy({ item in UUID(uuidString: item.blockId).map { blocks.contains($0) } ?? false }),
                       state.serverActive == true || (!NetworkMonitor.shared.isOnline && localActivation),
@@ -2174,7 +2186,7 @@ final class TripTrackingService {
             vineyardId: trip.vineyardId.uuidString.lowercased(), tripId: trip.id.uuidString.lowercased()))
         if try journal.load() == nil {
             guard let raw = trip.occurrenceCoverage else { throw TripOccurrenceCoverage.Failure.updateRequired }
-            try journal.initialize(raw)
+            try journal.initialize(raw, requiresRecovery: true)
         }
         return journal
     }

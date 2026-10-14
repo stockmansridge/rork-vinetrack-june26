@@ -357,7 +357,7 @@ class TripRepository(private val session: SessionStore) {
             val state = journal.load() ?: error("Saved occurrence plan missing.")
             check(state.heldReason == null) { "Saved start needs reconciliation." }
             val op = state.pending.firstOrNull() ?: return@repeat
-            check(op.rpc in listOf("create_trip_with_occurrences_v1", "activate_trip_occurrences_v1"))
+            if (op.rpc !in listOf("create_trip_with_occurrences_v1", "activate_trip_occurrences_v1")) return@repeat
             val result = try { applyOccurrenceOperation(op.params, op.rpc, access) }
             catch (rejection: OccurrenceRejected) {
                 if (!session.withAccountAccess(access) { journal.hold(rejection.code) }) throw BackendError.Unauthorized
@@ -366,10 +366,11 @@ class TripRepository(private val session: SessionStore) {
             if (!session.withAccountAccess(access) { journal.acknowledge(result) }) throw BackendError.Unauthorized
         }
         val state = journal.load() ?: error("Saved occurrence plan missing.")
-        check(state.creationConfirmed && state.pending.isEmpty() && state.heldReason == null)
+        check(state.creationConfirmed && state.heldReason == null &&
+            state.pending.none { it.rpc in listOf("create_trip_with_occurrences_v1", "activate_trip_occurrences_v1", "finalize_trip_occurrences_v1") })
         val remote = fetchTrip(trip.id, access) ?: error("Authoritative reload pending.")
         check(remote.occurrenceCoverage == state.acknowledged && remote.isActive == trip.isActive)
-        return remote
+        return remote.withOccurrenceProjection(journal.projected(state))
     }
 
     /**

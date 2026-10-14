@@ -8650,7 +8650,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val ready = if (_ui.value.isOnline) tripRepo.confirmPlannedStart(planned, journal) else planned
                 check(claimDeviceTrip(ready)) { "Couldn't durably claim this planned trip." }
                 _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == ready.id) ready else it },
-                    tripError = if (st.isOnline) null else "Locally activated · server sync pending. Coverage actions await confirmation.") }
+                    tripError = if (st.isOnline) null else "Local occurrence authority · server sync pending. Actions saved on this device.") }
                 recordTripLabourAtStart(ready)
                 beginTracking(ready)
                 replayOccurrenceActions(ready)
@@ -9489,8 +9489,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val committed = TripOccurrenceCoverage.requireDocument(occurrenceJournal(trip).projected(state))
                 check(state.heldReason == null && d.planId == committed.planId && d.planRevision == committed.planRevision)
                 check(d.order.map { id -> d.items.single { it.id == id }.label } == trip.rowSequence && d.items.all { it.blockId in trip.effectivePaddockIds })
-                val localActivation = state.pending.any { it.rpc == "activate_trip_occurrences_v1" } && state.pending.all {
-                    it.rpc in listOf("create_trip_with_occurrences_v1", "activate_trip_occurrences_v1") }
+                val localActivation = occurrenceJournal(trip).canOperate(state) &&
+                    state.pending.any { it.rpc == "activate_trip_occurrences_v1" }
                 check(state.serverActive == true || (!_ui.value.isOnline && localActivation)) { "Activation needs authoritative confirmation before recording online." }
                 check(state.pending.none { it.rpc == "finalize_trip_occurrences_v1" })
             }.isSuccess
@@ -11972,8 +11972,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (_ui.value.isOnline) {
                     val access = session.accountAccess() ?: error("Account unavailable.")
                     val state = journal.load()
-                    val recovery = tripRepo.fetchOccurrenceRecovery(saved.id, state?.pending?.map { it.id }.orEmpty(), access)
-                    check(session.withAccountAccess(access) { journal.recover(recovery) })
+                    if (state?.creationConfirmed != false || state?.pending?.none { it.rpc == "create_trip_with_occurrences_v1" } == true) {
+                        val recovery = tripRepo.fetchOccurrenceRecovery(saved.id, state?.pending?.map { it.id }.orEmpty(), access)
+                        check(session.withAccountAccess(access) { journal.recover(recovery) })
+                    }
                 }
                 val state = journal.load() ?: error("Connect to load authoritative occurrence state before offline activation.")
                 check(state.heldReason == null && TripOccurrenceCoverage.requireDocument(state.acknowledged).planId == d.planId)
@@ -11998,7 +12000,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 check(claimDeviceTrip(ready)) { "Couldn't durably save activation." }
                 _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == saved.id) ready else it },
                     sprayRecords = st.sprayRecords.map { if (it.id == record.id) startedRecord else it },
-                    sprayError = if (st.isOnline) null else "Locally activated · server sync pending. Coverage actions await confirmation.") }
+                    sprayError = if (st.isOnline) null else "Local occurrence authority · server sync pending. Actions saved on this device.") }
                 recordTripLabourAtStart(ready); beginTracking(ready); replayOccurrenceActions(ready)
                 onResult(true)
             } catch (e: Exception) {
@@ -12154,12 +12156,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun canOperateOccurrences(trip: Trip): Boolean = runCatching {
+        val journal = occurrenceJournal(trip)
+        journal.load()?.let { journal.canOperate(it) } == true
+    }.getOrDefault(false)
+
     fun occurrenceActivationMessage(trip: Trip): String? {
         if (trip.coverageBasis == TripOccurrenceCoverage.Basis.LEGACY) return null
         return runCatching {
             val state = occurrenceJournal(trip).load() ?: error("Saved activation missing.")
             state.heldReason ?: if (!state.creationConfirmed || state.serverActive != true || state.pending.any { it.rpc == "activate_trip_occurrences_v1" })
-                "Locally activated · server sync pending. Done/Skip/Undo await confirmation."
+                if (occurrenceJournal(trip).canOperate(state)) "Local occurrence authority · server sync pending. Actions saved on this device."
+                else "Occurrence activation unresolved. Recording and actions require recovery."
             else "Server-confirmed active"
         }.getOrElse { "Occurrence activation held · recovery/update required. Saved identities retained." }
     }
@@ -12168,7 +12176,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val owner = session.userId ?: error("Sign in to the account that owns this trip.")
         val journal = occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, trip.vineyardId, trip.id))
         if (journal.load() == null) journal.initialize(trip.occurrenceCoverage as? kotlinx.serialization.json.JsonObject
-            ?: error("Occurrence coverage requires an updated client."))
+            ?: error("Occurrence coverage requires an updated client."), requiresRecovery = true)
         return journal
     }
 
@@ -12199,7 +12207,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val journal = occurrenceJournal(trip)
                 val initial = journal.load() ?: error("Occurrence journal missing.")
-                if (initial.creationConfirmed) {
+                if (initial.creationConfirmed || initial.pending.none { it.rpc == "create_trip_with_occurrences_v1" }) {
                     val recovery = tripRepo.fetchOccurrenceRecovery(trip.id, initial.pending.map { it.id }, access)
                     if (!session.retentionGuard.withAccount(access, { session.userId }) {
                         journal.recover(recovery)

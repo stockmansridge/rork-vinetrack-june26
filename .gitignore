@@ -6,6 +6,6 @@ migration/out/*
 !migration/out/.gitkeep
 migration/node_modules/
 migration/bun.lock
-.rork
+**/__pycache__/
 master-backfill-*.json
 /.rork-tmp/

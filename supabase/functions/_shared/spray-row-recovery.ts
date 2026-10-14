@@ -5,6 +5,7 @@ export type SavedRow = { id?: string | null; number: number; startPoint?: Coordi
 export type RecoveryBlock = { id: string; name: string; rows: SavedRow[] };
 export type RecoverySession = { id?: string | null; tankNumber?: number | null; pathsCovered?: number[] | null };
 export type RecoveryInput = {
+  occurrenceCoverage?: unknown;
   rowSequence: number[];
   completedPaths: number[];
   skippedPaths: number[];
@@ -109,6 +110,9 @@ function sessionFor(path: number, sessions: RecoverySession[]): RecoverySession 
 
 /** Derives only reproducible, unambiguous assignments; unresolved paths are returned separately. */
 export function deriveRecoveryAssignments(input: RecoveryInput): { assignments: RecoveryAssignment[]; unresolved: Array<{ rowNumber: number; reason: string }> } {
+  if (input.occurrenceCoverage !== null && input.occurrenceCoverage !== undefined) {
+    throw new Error("OCCURRENCE_UPDATE_REQUIRED");
+  }
   const assignments: RecoveryAssignment[] = [];
   const unresolved: Array<{ rowNumber: number; reason: string }> = [];
   const uniquePaths = input.rowSequence.filter(finite).filter((path, index, all) => all.findIndex((value) => samePath(value, path)) === index);

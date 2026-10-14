@@ -23,6 +23,17 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
                                       val pending: List<Operation> = emptyList(),
                                       val history: List<Operation> = emptyList(), val heldReason: String? = null,
                                       val creationConfirmed: Boolean = true, val serverActive: Boolean? = null)
+    /** Durable activation is local authority; server confirmation is a separate sync state. */
+    fun canOperate(state: Snapshot): Boolean {
+        if (state.heldReason != null || state.pending.any { it.action["kind"].textOrNull() == "finalize" }) return false
+        val activation = state.pending.indexOfFirst { it.action["kind"].textOrNull() == "activate" }
+        if (activation >= 0) {
+            val parents = state.pending.take(activation)
+            return parents.all { it.rpc == "create_trip_with_occurrences_v1" } &&
+                (state.creationConfirmed || parents.size == 1)
+        }
+        return state.creationConfirmed && state.serverActive != false
+    }
     private val json = Json { encodeDefaults = true }
 
     @Synchronized fun load(): Snapshot? = storage.read()?.let {
@@ -32,10 +43,10 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
             state.pending.forEach { op -> TripOccurrenceCoverage.requireDocument(op.after) }
         }
     }
-    @Synchronized fun initialize(coverage: JsonObject) {
+    @Synchronized fun initialize(coverage: JsonObject, requiresRecovery: Boolean = false) {
         TripOccurrenceCoverage.requireDocument(coverage)
         check(load() == null) { "Occurrence journal already exists; identities were retained." }
-        save(Snapshot(scope, coverage))
+        save(Snapshot(scope, coverage, creationConfirmed = !requiresRecovery, serverActive = if (requiresRecovery) false else null))
     }
     /** Establishes all creation data in one commit; activation awaits an exact server receipt. */
     @Synchronized fun prepareCreation(trip: JsonObject, coverage: JsonObject): Operation {
@@ -56,10 +67,10 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
     private fun lifecycle(kind: String, metadata: JsonObject): Operation {
         val state = load() ?: error("Occurrence journal missing.")
         check(state.heldReason == null)
-        check(state.creationConfirmed || (kind == "activate" && state.pending.size == 1 && state.pending.first().rpc == "create_trip_with_occurrences_v1"))
-        check(state.pending.none { it.action["kind"].textOrNull() in listOf("activate", "finalize") })
+        check(kind == "finalize" || state.creationConfirmed || (kind == "activate" && state.pending.size == 1 && state.pending.first().rpc == "create_trip_with_occurrences_v1"))
+        check(state.pending.none { it.action["kind"].textOrNull() == "finalize" || (kind == "activate" && it.action["kind"].textOrNull() == "activate") })
         if (kind == "activate") check(state.serverActive == false && state.pending.all { it.rpc == "create_trip_with_occurrences_v1" })
-        else check(state.serverActive != false)
+        else check(canOperate(state))
         val before = projected(state); val d = TripOccurrenceCoverage.requireDocument(before)
         val id = UUID.randomUUID().toString()
         val after = JsonObject(before.toMutableMap().also { fields ->
@@ -125,6 +136,7 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
         val history = (state.history.filter { it.id in pendingIds || it.action["kind"].textOrNull() in listOf("create", "activate", "finalize") } + recovered).distinctBy { it.id }
             .sortedBy { TripOccurrenceCoverage.requireDocument(it.after).revision }
         save(state.copy(acknowledged = remote, history = history,
+            creationConfirmed = state.pending.none { it.rpc == "create_trip_with_occurrences_v1" },
             serverActive = response.getValue("isActive").jsonPrimitive.boolean))
     }
     private fun serverRequest(op: Operation): JsonObject = when (op.action["kind"].textOrNull()) {
@@ -145,7 +157,7 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
     fun projected(state: Snapshot): JsonObject = state.pending.lastOrNull()?.after ?: state.acknowledged
     fun targetId(): String? = load()?.let { TripOccurrenceCoverage.requireDocument(projected(it)).targetId }
     fun undoTarget(): Operation? = load()?.let { state ->
-        if (!state.creationConfirmed || state.serverActive == false || state.heldReason != null || state.pending.any { it.action["kind"].textOrNull() in listOf("activate", "finalize") }) return@let null
+        if (!canOperate(state)) return@let null
         val d = TripOccurrenceCoverage.requireDocument(projected(state))
         state.history.asReversed().firstOrNull { op ->
             val id = op.action["occurrenceId"].textOrNull()
@@ -201,8 +213,8 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
     private fun append(actionBuilder: (TripOccurrenceCoverage.Document) -> JsonObject): Operation {
         val state = load() ?: error("Occurrence journal missing.")
         check(state.heldReason == null) { state.heldReason ?: "Reconciliation required." }
-        check(state.creationConfirmed && state.serverActive != false && state.pending.none { it.action["kind"].textOrNull() in listOf("activate", "finalize") }) {
-            "Creation or activation is not confirmed, or finalisation is pending. Saved occurrence identity was retained."
+        check(canOperate(state)) {
+            "A safe durable activation is required, or finalisation/reconciliation is pending. Saved occurrence identity was retained."
         }
         val before = projected(state)
         val d = TripOccurrenceCoverage.requireDocument(before)

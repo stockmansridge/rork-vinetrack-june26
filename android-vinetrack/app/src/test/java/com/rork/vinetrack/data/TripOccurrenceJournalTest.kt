@@ -54,13 +54,69 @@ class TripOccurrenceJournalTest {
         val activate = j.activate(buildJsonObject { put("startTime", "2026-10-14T08:00:00Z"); put("startEngineHours", 123.5) })
         j = TripOccurrenceJournal(memory, scope)
         assertEquals(listOf(create.params, activate.params), j.load()!!.pending.map { it.params })
-        assertTrue(runCatching { j.setStatus(initial.order.first(), "done") }.isFailure)
+        assertTrue(j.canOperate(j.load()!!))
         j.acknowledge(ack(create)); j.acknowledge(ack(activate))
         val projected = Trip(scope.tripId, scope.vineyardId, occurrenceCoverage = coverage, isActive = true).withOccurrenceProjection(j.projected(j.load()!!))
         val restored = Json.decodeFromString(Trip.serializer(), Json.encodeToString(Trip.serializer(), projected))
         assertEquals(initial.order, restored.occurrenceDocument!!.order)
         assertEquals(4, restored.rowSequence.size); assertTrue(restored.completedPaths.orEmpty().isEmpty())
         assertEquals(metadata, j.load()!!.history.first().params["p_trip"])
+    }
+
+    @Test fun offlineLifecycleAllowsOrderedActionsUndoAndFinalReviewBeforeAnyReceipt() {
+        val storage = Memory(); var j = TripOccurrenceJournal(storage, scope)
+        val create = j.prepareCreation(buildJsonObject { put("id", scope.tripId); put("vineyard_id", scope.vineyardId); put("is_active", false) }, fixture(true))
+        assertFalse(j.canOperate(j.load()!!))
+        val activation = j.activate(buildJsonObject { put("startTime", "2026-10-14T08:00:00Z") })
+        val done = j.setStatus(a, "done"); val skip = j.setStatus(a, "skipped")
+        j = TripOccurrenceJournal(storage, scope)
+        assertEquals(skip.id, j.undoTarget()!!.id)
+        val undo = j.undo(skip.id); val other = j.setStatus(b, "skipped"); val otherDone = j.setStatus(b, "done")
+        assertEquals("done", status(j, a)); assertEquals("done", status(j, b))
+        val final = j.finalize(buildJsonObject { put("endTime", "2026-10-14T09:00:00Z") })
+        val ordered = listOf(create, activation, done, skip, undo, other, otherDone, final)
+        assertEquals(ordered.map { it.params }, j.load()!!.pending.map { it.params })
+        assertFalse(j.canOperate(j.load()!!)); assertNull(j.undoTarget())
+        assertTrue(runCatching { j.setStatus(a, "incomplete") }.isFailure)
+        ordered.forEach { operation ->
+            j.acknowledge(ack(operation)); j.acknowledge(ack(create))
+            assertEquals("done", status(j, a)); assertEquals("done", status(j, b))
+        }
+        assertTrue(j.load()!!.pending.isEmpty()); assertFalse(j.load()!!.serverActive!!)
+    }
+
+    @Test fun snapshotWithoutDurableActivationRequiresAuthoritativeRecovery() {
+        val j = TripOccurrenceJournal(Memory(), scope); j.initialize(fixture(), requiresRecovery = true)
+        assertFalse(j.canOperate(j.load()!!)); assertTrue(runCatching { j.setStatus(a, "done") }.isFailure)
+        val server = journal(); j.recover(recovery(server, null))
+        assertTrue(j.canOperate(j.load()!!)); j.setStatus(a, "done")
+        assertEquals("done", status(j, a)); assertEquals("incomplete", status(j, b))
+    }
+
+    @Test fun heldLocalActivationCannotBeBypassedOrMutated() {
+        val j = TripOccurrenceJournal(Memory(), scope)
+        j.prepareCreation(buildJsonObject { put("id", scope.tripId); put("vineyard_id", scope.vineyardId); put("is_active", false) }, fixture())
+        j.activate(buildJsonObject { put("startTime", "2026-10-14T08:00:00Z") })
+        val done = j.setStatus(a, "done"); j.hold("OCCURRENCE_REVISION_CONFLICT")
+        assertFalse(j.canOperate(j.load()!!)); assertNull(j.undoTarget())
+        assertTrue(runCatching { j.undo(done.id) }.isFailure)
+        assertTrue(runCatching { j.finalize(buildJsonObject {}) }.isFailure)
+        assertEquals(done.params, j.load()!!.pending.last().params)
+    }
+
+    @Test fun rowSnapshotsSeparateStoredGeometryFromLegacyCandidateContext() {
+        val point = com.rork.vinetrack.data.model.CoordinatePoint(-33.4, 149.1, speed = 3.0)
+        val row = com.rork.vinetrack.data.model.PaddockRow(id = a.uppercase(), number = 38, startPoint = point, endPoint = point)
+        val candidate = TripOccurrencePlanner.Candidate(scope.vineyardId, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "X", 38.5, listOf(row))
+        fun ref(c: TripOccurrencePlanner.Candidate) = TripOccurrencePlanner.commit(listOf(c), scope.vineyardId)["items"]!!.jsonArray.single().jsonObject["physicalPathRef"]!!.jsonObject
+        val resolved = ref(candidate)
+        assertEquals(a, resolved["rowIds"]!!.jsonArray.single().jsonPrimitive.content)
+        assertNull(resolved["rowSnapshots"]!!.jsonArray.single().jsonObject["startPoint"]!!.jsonObject["speed"])
+        val missingId = ref(candidate.copy(rows = listOf(row.copy(id = null))))
+        assertEquals("unresolved", missingId["geometryRevision"]!!.jsonPrimitive.content)
+        assertTrue(missingId["rowIds"]!!.jsonArray.isEmpty()); assertNull(missingId["rowSnapshots"])
+        val missingGeometry = ref(candidate.copy(rows = listOf(row.copy(endPoint = null))))
+        assertEquals("unresolved", missingGeometry["geometryRevision"]!!.jsonPrimitive.content)
     }
 
     @Test fun replacementRetiresDoneEvidenceAndNeverInheritsCoverage() {
@@ -153,7 +209,7 @@ class TripOccurrenceJournalTest {
         val create=j.prepareCreation(metadata,fixture()); assertEquals(metadata,create.params["p_trip"])
         assertTrue(runCatching { j.setStatus(a,"done") }.isFailure); assertFalse(j.load()!!.creationConfirmed)
         j.acknowledge(ack(create)); val activation=j.activate(buildJsonObject { put("startTime","2026-10-14T08:00:00Z") })
-        assertTrue(runCatching { j.setStatus(a,"done") }.isFailure); j.acknowledge(ack(activation)); j.setStatus(a,"done")
+        assertTrue(j.canOperate(j.load()!!)); j.acknowledge(ack(activation)); j.setStatus(a,"done")
         assertEquals("done",status(j,a))
     }
     @Test fun finalisationFreezesExactOccurrenceReviewAndRetainsPendingActionOrder() {

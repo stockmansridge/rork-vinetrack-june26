@@ -417,6 +417,8 @@ extension Paddock {
 
 nonisolated struct PaddockRow: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
+    /// Derived legacy identity is UI context only, not a stored physical-row reference.
+    private(set) var hasStoredIdentity: Bool = true
     var number: Int { didSet { decimalNumber = nil } }
     /// Preserves Portal decimal row numbers without changing integer-only row editors.
     var decimalNumber: Double? = nil
@@ -446,11 +448,11 @@ nonisolated struct PaddockRow: Codable, Identifiable, Sendable, Hashable {
         self.vineCountOverride = vineCountOverride
     }
 
-    enum CodingKeys: String, CodingKey { case id, number, startPoint, endPoint, vineCountOverride }
+    enum CodingKeys: String, CodingKey { case id, number, decimalNumber, startPoint, endPoint, vineCountOverride }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let rawNumber = try c.decode(Double.self, forKey: .number)
+        let rawNumber = try c.decodeIfPresent(Double.self, forKey: .decimalNumber) ?? c.decode(Double.self, forKey: .number)
         guard rawNumber.isFinite, rawNumber > Double(Int.min), rawNumber < Double(Int.max) else {
             throw DecodingError.dataCorruptedError(forKey: .number, in: c, debugDescription: "Invalid row number")
         }
@@ -462,8 +464,9 @@ nonisolated struct PaddockRow: Codable, Identifiable, Sendable, Hashable {
         // external systems stripped it). The fallback is DETERMINISTIC from
         // the row's content, so every device derives the identical id and
         // pruning progress keyed on it stays consistent across platforms.
-        id = (try? c.decodeIfPresent(UUID.self, forKey: .id))
-            ?? PaddockRowIdentity.derive(number: number, startPoint: startPoint, endPoint: endPoint, decimalNumber: decimalNumber)
+        let storedId = try? c.decode(UUID.self, forKey: .id)
+        hasStoredIdentity = storedId != nil
+        id = storedId ?? PaddockRowIdentity.derive(number: number, startPoint: startPoint, endPoint: endPoint, decimalNumber: decimalNumber)
         // Only a whole POSITIVE count is a real override — 0, negatives and
         // junk decode as "no override" rather than poisoning the estimate.
         vineCountOverride = PaddockRowVineCount.sanitiseOverride(
@@ -475,7 +478,7 @@ nonisolated struct PaddockRow: Codable, Identifiable, Sendable, Hashable {
     /// JSON shape older clients and the portal already parse.
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id, forKey: .id)
+        if hasStoredIdentity { try c.encode(id, forKey: .id) }
         if let decimalNumber { try c.encode(decimalNumber, forKey: .number) }
         else { try c.encode(number, forKey: .number) }
         try c.encode(startPoint, forKey: .startPoint)

@@ -305,7 +305,7 @@ export async function handler(request: Request): Promise<Response> {
 
   const { data: trip, error: tripError } = await user.from("trips")
     .select(
-      "id,vineyard_id,paddock_id,paddock_ids,row_sequence,completed_paths,skipped_paths,path_points,tank_sessions",
+      "id,vineyard_id,paddock_id,paddock_ids,row_sequence,completed_paths,skipped_paths,path_points,tank_sessions,occurrence_coverage",
     )
     .eq("id", tripId).is("deleted_at", null).maybeSingle();
   if (tripError) {
@@ -348,6 +348,11 @@ export async function handler(request: Request): Promise<Response> {
       operationId,
       retryable: false,
     }, 403);
+  }
+
+  if (trip.occurrence_coverage !== null && trip.occurrence_coverage !== undefined) {
+    return json({ error: "OCCURRENCE_UPDATE_REQUIRED", status: "occurrence_recovery_not_supported", operationId,
+      message: "Use occurrence-aware corrections. Numeric row recovery cannot identify this trip's passes.", retryable: false }, 409);
   }
 
   // Historical evidence is read first and remains authoritative even if today's
@@ -435,6 +440,7 @@ export async function handler(request: Request): Promise<Response> {
   }
 
   const result = deriveRecoveryAssignments({
+    occurrenceCoverage: trip.occurrence_coverage,
     rowSequence: missingSequence,
     completedPaths: numbers(trip.completed_paths).filter((path) =>
       !existingPaths.some((existing) => samePath(existing, path))

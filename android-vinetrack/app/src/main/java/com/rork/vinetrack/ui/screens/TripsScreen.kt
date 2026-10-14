@@ -2793,7 +2793,7 @@ private fun RowCoverageControls(vm: AppViewModel, trip: Trip, busy: Boolean) {
         val target = document?.items?.firstOrNull { it.id == document.targetId }
         val undo = vm.occurrenceUndoTarget(trip.id)
         val activationMessage = vm.occurrenceActivationMessage(trip)
-        val ready = activationMessage == "Server-confirmed active"
+        val ready = vm.canOperateOccurrences(trip)
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             activationMessage?.let { Text(it) }
             if (document == null) Text(trip.coverageMessage ?: "Occurrence coverage is unavailable. Update required.")

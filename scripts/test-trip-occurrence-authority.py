@@ -99,6 +99,42 @@ class AuthorityTests(unittest.TestCase):
     def states(self, d):
         return [d['states'][i['occurrenceId']]['status'] for i in d['items']]
 
+    def test_native_physical_snapshot_ignores_only_nonphysical_metadata(self):
+        d = document()
+        snapshots = [dict(row, id=row['id'].upper(), vineCountOverride=999,
+            startPoint=dict(row['startPoint'], id=str(uuid.uuid4())), endPoint=dict(row['endPoint'], speed=3)) for row in ROWS]
+        for item in d['items']:
+            item['physicalPathRef']['rowSnapshots'] = snapshots
+        t, accepted, _ = create(d)
+        self.assertEqual(accepted, d)
+        changed = json.loads(json.dumps(d))
+        for item in changed['items']:
+            item['physicalPathRef']['rowSnapshots'][0]['startPoint']['latitude'] += 0.000001
+        fields = {'id':str(uuid.uuid4()),'vineyard_id':VINEYARD}
+        self.assert_error(f"select public.create_trip_with_occurrences_v1('{uuid.uuid4()}',{literal(fields)},{literal(changed)});", 'OCCURRENCE_ROW_SCOPE_CONFLICT')
+
+    def test_native_missing_row_id_is_unresolved_not_snapshot_adoption(self):
+        d = document()
+        candidate_id = str(uuid.uuid4())
+        for item in d['items']:
+            item['physicalPathRef'].update(rowIds=[], rowSnapshots=[], geometryRevision='unresolved', candidateRowIds=[candidate_id])
+        _, accepted, _ = create(d)
+        self.assertEqual(accepted, d)
+        for item in d['items']:
+            item['physicalPathRef'].update(rowIds=item['physicalPathRef']['candidateRowIds'], rowSnapshots=[dict(ROWS[0], id=item['physicalPathRef']['candidateRowIds'][0])], geometryRevision='native-snapshot-v1')
+        self.assert_error(f"select public.create_trip_with_occurrences_v1('{uuid.uuid4()}',{literal({'id':str(uuid.uuid4()),'vineyard_id':VINEYARD})},{literal(d)});", 'OCCURRENCE_ROW_SCOPE_CONFLICT')
+
+    def test_native_snapshot_requires_both_exact_endpoints_and_effective_number(self):
+        for mutation in ['missing_endpoint', 'wrong_number', 'out_of_range']:
+            d = document()
+            for item in d['items']:
+                snapshots = json.loads(json.dumps(ROWS))
+                if mutation == 'missing_endpoint': snapshots[0].pop('endPoint')
+                elif mutation == 'wrong_number': snapshots[0]['number'] = 38.25
+                else: snapshots[0]['endPoint']['latitude'] = 91
+                item['physicalPathRef']['rowSnapshots'] = snapshots
+            self.assert_error(f"select public.create_trip_with_occurrences_v1('{uuid.uuid4()}',{literal({'id':str(uuid.uuid4()),'vineyard_id':VINEYARD})},{literal(d)});", 'OCCURRENCE_ROW_SCOPE_CONFLICT')
+
     def test_native_create_metadata_superset_preserved(self):
         for platform in ['android','ios']:
             d=document(); t=str(uuid.uuid4()); task=str(uuid.uuid4()); worker=str(uuid.uuid4())

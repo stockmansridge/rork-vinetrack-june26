@@ -87,6 +87,7 @@
 
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { normaliseApiWillyWeatherForecast, type ForecastDay } from "./forecast.ts";
+import { tripCoverageSummary } from "../_shared/trip-occurrence-summary.ts";
 import {
   areSprayTankActualsComplete,
   buildSprayActualResponse,
@@ -596,7 +597,7 @@ interface TripRow {
   pause_timestamps: unknown; resume_timestamps: unknown;
   created_at: string; updated_at: string;
   // detail only
-  row_sequence?: unknown; completed_paths?: unknown; skipped_paths?: unknown;
+  row_sequence?: unknown; completed_paths?: unknown; skipped_paths?: unknown; occurrence_coverage?: unknown;
 }
 
 const TRIP_LIST_COLUMNS =
@@ -605,7 +606,7 @@ const TRIP_LIST_COLUMNS =
   "operator_user_id, person_name, work_task_id, total_tanks, completion_notes, " +
   "start_engine_hours, end_engine_hours, pause_timestamps, resume_timestamps, created_at, updated_at";
 
-const TRIP_DETAIL_COLUMNS = TRIP_LIST_COLUMNS + ", row_sequence, completed_paths, skipped_paths";
+const TRIP_DETAIL_COLUMNS = TRIP_LIST_COLUMNS + ", row_sequence, completed_paths, skipped_paths, occurrence_coverage";
 
 /**
  * Pause-aware trip duration in whole minutes, mirroring the canonical
@@ -1537,10 +1538,7 @@ async function handleTripGet(
   const body = mapTripSummary(trip, idx, profile);
 
   // Detail-only row work summary (derived from the canonical row plan).
-  const planned = Array.isArray(trip.row_sequence) ? trip.row_sequence.length : 0;
-  const completed = Array.isArray(trip.completed_paths) ? trip.completed_paths.length : 0;
-  const skipped = Array.isArray(trip.skipped_paths) ? trip.skipped_paths.length : 0;
-  body.rows = { planned, completed, skipped };
+  body.rows = tripCoverageSummary(trip.occurrence_coverage, trip.row_sequence, trip.completed_paths, trip.skipped_paths);
 
   // Costs require costs:read; labour_cost additionally requires labour:read.
   if (hasScope(profile, "costs:read")) {

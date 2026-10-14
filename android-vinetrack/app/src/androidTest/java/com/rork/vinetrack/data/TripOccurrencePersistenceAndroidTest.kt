@@ -72,6 +72,29 @@ class TripOccurrencePersistenceAndroidTest {
         assertTrue(active.completedPaths.orEmpty().isEmpty()); assertEquals(4, active.notCompletedRowCount)
     }
 
+    @Test fun realPreferenceOfflineCreateActivationActionsReviewSurviveBeforeReceipts() {
+        val owner = UUID.randomUUID().toString(); SessionStore(context).save("synthetic-access", "synthetic-refresh", owner, null)
+        val scope = TripOccurrenceJournal.Scope(owner, UUID.randomUUID().toString(), UUID.randomUUID().toString())
+        var j = TripOccurrenceNativeStore(context).journal(scope)
+        val create = j.prepareCreation(buildJsonObject { put("id", scope.tripId); put("vineyard_id", scope.vineyardId); put("is_active", false) }, fixture())
+        val activation = j.activate(buildJsonObject { put("startTime", "2026-10-14T08:00:00Z") })
+        val done = j.setStatus(a, "done"); val skip = j.setStatus(a, "skipped")
+        j = TripOccurrenceNativeStore(context).journal(scope)
+        assertTrue(j.canOperate(j.load()!!)); assertEquals(skip.id, j.undoTarget()!!.id)
+        val undo = j.undo(skip.id); val other = j.setStatus(b, "skipped")
+        val final = j.finalize(buildJsonObject { put("endTime", "2026-10-14T09:00:00Z") })
+        val exact = listOf(create, activation, done, skip, undo, other, final)
+        j = TripOccurrenceNativeStore(context).journal(scope)
+        assertEquals(exact.map { it.params }, j.load()!!.pending.map { it.params })
+        assertFalse(j.canOperate(j.load()!!))
+        exact.forEach { op ->
+            j.acknowledge(buildJsonObject { put("tripId", scope.tripId); put("operationId", op.id); put("coverage", op.after) })
+            val d = TripOccurrenceCoverage.requireDocument(j.projected(j.load()!!))
+            assertEquals("done", d.status(a)); assertEquals("skipped", d.status(b))
+        }
+        assertTrue(j.load()!!.pending.isEmpty()); assertFalse(j.load()!!.serverActive!!)
+    }
+
     @Test fun realPreferenceRecreationPreservesDoneSkipUndoAndExactRetry() {
         val owner=UUID.randomUUID().toString(); SessionStore(context).save("synthetic-access","synthetic-refresh",owner,null)
         val scope=TripOccurrenceJournal.Scope(owner,UUID.randomUUID().toString(),UUID.randomUUID().toString())

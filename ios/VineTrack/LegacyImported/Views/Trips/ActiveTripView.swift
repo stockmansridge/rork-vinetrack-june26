@@ -572,14 +572,14 @@ struct ActiveTripView: View {
                         } label: {
                             Label("Mark this path done & move on", systemImage: "checkmark.circle")
                         }
-                        .disabled(trip.rowSequence.isEmpty || (tracking.occurrenceActivationMessage != nil && tracking.occurrenceActivationMessage != "Server-confirmed active"))
+                        .disabled(trip.rowSequence.isEmpty || (trip.coverageBasis != .legacy && !tracking.canOperateOccurrences))
 
                         Button(role: .destructive) {
                             tracking.skipCurrentPlannedPath()
                         } label: {
                             Label("Skip this path (won't count)", systemImage: "forward.end")
                         }
-                        .disabled(trip.rowSequence.isEmpty || (tracking.occurrenceActivationMessage != nil && tracking.occurrenceActivationMessage != "Server-confirmed active"))
+                        .disabled(trip.rowSequence.isEmpty || (trip.coverageBasis != .legacy && !tracking.canOperateOccurrences))
                     }
                     Divider()
                     Button {

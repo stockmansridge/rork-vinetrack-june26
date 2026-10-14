@@ -35,6 +35,17 @@ import Foundation
         var serverActive: Bool? = nil
         var projected: JSON { pending.last?.after ?? acknowledged }
     }
+    /// A retained create/activation chain permits offline work, never an unresolved identity or hold.
+    func canOperate(_ state: Snapshot) -> Bool {
+        guard state.heldReason == nil,
+              !state.pending.contains(where: { $0.action[occurrence: "kind"]?.occurrenceString == "finalize" }) else { return false }
+        if let activation = state.pending.firstIndex(where: { $0.action[occurrence: "kind"]?.occurrenceString == "activate" }) {
+            let parents = state.pending.prefix(activation)
+            return parents.allSatisfy { $0.rpc == "create_trip_with_occurrences_v1" } &&
+                (state.creationConfirmed != false || parents.count == 1)
+        }
+        return state.creationConfirmed != false && state.serverActive != false
+    }
     private let scope: Scope
     private let fileURL: URL
 
@@ -56,10 +67,12 @@ import Foundation
         for op in state.pending { _ = try TripOccurrenceCoverage.requireDocument(op.after) }
         return state
     }
-    func initialize(_ coverage: JSON) throws {
+    func initialize(_ coverage: JSON, requiresRecovery: Bool = false) throws {
         _ = try TripOccurrenceCoverage.requireDocument(coverage)
         guard try load() == nil else { throw Failure.reconciliation }
-        try save(Snapshot(scope: scope, acknowledged: coverage))
+        var state = Snapshot(scope: scope, acknowledged: coverage)
+        if requiresRecovery { state.creationConfirmed = false; state.serverActive = false }
+        try save(state)
     }
     @discardableResult func prepareCreation(trip: JSON, coverage: JSON) throws -> Operation {
         guard trip[occurrence: "id"]?.occurrenceString?.lowercased() == scope.tripId,
@@ -80,10 +93,10 @@ import Foundation
     @discardableResult func finalize(_ end: JSON) throws -> Operation { try lifecycle("finalize", metadata: end) }
     private func lifecycle(_ kind: String, metadata: JSON) throws -> Operation {
         guard var state = try load(), state.heldReason == nil,
-              state.creationConfirmed != false || (kind == "activate" && state.pending.count == 1 && state.pending.first?.rpc == "create_trip_with_occurrences_v1"),
-              !state.pending.contains(where: { ["activate", "finalize"].contains($0.action[occurrence: "kind"]?.occurrenceString ?? "") }) else { throw Failure.reconciliation }
+              kind == "finalize" || state.creationConfirmed != false || (kind == "activate" && state.pending.count == 1 && state.pending.first?.rpc == "create_trip_with_occurrences_v1"),
+              !state.pending.contains(where: { $0.action[occurrence: "kind"]?.occurrenceString == "finalize" || (kind == "activate" && $0.action[occurrence: "kind"]?.occurrenceString == "activate") }) else { throw Failure.reconciliation }
         if kind == "activate" { guard state.serverActive == false, state.pending.allSatisfy({ $0.rpc == "create_trip_with_occurrences_v1" }) else { throw Failure.reconciliation } }
-        else { guard state.serverActive != false else { throw Failure.reconciliation } }
+        else { guard canOperate(state) else { throw Failure.reconciliation } }
         let before = state.projected; let d = try TripOccurrenceCoverage.requireDocument(before)
         guard var fields = before.occurrenceObject else { throw Failure.updateRequired }
         let id = UUID().uuidString.lowercased()
@@ -150,6 +163,7 @@ import Foundation
         for op in recovered where !history.contains(where: { $0.id == op.id }) { history.append(op) }
         history.sort { (TripOccurrenceCoverage.read($0.after)?.revision ?? 0) < (TripOccurrenceCoverage.read($1.after)?.revision ?? 0) }
         state.acknowledged = remote; state.history = history; state.serverActive = active
+        state.creationConfirmed = !state.pending.contains(where: { $0.rpc == "create_trip_with_occurrences_v1" })
         try save(state)
     }
     private func serverRequest(_ op: Operation) -> JSON {
@@ -169,8 +183,7 @@ import Foundation
 
     func undoTarget() throws -> Operation? {
         guard let state = try load() else { throw Failure.missing }
-        guard state.creationConfirmed != false, state.serverActive != false, state.heldReason == nil,
-              !state.pending.contains(where: { ["activate", "finalize"].contains($0.action[occurrence: "kind"]?.occurrenceString ?? "") }) else { return nil }
+        guard canOperate(state) else { return nil }
         let d = try TripOccurrenceCoverage.requireDocument(state.projected)
         return state.history.reversed().first { op in
             guard let id = op.action[occurrence: "occurrenceId"]?.occurrenceString,
@@ -226,8 +239,7 @@ import Foundation
     }
     private func append(_ build: (TripOccurrenceCoverage.Document, JSON) throws -> JSON) throws -> Operation {
         guard var state = try load() else { throw Failure.missing }
-        guard state.heldReason == nil, state.creationConfirmed != false, state.serverActive != false,
-              !state.pending.contains(where: { ["activate", "finalize"].contains($0.action[occurrence: "kind"]?.occurrenceString ?? "") }) else { throw Failure.reconciliation }
+        guard canOperate(state) else { throw Failure.reconciliation }
         let before = state.projected
         let d = try TripOccurrenceCoverage.requireDocument(before)
         let action = try build(d, before)

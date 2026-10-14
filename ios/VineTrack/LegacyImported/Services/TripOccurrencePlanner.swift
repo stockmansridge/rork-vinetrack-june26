@@ -54,11 +54,21 @@ enum TripOccurrencePlanner {
         var ids: [String] = []
         for candidate in candidates {
             if refs[candidate.id] == nil {
-                let snapshots = try candidate.rows.map { try JSONDecoder().decode(JSON.self, from: JSONEncoder().encode($0)) }
+                let resolved = !candidate.rows.isEmpty && candidate.rows.allSatisfy { row in
+                    row.hasStoredIdentity && [row.startPoint, row.endPoint].allSatisfy {
+                        $0.latitude.isFinite && $0.longitude.isFinite && abs($0.latitude) <= 90 && abs($0.longitude) <= 180
+                    }
+                }
+                let snapshots: [JSON] = resolved ? candidate.rows.map { row in
+                    .object(["id": .string(row.id.uuidString.lowercased()), "number": .number(row.calculationRowNumber),
+                        "startPoint": .object(["latitude": .number(row.startPoint.latitude), "longitude": .number(row.startPoint.longitude)]),
+                        "endPoint": .object(["latitude": .number(row.endPoint.latitude), "longitude": .number(row.endPoint.longitude)])])
+                } : []
                 refs[candidate.id] = .object([
                     "pathId": .string(UUID().uuidString.lowercased()),
-                    "rowIds": .array(candidate.rows.map { .string($0.id.uuidString.lowercased()) }),
-                    "rowSnapshots": .array(snapshots), "geometryRevision": .string(candidate.rows.isEmpty ? "unresolved" : "native-snapshot-v1"),
+                    "rowIds": .array(resolved ? candidate.rows.map { .string($0.id.uuidString.lowercased()) } : []),
+                    "candidateRowIds": .array(candidate.rows.map { .string($0.id.uuidString.lowercased()) }),
+                    "rowSnapshots": .array(snapshots), "geometryRevision": .string(resolved ? "native-snapshot-v1" : "unresolved"),
                     "boundarySide": .string(candidate.rows.count == 1 ? (candidate.label < candidate.rows[0].calculationRowNumber ? "before" : "after") : "between")
                 ])
             }

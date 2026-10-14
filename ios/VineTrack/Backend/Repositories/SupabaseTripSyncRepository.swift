@@ -85,7 +85,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         let journal = try TripOccurrenceJournal(scope: .init(ownerId: account.uuidString.lowercased(),
             vineyardId: trip.vineyardId.uuidString.lowercased(), tripId: trip.id.uuidString.lowercased()))
         guard let initial = try journal.load() else { throw TripOccurrenceCoverage.Failure.missing }
-        if initial.creationConfirmed != false {
+        if initial.creationConfirmed != false || !initial.pending.contains(where: { $0.rpc == "create_trip_with_occurrences_v1" }) {
             let recovery = try await occurrenceRequest(rpc: "get_trip_occurrence_recovery_v1", params: .object([
                 "p_trip_id": .string(trip.id.uuidString.lowercased()),
                 "p_operation_ids": .array(initial.pending.prefix(256).map { .string($0.id) })]), accessToken: session.accessToken)
@@ -95,15 +95,19 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         }
         guard try journal.load()?.heldReason == nil else { throw TripOccurrenceCoverage.Failure.reconciliation }
         // Existing trip data/session establishment must precede occurrence links and finalisation.
-        if initial.creationConfirmed != false {
-            try await updateOccurrenceNonAuthorityFields(trip, accessToken: session.accessToken)
-        }
+        var sessionsEstablished = false
         for _ in 0..<128 {
             guard let state = try journal.load(), state.heldReason == nil else { throw TripOccurrenceCoverage.Failure.reconciliation }
             guard let op = state.pending.first else { break }
             do {
                 let beforeRequest = try await provider.client.auth.session
                 guard beforeRequest.user.id == account, beforeRequest.refreshToken == session.refreshToken else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                if !sessionsEstablished && !["create_trip_with_occurrences_v1", "activate_trip_occurrences_v1"].contains(op.rpc) {
+                    try await updateOccurrenceNonAuthorityFields(trip, accessToken: session.accessToken)
+                    let establishedSession = try await provider.client.auth.session
+                    guard establishedSession.user.id == account, establishedSession.refreshToken == session.refreshToken else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                    sessionsEstablished = true
+                }
                 let result = try await occurrenceRequest(rpc: op.rpc, params: op.params, accessToken: session.accessToken)
                 let currentSession = try await provider.client.auth.session
             guard currentSession.user.id == account, currentSession.refreshToken == session.refreshToken else { throw TripOccurrenceCoverage.Failure.scopeConflict }

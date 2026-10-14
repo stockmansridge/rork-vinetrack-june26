@@ -1,4 +1,4 @@
-import { assertEquals, assertGreater } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals, assertGreater, assertThrows } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { deriveRecoveryAssignments, type RecoveryBlock } from "./spray-row-recovery.ts";
 
 const block = (id: string, offset: number): RecoveryBlock => ({
@@ -10,6 +10,14 @@ const block = (id: string, offset: number): RecoveryBlock => ({
     startPoint: { latitude: -33 + offset, longitude: 149 + number * 0.0001 },
     endPoint: { latitude: -32.999 + offset, longitude: 149 + number * 0.0001 },
   })),
+});
+
+Deno.test("all non-null occurrence documents refuse numeric recovery", () => {
+  for (const coverage of [{ schemaVersion: 1 }, { schemaVersion: 99 }, "malformed", {}]) {
+    assertThrows(() => deriveRecoveryAssignments({ occurrenceCoverage: coverage,
+      rowSequence: [24.5], completedPaths: [24.5], skippedPaths: [], route: [],
+      blocks: [block("north", 0)], authoritativeBlockIds: ["north"], plannedBlockIds: ["north"], sessions: [] }), Error, "OCCURRENCE_UPDATE_REQUIRED");
+  }
 });
 
 Deno.test("saved identities recover only a uniquely scoped block", () => {

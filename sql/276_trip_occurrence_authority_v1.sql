@@ -163,6 +163,7 @@ end $fn$;
 create function public.validate_new_occurrence_geometry_v1(item jsonb,v uuid) returns void
 language plpgsql security definer set search_path=pg_catalog,public as $fn$
 declare b public.paddocks; rid text; mapped jsonb; snapshot jsonb; row_count integer; n numeric;
+ endpoint text; mapped_lat numeric; mapped_lon numeric; snapshot_lat numeric; snapshot_lon numeric;
 begin
   if auth.uid() is null or not public.has_vineyard_role(v,array['owner','manager','supervisor','operator']) then
     raise exception 'OCCURRENCE_TRIP_FORBIDDEN' using errcode='42501';
@@ -186,10 +187,26 @@ begin
   for rid in select jsonb_array_elements_text(item#>'{physicalPathRef,rowIds}') loop
     select r into mapped from jsonb_array_elements(coalesce(b.rows,'[]')) r where lower(r->>'id')=rid;
     select r into snapshot from jsonb_array_elements(item#>'{physicalPathRef,rowSnapshots}') r where lower(r->>'id')=rid;
-    if mapped is null or snapshot is distinct from mapped or
+    -- Compare immutable physical facts, not native encoder metadata (coordinate IDs,
+    -- omitted optional keys or unrelated vine-count fields). No rounding/tolerance.
+    if mapped is null or snapshot is null or
+       coalesce((mapped->>'decimalNumber')::numeric,(mapped->>'number')::numeric) is null or
+       coalesce((snapshot->>'decimalNumber')::numeric,(snapshot->>'number')::numeric) is distinct from
+         coalesce((mapped->>'decimalNumber')::numeric,(mapped->>'number')::numeric) or
        abs(coalesce((mapped->>'decimalNumber')::numeric,(mapped->>'number')::numeric)-n)>0.5 then
       raise exception 'OCCURRENCE_ROW_SCOPE_CONFLICT' using errcode='22023';
     end if;
+    foreach endpoint in array array['startPoint','endPoint'] loop
+      mapped_lat:=coalesce(mapped->endpoint->>'latitude',mapped->endpoint->>'lat')::numeric;
+      mapped_lon:=coalesce(mapped->endpoint->>'longitude',mapped->endpoint->>'lng')::numeric;
+      snapshot_lat:=coalesce(snapshot->endpoint->>'latitude',snapshot->endpoint->>'lat')::numeric;
+      snapshot_lon:=coalesce(snapshot->endpoint->>'longitude',snapshot->endpoint->>'lng')::numeric;
+      if mapped_lat is null or mapped_lon is null or
+         not (mapped_lat between -90 and 90 and mapped_lon between -180 and 180) or
+         snapshot_lat is distinct from mapped_lat or snapshot_lon is distinct from mapped_lon then
+        raise exception 'OCCURRENCE_ROW_SCOPE_CONFLICT' using errcode='22023';
+      end if;
+    end loop;
   end loop;
 end $fn$;
 revoke all on function public.validate_new_occurrence_geometry_v1(jsonb,uuid) from public,anon,authenticated,service_role;

@@ -60,7 +60,7 @@ final class TripOccurrenceJournalTests: XCTestCase {
         let activate = try j.activate(.object(["startTime": .string("2026-10-14T08:00:00Z"), "startEngineHours": .number(123.5)]))
         j = try TripOccurrenceJournal(scope: scope, directory: dir)
         XCTAssertEqual(try j.load()?.pending.map(\.params), [create.params, activate.params])
-        XCTAssertThrowsError(try j.setStatus(initial.activeOrder[0], status: "done"))
+        XCTAssertTrue(try j.canOperate(XCTUnwrap(j.load())))
         try j.acknowledge(ack(create)); try j.acknowledge(ack(activate))
         var trip = Trip(id: try XCTUnwrap(UUID(uuidString: scope.tripId)), vineyardId: vineyard, paddockName: "A, B", isActive: true)
         trip = try trip.withOccurrenceProjection(XCTUnwrap(j.load()).projected)
@@ -68,6 +68,66 @@ final class TripOccurrenceJournalTests: XCTestCase {
         XCTAssertEqual(restored.occurrenceDocument?.activeOrder, initial.activeOrder)
         XCTAssertTrue(restored.completedPaths.isEmpty); XCTAssertTrue(restored.skippedPaths.isEmpty)
         XCTAssertEqual(try j.load()?.history.first?.params[occurrence: "p_trip"], metadata)
+    }
+
+    @MainActor func testOfflineLifecycleActionsUndoAndFinalReviewBeforeAnyReceipt() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        var j = try TripOccurrenceJournal(scope: scope, directory: dir)
+        let create = try j.prepareCreation(trip: .object(["id": .string(scope.tripId), "vineyard_id": .string(scope.vineyardId), "is_active": .bool(false)]), coverage: fixture(otherBlock: true))
+        XCTAssertFalse(try j.canOperate(XCTUnwrap(j.load())))
+        let activate = try j.activate(.object(["startTime": .string("2026-10-14T08:00:00Z")]))
+        let done = try j.setStatus(a, status: "done"); let skip = try j.setStatus(a, status: "skipped")
+        j = try TripOccurrenceJournal(scope: scope, directory: dir)
+        XCTAssertEqual(try j.undoTarget()?.id, skip.id)
+        let undo = try j.undo(skip.id); let other = try j.setStatus(b, status: "skipped"); let otherDone = try j.setStatus(b, status: "done")
+        let final = try j.finalize(.object(["endTime": .string("2026-10-14T09:00:00Z")]))
+        let ordered = [create, activate, done, skip, undo, other, otherDone, final]
+        XCTAssertEqual(try j.load()?.pending.map(\.params), ordered.map(\.params))
+        XCTAssertFalse(try j.canOperate(XCTUnwrap(j.load()))); XCTAssertNil(try j.undoTarget())
+        XCTAssertThrowsError(try j.setStatus(a, status: "incomplete"))
+        for operation in ordered {
+            try j.acknowledge(ack(operation)); try j.acknowledge(ack(create))
+            XCTAssertEqual(try status(j, a), "done"); XCTAssertEqual(try status(j, b), "done")
+        }
+        XCTAssertTrue(try XCTUnwrap(j.load()).pending.isEmpty); XCTAssertEqual(try j.load()?.serverActive, false)
+    }
+
+    @MainActor func testSnapshotWithoutDurableActivationRequiresRecovery() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let j = try TripOccurrenceJournal(scope: scope, directory: dir)
+        let raw = try fixture(); try j.initialize(raw, requiresRecovery: true)
+        XCTAssertFalse(try j.canOperate(XCTUnwrap(j.load())))
+        XCTAssertThrowsError(try j.setStatus(a, status: "done"))
+        try j.recover(.object(["contract": .string("vinetrack.occurrence-recovery"), "schemaVersion": .number(1),
+            "tripId": .string(scope.tripId), "vineyardId": .string(scope.vineyardId), "coverage": raw,
+            "isActive": .bool(true), "reversibleOperations": .array([]), "receipts": .array([])]))
+        XCTAssertTrue(try j.canOperate(XCTUnwrap(j.load()))); try j.setStatus(a, status: "done")
+        XCTAssertEqual(try status(j, a), "done"); XCTAssertEqual(try status(j, b), "incomplete")
+    }
+
+    @MainActor func testHeldLocalActivationCannotBeBypassed() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let j = try TripOccurrenceJournal(scope: scope, directory: dir)
+        try j.prepareCreation(trip: .object(["id": .string(scope.tripId), "vineyard_id": .string(scope.vineyardId), "is_active": .bool(false)]), coverage: fixture())
+        try j.activate(.object(["startTime": .string("2026-10-14T08:00:00Z")]))
+        let done = try j.setStatus(a, status: "done"); try j.hold("OCCURRENCE_REVISION_CONFLICT")
+        XCTAssertFalse(try j.canOperate(XCTUnwrap(j.load()))); XCTAssertNil(try j.undoTarget())
+        XCTAssertThrowsError(try j.undo(done.id)); XCTAssertThrowsError(try j.finalize(.object([:])))
+        XCTAssertEqual(try j.load()?.pending.last?.params, done.params)
+    }
+
+    @MainActor func testLegacyRowIdentityRemainsManualOnlyAcrossCacheEncoding() throws {
+        let raw = Data("{\"number\":38,\"decimalNumber\":38.25,\"startPoint\":{\"latitude\":-33.4,\"longitude\":149.1},\"endPoint\":{\"latitude\":-33.399,\"longitude\":149.1}}".utf8)
+        let row = try JSONDecoder().decode(PaddockRow.self, from: raw)
+        let reloaded = try JSONDecoder().decode(PaddockRow.self, from: JSONEncoder().encode(row))
+        XCTAssertEqual(row.id, reloaded.id); XCTAssertFalse(reloaded.hasStoredIdentity)
+        XCTAssertEqual(reloaded.calculationRowNumber, 38.25)
+        let candidate = TripOccurrencePlanner.Candidate(vineyardId: try XCTUnwrap(UUID(uuidString: scope.vineyardId)), blockId: UUID(), blockName: "X", label: 38.75, rows: [reloaded])
+        let coverage = try TripOccurrencePlanner.commit([candidate], vineyardId: candidate.vineyardId)
+        guard case .array(let items) = coverage[occurrence: "items"], let ref = items.first?[occurrence: "physicalPathRef"] else { return XCTFail("Reference missing") }
+        XCTAssertEqual(ref[occurrence: "rowIds"], .array([]))
+        XCTAssertEqual(ref[occurrence: "geometryRevision"], .string("unresolved"))
+        XCTAssertEqual(ref[occurrence: "candidateRowIds"], .array([.string(row.id.uuidString.lowercased())]))
     }
 
     @MainActor func testReplacementRetiresDoneEvidenceWithoutInheritance() throws {
@@ -208,7 +268,7 @@ final class TripOccurrenceJournalTests: XCTestCase {
         let create=try j.prepareCreation(trip:metadata,coverage:fixture()); XCTAssertEqual(create.params[occurrence:"p_trip"],metadata)
         XCTAssertThrowsError(try j.setStatus(a,status:"done")); XCTAssertEqual(try j.load()?.creationConfirmed,false)
         try j.acknowledge(ack(create)); let activation=try j.activate(.object(["startTime":.string("2026-10-14T08:00:00Z")]))
-        XCTAssertThrowsError(try j.setStatus(a,status:"done")); try j.acknowledge(ack(activation)); try j.setStatus(a,status:"done")
+        XCTAssertTrue(try j.canOperate(XCTUnwrap(j.load()))); try j.acknowledge(ack(activation)); try j.setStatus(a,status:"done")
         XCTAssertEqual(try status(j,a),"done")
     }
     @MainActor func testFinalisationFreezesExactReviewAndPendingOrder() throws {
