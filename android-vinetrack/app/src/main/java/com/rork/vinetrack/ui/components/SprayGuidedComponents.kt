@@ -400,11 +400,8 @@ fun GuidedCalculatedRow(
     emphasis: Boolean = false,
     caption: String? = null,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodySmall,

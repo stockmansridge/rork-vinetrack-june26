@@ -235,7 +235,8 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
             // rather than given five more interceptors. It also gives the
             // calibration map the extra height it needs. No other screen is
             // affected.
-            if (!MainSurface.hidesBottomNavigation(surface)) {
+            val dedicatedActiveTrip = surface is MainSurface.TripTab && surface.selectedTripId != null && surface.selectedTripId == state.activeTrip?.id
+            if (!MainSurface.hidesBottomNavigation(surface) && !dedicatedActiveTrip) {
                 NavigationBar {
                     MainTab.entries.forEach { entry ->
                         NavigationBarItem(

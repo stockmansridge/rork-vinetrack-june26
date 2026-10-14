@@ -9,3 +9,4 @@ migration/bun.lock
 **/__pycache__/
 master-backfill-*.json
 /.rork-tmp/
+.rork

@@ -31,7 +31,8 @@ app = root / 'android-vinetrack'
 command = [str(app / 'gradlew'), '-p', str(app), '--no-daemon',
            '-Dorg.gradle.jvmargs=-Xmx4096m -XX:+UseParallelGC',
            '-PoccurrenceFocusedTests=true', ':app:testDebugUnitTest',
-           '--tests', 'com.rork.vinetrack.data.TripOccurrenceJournalTest', '--console=plain']
+           '--tests', 'com.rork.vinetrack.data.TripOccurrenceJournalTest',
+           '--tests', 'com.rork.vinetrack.data.OccurrenceTraversalTrackerTest', '--console=plain']
 started = time.time()
 with (output / 'stdout.log').open('w') as stdout, (output / 'stderr.log').open('w') as stderr:
     result = subprocess.run(command, cwd=root, stdout=stdout, stderr=stderr, timeout=1500)

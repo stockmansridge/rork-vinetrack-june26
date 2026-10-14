@@ -165,16 +165,22 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
                 d.state(id!!)["lastOperationId"].textOrNull() == op.id
         }
     }
-    @Synchronized fun setStatus(id: String, status: String, tankSessionIds: List<String> = emptyList(), source: String = "manual"): Operation {
+    @Synchronized fun setStatus(id: String, status: String, tankSessionIds: List<String> = emptyList(), source: String = "manual", evidence: JsonObject? = null): Operation {
         require(status in listOf("incomplete", "done", "skipped"))
-        require(source in listOf("manual", "correction", "endReview")) // GPS intentionally not enabled.
+        require(source in listOf("manual", "correction", "endReview", "automatic"))
+        if (source == "automatic") require(status == "done" && evidence?.get("occurrenceId").textOrNull() == id)
+
         return append { d -> buildJsonObject {
+            if (source == "automatic") { require(d.status(id) == "incomplete"); put("evidence", requireNotNull(evidence)) }
             put("kind", "setStatus"); put("planId", d.planId); put("occurrenceId", id)
             put("blockId", d.items.single { it.id == id }.blockId)
             put("expectedBeforeState", d.state(id)); put("toStatus", status); put("source", source)
             put("tankSessionIds", JsonArray(tankSessionIds.map(::JsonPrimitive)))
         } }
     }
+    @Synchronized fun clearSelection(): Operation = append { d -> buildJsonObject {
+        put("kind", "clearSelection"); put("planId", d.planId)
+    } }
     @Synchronized fun select(id: String): Operation = append { d -> buildJsonObject {
         put("kind", "selectOccurrence"); put("planId", d.planId); put("occurrenceId", id)
         put("blockId", d.items.single { it.id == id }.blockId)
@@ -288,6 +294,7 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
                 states[id] = JsonObject(before)
             }
             "selectOccurrence" -> fields["selectedOccurrenceId"] = JsonPrimitive(id)
+            "clearSelection" -> fields["selectedOccurrenceId"] = JsonNull
             "editPlan" -> {
                 val items = action.getValue("items").jsonArray
                 d.raw.getValue("items").jsonArray.forEach { old ->

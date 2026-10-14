@@ -44,6 +44,15 @@ class TripOccurrencePersistenceAndroidTest {
             put("plannedCursorId",a); put("selectedOccurrenceId",JsonNull)
         }
     }
+    @Test fun tankActualDraftSurvivesStoreRecreationWithoutBecomingTankAuthority() {
+        val owner=UUID.randomUUID().toString();SessionStore(context).save("synthetic-access","synthetic-refresh",owner,null)
+        val vineyard=UUID.randomUUID().toString(); val trip=UUID.randomUUID().toString();val tank=UUID.randomUUID().toString()
+        val amounts=mapOf("water" to "485.5", "chemical-a" to "1.25")
+        assertTrue(TankMixDraftStore(context).save(owner,vineyard,trip,tank,amounts))
+        assertEquals(amounts,TankMixDraftStore(context).read(owner,vineyard,trip,tank))
+        assertTrue(TankMixDraftStore(context).read(owner,vineyard,UUID.randomUUID().toString(),tank).isEmpty())
+    }
+
     @Test fun plannerToProductionCreatePayloadAndActivationKeepsFourIDsOnDisk() {
         val owner = UUID.randomUUID().toString(); val session = SessionStore(context)
         session.save("synthetic-access", "synthetic-refresh", owner, null)

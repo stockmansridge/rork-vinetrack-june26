@@ -654,7 +654,7 @@ if (providers.gradleProperty("occurrenceFocusedTests").orNull == "true") {
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach { testLogging { events("passed", "failed", "skipped") } }
     afterEvaluate {
         tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugUnitTestKotlin") {
-            setSource(fileTree("src/test/java") { include("**/TripOccurrenceJournalTest.kt") })
+            setSource(fileTree("src/test/java") { include("**/TripOccurrenceJournalTest.kt", "**/OccurrenceTraversalTrackerTest.kt") })
         }
     }
 }

@@ -136,17 +136,24 @@ internal fun ConfirmActualTankMixDialog(
     tank: SprayTank,
     onDismiss: () -> Unit,
     onConfirm: (Double, Map<String, Double>) -> Boolean,
+    confirmLabel: String? = null,
+    initialDraft: Map<String, String> = emptyMap(),
+    onDraftChange: (Map<String, String>) -> Boolean = { true },
 ) {
     val formatter = remember { NumberFormat.getNumberInstance(Locale.getDefault()) }
     val currentRegion = com.rork.vinetrack.ui.LocalRegionFormatter.current
     val region = remember(tank.id) { currentRegion }
     val waterSeed = remember(tank.id) { formatter.format(region.volumeValue(tank.waterVolume)) }
-    var waterText by remember(tank.id) { mutableStateOf(waterSeed) }
+    var waterText by remember(tank.id) { mutableStateOf(initialDraft["water"] ?: waterSeed) }
     val chemicalTexts = remember(tank.id) { mutableStateMapOf<String, String>().apply {
-        tank.chemicals.forEach { put(it.id, formatter.format(chemicalUnitFromBase(it.unit, it.volumePerTank))) }
+        tank.chemicals.forEach { put(it.id, initialDraft[it.id] ?: formatter.format(chemicalUnitFromBase(it.unit, it.volumePerTank))) }
     } }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    fun saveDraft() {
+        if (!onDraftChange(chemicalTexts.toMap() + ("water" to waterText))) error = "Actual draft could not be retained on this device. Retry before leaving."
+        else error = null
+    }
     fun parse(value: String): Double? = parseLocalizedNonNegativeDecimal(value, formatter)
     val valid = parse(waterText) != null && tank.chemicals.all {
         parse(chemicalTexts[it.id].orEmpty()) != null
@@ -156,7 +163,7 @@ internal fun ConfirmActualTankMixDialog(
         title = { Text("Confirm Actual Tank Mix") },
         text = {
             val vine = LocalVineColors.current
-            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Water — Planned and Actual", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -164,12 +171,12 @@ internal fun ConfirmActualTankMixDialog(
                     color = vine.cardBackground,
                     tonalElevation = 1.dp,
                 ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Tank ${tank.tankNumber} of ${record.tanks.orEmpty().size}", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Tank ${tank.tankNumber} of ${record.tanks.orEmpty().size}", fontWeight = FontWeight.Bold, fontSize = 17.sp)
                         PlannedTankAmountRow(region.formatVolume(tank.waterVolume))
                         ActualTankAmountRow(
                             value = waterText,
-                            onValueChange = { waterText = it },
+                            onValueChange = { waterText = it; saveDraft() },
                             unit = region.volumeUnitAbbreviation,
                         )
                         actualPlannedDifference(parse(waterText), region.volumeValue(tank.waterVolume))?.let { difference ->
@@ -186,14 +193,14 @@ internal fun ConfirmActualTankMixDialog(
                         color = vine.cardBackground,
                         tonalElevation = 1.dp,
                     ) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(chemical.name.ifBlank { "Unnamed chemical" }, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                             PlannedTankAmountRow(
                                 "${tankMixNumber(chemicalUnitFromBase(chemical.unit, chemical.volumePerTank))} ${chemical.unit}"
                             )
                             ActualTankAmountRow(
                                 value = chemicalTexts[chemical.id].orEmpty(),
-                                onValueChange = { chemicalTexts[chemical.id] = it },
+                                onValueChange = { chemicalTexts[chemical.id] = it; saveDraft() },
                                 unit = chemical.unit,
                             )
                             actualPlannedDifference(
@@ -221,7 +228,7 @@ internal fun ConfirmActualTankMixDialog(
                 }
                 if (onConfirm(water, amounts)) onDismiss() else error = "The mix could not be saved locally. The tank was not started."
                 saving = false
-            }) { Text("Confirm & Start Tank ${tank.tankNumber}") }
+            }) { Text(confirmLabel ?: "Confirm & Start Tank ${tank.tankNumber}") }
         },
         dismissButton = { TextButton(enabled = !saving, onClick = onDismiss) { Text("Cancel") } },
     )
@@ -233,9 +240,8 @@ internal fun actualPlannedDifference(actual: Double?, planned: Double): Double? 
 @Composable
 private fun LiveDifferenceRow(difference: Double, unit: String) {
     val vine = LocalVineColors.current
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Text("Actual − Planned", fontSize = 12.sp, color = vine.textSecondary)
-        Spacer(Modifier.weight(1f))
         Text("${signedTankMixNumber(difference)} $unit", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
     }
 }
@@ -243,9 +249,8 @@ private fun LiveDifferenceRow(difference: Double, unit: String) {
 @Composable
 private fun PlannedTankAmountRow(value: String) {
     val vine = LocalVineColors.current
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("Planned", fontSize = 15.sp, color = vine.textPrimary)
-        Spacer(Modifier.weight(1f))
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text("Planned", fontSize = 13.sp, color = vine.textPrimary)
         Text(value, fontSize = 15.sp, color = vine.textSecondary)
     }
 }
@@ -257,17 +262,12 @@ private fun ActualTankAmountRow(
     unit: String,
 ) {
     val vine = LocalVineColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text("Actual", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = VineColors.Olive)
-        Spacer(Modifier.weight(1f))
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Actual ($unit)", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = VineColors.Olive)
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            modifier = Modifier.width(112.dp),
+            modifier = Modifier.fillMaxWidth(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
             singleLine = true,
             textStyle = androidx.compose.ui.text.TextStyle(
@@ -277,7 +277,6 @@ private fun ActualTankAmountRow(
                 color = vine.textPrimary,
             ),
         )
-        Text(unit, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
     }
 }
 

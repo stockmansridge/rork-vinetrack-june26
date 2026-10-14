@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
@@ -1005,7 +1007,22 @@ private fun TripDetailView(
     }
     val durationSeconds = if (trip.isActive) liveDurationSeconds(trip, nowMs) else (trip.activeDurationSeconds ?: 0L)
 
-    if (isDeviceTrip && showLiveHud) {
+    if (isDeviceTrip && vm.requiresFirstTankReview(trip)) {
+        // The recoverable job exists, but capture and the live map wait for Actuals.
+        var pending by remember(trip.id) { mutableStateOf<com.rork.vinetrack.ui.PendingTankStart?>(null) }
+        LaunchedEffect(trip.id, linkedSpray) { pending = vm.pendingTankStart(trip.id) }
+        Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("Ready to start", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text("Recording has not begun. Review Tank 1 Actual quantities, then press Start.")
+            Button(onClick = { pending = vm.pendingTankStart(trip.id) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Review Tank 1 Mix") }
+            OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back · keep pending start") }
+            state.tripError?.let { Text(it, fontSize = 12.sp) }
+        }
+        pending?.let { first -> ConfirmActualTankMixDialog(record = first.record, tank = first.tank,
+            onDismiss = { pending = null }, onConfirm = { water, chemicals -> vm.confirmAndStartTank(first, water, chemicals) },
+            confirmLabel = "Start recording", initialDraft = vm.tankMixDraft(trip.id, first.tank.id),
+            onDraftChange = { vm.saveTankMixDraft(trip.id, first.tank.id, it) }) }
+    } else if (isDeviceTrip && showLiveHud) {
         ActiveTripHud(
             vm = vm,
             state = state,
@@ -1871,7 +1888,7 @@ private fun ActiveTripHud(
     var followZoom by remember { mutableFloatStateOf(18f) }
     // Floating left/right row labels start hidden (iOS parity) — the map
     // stays clear by default and the SwapHoriz control brings them back.
-    var showRowChips by remember { mutableStateOf(false) }
+    var showRowChips by remember { mutableStateOf(true) }
     // iOS canShowRowSides parity: the side chips are gated on the device-local
     // "row tracking" preference in addition to the on-map toggle.
     val hudContext = LocalContext.current
@@ -1890,7 +1907,7 @@ private fun ActiveTripHud(
 
     val bearing = state.latestBearingDegrees
     val speedKmh = state.latestSpeedMetresPerSecond?.let { (it * 3.6).coerceAtLeast(0.0) }
-    val accuracy = state.latestAccuracyMetres
+    val accuracy = state.latestAccuracyMetres.takeIf { state.latestMovementObservedAtMs?.let { System.currentTimeMillis() - it in 0..10000 } == true }
 
     // Initial framing on first open.
     LaunchedEffect(Unit) {
@@ -1941,18 +1958,16 @@ private fun ActiveTripHud(
 
     val livePath = state.currentDrivingPathNumber ?: trip.currentRowNumber
     val plannedPath = trip.rowSequence.getOrNull(trip.sequenceIndex)
-    val nextPlanned = remember(trip.rowSequence, trip.sequenceIndex, plannedPath) {
-        val seq = trip.rowSequence
-        var idx = trip.sequenceIndex + 1
-        var result: Double? = null
-        while (idx < seq.size) {
-            val c = seq[idx]
-            val same = plannedPath?.let { kotlin.math.abs(it - c) < 0.01 } ?: false
-            if (!same) { result = c; break }
-            idx++
-        }
-        result
-    }
+    val occurrenceDocument = trip.occurrenceDocument
+    val targetItem = occurrenceDocument?.items?.singleOrNull { it.id == occurrenceDocument.targetId }
+    val guidancePath = targetItem?.label ?: plannedPath
+    val nextPlanned = if (occurrenceDocument != null) {
+        occurrenceDocument.order.firstOrNull { it != occurrenceDocument.targetId && occurrenceDocument.status(it) == "incomplete" }
+            ?.let { id -> occurrenceDocument.items.single { it.id == id }.label }
+    } else trip.rowSequence.getOrNull(trip.sequenceIndex + 1)
+    val estimatedSeconds = vm.estimatedRemainingSeconds(trip)
+    val eta = estimatedSeconds?.let { seconds -> if (seconds >= 3600) "${seconds / 3600}h ${(seconds % 3600) / 60}m" else "${if (seconds == 0L) 0 else maxOf(1, seconds / 60)}m" }
+        ?: if (occurrenceDocument == null || com.rork.vinetrack.data.OccurrenceTraversalTracker.paths(occurrenceDocument).isEmpty()) "Unavailable" else "Calculating"
     val offPlan = livePath != null && plannedPath != null &&
         kotlin.math.abs(livePath - plannedPath) >= 0.5 && !trip.isPaused
 
@@ -1995,35 +2010,13 @@ private fun ActiveTripHud(
             bearingFlipSamples = 0
         }
     }
-    val pathForLabels = livePath ?: plannedPath
-    val travelingAlongRow = run {
-        val locked = lockedTravelBearing
-        val rowDir = currentBlock?.rowDirection
-        if (locked == null || rowDir == null) {
-            true
-        } else {
-            var diff = locked - rowDir
-            while (diff < 0) diff += 360
-            while (diff >= 360) diff -= 360
-            diff < 90 || diff > 270
-        }
+    val physicalSides = occurrenceDocument?.takeIf {
+        state.rowLockIsConfident && state.currentTripPaddockId == targetItem?.blockId && livePath == targetItem?.label
+    }?.let { document ->
+        com.rork.vinetrack.data.OccurrenceTraversalTracker.adjacentLabels(document, document.targetId, cameraPositionState.position.bearing.toDouble())
     }
-    val maxSequenceRow = remember(trip.rowSequence) {
-        trip.rowSequence.maxOfOrNull { kotlin.math.ceil(it).toInt() }
-    }
-    fun sideLabel(row: Int): String = when {
-        row < 1 -> "Start"
-        maxSequenceRow != null && row > maxSequenceRow -> "End"
-        else -> "Row $row"
-    }
-    val leftRowLabel = pathForLabels?.let { p ->
-        val lower = kotlin.math.floor(p).toInt()
-        sideLabel(if (travelingAlongRow) lower + 1 else lower)
-    }
-    val rightRowLabel = pathForLabels?.let { p ->
-        val lower = kotlin.math.floor(p).toInt()
-        sideLabel(if (travelingAlongRow) lower else lower + 1)
-    }
+    val leftRowLabel = physicalSides?.first?.let { "Row ${formatPath(it)}" }
+    val rightRowLabel = physicalSides?.second?.let { "Row ${formatPath(it)}" }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         GoogleMap(
@@ -2146,11 +2139,24 @@ private fun ActiveTripHud(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                HudStat(Icons.Filled.Schedule, clockDuration(durationSeconds), "Time", Modifier.weight(1f))
-                HudStat(Icons.Filled.Straighten, formatter.formatShortDistance(trip.totalDistance ?: 0.0), "Distance", Modifier.weight(1f))
-                HudStat(Icons.Filled.Speed, speedKmh?.let { "%.0f".format(formatter.speedValue(it)) } ?: "\u2014", formatter.speedUnitAbbreviation, Modifier.weight(1f))
+                HudStat(Icons.Filled.Route, guidancePath?.let { formatPath(it) } ?: "—", "Current / action path", Modifier.weight(1f))
+                HudStat(Icons.Filled.Route, nextPlanned?.let { formatPath(it) } ?: "—", "Next untreated path", Modifier.weight(1f))
             }
-            HudGpsPill(accuracy)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                HudStat(Icons.Filled.Straighten, formatter.formatShortDistance(trip.totalDistance ?: 0.0), "Distance", Modifier.weight(1f))
+                HudStat(Icons.Filled.Schedule, clockDuration(durationSeconds), "Duration", Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(speedKmh?.let { "${"%.1f".format(formatter.speedValue(it))} ${formatter.speedUnitAbbreviation}" } ?: "Speed —", color = Color.White, fontSize = 12.sp)
+                HudGpsPill(accuracy)
+            }
+            Text("Est. remaining: $eta", color = Color.White, fontSize = 13.sp)
+            if (trip.rowSequence.isNotEmpty()) {
+                Text("${TrackingPattern.fromRaw(trip.trackingPattern).title} · Position ${if (trip.sequenceIndex < trip.rowSequence.size) trip.sequenceIndex + 1 else trip.rowSequence.size} of ${trip.rowSequence.size}", color = Color.White, fontSize = 12.sp)
+                Surface(color = vine.cardBackground.copy(alpha = 0.95f), shape = RoundedCornerShape(8.dp)) {
+                    Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) { TripRowPlanProgress(trip) }
+                }
+            }
             // Repairs / Growth quick-pin actions (iOS tripInfoBar parity).
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 HudActionPill(Icons.Filled.Place, "Repairs", VineColors.Orange, Modifier.weight(1f)) { onHudLauncherModeChange("Repairs") }
@@ -2234,7 +2240,7 @@ private fun ActiveTripHud(
                 ) {
                     Icon(Icons.Outlined.ErrorOutline, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Text(
-                        "Off planned path \u2014 head to ${formatPath(plannedPath)}",
+                        "GPS detects ${livePath?.let { formatPath(it) }} · planned ${formatPath(plannedPath)}. Confirm your path below.",
                         color = Color.White,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -2249,23 +2255,17 @@ private fun ActiveTripHud(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 340.dp)
+                        .heightIn(max = 420.dp)
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                         .navigationBarsPadding(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     if (trip.rowSequence.isNotEmpty() || livePath != null) {
-                        RowGuidanceBar(
-                            livePath = livePath,
-                            plannedPath = plannedPath,
-                            nextPath = nextPlanned,
-                            lockConfident = state.rowLockIsConfident,
-                        )
+                        Text("GPS ${livePath?.let { formatPath(it) } ?: "searching"} · Planned ${plannedPath?.let { formatPath(it) } ?: "—"} · Action ${guidancePath?.let { formatPath(it) } ?: "—"}", fontSize = 12.sp)
                     }
-                    OutlinedButton(onClick = onChangeRoute, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Filled.Route, contentDescription = null)
-                        Text("  Change Route")
+                    if (panelExpanded) OutlinedButton(onClick = onChangeRoute, modifier = Modifier.fillMaxWidth()) {
+                        Text("Change route")
                     }
                     if (trip.isPaused && trip.trackingPattern == "freeDrive") {
                         OutlinedButton(onClick = onAddBlocks, modifier = Modifier.fillMaxWidth()) {
@@ -2316,7 +2316,10 @@ private fun ActiveTripHud(
                             }
                         }
                     }
-                    if (panelExpanded && !trip.isPaused) {
+                    if (trip.isPaused && isSprayTrip) {
+                        Text(trip.activeTankNumber?.let { "Tank $it · paused" } ?: "No active tank · paused", fontSize = 13.sp)
+                    }
+                    if (!trip.isPaused) {
                         if (trip.rowSequence.isNotEmpty()) {
                             Divider(vine.cardBorder)
                             RowCoverageControls(vm = vm, trip = trip, busy = state.tripBusy)
@@ -2603,6 +2606,7 @@ private fun ActiveTripControls(
  * left, compact Fill and Start/End Tank buttons on the right. Mirrors the
  * one-line iOS tank bar so the map keeps the reclaimed height.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: SprayRecord?, busy: Boolean) {
     val vine = LocalVineColors.current
@@ -2636,11 +2640,13 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
             when {
                 presentation.activeTankNumber != null -> {
                     val tank = presentation.tanks.first { it.tankNumber == presentation.activeTankNumber }
-                    "Active tank: Tank ${tank.tankNumber} of ${presentation.tanks.size} • ${tankMixNumber(tank.waterVolume)} L"
+                    "Tank ${tank.tankNumber} of ${presentation.tanks.size} · " +
+                        (vm.actualTankUse(trip.id, tank.tankNumber)?.waterVolumeL?.let { "Confirmed Actual ${tankMixNumber(it)} L" }
+                            ?: "Planned ${tankMixNumber(tank.waterVolume)} L · Actual unavailable")
                 }
                 presentation.nextTankNumber != null -> {
                     val tank = presentation.tanks.first { it.tankNumber == presentation.nextTankNumber }
-                    "Next: Tank ${tank.tankNumber} of ${presentation.tanks.size} • ${tankMixNumber(tank.waterVolume)} L"
+                    "Next: Tank ${tank.tankNumber} of ${presentation.tanks.size} · Planned ${tankMixNumber(tank.waterVolume)} L"
                 }
                 presentation.isAvailable -> "Finished: ${presentation.completedTankNumbers.size} of ${presentation.tanks.size} tanks complete"
                 totalTanks > 0 -> "Tank mix details unavailable on this device."
@@ -2653,13 +2659,10 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
         }
     }
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(
             modifier = Modifier
-                .weight(1f)
+                .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
                 .clickable {
                     interaction.tapStatus { showTankMix = true }
@@ -2675,11 +2678,12 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = if (active != null || isFilling) VineColors.Cyan else vine.textSecondary,
-                maxLines = 1,
+                maxLines = 2,
                 modifier = Modifier.weight(1f),
             )
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(18.dp))
+            Text("Mix", color = VineColors.Cyan, fontSize = 13.sp)
         }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // Optional fill timer (device-local setting). Mirrors iOS: filling a
         // tank happens between tanks, so Start Fill is offered only when no
         // tank is active. Stop Fill is always available while filling.
@@ -2688,7 +2692,7 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
                 OutlinedButton(
                     onClick = { vm.stopFillTimer(trip.id) },
                     enabled = !busy,
-                    modifier = Modifier.height(36.dp),
+                    modifier = Modifier.heightIn(min = 48.dp),
                     contentPadding = PaddingValues(horizontal = 10.dp),
                 ) {
                     Icon(Icons.Filled.Stop, contentDescription = null, modifier = Modifier.size(16.dp), tint = VineColors.Cyan)
@@ -2698,7 +2702,7 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
                 OutlinedButton(
                     onClick = { vm.startFillTimer(trip.id) },
                     enabled = !busy,
-                    modifier = Modifier.height(36.dp),
+                    modifier = Modifier.heightIn(min = 48.dp),
                     contentPadding = PaddingValues(horizontal = 10.dp),
                 ) {
                     Icon(Icons.Filled.Timer, contentDescription = null, modifier = Modifier.size(16.dp), tint = VineColors.Cyan)
@@ -2710,7 +2714,7 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
             Button(
                 onClick = { interaction = interaction.tapEnd() },
                 enabled = !busy,
-                modifier = Modifier.height(36.dp),
+                modifier = Modifier.heightIn(min = 48.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.Orange),
             ) {
@@ -2724,13 +2728,14 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
                     if (pendingTankStart == null) showNoMixConfirmation = true
                 } },
                 enabled = !busy,
-                modifier = Modifier.height(36.dp),
+                modifier = Modifier.heightIn(min = 48.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.Cyan),
             ) {
                 Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                Text(" Start tank", fontSize = 12.sp)
+                Text("Review & Start Tank", fontSize = 13.sp, maxLines = 1)
             }
+        }
         }
     }
 
@@ -2764,6 +2769,8 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
             tank = pending.tank,
             onDismiss = { pendingTankStart = null },
             onConfirm = { water, chemicals -> vm.confirmAndStartTank(pending, water, chemicals) },
+            initialDraft = vm.tankMixDraft(trip.id, pending.tank.id),
+            onDraftChange = { vm.saveTankMixDraft(trip.id, pending.tank.id, it) },
         )
     }
     if (showNoMixConfirmation) {
@@ -2793,25 +2800,60 @@ private fun RowCoverageControls(vm: AppViewModel, trip: Trip, busy: Boolean) {
         val target = document?.items?.firstOrNull { it.id == document.targetId }
         val undo = vm.occurrenceUndoTarget(trip.id)
         val activationMessage = vm.occurrenceActivationMessage(trip)
-        val ready = vm.canOperateOccurrences(trip)
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            activationMessage?.let { Text(it) }
-            if (document == null) Text(trip.coverageMessage ?: "Occurrence coverage is unavailable. Update required.")
+        val ready = vm.canOperateOccurrences(trip) && !trip.isPaused
+        var choosing by remember(trip.id) { mutableStateOf(false) }
+        var confirmation by remember(trip.id) { mutableStateOf<Pair<com.rork.vinetrack.data.model.TripOccurrenceCoverage.Item, String>?>(null) }
+        var undoConfirmation by remember(trip.id) { mutableStateOf<Pair<String, com.rork.vinetrack.data.model.TripOccurrenceCoverage.Item>?>(null) }
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (activationMessage != "Server-confirmed active") activationMessage?.let { Text(it, fontSize = 12.sp) }
+            if (document == null) Text(trip.coverageMessage ?: "Occurrence coverage unavailable. Update required.")
             else {
-                OccurrenceTripRows(trip, onSelect = { vm.selectTripOccurrence(trip.id, it) })
+                val manual = (document.raw["selectedOccurrenceId"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeUnless { it == "null" } != null
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { choosing = true }, enabled = ready, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                        Text("I'm on this path", maxLines = 2)
+                    }
+                    if (manual) TextButton(onClick = { vm.returnTripToAuto(trip.id) }, enabled = ready,
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp)) { Text("Return to Auto", maxLines = 2) }
+                }
                 target?.let { item ->
-                    Text("Acting on ${item.blockName} · ${TripRowSequencePlanner.formatPath(item.label)} · Pass ${item.pass}")
+                    Text("${item.blockName} · Path ${formatPath(item.label)} · Pass ${item.pass}", fontSize = 12.sp)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { vm.markTripOccurrence(trip.id, item.id, "done") }, enabled = !busy && ready) { Text("Done this pass") }
-                        OutlinedButton(onClick = { vm.markTripOccurrence(trip.id, item.id, "skipped") }, enabled = !busy && ready) { Text("Skip this pass") }
+                        Button(onClick = { confirmation = item to "done" }, enabled = !busy && ready,
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Text("Done ${formatPath(item.label)}", maxLines = 1)
+                        }
+                        OutlinedButton(onClick = { confirmation = item to "skipped" }, enabled = !busy && ready,
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Text("Skip ${formatPath(item.label)}", maxLines = 1)
+                        }
                     }
                 }
-                undo?.let { (operationId, item) ->
-                    OutlinedButton(onClick = { vm.undoTripOccurrence(trip.id, operationId) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                        Text("Undo ${item.blockName} · ${TripRowSequencePlanner.formatPath(item.label)} · Pass ${item.pass}")
+                undo?.let { frozen ->
+                    OutlinedButton(onClick = { undoConfirmation = frozen }, enabled = !busy && ready,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                        Text("Undo ${formatPath(frozen.second.label)} · Pass ${frozen.second.pass}", maxLines = 1)
                     }
                 }
+                if (manual) Text("Manual guidance retained", fontSize = 11.sp)
             }
+        }
+        if (choosing) AlertDialog(onDismissRequest = { choosing = false }, title = { Text("I'm on this path") },
+            text = { Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
+                Text("Select guidance only. No work is marked Done or Skip.", fontSize = 12.sp)
+                OccurrenceTripRows(trip, onSelect = { vm.selectTripOccurrence(trip.id, it); choosing = false })
+            } }, confirmButton = { TextButton(onClick = { choosing = false }) { Text("Close") } })
+        confirmation?.let { (item, status) ->
+            AlertDialog(onDismissRequest = { confirmation = null }, title = { Text("${if (status == "done") "Done" else "Skip"} ${formatPath(item.label)}?") },
+                text = { Text("${item.blockName} · Pass ${item.pass}\nOnly this occurrence will change.") },
+                confirmButton = { TextButton(enabled = ready && !busy, onClick = { vm.markTripOccurrence(trip.id, item.id, status); confirmation = null }) { Text("Confirm") } },
+                dismissButton = { TextButton(onClick = { confirmation = null }) { Text("Cancel") } })
+        }
+        undoConfirmation?.let { (operation, item) ->
+            AlertDialog(onDismissRequest = { undoConfirmation = null }, title = { Text("Undo ${formatPath(item.label)}?") },
+                text = { Text("Restore the actual previous action state for ${item.blockName} · Pass ${item.pass}.") },
+                confirmButton = { TextButton(enabled = ready && !busy, onClick = { vm.undoTripOccurrence(trip.id, operation); undoConfirmation = null }) { Text("Undo") } },
+                dismissButton = { TextButton(onClick = { undoConfirmation = null }) { Text("Cancel") } })
         }
         return
     }
@@ -2839,7 +2881,7 @@ private fun RowCoverageControls(vm: AppViewModel, trip: Trip, busy: Boolean) {
                 )
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (!sequenceComplete) {
                 Button(
                     onClick = { vm.markCurrentPathComplete(trip.id) },
@@ -2848,7 +2890,7 @@ private fun RowCoverageControls(vm: AppViewModel, trip: Trip, busy: Boolean) {
                     colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
                 ) {
                     Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text("  Done row")
+                    Text("Done ${currentPath?.let { formatPath(it) } ?: "path"}", maxLines = 1)
                 }
                 OutlinedButton(
                     onClick = { vm.skipCurrentPath(trip.id) },
@@ -2863,7 +2905,8 @@ private fun RowCoverageControls(vm: AppViewModel, trip: Trip, busy: Boolean) {
                 OutlinedButton(
                     onClick = { vm.undoLastRowAction(trip.id) },
                     enabled = !busy,
-                    modifier = if (sequenceComplete) Modifier.fillMaxWidth() else Modifier.weight(1f),
+                    modifier = if (sequenceComplete) Modifier.fillMaxWidth().heightIn(min = 48.dp) else Modifier.weight(1f).heightIn(min = 48.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp),
                 ) {
                     Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = null, modifier = Modifier.size(18.dp))
                     Text("  Undo")
@@ -2884,7 +2927,7 @@ private fun TripRowPlanProgress(trip: Trip) {
         val d = trip.occurrenceDocument
         if (d == null) Text(trip.coverageMessage ?: "Update required. Coverage unavailable.")
         else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("${d.count("done")} done · ${d.count("skipped")} skipped · ${d.count("incomplete")} incomplete")
+            Text("${d.count("done")} done · ${d.count("skipped")} skipped · ${d.count("incomplete")} incomplete", fontSize = 12.sp)
             LinearProgressIndicator(progress = { if (d.order.isEmpty()) 0f else d.count("done").toFloat() / d.order.size }, modifier = Modifier.fillMaxWidth())
         }
         return
@@ -3992,13 +4035,13 @@ private fun StartTripPatternCard(pattern: TrackingPattern, selected: Boolean, on
                 RoundedCornerShape(12.dp),
             )
             .clickable(onClick = onClick)
-            .padding(14.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp).heightIn(min = 48.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Box(
             modifier = Modifier
-                .size(44.dp)
+                .size(32.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background((if (selected) accent else vine.textSecondary).copy(alpha = 0.15f)),
             contentAlignment = Alignment.Center,

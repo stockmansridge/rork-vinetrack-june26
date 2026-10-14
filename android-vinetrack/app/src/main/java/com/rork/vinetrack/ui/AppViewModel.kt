@@ -8823,6 +8823,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun setTripPaused(tripId: String, paused: Boolean) {
         if (_ui.value.activeTrip?.id != tripId) return
+        occurrenceTraversal.reset(System.currentTimeMillis())
         val nowIso = java.time.Instant.now().toString()
         _ui.update { st ->
             st.copy(
@@ -8844,6 +8845,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         persistActiveTripSnapshot()
         val trip = _ui.value.trips.firstOrNull { it.id == tripId } ?: return
+        if (!paused && !_ui.value.isTracking && !requiresFirstTankReview(trip)) beginTracking(trip)
         // Stage B-1: when offline, queue the pause/resume as a scalar edit so it
         // isn't silently lost (the online saveProgress below would throw and be
         // swallowed). Active server trips only; no network call when offline.
@@ -9481,7 +9483,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Whether foreground location permission is currently granted. */
     fun hasLocationPermission(): Boolean = LocationTracker(getApplication()).hasPermission
 
+    private val occurrenceTraversal = com.rork.vinetrack.data.OccurrenceTraversalTracker()
+
+    fun estimatedRemainingSeconds(trip: Trip): Long? = trip.occurrenceDocument?.let {
+        occurrenceTraversal.remainingSeconds(it, System.currentTimeMillis())
+    }
+
     private fun beginTracking(trip: Trip) {
+        // The existing tank commit is the final recording boundary, including recovered starts.
+        if (requiresFirstTankReview(trip)) {
+            _ui.update { it.copy(isTracking = false, tripError = "Review Tank 1 Actuals, then Start. Recording has not begun.") }
+            return
+        }
+        occurrenceTraversal.resetSession()
         if (trip.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY) {
             val admitted = runCatching {
                 val d = TripOccurrenceCoverage.requireDocument(requireNotNull(trip.occurrenceCoverage))
@@ -9536,7 +9550,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { st ->
                 st.copy(trips = st.trips.map { if (it.id == trip.id) it.copy(pathPoints = points, totalDistance = distance) else it })
             }
-            if (_ui.value.selectedVineyardId == trip.vineyardId) updateRowLockState(trip.id, sample)
+            if (_ui.value.selectedVineyardId == trip.vineyardId) {
+                updateRowLockState(trip.id, sample)
+                updateOccurrenceTraversal(trip.id, sample)
+            }
             maybeAutosave(trip.id, points, distance)
             maybeAutosaveLocal()
             }
@@ -9590,6 +9607,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 rowLockIsConfident = rowLockTracker.isConfident,
             )
         }
+    }
+
+    private fun updateOccurrenceTraversal(tripId: String, sample: LocationTracker.MovementSample?) {
+        val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return
+        val document = trip.occurrenceDocument ?: return
+        if (sample == null || trip.isPaused || !_ui.value.isTracking || !canOperateOccurrences(trip)) { occurrenceTraversal.reset(System.currentTimeMillis()); return }
+        val now = System.currentTimeMillis()
+        val fix = com.rork.vinetrack.data.OccurrenceTraversalTracker.Fix(sample.latitude, sample.longitude, sample.accuracyMetres, sample.timestampMs)
+        occurrenceTraversal.recordSpeed(sample.timestampMs, sample.speedMetresPerSecond, sample.accuracyMetres, now)
+        val selected = (document.raw["selectedOccurrenceId"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeUnless { it == "null" }
+        if (selected != null && occurrenceTraversal.departed(document, selected, fix, now)) {
+            returnTripToAuto(tripId); return
+        }
+        val sprayWork = trip.tripFunction == "spraying" || (trip.totalTanks ?: 0) > 0
+        val evidence = occurrenceTraversal.observe(document, fix, now,
+            operational = !sprayWork || (trip.activeTankNumber != null && !trip.isFillingTank)) ?: return
+        val id = (evidence["occurrenceId"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return
+        applyOccurrenceAction(trip) { journal -> journal.setStatus(id, "done",
+            trip.tankSessions.filter { it.endTime == null && it.startTime != null }.map { it.id }, "automatic", evidence) }
     }
 
     /** Replan the remaining route without ending or restarting GPS capture. */
@@ -9658,6 +9694,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Reset live movement + row-lock state when tracking stops. */
     private fun clearRowLockState() {
+        occurrenceTraversal.reset(System.currentTimeMillis())
         rowLockTracker.reset()
         _ui.update {
             it.copy(
@@ -12106,6 +12143,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Explicit pass selection changes guidance only, never coverage. */
+    fun returnTripToAuto(tripId: String) {
+        val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return
+        applyOccurrenceAction(trip) { it.clearSelection() }
+    }
+
     fun selectTripOccurrence(tripId: String, occurrenceId: String) {
         val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return
         applyOccurrenceAction(trip) { it.select(occurrenceId) }
@@ -12186,6 +12228,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             check(_ui.value.activeTrip?.id == trip.id && trip.id !in _ui.value.locallyEndedTripIds)
             val journal = occurrenceJournal(trip)
             action(journal)
+            occurrenceTraversal.reset(System.currentTimeMillis())
             val state = journal.load() ?: error("Occurrence journal unavailable.")
             val projected = trip.withOccurrenceProjection(journal.projected(state))
             _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) projected else it },
@@ -12232,7 +12275,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     val dependencies = pendingWrites.list().any { write ->
                         write.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved && write.clientId == trip.id &&
                         (write.entityType in setOf(com.rork.vinetrack.data.model.PendingEntityType.TRIP_START,
-                            com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK) ||
+                            com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK,
+                            com.rork.vinetrack.data.model.PendingEntityType.TRIP_METADATA) ||
                             (operation.rpc == "finalize_trip_occurrences_v1" && write.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS))
                     } || sprayTankActualStore.pending(trip.id).isNotEmpty()
                     if (dependencies && operation.rpc !in listOf("create_trip_with_occurrences_v1", "activate_trip_occurrences_v1")) return@launch
@@ -12346,6 +12390,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return repaired
     }
 
+    private val tankMixDrafts = com.rork.vinetrack.data.TankMixDraftStore(getApplication())
+    fun tankMixDraft(tripId: String, tankId: String): Map<String,String> = runCatching {
+        val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return@runCatching emptyMap()
+        tankMixDrafts.read(session.userId ?: return@runCatching emptyMap(),trip.vineyardId,trip.id,tankId)
+    }.getOrDefault(emptyMap())
+    fun saveTankMixDraft(tripId: String, tankId: String, text: Map<String,String>): Boolean = runCatching {
+        val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return@runCatching false
+        tankMixDrafts.save(session.userId ?: return@runCatching false,trip.vineyardId,trip.id,tankId,text)
+    }.getOrDefault(false)
+
     /** Returns the exact next planned tank selected by the production lifecycle. */
     fun pendingTankStart(tripId: String): PendingTankStart? {
         val trip = reconciledTankTripForStart(tripId) ?: return null
@@ -12456,7 +12510,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
+    fun requiresFirstTankReview(trip: Trip): Boolean = TankSessionLifecycle.requiresFirstReview(trip)
+
     private fun syncCommittedTankTrip(committedTrip: Trip) {
+        occurrenceTraversal.reset(System.currentTimeMillis())
+        if (!_ui.value.isTracking && !committedTrip.isPaused) beginTracking(committedTrip)
         // The recoverable commit already queued TRIP_TANK. Never launch a competing
         // whole-array PATCH: an earlier Start response could overwrite End Tank.
         if (_ui.value.isOnline) replayAllPendingWrites()
@@ -12479,6 +12537,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             trip.currentRowNumber ?: trip.rowSequence.getOrNull(trip.sequenceIndex), null
         ) ?: return
         persistTankSessions(tripId, result.trip.tankSessions, result.trip.activeTankNumber, result.trip.isFillingTank, result.trip.fillingTankNumber)
+        _ui.value.activeTrip?.takeIf { it.id == tripId && it.activeTankNumber == result.tankNumber && !it.isPaused }?.let {
+            if (!_ui.value.isTracking) beginTracking(it)
+        }
     }
 
     /** End only the session identified by the active tank number. */
@@ -12596,6 +12657,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         // Optimistic local update only after the complete transition is durable.
+        occurrenceTraversal.reset(System.currentTimeMillis())
         _ui.update { st ->
             st.copy(
                 trips = st.trips.map {

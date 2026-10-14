@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -1850,17 +1851,17 @@ fun SprayCalculatorScreen(
                         }
                         if (planningMethod == SprayPlanningMethod.BY_AREA) {
                         Text("Spray at the recommended volume?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             val choices = listOf(
                                 SprayVolumeChoice.USE_RECOMMENDED to "Use recommended rate",
                                 SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE to "Set my own rate",
                             )
-                            choices.forEachIndexed { index, (choice, label) ->
-                                SegmentedButton(
-                                    selected = sprayVolumeChoice == choice,
+                            choices.forEach { (choice, label) ->
+                                OutlinedButton(
                                     onClick = { sprayVolumeChoice = choice; result = null },
-                                    shape = SegmentedButtonDefaults.itemShape(index, choices.size),
-                                ) { Text(label, fontSize = 12.sp, textAlign = TextAlign.Center) }
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                ) { Text("${if (sprayVolumeChoice == choice) "✓ " else ""}$label", fontSize = 14.sp, maxLines = 2, textAlign = TextAlign.Center) }
                             }
                         }
                         if (sprayVolumeChoice == SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE) {

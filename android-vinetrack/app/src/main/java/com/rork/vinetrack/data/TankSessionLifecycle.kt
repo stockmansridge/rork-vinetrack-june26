@@ -12,6 +12,11 @@ data class TankStartResult(
 
 /** Deterministic production transitions for operator-driven tank spraying. */
 object TankSessionLifecycle {
+    /** Fill timestamps alone never admit the first recording start. Existing started/ended sessions stay compatible. */
+    fun requiresFirstReview(trip: Trip): Boolean =
+        (trip.tripFunction == "spraying" || (trip.totalTanks ?: 0) > 0) && trip.activeTankNumber == null &&
+            trip.tankSessions.none { it.endTime != null || (it.startTime != null && isOpenSpray(it)) }
+
     fun start(
         trip: Trip,
         timestamp: String,

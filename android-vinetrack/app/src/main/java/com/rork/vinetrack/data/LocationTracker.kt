@@ -106,9 +106,11 @@ class LocationTracker(context: Context) : PinFixSnapshotSource {
         distanceMetres = pathLength(points)
         latestSample = null
 
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 4000L)
-            .setMinUpdateIntervalMillis(2000L)
-            .setMinUpdateDistanceMeters(3f)
+        // Foreground field capture needs independent observations even on short aisles.
+        // Completion still requires ordered movement and duration; requesting a fix is not evidence.
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
+            .setMinUpdateIntervalMillis(1000L)
+            .setMinUpdateDistanceMeters(0.5f)
             .build()
 
         val cb = object : LocationCallback() {
