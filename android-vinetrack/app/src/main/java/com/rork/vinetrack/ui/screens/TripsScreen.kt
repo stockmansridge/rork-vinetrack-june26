@@ -2788,6 +2788,30 @@ private fun TankSessionControls(vm: AppViewModel, trip: Trip, linkedSpray: Spray
  */
 @Composable
 private fun RowCoverageControls(vm: AppViewModel, trip: Trip, busy: Boolean) {
+    if (trip.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY) {
+        val document = trip.occurrenceDocument
+        val target = document?.items?.firstOrNull { it.id == document.targetId }
+        val undo = vm.occurrenceUndoTarget(trip.id)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (document == null) Text(trip.coverageMessage ?: "Occurrence coverage is unavailable. Update required.")
+            else {
+                OccurrenceTripRows(trip, onSelect = { vm.selectTripOccurrence(trip.id, it) })
+                target?.let { item ->
+                    Text("Acting on ${item.blockName} · ${TripRowSequencePlanner.formatPath(item.label)} · Pass ${item.pass}")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { vm.markTripOccurrence(trip.id, item.id, "done") }, enabled = !busy) { Text("Done this pass") }
+                        OutlinedButton(onClick = { vm.markTripOccurrence(trip.id, item.id, "skipped") }, enabled = !busy) { Text("Skip this pass") }
+                    }
+                }
+                undo?.let { (operationId, item) ->
+                    OutlinedButton(onClick = { vm.undoTripOccurrence(trip.id, operationId) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                        Text("Undo ${item.blockName} · ${TripRowSequencePlanner.formatPath(item.label)} · Pass ${item.pass}")
+                    }
+                }
+            }
+        }
+        return
+    }
     val vine = LocalVineColors.current
     val total = trip.rowSequence.size
     val index = trip.sequenceIndex
@@ -2853,6 +2877,15 @@ private fun RowCoverageControls(vm: AppViewModel, trip: Trip, busy: Boolean) {
  */
 @Composable
 private fun TripRowPlanProgress(trip: Trip) {
+    if (trip.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY) {
+        val d = trip.occurrenceDocument
+        if (d == null) Text(trip.coverageMessage ?: "Update required. Coverage unavailable.")
+        else Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("${d.count("done")} done · ${d.count("skipped")} skipped · ${d.count("incomplete")} incomplete")
+            LinearProgressIndicator(progress = { if (d.order.isEmpty()) 0f else d.count("done").toFloat() / d.order.size }, modifier = Modifier.fillMaxWidth())
+        }
+        return
+    }
     val vine = LocalVineColors.current
     val total = trip.rowSequence.size
     if (total == 0) return
@@ -2891,6 +2924,10 @@ private fun TripRowPlanProgress(trip: Trip) {
  */
 @Composable
 private fun TripRowPlanSummaryCard(trip: Trip) {
+    if (trip.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY) {
+        VineyardCard { OccurrenceTripRows(trip) }
+        return
+    }
     val vine = LocalVineColors.current
     val total = trip.rowSequence.size
     if (total == 0) return
@@ -2922,6 +2959,23 @@ private fun TripRowPlanSummaryCard(trip: Trip) {
         if (skipped > 0) {
             Divider(vine.cardBorder)
             DetailRow(Icons.Filled.Route, "Paths skipped", skipped.toString(), VineColors.Orange)
+        }
+    }
+}
+
+@Composable
+private fun OccurrenceTripRows(trip: Trip, modifier: Modifier = Modifier, onSelect: ((String) -> Unit)? = null) {
+    val d = trip.occurrenceDocument
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (d == null) Text(trip.coverageMessage ?: "Update required. Coverage unavailable.")
+        else {
+            Text("${d.count("done")} done · ${d.count("skipped")} skipped · ${d.count("incomplete")} incomplete")
+            d.order.forEach { id ->
+                val item = d.items.single { it.id == id }
+                val label = "${item.blockName} · ${TripRowSequencePlanner.formatPath(item.label)} · Pass ${item.pass} — ${d.status(id)}"
+                if (onSelect == null) Text(label)
+                else OutlinedButton(onClick = { onSelect(id) }, modifier = Modifier.fillMaxWidth()) { Text(label) }
+            }
         }
     }
 }
@@ -4633,7 +4687,10 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
                 Text("End trip", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
                 Text("Add any completion notes before finishing.", fontSize = 13.sp, color = vine.textSecondary)
 
-                if (hasRowPlan) {
+                if (trip.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY) {
+                    OccurrenceTripRows(trip)
+                    Text("Occurrence finalisation is not yet enabled. Numeric review cannot change these independent passes.")
+                } else if (hasRowPlan) {
                     EndTripRowReview(
                         sequence = sequence,
                         completedSet = completedSet,

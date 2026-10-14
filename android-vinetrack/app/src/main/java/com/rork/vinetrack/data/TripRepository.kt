@@ -720,6 +720,27 @@ class TripRepository(private val session: SessionStore) {
         return firstRow(response)
     }
 
+    /** Exact persisted request; uncertain retries must reuse it unchanged. */
+    suspend fun applyOccurrenceOperation(params: JsonObject): JsonObject = withContext(Dispatchers.IO) {
+        requireConfig()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.post(SupabaseClient.restUrl("rpc/apply_trip_occurrence_action_v1")) {
+            authHeaders(token)
+            contentType(ContentType.Application.Json)
+            setBody(params)
+        }
+        if (!response.status.isSuccess()) {
+            val body = response.bodyAsText()
+            val code = Regex("OCCURRENCE_[A-Z_]+").find(body)?.value
+            if (code != null) throw OccurrenceRejected(code)
+            if (response.status.value == 401) throw BackendError.Unauthorized
+            throw BackendError.Server(response.status.value, "Occurrence sync is unavailable. Saved work is retained.")
+        }
+        response.body<JsonObject>()
+    }
+
+    class OccurrenceRejected(val code: String) : Exception("Occurrence sync needs review ($code). Saved work is retained.")
+
     private suspend fun firstRow(response: io.ktor.client.statement.HttpResponse): Trip = when {
         response.status.isSuccess() -> response.body<List<Trip>>().firstOrNull()
             ?: throw BackendError.Server(response.status.value, "Empty response")

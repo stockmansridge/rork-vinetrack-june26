@@ -272,7 +272,13 @@ final class TripTrackingService {
 
     var activeTrip: Trip? {
         guard let store, store.isDeviceTripOwner, let id = store.deviceActiveTripId else { return nil }
-        return store.trips.first { $0.id == id && $0.isActive && $0.vineyardId == store.selectedVineyardId }
+        guard let trip = store.trips.first(where: { $0.id == id && $0.isActive && $0.vineyardId == store.selectedVineyardId }) else { return nil }
+        guard trip.coverageBasis == .occurrence else { return trip }
+        do {
+            let journal = try occurrenceJournal(for: trip)
+            guard let state = try journal.load() else { return trip }
+            return try trip.withOccurrenceProjection(state.projected)
+        } catch { errorMessage = error.localizedDescription; return trip }
     }
 
     // MARK: - Start
@@ -501,6 +507,7 @@ final class TripTrackingService {
     /// route points and operational records remain on the same trip.
     func changeActiveRoute(pattern: TrackingPattern, startPath: Double, higherFirst: Bool) throws {
         guard let store, var trip = activeTrip else { throw TripEndPersistenceError.tripUnavailable }
+        guard trip.coverageBasis == .legacy else { throw TripOccurrenceCoverage.Failure.reconciliation }
         let ids = Set(trip.paddockIds + (trip.paddockId.map { [$0] } ?? []))
         let paddocks = store.paddocks.filter { ids.contains($0.id) }
         let paths = TripRowSequencePlanner.availablePaths(in: paddocks)
@@ -604,6 +611,11 @@ final class TripTrackingService {
     @discardableResult
     func endTrip() -> TripEndOutcome {
         guard let current = activeTrip else { return .noActiveTrip }
+        guard current.coverageBasis == .legacy else {
+            let message = "Occurrence End Review is not yet enabled. Saved pass states are retained; numeric finalisation was not applied."
+            errorMessage = message
+            return .persistenceFailed(message)
+        }
         let gateTrip = TankSessionLifecycle.reconciled(current)
         if gateTrip != current {
             do {
@@ -1410,6 +1422,13 @@ final class TripTrackingService {
         trip: inout Trip,
         store: MigratedDataStore
     ) {
+        if trip.coverageBasis != .legacy {
+            rowsCoveredCount = trip.occurrenceDocument?.count("done") ?? 0
+            rowGuidanceAvailable = false
+            previousOnPlannedInCorridor = false
+            // Keep GPS recording separate. No numeric evaluator may credit prospective occurrences.
+            return
+        }
         let coordinate = location.coordinate
         // Resolve all selected paddocks for this trip (multi-block aware).
         var selectedIds: [UUID] = trip.paddockIds
@@ -2013,6 +2032,39 @@ final class TripTrackingService {
         recomputeAutoRealignSuggestion()
     }
 
+    private func occurrenceJournal(for trip: Trip) throws -> TripOccurrenceJournal {
+        guard let account = store?.currentUserIdProvider?() else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+        let journal = try TripOccurrenceJournal(scope: .init(ownerId: account.uuidString.lowercased(),
+            vineyardId: trip.vineyardId.uuidString.lowercased(), tripId: trip.id.uuidString.lowercased()))
+        if try journal.load() == nil {
+            guard let raw = trip.occurrenceCoverage else { throw TripOccurrenceCoverage.Failure.updateRequired }
+            try journal.initialize(raw)
+        }
+        return journal
+    }
+
+    /// Returns true for every non-legacy trip, even on failure: never falls through to numeric actions.
+    private func performOccurrenceAction(_ action: (TripOccurrenceJournal, Trip) throws -> Void) -> Bool {
+        guard let trip = activeTrip, trip.coverageBasis != .legacy else { return false }
+        do {
+            let journal = try occurrenceJournal(for: trip)
+            try action(journal, trip)
+            guard let state = try journal.load() else { throw TripOccurrenceCoverage.Failure.missing }
+            let projected = try trip.withOccurrenceProjection(state.projected)
+            try store?.updateTripOrThrow(projected)
+            errorMessage = state.heldReason ?? "Occurrence action saved; awaiting sync."
+        } catch { errorMessage = error.localizedDescription }
+        return true
+    }
+
+    func selectOccurrence(_ id: String) {
+        _ = performOccurrenceAction { journal, _ in try journal.select(id) }
+    }
+
+    func reorderOccurrences(_ order: [String]) {
+        _ = performOccurrenceAction { journal, _ in try journal.reorder(order) }
+    }
+
     // MARK: - Manual correction
 
     /// Force the planned-sequence index to the row the tractor is
@@ -2020,6 +2072,10 @@ final class TripTrackingService {
     /// can audit the override after the trip.
     func snapPlannedSequenceToCurrentLivePath() {
         guard var trip = activeTrip, !trip.rowSequence.isEmpty else { return }
+        guard trip.coverageBasis == .legacy else {
+            errorMessage = "Select the exact block and pass. A numeric GPS label cannot identify an occurrence."
+            return
+        }
         guard let livePath = lockedPath ?? diagLiveDetectedPath else { return }
         if let idx = trip.rowSequence.firstIndex(where: { abs($0 - livePath) < 0.01 }) {
             trip.sequenceIndex = idx
@@ -2034,6 +2090,10 @@ final class TripTrackingService {
 
     /// Mark the current planned path as completed manually and advance.
     func markCurrentPlannedPathComplete() {
+        if performOccurrenceAction({ journal, trip in
+            guard let state = try journal.load(), let id = TripOccurrenceCoverage.read(state.projected)?.targetId else { throw TripOccurrenceCoverage.Failure.invalidAction }
+            try journal.setStatus(id, status: "done", tankSessionIds: trip.tankSessions.filter { $0.endTime == nil }.map { $0.id.uuidString.lowercased() })
+        }) { return }
         guard var trip = activeTrip, !trip.rowSequence.isEmpty else { return }
         let path = trip.rowSequence.indices.contains(trip.sequenceIndex)
             ? trip.rowSequence[trip.sequenceIndex]
@@ -2060,6 +2120,10 @@ final class TripTrackingService {
 
     /// Skip the current planned path manually and advance.
     func skipCurrentPlannedPath() {
+        if performOccurrenceAction({ journal, trip in
+            guard let state = try journal.load(), let id = TripOccurrenceCoverage.read(state.projected)?.targetId else { throw TripOccurrenceCoverage.Failure.invalidAction }
+            try journal.setStatus(id, status: "skipped", tankSessionIds: trip.tankSessions.filter { $0.endTime == nil }.map { $0.id.uuidString.lowercased() })
+        }) { return }
         guard var trip = activeTrip, !trip.rowSequence.isEmpty else { return }
         let path = trip.rowSequence.indices.contains(trip.sequenceIndex)
             ? trip.rowSequence[trip.sequenceIndex]
@@ -2128,6 +2192,10 @@ final class TripTrackingService {
     /// completed/skipped entry on the new index so the operator can recover
     /// from a premature advance.
     func goBackOnePlannedPath() {
+        if performOccurrenceAction({ journal, _ in
+            guard let operation = try journal.undoTarget() else { throw TripOccurrenceCoverage.Failure.reconciliation }
+            try journal.undo(operation.id)
+        }) { return }
         guard var trip = activeTrip, !trip.rowSequence.isEmpty else { return }
         let newIndex = trip.sequenceIndex - 1
         guard newIndex >= 0 else { return }
@@ -2148,6 +2216,10 @@ final class TripTrackingService {
     /// Accept the suggested realignment: snap the planned sequence index to
     /// the locked live path. Records the override in diagnostics.
     func acceptAutoRealign() {
+        if activeTrip?.coverageBasis != .legacy {
+            errorMessage = "Select the exact planned pass to correct guidance. Coverage was not changed."
+            return
+        }
         guard let path = autoRealignSuggestedPath else { return }
         if var trip = activeTrip,
            let idx = trip.rowSequence.firstIndex(where: { abs($0 - path) < 0.01 }) {
@@ -2315,6 +2387,7 @@ final class TripTrackingService {
     /// Idempotent — already completed/skipped paths are left alone.
     func finalizePendingRowsForReview() {
         guard let store, var trip = activeTrip else { return }
+        guard trip.coverageBasis == .legacy else { return }
         guard !trip.rowSequence.isEmpty else { return }
 
         // Resolve all paddocks selected for this trip.

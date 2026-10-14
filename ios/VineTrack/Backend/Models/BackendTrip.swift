@@ -20,6 +20,7 @@ nonisolated struct BackendTrip: Codable, Sendable, Identifiable {
     let nextRowNumber: Double?
     let sequenceIndex: Int?
     let rowSequence: [Double]?
+    var occurrenceCoverage: TripOccurrenceCoverage.JSON? = nil
 
     let pathPoints: [CoordinatePoint]?
     let completedPaths: [Double]?
@@ -81,6 +82,7 @@ nonisolated struct BackendTrip: Codable, Sendable, Identifiable {
         case nextRowNumber = "next_row_number"
         case sequenceIndex = "sequence_index"
         case rowSequence = "row_sequence"
+        case occurrenceCoverage = "occurrence_coverage"
         case pathPoints = "path_points"
         case completedPaths = "completed_paths"
         case skippedPaths = "skipped_paths"
@@ -134,6 +136,7 @@ nonisolated struct BackendTripUpsert: Encodable, Sendable {
     let nextRowNumber: Double
     let sequenceIndex: Int
     let rowSequence: [Double]
+    var occurrenceCoverage: TripOccurrenceCoverage.JSON? = nil
     let pathPoints: [CoordinatePoint]
     let completedPaths: [Double]
     let skippedPaths: [Double]
@@ -195,6 +198,7 @@ nonisolated struct BackendTripUpsert: Encodable, Sendable {
         case nextRowNumber = "next_row_number"
         case sequenceIndex = "sequence_index"
         case rowSequence = "row_sequence"
+        case occurrenceCoverage = "occurrence_coverage"
         case pathPoints = "path_points"
         case completedPaths = "completed_paths"
         case skippedPaths = "skipped_paths"
@@ -241,6 +245,7 @@ nonisolated struct BackendTripUpsert: Encodable, Sendable {
         try c.encode(nextRowNumber, forKey: .nextRowNumber)
         try c.encode(sequenceIndex, forKey: .sequenceIndex)
         try c.encode(rowSequence, forKey: .rowSequence)
+        try c.encodeIfPresent(occurrenceCoverage, forKey: .occurrenceCoverage)
         try c.encode(pathPoints, forKey: .pathPoints)
         try c.encode(completedPaths, forKey: .completedPaths)
         try c.encode(skippedPaths, forKey: .skippedPaths)
@@ -302,6 +307,7 @@ extension BackendTrip {
             nextRowNumber: trip.nextRowNumber,
             sequenceIndex: trip.sequenceIndex,
             rowSequence: trip.rowSequence,
+            occurrenceCoverage: trip.occurrenceCoverage,
             pathPoints: trip.pathPoints,
             completedPaths: trip.completedPaths,
             skippedPaths: trip.skippedPaths,
@@ -375,7 +381,8 @@ extension BackendTrip {
             seedingDetails: seedingDetails,
             manualCorrectionEvents: manualCorrectionEvents ?? [],
             completionNotes: completionNotes,
-            workTaskId: workTaskId
+            workTaskId: workTaskId,
+            occurrenceCoverage: occurrenceCoverage
         )
     }
 }

@@ -712,7 +712,12 @@ data class Trip(
     @SerialName("client_updated_at") val clientUpdatedAt: String? = null,
     @SerialName("entry_source") val entrySource: String? = null,
     @SerialName("manual_entry_id") val manualEntryId: String? = null,
+    @SerialName("occurrence_coverage") val occurrenceCoverage: kotlinx.serialization.json.JsonElement? = null,
 ) {
+    val coverageBasis: TripOccurrenceCoverage.Basis get() = TripOccurrenceCoverage.basis(occurrenceCoverage)
+    val occurrenceDocument: TripOccurrenceCoverage.Document? get() = TripOccurrenceCoverage.read(occurrenceCoverage)
+    val coverageMessage: String? get() = if (coverageBasis == TripOccurrenceCoverage.Basis.UPDATE_REQUIRED)
+        "Update required. This trip uses occurrence coverage; numeric history is unavailable." else null
     val isManualEntry: Boolean get() = entrySource == "manual"
 
     /** User-facing label, mirroring iOS `Trip.displayFunctionLabel`. */
@@ -765,16 +770,19 @@ data class Trip(
         }
 
     /** Number of rows recorded as completed during this trip. */
-    val completedRowCount: Int get() = completedPaths?.size ?: 0
+    val completedRowCount: Int get() = if (coverageBasis == TripOccurrenceCoverage.Basis.LEGACY) completedPaths?.size ?: 0
+        else occurrenceDocument?.count("done") ?: 0
 
     /** True when this trip carries a planned row sequence (not Free Drive). */
     val hasRowPlan: Boolean get() = rowSequence.isNotEmpty()
 
     /** Number of planned paths in the row sequence. */
-    val plannedPathCount: Int get() = rowSequence.size
+    val plannedPathCount: Int get() = if (coverageBasis == TripOccurrenceCoverage.Basis.LEGACY) rowSequence.size
+        else occurrenceDocument?.order?.size ?: 0
 
     /** Number of rows recorded as skipped during this trip. */
-    val skippedRowCount: Int get() = skippedPaths?.size ?: 0
+    val skippedRowCount: Int get() = if (coverageBasis == TripOccurrenceCoverage.Basis.LEGACY) skippedPaths?.size ?: 0
+        else occurrenceDocument?.count("skipped") ?: 0
 
     /**
      * Planned paths neither completed nor skipped — i.e. still outstanding.
@@ -783,6 +791,7 @@ data class Trip(
      */
     val notCompletedRowCount: Int
         get() {
+            if (coverageBasis != TripOccurrenceCoverage.Basis.LEGACY) return occurrenceDocument?.count("incomplete") ?: 0
             if (rowSequence.isEmpty()) return 0
             val done = completedPaths?.toSet() ?: emptySet()
             val skip = skippedPaths?.toSet() ?: emptySet()

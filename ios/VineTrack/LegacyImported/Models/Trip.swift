@@ -145,6 +145,9 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
     /// a trip belongs to zero or one Work Task. Synced as `trips.work_task_id`
     /// (see sql/102_trips_work_task_link.sql). No costing/reporting impact.
     var workTaskId: UUID?
+    var occurrenceCoverage: TripOccurrenceCoverage.JSON?
+    var coverageBasis: TripOccurrenceCoverage.Basis { TripOccurrenceCoverage.basis(occurrenceCoverage) }
+    var occurrenceDocument: TripOccurrenceCoverage.Document? { TripOccurrenceCoverage.read(occurrenceCoverage) }
 
     /// Convenience: returns a short label suitable for the active trip header.
     /// Prefers an explicit user-entered title, then the friendly label for the
@@ -223,7 +226,8 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         seedingDetails: SeedingDetails? = nil,
         manualCorrectionEvents: [String] = [],
         completionNotes: String? = nil,
-        workTaskId: UUID? = nil
+        workTaskId: UUID? = nil,
+        occurrenceCoverage: TripOccurrenceCoverage.JSON? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -265,6 +269,7 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         self.manualCorrectionEvents = manualCorrectionEvents
         self.completionNotes = completionNotes
         self.workTaskId = workTaskId
+        self.occurrenceCoverage = occurrenceCoverage
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
@@ -282,7 +287,7 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         case seedingDetails
         case manualCorrectionEvents
         case completionNotes
-        case workTaskId
+        case workTaskId, occurrenceCoverage
     }
 
     init(from decoder: Decoder) throws {
@@ -324,6 +329,7 @@ nonisolated struct Trip: Codable, Identifiable, Sendable, Hashable {
         manualCorrectionEvents = try container.decodeIfPresent([String].self, forKey: .manualCorrectionEvents) ?? []
         completionNotes = try container.decodeIfPresent(String.self, forKey: .completionNotes)
         workTaskId = try container.decodeIfPresent(UUID.self, forKey: .workTaskId)
+        occurrenceCoverage = try container.decodeIfPresent(TripOccurrenceCoverage.JSON.self, forKey: .occurrenceCoverage)
 
         if let doubleRow = try? container.decode(Double.self, forKey: .currentRowNumber) {
             currentRowNumber = doubleRow

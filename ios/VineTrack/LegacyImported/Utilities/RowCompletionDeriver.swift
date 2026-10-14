@@ -61,7 +61,11 @@ nonisolated struct RowCompletionResult: Sendable, Identifiable, Hashable {
     let status: RowCompletionStatus
     let source: RowCompletionSource?
 
-    var id: Double { path }
+    var occurrenceId: String? = nil
+    var occurrenceState: String? = nil
+    var blockName: String? = nil
+    var passOrdinal: Int? = nil
+    var id: String { occurrenceId ?? String(path) }
 
     var formattedPath: String {
         if path.truncatingRemainder(dividingBy: 1) == 0 {
@@ -73,6 +77,8 @@ nonisolated struct RowCompletionResult: Sendable, Identifiable, Hashable {
     /// Operator-friendly one-line summary, e.g. "Complete — Auto" or
     /// "Not complete".
     var statusAndSourceLabel: String {
+        if occurrenceState == "skipped" { return "Skipped — not treated" }
+        if occurrenceState == "unsupported" { return "Update required — coverage unavailable" }
         if let source {
             return "\(status.label) — \(source.label)"
         }
@@ -83,7 +89,19 @@ nonisolated struct RowCompletionResult: Sendable, Identifiable, Hashable {
 nonisolated enum RowCompletionDeriver {
     /// Derive the per-row completion list from the trip's stored fields.
     static func results(for trip: Trip) -> [RowCompletionResult] {
-        results(
+        if trip.coverageBasis != .legacy {
+            guard let d = trip.occurrenceDocument else { return [] }
+            return d.activeOrder.compactMap { id in
+                guard let item = d.items.first(where: { $0.occurrenceId == id }), let state = d.states[id] else { return nil }
+                let source: RowCompletionSource? = state.source.map { value in
+                    value == "automatic" ? .auto : value == "endReview" ? .endReview : .manual
+                }
+                return RowCompletionResult(path: item.pathNumber, status: state.status == "done" ? .complete : .notComplete,
+                    source: source, occurrenceId: id, occurrenceState: state.status,
+                    blockName: item.blockNameSnapshot, passOrdinal: item.passOrdinal)
+            }
+        }
+        return results(
             rowSequence: trip.rowSequence,
             completedPaths: trip.completedPaths,
             skippedPaths: trip.skippedPaths,

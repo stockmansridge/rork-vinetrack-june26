@@ -51,7 +51,8 @@ struct TripPDFService {
 
         let manuallyMarkedComplete: [Double] = parseEndReviewCompleted(trip.manualCorrectionEvents)
         let rowResults: [RowCompletionResult] = RowCompletionDeriver.results(for: trip)
-        let rowResultByPath: [Double: RowCompletionResult] = Dictionary(uniqueKeysWithValues: rowResults.map { ($0.path, $0) })
+        let rowResultByPath: [Double: RowCompletionResult] = trip.coverageBasis == .legacy
+            ? Dictionary(rowResults.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first }) : [:]
 
         let data = renderer.pdfData { context in
             context.beginPage()
@@ -238,7 +239,25 @@ struct TripPDFService {
             }
 
             // ── Rows / Paths Covered ─────────────────────────────────────
-            if !trip.rowSequence.isEmpty {
+            if trip.coverageBasis != .legacy {
+                drawSectionHeader("Planned passes — occurrence coverage")
+                if trip.coverageBasis == .updateRequired {
+                    drawText("Update required. Coverage is unavailable; numeric history was not used.", font: bodyFont)
+                } else {
+                    for result in rowResults {
+                        drawRow(label: "\(result.blockName ?? "Block") · \(result.formattedPath) · Pass \(result.passOrdinal ?? 1)",
+                            value: result.statusAndSourceLabel)
+                    }
+                    if let d = trip.occurrenceDocument, !d.retired.isEmpty {
+                        drawSubHeader("Retired planned passes — audit")
+                        for id in d.retired {
+                            if let item = d.items.first(where: { $0.occurrenceId == id }), let state = d.states[id] {
+                                drawRow(label: "\(item.blockNameSnapshot) · \(item.pathNumber) · Pass \(item.passOrdinal)", value: state.status)
+                            }
+                        }
+                    }
+                }
+            } else if !trip.rowSequence.isEmpty {
                 drawSectionHeader("Rows / Paths")
 
                 let groups: [PaddockCoverage] = {

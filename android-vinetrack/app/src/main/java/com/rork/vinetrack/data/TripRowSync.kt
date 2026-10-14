@@ -84,6 +84,9 @@ class TripRowSync(
      * actions never move the baseline forward. Returns the row.
      */
     fun enqueue(trip: Trip): PendingWrite {
+        check(trip.coverageBasis == com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY) {
+            "Occurrence actions require their durable operation journal; numeric replay is unsupported."
+        }
         val tripId = trip.id
         val existing = pending.list().filter {
             it.entityType == PendingEntityType.TRIP_ROW &&
@@ -195,6 +198,12 @@ class TripRowSync(
                         )
                         continue
                     }
+                    if (server.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY ||
+                        local.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                            "Occurrence coverage requires reconciliation. Numeric replay was not applied.")
+                        continue
+                    }
                     val merged = mergeCoverage(server, local)
                     if (merged == null) {
                         // Merge could not be proven safe (would shrink server
@@ -288,6 +297,8 @@ class TripRowSync(
      * union construction).
      */
     private fun mergeCoverage(server: Trip, local: Trip): MergedCoverage? {
+        if (server.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY ||
+            local.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY) return null
         val serverCompleted = server.completedPaths.orEmpty()
         val serverSkipped = server.skippedPaths.orEmpty()
         val localCompleted = local.completedPaths.orEmpty()

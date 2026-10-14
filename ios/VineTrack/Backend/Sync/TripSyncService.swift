@@ -785,6 +785,35 @@ final class TripSyncService {
             return
         }
 
+        // Occurrence journals own pending overlays independently of timestamp-based snapshot dirtiness.
+        if TripOccurrenceCoverage.basis(backendTrip.occurrenceCoverage) != .legacy ||
+            store.trips.first(where: { $0.id == backendTrip.id }).map({ $0.coverageBasis != .legacy }) == true {
+            var mapped = backendTrip.toTrip()
+            metadata.markParentsEstablished([backendTrip.id])
+            do {
+                guard let raw = backendTrip.occurrenceCoverage else { throw TripOccurrenceCoverage.Failure.updateRequired }
+                _ = try TripOccurrenceCoverage.requireDocument(raw)
+                guard let account = store.currentUserIdProvider?() else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                let journal = try TripOccurrenceJournal(scope: .init(ownerId: account.uuidString.lowercased(),
+                    vineyardId: mapped.vineyardId.uuidString.lowercased(), tripId: mapped.id.uuidString.lowercased()))
+                if let saved = try journal.load() {
+                    if backendTrip.isActive == false || backendTrip.endTime != nil { try journal.hold("OCCURRENCE_TRIP_CLOSED") }
+                    else if let raw = backendTrip.occurrenceCoverage { try journal.reconcile(raw) }
+                    if let retained = try journal.load() { mapped = try mapped.withOccurrenceProjection(retained.projected) }
+                    store.applyRemoteTripUpsert(mapped)
+                    if saved.pending.isEmpty, saved.heldReason == nil { metadata.clearDirty([backendTrip.id]) }
+                    else { syncStatus = .failure("Occurrence reconciliation pending. Saved actions are retained.") }
+                } else {
+                    // A read never adopts historical numeric state or fabricates operation history.
+                    store.applyRemoteTripUpsert(mapped)
+                    metadata.clearDirty([backendTrip.id])
+                }
+            } catch {
+                if mapped.coverageBasis == .updateRequired { store.applyRemoteTripUpsert(mapped) }
+                syncStatus = .failure("Update or reconciliation required. Occurrence evidence was retained; numeric history was not used.")
+            }
+            return
+        }
         // Server completion is authoritative even against a newer queued device edit.
         let serverCompleted = backendTrip.isActive == false || backendTrip.endTime != nil
         if !serverCompleted, let pendingDirtyAt = metadata.pendingUpserts[backendTrip.id] {

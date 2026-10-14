@@ -800,7 +800,8 @@ struct TripDetailView: View {
                 .font(.body)
                 .foregroundStyle(rowTint(result.status))
                 .frame(width: 22)
-            Text(result.formattedPath)
+            Text(result.occurrenceId == nil ? result.formattedPath
+                : "\(result.blockName ?? "Block") · \(result.formattedPath) · Pass \(result.passOrdinal ?? 1)")
                 .font(.subheadline.weight(.semibold))
                 .frame(minWidth: 44, alignment: .leading)
             Spacer()
@@ -984,6 +985,7 @@ struct TripDetailView: View {
     }
 
     private func paddockGroupsForReport() -> [TripPDFService.PaddockCoverage] {
+        guard trip.coverageBasis == .legacy else { return [] }
         let ids: [UUID] = {
             if !trip.paddockIds.isEmpty { return trip.paddockIds }
             if let single = trip.paddockId { return [single] }

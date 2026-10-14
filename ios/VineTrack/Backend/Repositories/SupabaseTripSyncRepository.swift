@@ -34,6 +34,10 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
 
     func upsertTrip(_ trip: BackendTripUpsert) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        if TripOccurrenceCoverage.basis(trip.occurrenceCoverage) != .legacy {
+            try await replayOccurrenceTrip(trip)
+            return
+        }
         try await provider.client
             .from("trips")
             .upsert(trip, onConflict: "id")
@@ -43,10 +47,51 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     func upsertTrips(_ trips: [BackendTripUpsert]) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard !trips.isEmpty else { return }
+        let occurrenceTrips = trips.filter { TripOccurrenceCoverage.basis($0.occurrenceCoverage) != .legacy }
+        for trip in occurrenceTrips { try await replayOccurrenceTrip(trip) }
+        let legacyTrips = trips.filter { TripOccurrenceCoverage.basis($0.occurrenceCoverage) == .legacy }
+        guard !legacyTrips.isEmpty else { return }
         try await provider.client
             .from("trips")
-            .upsert(trips, onConflict: "id")
+            .upsert(legacyTrips, onConflict: "id")
             .execute()
+    }
+
+    /// Serial durable action replay. Never converts an occurrence trip into a numeric full-snapshot write.
+    private func replayOccurrenceTrip(_ trip: BackendTripUpsert) async throws {
+        guard let raw = trip.occurrenceCoverage else { throw TripOccurrenceCoverage.Failure.updateRequired }
+        _ = try TripOccurrenceCoverage.requireDocument(raw)
+        guard trip.isActive, trip.endTime == nil else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        let session = try await provider.client.auth.session
+        let account = session.user.id
+        let journal = try TripOccurrenceJournal(scope: .init(ownerId: account.uuidString.lowercased(),
+            vineyardId: trip.vineyardId.uuidString.lowercased(), tripId: trip.id.uuidString.lowercased()))
+        guard try journal.load() != nil else { throw TripOccurrenceCoverage.Failure.missing }
+        for _ in 0..<128 {
+            guard let state = try journal.load(), state.heldReason == nil else { throw TripOccurrenceCoverage.Failure.reconciliation }
+            guard let op = state.pending.first else { break }
+            do {
+                let result: TripOccurrenceCoverage.JSON = try await provider.client
+                    .rpc("apply_trip_occurrence_action_v1", params: op.params).execute().value
+                guard try await provider.client.auth.session.user.id == account else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                try journal.acknowledge(result)
+            } catch {
+                let message = String(describing: error)
+                if message.contains("OCCURRENCE_") {
+                    try journal.hold(message.contains("UPDATE_REQUIRED") || message.contains("UNSUPPORTED") ? "OCCURRENCE_UPDATE_REQUIRED" : "OCCURRENCE_CONFLICT")
+                }
+                throw error
+            }
+        }
+        guard let state = try journal.load(), state.pending.isEmpty, state.heldReason == nil else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        var fields = try JSONDecoder().decode([String: TripOccurrenceCoverage.JSON].self, from: encoder.encode(trip))
+        // Authority, route identity and lifecycle can only go through their dedicated RPCs.
+        for key in ["id", "vineyard_id", "created_by", "occurrence_coverage", "row_sequence", "completed_paths", "skipped_paths",
+                    "sequence_index", "current_row_number", "next_row_number", "paddock_id", "paddock_ids", "tracking_pattern",
+                    "start_time", "end_time", "is_active", "operator_user_id"] { fields.removeValue(forKey: key) }
+        try await provider.client.from("trips").update(fields).eq("id", value: trip.id.uuidString).execute()
     }
 
     func fetchAllAccessibleTrips() async throws -> [BackendTrip] {

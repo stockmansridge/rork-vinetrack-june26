@@ -44,6 +44,11 @@ struct EndTripReviewSheet: View {
 
     private var rows: [DisplayRow] {
         let live = liveTrip
+        if live.coverageBasis != .legacy {
+            return RowCompletionDeriver.results(for: live).enumerated().map {
+                DisplayRow(id: $0.offset, result: $0.element, manuallyTicked: false)
+            }
+        }
         // Promote the live current row to .partial so the sheet still hints
         // at it; the rest of the derivation comes straight from the shared
         // deriver so this view shows exactly what the report will show.
@@ -76,8 +81,15 @@ struct EndTripReviewSheet: View {
         NavigationStack {
             List {
                 summarySection
+                if liveTrip.coverageBasis != .legacy {
+                    Section {
+                        Text(liveTrip.coverageBasis == .updateRequired
+                            ? "Update required. Numeric coverage cannot describe this trip."
+                            : "Pass states are shown independently. Occurrence finalisation is not yet enabled; saved work is retained.")
+                    }
+                }
 
-                if missedCount > 0 {
+                if liveTrip.coverageBasis == .legacy && missedCount > 0 {
                     Section {
                         Button {
                             let live = liveTrip
@@ -460,7 +472,8 @@ struct EndTripReviewSheet: View {
                 .frame(width: 32)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Path \(row.result.formattedPath)")
+                Text(row.result.occurrenceId == nil ? "Path \(row.result.formattedPath)"
+                    : "\(row.result.blockName ?? "Block") · \(row.result.formattedPath) · Pass \(row.result.passOrdinal ?? 1)")
                     .font(.headline)
                 Text(detailLabel(for: row, manuallyCompleted: isManualCompleted))
                     .font(.caption)
@@ -470,7 +483,7 @@ struct EndTripReviewSheet: View {
 
             Spacer()
 
-            if !alreadyCompleted && !alreadySkipped {
+            if live.coverageBasis == .legacy && !alreadyCompleted && !alreadySkipped {
                 Toggle("", isOn: Binding(
                     get: { manualCompletes.contains(row.path) },
                     set: { newValue in
@@ -501,6 +514,7 @@ struct EndTripReviewSheet: View {
     }
 
     private func detailLabel(for row: DisplayRow, manuallyCompleted: Bool) -> String {
+        if row.result.occurrenceId != nil { return row.result.statusAndSourceLabel }
         if manuallyCompleted { return "Will be ticked Complete — End review" }
         switch row.status {
         case .complete:
@@ -557,6 +571,10 @@ struct EndTripReviewSheet: View {
     }
 
     private func applyAndFinish() {
+        guard liveTrip.coverageBasis == .legacy else {
+            finishBlockedMessage = "Occurrence End Review is held. Saved pass states are retained; numeric finalisation was not applied."
+            return
+        }
         // Persist any manual ticks AND the optional completion notes
         // onto the live trip in a single update so the saved record
         // (and the synced row) reflects everything in one shot.

@@ -1,0 +1,70 @@
+package com.rork.vinetrack.data
+
+import androidx.test.platform.app.InstrumentationRegistry
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.runner.RunWith
+import org.junit.After
+import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.model.TripOccurrenceCoverage
+import kotlinx.serialization.json.*
+import org.junit.Assert.*
+import org.junit.Test
+import java.util.UUID
+
+/** Real production SharedPreferences journal with isolated synthetic accounts, no backend calls. */
+@RunWith(AndroidJUnit4::class)
+class TripOccurrencePersistenceAndroidTest {
+    private class Installation(base: Context) : ContextWrapper(base) {
+        private val prefix = "occurrence_${UUID.randomUUID()}_"
+        private val names = mutableSetOf<String>()
+        override fun getApplicationContext(): Context = this
+        override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+            names.add(name)
+            return baseContext.getSharedPreferences(prefix + name, mode)
+        }
+        fun dispose() { names.forEach { baseContext.deleteSharedPreferences(prefix + it) } }
+    }
+    private val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+    @After fun dispose() { context.dispose() }
+    private val a="11111111-1111-4111-8111-111111111111"
+    private val b="22222222-2222-4222-8222-222222222222"
+    private fun fixture(): JsonObject {
+        val block="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+        val items=listOf(a,b).mapIndexed { index,id -> buildJsonObject {
+            put("occurrenceId",id); put("blockId",block); put("blockNameSnapshot","Block X"); put("pathNumber",38.5); put("passOrdinal",index+1)
+            put("physicalPathRef",buildJsonObject { put("pathId","ffffffff-ffff-4fff-8fff-ffffffffffff"); put("rowIds",JsonArray(emptyList())); put("geometryRevision","unresolved") })
+        } }
+        return buildJsonObject {
+            put("contract",TripOccurrenceCoverage.CONTRACT); put("schemaVersion",1); put("planId","dddddddd-dddd-4ddd-8ddd-dddddddddddd"); put("revision",0); put("planRevision",1)
+            put("items",JsonArray(items)); put("activeOrder",JsonArray(listOf(a,b).map(::JsonPrimitive))); put("retired",JsonArray(emptyList()))
+            put("states",buildJsonObject { listOf(a,b).forEach { id -> put(id,buildJsonObject { put("status","incomplete"); put("source",JsonNull); put("lastOperationId",JsonNull); put("tankSessionIds",JsonArray(emptyList())) }) } })
+            put("plannedCursorId",a); put("selectedOccurrenceId",JsonNull)
+        }
+    }
+    @Test fun realPreferenceRecreationPreservesDoneSkipUndoAndExactRetry() {
+        val owner=UUID.randomUUID().toString(); SessionStore(context).save("synthetic-access","synthetic-refresh",owner,null)
+        val scope=TripOccurrenceJournal.Scope(owner,UUID.randomUUID().toString(),UUID.randomUUID().toString())
+        var journal=TripOccurrenceNativeStore(context).journal(scope); journal.initialize(fixture())
+        val done=journal.setStatus(a,"done"); val skip=journal.setStatus(a,"skipped"); journal.setStatus(b,"skipped")
+        journal=TripOccurrenceNativeStore(context).journal(scope); journal.undo(skip.id)
+        val state=journal.load()!!; val d=TripOccurrenceCoverage.requireDocument(journal.projected(state))
+        assertEquals("done",d.status(a)); assertEquals("skipped",d.status(b)); assertEquals(done.params,state.pending.first().params)
+        assertEquals(skip.id,state.history[1].id); assertEquals(4,state.pending.size)
+    }
+    @Test fun realPreferenceDelayedAckCannotRestoreOlderCoverage() {
+        val owner=UUID.randomUUID().toString(); SessionStore(context).save("synthetic-access","synthetic-refresh",owner,null)
+        val scope=TripOccurrenceJournal.Scope(owner,UUID.randomUUID().toString(),UUID.randomUUID().toString())
+        val journal=TripOccurrenceNativeStore(context).journal(scope); journal.initialize(fixture())
+        val done=journal.setStatus(a,"done"); val skip=journal.setStatus(a,"skipped")
+        val ack=buildJsonObject { put("tripId",scope.tripId); put("operationId",done.id); put("coverage",done.after) }
+        journal.acknowledge(ack)
+        val restored=TripOccurrenceNativeStore(context).journal(scope); restored.acknowledge(ack)
+        val state=restored.load()!!
+        assertEquals("skipped",TripOccurrenceCoverage.requireDocument(restored.projected(state)).status(a)); assertEquals(listOf(skip),state.pending)
+        restored.hold("OCCURRENCE_REVISION_CONFLICT")
+        assertNotNull(TripOccurrenceNativeStore(context).journal(scope).load()!!.heldReason)
+    }
+}

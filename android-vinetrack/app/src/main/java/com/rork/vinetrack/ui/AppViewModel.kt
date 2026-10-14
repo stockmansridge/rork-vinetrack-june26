@@ -2,6 +2,10 @@ package com.rork.vinetrack.ui
 
 import android.app.Activity
 import android.app.Application
+import com.rork.vinetrack.data.TripOccurrenceNativeStore
+import com.rork.vinetrack.data.TripOccurrenceJournal
+import com.rork.vinetrack.data.withOccurrenceProjection
+import com.rork.vinetrack.data.model.TripOccurrenceCoverage
 import android.util.Log
 import android.content.Context
 import android.graphics.Bitmap
@@ -2366,6 +2370,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * contracts are unchanged.
      */
     private val activeTripStore = ActiveTripStore(app)
+    private val occurrenceStore = TripOccurrenceNativeStore(app)
+    private val replayingOccurrenceTrips = mutableSetOf<String>()
 
     /**
      * Offline replay coordinator for trip GPS/path progress only (Tier-A Stage
@@ -4625,6 +4631,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingTripSeeding()
         replayPendingTripGps()
         replayPendingTripRow()
+        _ui.value.trips.filter { it.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE }.forEach(::replayOccurrenceActions)
         replayPendingTripTank()
         replayPendingSprayCreates()
         replayPendingTankActuals()
@@ -4703,6 +4710,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingTripSeeding()
         replayPendingTripGps()
         replayPendingTripRow()
+        _ui.value.trips.filter { it.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE }.forEach(::replayOccurrenceActions)
         replayPendingTripTank()
         replayPendingSprayCreates()
         replayPendingTankActuals()
@@ -5334,6 +5342,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayPendingTripSeeding()
         replayPendingTripGps()
         replayPendingTripRow()
+        _ui.value.trips.filter { it.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE }.forEach(::replayOccurrenceActions)
         replayPendingTripTank()
         replayPendingSprayCreates()
         replayPendingTankActuals()
@@ -8798,6 +8807,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(tripError = "This trip is no longer active.") }
             onResult(false); return
         }
+        if (trip.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY) {
+            _ui.update { it.copy(tripError = "Occurrence End Review is not yet enabled. Saved pass states are retained; numeric finalisation was not applied.") }
+            onResult(false); return
+        }
         // Only unfinished records that ending would corrupt may hold a trip
         // open. The gate takes no planned-path input at all, so a Free Drive
         // trip with no row sequence and 0% planned progress ends normally.
@@ -8961,6 +8974,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onResult: (Boolean) -> Unit,
     ) {
         val trip = _ui.value.activeTrip ?: run { onResult(false); return }
+        if (trip.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY) {
+            _ui.update { it.copy(tripError = "Occurrence End Review is not yet enabled. Numeric review was not applied; saved pass states are retained.") }
+            onResult(false); return
+        }
         val sequence = trip.rowSequence
         if (extraCompletedPaths.isEmpty() || sequence.isEmpty()) {
             endTrip(notes, endEngineHours, onResult)
@@ -9488,6 +9505,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             onResult(false)
             return
         }
+        if (before.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY) {
+            _ui.update { it.copy(tripError = "Reorder exact occurrence IDs. Numeric route replacement cannot preserve repeated passes.") }
+            onResult(false); return
+        }
         val blocks = state.paddocks.filter { it.id in before.effectivePaddockIds }
         val available = TripRowSequencePlanner.availablePaths(blocks)
         val visited = before.completedPaths.orEmpty().toSet() + before.skippedPaths.orEmpty().toSet()
@@ -9686,6 +9707,38 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (snapshot.ownerUserId != userId) return loadedTrips
         if (snapshot.vineyardId != vineyardId) return loadedTrips
         val saved = snapshot.trip
+        val occurrenceRemote = loadedTrips.firstOrNull { it.id == saved.id }
+        if (saved.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY ||
+            occurrenceRemote?.coverageBasis?.let { it != TripOccurrenceCoverage.Basis.LEGACY } == true) {
+            try {
+                val journal = occurrenceJournal(saved.takeIf { it.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE }
+                    ?: occurrenceRemote ?: saved)
+                if (tripsFromServer) {
+                    if (occurrenceRemote == null || !occurrenceRemote.isActive || occurrenceRemote.endTime != null) {
+                        journal.hold("OCCURRENCE_TRIP_CLOSED")
+                    } else if (occurrenceRemote.coverageBasis != TripOccurrenceCoverage.Basis.OCCURRENCE) {
+                        journal.hold("OCCURRENCE_UPDATE_REQUIRED")
+                    } else journal.reconcile(occurrenceRemote.occurrenceCoverage as kotlinx.serialization.json.JsonObject)
+                }
+                val retained = journal.load() ?: error("Occurrence journal unavailable.")
+                val serverClosed = tripsFromServer && (occurrenceRemote == null || !occurrenceRemote.isActive || occurrenceRemote.endTime != null)
+                val projected = (occurrenceRemote ?: saved).withOccurrenceProjection(journal.projected(retained)).copy(
+                    pathPoints = if (saved.pathPoints.orEmpty().size > occurrenceRemote?.pathPoints.orEmpty().size) saved.pathPoints else occurrenceRemote?.pathPoints,
+                    totalDistance = if (saved.pathPoints.orEmpty().size > occurrenceRemote?.pathPoints.orEmpty().size) saved.totalDistance else occurrenceRemote?.totalDistance,
+                    isActive = !serverClosed && saved.isActive,
+                )
+                if (serverClosed) { tracker?.stop(); tracker = null }
+                _ui.update { it.copy(deviceActiveTripId = if (serverClosed) null else saved.id,
+                    isTracking = if (serverClosed) false else it.isTracking, tripError = retained.heldReason) }
+                check(activeTripStore.saveDurably(userId, vineyardId, projected))
+                return if (occurrenceRemote == null) listOf(projected) + loadedTrips
+                    else loadedTrips.map { if (it.id == saved.id) projected else it }
+            } catch (_: Exception) {
+                _ui.update { it.copy(tripError = "Occurrence reconciliation is held. Saved pass evidence is retained; numeric history was not used.") }
+                return if (occurrenceRemote?.coverageBasis == TripOccurrenceCoverage.Basis.UPDATE_REQUIRED) loadedTrips
+                    else loadedTrips.filterNot { it.id == saved.id } + saved
+            }
+        }
         val completedServer = if (tripsFromServer) loadedTrips.firstOrNull {
             it.id == saved.id && (!it.isActive || it.endTime != null)
         } else null
@@ -11768,6 +11821,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
+        if (applyOccurrenceAction(trip) { journal ->
+                val target = journal.targetId() ?: error("Select an incomplete occurrence before marking this path.")
+                journal.setStatus(target, if (markComplete) "done" else "skipped",
+                    trip.tankSessions.filter { it.endTime == null }.map { it.id })
+            }) return
         val sequence = trip.rowSequence
         val index = trip.sequenceIndex
         if (sequence.isEmpty() || index < 0 || index >= sequence.size) {
@@ -11805,6 +11863,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
+        if (applyOccurrenceAction(trip) { journal ->
+                val target = journal.undoTarget() ?: error("No locally retained reversible occurrence action. Sync history needs review.")
+                journal.undo(target.id)
+            }) return
         val sequence = trip.rowSequence
         if (sequence.isEmpty() || trip.sequenceIndex <= 0) return
         val newIndex = (trip.sequenceIndex - 1).coerceIn(0, sequence.size - 1)
@@ -11812,6 +11874,96 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val completed = trip.completedPaths.orEmpty().toMutableList().also { it.remove(restoredPath) }
         val skipped = trip.skippedPaths.orEmpty().toMutableList().also { it.remove(restoredPath) }
         persistCoverage(tripId, completed, skipped, newIndex, sequence)
+    }
+
+    fun markTripOccurrence(tripId: String, occurrenceId: String, status: String) {
+        val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return
+        applyOccurrenceAction(trip) { journal -> journal.setStatus(occurrenceId, status,
+            trip.tankSessions.filter { it.endTime == null }.map { it.id }) }
+    }
+
+    fun occurrenceUndoTarget(tripId: String): Pair<String, TripOccurrenceCoverage.Item>? = runCatching {
+        val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return@runCatching null
+        if (trip.coverageBasis != TripOccurrenceCoverage.Basis.OCCURRENCE) return@runCatching null
+        val op = occurrenceJournal(trip).undoTarget() ?: return@runCatching null
+        val id = (op.action["occurrenceId"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+        val item = trip.occurrenceDocument?.items?.singleOrNull { it.id == id } ?: return@runCatching null
+        op.id to item
+    }.getOrNull()
+
+    fun undoTripOccurrence(tripId: String, operationId: String) {
+        val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return
+        applyOccurrenceAction(trip) { it.undo(operationId) }
+    }
+
+    /** Explicit pass selection changes guidance only, never coverage. */
+    fun selectTripOccurrence(tripId: String, occurrenceId: String) {
+        val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return
+        applyOccurrenceAction(trip) { it.select(occurrenceId) }
+    }
+
+    fun reorderTripOccurrences(tripId: String, order: List<String>) {
+        val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return
+        applyOccurrenceAction(trip) { it.reorder(order) }
+    }
+
+    private fun occurrenceJournal(trip: Trip): TripOccurrenceJournal {
+        val owner = session.userId ?: error("Sign in to the account that owns this trip.")
+        val journal = occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, trip.vineyardId, trip.id))
+        if (journal.load() == null) journal.initialize(trip.occurrenceCoverage as? kotlinx.serialization.json.JsonObject
+            ?: error("Occurrence coverage requires an updated client."))
+        return journal
+    }
+
+    private fun applyOccurrenceAction(trip: Trip, action: (TripOccurrenceJournal) -> Unit): Boolean {
+        if (trip.coverageBasis == TripOccurrenceCoverage.Basis.LEGACY) return false
+        try {
+            check(_ui.value.activeTrip?.id == trip.id && trip.id !in _ui.value.locallyEndedTripIds)
+            val journal = occurrenceJournal(trip)
+            action(journal)
+            val state = journal.load() ?: error("Occurrence journal unavailable.")
+            val projected = trip.withOccurrenceProjection(journal.projected(state))
+            _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) projected else it },
+                tripError = if (st.isOnline) "Occurrence action saved; awaiting sync." else "Occurrence action saved offline.") }
+            persistActiveTripSnapshot()
+            replayOccurrenceActions(projected)
+        } catch (e: Exception) {
+            _ui.update { it.copy(tripError = trip.coverageMessage ?: e.message ?: "Occurrence action needs review. Saved work is retained.") }
+        }
+        return true
+    }
+
+    private fun replayOccurrenceActions(trip: Trip) {
+        if (!_ui.value.isOnline || session.accessToken == null || !replayingOccurrenceTrips.add(trip.id)) return
+        val owner = session.userId
+        viewModelScope.launch {
+            try {
+                val journal = occurrenceJournal(trip)
+                repeat(128) {
+                    val state = journal.load() ?: return@launch
+                    if (state.heldReason != null) {
+                        _ui.update { it.copy(tripError = state.heldReason) }; return@launch
+                    }
+                    val operation = state.pending.firstOrNull() ?: return@launch
+                    val result = tripRepo.applyOccurrenceOperation(operation.params)
+                    if (session.userId != owner) return@launch
+                    journal.acknowledge(result)
+                    val next = journal.load() ?: return@launch
+                    _ui.update { st -> st.copy(trips = st.trips.map { current ->
+                        if (current.id == trip.id) current.withOccurrenceProjection(journal.projected(next)) else current
+                    }, tripError = next.heldReason) }
+                    persistActiveTripSnapshot()
+                }
+            } catch (e: TripRepository.OccurrenceRejected) {
+                if (session.userId == owner) {
+                    runCatching { occurrenceJournal(trip).hold(e.code) }
+                    _ui.update { it.copy(tripError = "Occurrence sync needs review (${e.code}). Saved actions are retained.") }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
+            } catch (_: Exception) {
+                if (session.userId == owner) _ui.update { it.copy(tripError = "Occurrence sync is pending. Saved actions are retained.") }
+            } finally { replayingOccurrenceTrips.remove(trip.id) }
+        }
     }
 
     private fun persistCoverage(
