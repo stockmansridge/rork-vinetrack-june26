@@ -8,3 +8,4 @@ migration/node_modules/
 migration/bun.lock
 .rork
 master-backfill-*.json
+/.rork-tmp/
