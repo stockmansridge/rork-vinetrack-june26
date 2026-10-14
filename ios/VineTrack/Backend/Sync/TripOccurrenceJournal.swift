@@ -79,9 +79,10 @@ import Foundation
     @discardableResult func activate(_ start: JSON) throws -> Operation { try lifecycle("activate", metadata: start) }
     @discardableResult func finalize(_ end: JSON) throws -> Operation { try lifecycle("finalize", metadata: end) }
     private func lifecycle(_ kind: String, metadata: JSON) throws -> Operation {
-        guard var state = try load(), state.creationConfirmed != false, state.heldReason == nil,
+        guard var state = try load(), state.heldReason == nil,
+              state.creationConfirmed != false || (kind == "activate" && state.pending.count == 1 && state.pending.first?.rpc == "create_trip_with_occurrences_v1"),
               !state.pending.contains(where: { ["activate", "finalize"].contains($0.action[occurrence: "kind"]?.occurrenceString ?? "") }) else { throw Failure.reconciliation }
-        if kind == "activate" { guard state.serverActive == false, state.pending.isEmpty else { throw Failure.reconciliation } }
+        if kind == "activate" { guard state.serverActive == false, state.pending.allSatisfy({ $0.rpc == "create_trip_with_occurrences_v1" }) else { throw Failure.reconciliation } }
         else { guard state.serverActive != false else { throw Failure.reconciliation } }
         let before = state.projected; let d = try TripOccurrenceCoverage.requireDocument(before)
         guard var fields = before.occurrenceObject else { throw Failure.updateRequired }
@@ -203,6 +204,16 @@ import Foundation
                             "activeOrder": .array(order.map { .string($0) }), "retired": retired])
         }
     }
+    /// Retires the old item and preserves its audit state. The replacement must have a new UUID.
+    @discardableResult func replaceOccurrence(_ oldId: String, newItem: JSON) throws -> Operation {
+        try append { d, raw in
+            guard d.activeOrder.contains(oldId), let newId = newItem[occurrence: "occurrenceId"]?.occurrenceString,
+                  !d.items.contains(where: { $0.occurrenceId == newId }), case .array(let items) = raw[occurrence: "items"] else { throw Failure.invalidAction }
+            return .object(["kind": .string("editPlan"), "planId": .string(d.planId), "items": .array(items + [newItem]),
+                "activeOrder": .array(d.activeOrder.map { .string($0 == oldId ? newId : $0) }),
+                "retired": .array((d.retired + [oldId]).map { .string($0) })])
+        }
+    }
     @discardableResult func undo(_ operationId: String) throws -> Operation {
         guard let state = try load(), let previous = state.history.first(where: { $0.id == operationId }),
               let id = previous.action[occurrence: "occurrenceId"]?.occurrenceString else { throw Failure.missing }
@@ -286,6 +297,15 @@ import Foundation
             before["lastOperationId"] = .string(id); before["source"] = .string("correction"); states[target] = .object(before)
         case "selectOccurrence": fields["selectedOccurrenceId"] = target.map { .string($0) } ?? .null
         case "editPlan":
+            guard case .array(let items) = action[occurrence: "items"], case .array(let oldItems) = raw[occurrence: "items"] else { throw Failure.invalidAction }
+            for old in oldItems {
+                guard items.filter({ $0[occurrence: "occurrenceId"] == old[occurrence: "occurrenceId"] }) == [old] else { throw Failure.invalidAction }
+            }
+            for item in items {
+                guard let key = item[occurrence: "occurrenceId"]?.occurrenceString else { throw Failure.invalidAction }
+                if states[key] == nil { states[key] = .object(["status": .string("incomplete"), "lastOperationId": .null, "source": .null, "tankSessionIds": .array([])]) }
+            }
+            fields["items"] = .array(items); fields["retired"] = action[occurrence: "retired"]
             fields["activeOrder"] = action[occurrence: "activeOrder"]; fields["selectedOccurrenceId"] = .null
             fields["planRevision"] = .number(Double(d.planRevision + 1))
         default: throw Failure.invalidAction

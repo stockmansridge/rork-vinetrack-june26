@@ -448,6 +448,18 @@ struct ActiveTripView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let message = tracking.occurrenceActivationMessage {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(message).font(.caption)
+                    if let live = tracking.activeTrip, let d = live.occurrenceDocument,
+                       let target = d.items.first(where: { $0.occurrenceId == d.targetId }) {
+                        Text("Acting on \(target.blockNameSnapshot) · Path \(formatPath(target.pathNumber)) · Pass \(target.passOrdinal)")
+                            .font(.caption.weight(.semibold))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16).padding(.vertical, 8)
+            }
             tripInfoBar
 
             ZStack(alignment: .topTrailing) {
@@ -560,14 +572,14 @@ struct ActiveTripView: View {
                         } label: {
                             Label("Mark this path done & move on", systemImage: "checkmark.circle")
                         }
-                        .disabled(trip.rowSequence.isEmpty)
+                        .disabled(trip.rowSequence.isEmpty || (tracking.occurrenceActivationMessage != nil && tracking.occurrenceActivationMessage != "Server-confirmed active"))
 
                         Button(role: .destructive) {
                             tracking.skipCurrentPlannedPath()
                         } label: {
                             Label("Skip this path (won't count)", systemImage: "forward.end")
                         }
-                        .disabled(trip.rowSequence.isEmpty)
+                        .disabled(trip.rowSequence.isEmpty || (tracking.occurrenceActivationMessage != nil && tracking.occurrenceActivationMessage != "Server-confirmed active"))
                     }
                     Divider()
                     Button {

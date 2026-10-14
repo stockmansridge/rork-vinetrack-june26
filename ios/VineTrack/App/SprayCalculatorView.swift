@@ -83,6 +83,7 @@ struct SprayCalculatorView: View {
     /// between rows X and X+1; defaults snap to the first available path in
     /// `clampStartPath()` whenever the paddock selection changes.
     @State private var startPath: Double = 0.5
+    @State private var startCandidateKey: String? = nil
     /// Sequence direction. `true` = lower rows first (ascending), `false` =
     /// higher rows first (descending). Mirrors `StartTripSheet`'s
     /// `directionHigherFirst` so both flows share semantics.
@@ -391,15 +392,12 @@ struct SprayCalculatorView: View {
     }
 
     /// Proposed row sequence shared by the preview card and trip start.
-    private var pathSequencePreview: [Double] {
-        guard hasAnyRowGeometry, trackingPatternChoice != .freeDrive else { return [] }
-        return TripRowSequencePlanner.generateSequence(
-            paddocks: orderedSelectedPaddocks,
-            pattern: trackingPatternChoice,
-            startPath: startPath,
-            directionHigherFirst: directionHigherFirst
-        )
+    private var qualifiedCandidates: [TripOccurrencePlanner.Candidate] { TripOccurrencePlanner.candidates(orderedSelectedPaddocks) }
+    private var selectedCandidate: TripOccurrencePlanner.Candidate? { qualifiedCandidates.first { $0.id == startCandidateKey } ?? qualifiedCandidates.first }
+    private var plannedCandidates: [TripOccurrencePlanner.Candidate] {
+        TripOccurrencePlanner.plan(qualifiedCandidates, pattern: trackingPatternChoice, startKey: selectedCandidate?.id, higherFirst: directionHigherFirst)
     }
+    private var pathSequencePreview: [Double] { plannedCandidates.map(\.label) }
 
     private var selectedTractorName: String {
         selectedTractorId.flatMap { id in
@@ -2106,13 +2104,14 @@ struct SprayCalculatorView: View {
                 }
 
                 Menu {
-                    ForEach(availablePaths, id: \.self) { path in
+                    ForEach(qualifiedCandidates) { path in
                         Button {
-                            startPath = path
+                            startCandidateKey = path.id
+                            startPath = path.label
                         } label: {
                             HStack {
-                                Text(TripRowSequencePlanner.pathMenuLabel(path, paddocks: orderedSelectedPaddocks))
-                                if abs(path - startPath) < 0.01 {
+                                Text(path.display)
+                                if path.id == selectedCandidate?.id {
                                     Spacer()
                                     Image(systemName: "checkmark")
                                 }
@@ -2128,7 +2127,7 @@ struct SprayCalculatorView: View {
                             Text("Start path")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
-                            Text(TripRowSequencePlanner.pathMenuLabel(startPath, paddocks: orderedSelectedPaddocks))
+                            Text(selectedCandidate?.display ?? "Select a block and path")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -2185,7 +2184,7 @@ struct SprayCalculatorView: View {
                             Image(systemName: "sparkles")
                                 .font(.caption2)
                                 .foregroundStyle(.purple)
-                            Text(TripRowSequencePlanner.sequencePreviewText(sequence))
+                            Text(TripOccurrencePlanner.preview(plannedCandidates))
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.primary)
                                 .lineLimit(3)
@@ -2875,7 +2874,7 @@ struct SprayCalculatorView: View {
     }
 
     private var pathSequenceText: String {
-        TripRowSequencePlanner.sequencePreviewText(pathSequencePreview, maxItems: 40)
+        TripOccurrencePlanner.preview(plannedCandidates, maxItems: 40)
     }
 
     private func confirmRow(label: String, value: String, icon: String) -> some View {
@@ -4410,6 +4409,7 @@ struct SprayCalculatorView: View {
             paddockName: paddockNames,
             trackingPattern: trackingPatternChoice,
             rowSequence: sequence,
+            plannedCandidates: plannedCandidates,
             sequenceIndex: 0,
             currentRowNumber: initialPath,
             nextRowNumber: sequence.dropFirst().first ?? initialPath,
@@ -4421,19 +4421,15 @@ struct SprayCalculatorView: View {
             operatorUserId: auth.userId,
             operatorCategoryId: accessControl.loadedVineyardId == vineyardId ? accessControl.currentWorkerTypeId : nil,
             startEngineHours: parsedStartEngineHours,
-            sprayRecord: record
+            sprayRecord: record,
+            onStarted: { success in
+                guard success else { errorMessage = tracking.errorMessage ?? "Planned start needs recovery."; return }
+                savedFeedback.toggle()
+                showSummary = false
+                showStartConfirmation = false
+                dismiss()
+            }
         )
-        guard tracking.activeTrip != nil else {
-            errorMessage = tracking.errorMessage ?? "Could not start trip."
-            return
-        }
-
-        savedFeedback.toggle()
-        showSummary = false
-        showStartConfirmation = false
-        // Dismiss the Spray Calculator sheet so the live trip tracking UI
-        // becomes visible to the operator.
-        dismiss()
     }
 
     private func saveForLater() {
@@ -4460,7 +4456,7 @@ struct SprayCalculatorView: View {
         let tanks: [SprayTank] = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
         let sequence = pathSequencePreview
         let initialPath = sequence.first ?? 0.5
-        let placeholderTrip = Trip(
+        var placeholderTrip = Trip(
             id: UUID(),
             vineyardId: vineyardId,
             paddockId: firstPaddock?.id,
@@ -4510,9 +4506,17 @@ struct SprayCalculatorView: View {
             // Job-originated completion: the record fulfils this spray job.
             sprayJobId: originSprayJobId
         )
-        let attempt = pendingLaterSave ?? (record: record, trip: placeholderTrip)
-        pendingLaterSave = attempt
         do {
+            if pendingLaterSave == nil, !sequence.isEmpty {
+                guard selectedPaddocks.allSatisfy({ block in plannedCandidates.contains { $0.blockId == block.id } }) else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                placeholderTrip.occurrenceCoverage = try TripOccurrencePlanner.commit(plannedCandidates, vineyardId: vineyardId)
+            }
+            let attempt = pendingLaterSave ?? (record: record, trip: placeholderTrip)
+            pendingLaterSave = attempt
+            if attempt.trip.coverageBasis != .legacy {
+                guard let owner = auth.userId else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                try SupabaseTripSyncRepository().prepareOccurrenceCreation(BackendTrip.upsert(from: attempt.trip, createdBy: owner, clientUpdatedAt: attempt.trip.startTime), ownerId: owner)
+            }
             try store.saveSprayForLater(record: attempt.record, trip: attempt.trip)
         } catch {
             errorMessage = "Couldn't confirm the saved spray job. Your original save is retained for retry; no spray has started."

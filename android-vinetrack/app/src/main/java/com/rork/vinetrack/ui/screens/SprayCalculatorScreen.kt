@@ -713,19 +713,16 @@ fun SprayCalculatorScreen(
     val hasRowGeometry = remember(orderedSelectedPaddocks) {
         TripRowSequencePlanner.hasAnyRowGeometry(orderedSelectedPaddocks)
     }
+    var startCandidateKey by remember { mutableStateOf<String?>(null) }
     val availablePaths = remember(orderedSelectedPaddocks) {
-        TripRowSequencePlanner.availablePaths(orderedSelectedPaddocks)
+        com.rork.vinetrack.data.TripOccurrencePlanner.candidates(orderedSelectedPaddocks)
     }
-    LaunchedEffect(availablePaths) {
-        startPath = if (availablePaths.none { abs(it - startPath) < 0.01 }) {
-            availablePaths.firstOrNull() ?: 0.5
-        } else {
-            TripRowSequencePlanner.clampedStartPath(startPath, orderedSelectedPaddocks)
-        }
-    }
-    val pathSequence = remember(orderedSelectedPaddocks, trackingPattern, startPath, directionHigherFirst) {
-        if (!hasRowGeometry || trackingPattern == TrackingPattern.FREE_DRIVE) emptyList()
-        else TripRowSequencePlanner.generateSequence(orderedSelectedPaddocks, trackingPattern, startPath, directionHigherFirst)
+    val selectedCandidate = availablePaths.firstOrNull { it.key == startCandidateKey } ?: availablePaths.firstOrNull()
+    val plannedCandidates = com.rork.vinetrack.data.TripOccurrencePlanner.plan(availablePaths, trackingPattern, selectedCandidate?.key, directionHigherFirst)
+    val pathSequence = plannedCandidates.map { it.label }
+    LaunchedEffect(selectedCandidate?.key) {
+        startPath = selectedCandidate?.label ?: 0.5
+        equipmentConfirmedSignature = null
     }
     val equipmentSelection = SprayEquipmentSelection(
         selectedBlockIds = orderedSelectedPaddocks.map { it.id },
@@ -1223,6 +1220,7 @@ fun SprayCalculatorScreen(
             trackingPattern = effectivePattern.rawValue,
             rowSequence = pathSequence,
             totalTanks = totalTanks,
+            candidates = plannedCandidates,
         )
     }
 
@@ -1303,13 +1301,13 @@ fun SprayCalculatorScreen(
             fansJets = fansJets,
             trackingPattern = trackingPattern,
             hasRowGeometry = hasRowGeometry,
-            startPath = startPath,
+            startPath = selectedCandidate?.key,
             directionHigherFirst = directionHigherFirst,
             orderedSelectedPaddocks = orderedSelectedPaddocks,
             pathSequence = pathSequence,
             availablePaths = availablePaths,
             onPatternChange = { trackingPattern = it },
-            onStartPathChange = { startPath = it },
+            onStartPathChange = { startCandidateKey = it },
             onDirectionChange = { directionHigherFirst = it },
             errorMessage = guidedFlow.operationalBlocker ?: errorMessage,
             saving = saving,
@@ -3975,9 +3973,9 @@ private fun TrackingSetupContent(
     trackingPattern: TrackingPattern,
     onPatternChange: (TrackingPattern) -> Unit,
     hasRowGeometry: Boolean,
-    availablePaths: List<Double>,
-    startPath: Double,
-    onStartPathChange: (Double) -> Unit,
+    availablePaths: List<com.rork.vinetrack.data.TripOccurrencePlanner.Candidate>,
+    startPath: String?,
+    onStartPathChange: (String) -> Unit,
     directionHigherFirst: Boolean,
     onDirectionChange: (Boolean) -> Unit,
     orderedSelectedPaddocks: List<Paddock>,
@@ -4006,14 +4004,14 @@ private fun TrackingSetupContent(
         if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
             ExposedDropdownMenuBox(expanded = pathMenu, onExpandedChange = { pathMenu = it }) {
                 OutlinedTextField(
-                    value = TripRowSequencePlanner.pathMenuLabel(startPath, orderedSelectedPaddocks),
+                    value = availablePaths.firstOrNull { it.key == startPath }?.display ?: "Select a block and path",
                     onValueChange = {}, readOnly = true, label = { Text("Starting path") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(pathMenu) },
                     modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
                 )
                 ExposedDropdownMenu(expanded = pathMenu, onDismissRequest = { pathMenu = false }) {
                     availablePaths.forEach { path ->
-                        DropdownMenuItem(text = { Text(TripRowSequencePlanner.pathMenuLabel(path, orderedSelectedPaddocks)) }, onClick = { onStartPathChange(path); pathMenu = false })
+                        DropdownMenuItem(text = { Text(path.display) }, onClick = { onStartPathChange(path.key); pathMenu = false })
                     }
                 }
             }
@@ -4023,7 +4021,7 @@ private fun TrackingSetupContent(
                 SegmentedButton(selected = directionHigherFirst, onClick = { onDirectionChange(true) }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Lower to higher", fontSize = 12.sp) }
             }
             Text("Proposed row/path sequence", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-            Text(TripRowSequencePlanner.sequencePreviewText(pathSequence), fontSize = 13.sp, color = vine.textPrimary)
+            Text(com.rork.vinetrack.data.TripOccurrencePlanner.preview(com.rork.vinetrack.data.TripOccurrencePlanner.plan(availablePaths, trackingPattern, startPath, directionHigherFirst)), fontSize = 13.sp, color = vine.textPrimary)
         } else {
             Text(
                 if (trackingPattern == TrackingPattern.FREE_DRIVE) "Free Drive does not require a starting path."
@@ -4066,13 +4064,13 @@ private fun SprayTankMixReview(
     fansJets: String,
     trackingPattern: TrackingPattern,
     hasRowGeometry: Boolean,
-    startPath: Double,
+    startPath: String?,
     directionHigherFirst: Boolean,
     orderedSelectedPaddocks: List<Paddock>,
     pathSequence: List<Double>,
-    availablePaths: List<Double>,
+    availablePaths: List<com.rork.vinetrack.data.TripOccurrencePlanner.Candidate>,
     onPatternChange: (TrackingPattern) -> Unit,
-    onStartPathChange: (Double) -> Unit,
+    onStartPathChange: (String) -> Unit,
     onDirectionChange: (Boolean) -> Unit,
     errorMessage: String?,
     saving: Boolean,
@@ -4287,7 +4285,7 @@ private fun SprayTankMixReview(
                         var pathMenu by remember { mutableStateOf(false) }
                         ExposedDropdownMenuBox(expanded = pathMenu, onExpandedChange = { pathMenu = it }) {
                             OutlinedTextField(
-                                value = TripRowSequencePlanner.pathMenuLabel(startPath, orderedSelectedPaddocks),
+                                value = availablePaths.firstOrNull { it.key == startPath }?.display ?: "Select a block and path",
                                 onValueChange = {},
                                 readOnly = true,
                                 label = { Text("Start path") },
@@ -4297,8 +4295,8 @@ private fun SprayTankMixReview(
                             ExposedDropdownMenu(expanded = pathMenu, onDismissRequest = { pathMenu = false }) {
                                 availablePaths.forEach { path ->
                                     DropdownMenuItem(
-                                        text = { Text(TripRowSequencePlanner.pathMenuLabel(path, orderedSelectedPaddocks)) },
-                                        onClick = { onStartPathChange(path); pathMenu = false },
+                                        text = { Text(path.display) },
+                                        onClick = { onStartPathChange(path.key); pathMenu = false },
                                     )
                                 }
                             }
@@ -4331,7 +4329,7 @@ private fun SprayTankMixReview(
                             Text("No sequence available for the current selection.", fontSize = 12.sp, color = vine.textSecondary)
                         } else {
                             Text(
-                                TripRowSequencePlanner.sequencePreviewText(pathSequence),
+                                com.rork.vinetrack.data.TripOccurrencePlanner.preview(com.rork.vinetrack.data.TripOccurrencePlanner.plan(availablePaths, trackingPattern, startPath, directionHigherFirst)),
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = vine.textPrimary,

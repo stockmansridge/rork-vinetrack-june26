@@ -133,7 +133,7 @@ nonisolated struct BackendTripUpsert: Encodable, Sendable {
     let totalDistance: Double
     let currentPathDistance: Double
     let currentRowNumber: Double
-    let nextRowNumber: Double
+    let nextRowNumber: Double?
     let sequenceIndex: Int
     let rowSequence: [Double]
     var occurrenceCoverage: TripOccurrenceCoverage.JSON? = nil
@@ -304,7 +304,10 @@ extension BackendTrip {
             totalDistance: trip.totalDistance,
             currentPathDistance: trip.currentPathDistance,
             currentRowNumber: trip.currentRowNumber,
-            nextRowNumber: trip.nextRowNumber,
+            nextRowNumber: trip.coverageBasis == .legacy ? trip.nextRowNumber : trip.occurrenceDocument.flatMap { document in
+                document.activeOrder.first(where: { $0 != document.targetId && document.states[$0]?.status == "incomplete" })
+                    .flatMap { id in document.items.first(where: { $0.occurrenceId == id })?.pathNumber }
+            },
             sequenceIndex: trip.sequenceIndex,
             rowSequence: trip.rowSequence,
             occurrenceCoverage: trip.occurrenceCoverage,

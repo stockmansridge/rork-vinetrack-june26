@@ -66,6 +66,13 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         metadata.removeValue(forKey: "occurrence_coverage")
         let journal = try TripOccurrenceJournal(scope: .init(ownerId: ownerId.uuidString.lowercased(),
             vineyardId: trip.vineyardId.uuidString.lowercased(), tripId: trip.id.uuidString.lowercased()))
+        if let existing = try journal.load() {
+            guard let creation = existing.history.first(where: { $0.rpc == "create_trip_with_occurrences_v1" }),
+                  creation.params[occurrence: "p_trip"] == .object(metadata), creation.params[occurrence: "p_coverage"] == coverage else {
+                throw TripOccurrenceCoverage.Failure.reconciliation
+            }
+            return
+        }
         try journal.prepareCreation(trip: .object(metadata), coverage: coverage)
     }
 

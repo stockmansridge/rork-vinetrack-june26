@@ -37,6 +37,7 @@ class SprayRecordCreateSync(
     private val sprayRepo: SprayRecordRepository?,
     private val pending: PendingWriteRepository,
     private val createRemote: (suspend (Payload) -> SprayRecord)? = null,
+    private val occurrenceParentReady: (Payload) -> Boolean = { false },
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -90,6 +91,7 @@ class SprayRecordCreateSync(
          */
         val applicationGeometry: SprayApplicationSnapshot? = null,
         val clientUpdatedAt: String,
+        val requiresOccurrenceParent: Boolean = false,
     )
 
     /**
@@ -103,6 +105,7 @@ class SprayRecordCreateSync(
         vineyardId: String,
         input: SprayRecordRepository.SprayInput,
         clientUpdatedAt: String,
+        requiresOccurrenceParent: Boolean = false,
     ): PendingWrite {
         input.operationalBlocker()?.let { throw IllegalStateException(it) }
         val payload = Payload(
@@ -131,6 +134,7 @@ class SprayRecordCreateSync(
             tanks = input.tanks,
             applicationGeometry = input.applicationGeometry,
             clientUpdatedAt = clientUpdatedAt,
+            requiresOccurrenceParent = requiresOccurrenceParent,
         )
         val encoded = json.encodeToString(Payload.serializer(), payload)
         return requireNotNull(pending.coalesceUnstartedCreate(PendingEntityType.SPRAY_RECORD, id) { existing ->
@@ -195,6 +199,8 @@ class SprayRecordCreateSync(
                     (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
             }
             for (write in candidates) {
+                val retained = runCatching { json.decodeFromString(Payload.serializer(), write.payloadJson) }.getOrNull()
+                if (retained?.requiresOccurrenceParent == true && !occurrenceParentReady(retained)) continue
                 val claimed = pending.claimReplay(write) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)

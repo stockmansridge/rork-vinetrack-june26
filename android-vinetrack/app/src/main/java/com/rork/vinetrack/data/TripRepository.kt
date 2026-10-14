@@ -333,6 +333,45 @@ class TripRepository(private val session: SessionStore) {
         firstRow(response)
     }
 
+    /** Retain the ordinary creation payload before publishing any prospective planned trip. */
+    fun preparePlannedCreation(trip: Trip, journal: TripOccurrenceJournal) {
+        val body = TripInsert(id = trip.id, vineyardId = trip.vineyardId, paddockId = trip.paddockId,
+            paddockName = trip.paddockName, paddockIds = trip.paddockIds,
+            startTime = requireNotNull(trip.startTime), isActive = false, personName = trip.personName,
+            tripFunction = trip.tripFunction, tripTitle = trip.tripTitle, machineId = trip.machineId,
+            tractorId = trip.tractorId, workTaskId = trip.workTaskId, operatorUserId = trip.operatorUserId,
+            operatorCategoryId = trip.operatorCategoryId, startEngineHours = trip.startEngineHours,
+            seedingDetails = trip.seedingDetails, trackingPattern = trip.trackingPattern,
+            rowSequence = trip.rowSequence, sequenceIndex = trip.sequenceIndex,
+            currentRowNumber = trip.currentRowNumber, nextRowNumber = trip.nextRowNumber,
+            totalTanks = trip.totalTanks, createdBy = session.userId,
+            clientUpdatedAt = requireNotNull(trip.clientUpdatedAt))
+        journal.prepareCreation(SupabaseClient.json.encodeToJsonElement(TripInsert.serializer(), body) as JsonObject,
+            trip.occurrenceCoverage as? JsonObject ?: error("Missing occurrence plan."))
+    }
+
+    /** Exact lifecycle replay and authoritative reload precede online recording. */
+    suspend fun confirmPlannedStart(trip: Trip, journal: TripOccurrenceJournal): Trip {
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        repeat(3) {
+            val state = journal.load() ?: error("Saved occurrence plan missing.")
+            check(state.heldReason == null) { "Saved start needs reconciliation." }
+            val op = state.pending.firstOrNull() ?: return@repeat
+            check(op.rpc in listOf("create_trip_with_occurrences_v1", "activate_trip_occurrences_v1"))
+            val result = try { applyOccurrenceOperation(op.params, op.rpc, access) }
+            catch (rejection: OccurrenceRejected) {
+                if (!session.withAccountAccess(access) { journal.hold(rejection.code) }) throw BackendError.Unauthorized
+                throw rejection
+            }
+            if (!session.withAccountAccess(access) { journal.acknowledge(result) }) throw BackendError.Unauthorized
+        }
+        val state = journal.load() ?: error("Saved occurrence plan missing.")
+        check(state.creationConfirmed && state.pending.isEmpty() && state.heldReason == null)
+        val remote = fetchTrip(trip.id, access) ?: error("Authoritative reload pending.")
+        check(remote.occurrenceCoverage == state.acknowledged && remote.isActive == trip.isActive)
+        return remote
+    }
+
     /**
      * Create an inactive, already-finished trip to carry an imported spray
      * record's block + operator. Mirrors the iOS importer, which makes a

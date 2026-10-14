@@ -44,6 +44,34 @@ class TripOccurrencePersistenceAndroidTest {
             put("plannedCursorId",a); put("selectedOccurrenceId",JsonNull)
         }
     }
+    @Test fun plannerToProductionCreatePayloadAndActivationKeepsFourIDsOnDisk() {
+        val owner = UUID.randomUUID().toString(); val session = SessionStore(context)
+        session.save("synthetic-access", "synthetic-refresh", owner, null)
+        val scope = TripOccurrenceJournal.Scope(owner, UUID.randomUUID().toString(), UUID.randomUUID().toString())
+        val candidates = listOf(
+            TripOccurrencePlanner.Candidate(scope.vineyardId, UUID.randomUUID().toString(), "A", 38.5, emptyList()),
+            TripOccurrencePlanner.Candidate(scope.vineyardId, UUID.randomUUID().toString(), "B", 38.5, emptyList()))
+        val raw = TripOccurrencePlanner.commit(TripOccurrencePlanner.plan(candidates, TrackingPattern.UP_AND_BACK, candidates[0].key, true), scope.vineyardId)
+        val ids = TripOccurrenceCoverage.requireDocument(raw).order
+        val trip = com.rork.vinetrack.data.model.Trip(id = scope.tripId, vineyardId = scope.vineyardId,
+            paddockIds = candidates.map { it.blockId }, occurrenceCoverage = raw, rowSequence = List(4) { 38.5 },
+            startTime = "2026-10-14T08:00:00Z", clientUpdatedAt = "2026-10-14T08:00:00Z", tripTitle = "Retained setup",
+            currentRowNumber = 38.5, nextRowNumber = 38.5)
+        var j = TripOccurrenceNativeStore(context).journal(scope)
+        TripRepository(session).preparePlannedCreation(trip, j)
+        val create = j.load()!!.pending.single()
+        val activate = j.activate(buildJsonObject { put("startTime", "2026-10-14T09:00:00Z") })
+        j = TripOccurrenceNativeStore(context).journal(scope)
+        assertEquals(listOf(create.params, activate.params), j.load()!!.pending.map { it.params })
+        assertEquals(ids, TripOccurrenceCoverage.requireDocument(j.projected(j.load()!!)).order)
+        assertEquals(JsonPrimitive("Retained setup"), create.params["p_trip"]!!.jsonObject["trip_title"])
+        j.acknowledge(buildJsonObject { put("tripId", scope.tripId); put("operationId", create.id); put("coverage", create.after) })
+        j.acknowledge(buildJsonObject { put("tripId", scope.tripId); put("operationId", activate.id); put("coverage", activate.after) })
+        val active = trip.copy(isActive = true).withOccurrenceProjection(j.projected(j.load()!!))
+        assertEquals(ids, active.occurrenceDocument!!.order)
+        assertTrue(active.completedPaths.orEmpty().isEmpty()); assertEquals(4, active.notCompletedRowCount)
+    }
+
     @Test fun realPreferenceRecreationPreservesDoneSkipUndoAndExactRetry() {
         val owner=UUID.randomUUID().toString(); SessionStore(context).save("synthetic-access","synthetic-refresh",owner,null)
         val scope=TripOccurrenceJournal.Scope(owner,UUID.randomUUID().toString(),UUID.randomUUID().toString())

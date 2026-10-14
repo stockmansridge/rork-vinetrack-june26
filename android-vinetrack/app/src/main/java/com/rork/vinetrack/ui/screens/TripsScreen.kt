@@ -2792,15 +2792,18 @@ private fun RowCoverageControls(vm: AppViewModel, trip: Trip, busy: Boolean) {
         val document = trip.occurrenceDocument
         val target = document?.items?.firstOrNull { it.id == document.targetId }
         val undo = vm.occurrenceUndoTarget(trip.id)
+        val activationMessage = vm.occurrenceActivationMessage(trip)
+        val ready = activationMessage == "Server-confirmed active"
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            activationMessage?.let { Text(it) }
             if (document == null) Text(trip.coverageMessage ?: "Occurrence coverage is unavailable. Update required.")
             else {
                 OccurrenceTripRows(trip, onSelect = { vm.selectTripOccurrence(trip.id, it) })
                 target?.let { item ->
                     Text("Acting on ${item.blockName} · ${TripRowSequencePlanner.formatPath(item.label)} · Pass ${item.pass}")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { vm.markTripOccurrence(trip.id, item.id, "done") }, enabled = !busy) { Text("Done this pass") }
-                        OutlinedButton(onClick = { vm.markTripOccurrence(trip.id, item.id, "skipped") }, enabled = !busy) { Text("Skip this pass") }
+                        Button(onClick = { vm.markTripOccurrence(trip.id, item.id, "done") }, enabled = !busy && ready) { Text("Done this pass") }
+                        OutlinedButton(onClick = { vm.markTripOccurrence(trip.id, item.id, "skipped") }, enabled = !busy && ready) { Text("Skip this pass") }
                     }
                 }
                 undo?.let { (operationId, item) ->
@@ -3022,6 +3025,7 @@ private fun StartTripSheet(
     var title by remember { mutableStateOf("") }
     var pattern by remember { mutableStateOf(TrackingPattern.SEQUENTIAL) }
     var startPath by remember { mutableStateOf(0.5) }
+    var startCandidateKey by remember { mutableStateOf<String?>(null) }
     var directionHigherFirst by remember { mutableStateOf(true) }
     var machineId by remember { mutableStateOf<String?>(null) }
     var machineDefaulted by remember { mutableStateOf(false) }
@@ -3109,13 +3113,10 @@ private fun StartTripSheet(
         .firstOrNull { it.first == functionRaw }?.second ?: "Select function"
     val canManageFunctions = state.currentRole == "owner" || state.currentRole == "manager"
 
-    val sequence = remember(selectedPaddocks, pattern, startPath, directionHigherFirst) {
-        if (!hasRowGeometry || pattern == TrackingPattern.FREE_DRIVE) {
-            emptyList()
-        } else {
-            TripRowSequencePlanner.generateSequence(selectedPaddocks, pattern, startPath, directionHigherFirst)
-        }
-    }
+    val qualifiedCandidates = com.rork.vinetrack.data.TripOccurrencePlanner.candidates(selectedPaddocks)
+    val selectedCandidate = qualifiedCandidates.firstOrNull { it.key == startCandidateKey } ?: qualifiedCandidates.firstOrNull()
+    val plannedCandidates = com.rork.vinetrack.data.TripOccurrencePlanner.plan(qualifiedCandidates, pattern, selectedCandidate?.key, directionHigherFirst)
+    val sequence = plannedCandidates.map { it.label }
     val isSeedingSelected = functionRaw == "seeding"
     val seedBoxesInvalid = isSeedingSelected && !useFrontBox && !useBackBox
     val canStart = paddockIds.isNotEmpty() && !seedBoxesInvalid
@@ -3274,6 +3275,7 @@ private fun StartTripSheet(
             startEngineHours = engineHours,
             trackingPattern = effectivePattern.rawValue,
             rowSequence = sequence,
+            plannedCandidates = plannedCandidates,
             seedingDetails = seedingDetails,
         ) { ok ->
             saving = false
@@ -3662,15 +3664,15 @@ private fun StartTripSheet(
                             icon = Icons.Filled.Route,
                             tint = VineColors.Info,
                             title = "Start path",
-                            subtitle = TripRowSequencePlanner.pathMenuLabel(startPath, selectedPaddocks),
+                            subtitle = selectedCandidate?.display ?: "Select a block and path",
                             onClick = { pathMenu = true },
                         )
                         DropdownMenu(expanded = pathMenu, onDismissRequest = { pathMenu = false }) {
-                            TripRowSequencePlanner.availablePaths(selectedPaddocks).forEach { path ->
+                            qualifiedCandidates.forEach { path ->
                                 StartTripMenuItem(
-                                    TripRowSequencePlanner.pathMenuLabel(path, selectedPaddocks),
-                                    kotlin.math.abs(path - startPath) < 0.01,
-                                ) { startPath = path; pathMenu = false }
+                                    path.display,
+                                    path.key == selectedCandidate?.key,
+                                ) { startCandidateKey = path.key; startPath = path.label; pathMenu = false }
                             }
                         }
                     }
@@ -3718,7 +3720,7 @@ private fun StartTripSheet(
                                     modifier = Modifier.size(13.dp),
                                 )
                                 Text(
-                                    TripRowSequencePlanner.sequencePreviewText(sequence),
+                                    com.rork.vinetrack.data.TripOccurrencePlanner.preview(plannedCandidates),
                                     fontSize = 12.sp,
                                     color = vine.textPrimary,
                                     maxLines = 3,

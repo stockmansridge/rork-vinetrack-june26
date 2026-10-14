@@ -133,9 +133,9 @@ struct SprayTripSetupSheet: View {
                     machineName: machineName(for: trip),
                     latestEngineHours: latestEngineHours(for: trip)
                 ) { startEngineHours in
-                    tracking.activateSavedTrip(trip, startEngineHours: startEngineHours)
-                    pendingSavedTrip = nil
-                    if tracking.errorMessage == nil { dismiss() }
+                    tracking.activateSavedTrip(trip, startEngineHours: startEngineHours, onStarted: { success in
+                        if success { pendingSavedTrip = nil; dismiss() }
+                    })
                 }
             }
             .task {

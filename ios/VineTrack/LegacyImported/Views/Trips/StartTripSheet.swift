@@ -22,6 +22,7 @@ struct StartTripSheet: View {
     /// Selected start path (e.g. 0.5, 1.5, … N+0.5). Path X.5 sits between rows X and X+1.
     /// Path 0.5 is before row 1; path (totalRows+0.5) is after the last row.
     @State private var startPath: Double = 0.5
+    @State private var startCandidateKey: String? = nil
     /// Direction selector for traversal. true = higher rows first (ascending),
     /// false = lower rows first (descending). Replaces the old "Reverse direction" toggle.
     @State private var directionHigherFirst: Bool = true
@@ -161,6 +162,12 @@ struct StartTripSheet: View {
     /// number N we contribute paths N-0.5 (before/between) and N+0.5 (after).
     /// Path X.5 sits between rows X and X+1; path (minRow-0.5) is before the
     /// first row; path (maxRow+0.5) is after the last row.
+    private var qualifiedCandidates: [TripOccurrencePlanner.Candidate] { TripOccurrencePlanner.candidates(selectedPaddocks) }
+    private var selectedCandidate: TripOccurrencePlanner.Candidate? { qualifiedCandidates.first { $0.id == startCandidateKey } ?? qualifiedCandidates.first }
+    private var plannedCandidates: [TripOccurrencePlanner.Candidate] {
+        TripOccurrencePlanner.plan(qualifiedCandidates, pattern: trackingPattern, startKey: selectedCandidate?.id, higherFirst: directionHigherFirst)
+    }
+
     private var availablePaths: [Double] {
         let numbers = selectedRowNumbers
         guard !numbers.isEmpty else { return [0.5] }
@@ -485,13 +492,14 @@ struct StartTripSheet: View {
                 }
 
                 Menu {
-                    ForEach(availablePaths, id: \.self) { path in
+                    ForEach(qualifiedCandidates) { path in
                         Button {
-                            startPath = path
+                            startCandidateKey = path.id
+                            startPath = path.label
                         } label: {
                             HStack {
-                                Text(pathMenuLabel(path))
-                                if abs(path - startPath) < 0.01 {
+                                Text(path.display)
+                                if path.id == selectedCandidate?.id {
                                     Spacer()
                                     Image(systemName: "checkmark")
                                 }
@@ -507,7 +515,7 @@ struct StartTripSheet: View {
                             Text("Start path")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
-                            Text(pathMenuLabel(startPath))
+                            Text(selectedCandidate?.display ?? "Select a block and path")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -612,7 +620,7 @@ struct StartTripSheet: View {
                             Image(systemName: "sparkles")
                                 .font(.caption2)
                                 .foregroundStyle(.purple)
-                            Text(sequencePreviewText(sequence))
+                            Text(TripOccurrencePlanner.preview(plannedCandidates))
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.primary)
                                 .lineLimit(3)
@@ -668,12 +676,7 @@ struct StartTripSheet: View {
     /// The preview and the persisted `trip.rowSequence` both call this.
     private func generatedSequence() -> [Double] {
         guard combinedTotalRows > 0 else { return [] }
-        return TripRowSequencePlanner.plannedSequence(
-            paths: availablePaths,
-            pattern: trackingPattern,
-            startPath: startPath,
-            higherFirst: directionHigherFirst
-        )
+        return plannedCandidates.map(\.label)
     }
 
     /// Every Second Row, parity-preserving sequence across the combined paths.
@@ -1262,6 +1265,7 @@ struct StartTripSheet: View {
             paddockName: paddockName,
             trackingPattern: trackingPattern,
             rowSequence: sequence,
+            plannedCandidates: plannedCandidates,
             sequenceIndex: 0,
             currentRowNumber: initialPath,
             nextRowNumber: sequence.dropFirst().first ?? initialPath,
@@ -1273,12 +1277,9 @@ struct StartTripSheet: View {
             operatorUserId: auth.userId,
             operatorCategoryId: accessControl.loadedVineyardId == store.selectedVineyardId ? accessControl.currentWorkerTypeId : nil,
             startEngineHours: startHours,
-            seedingDetails: tripSeedingDetails
+            seedingDetails: tripSeedingDetails,
+            onStarted: { success in if success { dismiss() } }
         )
-
-        if tracking.errorMessage == nil {
-            dismiss()
-        }
     }
 
     // MARK: Seeding Details

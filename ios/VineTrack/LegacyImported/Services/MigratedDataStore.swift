@@ -1364,6 +1364,17 @@ final class MigratedDataStore {
 
     // MARK: - Trip CRUD
 
+    /// Prospective planned starts publish only after the complete trip snapshot reaches disk.
+    func savePlannedTripOrThrow(_ trip: Trip) throws {
+        guard selectedVineyardId == trip.vineyardId else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+        var next = trips
+        if let index = next.firstIndex(where: { $0.id == trip.id }) { next[index] = trip }
+        else { next.append(trip) }
+        try tripRepo.saveSliceOrThrow(next, for: trip.vineyardId)
+        trips = next
+        onTripChanged?(trip.id)
+    }
+
     func startTrip(_ trip: Trip) {
         guard let vineyardId = selectedVineyardId else { return }
         var item = trip

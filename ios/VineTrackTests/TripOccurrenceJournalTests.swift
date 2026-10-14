@@ -31,6 +31,75 @@ final class TripOccurrenceJournalTests: XCTestCase {
     }
     private func directory() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
 
+    @MainActor func testBlockQualifiedPlannerKeepsFourSameLabelPassesAndSubset() throws {
+        let vineyard = try XCTUnwrap(UUID(uuidString: scope.vineyardId))
+        let rows = [PaddockRow(number: 38, startPoint: .init(latitude: 0, longitude: 0), endPoint: .init(latitude: 0, longitude: 1)),
+                    PaddockRow(number: 39, startPoint: .init(latitude: 1, longitude: 0), endPoint: .init(latitude: 1, longitude: 1))]
+        let blocks = [Paddock(vineyardId: vineyard, name: "A", rows: rows), Paddock(vineyardId: vineyard, name: "B", rows: rows)]
+        let choices = TripOccurrencePlanner.candidates(blocks).filter { $0.label == 38.5 }
+        XCTAssertEqual(choices.count, 2); XCTAssertEqual(Set(choices.map(\.id)).count, 2)
+        let planned = TripOccurrencePlanner.plan(choices, pattern: .upAndBack, startKey: choices[1].id, higherFirst: true)
+        XCTAssertEqual(planned.map(\.blockId), [blocks[1].id, blocks[1].id, blocks[0].id, blocks[0].id])
+        let d = try TripOccurrenceCoverage.requireDocument(TripOccurrencePlanner.commit(planned, vineyardId: vineyard))
+        XCTAssertEqual(Set(d.activeOrder).count, 4); XCTAssertEqual(d.items.map(\.passOrdinal), [1,2,1,2])
+        XCTAssertEqual(d.items.map(\.pathNumber), [38.5,38.5,38.5,38.5])
+        XCTAssertEqual(TripOccurrencePlanner.candidates([blocks[0]]).filter { $0.label == 38.5 }.count, 1)
+        XCTAssertEqual(TripOccurrencePlanner.candidates(blocks).filter { $0.label == 38.5 }, choices)
+    }
+
+    @MainActor func testOfflineCreateActivationRetainsIDsThroughFileRecreationAndTripReload() throws {
+        let vineyard = try XCTUnwrap(UUID(uuidString: scope.vineyardId))
+        let candidates = [TripOccurrencePlanner.Candidate(vineyardId: vineyard, blockId: UUID(), blockName: "A", label: 38.5, rows: []),
+                          TripOccurrencePlanner.Candidate(vineyardId: vineyard, blockId: UUID(), blockName: "B", label: 38.5, rows: [])]
+        let raw = try TripOccurrencePlanner.commit(TripOccurrencePlanner.plan(candidates, pattern: .upAndBack, startKey: candidates[0].id, higherFirst: true), vineyardId: vineyard)
+        let initial = try TripOccurrenceCoverage.requireDocument(raw)
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        var j = try TripOccurrenceJournal(scope: scope, directory: dir)
+        let metadata: TripOccurrenceCoverage.JSON = .object(["id": .string(scope.tripId), "vineyard_id": .string(scope.vineyardId), "is_active": .bool(false), "trip_title": .string("Kept title")])
+        let create = try j.prepareCreation(trip: metadata, coverage: raw)
+        let activate = try j.activate(.object(["startTime": .string("2026-10-14T08:00:00Z"), "startEngineHours": .number(123.5)]))
+        j = try TripOccurrenceJournal(scope: scope, directory: dir)
+        XCTAssertEqual(try j.load()?.pending.map(\.params), [create.params, activate.params])
+        XCTAssertThrowsError(try j.setStatus(initial.activeOrder[0], status: "done"))
+        try j.acknowledge(ack(create)); try j.acknowledge(ack(activate))
+        var trip = Trip(id: try XCTUnwrap(UUID(uuidString: scope.tripId)), vineyardId: vineyard, paddockName: "A, B", isActive: true)
+        trip = try trip.withOccurrenceProjection(XCTUnwrap(j.load()).projected)
+        let restored = try JSONDecoder().decode(Trip.self, from: JSONEncoder().encode(trip))
+        XCTAssertEqual(restored.occurrenceDocument?.activeOrder, initial.activeOrder)
+        XCTAssertTrue(restored.completedPaths.isEmpty); XCTAssertTrue(restored.skippedPaths.isEmpty)
+        XCTAssertEqual(try j.load()?.history.first?.params[occurrence: "p_trip"], metadata)
+    }
+
+    @MainActor func testReplacementRetiresDoneEvidenceWithoutInheritance() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let j = try journal(dir); try j.setStatus(a, status: "done"); try j.reorder([b,a])
+        let candidate = TripOccurrencePlanner.Candidate(vineyardId: try XCTUnwrap(UUID(uuidString: scope.vineyardId)), blockId: UUID(), blockName: "X", label: 38.5, rows: [])
+        let raw = try TripOccurrencePlanner.commit([candidate], vineyardId: candidate.vineyardId)
+        guard case .array(let items) = raw[occurrence: "items"], let item = items.first,
+              let newId = item[occurrence: "occurrenceId"]?.occurrenceString else { return XCTFail("New item missing") }
+        try j.replaceOccurrence(a, newItem: item)
+        let d = try TripOccurrenceCoverage.requireDocument(XCTUnwrap(j.load()).projected)
+        XCTAssertEqual(d.activeOrder, [b,newId]); XCTAssertEqual(d.retired, [a])
+        XCTAssertEqual(d.states[a]?.status, "done"); XCTAssertEqual(d.states[newId]?.status, "incomplete"); XCTAssertEqual(d.states[b]?.status, "incomplete")
+        XCTAssertThrowsError(try j.replaceOccurrence(b, newItem: item))
+    }
+
+    @MainActor func testSingleOccurrenceCreationHasNoNumericNextFallback() throws {
+        let vineyard = try XCTUnwrap(UUID(uuidString: scope.vineyardId))
+        let candidate = TripOccurrencePlanner.Candidate(vineyardId: vineyard, blockId: UUID(), blockName: "X", label: 38.5, rows: [])
+        let raw = try TripOccurrencePlanner.commit([candidate], vineyardId: vineyard)
+        var trip = Trip(vineyardId: vineyard, paddockName: "X", currentRowNumber: 38.5, nextRowNumber: 38.5, rowSequence: [38.5])
+        trip.occurrenceCoverage = raw
+        let payload = BackendTrip.upsert(from: trip, createdBy: nil, clientUpdatedAt: trip.startTime)
+        XCTAssertNil(payload.nextRowNumber)
+        XCTAssertEqual(payload.occurrenceCoverage, raw)
+    }
+
+    @MainActor func testPlannerRejectsCrossVineyardCommit() throws {
+        let candidate = TripOccurrencePlanner.Candidate(vineyardId: UUID(), blockId: UUID(), blockName: "X", label: 38.5, rows: [])
+        XCTAssertThrowsError(try TripOccurrencePlanner.commit([candidate], vineyardId: UUID()))
+    }
+
     @MainActor func testADoneLeavesBIncomplete() throws {
         let dir=directory(); defer { try? FileManager.default.removeItem(at: dir) }; let j=try journal(dir)
         try j.setStatus(a,status:"done"); XCTAssertEqual(try status(j,a),"done"); XCTAssertEqual(try status(j,b),"incomplete")

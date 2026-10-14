@@ -1986,7 +1986,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * other entity. The trip-coupled spray-create variants (which create a trip
      * first) are NOT queued here.
      */
-    private val sprayCreateSync = SprayRecordCreateSync(sprayRepo, pendingWrites)
+    private val sprayCreateSync = SprayRecordCreateSync(sprayRepo, pendingWrites, occurrenceParentReady = { payload ->
+        val trip = _ui.value.trips.firstOrNull { it.id == payload.tripId && it.vineyardId == payload.vineyardId }
+        val owner = session.userId
+        if (trip == null || owner == null || trip.coverageBasis != TripOccurrenceCoverage.Basis.OCCURRENCE) false
+        else runCatching {
+            val state = occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, trip.vineyardId, trip.id)).load()
+            state?.creationConfirmed == true && state.heldReason == null
+        }.getOrDefault(false)
+    })
 
     /**
      * Replay coordinator for plan-originated spray-job creates (sql/201,
@@ -8505,6 +8513,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         paddockIds: List<String> = emptyList(),
         trackingPattern: String? = null,
         rowSequence: List<Double> = emptyList(),
+        plannedCandidates: List<com.rork.vinetrack.data.TripOccurrencePlanner.Candidate> = emptyList(),
         seedingDetails: com.rork.vinetrack.data.model.SeedingDetails? = null,
         onResult: (Boolean) -> Unit,
     ) {
@@ -8515,6 +8524,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (tripFunction?.trim()?.lowercase() in setOf("spraying", "spray")) {
             _ui.update { it.copy(tripError = com.rork.vinetrack.data.SprayOperationalFailure.SPRAY_START_MESSAGE) }
             onResult(false); return
+        }
+        if (rowSequence.isNotEmpty()) {
+            if (plannedCandidates.map { it.label } != rowSequence) {
+                _ui.update { it.copy(tripError = "Reselect the block-qualified route. Numeric planned work cannot start.") }
+                onResult(false); return
+            }
+            val now = java.time.Instant.now().toString()
+            val trip = Trip(id = java.util.UUID.randomUUID().toString(), vineyardId = vineyardId,
+                paddockId = paddockId, paddockName = paddockName, paddockIds = paddockIds,
+                startTime = now, clientUpdatedAt = now, isActive = true, personName = personName,
+                tripFunction = tripFunction, tripTitle = tripTitle, machineId = machineId, tractorId = tractorId,
+                workTaskId = workTaskId, operatorUserId = operatorUserId, operatorCategoryId = operatorCategoryId,
+                startEngineHours = startEngineHours, trackingPattern = trackingPattern, rowSequence = rowSequence,
+                currentRowNumber = rowSequence.firstOrNull(), nextRowNumber = rowSequence.getOrNull(1),
+                seedingDetails = seedingDetails)
+            startQualifiedTrip(trip, plannedCandidates, onResult)
+            return
         }
         // Final id + start instant generated up front so an offline/transient
         // fallback provisional trip shares the eventual server row's identity.
@@ -8615,6 +8641,60 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * trip's id is the final server row id, so dependent markers attach to it
      * with no remapping.
      */
+    /** Durable create and activation precede local recording; online recording waits for read-back. */
+    private fun startQualifiedTrip(base: Trip, candidates: List<com.rork.vinetrack.data.TripOccurrencePlanner.Candidate>, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val planned = prepareQualifiedTrip(base, candidates)
+                val journal = occurrenceJournal(planned)
+                val ready = if (_ui.value.isOnline) tripRepo.confirmPlannedStart(planned, journal) else planned
+                check(claimDeviceTrip(ready)) { "Couldn't durably claim this planned trip." }
+                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == ready.id) ready else it },
+                    tripError = if (st.isOnline) null else "Locally activated · server sync pending. Coverage actions await confirmation.") }
+                recordTripLabourAtStart(ready)
+                beginTracking(ready)
+                replayOccurrenceActions(ready)
+                onResult(true)
+            } catch (e: Exception) {
+                _ui.update { it.copy(tripBusy = false, tripError = "Planned start retained for recovery: ${e.message ?: "sync pending"}. No numeric start was attempted.") }
+                onResult(false)
+            }
+        }
+    }
+
+    private fun prepareQualifiedTrip(base: Trip, candidates: List<com.rork.vinetrack.data.TripOccurrencePlanner.Candidate>): Trip {
+        val owner = session.userId ?: error("Sign in before accepting planned work.")
+        check(candidates.map { it.label } == base.rowSequence && candidates.all { it.blockId in base.effectivePaddockIds } &&
+            base.effectivePaddockIds.all { block -> candidates.any { it.blockId == block } }) {
+            "Every selected block must have explicitly bound planned work. Reselect the route; missing blocks cannot be silently omitted."
+        }
+        val pendingRecipes = pendingWrites.list().filter { write ->
+            write.entityType == com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD &&
+                write.opType == com.rork.vinetrack.data.model.PendingOpType.CREATE &&
+                write.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
+        }.mapNotNull { write -> runCatching {
+            kotlinx.serialization.json.Json.decodeFromString(SprayRecordCreateSync.Payload.serializer(), write.payloadJson).tripId
+        }.getOrNull() }.toSet()
+        check(_ui.value.trips.none { trip ->
+            trip.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE &&
+                (occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, trip.vineyardId, trip.id)).load()?.creationConfirmed == false || trip.id in pendingRecipes)
+        }) {
+            "An earlier planned creation is pending. Recover that exact trip before accepting another."
+        }
+        val coverage = com.rork.vinetrack.data.TripOccurrencePlanner.commit(candidates, base.vineyardId)
+        val planned = base.copy(occurrenceCoverage = coverage)
+        val journal = occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, planned.vineyardId, planned.id))
+        tripRepo.preparePlannedCreation(planned, journal)
+        if (planned.isActive) journal.activate(kotlinx.serialization.json.buildJsonObject {
+            put("startTime", kotlinx.serialization.json.JsonPrimitive(requireNotNull(planned.startTime)))
+            planned.startEngineHours?.let { put("startEngineHours", kotlinx.serialization.json.JsonPrimitive(it)) }
+        })
+        // Save for reload even if HTTP or the later device claim fails. Never delete an uncertain create.
+        domainCache.saveTrips(owner, planned.vineyardId, _ui.value.trips + planned.copy(isActive = false))
+        _ui.update { it.copy(trips = it.trips + planned.copy(isActive = false)) }
+        return planned
+    }
+
     private fun startTripLocally(provisional: Trip) {
         if (!claimDeviceTrip(provisional)) {
             _ui.update { it.copy(tripBusy = false, tripError = "Couldn't save this device's trip. Please free up storage and retry.") }
@@ -9402,6 +9482,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun hasLocationPermission(): Boolean = LocationTracker(getApplication()).hasPermission
 
     private fun beginTracking(trip: Trip) {
+        if (trip.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY) {
+            val admitted = runCatching {
+                val d = TripOccurrenceCoverage.requireDocument(requireNotNull(trip.occurrenceCoverage))
+                val state = occurrenceJournal(trip).load() ?: error("Saved activation missing.")
+                val committed = TripOccurrenceCoverage.requireDocument(occurrenceJournal(trip).projected(state))
+                check(state.heldReason == null && d.planId == committed.planId && d.planRevision == committed.planRevision)
+                check(d.order.map { id -> d.items.single { it.id == id }.label } == trip.rowSequence && d.items.all { it.blockId in trip.effectivePaddockIds })
+                val localActivation = state.pending.any { it.rpc == "activate_trip_occurrences_v1" } && state.pending.all {
+                    it.rpc in listOf("create_trip_with_occurrences_v1", "activate_trip_occurrences_v1") }
+                check(state.serverActive == true || (!_ui.value.isOnline && localActivation)) { "Activation needs authoritative confirmation before recording online." }
+                check(state.pending.none { it.rpc == "finalize_trip_occurrences_v1" })
+            }.isSuccess
+            if (!admitted) {
+                _ui.update { it.copy(isTracking = false, tripError = "Occurrence recording is pending or held. Recover the saved activation; numeric fallback is disabled.") }
+                replayOccurrenceActions(trip)
+                return
+            }
+        }
         val operation = session.fieldOperation() ?: return
         trackingOperation?.complete()
         trackingOperation = operation
@@ -9722,7 +9820,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     // our own lost acknowledgement, so it must not pre-emptively hold that request.
                 }
                 val retained = journal.load() ?: error("Occurrence journal unavailable.")
-                val serverClosed = tripsFromServer && (occurrenceRemote == null || !occurrenceRemote.isActive || occurrenceRemote.endTime != null)
+                val pendingStart = retained.pending.any { it.rpc in listOf("create_trip_with_occurrences_v1", "activate_trip_occurrences_v1") }
+                val serverClosed = tripsFromServer && !pendingStart && (occurrenceRemote == null || !occurrenceRemote.isActive || occurrenceRemote.endTime != null)
                 val pendingFinal = retained.pending.any { it.action["kind"] == kotlinx.serialization.json.JsonPrimitive("finalize") }
                 if (pendingFinal) {
                     tracker?.stop(); tracker = null
@@ -11566,6 +11665,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         input.operationalBlocker()?.let { blocker -> _ui.update { it.copy(sprayError = blocker) }; onResult(false); return }
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        if (rowPlan?.rowSequence?.isNotEmpty() == true) {
+            createQualifiedSpray(input, paddockId, paddockIds, paddockName, rowPlan, false, null, onResult)
+            return
+        }
         viewModelScope.launch {
             _ui.update { it.copy(sprayBusy = true, sprayError = null) }
             var trip: Trip? = null
@@ -11654,6 +11757,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!canStartDeviceTrip { message -> _ui.update { it.copy(sprayError = message) } }) {
             onResult(false); return
         }
+        if (existing.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY) {
+            activateQualifiedSpray(existing, startEngineHours, onResult)
+            return
+        }
         val operationalStart = java.time.Instant.now().toString()
         val linkedSpray = _ui.value.sprayRecords.firstOrNull {
             it.tripId == tripId && !it.isTemplate && it.endTime == null
@@ -11739,6 +11846,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!canStartDeviceTrip { message -> _ui.update { it.copy(sprayError = message) } }) {
             onResult(false); return
         }
+        if (rowPlan?.rowSequence?.isNotEmpty() == true) {
+            createQualifiedSpray(input, paddockId, paddockIds, paddockName, rowPlan, true, startEngineHours, onResult)
+            return
+        }
         viewModelScope.launch {
             _ui.update { it.copy(sprayBusy = true, tripBusy = true, sprayError = null, tripError = null) }
             var trip: Trip? = null
@@ -11802,6 +11913,96 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val message = (e as? BackendError.Server)?.let { friendlyWriteError(it.code) }
                     ?: "Couldn't start the spray job. Check your connection."
                 _ui.update { it.copy(sprayBusy = false, tripBusy = false, sprayError = message) }
+                onResult(false)
+            }
+        }
+    }
+
+    private fun createQualifiedSpray(input: SprayRecordRepository.SprayInput, paddockId: String?, paddockIds: List<String>,
+        paddockName: String?, plan: SprayJobRowPlan, active: Boolean, hours: Double?, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            _ui.update { it.copy(sprayBusy = true, sprayError = null) }
+            try {
+                check(plan.candidates.map { it.label } == plan.rowSequence) { "Reselect the block-qualified route." }
+                // Calculator creation was online-only. Preserve that rule until linked recipe offline replay is accepted.
+                check(_ui.value.isOnline) { "Save the linked spray recipe online before starting this planned spray offline." }
+                val now = java.time.Instant.now().toString()
+                val vineyard = _ui.value.selectedVineyardId ?: error("No vineyard selected.")
+                val base = Trip(id = java.util.UUID.randomUUID().toString(), vineyardId = vineyard,
+                    paddockId = paddockId, paddockIds = paddockIds.distinct(), paddockName = paddockName,
+                    startTime = if (active) now else input.startTime, clientUpdatedAt = now, isActive = active,
+                    personName = userName, tripFunction = "spraying", tripTitle = "Spraying", machineId = input.machineId, tractorId = input.tractorId,
+                    operatorUserId = session.userId, operatorCategoryId = _ui.value.members.firstOrNull { it.userId == session.userId }?.operatorCategoryId,
+                    startEngineHours = hours, trackingPattern = plan.trackingPattern, rowSequence = plan.rowSequence,
+                    currentRowNumber = plan.rowSequence.firstOrNull(), nextRowNumber = plan.rowSequence.getOrNull(1), totalTanks = plan.totalTanks)
+                val planned = prepareQualifiedTrip(base, plan.candidates)
+                // Retain the complete linked recipe and final record ID before either HTTP request.
+                val recordId = sprayRepo.newId()
+                sprayCreateSync.enqueue(recordId, vineyard, input.copy(tripId = planned.id), now, requiresOccurrenceParent = true)
+                val confirmed = tripRepo.confirmPlannedStart(planned, occurrenceJournal(planned))
+                var acceptedRecord: SprayRecord? = null
+                sprayCreateSync.replayAll { row ->
+                    if (row.id == recordId) acceptedRecord = row
+                    _ui.update { st -> st.copy(sprayRecords = st.sprayRecords.filterNot { it.id == row.id } + row) }
+                }
+                val record = acceptedRecord ?: error("The original linked recipe is retained in the outbox and needs exact acknowledgement. Recover this trip instead of creating another.")
+                domainCache.saveTrips(requireNotNull(session.userId), vineyard, _ui.value.trips.map { if (it.id == confirmed.id) confirmed else it })
+                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == confirmed.id) confirmed else it },
+                    sprayRecords = st.sprayRecords.filterNot { it.id == record.id } + record, sprayBusy = false) }
+                if (active) {
+                    check(claimDeviceTrip(confirmed)) { "Couldn't save this device's trip." }
+                    recordTripLabourAtStart(confirmed); beginTracking(confirmed)
+                }
+                onResult(true)
+            } catch (e: Exception) {
+                _ui.update { it.copy(sprayBusy = false, tripBusy = false,
+                    sprayError = "Planned spray needs recovery: ${e.message ?: "sync pending"}. Saved identities were retained; no numeric fallback or replacement trip.") }
+                onResult(false)
+            }
+        }
+    }
+
+    private fun activateQualifiedSpray(saved: Trip, hours: Double?, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val d = TripOccurrenceCoverage.requireDocument(requireNotNull(saved.occurrenceCoverage))
+                check(d.order.isNotEmpty() && d.items.all { it.blockId in saved.effectivePaddockIds })
+                val owner = session.userId ?: error("Sign in before activation.")
+                val journal = occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, saved.vineyardId, saved.id))
+                if (_ui.value.isOnline) {
+                    val access = session.accountAccess() ?: error("Account unavailable.")
+                    val state = journal.load()
+                    val recovery = tripRepo.fetchOccurrenceRecovery(saved.id, state?.pending?.map { it.id }.orEmpty(), access)
+                    check(session.withAccountAccess(access) { journal.recover(recovery) })
+                }
+                val state = journal.load() ?: error("Connect to load authoritative occurrence state before offline activation.")
+                check(state.heldReason == null && TripOccurrenceCoverage.requireDocument(state.acknowledged).planId == d.planId)
+                check(TripOccurrenceCoverage.requireDocument(state.acknowledged).planRevision == d.planRevision)
+                if (state.serverActive != true && state.pending.none { it.rpc == "activate_trip_occurrences_v1" }) {
+                    journal.activate(kotlinx.serialization.json.buildJsonObject {
+                        put("startTime", kotlinx.serialization.json.JsonPrimitive(java.time.Instant.now().toString()))
+                        hours?.let { put("startEngineHours", kotlinx.serialization.json.JsonPrimitive(it)) }
+                    })
+                }
+                val op = journal.load()?.history?.lastOrNull { it.rpc == "activate_trip_occurrences_v1" } ?: error("Activation intent missing.")
+                val start = op.params["p_start"] as kotlinx.serialization.json.JsonObject
+                val time = (start["startTime"] as kotlinx.serialization.json.JsonPrimitive).content
+                val local = saved.withOccurrenceProjection(journal.projected(requireNotNull(journal.load()))).copy(isActive = true,
+                    startTime = time, startEngineHours = (start["startEngineHours"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull(), clientUpdatedAt = time)
+                val ready = if (_ui.value.isOnline) tripRepo.confirmPlannedStart(local, journal) else local
+                val record = _ui.value.sprayRecords.firstOrNull { it.tripId == saved.id && !it.isTemplate && it.endTime == null }
+                    ?: error("Linked spray recipe unavailable.")
+                com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(record.applicationGeometry, record.tanks.orEmpty())?.let { error(it) }
+                val startedRecord = SavedTripActivation.activateLinkedSpray(record, saved.id, time) ?: error("Linked spray cannot activate.")
+                sprayUpdateSync.enqueue(startedRecord.id, SavedTripActivation.sprayUpdateInput(startedRecord), time)
+                check(claimDeviceTrip(ready)) { "Couldn't durably save activation." }
+                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == saved.id) ready else it },
+                    sprayRecords = st.sprayRecords.map { if (it.id == record.id) startedRecord else it },
+                    sprayError = if (st.isOnline) null else "Locally activated · server sync pending. Coverage actions await confirmation.") }
+                recordTripLabourAtStart(ready); beginTracking(ready); replayOccurrenceActions(ready)
+                onResult(true)
+            } catch (e: Exception) {
+                _ui.update { it.copy(sprayError = "Occurrence activation pending or held: ${e.message ?: "recovery required"}. Identities retained.") }
                 onResult(false)
             }
         }
@@ -11953,6 +12154,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun occurrenceActivationMessage(trip: Trip): String? {
+        if (trip.coverageBasis == TripOccurrenceCoverage.Basis.LEGACY) return null
+        return runCatching {
+            val state = occurrenceJournal(trip).load() ?: error("Saved activation missing.")
+            state.heldReason ?: if (!state.creationConfirmed || state.serverActive != true || state.pending.any { it.rpc == "activate_trip_occurrences_v1" })
+                "Locally activated · server sync pending. Done/Skip/Undo await confirmation."
+            else "Server-confirmed active"
+        }.getOrElse { "Occurrence activation held · recovery/update required. Saved identities retained." }
+    }
+
     private fun occurrenceJournal(trip: Trip): TripOccurrenceJournal {
         val owner = session.userId ?: error("Sign in to the account that owns this trip.")
         val journal = occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, trip.vineyardId, trip.id))
@@ -12016,13 +12227,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK) ||
                             (operation.rpc == "finalize_trip_occurrences_v1" && write.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS))
                     } || sprayTankActualStore.pending(trip.id).isNotEmpty()
-                    if (dependencies) return@launch
+                    if (dependencies && operation.rpc !in listOf("create_trip_with_occurrences_v1", "activate_trip_occurrences_v1")) return@launch
                     val result = tripRepo.applyOccurrenceOperation(operation.params, operation.rpc, access)
                     if (!session.retentionGuard.withAccount(access, { session.userId }) { journal.acknowledge(result) }) return@launch
                     val next = journal.load() ?: return@launch
                     _ui.update { st -> st.copy(trips = st.trips.map { current ->
                         if (current.id == trip.id) current.withOccurrenceProjection(journal.projected(next)) else current
                     }, tripError = next.heldReason) }
+                    if (operation.rpc in listOf("create_trip_with_occurrences_v1", "activate_trip_occurrences_v1")) replayPendingSprayCreates()
                     if (operation.action["kind"] == kotlinx.serialization.json.JsonPrimitive("finalize") && next.pending.isEmpty() && next.heldReason == null) {
                         val end = operation.params["p_end"] as? kotlinx.serialization.json.JsonObject
                         val time = (end?.get("endTime") as? kotlinx.serialization.json.JsonPrimitive)?.content
@@ -17510,4 +17722,5 @@ data class SprayJobRowPlan(
     val trackingPattern: String,
     val rowSequence: List<Double>,
     val totalTanks: Int?,
+    val candidates: List<com.rork.vinetrack.data.TripOccurrencePlanner.Candidate> = emptyList(),
 )

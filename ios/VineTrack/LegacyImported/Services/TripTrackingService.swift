@@ -10,6 +10,18 @@ import Supabase
 final class TripTrackingService {
     private let startTankCommitCoordinator = StartTankCommitCoordinator()
 
+    var occurrenceActivationMessage: String? {
+        guard let trip = activeTrip, trip.coverageBasis != .legacy else { return nil }
+        do {
+            guard let state = try occurrenceJournal(for: trip).load() else { throw TripOccurrenceCoverage.Failure.missing }
+            if let held = state.heldReason { return held }
+            if state.creationConfirmed == false || state.serverActive != true || state.pending.contains(where: { $0.rpc == "activate_trip_occurrences_v1" }) {
+                return "Locally activated · server sync pending. Done/Skip/Undo await confirmation."
+            }
+            return "Server-confirmed active"
+        } catch { return "Occurrence activation held · recovery/update required. Saved identities retained." }
+    }
+
     // MARK: - Published state
 
     var isTracking: Bool = false
@@ -300,6 +312,7 @@ final class TripTrackingService {
         paddockName: String,
         trackingPattern: TrackingPattern = .sequential,
         rowSequence: [Double] = [],
+        plannedCandidates: [TripOccurrencePlanner.Candidate] = [],
         sequenceIndex: Int = 0,
         currentRowNumber: Double? = nil,
         nextRowNumber: Double? = nil,
@@ -313,7 +326,8 @@ final class TripTrackingService {
         operatorCategoryId: UUID? = nil,
         startEngineHours: Double? = nil,
         seedingDetails: SeedingDetails? = nil,
-        sprayRecord: SprayRecord? = nil
+        sprayRecord: SprayRecord? = nil,
+        onStarted: @escaping (Bool) -> Void = { _ in }
     ) {
         guard let store else { return }
         guard let vineyardId = store.selectedVineyardId else {
@@ -347,7 +361,7 @@ final class TripTrackingService {
             ?? (rowSequence.indices.contains(clampedIndex + 1) ? rowSequence[clampedIndex + 1] : nil)
             ?? resolvedCurrent
 
-        let trip = Trip(
+        var trip = Trip(
             vineyardId: vineyardId,
             paddockId: primaryPaddockId ?? resolvedIds.first,
             paddockName: paddockName,
@@ -370,6 +384,33 @@ final class TripTrackingService {
             startEngineHours: startEngineHours,
             seedingDetails: seedingDetails
         )
+        if !rowSequence.isEmpty {
+            guard plannedCandidates.map(\.label) == rowSequence, let owner = authService?.userId else {
+                errorMessage = "Reselect the block-qualified route. Numeric planned work cannot start."; onStarted(false); return
+            }
+            do {
+                guard plannedCandidates.allSatisfy({ resolvedIds.contains($0.blockId) }),
+                      resolvedIds.allSatisfy({ block in plannedCandidates.contains { $0.blockId == block } }) else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                // A retained uncertain start must be recovered, never replaced with newly minted IDs.
+                for saved in store.trips where saved.coverageBasis == .occurrence {
+                    if try occurrenceJournal(for: saved).load()?.creationConfirmed == false { throw TripOccurrenceCoverage.Failure.reconciliation }
+                }
+                trip.occurrenceCoverage = try TripOccurrencePlanner.commit(plannedCandidates, vineyardId: vineyardId)
+                var inactive = trip; inactive.isActive = false
+                let repository = SupabaseTripSyncRepository()
+                try repository.prepareOccurrenceCreation(BackendTrip.upsert(from: inactive, createdBy: owner, clientUpdatedAt: inactive.startTime), ownerId: owner)
+                let journal = try occurrenceJournal(for: trip)
+                var start: [String: TripOccurrenceCoverage.JSON] = ["startTime": .string(ISO8601DateFormatter().string(from: trip.startTime))]
+                if let hours = trip.startEngineHours { start["startEngineHours"] = .number(hours) }
+                try journal.activate(.object(start))
+                if isSpray, var record = sprayRecord {
+                    record.tripId = trip.id
+                    try store.saveSprayForLater(record: record, trip: inactive)
+                } else { try store.savePlannedTripOrThrow(inactive) }
+                finishPlannedActivation(trip, owner: owner, onStarted: onStarted)
+            } catch { errorMessage = "Planned start retained for recovery. \(error.localizedDescription)"; onStarted(false) }
+            return
+        }
         if isSpray, var record = sprayRecord {
             record.tripId = trip.id
             var inactive = trip
@@ -408,7 +449,50 @@ final class TripTrackingService {
         errorMessage = nil
         beginSprayWeatherCapture(for: trip)
         beginTracking()
+        onStarted(true)
         _ = type
+    }
+
+    /// Online recording requires acknowledged lifecycle requests and an authoritative reload.
+    /// Offline recording requires the full frozen activation intent and durable local trip.
+    private func finishPlannedActivation(_ intended: Trip, owner: UUID, onStarted: @escaping (Bool) -> Void) {
+        guard let store else { onStarted(false); return }
+        Task { @MainActor in
+            do {
+                var ready = intended
+                let journal = try occurrenceJournal(for: intended)
+                guard let state = try journal.load(), state.heldReason == nil,
+                      state.pending.contains(where: { $0.rpc == "activate_trip_occurrences_v1" }) || state.serverActive == true else {
+                    throw TripOccurrenceCoverage.Failure.reconciliation
+                }
+                if NetworkMonitor.shared.isOnline {
+                    let repo = SupabaseTripSyncRepository()
+                    try await repo.upsertTrip(BackendTrip.upsert(from: intended, createdBy: owner, clientUpdatedAt: intended.startTime))
+                    let rows = try await repo.fetchAllTrips(vineyardId: intended.vineyardId)
+                    guard let remote = rows.first(where: { $0.id == intended.id }), let accepted = try journal.load(),
+                          accepted.creationConfirmed != false, accepted.serverActive == true, accepted.pending.isEmpty,
+                          accepted.heldReason == nil, remote.occurrenceCoverage == accepted.acknowledged,
+                          remote.isActive == true else { throw TripOccurrenceCoverage.Failure.reconciliation }
+                    ready = remote.toTrip()
+                }
+                guard authService?.userId == owner, store.selectedVineyardId == intended.vineyardId,
+                      store.deviceActiveTripId == nil || store.deviceActiveTripId == intended.id else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                if let index = store.sprayRecords.firstIndex(where: { $0.tripId == ready.id && !$0.isTemplate && $0.endTime == nil }) {
+                    var record = store.sprayRecords[index]
+                    record.startTime = ready.startTime; record.date = ready.startTime
+                    guard store.updateSprayRecord(record) else { throw TripOccurrenceCoverage.Failure.storage }
+                }
+                try store.updateTripOrThrow(ready)
+                store.claimDeviceTrip(ready.id)
+                errorMessage = NetworkMonitor.shared.isOnline ? nil : "Locally activated · server sync pending. Coverage actions await confirmation."
+                beginSprayWeatherCapture(for: ready)
+                beginTracking()
+                onStarted(true)
+            } catch {
+                errorMessage = "Occurrence activation pending or held. \(error.localizedDescription) Saved identities were retained."
+                onStarted(false)
+            }
+        }
     }
 
     /// Activate a genuine saved, unstarted spray placeholder in place. Identity
@@ -417,7 +501,8 @@ final class TripTrackingService {
     func activateSavedTrip(
         _ savedTrip: Trip,
         startEngineHours: Double? = nil,
-        at activationTime: Date = Date()
+        at activationTime: Date = Date(),
+        onStarted: @escaping (Bool) -> Void = { _ in }
     ) {
         guard let store else { return }
         guard store.selectedVineyardId != nil else {
@@ -444,6 +529,42 @@ final class TripTrackingService {
 
         if let blocker = store.sprayRecords[recordIndex].operationalPlanningBlocker {
             errorMessage = blocker
+            return
+        }
+        if savedTrip.coverageBasis != .legacy {
+            Task { @MainActor in
+            do {
+                guard let owner = authService?.userId else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                let d = try TripOccurrenceCoverage.requireDocument(savedTrip.occurrenceCoverage ?? .null)
+                let blocks = Set(savedTrip.paddockIds + (savedTrip.paddockId.map { [$0] } ?? []))
+                guard d.items.allSatisfy({ item in UUID(uuidString: item.blockId).map { blocks.contains($0) } ?? false }),
+                      !d.activeOrder.isEmpty else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                let journal = try TripOccurrenceJournal(scope: .init(ownerId: owner.uuidString.lowercased(),
+                    vineyardId: savedTrip.vineyardId.uuidString.lowercased(), tripId: savedTrip.id.uuidString.lowercased()))
+                if NetworkMonitor.shared.isOnline {
+                    let retained = try journal.load()
+                    if retained?.creationConfirmed != false {
+                        let recovery = try await SupabaseTripSyncRepository().fetchOccurrenceRecovery(tripId: savedTrip.id, operationIds: retained?.pending.map(\.id) ?? [])
+                        guard authService?.userId == owner else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                        try journal.recover(recovery)
+                    }
+                }
+                guard let state = try journal.load(), state.heldReason == nil,
+                      try TripOccurrenceCoverage.requireDocument(state.acknowledged).planRevision == d.planRevision,
+                      try TripOccurrenceCoverage.requireDocument(state.acknowledged).planId == d.planId else { throw TripOccurrenceCoverage.Failure.reconciliation }
+                if state.serverActive != true && !state.pending.contains(where: { $0.rpc == "activate_trip_occurrences_v1" }) {
+                    var start: [String: TripOccurrenceCoverage.JSON] = ["startTime": .string(ISO8601DateFormatter().string(from: activationTime))]
+                    if let hours = startEngineHours { start["startEngineHours"] = .number(hours) }
+                    try journal.activate(.object(start))
+                }
+                guard let op = try journal.load()?.history.last(where: { $0.rpc == "activate_trip_occurrences_v1" }),
+                      let time = op.params[occurrence: "p_start"]?[occurrence: "startTime"]?.occurrenceString,
+                      let date = ISO8601DateFormatter().date(from: time) else { throw TripOccurrenceCoverage.Failure.missing }
+                var active = savedTrip; active.isActive = true; active.startTime = date
+                if case .number(let hours) = op.params[occurrence: "p_start"]?[occurrence: "startEngineHours"] { active.startEngineHours = hours }
+                finishPlannedActivation(active, owner: owner, onStarted: onStarted)
+            } catch { errorMessage = error.localizedDescription; onStarted(false) }
+            }
             return
         }
         var activated = savedTrip
@@ -501,6 +622,7 @@ final class TripTrackingService {
         errorMessage = nil
         beginSprayWeatherCapture(for: activated)
         beginTracking()
+        onStarted(true)
     }
 
     /// Replan only the remaining guidance on the live trip. Historical coverage,
@@ -1187,6 +1309,24 @@ final class TripTrackingService {
     // MARK: - Internals
 
     private func beginTracking() {
+        if let trip = activeTrip, trip.coverageBasis != .legacy {
+            do {
+                let d = try TripOccurrenceCoverage.requireDocument(trip.occurrenceCoverage ?? .null)
+                guard let state = try occurrenceJournal(for: trip).load() else { throw TripOccurrenceCoverage.Failure.missing }
+                let committed = try TripOccurrenceCoverage.requireDocument(state.projected)
+                let blocks = Set(trip.paddockIds + (trip.paddockId.map { [$0] } ?? []))
+                let labels = d.activeOrder.compactMap { id in d.items.first { $0.occurrenceId == id }?.pathNumber }
+                let localActivation = state.pending.contains { $0.rpc == "activate_trip_occurrences_v1" } && state.pending.allSatisfy { ["create_trip_with_occurrences_v1", "activate_trip_occurrences_v1"].contains($0.rpc) }
+                guard state.heldReason == nil, d.planId == committed.planId, d.planRevision == committed.planRevision,
+                      labels == trip.rowSequence, d.items.allSatisfy({ item in UUID(uuidString: item.blockId).map { blocks.contains($0) } ?? false }),
+                      state.serverActive == true || (!NetworkMonitor.shared.isOnline && localActivation),
+                      !state.pending.contains(where: { $0.rpc == "finalize_trip_occurrences_v1" }) else { throw TripOccurrenceCoverage.Failure.reconciliation }
+            } catch {
+                isTracking = false
+                errorMessage = "Occurrence recording is pending or held. Recover the saved activation; numeric fallback is disabled."
+                return
+            }
+        }
         guard let locationService else { return }
         let status = locationService.authorizationStatus
         if status == .notDetermined {

@@ -55,9 +55,10 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
     @Synchronized fun finalize(end: JsonObject): Operation = lifecycle("finalize", end)
     private fun lifecycle(kind: String, metadata: JsonObject): Operation {
         val state = load() ?: error("Occurrence journal missing.")
-        check(state.creationConfirmed && state.heldReason == null)
+        check(state.heldReason == null)
+        check(state.creationConfirmed || (kind == "activate" && state.pending.size == 1 && state.pending.first().rpc == "create_trip_with_occurrences_v1"))
         check(state.pending.none { it.action["kind"].textOrNull() in listOf("activate", "finalize") })
-        if (kind == "activate") check(state.serverActive == false && state.pending.isEmpty())
+        if (kind == "activate") check(state.serverActive == false && state.pending.all { it.rpc == "create_trip_with_occurrences_v1" })
         else check(state.serverActive != false)
         val before = projected(state); val d = TripOccurrenceCoverage.requireDocument(before)
         val id = UUID.randomUUID().toString()
@@ -173,6 +174,18 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
             put("activeOrder", JsonArray(order.map(::JsonPrimitive))); put("retired", d.raw.getValue("retired"))
         }
     }
+    /** Replacement retires old evidence and admits a genuinely new item, never transfers status. */
+    @Synchronized fun replaceOccurrence(oldId: String, newItem: JsonObject): Operation = append { d ->
+        val newId = newItem.getValue("occurrenceId").jsonPrimitive.content
+        require(oldId in d.order && newId !in d.items.map { it.id })
+        buildJsonObject {
+            put("kind", "editPlan"); put("planId", d.planId)
+            put("items", JsonArray(d.raw.getValue("items").jsonArray + newItem))
+            put("activeOrder", JsonArray(d.order.map { JsonPrimitive(if (it == oldId) newId else it) }))
+            put("retired", JsonArray((d.retired + oldId).map(::JsonPrimitive)))
+        }
+    }
+
     @Synchronized fun undo(operationId: String): Operation {
         val state = load() ?: error("Occurrence journal missing.")
         val previous = state.history.single { it.id == operationId }
@@ -264,6 +277,17 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
             }
             "selectOccurrence" -> fields["selectedOccurrenceId"] = JsonPrimitive(id)
             "editPlan" -> {
+                val items = action.getValue("items").jsonArray
+                d.raw.getValue("items").jsonArray.forEach { old ->
+                    require(items.single { it.jsonObject["occurrenceId"] == old.jsonObject["occurrenceId"] } == old)
+                }
+                items.forEach { item ->
+                    val key = item.jsonObject.getValue("occurrenceId").jsonPrimitive.content
+                    if (key !in states) states[key] = buildJsonObject {
+                        put("status", "incomplete"); put("lastOperationId", JsonNull); put("source", JsonNull); put("tankSessionIds", JsonArray(emptyList()))
+                    }
+                }
+                fields["items"] = items; fields["retired"] = action.getValue("retired")
                 fields["activeOrder"] = action.getValue("activeOrder")
                 fields["planRevision"] = JsonPrimitive(d.planRevision + 1); fields["selectedOccurrenceId"] = JsonNull
             }

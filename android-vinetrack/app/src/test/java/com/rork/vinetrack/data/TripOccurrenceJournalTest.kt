@@ -26,6 +26,78 @@ class TripOccurrenceJournalTest {
     private fun status(j: TripOccurrenceJournal, id: String) = TripOccurrenceCoverage.requireDocument(j.projected(j.load()!!)).status(id)
     private fun ack(op: TripOccurrenceJournal.Operation) = buildJsonObject { put("tripId", scope.tripId); put("operationId", op.id); put("coverage", op.after) }
 
+    @Test fun blockQualifiedPlannerKeepsFourSameLabelPassesAndSubset() {
+        val blocks = listOf("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "99999999-9999-4999-8999-999999999999").mapIndexed { index, id ->
+            com.rork.vinetrack.data.model.Paddock(id = id, vineyardId = scope.vineyardId, name = "Block $index", rows = listOf(
+                com.rork.vinetrack.data.model.PaddockRow(number = 38), com.rork.vinetrack.data.model.PaddockRow(number = 39)))
+        }
+        val choices = TripOccurrencePlanner.candidates(blocks).filter { it.label == 38.5 }
+        assertEquals(2, choices.size); assertEquals(2, choices.map { it.key }.toSet().size)
+        val planned = TripOccurrencePlanner.plan(choices, TrackingPattern.UP_AND_BACK, choices.last().key, true)
+        assertEquals(listOf(blocks[1].id, blocks[1].id, blocks[0].id, blocks[0].id), planned.map { it.blockId })
+        val coverage = TripOccurrencePlanner.commit(planned, scope.vineyardId)
+        val d = TripOccurrenceCoverage.requireDocument(coverage)
+        assertEquals(4, d.items.map { it.id }.toSet().size); assertEquals(listOf(1,2,1,2), d.items.map { it.pass })
+        assertEquals(listOf(38.5,38.5,38.5,38.5), d.items.map { it.label })
+        assertEquals(1, TripOccurrencePlanner.candidates(blocks.take(1)).filter { it.label == 38.5 }.size)
+        assertTrue(TripOccurrencePlanner.candidates(blocks).filter { it.label == 38.5 } == choices)
+    }
+
+    @Test fun offlineCreateActivationChainRetainsExactIDsAfterRecreationAndProjection() {
+        val candidates = listOf(TripOccurrencePlanner.Candidate(scope.vineyardId, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "A", 38.5, emptyList()),
+            TripOccurrencePlanner.Candidate(scope.vineyardId, "99999999-9999-4999-8999-999999999999", "B", 38.5, emptyList()))
+        val coverage = TripOccurrencePlanner.commit(TripOccurrencePlanner.plan(candidates, TrackingPattern.UP_AND_BACK, candidates[0].key, true), scope.vineyardId)
+        val initial = TripOccurrenceCoverage.requireDocument(coverage)
+        val memory = Memory(); var j = TripOccurrenceJournal(memory, scope)
+        val metadata = buildJsonObject { put("id", scope.tripId); put("vineyard_id", scope.vineyardId); put("is_active", false); put("trip_title", "Kept title") }
+        val create = j.prepareCreation(metadata, coverage)
+        val activate = j.activate(buildJsonObject { put("startTime", "2026-10-14T08:00:00Z"); put("startEngineHours", 123.5) })
+        j = TripOccurrenceJournal(memory, scope)
+        assertEquals(listOf(create.params, activate.params), j.load()!!.pending.map { it.params })
+        assertTrue(runCatching { j.setStatus(initial.order.first(), "done") }.isFailure)
+        j.acknowledge(ack(create)); j.acknowledge(ack(activate))
+        val projected = Trip(scope.tripId, scope.vineyardId, occurrenceCoverage = coverage, isActive = true).withOccurrenceProjection(j.projected(j.load()!!))
+        val restored = Json.decodeFromString(Trip.serializer(), Json.encodeToString(Trip.serializer(), projected))
+        assertEquals(initial.order, restored.occurrenceDocument!!.order)
+        assertEquals(4, restored.rowSequence.size); assertTrue(restored.completedPaths.orEmpty().isEmpty())
+        assertEquals(metadata, j.load()!!.history.first().params["p_trip"])
+    }
+
+    @Test fun replacementRetiresDoneEvidenceAndNeverInheritsCoverage() {
+        val j = journal(); j.setStatus(a, "done"); j.reorder(listOf(b,a))
+        val candidate = TripOccurrencePlanner.Candidate(scope.vineyardId, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "Block X", 38.5, emptyList())
+        val item = TripOccurrencePlanner.commit(listOf(candidate), scope.vineyardId).getValue("items").jsonArray.single().jsonObject
+        val newId = item.getValue("occurrenceId").jsonPrimitive.content
+        j.replaceOccurrence(a, item)
+        val d = TripOccurrenceCoverage.requireDocument(j.projected(j.load()!!))
+        assertEquals(listOf(b,newId), d.order); assertEquals(listOf(a), d.retired)
+        assertEquals("done", d.status(a)); assertEquals("incomplete", d.status(newId)); assertEquals("incomplete", d.status(b))
+        assertTrue(runCatching { j.replaceOccurrence(b, item) }.isFailure)
+    }
+
+    @Test fun linkedRecipeCannotReplayBeforeOccurrenceParentConfirmation() = kotlinx.coroutines.runBlocking {
+        val store = InMemoryPendingWriteStore()
+        val pending = PendingWriteRepository(store)
+        val payload = SprayRecordCreateSync.Payload(id = a, vineyardId = scope.vineyardId,
+            date = "2026-10-14", startTime = "2026-10-14T08:00:00Z", tripId = scope.tripId,
+            clientUpdatedAt = "2026-10-14T08:00:00Z", requiresOccurrenceParent = true, notes = "Retained recipe notes")
+        val encoded = Json.encodeToString(SprayRecordCreateSync.Payload.serializer(), payload)
+        pending.enqueue(com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD, com.rork.vinetrack.data.model.PendingOpType.CREATE,
+            clientId = a, payloadJson = encoded)
+        var calls = 0
+        val replay = SprayRecordCreateSync(null, PendingWriteRepository(store), createRemote = {
+            calls++; error("No unconfirmed parent may issue HTTP")
+        })
+        replay.replayAll { fail("Unconfirmed recipe cannot be published") }
+        assertEquals(0, calls); assertEquals(encoded, pending.list().single().payloadJson)
+        assertEquals(com.rork.vinetrack.data.model.PendingWriteStatus.PENDING, PendingWriteRepository(store).list().single().status)
+    }
+
+    @Test fun plannerRejectsCrossVineyardCommit() {
+        val candidate = TripOccurrencePlanner.Candidate("99999999-9999-4999-8999-999999999999", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "X", 38.5, emptyList())
+        assertTrue(runCatching { TripOccurrencePlanner.commit(listOf(candidate), scope.vineyardId) }.isFailure)
+    }
+
     @Test fun aDoneLeavesBIncomplete() { val j = journal(); j.setStatus(a, "done"); assertEquals("done", status(j,a)); assertEquals("incomplete", status(j,b)) }
     @Test fun bDoneLeavesAIncomplete() { val j = journal(); j.setStatus(b, "done"); assertEquals("incomplete", status(j,a)); assertEquals("done", status(j,b)) }
     @Test fun doneSkipAndUndoRemainIndependent() { val j = journal(); val op = j.setStatus(a,"done"); j.setStatus(b,"skipped"); j.undo(op.id); assertEquals("incomplete",status(j,a)); assertEquals("skipped",status(j,b)) }
