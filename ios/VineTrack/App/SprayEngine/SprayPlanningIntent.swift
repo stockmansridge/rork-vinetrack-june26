@@ -121,6 +121,14 @@ nonisolated struct SprayPlanningResolution: Codable, Sendable, Hashable {
 nonisolated enum SprayPlanningOperationalGate {
     static let migrationMessage = "Calculation preview only. New spray planning save/start and replay are disabled until the schema and operational workflows are approved and validated."
     static let concentrateMessage = "Concentrate spraying permission and limits are unverified for this dilute-rate mix. Save/start is blocked. A displayed CF is not label approval."
+    static let aboveReferenceMessage = "Above-reference spray volume requires independent label review for dilute-rate products. Save/start is blocked; CF 1.00 or an entered rate is not approval."
+
+    static func aboveReferenceBlocker(actual: Double?, reference: Double?, hasDiluteRateProducts: Bool) -> String? {
+        guard hasDiluteRateProducts, let actual, let reference, actual.isFinite, reference.isFinite,
+              reference > 0, actual > reference + max(0.000001, reference * 0.00000001) else { return nil }
+        return aboveReferenceMessage
+    }
+
     /// Evaluate each chemical against its own tank, not the maximum CF of unrelated tanks.
     static func tankComplianceBlocker(_ tanks: [SprayTank]) -> String? {
         for tank in tanks {

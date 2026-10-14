@@ -2,6 +2,10 @@ import Foundation
 
 /// Boundary conversion only. Chemical engines and physical-vine-row dilute references are unchanged.
 nonisolated enum SprayControllerRateEntry {
+    static func parse(_ text: String) -> Double? {
+        RegionalInput(canonical: nil, forward: { $0 }).resolve(text, inverse: { $0 })
+    }
+
     static func canonical(_ value: Double?, basis: SprayCarrierBasis, configuration: SprayPassConfiguration?, spacing: Double?) -> Double? {
         guard let value, value.isFinite, value > 0 else { return nil }
         if basis == .litresPerHectare { return value }

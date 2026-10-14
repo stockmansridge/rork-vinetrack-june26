@@ -7,6 +7,8 @@ import com.rork.vinetrack.data.spray.SprayCarrierBasis
 import com.rork.vinetrack.data.spray.SprayCarrierVolumePolicy
 import com.rork.vinetrack.data.spray.SprayComplianceProfile
 import com.rork.vinetrack.data.spray.SprayGuidedBlocker
+import com.rork.vinetrack.data.spray.SprayGroundTarget
+import com.rork.vinetrack.data.spray.SprayCarrierAreaBasis
 import com.rork.vinetrack.data.spray.SprayGuidedFlow
 import com.rork.vinetrack.data.spray.SprayGuidedInputs
 import com.rork.vinetrack.data.spray.SprayGuidedStep
@@ -88,14 +90,16 @@ class SprayGuidedWorkflowParityTest {
         operationType = SprayOperationType.BANDED_SPRAY,
         blocks = listOf(block()),
         targets = setOf(SprayTarget.WEEDS),
+        groundTarget = SprayGroundTarget.UNDERVINE,
+        carrierAreaBasis = SprayCarrierAreaBasis.WHOLE_BLOCK_AREA,
         bandWidthTotalMetres = bandWidth,
         isGrowthStageAssigned = true,
         isEquipmentSelected = true,
         isEquipmentConfirmed = true,
         isCanopyConfirmed = true,
         tankCapacityLitres = 2_000.0,
-        carrierBasis = SprayCarrierBasis.LITRES_PER_100_METRES,
-        appliedLitresPer100Metres = appliedPer100m,
+        carrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
+        litresPerHectare = appliedPer100m * 100.0 / 3.2,
         products = products,
     )
 
@@ -335,7 +339,7 @@ class SprayGuidedWorkflowParityTest {
             storedPolicy = SprayCarrierVolumePolicy.LITRES_PER_100_METRES_ONLY,
             countryCode = "AU",
         )
-        val flow = SprayGuidedFlow(bandedInputs(), profile)
+        val flow = SprayGuidedFlow(foliarInputs(), profile)
 
         assertTrue(flow.isCarrierBasisLocked)
         assertEquals(SprayCarrierBasis.LITRES_PER_100_METRES, flow.effectiveCarrierBasis)
@@ -350,7 +354,7 @@ class SprayGuidedWorkflowParityTest {
         // Even if the screen state says L/ha, the profile overrides it: the UI
         // renders no L/ha option and no "allow either" selector for SWNZ.
         val flow = SprayGuidedFlow(
-            bandedInputs().copy(carrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE),
+            foliarInputs().copy(carrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE),
             profile,
         )
 
@@ -587,6 +591,9 @@ class SprayGuidedWorkflowParityTest {
                 plan = plan,
                 targets = flow.orderedTargets,
                 sprayHeadTarget = flow.effectiveSprayHeadTarget,
+                carrierVolumeBasis = flow.effectiveCarrierBasis,
+                groundTarget = flow.inputs.groundTarget,
+                carrierAreaBasis = flow.inputs.carrierAreaBasis,
             ),
             snapshot,
         )

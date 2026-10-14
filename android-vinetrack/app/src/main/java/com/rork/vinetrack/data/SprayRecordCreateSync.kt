@@ -94,8 +94,8 @@ class SprayRecordCreateSync(
 
     /**
      * Queue (or replace) a spray-record create for later replay. Coalesces by
-     * record id: any earlier unresolved create for the same id is removed first
-     * so only one is ever replayed. The [id] must be the same client-generated id
+     * record id in one durable mutation. Blocked/in-flight operations cannot be
+     * replaced, and failed persistence leaves the original operation intact. The [id] must be the same client-generated id
      * used for the optimistic local row and the eventual server insert.
      */
     fun enqueue(
@@ -105,14 +105,6 @@ class SprayRecordCreateSync(
         clientUpdatedAt: String,
     ): PendingWrite {
         input.operationalBlocker()?.let { throw IllegalStateException(it) }
-        pending.list()
-            .filter {
-                it.entityType == PendingEntityType.SPRAY_RECORD &&
-                    it.opType == PendingOpType.CREATE &&
-                    it.clientId == id &&
-                    it.status != PendingWriteStatus.SYNCED
-            }
-            .forEach { pending.remove(it.id) }
         val payload = Payload(
             id = id,
             vineyardId = vineyardId,
@@ -140,12 +132,14 @@ class SprayRecordCreateSync(
             applicationGeometry = input.applicationGeometry,
             clientUpdatedAt = clientUpdatedAt,
         )
-        return pending.enqueue(
-            entityType = PendingEntityType.SPRAY_RECORD,
-            opType = PendingOpType.CREATE,
-            payloadJson = json.encodeToString(Payload.serializer(), payload),
-            clientId = id,
-        )
+        val encoded = json.encodeToString(Payload.serializer(), payload)
+        return requireNotNull(pending.coalesceUnstartedCreate(PendingEntityType.SPRAY_RECORD, id) { existing ->
+            if (existing != null) {
+                val original = json.decodeFromString(Payload.serializer(), existing.payloadJson)
+                check(original.id == id && original.vineyardId == vineyardId) { "The original spray scope cannot be replaced." }
+            }
+            encoded
+        })
     }
 
     /**
@@ -171,11 +165,10 @@ class SprayRecordCreateSync(
         }
         if (existing.isEmpty()) return false
         // Preserve the vineyard scope captured when the create was first queued.
-        val vineyardId = existing
-            .mapNotNull { runCatching { json.decodeFromString(Payload.serializer(), it.payloadJson) }.getOrNull() }
-            .firstOrNull()
-            ?.vineyardId
-            ?: return false
+        check(existing.size == 1) { "Multiple retained spray operations require review." }
+        val original = json.decodeFromString(Payload.serializer(), existing.single().payloadJson)
+        check(original.id == id) { "The original spray identity cannot be replaced." }
+        val vineyardId = original.vineyardId
         enqueue(id, vineyardId, input, clientUpdatedAt)
         return true
     }
@@ -202,17 +195,17 @@ class SprayRecordCreateSync(
                     (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
             }
             for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+                val claimed = pending.claimReplay(write) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (payload == null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved spray record.")
+                    pending.updateStatusIfCurrent(claimed, PendingWriteStatus.BLOCKED, "Couldn't read the saved spray record.")
                     continue
                 }
                 val planningBlocker = com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(payload.applicationGeometry, payload.tanks)
                 if (planningBlocker != null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, planningBlocker)
+                    pending.updateStatusIfCurrent(claimed, PendingWriteStatus.BLOCKED, planningBlocker)
                     continue
                 }
                 try {
@@ -245,31 +238,30 @@ class SprayRecordCreateSync(
                         id = payload.id,
                         clientUpdatedAt = payload.clientUpdatedAt,
                     )
-                    pending.remove(write.id)
-                    onSynced(created)
+                    if (pending.removeIfCurrent(claimed)) onSynced(created)
                 } catch (e: BackendError.Unauthorized) {
                     // Session expired mid-replay — retry after re-auth (bounded by the cap).
-                    retryOrBlock(write, "Sign-in needed to sync this spray record.")
+                    retryOrBlock(claimed, "Sign-in needed to sync this spray record.")
                 } catch (e: BackendError.Server) {
                     when {
-                        SprayOperationalFailure.isComplianceRejection(e) -> pending.updateStatus(
-                            write.id, PendingWriteStatus.BLOCKED, "The spray was rejected by server safety validation. Review the original recipe before retrying.")
-                        e.code == 409 -> pending.updateStatus(write.id, PendingWriteStatus.BLOCKED,
+                        SprayOperationalFailure.isComplianceRejection(e) -> pending.updateStatusIfCurrent(
+                            claimed, PendingWriteStatus.BLOCKED, "The spray was rejected by server safety validation. Review the original recipe before retrying.")
+                        e.code == 409 -> pending.updateStatusIfCurrent(claimed, PendingWriteStatus.BLOCKED,
                             when (SprayOperationalFailure.createConflict(e)) {
                                 SprayOperationalFailure.CreateConflict.COMPLIANCE_REJECTION -> "The spray was rejected by server safety validation."
                                 SprayOperationalFailure.CreateConflict.REVISION_OR_DATA_CONFLICT -> "The saved spray conflicts with server data. The original operation is retained for review."
                                 SprayOperationalFailure.CreateConflict.UNVERIFIED -> "The server response did not verify this exact operation. The original save is retained; it has not been acknowledged."
                             })
-                        e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
+                        e.code in 500..599 -> retryOrBlock(claimed, "Server error (${e.code}).")
+                        else -> pending.updateStatusIfCurrent(
+                            claimed,
                             PendingWriteStatus.BLOCKED,
                             "The spray record was rejected (${e.code}).",
                         )
                     }
                 } catch (e: Exception) {
                     // Still offline / transient network failure — leave for next time.
-                    retryOrBlock(write, e.message ?: "No connection.")
+                    retryOrBlock(claimed, e.message ?: "No connection.")
                 }
             }
         } finally {
@@ -279,10 +271,7 @@ class SprayRecordCreateSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

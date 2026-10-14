@@ -57,8 +57,8 @@ struct SprayGuidedWorkflowParityTests {
         ]
     }
 
-    /// A complete BANDED pass on the worked example, carried on L/100 m so the
-    /// carrier volume is exactly 6,250 L with no concentration.
+    /// The worked example's 20 L/100 m equals 625 L/ha at 3.2 m spacing.
+    /// Ground entry uses explicit whole-block L/ha, not foliar canopy/controller input.
     private func bandedInputs(
         appliedPer100m: Double = 20,
         bandWidth: Double = 0.8,
@@ -68,12 +68,16 @@ struct SprayGuidedWorkflowParityTests {
         inputs.operationType = .bandedSpray
         inputs.blocks = [block()]
         inputs.targets = [.weeds]
+        inputs.groundTarget = .undervine
+        inputs.carrierAreaBasis = .wholeBlockArea
         inputs.bandWidthTotalMetres = bandWidth
         inputs.isGrowthStageResolved = true
         inputs.isEquipmentSelected = true
+        inputs.isEquipmentConfirmed = true
+        inputs.isCanopyConfirmed = true
         inputs.tankCapacityLitres = 2_000
-        inputs.carrierBasis = .litresPer100Metres
-        inputs.appliedLitresPer100Metres = appliedPer100m
+        inputs.carrierBasis = .litresPerHectare
+        inputs.litresPerHectare = appliedPer100m * 100 / 3.2
         inputs.products = products ?? mixedBasisProducts()
         return inputs
     }
@@ -90,9 +94,12 @@ struct SprayGuidedWorkflowParityTests {
         inputs.sprayHeadTarget = head
         inputs.isGrowthStageResolved = true
         inputs.isEquipmentSelected = true
+        inputs.isEquipmentConfirmed = true
+        inputs.isCanopyConfirmed = true
         inputs.tankCapacityLitres = 2_000
         inputs.carrierBasis = .litresPerHectare
         inputs.litresPerHectare = 625
+        inputs.appliedLitresPer100Metres = 20
         inputs.products = products ?? [product("Sulphur", .wholeBlockArea, rate: 2)]
         return inputs
     }
@@ -218,7 +225,7 @@ struct SprayGuidedWorkflowParityTests {
     @Test("A stored L/100 m-only policy locks the basis to row length")
     func storedRowLengthOnly() {
         let flow = SprayGuidedFlow(
-            inputs: bandedInputs(),
+            inputs: foliarInputs(),
             profile: SprayVineyardProfile(storedPolicy: .litresPer100MetresOnly, countryCode: "AU")
         )
 
@@ -228,7 +235,7 @@ struct SprayGuidedWorkflowParityTests {
 
     @Test("An NZ/SWNZ vineyard cannot be switched onto L/ha")
     func swnzLocksToRowLength() {
-        var inputs = bandedInputs()
+        var inputs = foliarInputs()
         // Even if the screen state says L/ha, the profile overrides it: the UI
         // renders no L/ha option and no "allow either" selector for SWNZ.
         inputs.carrierBasis = .litresPerHectare
@@ -425,8 +432,12 @@ struct SprayGuidedWorkflowParityTests {
         #expect(
             snapshot == SprayApplicationSnapshot(
                 plan: plan,
+                carrierVolumeBasis: flow.effectiveCarrierBasis,
                 targets: flow.orderedTargets,
-                sprayHeadTarget: flow.effectiveSprayHeadTarget
+                customTargets: flow.inputs.customTargets,
+                sprayHeadTarget: flow.effectiveSprayHeadTarget,
+                groundTarget: flow.inputs.groundTarget,
+                carrierAreaBasis: flow.inputs.carrierAreaBasis
             )
         )
         #expect(abs((snapshot.grossAreaHa ?? 0) - plan.grossAreaHectares) < tolerance)

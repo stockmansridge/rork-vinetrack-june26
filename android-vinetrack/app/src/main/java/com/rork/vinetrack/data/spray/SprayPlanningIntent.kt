@@ -130,7 +130,14 @@ object SprayPlanningOperationalGate {
     }
     const val MIGRATION_MESSAGE = "Calculation preview only. New spray planning save/start and replay are disabled until the schema and operational workflows are approved and validated."
     const val CONCENTRATE_MESSAGE = "Concentrate spraying permission and limits are unverified for this dilute-rate mix. Save/start is blocked. A displayed CF is not label approval."
+    const val ABOVE_REFERENCE_MESSAGE = "Above-reference spray volume requires independent label review for dilute-rate products. Save/start is blocked; CF 1.00 or an entered rate is not approval."
+    fun aboveReferenceBlocker(actual: Double?, reference: Double?, hasDiluteRateProducts: Boolean): String? {
+        if (!hasDiluteRateProducts || actual == null || reference == null || !actual.isFinite() || !reference.isFinite() || reference <= 0) return null
+        return if (actual > reference + maxOf(0.000001, reference * 0.00000001)) ABOVE_REFERENCE_MESSAGE else null
+    }
     fun blocker(snapshot: SprayApplicationSnapshot?, tanks: List<com.rork.vinetrack.data.model.SprayTank>): String? {
+        aboveReferenceBlocker(snapshot?.appliedLitresPer100m, snapshot?.diluteLitresPer100m,
+            tanks.any { tank -> tank.chemicals.any { it.rateBasis == SprayProductRateBasis.PER_100_LITRES.raw || (it.rateBasis == null && it.ratePer100L > 0) } })?.let { return it }
         if (snapshot?.planningResolution != null) {
             snapshot.planningIntent?.fullTankExecutionBlocker(snapshot.planningResolution, snapshot.grossAreaHa)?.let { return it }
         }

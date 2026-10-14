@@ -8,6 +8,28 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SprayPlanningIntentTest {
+    @Test fun aboveReferenceCannotBeAuthorisedByFactorOne() {
+        assertEquals(1.0, SprayCarrierConversion.concentrationFactor(713.0, 750.0), 0.0)
+        assertEquals(SprayPlanningOperationalGate.ABOVE_REFERENCE_MESSAGE,
+            SprayPlanningOperationalGate.aboveReferenceBlocker(750.0, 713.0, true))
+        assertNull(SprayPlanningOperationalGate.aboveReferenceBlocker(713.0, 713.0, true))
+        assertNull(SprayPlanningOperationalGate.aboveReferenceBlocker(750.0, 713.0, false))
+    }
+
+    @Test fun regionalDecimalPlanningEntryRefusesPartialAndNonfiniteValues() {
+        assertEquals(3.0, SprayControllerRateEntry.parse(" 3,00 ")!!, 0.0)
+        assertEquals(1500.0, SprayControllerRateEntry.parse("1500.")!!, 0.0)
+        for (text in listOf("", ".", "1..2", "NaN", "Infinity")) assertNull(SprayControllerRateEntry.parse(text))
+    }
+
+    @Test fun bothControllerRatesPreservePhysicalApplication() {
+        for (rate in listOf(500.0, 600.0)) for (pass in SprayPassConfiguration.entries) {
+            val travel = requireNotNull(SprayControllerRateEntry.displayed(rate, SprayCarrierBasis.LITRES_PER_100_METRES, pass, 2.8))
+            assertEquals((if (rate == 500.0) 14.0 else 16.8) * pass.rowEquivalents, travel, 1e-8)
+            assertEquals(rate, SprayControllerRateEntry.canonical(travel, SprayCarrierBasis.LITRES_PER_100_METRES, pass, 2.8)!!, 1e-8)
+        }
+    }
+
     @Test fun delayedTankConfirmationRequiresCurrentFrozenRecipe() {
         val captured = SprayRecord(id = "record", vineyardId = "vineyard")
         assertNull(SprayPlanningOperationalGate.tankConfirmationBlocker(captured, captured))

@@ -9,6 +9,8 @@ import com.rork.vinetrack.data.spray.SprayCarrierVolumePolicy
 import com.rork.vinetrack.data.spray.SprayGeometryQuality
 import com.rork.vinetrack.data.spray.SprayGeometrySource
 import com.rork.vinetrack.data.spray.SprayGuidedBlocker
+import com.rork.vinetrack.data.spray.SprayGroundTarget
+import com.rork.vinetrack.data.spray.SprayCarrierAreaBasis
 import com.rork.vinetrack.data.spray.SprayGuidedFlow
 import com.rork.vinetrack.data.spray.SprayGuidedInputs
 import com.rork.vinetrack.data.spray.SprayGuidedStep
@@ -92,6 +94,8 @@ class SprayGuidedFlowTest {
             null
         },
         bandWidthTotalMetres = if (operationType == SprayOperationType.BANDED_SPRAY) 0.8 else null,
+        groundTarget = SprayGroundTarget.UNDERVINE.takeIf { operationType == SprayOperationType.BANDED_SPRAY },
+        carrierAreaBasis = SprayCarrierAreaBasis.WHOLE_BLOCK_AREA,
         isGrowthStageAssigned = true,
         isEquipmentSelected = true,
         isEquipmentConfirmed = true,
@@ -565,10 +569,8 @@ class SprayGuidedFlowTest {
     fun `the persisted snapshot is a projection of the plan Review displays`() {
         val flow = SprayGuidedFlow(
             completeInputs(SprayOperationType.BANDED_SPRAY).copy(
-                carrierBasis = SprayCarrierBasis.LITRES_PER_100_METRES,
-                litresPerHectare = null,
-                diluteLitresPer100Metres = 40.0,
-                appliedLitresPer100Metres = 20.0,
+                carrierBasis = SprayCarrierBasis.LITRES_PER_HECTARE,
+                litresPerHectare = 625.0,
                 products = listOf(
                     product("Kelp", SprayProductRateBasis.WHOLE_BLOCK_AREA, 2.0),
                     product("Herbicide", SprayProductRateBasis.TREATED_AREA, 2.0),
@@ -604,8 +606,11 @@ class SprayGuidedFlowTest {
             snapshot.carrierLitresPerHectare!!,
             tolerance,
         )
-        assertEquals(40.0, snapshot.diluteLitresPer100m!!, tolerance)
-        assertEquals(20.0, snapshot.appliedLitresPer100m!!, tolerance)
+        assertNull(snapshot.diluteLitresPer100m)
+        assertEquals(1.0, snapshot.concentrationFactor!!, tolerance)
+        // Ground L/ha records do not claim an entered foliar/controller travel rate.
+        assertNull(snapshot.appliedLitresPer100m)
+        assertEquals(625.0, snapshot.carrierLitresPerHectare!!, tolerance)
         assertEquals(plan.concentrationFactor, snapshot.concentrationFactor!!, tolerance)
         assertTrue(snapshot.hasGenuineTreatedArea)
 
@@ -618,6 +623,9 @@ class SprayGuidedFlowTest {
                 plan = plan,
                 targets = flow.orderedTargets,
                 sprayHeadTarget = flow.effectiveSprayHeadTarget,
+                carrierVolumeBasis = flow.effectiveCarrierBasis,
+                groundTarget = flow.inputs.groundTarget,
+                carrierAreaBasis = flow.inputs.carrierAreaBasis,
             ),
             snapshot,
         )

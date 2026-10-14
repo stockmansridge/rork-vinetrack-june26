@@ -2,7 +2,60 @@
 
 Date: 2026-10-13. Scope: controlled synthetic handset UI/local-data/blocked-state testing only. No Supabase/SQL/RLS/production chemical mutation, dosing equation change, planning-write activation or public release.
 
-## 1. Mobile safety corrections
+## 2026-10-14 calculator continuation — implemented corrections, acceptance still incomplete
+
+This update supersedes the historical test counts below for the described calculator selection only. No new release, SQL/Supabase mutation, historical-record rewrite, chemical label change or operational-planning activation.
+
+### A. UI implementation
+
+The existing eight steps, two inline cards, order, illustrations and progressive disclosure remain. Step 6's shared title now matches the approved `Canopy & Spray Volume` wording on both platforms. Android card internal spacing now matches iOS's 12-point spacing; decimal fields expose IME Done, which clears focus/hides the keyboard without invoking a save or changing the selected step. iOS global keyboard implementation is unchanged. Selected/unselected configuration illustrations and both Full Tank paths were exercised through production Compose cards, not an authenticated whole-calculator journey or pixel/dark-mode/small-screen audit.
+
+### B. Configuration and units
+
+At physical spacing 2.8 m: Standard width 2.8 m / Over-Row width 5.6 m. At 600 L/ha, controller travel 16.8 / 33.6 L/100 m; at 500 L/ha, 14 / 28. Existing controller boundary retains physical L/ha while re-expressing controller travel; no row-spacing or product-quantity equation changes. Both Full Tank examples remain in focused tests: 1500 L / 3 ha = 500 L/ha; 1500 L / 600 L/ha = 2.5 ha. Capacity, gross-selected-area bounds, target/calibration equivalence and no invented partial-block coverage assertions remain.
+
+Corrections: Android carrier basis is now saveable alongside rate text; same-basis L/ha configuration changes leave raw text alone on both apps; true rate-basis/controller transitions refuse nonblank invalid/partial/zero entries rather than changing their meaning. Full Tank parsing now uses the existing regional decimal parser (comma decimal supported, incomplete/nonfinite input unresolved). iOS legacy carrier-display cache is keyed by regional volume/area/length/country so a stale local-unit display is not reused under another region. The field state is not a new calculator/configuration model.
+
+Remaining MOBILE unit work: certify and, where necessary, finish live global regional-settings changes while Full Tank raw fields are populated, exact raw-text restoration after repeated controller-unit/configuration round trips, and complete canonical-versus-original-text retention for By Area custom output. Current tests prove conversions/serialized captured-unit provenance and reopen contracts, not all production-screen setters. Do not call these remaining issues environment-only or all unit transitions accepted.
+
+### C. Chemical calculations and stricter Option C
+
+Existing CF/concentration/product quantity equations unchanged: CF minimum 1, per-100 L uses the existing relationship, area products never receive CF. Crop Sil, explicit REVUS conditional selection and DiPel dimension-refusal suites remain. A new admission-only above-reference blocker prevents CF 1.00 from authorising a dilute-rate mix above its established reference; flow and available frozen physical-row evidence are checked independently of typed/preferred rate. Area-only products are not assigned dilute CF. No label authority or server permission is inferred. This client check is NOT full server/direct-write/old-client authority; frozen legacy rows lacking a trustworthy comparable reference and complete server enforcement remain separately unresolved. New planning gates remain closed.
+
+### D. Persistence and reliability
+
+Reproduced iOS edit failure with a real-file PersistenceStore failure injection: the old method returned true and published an edit despite disk refusal. `updateSprayRecord` now requires matching current vineyard/record scope, writes via `saveRecordsSliceOrThrow`, then publishes/calls dirty notification. Failed write retains old disk and memory, returns false, emits no dirty callback; retry is tested. No record is moved into the currently selected vineyard.
+
+Reproduced three Android pending CREATE defects before correction: failed replacement deleted original evidence; BLOCKED/IN_PROGRESS payloads could be replaced/unblocked; edits minted a new operation and lost retry history. Added one durable coalescing mutation using the existing auth-first repository lock/order, retaining operation ID/client ID/creation/attempts and original vineyard. Corrupt/multiple/foreign-scope entries refuse, blocked/in-flight evidence is immutable. CREATE replay now claims the exact version and uses compare-and-remove/status/retry, so stale acknowledgements cannot remove/fail/publish over newer intent. HTTP409 remains blocked without reviewed receipt. No synchronous durable commit was replaced with asynchronous apply.
+
+Existing delayed Start Tank and established-factual-recovery tests remain. Save for Later still writes recipe then inactive Trip, preserving same-screen exact-ID retry. Process-restorable repair of an interrupted recipe-only save is NOT implemented/accepted; this is remaining MOBILE reliability work, not merely a server prerequisite. No newly enabled operational save/start/replay or actual coverage writes.
+
+### E. Performance
+
+Measured synthetic Android workload: immutable guided inputs with 100 blocks/20 products, 300 iterations reading plan twice plus geometry, checksum 540000 throughout. BEFORE caching: **39.178884 ms** (standalone executed test). First AFTER: **7.460265 ms** in the 78-case run; later 165-case runs **2.700177 ms** and **1.060520 ms**. Single-shot host/JIT variation prevents a statistical startup/frame-rate claim. Mechanism: geometry and plan are now per-flow lazy values; Compose remembers flow by the full immutable guided-input/profile value, avoiding reconstruction for unrelated UI changes. No arithmetic/durability change. All subsequent snapshot/ground/volume/chemical tests pass on Android.
+
+iOS source hotspots remain: `SprayCalculatorView.flow` constructs inputs/flow on repeated property reads; `guidedProductLines` repeatedly scans saved chemicals and registered rate evidence; `flow.plan`/geometry computed getters repeat; resistance check rebuilds events from all records during product rendering; local spray persistence remains main-thread full-slice JSON/disk. A Swift timing probe executed 1/0 before changes, but managed successful test output supplied no probe timing and the local log remained a previous invocation. NO fabricated iOS before/after number or unmeasured optimisation. Latest iOS test-host launch failure had no crash log; runtime CLI returned no logs. Cold startup, real recomposition/frame counts, resistance history and codec/SharedPreferences disk latency remain unprofiled. No unsafe background durability refactor.
+
+### F. Executed testing and builds
+
+- iOS focused planning/save/recovery/captured chemistry/regional/timing selection: **66 passed, 0 failed, 112s**. This preceded the later same-basis L/ha text fast path and fixture reconciliation. The new edit regression first executed **0/1**, then passed in the 66-case selection after production correction.
+- Six documented iOS wider suites: fixture reconciliation changed unsupported synthetic `Kilograms` to supported `Kg` (no production alias/label rewrite), expected display `L` to actual ChemicalUnit raw `Litres`, integer division to fractional arithmetic, original directions versus expanded presets to explicit 2-original/3-derived/5-unique assertions, confirmed equipment/canopy/ground inputs, physical equivalent controller values and regional CF number formatting. Execution progressed **127/15**, then **141/1**. The last failure was exact snapshot comparison's `customTargets:nil` versus actual empty array; the expected full projection now includes `flow.inputs.customTargets`, retaining whole equality. Its corrected selection (GuidedWorkflowParity + Planning + SaveForLater) then **0 executed**, host launch/connection failure with no crash log. No unchanged retry/startup bypass; final corrected iOS parity is UNVERIFIED, not142/0. Other five wider suites were green in the 141/1 execution, not an unchanged baseline certification.
+- iOS UI selection of three KeyboardInteractionUITests: **2 passed / 1 failed**. Actual Calculator numeric Done/drag/passive-tap/no-save test PASSED; generic passive-tap/scroll test PASSED. Generic native formatted-number sample FAILED (`25.75` expected, `2.575` observed). Kept assertion/production keyboard unchanged; chemical-editor/Step6 numeric-field UI not separately certified.
+- Android replacement regressions first executed **0/3** (after one missing nullable-fixture-argument compilation correction); all3 now pass. Focused selection then **78/0**. Expanded selection first **164/1**: stale ground test required a row-rate field that explicit Android L/ha carrier does not store. Expected projection now explicitly requires absent foliar/controller/dilute fields, exact625L/ha/CF1 and full snapshot/ground metadata, not canopy leakage. Final **165 passed / 0 failed/errors/skips**, BUILD SUCCESSFUL24s, `CALCULATOR_REGRESSION_EXIT=0`, XML2026-10-14T00:59:48Z. Includes all30 GuidedFlow,25 GuidedWorkflowParity,6 ground-carrier,17 snapshot,9 volume,23 planning,14 registered rates,10 captured-chemical,14 StartTank,8 mobile-safety,3 replacement,4 normalizer,1 timing and1 child-JVM cases. Child JVM is not Android OS termination. Init/logs `.rork-tmp/calculator-completion.*`; launcher `scripts/run-calculator-completion.py`. Geometry/regional source names requested in init were absent; do NOT claim their separate suites were discovered.
+- Final Android native selection `SprayPlanningAndroidTest` + `ChemicalConditionPersistenceAndroidTest`: **7 passed / 0 failed/skipped,19s**, after correcting only the test's invalid chain on Unit-returning `performImeAction`. Covers production-card IME Done/text retention, both configurations/Full Tank paths and scoped real preferences/mock chemical REST. Earlier7/0/16s preceded the new IME assertion.
+- Final `runChecks(ios)` simulator and `runChecks(android-vinetrack)` release both PASSED after source changes. Existing nonblocking asset notices unchanged. No device-release/iOS archive validation or distribution.
+
+### G. Remaining work — explicit categories
+
+**Mobile implementation/validation:** live regional setting/raw canonical retention gaps above; interrupted Save for Later process recovery; generic formatted-number input defect classification/correction; final corrected iOS full-snapshot parity execution; iOS/cold-start/resistance/persistence measured profiling. Do not label these finished from 165 Android passes.
+
+**Physical-device testing:** authenticated full eight-step calculator/review/chemical editor on iPhone/Android, keyboard/focus behavior on actual Step6 fields, dark mode/small screens/Dynamic Type, saved legacy edit/reopen, true offline OS kill/restart and account/vineyard isolation. Native card semantics and file/prefs recreation are supporting evidence only.
+
+**Backend/server compliance:** reviewed trusted label/reference/currentness and Option C authority, staged storage contract, typed scoped receipt/idempotence and atomic direct/job/Trip/tank/inventory admission. New operational planning remains disabled. No SQL applied or production data changed.
+
+**Release dependencies:** no release authorised; updated final-source candidates would need separate permission, complete mobile/device/server acceptance and build identity. Historical TestFlight168 does not contain this continuation.
+
+## 1. Mobile safety corrections (historical 2026-10-13)
 
 ### A. iOS Save for Later
 

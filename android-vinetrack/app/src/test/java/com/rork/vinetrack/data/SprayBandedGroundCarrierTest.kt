@@ -96,7 +96,8 @@ class SprayBandedGroundCarrierTest {
     @Test
     fun `Undervine and Midrow do not require canopy`() {
         SprayGroundTarget.entries.forEach { target ->
-            val flow = banded(SprayCarrierBasis.LITRES_PER_HECTARE, SprayCarrierAreaBasis.TREATED_AREA, 200.0, groundTarget = target)
+            val flow = banded(SprayCarrierBasis.LITRES_PER_HECTARE, SprayCarrierAreaBasis.TREATED_AREA, 200.0, groundTarget = target,
+                products = listOf(SprayProductLineInput("water", "Synthetic adjuvant", "mL", SprayProductRateBasis.PER_100_LITRES, 1.0)))
             assertNull(flow.blocker(SprayGuidedStep.CARRIER))
             assertEquals(target, flow.snapshot?.groundTarget)
             assertEquals(SprayCarrierAreaBasis.TREATED_AREA, flow.snapshot?.carrierAreaBasis)

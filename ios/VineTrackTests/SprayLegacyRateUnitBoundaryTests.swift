@@ -132,7 +132,7 @@ struct SprayLegacyRateUnitBoundaryTests {
         // Anchored to the real model: the line must now READ as 2.5 L/ha.
         let line = SprayChemical(name: "x", ratePerHa: seeded, unit: .litres)
         #expect(abs(line.displayRate - 2.5) < 0.0001)
-        #expect(line.unitLabel == "L")
+        #expect(line.unitLabel == ChemicalUnit.litres.rawValue)
     }
 
     @Test("A litre-quoted legacy rate crosses the boundary in the calculator")
@@ -363,7 +363,7 @@ struct SprayLegacyRateUnitBoundaryTests {
         let line = bind(chosen, into: SprayChemical(unit: .kilograms))
 
         #expect(line.unit == .litres)
-        #expect(line.unitLabel == "L")
+        #expect(line.unitLabel == ChemicalUnit.litres.rawValue)
         #expect(abs(line.ratePerHa - 2_500) < 0.0001)
         #expect(abs(line.displayRate - 2.5) < 0.0001)
     }

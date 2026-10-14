@@ -62,6 +62,8 @@ class SprayPlanningAndroidTest {
         compose.onNodeWithText("Full Tank").performScrollTo().performClick().assertIsSelected()
         compose.onNodeWithText("Intended tank volume (L)").performScrollTo().performTextInput("1500")
         compose.onNodeWithText("Planned area (ha)").performScrollTo().performTextInput("3")
+        compose.onNodeWithText("Planned area (ha)").performImeAction()
+        compose.onNodeWithText("Planned area (ha)").assertTextContains("3")
         compose.onNodeWithText("Planned area: ${fmt.formatArea(3.0)}").performScrollTo().assertExists()
         compose.onNodeWithText("Controller travel: ${fmt.formatVolumePer100Length(28.0)}").performScrollTo().assertExists()
         compose.onNodeWithText("Intended water: ${fmt.formatVolume(1500.0)}").performScrollTo().assertExists()

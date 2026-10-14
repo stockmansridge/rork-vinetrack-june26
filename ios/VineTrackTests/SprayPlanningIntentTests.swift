@@ -4,6 +4,30 @@ import Testing
 
 @MainActor
 struct SprayPlanningIntentTests {
+    @Test func aboveReferenceCannotBeAuthorisedByFactorOne() {
+        #expect(SprayCarrierConversion.concentrationFactor(dilute: 713, actual: 750) == 1)
+        #expect(SprayPlanningOperationalGate.aboveReferenceBlocker(actual: 750, reference: 713, hasDiluteRateProducts: true) == SprayPlanningOperationalGate.aboveReferenceMessage)
+        #expect(SprayPlanningOperationalGate.aboveReferenceBlocker(actual: 713, reference: 713, hasDiluteRateProducts: true) == nil)
+        #expect(SprayPlanningOperationalGate.aboveReferenceBlocker(actual: 750, reference: 713, hasDiluteRateProducts: false) == nil)
+    }
+
+    @Test func regionalDecimalPlanningEntryRefusesPartialAndNonfiniteValues() {
+        #expect(SprayControllerRateEntry.parse(" 3,00 ") == 3)
+        #expect(SprayControllerRateEntry.parse("1500.") == 1500)
+        for text in ["", ".", "1..2", "NaN", "inf"] { #expect(SprayControllerRateEntry.parse(text) == nil) }
+    }
+
+    @Test func bothControllerRatesPreservePhysicalApplication() throws {
+        for rate in [500.0, 600.0] {
+            for pass in SprayPassConfiguration.allCases {
+                let travel = try #require(SprayControllerRateEntry.displayed(rate, basis: .litresPer100Metres, configuration: pass, spacing: 2.8))
+                let expected = (rate == 500 ? 14.0 : 16.8) * pass.rowEquivalents
+                #expect(abs(travel - expected) < 0.00000001)
+                #expect(abs((SprayControllerRateEntry.canonical(travel, basis: .litresPer100Metres, configuration: pass, spacing: 2.8) ?? 0) - rate) < 0.00000001)
+            }
+        }
+    }
+
     @Test func delayedTankConfirmationRequiresCurrentFrozenRecipe() {
         let captured = SprayRecord(sprayReference: "Original frozen mix")
         #expect(SprayPlanningOperationalGate.tankConfirmationBlocker(current: captured, captured: captured) == nil)

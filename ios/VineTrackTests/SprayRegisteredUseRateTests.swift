@@ -118,7 +118,9 @@ struct SprayRegisteredUseRateTests {
         let chem = try chemical(custodiaForteJSON)
         let rates = SprayRegisteredUseRates.rates(for: chem)
 
-        #expect(rates.count == 2)
+        #expect(rates.filter { !$0.isRangePreset }.count == 2)
+        #expect(rates.filter(\.isRangePreset).count == 3)
+        #expect(rates.count == 5)
         #expect(rates.allSatisfy { $0.origin == .registeredUse })
         // Both rates stay tied to the registered use they came from.
         #expect(rates.allSatisfy { $0.crop == "GRAPEVINE" })
@@ -155,7 +157,8 @@ struct SprayRegisteredUseRateTests {
         // Deterministic ids, so a persisted selection survives a redraw or a
         // relaunch instead of silently detaching from its rate.
         #expect(first.map(\.id) == second.map(\.id))
-        #expect(Set(first.map(\.id)).count == 2)
+        #expect(Set(first.map(\.id)).count == 5)
+        #expect(Set(first.filter { !$0.isRangePreset }.map(\.id)).count == 2)
     }
 
     // MARK: - Range preservation

@@ -18,7 +18,7 @@ enum class SprayGuidedStep(val raw: String, val title: String) {
     TARGET("target", "Target"),
     GROWTH_STAGE("growth_stage", "Growth Stage"),
     EQUIPMENT("equipment", "Equipment"),
-    CARRIER("carrier", "Carrier / Spray Volume"),
+    CARRIER("carrier", "Canopy & Spray Volume"),
     PRODUCTS("products", "Products"),
     REVIEW("review", "Review"),
     ;
@@ -351,8 +351,7 @@ data class SprayGuidedFlow(
      * Canonical geometry for the current selection. The single source of truth for
      * row length and row spacing in this screen.
      */
-    val geometry: SprayApplicationGeometry
-        get() = SprayGeometryResolver.resolve(inputs.blocks)
+    val geometry: SprayApplicationGeometry by lazy { SprayGeometryResolver.resolve(inputs.blocks) }
 
     /**
      * True when the chosen workflow genuinely needs canonical row metres.
@@ -420,7 +419,11 @@ data class SprayGuidedFlow(
         }
 
     val operationalBlocker: String?
-        get() = inputs.planningIntent?.fullTankExecutionBlocker(planningResolution, geometry.grossAreaHectares)
+        get() = SprayPlanningOperationalGate.aboveReferenceBlocker(
+            planningResolution?.litresPerHectare ?: volumeDecision?.actualLitresPerHectare,
+            volumeDecision?.recommendedLitresPerHectare,
+            inputs.products.any { it.basis == SprayProductRateBasis.PER_100_LITRES })
+            ?: inputs.planningIntent?.fullTankExecutionBlocker(planningResolution, geometry.grossAreaHectares)
             ?: SprayPlanningOperationalGate.blocker(inputs.planningIntent != null, carrier?.concentrationFactor,
                 inputs.products.any { it.basis == SprayProductRateBasis.PER_100_LITRES },
                 inputs.products.filter { it.basis == SprayProductRateBasis.PER_100_LITRES }.map { it.name })
@@ -531,8 +534,8 @@ data class SprayGuidedFlow(
      * carrier step is valid it is built on the zero-litre placeholder, which
      * affects only carrier-dependent figures.
      */
-    val plan: SprayApplicationPlan
-        get() = SprayApplicationPlanner.plan(
+    val plan: SprayApplicationPlan by lazy {
+        SprayApplicationPlanner.plan(
             blocks = inputs.blocks,
             mode = mode,
             bandWidth = bandWidth,
@@ -541,6 +544,7 @@ data class SprayGuidedFlow(
             productLines = inputs.products,
             plannedAreaHectares = if (inputs.planningIntent?.method == SprayPlanningMethod.FULL_TANK) (planningResolution?.plannedAreaHa ?: 0.0) else null,
         )
+    }
 
     /**
      * The plan to PERSIST — only once the flow is genuinely complete, so a

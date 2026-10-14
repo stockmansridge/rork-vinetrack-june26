@@ -151,6 +151,33 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         return next
     }
 
+    /** One-commit edit of unsent CREATE intent; blocked or in-flight evidence is immutable. */
+    internal fun coalesceUnstartedCreate(entityType: String, clientId: String, requireExisting: Boolean = false,
+        payload: (PendingWrite?) -> String): PendingWrite? = admitted {
+        coalesceUnstartedCreateLocked(entityType, clientId, requireExisting, payload)
+    }
+
+    @Synchronized
+    private fun coalesceUnstartedCreateLocked(entityType: String, clientId: String, requireExisting: Boolean,
+        payload: (PendingWrite?) -> String): PendingWrite? {
+        val matches = _writes.value.filter { it.entityType == entityType && it.clientId == clientId &&
+            it.opType == com.rork.vinetrack.data.model.PendingOpType.CREATE && it.status in PendingWriteStatus.unresolved }
+        check(matches.size <= 1) { "Multiple retained spray operations require review." }
+        val existing = matches.singleOrNull()
+        if (existing == null && requireExisting) return null
+        check(existing == null || existing.status in setOf(PendingWriteStatus.PENDING, PendingWriteStatus.FAILED)) {
+            "This spray operation is blocked or syncing. Its original evidence is retained for review."
+        }
+        val encoded = payload(existing)
+        val now = System.currentTimeMillis()
+        val next = existing?.copy(payloadJson = encoded, status = PendingWriteStatus.PENDING, lastError = null, updatedAt = now)
+            ?: PendingWrite(id = UUID.randomUUID().toString(), entityType = entityType,
+                opType = com.rork.vinetrack.data.model.PendingOpType.CREATE, clientId = clientId,
+                payloadJson = encoded, createdAt = now, updatedAt = now)
+        check(update { rows -> rows.filterNot { it == existing } + next }) { "Pending write could not be committed durably." }
+        return next
+    }
+
     /** Update the status and optional error of a pending write by id. */
     fun updateStatus(id: String, status: String, lastError: String? = null) {
         val now = System.currentTimeMillis()

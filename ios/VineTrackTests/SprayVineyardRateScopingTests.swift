@@ -40,7 +40,7 @@ struct SprayVineyardRateScopingTests {
       "id": "aaaaaaaa-0000-0000-0000-000000000001",
       "vineyard_id": "22222222-2222-2222-2222-222222222222",
       "name": "Dithane Rainshield NeoTec",
-      "unit": "Kilograms",
+      "unit": "Kg",
       "rate_per_ha": 0,
       "rates": [],
       "registration_country": "AU",
@@ -169,7 +169,7 @@ struct SprayVineyardRateScopingTests {
       "id": "aaaaaaaa-0000-0000-0000-000000000005",
       "vineyard_id": "22222222-2222-2222-2222-222222222222",
       "name": "Mixed Crop Fungicide",
-      "unit": "Kilograms",
+      "unit": "Kg",
       "rate_per_ha": 0,
       "rates": [],
       "registered_uses": [
@@ -278,7 +278,7 @@ struct SprayVineyardRateScopingTests {
           "id": "aaaaaaaa-0000-0000-0000-000000000006",
           "vineyard_id": "22222222-2222-2222-2222-222222222222",
           "name": "Stale Legacy Plus Structured",
-          "unit": "Kilograms",
+          "unit": "Kg",
           "rate_per_ha": 0,
           "rates": [
             { "label": "Hand typed", "value": 9999, "basis": "per_hectare" }

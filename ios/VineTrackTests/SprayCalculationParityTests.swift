@@ -124,7 +124,7 @@ struct SprayCalculationParityTests {
             )
         )
         // Total litres still resolve from summed row metres…
-        #expect(carrier.totalLitres == 28_125 / 100 * 10)
+        #expect(carrier.totalLitres == 28_125.0 / 100 * 10)
         // …but L/ha is refused rather than guessed.
         #expect(carrier.litresPerHectare == nil)
     }
@@ -196,8 +196,9 @@ struct SprayCalculationParityTests {
         )
         #expect(perHa.basis == .litresPerHectare)
         #expect(per100m.basis == .litresPer100Metres)
-        // A L/ha carrier carries no L/100 m rates…
-        #expect(perHa.appliedLitresPer100Metres == nil)
+        // The entered basis stays L/ha; known geometry also exposes its physical-row equivalent.
+        #expect(perHa.appliedLitresPer100Metres == 16)
+        #expect(perHa.litresPerHectare == 500)
         // …and a L/100 m carrier records no entered hectares.
         #expect(per100m.areaHectaresUsed == nil)
         // The two totals are genuinely different quantities and must not be

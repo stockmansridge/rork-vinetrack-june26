@@ -226,13 +226,16 @@ struct SprayCalculatorView: View {
     /// Keep engine state canonical, while retaining partial local-unit typing in the editor.
     private func carrierBinding(_ key: String, _ canonical: Binding<String>, forward: @escaping (Double) -> Double, inverse: @escaping (Double) -> Double) -> Binding<String> {
         Binding(get: {
-            if let cached = carrierInputText[key], cached.canonical == canonical.wrappedValue { return cached.display }
+            let scopedKey = "\(key)|\(region.settings.countryCode)|\(region.settings.volumeUnit)|\(region.settings.areaUnit)|\(region.lengthUnitAbbreviation)"
+            if let cached = carrierInputText[scopedKey], cached.canonical == canonical.wrappedValue { return cached.display }
             return Double(canonical.wrappedValue).map { String(forward($0)) } ?? canonical.wrappedValue
         }, set: { text in
             let seed = RegionalInput(canonical: Double(canonical.wrappedValue), forward: forward)
             if text == seed.text { return }
             let raw = seed.resolve(text, inverse: inverse).map { String($0) } ?? ""
             canonical.wrappedValue = raw
+            let scopedKey = "\(key)|\(region.settings.countryCode)|\(region.settings.volumeUnit)|\(region.settings.areaUnit)|\(region.lengthUnitAbbreviation)"
+            carrierInputText[scopedKey] = (raw, text)
             carrierInputText[key] = (raw, text)
         })
     }
@@ -446,7 +449,7 @@ struct SprayCalculatorView: View {
     }
 
     private var planningRateCanonical: Double? {
-        let value = Double(planningRateText).map { customSprayerInputBasis == .litresPer100Metres
+        let value = SprayControllerRateEntry.parse(planningRateText).map { customSprayerInputBasis == .litresPer100Metres
             ? region.volumePer100LengthToCanonical($0) : region.volumePerAreaToCanonical($0) }
         return SprayControllerRateEntry.canonical(value, basis: customSprayerInputBasis,
             configuration: passConfiguration, spacing: resolvedRowSpacingMetres)
@@ -456,6 +459,12 @@ struct SprayCalculatorView: View {
     private func changeRateDisplay(basis: SprayCarrierBasis, configuration: SprayPassConfiguration?) {
         let oldBasis = customSprayerInputBasis
         let newBasis = basis == .manualTotalVolume ? sprayProfile.customSprayerInputBasis : basis
+        if newBasis == oldBasis && configuration == passConfiguration { return }
+        if newBasis == oldBasis && oldBasis == .litresPerHectare {
+            carrierBasisChoice = basis
+            passConfiguration = configuration
+            return
+        }
         let custom = Double(customSprayerRateText)
         let customCanonical = SprayControllerRateEntry.canonical(custom, basis: oldBasis,
             configuration: passConfiguration, spacing: resolvedRowSpacingMetres)
@@ -464,7 +473,9 @@ struct SprayCalculatorView: View {
             configuration: configuration, spacing: resolvedRowSpacingMetres)
         let newPlanning = SprayControllerRateEntry.displayed(planning, basis: newBasis,
             configuration: configuration, spacing: resolvedRowSpacingMetres)
-        if (custom != nil && newCustom == nil) || (Double(planningRateText) != nil && newPlanning == nil) {
+        let customDisplay = carrierInputText["custom-\(oldBasis.rawValue)"]?.display ?? customSprayerRateText
+        if (!customDisplay.trimmingCharacters(in: .whitespaces).isEmpty && newCustom == nil)
+            || (!planningRateText.trimmingCharacters(in: .whitespaces).isEmpty && newPlanning == nil) {
             errorMessage = "Matching row spacing is required to change application-rate units without changing the intended dose."
             return
         }
@@ -671,8 +682,8 @@ struct SprayCalculatorView: View {
         if operationType == .foliarSpray, passConfiguration != nil || planningMethod == .fullTank {
             inputs.planningIntent = SprayPlanningIntent(configuration: passConfiguration, method: planningMethod,
                 fullTankSpecification: planningMethod == .fullTank ? fullTankSpecification : nil,
-                intendedTankLitres: planningMethod == .fullTank ? Double(planningTankText).map(region.volumeToCanonical) : nil,
-                targetAreaHa: planningMethod == .fullTank && fullTankSpecification == .targetArea ? Double(planningAreaText).map(region.areaToCanonical) : nil,
+                intendedTankLitres: planningMethod == .fullTank ? SprayControllerRateEntry.parse(planningTankText).map(region.volumeToCanonical) : nil,
+                targetAreaHa: planningMethod == .fullTank && fullTankSpecification == .targetArea ? SprayControllerRateEntry.parse(planningAreaText).map(region.areaToCanonical) : nil,
                 calibratedLitresPerHectare: planningMethod == .fullTank && fullTankSpecification == .calibratedRate ? planningRateCanonical : nil,
                 inputProvenance: SprayPlanningInputProvenance(tankText: planningTankText, areaText: planningAreaText,
                     rateText: planningRateText, volumeUnit: region.settings.volumeUnit, areaUnit: region.settings.areaUnit,

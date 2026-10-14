@@ -20,6 +20,9 @@ extension SprayRecord {
         if !isTemplate, let geometry = applicationGeometry, let intent = geometry.planningIntent,
            geometry.planningResolution != nil,
            let blocker = intent.fullTankExecutionBlocker(resolution: geometry.planningResolution, selectedGrossAreaHa: geometry.grossAreaHa) { return blocker }
+        if let blocker = SprayPlanningOperationalGate.aboveReferenceBlocker(
+            actual: applicationGeometry?.appliedLitresPer100m, reference: applicationGeometry?.diluteLitresPer100m,
+            hasDiluteRateProducts: tanks.contains { tank in tank.chemicals.contains { $0.rateBasis == .per100Litres || ($0.rateBasis == nil && $0.ratePer100L > 0) } }) { return blocker }
         if let blocker = SprayPlanningOperationalGate.tankComplianceBlocker(tanks) { return blocker }
         return SprayPlanningOperationalGate.blocker(
             hasPlanningIntent: applicationGeometry?.planningFieldsCleared == true || applicationGeometry?.planningIntent != nil || applicationGeometry?.planningResolution != nil,
@@ -37,6 +40,9 @@ extension BackendSprayRecordUpsert {
                 effectiveWorkingWidthMetres: effectiveWorkingWidthMetres, concentrationFactor: factor)
             if let blocker = intent.fullTankExecutionBlocker(resolution: resolution, selectedGrossAreaHa: grossAreaHa) { return blocker }
         }
+        if let blocker = SprayPlanningOperationalGate.aboveReferenceBlocker(
+            actual: appliedLitresPer100m, reference: diluteLitresPer100m,
+            hasDiluteRateProducts: tanks.contains { tank in tank.chemicals.contains { $0.rateBasis == .per100Litres || ($0.rateBasis == nil && $0.ratePer100L > 0) } }) { return blocker }
         if let blocker = SprayPlanningOperationalGate.tankComplianceBlocker(tanks) { return blocker }
         return SprayPlanningOperationalGate.blocker(
             hasPlanningIntent: planningFieldsCleared || planningIntent != nil || sprayerConfiguration != nil || sprayPlanningMethod != nil ||

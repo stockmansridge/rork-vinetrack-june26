@@ -31,11 +31,11 @@ struct SprayVolumeDecisionTests {
         return abs(lhs - rhs) <= tolerance
     }
 
-    /// A canopy that recommends 20 L/100 m: VSP · Medium · High.
+    /// A canopy that recommends 20 L/100 m: VSP · Medium · Low.
     private func canopy(
         type: CanopyType = .vsp,
         size: CanopySize = .medium,
-        density: CanopyDensity = .high
+        density: CanopyDensity = .low
     ) -> SprayCanopySelection {
         var selection = SprayCanopySelection.unconfirmed
         selection.choose(type: type)
@@ -70,6 +70,13 @@ struct SprayVolumeDecisionTests {
         var inputs = SprayGuidedInputs()
         inputs.operationType = .foliarSpray
         inputs.blocks = blocks
+        inputs.targets = [.powderyMildew]
+        inputs.sprayHeadTarget = .fullCanopy
+        inputs.isGrowthStageResolved = true
+        inputs.isEquipmentSelected = true
+        inputs.isEquipmentConfirmed = true
+        inputs.tankCapacityLitres = 1500
+        inputs.isCanopyConfirmed = canopy.isConfirmed
         inputs.canopy = canopy
         inputs.canopyWaterRates = .defaults
         inputs.sprayVolumeChoice = choice
@@ -212,7 +219,7 @@ struct SprayVolumeDecisionTests {
     func recommendedTracksCanopy() {
         var selection = canopy(size: .medium, density: .high)
         let before = decision(canopy: selection, choice: .useRecommended)
-        #expect(isClose(before.actualLitresPerHectare, 714.285714, tolerance: 0.000_1))
+        #expect(isClose(before.actualLitresPerHectare, 1428.571429, tolerance: 0.000_1))
 
         selection.choose(size: .full)
         let after = decision(canopy: selection, choice: .useRecommended)
@@ -227,7 +234,7 @@ struct SprayVolumeDecisionTests {
     func customSurvivesCanopyChange() {
         var selection = canopy(size: .medium, density: .high)
         let before = decision(canopy: selection, choice: .useCustomSprayerRate, custom: 600)
-        #expect(isClose(before.concentrationFactor, 1.190_476, tolerance: 0.000_01))
+        #expect(isClose(before.concentrationFactor, 2.380_952, tolerance: 0.000_01))
 
         selection.choose(size: .full)
         let after = decision(canopy: selection, choice: .useCustomSprayerRate, custom: 600)
@@ -340,14 +347,18 @@ struct SprayVolumeDecisionTests {
         #expect(perArea.workings == "20.00 L/100 m at 2.80 m row spacing → 714.29 L/ha")
 
         let cf = try #require(reference.volume.first { $0.id == "concentrationFactor" })
-        #expect(cf.value == "1.19×")
+        let localNumber = NumberFormatter()
+        localNumber.numberStyle = .decimal
+        localNumber.minimumFractionDigits = 2
+        localNumber.maximumFractionDigits = 2
+        #expect(cf.value == "\(localNumber.string(from: 1.19) ?? "1.19")×")
         #expect(cf.workings == "max(1.00, 714.29 L/ha ÷ 600.00 L/ha)")
         #expect(reference.volume.first { $0.id == "actualOutput" }?.value == "600.00 L/ha")
 
         // The per-100 L product shows the concentrated tank strength...
         let dithane = try #require(reference.products.first { $0.name == "DITHANE" })
         #expect(dithane.lines.first { $0.id == "labelRate" }?.value == "150 g/100 L")
-        #expect(dithane.lines.first { $0.id == "tankConcentration" }?.value == "178.57 g/100 L")
+        #expect(dithane.lines.first { $0.id == "tankConcentration" }?.value == "\(localNumber.string(from: 178.57) ?? "178.57") g/100 L")
         // ...and the per-ha product explicitly says CF does not apply to it.
         let perHa = try #require(reference.products.first { $0.name == "PER HA PRODUCT" })
         #expect(perHa.lines.first { $0.id == "cfNotApplied" }?.value == "Not applied")
@@ -621,7 +632,7 @@ struct SprayVolumeDecisionTests {
         let per100m = flow(
             canopy: canopy(),
             choice: .useCustomSprayerRate,
-            custom: 600,
+            custom: 16.8,
             basis: .litresPer100Metres
         )
         #expect(isClose(

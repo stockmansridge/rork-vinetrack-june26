@@ -81,6 +81,34 @@ final class SpraySaveForLaterTests: XCTestCase {
         XCTAssertEqual(store.trips, [trip])
     }
 
+    @MainActor func testEditDiskFailureNeverPublishesSuccessOrChangesOriginal() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let store = MigratedDataStore(persistence: persistence)
+        let vineyard = UUID()
+        store.selectedVineyardId = vineyard
+        let original = SprayRecord(vineyardId: vineyard, date: Date(timeIntervalSince1970: 100), startTime: Date(timeIntervalSince1970: 100), notes: "Original")
+        XCTAssertTrue(store.addSprayRecord(original))
+        var edited = original
+        edited.notes = "Edited"
+        var publications = 0
+        store.onSprayRecordChanged = { _ in publications += 1 }
+        persistence.durableSaveFailureForTesting = { _ in SprayTankActualValidationError.localSaveFailed }
+        XCTAssertFalse(store.updateSprayRecord(edited))
+        XCTAssertEqual(store.sprayRecords, [original])
+        XCTAssertEqual(SprayRepository(persistence: persistence).loadAllRecords(), [original])
+        XCTAssertEqual(publications, 0)
+        persistence.durableSaveFailureForTesting = nil
+        XCTAssertTrue(store.updateSprayRecord(edited))
+        XCTAssertEqual(SprayRepository(persistence: persistence).loadAllRecords(), [edited])
+        XCTAssertEqual(publications, 1)
+        store.selectedVineyardId = UUID()
+        XCTAssertFalse(store.updateSprayRecord(edited))
+        XCTAssertEqual(publications, 1)
+    }
+
     @MainActor func testPlanningGateRefusesBeforeEitherWrite() {
         let vineyard = UUID()
         let trip = Trip(vineyardId: vineyard, paddockName: "Synthetic", isActive: false)

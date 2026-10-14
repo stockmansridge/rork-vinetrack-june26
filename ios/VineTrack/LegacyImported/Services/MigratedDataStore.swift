@@ -1573,10 +1573,14 @@ final class MigratedDataStore {
     @discardableResult
     func updateSprayRecord(_ record: SprayRecord) -> Bool {
         guard record.operationalPlanningBlocker == nil else { return false }
-        guard let vineyardId = selectedVineyardId else { return false }
-        guard let index = sprayRecords.firstIndex(where: { $0.id == record.id }) else { return false }
-        sprayRecords[index] = record
-        sprayRepo.saveRecordsSlice(sprayRecords, for: vineyardId)
+        guard let vineyardId = selectedVineyardId, record.vineyardId == vineyardId else { return false }
+        guard let index = sprayRecords.firstIndex(where: { $0.id == record.id && $0.vineyardId == vineyardId }) else { return false }
+        var next = sprayRecords
+        next[index] = record
+        do {
+            try sprayRepo.saveRecordsSliceOrThrow(next, for: vineyardId)
+        } catch { return false }
+        sprayRecords = next
         onSprayRecordChanged?(record.id)
         return true
     }

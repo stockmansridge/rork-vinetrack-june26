@@ -529,7 +529,7 @@ fun SprayCalculatorScreen(
     var planningTankText by rememberSaveable { mutableStateOf("") }
     var planningAreaText by rememberSaveable { mutableStateOf("") }
     var planningRateText by rememberSaveable { mutableStateOf("") }
-    var carrierBasisChoice by remember { mutableStateOf(SprayCarrierBasis.LITRES_PER_HECTARE) }
+    var carrierBasisChoice by rememberSaveable { mutableStateOf(SprayCarrierBasis.LITRES_PER_HECTARE) }
     var carrierAreaBasis by rememberSaveable { mutableStateOf(SprayCarrierAreaBasis.TREATED_AREA) }
     var manualTotalLitresText by rememberSaveable { mutableStateOf("") }
     var sprayVolumeChoice by rememberSaveable { mutableStateOf(SprayVolumeChoice.UNDECIDED) }
@@ -639,12 +639,19 @@ fun SprayCalculatorScreen(
         (if (basis == SprayCarrierBasis.LITRES_PER_100_METRES) fmt.volumePer100LengthValue(value) else fmt.volumePerAreaValue(value)).toString()
     fun changeRateDisplay(basis: SprayCarrierBasis, configuration: SprayPassConfiguration?) {
         val newBasis = if (basis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) SprayCarrierBasis.LITRES_PER_HECTARE else basis
+        if (newBasis == customSprayerBasis && configuration == passConfiguration) return
+        if (newBasis == customSprayerBasis && newBasis == SprayCarrierBasis.LITRES_PER_HECTARE) {
+            carrierBasisChoice = basis
+            passConfiguration = configuration
+            result = null
+            return
+        }
         val custom = carrierFormat.resolveRate(customSprayerRateText, customSprayerBasis)
         val canonicalCustom = SprayControllerRateEntry.canonical(custom, customSprayerBasis, passConfiguration, resolvedRowSpacing)
         val canonicalPlanning = planningRateCanonical()
         val newCustom = SprayControllerRateEntry.displayed(canonicalCustom, newBasis, configuration, resolvedRowSpacing)
         val newPlanning = SprayControllerRateEntry.displayed(canonicalPlanning, newBasis, configuration, resolvedRowSpacing)
-        if ((custom != null && newCustom == null) || (planningRateText.toDoubleOrNull() != null && newPlanning == null)) {
+        if ((customSprayerRateText.isNotBlank() && newCustom == null) || (planningRateText.isNotBlank() && newPlanning == null)) {
             errorMessage = "Matching row spacing is required to change application-rate units without changing the intended dose."
             return
         }
@@ -738,8 +745,7 @@ fun SprayCalculatorScreen(
      * this screen displays is read back off `guidedPlan` — the screen does no
      * arithmetic of its own.
      */
-    val guidedFlow = SprayGuidedFlow(
-        inputs = SprayGuidedInputs(
+    val guidedInputs = SprayGuidedInputs(
             sprayName = sprayName,
             operationType = SprayOperationType.from(operationType)
                 ?: SprayOperationType.FOLIAR_SPRAY,
@@ -785,15 +791,14 @@ fun SprayCalculatorScreen(
             planningIntent = if (operationType == "Foliar Spray" && (passConfiguration != null || planningMethod == SprayPlanningMethod.FULL_TANK))
                 SprayPlanningIntent(configuration = passConfiguration, method = planningMethod,
                     fullTankSpecification = fullTankSpecification.takeIf { planningMethod == SprayPlanningMethod.FULL_TANK },
-                    intendedTankLitres = if (planningMethod == SprayPlanningMethod.FULL_TANK) planningTankText.toDoubleOrNull()?.let(fmt::volumeToCanonical) else null,
-                    targetAreaHa = if (planningMethod == SprayPlanningMethod.FULL_TANK && fullTankSpecification == SprayFullTankSpecification.TARGET_AREA) planningAreaText.toDoubleOrNull()?.let(fmt::areaToCanonical) else null,
+                    intendedTankLitres = if (planningMethod == SprayPlanningMethod.FULL_TANK) SprayControllerRateEntry.parse(planningTankText)?.let(fmt::volumeToCanonical) else null,
+                    targetAreaHa = if (planningMethod == SprayPlanningMethod.FULL_TANK && fullTankSpecification == SprayFullTankSpecification.TARGET_AREA) SprayControllerRateEntry.parse(planningAreaText)?.let(fmt::areaToCanonical) else null,
                     calibratedLitresPerHectare = if (planningMethod == SprayPlanningMethod.FULL_TANK && fullTankSpecification == SprayFullTankSpecification.CALIBRATED_RATE) planningRateCanonical() else null,
                     inputProvenance = SprayPlanningInputProvenance(planningTankText, planningAreaText, planningRateText,
                         fmt.settings.volumeUnit, fmt.settings.areaUnit,
                         if (customSprayerBasis == SprayCarrierBasis.LITRES_PER_100_METRES) (if (fmt.lengthUnitAbbreviation == "ft") "100ft_travel" else "100m_travel") else fmt.settings.sprayRateAreaUnit, fmt.settings.countryCode)) else null,
-        ),
-        profile = sprayProfile,
-    )
+        )
+    val guidedFlow = remember(guidedInputs, sprayProfile) { SprayGuidedFlow(guidedInputs, sprayProfile) }
     val guidedPlan = guidedFlow.plan
 
     // Expansion is operator-owned after a one-time seed from the flow. Both

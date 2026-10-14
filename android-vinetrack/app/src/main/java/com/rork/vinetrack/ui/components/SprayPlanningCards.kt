@@ -5,6 +5,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -35,7 +39,7 @@ fun SprayPlanningCards(
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Sprayer configuration", fontWeight = FontWeight.SemiBold)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     SprayPassConfiguration.entries.forEachIndexed { index, pass ->
@@ -56,7 +60,7 @@ fun SprayPlanningCards(
             }
         }
         Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Plan spray volume", fontWeight = FontWeight.SemiBold)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     SprayPlanningMethod.entries.forEachIndexed { index, option ->
@@ -95,8 +99,12 @@ fun SprayPlanningCards(
 
 @Composable
 private fun PlanningField(title: String, value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     OutlinedTextField(value, onChange, label = { Text(title) }, singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = modifier.fillMaxWidth())
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+        keyboardActions = KeyboardActions(onDone = { focus.clearFocus(); keyboard?.hide() }),
+        modifier = modifier.fillMaxWidth())
 }
 
 @Composable
