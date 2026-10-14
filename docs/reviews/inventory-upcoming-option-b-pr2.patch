@@ -1,0 +1,1120 @@
+diff --git a/android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/InventoryUpcomingPersistenceAndroidTest.kt b/android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/InventoryUpcomingPersistenceAndroidTest.kt
+new file mode 100644
+--- /dev/null
++++ b/android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/InventoryUpcomingPersistenceAndroidTest.kt
+@@ -0,0 +1,89 @@
++package com.rork.vinetrack.data
++
++import android.content.Context
++import android.content.ContextWrapper
++import android.content.SharedPreferences
++import androidx.test.ext.junit.runners.AndroidJUnit4
++import androidx.test.platform.app.InstrumentationRegistry
++import com.rork.vinetrack.data.auth.SessionStore
++import com.rork.vinetrack.data.chemical.*
++import com.rork.vinetrack.data.model.*
++import kotlinx.coroutines.runBlocking
++import kotlinx.coroutines.withTimeout
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.put
++import org.junit.Assert.*
++import org.junit.Test
++import org.junit.runner.RunWith
++import java.time.Instant
++import java.time.LocalDate
++import java.time.ZoneId
++import java.util.UUID
++
++/** Isolated real preferences/store recreation, not OS-process restart or live-server acceptance. */
++@RunWith(AndroidJUnit4::class)
++class InventoryUpcomingPersistenceAndroidTest {
++    private class Installation(base: Context) : ContextWrapper(base) {
++        private val prefix = "inventory_upcoming_${UUID.randomUUID()}_"
++        private val names = mutableSetOf<String>()
++        override fun getApplicationContext(): Context = this
++        override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
++            names.add(name)
++            return baseContext.getSharedPreferences(prefix + name, mode)
++        }
++        fun dispose() { names.forEach { baseContext.deleteSharedPreferences(prefix + it) } }
++    }
++
++    @Test fun archivedInventoryStaysHiddenAfterRealStoreRecreationAndScopeSwitch() = runBlocking {
++        withTimeout(10_000) {
++            val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
++            val owner = "22222222-2222-4222-8222-222222222222"
++            try {
++                SessionStore(context).save("synthetic-access", "synthetic-refresh", owner, null)
++                val active = SavedChemical("active", "vineyard", name = "Active")
++                val history = active.copy(id = "history", name = "Historical", isActive = false, inventoryQuantity = 75.0)
++                assertTrue(SavedChemicalLocalStore(context).save(owner, "vineyard", listOf(active, history)))
++                val restored = SavedChemicalLocalStore(context).load(owner, "vineyard")
++                assertEquals(listOf(active), ChemicalStorePresentation.active(restored))
++                assertEquals(history, restored.single { it.id == history.id })
++                assertTrue(SavedChemicalLocalStore(context).load("other-account", "vineyard").isEmpty())
++                assertTrue(SavedChemicalLocalStore(context).load(owner, "other-vineyard").isEmpty())
++                val requested = mutableListOf<String>()
++                val state = ChemicalInventorySummaryState(this) { id ->
++                    requested.add(id); CatalogueRow(buildJsonObject { put("tracked", true); put("estimated_stock_value", 25) })
++                }
++                state.update("$owner|vineyard|owner", restored); state.waitForRefresh()
++                assertEquals(listOf(active.id), requested)
++                assertEquals(25.0, state.state.value.summaries.values.sumOf { it.number("estimated_stock_value") ?: 0.0 }, 0.0)
++                state.update("$owner|other-vineyard|owner", emptyList())
++                assertTrue(state.state.value.summaries.isEmpty())
++                state.update("other-account|vineyard|operator", emptyList())
++                assertTrue(state.state.value.summaries.isEmpty())
++            } finally { context.dispose() }
++        }
++    }
++
++    @Test fun cachedUpcomingRolloverCompleteReopenAndVineyardAccountIsolation() {
++        val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
++        val owner = "22222222-2222-4222-8222-222222222222"
++        try {
++            SessionStore(context).save("synthetic-access", "synthetic-refresh", owner, null)
++            val task = WorkTask("task", "vineyard", date = "2026-10-14T00:00:00Z")
++            val stage = task.copy(id = "stage", scheduleBasis = "el_stage", targetELStage = 35)
++            val cache = DomainCacheRepository(context)
++            cache.saveWorkTasks(owner, "vineyard", listOf(task, stage))
++            val restored = DomainCacheRepository(context).loadWorkTasks(owner, "vineyard").orEmpty()
++            val zone = ZoneId.of("Australia/Sydney")
++            val before = Instant.parse("2026-10-14T12:59:59Z")
++            assertEquals(listOf(stage, task), WorkTaskPlanning.upcoming(restored, before, zone))
++            assertEquals(listOf(stage), WorkTaskPlanning.upcoming(restored, before.plusSeconds(1), zone))
++            val completed = WorkTaskCompletion.complete(task, LocalDate.parse("2026-10-14"), zone, before, owner)
++            cache.saveWorkTasks(owner, "vineyard", listOf(completed, stage))
++            assertEquals(listOf(stage), WorkTaskPlanning.upcoming(DomainCacheRepository(context).loadWorkTasks(owner, "vineyard").orEmpty(), before, zone))
++            cache.saveWorkTasks(owner, "vineyard", listOf(WorkTaskCompletion.reopen(completed), stage))
++            assertEquals(listOf(stage, task), WorkTaskPlanning.upcoming(DomainCacheRepository(context).loadWorkTasks(owner, "vineyard").orEmpty(), before, zone))
++            assertNull(DomainCacheRepository(context).loadWorkTasks("other-account", "vineyard"))
++            assertNull(DomainCacheRepository(context).loadWorkTasks(owner, "other-vineyard"))
++        } finally { context.dispose() }
++    }
++}
+diff --git a/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalInventorySummaryState.kt b/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalInventorySummaryState.kt
+new file mode 100644
+--- /dev/null
++++ b/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalInventorySummaryState.kt
+@@ -0,0 +1,69 @@
++package com.rork.vinetrack.data.chemical
++
++import com.rork.vinetrack.data.model.SavedChemical
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Job
++import kotlinx.coroutines.CancellationException
++import kotlinx.coroutines.launch
++import kotlinx.coroutines.flow.MutableStateFlow
++import kotlinx.coroutines.flow.asStateFlow
++
++/** Screen-local, single-worker read cache. All callers run on the owning UI dispatcher. */
++internal class ChemicalInventorySummaryState(
++    private val coroutineScope: CoroutineScope,
++    private val fetch: suspend (String) -> CatalogueRow,
++) {
++    data class Snapshot(val scope: String? = null, val summaries: Map<String, CatalogueRow> = emptyMap(), val loading: Boolean = false, val error: String? = null)
++    private val mutable = MutableStateFlow(Snapshot())
++    val state = mutable.asStateFlow()
++    private var scope: String? = null
++    private var chemicals: Map<String, SavedChemical> = emptyMap()
++    private val pending = linkedSetOf<String>()
++    private val revisions = mutableMapOf<String, Int>()
++    private var generation = 0
++    private var worker: Job? = null
++
++    fun update(scope: String?, rows: List<SavedChemical>, force: Set<String> = emptySet()) {
++        if (this.scope != scope) {
++            generation++
++            this.scope = scope
++            chemicals = emptyMap(); pending.clear(); revisions.clear()
++            mutable.value = Snapshot(scope = scope, loading = worker?.isActive == true)
++        }
++        val incoming = if (scope == null) emptyMap() else ChemicalStorePresentation.active(rows).associateBy { it.id }
++        val changed = incoming.keys.filter { incoming[it] != chemicals[it] }.toSet() + force.intersect(incoming.keys)
++        chemicals = incoming
++        mutable.value = mutable.value.copy(summaries = mutable.value.summaries.filterKeys { it in incoming && it !in changed })
++        pending.retainAll(incoming.keys)
++        changed.forEach { revisions[it] = (revisions[it] ?: 0) + 1; pending.add(it) }
++        if (worker?.isActive == true || pending.isEmpty()) return
++        mutable.value = mutable.value.copy(loading = true)
++        worker = coroutineScope.launch {
++            try {
++                while (pending.isNotEmpty()) {
++                    val id = pending.first().also { pending.remove(it) }
++                    val capturedGeneration = generation
++                    val revision = revisions[id]
++                    try {
++                        val row = fetch(id)
++                        if (generation == capturedGeneration && revisions[id] == revision && id in chemicals) {
++                            mutable.value = mutable.value.copy(summaries = mutable.value.summaries + (id to row))
++                        }
++                    } catch (cancelled: CancellationException) { throw cancelled }
++                    catch (_: Exception) {
++                        if (generation == capturedGeneration && revisions[id] == revision && id in chemicals) {
++                            mutable.value = mutable.value.copy(error = "Unable to load inventory. Check access and try again.")
++                        }
++                    }
++                }
++            } finally { mutable.value = mutable.value.copy(loading = false) }
++        }
++    }
++
++    suspend fun waitForRefresh() { worker?.join() }
++
++    fun retry() {
++        mutable.value = mutable.value.copy(error = null)
++        update(scope, chemicals.values.toList(), chemicals.keys)
++    }
++}
+diff --git a/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/WorkTaskPlanning.kt b/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/WorkTaskPlanning.kt
+--- a/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/WorkTaskPlanning.kt
++++ b/android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/WorkTaskPlanning.kt
+@@ -23,12 +23,12 @@
+         return task.finalizedBy?.takeIf { it in verifiedMemberIds }
+     }
+
+-    /** Hub-only projection; Task Log retains completed, archived, and overdue history. */
++    /** Hub-only projection; history and Task Log ordering are unchanged. */
+     fun upcoming(tasks: List<WorkTask>, now: Instant, zone: ZoneId): List<WorkTask> {
+         val today = now.atZone(zone).toLocalDate()
+         return tasks.filter { task ->
+             !task.isArchived && !task.isFinalized &&
+-                (task.isStageScheduled || (WorkTaskCompletion.workDate(task, zone)?.let { !it.isBefore(today) } == true))
++                (task.isStageScheduled || WorkTaskCompletion.workDate(task, zone)?.let { !it.isBefore(today) } == true)
+         }.sortedWith { lhs, rhs ->
+             when {
+                 lhs.isStageScheduled != rhs.isStageScheduled -> if (lhs.isStageScheduled) -1 else 1
+@@ -37,6 +37,8 @@
+             }
+         }
+     }
++
++    fun nextDayBoundary(now: Instant, zone: ZoneId): Instant = now.atZone(zone).toLocalDate().plusDays(1).atStartOfDay(zone).toInstant()
+
+     fun ordered(tasks: List<WorkTask>, now: Instant, zone: ZoneId): List<WorkTask> {
+         val today = now.atZone(zone).toLocalDate().atStartOfDay(zone).toInstant().toEpochMilli()
+diff --git a/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalInventoryScreen.kt b/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalInventoryScreen.kt
+--- a/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalInventoryScreen.kt
++++ b/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalInventoryScreen.kt
+@@ -14,6 +14,7 @@
+ import com.rork.vinetrack.data.chemical.*
+ import com.rork.vinetrack.data.model.SavedChemical
+ import kotlinx.coroutines.launch
++import androidx.lifecycle.compose.collectAsStateWithLifecycle
+ import kotlinx.serialization.json.*
+ import java.time.LocalDate
+ import android.app.DatePickerDialog
+@@ -25,40 +26,37 @@
+     val context = LocalContext.current
+     val repository = remember { CatalogueRepository(context) }
+     val overviewScope = rememberCoroutineScope()
+-    // Use the same active-only projection as Chemicals; retain archived rows in storage for history.
++    val inventory = remember(repository) { ChemicalInventorySummaryState(overviewScope) { id ->
++        repository.rows(repository.rpc("chemical_inventory_summary", buildJsonObject { put("p_saved_chemical_id", id) })).single()
++    } }
+     val vineyardChemicals = remember(state.savedChemicals, state.selectedVineyardId) {
+-        com.rork.vinetrack.data.chemical.ChemicalStorePresentation.active(state.savedChemicals)
+-            .filter { it.vineyardId == state.selectedVineyardId }
+-    }
+-    var loading by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf(false) }
+-    var summaries by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf<Map<String, CatalogueRow>>(emptyMap()) }
+-    val visibleSummaries = vineyardChemicals.mapNotNull { summaries[it.id] }
+-    var selected by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf<SavedChemical?>(vineyardChemicals.firstOrNull { it.id == initialChemicalId }) }
++        ChemicalStorePresentation.active(state.savedChemicals.filter { it.vineyardId == state.selectedVineyardId })
++    }
++    val inventoryScope = listOf(state.currentUserId, state.selectedVineyardId, state.currentRole,
++        state.canViewInventoryCosts, state.canRecordInventoryPurchase, state.canManageInventory).joinToString("|")
++    val latestScope by rememberUpdatedState(inventoryScope)
++    val latestChemicals by rememberUpdatedState(vineyardChemicals)
++    val snapshot by inventory.state.collectAsStateWithLifecycle()
++    val summaries = if (snapshot.scope == inventoryScope) snapshot.summaries.filterKeys { id -> vineyardChemicals.any { it.id == id } } else emptyMap()
++    val loading = snapshot.loading
++    val error = snapshot.error
++    var selected by remember(inventoryScope) { mutableStateOf<SavedChemical?>(vineyardChemicals.firstOrNull { it.id == initialChemicalId }) }
+     var search by remember { mutableStateOf("") }
+     var filter by remember { mutableStateOf("All") }
+-    var error by remember { mutableStateOf<String?>(null) }
+-    suspend fun refresh(id: String) {
+-        try { val row = repository.rows(repository.rpc("chemical_inventory_summary", buildJsonObject { put("p_saved_chemical_id", id) })).single(); summaries = summaries + (id to row) }
+-        catch (_: Exception) { error = "Unable to load inventory. Check access and try again." }
+-    }
+-    suspend fun loadSummaries() {
+-        loading = true; error = null
+-        try { vineyardChemicals.forEach { refresh(it.id) } } finally { loading = false }
+-    }
+-    LaunchedEffect(state.selectedVineyardId, state.currentRole, vineyardChemicals.map { it.id }) {
+-        if (selected != null && vineyardChemicals.none { it.id == selected?.id }) selected = null
+-        summaries = emptyMap()
+-        loadSummaries()
+-    }
++    LaunchedEffect(inventoryScope, vineyardChemicals) {
++        if (vineyardChemicals.none { it.id == selected?.id }) selected = null
++        inventory.update(inventoryScope, vineyardChemicals)
++    }
++    DisposableEffect(inventory) { onDispose { inventory.update(null, emptyList()) } }
+     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+         Text(if (recordPurchase) "Chemical Purchase" else "Chemical Inventory", style = MaterialTheme.typography.headlineSmall)
+         if (recordPurchase && state.canRecordInventoryPurchase) Text("Select a chemical to record a purchase.")
+         TextButton(onClick = onClose) { Text("Close") }
+         if (!recordPurchase) {
+-            Text("Tracked chemicals: ${visibleSummaries.count { it.bool("tracked") }}")
+-            Text("Low stock: ${visibleSummaries.count { it.bool("low_stock") }} · Out of stock: ${visibleSummaries.count { it.bool("out_of_stock") }}")
++            Text("Tracked chemicals: ${summaries.values.count { it.bool("tracked") }}")
++            Text("Low stock: ${summaries.values.count { it.bool("low_stock") }} · Out of stock: ${summaries.values.count { it.bool("out_of_stock") }}")
+             if (state.canViewInventoryCosts) {
+-            val stockValues = visibleSummaries.mapNotNull { row -> row.number("estimated_stock_value")?.let { (row.text("currency") ?: "") to it } }
++            val stockValues = summaries.values.mapNotNull { row -> row.number("estimated_stock_value")?.let { (row.text("currency") ?: "") to it } }
+             if (stockValues.isEmpty()) Text("Estimated stock value: —")
+             else stockValues.groupBy { it.first }.forEach { (currency, values) -> Text("Estimated stock value: ${values.sumOf { it.second }} $currency") }
+             }
+@@ -91,10 +89,15 @@
+         if (loading) CircularProgressIndicator()
+         error?.let { message ->
+             Text(message, color = MaterialTheme.colorScheme.error)
+-            TextButton(onClick = { overviewScope.launch { loadSummaries() } }) { Text("Retry") }
+-        }
+-    }
+-    selected?.takeIf { candidate -> vineyardChemicals.any { it.id == candidate.id } }?.let { chemical -> InventoryActions(chemical, summaries[chemical.id], canViewInventory = state.canViewInventory, canRecordInventoryPurchase = state.canRecordInventoryPurchase, canManageInventory = state.canManageInventory, canViewInventoryCosts = state.canViewInventoryCosts, onDismiss = { selected = null }, onMutation = { refresh(chemical.id) }, recordPurchase = recordPurchase) }
++            TextButton(onClick = { inventory.retry() }) { Text("Retry") }
++        }
++    }
++    selected?.takeIf { candidate -> vineyardChemicals.any { it.id == candidate.id } }?.let { chemical -> InventoryActions(chemical, summaries[chemical.id], canViewInventory = state.canViewInventory, canRecordInventoryPurchase = state.canRecordInventoryPurchase, canManageInventory = state.canManageInventory, canViewInventoryCosts = state.canViewInventoryCosts, onDismiss = { selected = null }, onMutation = {
++        if (latestScope == inventoryScope && latestChemicals.any { it.id == chemical.id }) {
++            inventory.update(latestScope, latestChemicals, setOf(chemical.id))
++            inventory.waitForRefresh()
++        }
++    }, recordPurchase = recordPurchase) }
+ }
+
+ @Composable
+diff --git a/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt b/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt
+--- a/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt
++++ b/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt
+@@ -81,6 +81,11 @@
+ import com.rork.vinetrack.ui.components.rememberGuardedSheetState
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.LaunchedEffect
++import androidx.lifecycle.Lifecycle
++import androidx.lifecycle.compose.LocalLifecycleOwner
++import androidx.lifecycle.repeatOnLifecycle
++import kotlinx.coroutines.delay
++import kotlinx.coroutines.awaitCancellation
+ import androidx.compose.runtime.getValue
+ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
+@@ -148,9 +153,14 @@
+     var nav by remember { mutableStateOf(WTNav.Hub) }
+     val selected = state.workTasks.firstOrNull { it.id == selectedId }
+
+-    // Auto-sync on open so Upcoming Tasks and the season total are current
+-    // without a manual refresh. Existing data stays visible while it runs.
+-    LaunchedEffect(Unit) { vm.refreshWorkTasks() }
++    // One refresh on entering/resuming this area; no polling or midnight RPC.
++    val lifecycle = LocalLifecycleOwner.current.lifecycle
++    LaunchedEffect(lifecycle, state.currentUserId, state.selectedVineyardId, state.isOnline) {
++        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
++            if (state.isOnline) vm.refreshWorkTasks()
++            awaitCancellation()
++        }
++    }
+
+     AnimatedContent(
+         targetState = Triple(selected, nav, Unit),
+@@ -352,8 +362,19 @@
+     onSelect: (WorkTask) -> Unit,
+ ) {
+     val vine = LocalVineColors.current
+-    val tasks = remember(state.workTasks) { state.workTasks.filterNot { it.isArchived } }
+-    val upcoming = remember(tasks, state.seasonZone) { WorkTaskPlanning.upcoming(tasks, Instant.now(), state.seasonZone).take(5) }
++    val tasks = remember(state.workTasks, state.selectedVineyardId) { state.workTasks.filter { !it.isArchived && it.vineyardId == state.selectedVineyardId } }
++    val lifecycle = LocalLifecycleOwner.current.lifecycle
++    var presentationNow by remember(state.currentUserId, state.selectedVineyardId, state.seasonZone) { mutableStateOf(Instant.now()) }
++    LaunchedEffect(lifecycle, state.currentUserId, state.selectedVineyardId, state.seasonZone) {
++        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
++            while (true) {
++                val now = Instant.now()
++                presentationNow = now
++                delay(java.time.Duration.between(now, WorkTaskPlanning.nextDayBoundary(now, state.seasonZone)).toMillis().coerceAtLeast(100))
++            }
++        }
++    }
++    val upcoming = remember(tasks, state.seasonZone, presentationNow) { WorkTaskPlanning.upcoming(tasks, presentationNow, state.seasonZone).take(5) }
+
+     // Season-to-date total uses the same component roll-up as task detail.
+     val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
+diff --git a/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/ChemicalInventorySummaryTest.kt b/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/ChemicalInventorySummaryTest.kt
+new file mode 100644
+--- /dev/null
++++ b/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/ChemicalInventorySummaryTest.kt
+@@ -0,0 +1,85 @@
++package com.rork.vinetrack.data
++
++import com.rork.vinetrack.data.chemical.*
++import com.rork.vinetrack.data.model.SavedChemical
++import kotlinx.coroutines.runBlocking
++import kotlinx.serialization.json.*
++import org.junit.Assert.*
++import org.junit.Test
++import java.io.IOException
++
++class ChemicalInventorySummaryTest {
++    @Test fun archiveEvictsTotalsAndReloadNeverRequestsHistoricalRows() = runBlocking {
++        val active = SavedChemical("active", "vineyard", name = "Active")
++        val old = active.copy(id = "history", name = "Historical")
++        val requests = mutableListOf<String>()
++        val cache = ChemicalInventorySummaryState(this) { id ->
++            requests.add(id)
++            CatalogueRow(buildJsonObject { put("tracked", true); put("estimated_stock_value", 25) })
++        }
++        cache.update("account|vineyard|owner", listOf(active, old)); cache.waitForRefresh()
++        assertEquals(50.0, cache.state.value.summaries.values.sumOf { it.number("estimated_stock_value") ?: 0.0 }, 0.0)
++        val archived = old.copy(isActive = false)
++        cache.update("account|vineyard|owner", listOf(active, archived)); cache.waitForRefresh()
++        assertEquals(setOf(active.id), cache.state.value.summaries.keys)
++        assertEquals(2, requests.size)
++        assertEquals(25.0, cache.state.value.summaries.values.sumOf { it.number("estimated_stock_value") ?: 0.0 }, 0.0)
++        val restored = SupabaseClient.json.decodeFromString<List<SavedChemical>>(SupabaseClient.json.encodeToString(listOf(active, archived)))
++        val restarted = ChemicalInventorySummaryState(this) { id ->
++            assertEquals(active.id, id); CatalogueRow(buildJsonObject { put("tracked", true) })
++        }
++        restarted.update("account|vineyard|owner", restored); restarted.waitForRefresh()
++        assertEquals(setOf(active.id), restarted.state.value.summaries.keys)
++        assertEquals("Historical", archived.name)
++    }
++
++    @Test fun onlyChangedSummaryReloadsAndMutationInvalidatesOne() = runBlocking {
++        val one = SavedChemical("one", "vineyard", name = "One")
++        val two = one.copy(id = "two", name = "Two")
++        val requests = mutableListOf<String>()
++        val cache = ChemicalInventorySummaryState(this) { id -> requests.add(id); CatalogueRow(buildJsonObject {}) }
++        cache.update("A", listOf(one, two)); cache.waitForRefresh()
++        cache.update("A", listOf(one, two)); cache.waitForRefresh()
++        assertEquals(2, requests.size)
++        val changed = one.copy(notes = "Edited")
++        cache.update("A", listOf(changed, two)); cache.waitForRefresh()
++        assertEquals(2, requests.count { it == one.id }); assertEquals(1, requests.count { it == two.id })
++        cache.update("A", listOf(changed, two), setOf(two.id)); cache.waitForRefresh()
++        assertEquals(4, requests.size)
++    }
++
++    @Test fun oldScopeAndMutationCannotPublishAndRequestsAreSerialized() = runBlocking {
++        val chemical = SavedChemical("one", "vineyard", name = "One")
++        lateinit var cache: ChemicalInventorySummaryState
++        var requests = 0; var active = 0; var maximum = 0
++        cache = ChemicalInventorySummaryState(this) {
++            requests++; active++; maximum = maxOf(maximum, active)
++            try {
++                if (requests == 1) cache.update("B", listOf(chemical))
++                if (requests == 2) cache.update("B", listOf(chemical), setOf(chemical.id))
++                CatalogueRow(buildJsonObject { put("estimated_stock_value", requests) })
++            } finally { active-- }
++        }
++        cache.update("A", listOf(chemical)); cache.waitForRefresh()
++        assertEquals(3, requests); assertEquals(1, maximum)
++        assertEquals("B", cache.state.value.scope)
++        assertEquals(3.0, cache.state.value.summaries[chemical.id]?.number("estimated_stock_value") ?: -1.0, 0.0)
++        cache.update(null, emptyList()); assertTrue(cache.state.value.summaries.isEmpty())
++    }
++
++    @Test fun offlineRetainsUnchangedRowsAndPermissionChangeClearsCache() = runBlocking {
++        val chemical = SavedChemical("one", "vineyard", name = "One")
++        var fail = false
++        val cache = ChemicalInventorySummaryState(this) {
++            if (fail) throw IOException("Offline synthetic transport")
++            CatalogueRow(buildJsonObject { put("tracked", true) })
++        }
++        cache.update("owner", listOf(chemical)); cache.waitForRefresh()
++        fail = true; cache.update("owner", listOf(chemical)); cache.waitForRefresh()
++        assertEquals(1, cache.state.value.summaries.size)
++        cache.update("operator", listOf(chemical)); assertTrue(cache.state.value.summaries.isEmpty())
++        cache.waitForRefresh(); assertNotNull(cache.state.value.error)
++        fail = false; cache.retry(); cache.waitForRefresh()
++        assertEquals(1, cache.state.value.summaries.size); assertNull(cache.state.value.error)
++    }
++}
+diff --git a/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/WorkTaskPlanningParityTest.kt b/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/WorkTaskPlanningParityTest.kt
+--- a/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/WorkTaskPlanningParityTest.kt
++++ b/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/WorkTaskPlanningParityTest.kt
+@@ -10,6 +10,47 @@
+ import java.io.File
+
+ class WorkTaskPlanningParityTest {
++    @Test fun `upcoming hub excludes old completed and archived without hiding stage plans`() {
++        val now = Instant.parse("2026-10-14T00:00:00Z")
++        val zone = ZoneId.of("Australia/Sydney")
++        val today = WorkTask("today", "vineyard", date = "2026-10-14T00:00:00Z")
++        val later = today.copy(id = "later", date = "2026-10-15T00:00:00Z")
++        val old = today.copy(id = "old", date = "2026-10-13T00:00:00Z")
++        val completed = today.copy(id = "completed", isFinalized = true)
++        val archived = today.copy(id = "archived", isArchived = true)
++        val stage = today.copy(id = "stage", scheduleBasis = "el_stage", targetELStage = 35, date = "2000-01-01T00:00:00Z")
++        assertEquals(listOf("stage", "today", "later"), WorkTaskPlanning.upcoming(listOf(old, completed, later, archived, today, stage), now, zone).map { it.id })
++    }
++
++    @Test fun `vineyard midnight updates offline projection and completion reopen`() {
++        val before = Instant.parse("2026-10-14T12:59:59Z")
++        val after = before.plusSeconds(1)
++        val zone = ZoneId.of("Australia/Sydney")
++        val task = WorkTask("task", "vineyard", date = "2026-10-14T00:00:00Z")
++        assertEquals(listOf(task), WorkTaskPlanning.upcoming(listOf(task), before, zone))
++        assertTrue(WorkTaskPlanning.upcoming(listOf(task), after, zone).isEmpty())
++        assertEquals(listOf(task), WorkTaskPlanning.upcoming(listOf(task), after, ZoneId.of("UTC")))
++        assertEquals(after, WorkTaskPlanning.nextDayBoundary(before, zone))
++        val complete = WorkTaskCompletion.complete(task, LocalDate.parse("2026-10-14"), zone, before, "operator")
++        assertTrue(WorkTaskPlanning.upcoming(listOf(complete), before, zone).isEmpty())
++        val reopened = WorkTaskCompletion.reopen(complete)
++        assertEquals(listOf(task), WorkTaskPlanning.upcoming(listOf(reopened), before, zone))
++        assertNull(reopened.endDate); assertNull(reopened.completedAt)
++        val restored = SupabaseClient.json.decodeFromString<List<WorkTask>>(SupabaseClient.json.encodeToString(listOf(reopened)))
++        assertTrue(WorkTaskPlanning.upcoming(restored, after, zone).isEmpty())
++    }
++
++    @Test fun `upcoming uses start date stage order and DST calendar boundary`() {
++        val now = Instant.parse("2026-10-04T00:00:00Z")
++        val zone = ZoneId.of("Australia/Sydney")
++        val stage12 = WorkTask("stage12", "vineyard", date = "2000-01-01T00:00:00Z", scheduleBasis = "el_stage", targetELStage = 12)
++        val stage35 = stage12.copy(id = "stage35", date = "2030-01-01T00:00:00Z", targetELStage = 35)
++        val edited = WorkTask("edited", "vineyard", date = "2000-01-01T00:00:00Z", startDate = "2026-10-04T00:00:00Z")
++        assertEquals(listOf(stage35, stage12, edited), WorkTaskPlanning.upcoming(listOf(edited, stage12, stage35), now, zone))
++        val start = now.atZone(zone).toLocalDate().atStartOfDay(zone).toInstant()
++        assertEquals(23 * 3600L, java.time.Duration.between(start, WorkTaskPlanning.nextDayBoundary(start, zone)).seconds)
++    }
++
+     @Test fun `portal order keeps to do first then descending stages and upcoming dates`() {
+         val now = Instant.parse("2026-10-08T10:00:00Z")
+         val stage35 = WorkTask("stage35", "vineyard", date = "2030-01-01T00:00:00Z", scheduleBasis = "el_stage", targetELStage = 35)
+@@ -112,17 +153,4 @@
+         assertFalse(payload.containsKey("hourly_rate"))
+         assertNotEquals(payload, ExternalResourceRepository.payload(resource.copy(isActive = false)))
+     }
+-    @Test fun `upcoming hub excludes old completed and archived without hiding stage plans`() {
+-        val now = Instant.parse("2026-10-14T00:00:00Z")
+-        val zone = ZoneId.of("Australia/Sydney")
+-        val today = WorkTask("today", "vineyard", date = "2026-10-14T00:00:00Z")
+-        val later = today.copy(id = "later", date = "2026-10-15T00:00:00Z")
+-        val old = today.copy(id = "old", date = "2026-10-13T00:00:00Z")
+-        val completed = today.copy(id = "completed", isFinalized = true)
+-        val archived = today.copy(id = "archived", isArchived = true)
+-        val stage = today.copy(id = "stage", scheduleBasis = "el_stage", targetELStage = 35, date = "2000-01-01T00:00:00Z")
+-        assertEquals(listOf("stage", "today", "later"),
+-            WorkTaskPlanning.upcoming(listOf(old, completed, later, archived, today, stage), now, zone).map { it.id })
+-    }
+-
+ }
+diff --git a/ios/VineTrack/App/ChemicalIntelligence/ChemicalInventorySummaryState.swift b/ios/VineTrack/App/ChemicalIntelligence/ChemicalInventorySummaryState.swift
+new file mode 100644
+--- /dev/null
++++ b/ios/VineTrack/App/ChemicalIntelligence/ChemicalInventorySummaryState.swift
+@@ -0,0 +1,65 @@
++import Foundation
++import Observation
++
++/// Screen-local read cache. A single worker serializes RPCs, including scope replacements.
++@MainActor @Observable
++final class ChemicalInventorySummaryState {
++    private(set) var summaries: [UUID: CatalogueWire] = [:]
++    private(set) var loading: Bool = false
++    private(set) var error: String?
++    private var scope: String?
++    private var chemicals: [UUID: SavedChemical] = [:]
++    private var pending: Set<UUID> = []
++    private var revisions: [UUID: Int] = [:]
++    private var generation: Int = 0
++    private var worker: Task<Void, Never>?
++    private let fetch: @MainActor (UUID) async throws -> CatalogueWire?
++
++    init(fetch: @escaping @MainActor (UUID) async throws -> CatalogueWire? = { id in
++        try await CatalogueRepository().rpc("chemical_inventory_summary", ["p_saved_chemical_id": .string(id.uuidString)]).first
++    }) { self.fetch = fetch }
++
++    func update(scope: String?, chemicals rows: [SavedChemical], force: Set<UUID> = []) {
++        if self.scope != scope {
++            generation += 1
++            self.scope = scope
++            chemicals = [:]; summaries = [:]; pending = []; revisions = [:]; error = nil
++        }
++        let active = scope == nil ? [] : ChemicalStorePresentation.active(rows)
++        let incoming = Dictionary(active.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
++        let changed = Set(incoming.keys.filter { incoming[$0] != chemicals[$0] }).union(force.intersection(incoming.keys))
++        chemicals = incoming
++        summaries = summaries.filter { incoming[$0.key] != nil && !changed.contains($0.key) }
++        pending.formIntersection(incoming.keys)
++        for id in changed { revisions[id, default: 0] += 1; pending.insert(id) }
++        startWorker()
++    }
++
++    func values(for scope: String?) -> [UUID: CatalogueWire] { self.scope == scope ? summaries : [:] }
++
++    func retry() { error = nil; update(scope: scope, chemicals: Array(chemicals.values), force: Set(chemicals.keys)) }
++
++    func waitForRefresh() async { await worker?.value }
++
++    private func startWorker() {
++        guard worker == nil, !pending.isEmpty else { return }
++        loading = true
++        worker = Task { [weak self] in
++            guard let self else { return }
++            defer { self.worker = nil; self.loading = false }
++            while let id = self.pending.sorted(by: { $0.uuidString < $1.uuidString }).first {
++                self.pending.remove(id)
++                let generation = self.generation
++                let revision = self.revisions[id]
++                do {
++                    let row = try await self.fetch(id)
++                    guard generation == self.generation, revision == self.revisions[id], self.chemicals[id] != nil else { continue }
++                    self.summaries[id] = row
++                } catch {
++                    guard generation == self.generation, revision == self.revisions[id], self.chemicals[id] != nil else { continue }
++                    self.error = "Unable to load inventory. Check access and try again."
++                }
++            }
++        }
++    }
++}
+diff --git a/ios/VineTrack/App/ChemicalIntelligence/ChemicalInventoryView.swift b/ios/VineTrack/App/ChemicalIntelligence/ChemicalInventoryView.swift
+--- a/ios/VineTrack/App/ChemicalIntelligence/ChemicalInventoryView.swift
++++ b/ios/VineTrack/App/ChemicalIntelligence/ChemicalInventoryView.swift
+@@ -7,24 +7,28 @@
+     private var canViewInventory: Bool { store.selectedVineyardId != nil && accessControl?.inventoryVineyardId == store.selectedVineyardId && accessControl?.canViewInventory == true }
+     private var canViewInventoryCosts: Bool { canViewInventory && accessControl?.canViewInventoryCosts == true }
+     @Environment(MigratedDataStore.self) private var store
+-    @State private var summaries: [UUID: CatalogueWire] = [:]
++    @Environment(NewBackendAuthService.self) private var auth
++    @State private var inventory: ChemicalInventorySummaryState = ChemicalInventorySummaryState()
++    private var inventoryScope: String? {
++        guard canViewInventory, auth.isSignedIn, let user = auth.userId, let vineyard = store.selectedVineyardId else { return nil }
++        return "\(user)|\(auth.completedSignOutSequence)|\(vineyard)|\(canViewInventoryCosts)|\(accessControl?.canRecordInventoryPurchase == true)|\(accessControl?.canManageInventory == true)"
++    }
++    private var inventoryChemicals: [SavedChemical] {
++        ChemicalStorePresentation.active(store.savedChemicals.filter { $0.vineyardId == store.selectedVineyardId })
++    }
++    private var summaries: [UUID: CatalogueWire] {
++        inventory.values(for: inventoryScope).filter { id, _ in inventoryChemicals.contains { $0.id == id } }
++    }
++    private struct LoadKey: Hashable { let scope: String?; let chemicals: [SavedChemical] }
+     @State private var selected: SavedChemical?
+     @State private var search: String = ""
+     @State private var filter: String = "All"
+-    @State private var error: String?
+-    @State private var loading: Bool = false
+-    // Archived chemicals stay in the store for historical ID resolution, never inventory.
+-    private var inventoryChemicals: [SavedChemical] {
+-        ChemicalStorePresentation.active(store.savedChemicals)
+-            .filter { $0.vineyardId == store.selectedVineyardId }
+-    }
+-    private var visibleSummaries: [CatalogueWire] {
+-        inventoryChemicals.compactMap { summaries[$0.id] }
+-    }
++    private var error: String? { inventory.error }
++    private var loading: Bool { inventory.loading }
+     private var rows: [SavedChemical] {
+         inventoryChemicals.filter { chemical in
+             let status = summaries[chemical.id]?.inventoryStatus
+-            return (filter == "All" || status == filter) && (search.isEmpty || (chemical.name + " " + chemical.manufacturer).localizedStandardContains(search))
++            return chemical.vineyardId == store.selectedVineyardId && (filter == "All" || status == filter) && (search.isEmpty || (chemical.name + " " + chemical.manufacturer).localizedStandardContains(search))
+         }
+     }
+     var body: some View {
+@@ -36,11 +40,11 @@
+                     }
+                     if !recordPurchase {
+                         Section("Overview") {
+-                            LabeledContent("Tracked chemicals", value: "\(visibleSummaries.filter { $0.bool("tracked") }.count)")
+-                            LabeledContent("Low stock", value: "\(visibleSummaries.filter { $0.bool("low_stock") }.count)")
+-                            LabeledContent("Out of stock", value: "\(visibleSummaries.filter { $0.bool("out_of_stock") }.count)")
++                            LabeledContent("Tracked chemicals", value: "\(summaries.values.filter { $0.bool("tracked") }.count)")
++                            LabeledContent("Low stock", value: "\(summaries.values.filter { $0.bool("low_stock") }.count)")
++                            LabeledContent("Out of stock", value: "\(summaries.values.filter { $0.bool("out_of_stock") }.count)")
+                             if canViewInventoryCosts {
+-                            let values = visibleSummaries.compactMap { row -> (String, Double)? in
++                            let values = summaries.values.compactMap { row -> (String, Double)? in
+                                 guard let value = row.number("estimated_stock_value") else { return nil }
+                                 return (row.text("currency") ?? "", value)
+                             }
+@@ -77,40 +81,27 @@
+                     if rows.isEmpty && !loading { Text("No chemicals match this search or filter.") }
+                     if let error {
+                         Text(error)
+-                        Button("Retry") { Task { await loadSummaries() } }
++                        Button("Retry") { inventory.retry() }
+                     }
+                 }
+                 .searchable(text: $search)
+-                .task(id: store.selectedVineyardId) {
+-                    summaries = [:]
+-                    await loadSummaries()
+-                }
+-                .onChange(of: inventoryChemicals.map(\.id)) { _, ids in
+-                    let visibleIDs = Set(ids)
+-                    summaries = summaries.filter { visibleIDs.contains($0.key) }
+-                    if let selected, !visibleIDs.contains(selected.id) { self.selected = nil }
+-                    Task { await loadSummaries() }
++                .task(id: LoadKey(scope: inventoryScope, chemicals: inventoryChemicals)) {
++                    inventory.update(scope: inventoryScope, chemicals: inventoryChemicals)
++                    if let selected, !inventoryChemicals.contains(where: { $0.id == selected.id }) { self.selected = nil }
+                 }
+                 .sheet(item: $selected) { chemical in
+-                    ChemicalInventoryActionsView(chemical: chemical, summary: summaries[chemical.id], recordPurchase: recordPurchase) { await refresh(chemical.id) }
++                    if inventoryChemicals.contains(where: { $0.id == chemical.id }), let requestScope = inventoryScope {
++                        ChemicalInventoryActionsView(chemical: chemical, summary: summaries[chemical.id], recordPurchase: recordPurchase) {
++                            guard requestScope == inventoryScope else { return }
++                            inventory.update(scope: requestScope, chemicals: inventoryChemicals, force: [chemical.id])
++                            await inventory.waitForRefresh()
++                        }
++                    }
+                 }
+             } else { ContentUnavailableView("Inventory access", systemImage: "lock", description: Text("Selected-vineyard membership required.")) }
+-        }.navigationTitle(recordPurchase ? "Chemical Purchase" : "Chemical Inventory")
+-    }
+-    private func loadSummaries() async {
+-        loading = true; error = nil
+-        defer { loading = false }
+-        for chemical in inventoryChemicals { await refresh(chemical.id) }
+-    }
+-    private func refresh(_ id: UUID) async {
+-        guard canViewInventory, let vineyardId = store.selectedVineyardId,
+-              inventoryChemicals.contains(where: { $0.id == id }) else { return }
+-        do {
+-            let row = try await CatalogueRepository().rpc("chemical_inventory_summary", ["p_saved_chemical_id": .string(id.uuidString)]).first
+-            guard !Task.isCancelled, canViewInventory, store.selectedVineyardId == vineyardId,
+-                  inventoryChemicals.contains(where: { $0.id == id }) else { return }
+-            summaries[id] = row
+         }
+-        catch { self.error = "Unable to load inventory. Check access and try again." }
++        .onDisappear { inventory.update(scope: nil, chemicals: []); selected = nil }
++        .onChange(of: inventoryScope) { _, _ in selected = nil; inventory.update(scope: inventoryScope, chemicals: inventoryChemicals) }
++        .navigationTitle(recordPurchase ? "Chemical Purchase" : "Chemical Inventory")
+     }
+ }
+diff --git a/ios/VineTrack/LegacyImported/Models/WorkTaskPlanning.swift b/ios/VineTrack/LegacyImported/Models/WorkTaskPlanning.swift
+--- a/ios/VineTrack/LegacyImported/Models/WorkTaskPlanning.swift
++++ b/ios/VineTrack/LegacyImported/Models/WorkTaskPlanning.swift
+@@ -35,26 +35,29 @@
+         }
+     }
+
+-    /// Hub-only projection; the full Task Log retains all history.
++    /// Hub-only projection; Task Log and all stored history remain unchanged.
+     static func upcoming(_ tasks: [WorkTask], now: Date, timeZone: TimeZone) -> [WorkTask] {
+-        let calendar = WorkTaskCompletion.calendar(timeZone)
+-        let today = calendar.startOfDay(for: now)
++        let today = WorkTaskCompletion.calendar(timeZone).startOfDay(for: now)
+         return tasks.filter { task in
+             guard !task.isArchived && !task.isFinalized else { return false }
+-            if task.isStageScheduled { return true }
+-            guard let date = task.plannedDate else { return false }
+-            return WorkTaskCompletion.businessDay(date, timeZone: timeZone) >= today
++            return task.isStageScheduled || WorkTaskCompletion.workDate(task, timeZone: timeZone) >= today
+         }.sorted { lhs, rhs in
+             if lhs.isStageScheduled != rhs.isStageScheduled { return lhs.isStageScheduled }
+             if lhs.isStageScheduled {
+                 if lhs.targetELStage != rhs.targetELStage { return (lhs.targetELStage ?? 0) > (rhs.targetELStage ?? 0) }
+             } else {
+-                let left = WorkTaskCompletion.businessDay(lhs.plannedDate!, timeZone: timeZone)
+-                let right = WorkTaskCompletion.businessDay(rhs.plannedDate!, timeZone: timeZone)
++                let left = WorkTaskCompletion.workDate(lhs, timeZone: timeZone)
++                let right = WorkTaskCompletion.workDate(rhs, timeZone: timeZone)
+                 if left != right { return left < right }
+             }
+             return lhs.id.uuidString < rhs.id.uuidString
+         }
++    }
++
++    /// Calendar arithmetic, not a fixed 24 hours (DST days may have 23 or 25).
++    static func nextDayBoundary(after now: Date, timeZone: TimeZone) -> Date {
++        let calendar = WorkTaskCompletion.calendar(timeZone)
++        return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86400)
+     }
+
+     static func completingUser(_ task: WorkTask, trips: [Trip], verifiedMemberIDs: Set<UUID>) -> UUID? {
+diff --git a/ios/VineTrack/LegacyImported/Views/Tasks/WorkTasksHubView.swift b/ios/VineTrack/LegacyImported/Views/Tasks/WorkTasksHubView.swift
+--- a/ios/VineTrack/LegacyImported/Views/Tasks/WorkTasksHubView.swift
++++ b/ios/VineTrack/LegacyImported/Views/Tasks/WorkTasksHubView.swift
+@@ -12,6 +12,13 @@
+     @Environment(BackendAccessControl.self) private var backendAccessControl
+     @Environment(\.accessControl) private var accessControl
+
++    @Environment(\.scenePhase) private var scenePhase
++    @State private var presentationNow: Date = Date()
++    @State private var clockRevision: Int = 0
++    private struct DayClockKey: Hashable {
++        let user: UUID?; let vineyard: UUID?; let zone: String; let isActive: Bool; let clockRevision: Int
++    }
++
+     @State private var showLog: Bool = false
+     @State private var showCalculator: Bool = false
+     @State private var showAddTask: Bool = false
+@@ -26,7 +33,7 @@
+         ).isAllowed
+     }
+
+-    private var visibleTasks: [WorkTask] { store.workTasks.filter { !$0.isArchived } }
++    private var visibleTasks: [WorkTask] { store.workTasks.filter { !$0.isArchived && $0.vineyardId == store.selectedVineyardId } }
+     private var totalTasks: Int { visibleTasks.count }
+
+     /// Start of the current season — the most recent occurrence of the
+@@ -97,6 +104,22 @@
+         // stays visible while the sync runs.
+         .task {
+             await syncWorkTaskData()
++        }
++        // NewMainTabView already syncs on foreground/reconnect. This clock is local-only.
++        .task(id: DayClockKey(user: auth.userId, vineyard: store.selectedVineyardId,
++                              zone: store.settings.resolvedTimeZone.identifier, isActive: scenePhase == .active, clockRevision: clockRevision)) {
++            guard scenePhase == .active else { return }
++            while !Task.isCancelled {
++                let now = Date()
++                presentationNow = now
++                let next = WorkTaskPlanning.nextDayBoundary(after: now, timeZone: store.settings.resolvedTimeZone)
++                do { try await Task.sleep(for: .seconds(max(0.1, next.timeIntervalSince(now)))) }
++                catch { return }
++            }
++        }
++        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
++            presentationNow = Date()
++            clockRevision += 1
+         }
+     }
+
+@@ -195,12 +218,12 @@
+         }
+     }
+
+-    private var recentSection: some View {
++    private var upcomingSection: some View {
+         VStack(alignment: .leading, spacing: 12) {
+             Text("Upcoming Tasks")
+                 .font(.headline)
+
+-            let upcoming = Array(WorkTaskPlanning.upcoming(visibleTasks, now: Date(), timeZone: store.settings.resolvedTimeZone).prefix(5))
++            let upcoming = Array(WorkTaskPlanning.upcoming(visibleTasks, now: presentationNow, timeZone: store.settings.resolvedTimeZone).prefix(5))
+
+             if upcoming.isEmpty {
+                 VStack(spacing: 10) {
+diff --git a/ios/VineTrackTests/ChemicalInventorySummaryTests.swift b/ios/VineTrackTests/ChemicalInventorySummaryTests.swift
+new file mode 100644
+--- /dev/null
++++ b/ios/VineTrackTests/ChemicalInventorySummaryTests.swift
+@@ -0,0 +1,90 @@
++import Foundation
++import Testing
++@testable import VineTrack
++
++@MainActor
++struct ChemicalInventorySummaryTests {
++    @Test func archiveEvictsTotalsAndReloadNeverRequestsHistoricalRows() async {
++        let vineyard = UUID()
++        let active = SavedChemical(vineyardId: vineyard, name: "Active")
++        var archived = SavedChemical(vineyardId: vineyard, name: "Historical")
++        var requests: [UUID] = []
++        let cache = ChemicalInventorySummaryState { id in
++            requests.append(id)
++            return CatalogueWire(fields: ["tracked": .bool(true), "estimated_stock_value": .number(25)])
++        }
++        cache.update(scope: "account|vineyard|owner", chemicals: [active, archived])
++        await cache.waitForRefresh()
++        #expect(cache.summaries.values.reduce(0) { $0 + ($1.number("estimated_stock_value") ?? 0) } == 50)
++        archived.isActive = false
++        cache.update(scope: "account|vineyard|owner", chemicals: [active, archived])
++        await cache.waitForRefresh()
++        #expect(Set(cache.summaries.keys) == [active.id])
++        #expect(requests.count == 2)
++        #expect(cache.summaries.values.reduce(0) { $0 + ($1.number("estimated_stock_value") ?? 0) } == 25)
++        let restarted = ChemicalInventorySummaryState { id in
++            #expect(id == active.id)
++            return CatalogueWire(fields: ["tracked": .bool(true)])
++        }
++        let restored = try? JSONDecoder().decode([SavedChemical].self, from: JSONEncoder().encode([active, archived]))
++        restarted.update(scope: "account|vineyard|owner", chemicals: restored ?? [])
++        await restarted.waitForRefresh()
++        #expect(Set(restarted.summaries.keys) == [active.id])
++        #expect(archived.name == "Historical")
++    }
++
++    @Test func onlyChangedSummaryReloadsAndExplicitMutationInvalidatesOne() async {
++        let first = SavedChemical(name: "One"), second = SavedChemical(name: "Two")
++        var requests: [UUID] = []
++        let cache = ChemicalInventorySummaryState { id in requests.append(id); return CatalogueWire(fields: [:]) }
++        cache.update(scope: "A", chemicals: [first, second]); await cache.waitForRefresh()
++        cache.update(scope: "A", chemicals: [first, second]); await cache.waitForRefresh()
++        #expect(requests.count == 2)
++        var changed = first; changed.notes = "Edited"
++        cache.update(scope: "A", chemicals: [changed, second]); await cache.waitForRefresh()
++        #expect(requests.filter { $0 == first.id }.count == 2)
++        #expect(requests.filter { $0 == second.id }.count == 1)
++        cache.update(scope: "A", chemicals: [changed, second], force: [second.id]); await cache.waitForRefresh()
++        #expect(requests.count == 4)
++    }
++
++    @Test func oldScopeAndOldMutationResponsesCannotPublishAndRequestsAreSerialized() async {
++        let chemical = SavedChemical(name: "One")
++        var cache: ChemicalInventorySummaryState?
++        var requests = 0, active = 0, maximum = 0
++        let state = ChemicalInventorySummaryState { _ in
++            requests += 1; active += 1; maximum = max(maximum, active)
++            defer { active -= 1 }
++            if requests == 1 { cache?.update(scope: "B", chemicals: [chemical]) }
++            if requests == 2 { cache?.update(scope: "B", chemicals: [chemical], force: [chemical.id]) }
++            return CatalogueWire(fields: ["estimated_stock_value": .number(Double(requests))])
++        }
++        cache = state
++        state.update(scope: "A", chemicals: [chemical]); await state.waitForRefresh()
++        #expect(requests == 3 && maximum == 1)
++        #expect(state.values(for: "A").isEmpty)
++        #expect(state.values(for: "B")[chemical.id]?.number("estimated_stock_value") == 3)
++        state.update(scope: nil, chemicals: [])
++        #expect(state.summaries.isEmpty)
++        cache = nil
++    }
++
++    @Test func offlineFailureRetainsUnchangedRowsAndPermissionChangeClearsCache() async {
++        let chemical = SavedChemical(name: "One")
++        var fail = false
++        let state = ChemicalInventorySummaryState { _ in
++            if fail { throw URLError(.notConnectedToInternet) }
++            return CatalogueWire(fields: ["tracked": .bool(true)])
++        }
++        state.update(scope: "owner", chemicals: [chemical]); await state.waitForRefresh()
++        fail = true
++        state.update(scope: "owner", chemicals: [chemical]); await state.waitForRefresh()
++        #expect(state.summaries.count == 1)
++        state.update(scope: "operator", chemicals: [chemical])
++        #expect(state.values(for: "owner").isEmpty)
++        await state.waitForRefresh()
++        #expect(state.summaries.isEmpty && state.error != nil)
++        fail = false; state.retry(); await state.waitForRefresh()
++        #expect(state.summaries.count == 1 && state.error == nil)
++    }
++}
+diff --git a/ios/VineTrackTests/WorkTaskHeaderFullPullTests.swift b/ios/VineTrackTests/WorkTaskHeaderFullPullTests.swift
+--- a/ios/VineTrackTests/WorkTaskHeaderFullPullTests.swift
++++ b/ios/VineTrackTests/WorkTaskHeaderFullPullTests.swift
+@@ -30,14 +30,14 @@
+         ISO8601DateFormatter().date(from: "\(text)T12:00:00Z")!
+     }
+
+-    private func row(_ id: UUID, vineyard: UUID, day: Date, cost: Double = 0, updated: Date? = nil, deleted: Date? = nil, name: String = "Pruning") -> BackendWorkTask {
++    private func row(_ id: UUID, vineyard: UUID, day: Date, cost: Double = 0, updated: Date? = nil, deleted: Date? = nil, name: String = "Pruning", start: Date? = nil, finalized: Bool = false, end: Date? = nil) -> BackendWorkTask {
+         BackendWorkTask(
+             id: id, vineyardId: vineyard, paddockId: nil, paddockName: nil,
+             date: day, taskType: name, durationHours: 1,
+             resources: cost == 0 ? [] : [WorkTaskResource(hourlyRate: cost)],
+             notes: nil, isArchived: false, archivedAt: nil, archivedBy: nil,
+-            isFinalized: false, finalizedAt: nil, finalizedBy: nil,
+-            startDate: nil, endDate: nil, areaHa: nil, taskDescription: nil,
++            isFinalized: finalized, finalizedAt: nil, finalizedBy: nil,
++            startDate: start, endDate: end, areaHa: nil, taskDescription: nil,
+             status: nil, costingMethod: nil, pieceRatePerVine: nil,
+             pieceVineCount: nil, pruningActivityId: nil, createdBy: nil,
+             createdAt: nil, updatedAt: updated ?? day, deletedAt: deleted,
+@@ -59,6 +59,32 @@
+         service.configure(store: store, auth: NewBackendAuthService())
+         metadata.setLastSync(date("2026-09-10"), for: vineyard)
+         return (vineyard, store, metadata, server, service)
++    }
++
++    @Test func upcomingReprojectsAfterSyncedCreateEditCompletionAndReopen() async throws {
++        let (vineyard, store, _, server, service) = environment()
++        let now = date("2026-10-14")
++        let zone = try #require(TimeZone(identifier: "Australia/Sydney"))
++        let task = row(UUID(), vineyard: vineyard, day: date("2026-10-15"))
++        server.rows = [task]
++        try await service.pull(vineyardId: vineyard)
++        #expect(WorkTaskPlanning.upcoming(store.workTasks, now: now, timeZone: zone).map(\.id) == [task.id])
++        server.rows = [row(task.id, vineyard: vineyard, day: date("2026-10-15"), start: date("2026-10-13"))]
++        try await service.pull(vineyardId: vineyard)
++        #expect(WorkTaskPlanning.upcoming(store.workTasks, now: now, timeZone: zone).isEmpty)
++        server.rows = [row(task.id, vineyard: vineyard, day: date("2026-10-15"), finalized: true, end: date("2026-10-15"))]
++        try await service.pull(vineyardId: vineyard)
++        #expect(WorkTaskPlanning.upcoming(store.workTasks, now: now, timeZone: zone).isEmpty)
++        server.rows = [task]
++        try await service.pull(vineyardId: vineyard)
++        #expect(WorkTaskPlanning.upcoming(store.workTasks, now: now, timeZone: zone).map(\.id) == [task.id])
++        let encoder = JSONEncoder()
++        encoder.outputFormatting = .sortedKeys
++        let originalTasks = try encoder.encode(store.workTasks)
++        store.selectedVineyardId = UUID()
++        try await service.pull(vineyardId: vineyard)
++        #expect(try encoder.encode(store.workTasks) == originalTasks)
++        #expect(store.workTasks.filter { $0.vineyardId == store.selectedVineyardId }.isEmpty)
+     }
+
+     @Test func recoversSeventeenToTwentyFourAndIsIdempotentWithOldServerTimestamps() async throws {
+diff --git a/ios/VineTrackTests/WorkTaskPlanningParityTests.swift b/ios/VineTrackTests/WorkTaskPlanningParityTests.swift
+--- a/ios/VineTrackTests/WorkTaskPlanningParityTests.swift
++++ b/ios/VineTrackTests/WorkTaskPlanningParityTests.swift
+@@ -4,6 +4,52 @@
+
+ @MainActor
+ struct WorkTaskPlanningParityTests {
++    @Test func upcomingHubKeepsPlannedTasksButNotHistoricalOrCompleted() throws {
++        let now = try #require(ISO8601DateFormatter().date(from: "2026-10-14T00:00:00Z"))
++        let zone = try #require(TimeZone(identifier: "Australia/Sydney"))
++        let vineyard = UUID()
++        let today = WorkTask(vineyardId: vineyard, date: now)
++        let later = WorkTask(vineyardId: vineyard, date: now.addingTimeInterval(86400))
++        let old = WorkTask(vineyardId: vineyard, date: now.addingTimeInterval(-86400))
++        let completed = WorkTask(vineyardId: vineyard, date: now, isFinalized: true)
++        let archived = WorkTask(vineyardId: vineyard, date: now, isArchived: true)
++        let stage = WorkTask(vineyardId: vineyard, date: now.addingTimeInterval(-86400), scheduleBasis: "el_stage", targetELStage: 35)
++        #expect(WorkTaskPlanning.upcoming([old, completed, later, archived, today, stage], now: now, timeZone: zone).map(\.id) == [stage.id, today.id, later.id])
++    }
++
++    @Test func vineyardMidnightChangesCachedProjectionWithoutNetworkAndReopenRestoresTask() throws {
++        let parse = ISO8601DateFormatter()
++        let before = try #require(parse.date(from: "2026-10-14T12:59:59Z"))
++        let after = before.addingTimeInterval(1)
++        let zone = try #require(TimeZone(identifier: "Australia/Sydney"))
++        let task = WorkTask(date: try #require(parse.date(from: "2026-10-14T00:00:00Z")))
++        #expect(WorkTaskPlanning.upcoming([task], now: before, timeZone: zone).count == 1)
++        #expect(WorkTaskPlanning.upcoming([task], now: after, timeZone: zone).isEmpty)
++        #expect(WorkTaskPlanning.upcoming([task], now: after, timeZone: TimeZone(secondsFromGMT: 0)!).count == 1)
++        #expect(WorkTaskPlanning.nextDayBoundary(after: before, timeZone: zone) == after)
++        let completed = try #require(WorkTaskCompletion.complete(task, selected: before, timeZone: zone, now: before, userId: UUID().uuidString))
++        #expect(WorkTaskPlanning.upcoming([completed], now: before, timeZone: zone).isEmpty)
++        let reopened = WorkTaskCompletion.reopen(completed)
++        #expect(WorkTaskPlanning.upcoming([reopened], now: before, timeZone: zone).map(\.id) == [task.id])
++        #expect(reopened.endDate == nil && reopened.completedAt == nil)
++        let restored = try JSONDecoder().decode([WorkTask].self, from: JSONEncoder().encode([reopened]))
++        #expect(WorkTaskPlanning.upcoming(restored, now: after, timeZone: zone).isEmpty)
++    }
++
++    @Test func upcomingUsesStartDateAndStableStageOrderAndCalendarDSTBoundary() throws {
++        let parse = ISO8601DateFormatter()
++        let now = try #require(parse.date(from: "2026-10-04T00:00:00Z"))
++        let zone = try #require(TimeZone(identifier: "Australia/Sydney"))
++        let stage12 = WorkTask(date: now.addingTimeInterval(-864000), scheduleBasis: "el_stage", targetELStage: 12)
++        let stage35 = WorkTask(date: now.addingTimeInterval(864000), scheduleBasis: "el_stage", targetELStage: 35)
++        var edited = WorkTask(date: now.addingTimeInterval(-864000))
++        edited.startDate = now
++        #expect(WorkTaskPlanning.upcoming([stage12, edited, stage35], now: now, timeZone: zone).map(\.id) == [stage35.id, stage12.id, edited.id])
++        let start = WorkTaskCompletion.calendar(zone).startOfDay(for: now)
++        #expect(WorkTaskPlanning.nextDayBoundary(after: start, timeZone: zone).timeIntervalSince(start) == 23 * 3600)
++        #expect(WorkTaskPlanning.ordered([edited, stage35], now: now, timeZone: zone).count == 2)
++    }
++
+     @Test func portalOrderSeparatesCompletionStageAndUpcomingDates() throws {
+         let now = try #require(ISO8601DateFormatter().date(from: "2026-10-08T10:00:00Z"))
+         let vineyard = UUID()
+@@ -116,18 +162,4 @@
+         var historical = resource; historical.isActive = false
+         #expect(ResourceWrite(resource) != ResourceWrite(historical))
+     }
+-    @Test func upcomingHubKeepsPlannedTasksButNotHistoricalOrCompleted() throws {
+-        let now = try #require(ISO8601DateFormatter().date(from: "2026-10-14T00:00:00Z"))
+-        let zone = try #require(TimeZone(identifier: "Australia/Sydney"))
+-        let vineyard = UUID()
+-        let today = WorkTask(vineyardId: vineyard, date: now)
+-        let later = WorkTask(vineyardId: vineyard, date: now.addingTimeInterval(86400))
+-        let old = WorkTask(vineyardId: vineyard, date: now.addingTimeInterval(-86400))
+-        let completed = WorkTask(vineyardId: vineyard, date: now, isFinalized: true)
+-        let archived = WorkTask(vineyardId: vineyard, date: now, isArchived: true)
+-        let stage = WorkTask(vineyardId: vineyard, date: now.addingTimeInterval(-86400), scheduleBasis: "el_stage", targetELStage: 35)
+-        #expect(WorkTaskPlanning.upcoming([old, completed, later, archived, today, stage], now: now, timeZone: zone).map(\.id) ==
+-            [stage.id, today.id, later.id])
+-    }
+-
+ }
+diff --git a/scripts/inventory-upcoming-tests.init.gradle b/scripts/inventory-upcoming-tests.init.gradle
+new file mode 100644
+--- /dev/null
++++ b/scripts/inventory-upcoming-tests.init.gradle
+@@ -0,0 +1,29 @@
++// Narrow host regression selection; does not alter app/release configuration.
++gradle.projectsEvaluated {
++    def app = gradle.rootProject.project(':app')
++    app.tasks.named('compileDebugUnitTestKotlin').configure {
++        setSource(app.fileTree('src/test/java') {
++            include '**/ChemicalInventorySummaryTest.kt'
++            include '**/ChemicalStorePresentationTest.kt'
++            include '**/ChemicalInventoryTraceabilityTest.kt'
++            include '**/WorkTaskPlanningParityTest.kt'
++            include '**/WorkTaskCompletionTest.kt'
++            include '**/WorkTaskFullRefreshParityTest.kt'
++            include '**/WorkTaskWriteParityTest.kt'
++            include '**/WorkTaskEditorLifecycleTest.kt'
++        })
++    }
++    app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
++        filter {
++            includeTestsMatching 'com.rork.vinetrack.data.ChemicalInventorySummaryTest'
++            includeTestsMatching 'com.rork.vinetrack.data.ChemicalStorePresentationTest'
++            includeTestsMatching 'com.rork.vinetrack.data.ChemicalInventoryTraceabilityTest'
++            includeTestsMatching 'com.rork.vinetrack.data.WorkTaskPlanningParityTest'
++            includeTestsMatching 'com.rork.vinetrack.data.WorkTaskCompletionTest'
++            includeTestsMatching 'com.rork.vinetrack.data.WorkTaskFullRefreshParityTest'
++            includeTestsMatching 'com.rork.vinetrack.data.WorkTaskWriteParityTest'
++            includeTestsMatching 'com.rork.vinetrack.data.WorkTaskEditorLifecycleTest'
++        }
++        testLogging { events 'passed', 'failed', 'skipped' }
++    }
++}
+diff --git a/scripts/run-inventory-upcoming-regressions.py b/scripts/run-inventory-upcoming-regressions.py
+new file mode 100644
+--- /dev/null
++++ b/scripts/run-inventory-upcoming-regressions.py
+@@ -0,0 +1,64 @@
++#!/usr/bin/env python3
++"""Scoped Android tests; optional immutable Git archive baseline, never a checkout."""
++import argparse
++import hashlib
++import io
++import json
++import pathlib
++import subprocess
++import sys
++import tarfile
++import time
++import xml.etree.ElementTree as ET
++
++parser = argparse.ArgumentParser()
++parser.add_argument('--baseline', help='Read-only Git revision to export under /tmp')
++parser.add_argument('--label', default='validation')
++args = parser.parse_args()
++root = pathlib.Path(__file__).resolve().parents[1]
++output = pathlib.Path('/tmp') / ('vinetrack-inventory-upcoming-' + args.label)
++output.mkdir(exist_ok=True)
++app = root / 'android-vinetrack'
++verified = 0
++if args.baseline:
++    archive = subprocess.check_output(['git', 'archive', '--format=tar', args.baseline, 'android-vinetrack'], cwd=root)
++    with tarfile.open(fileobj=io.BytesIO(archive)) as source:
++        source.extractall(output, filter='data')
++    app = output / 'android-vinetrack'
++    paths = subprocess.check_output(['git', 'ls-tree', '-rz', args.baseline, '--', 'android-vinetrack'], cwd=root)
++    for entry in paths.split(b'\0'):
++        if not entry:
++            continue
++        metadata, name = entry.split(b'\t', 1)
++        _, kind, digest = metadata.split()
++        if kind != b'blob':
++            continue
++        exported = output / name.decode()
++        content = exported.read_bytes()
++        actual = hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content).hexdigest()
++        if actual != digest.decode():
++            raise RuntimeError('Baseline byte verification failed: ' + name.decode())
++        verified += 1
++    # Config is generated/ignored by Rork, not tracked application source. No real endpoint/key.
++    companion = app / 'app/src/main/java/com/rork/vinetrack/Config.kt'
++    companion.write_text('package com.rork.vinetrack\nobject Config { val allValues: Map<String, String> = mapOf("EXPO_PUBLIC_SUPABASE_URL" to "https://baseline.invalid", "EXPO_PUBLIC_SUPABASE_ANON_KEY" to "synthetic-not-a-credential", "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID" to "synthetic.invalid") }\n')
++command = [str(app / 'gradlew'), '-p', str(app), '--no-daemon', '-I',
++           str(root / 'scripts/inventory-upcoming-tests.init.gradle'),
++           '-Dorg.gradle.jvmargs=-Xmx4096m -XX:+UseParallelGC -XX:SoftRefLRUPolicyMSPerMB=50',
++           ':app:testDebugUnitTest']
++started = time.time()
++with (output / 'stdout.log').open('w') as stdout, (output / 'stderr.log').open('w') as stderr:
++    result = subprocess.run(command, cwd=root, stdout=stdout, stderr=stderr)
++report = {'command': command, 'exitCode': result.returncode, 'baseline': args.baseline,
++          'verifiedTrackedFiles': verified, 'elapsedSeconds': round(time.time() - started, 2), 'suites': []}
++folder = app / 'app/build/test-results/testDebugUnitTest'
++for path in sorted(folder.glob('TEST-*.xml')):
++    if path.stat().st_mtime < started:
++        continue
++    suite = ET.parse(path).getroot()
++    details = {key: suite.attrib.get(key) for key in ('name', 'tests', 'failures', 'errors', 'skipped', 'timestamp')}
++    details['failedCases'] = [{'name': case.attrib['name'], 'message': case.find('failure').attrib.get('message')}
++                              for case in suite.findall('testcase') if case.find('failure') is not None]
++    report['suites'].append(details)
++(output / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
++sys.exit(result.returncode)

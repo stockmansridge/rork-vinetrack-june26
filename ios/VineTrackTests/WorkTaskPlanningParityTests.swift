@@ -4,6 +4,52 @@ import Testing
 
 @MainActor
 struct WorkTaskPlanningParityTests {
+    @Test func upcomingHubKeepsPlannedTasksButNotHistoricalOrCompleted() throws {
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-10-14T00:00:00Z"))
+        let zone = try #require(TimeZone(identifier: "Australia/Sydney"))
+        let vineyard = UUID()
+        let today = WorkTask(vineyardId: vineyard, date: now)
+        let later = WorkTask(vineyardId: vineyard, date: now.addingTimeInterval(86400))
+        let old = WorkTask(vineyardId: vineyard, date: now.addingTimeInterval(-86400))
+        let completed = WorkTask(vineyardId: vineyard, date: now, isFinalized: true)
+        let archived = WorkTask(vineyardId: vineyard, date: now, isArchived: true)
+        let stage = WorkTask(vineyardId: vineyard, date: now.addingTimeInterval(-86400), scheduleBasis: "el_stage", targetELStage: 35)
+        #expect(WorkTaskPlanning.upcoming([old, completed, later, archived, today, stage], now: now, timeZone: zone).map(\.id) == [stage.id, today.id, later.id])
+    }
+
+    @Test func vineyardMidnightChangesCachedProjectionWithoutNetworkAndReopenRestoresTask() throws {
+        let parse = ISO8601DateFormatter()
+        let before = try #require(parse.date(from: "2026-10-14T12:59:59Z"))
+        let after = before.addingTimeInterval(1)
+        let zone = try #require(TimeZone(identifier: "Australia/Sydney"))
+        let task = WorkTask(date: try #require(parse.date(from: "2026-10-14T00:00:00Z")))
+        #expect(WorkTaskPlanning.upcoming([task], now: before, timeZone: zone).count == 1)
+        #expect(WorkTaskPlanning.upcoming([task], now: after, timeZone: zone).isEmpty)
+        #expect(WorkTaskPlanning.upcoming([task], now: after, timeZone: TimeZone(secondsFromGMT: 0)!).count == 1)
+        #expect(WorkTaskPlanning.nextDayBoundary(after: before, timeZone: zone) == after)
+        let completed = try #require(WorkTaskCompletion.complete(task, selected: before, timeZone: zone, now: before, userId: UUID().uuidString))
+        #expect(WorkTaskPlanning.upcoming([completed], now: before, timeZone: zone).isEmpty)
+        let reopened = WorkTaskCompletion.reopen(completed)
+        #expect(WorkTaskPlanning.upcoming([reopened], now: before, timeZone: zone).map(\.id) == [task.id])
+        #expect(reopened.endDate == nil && reopened.completedAt == nil)
+        let restored = try JSONDecoder().decode([WorkTask].self, from: JSONEncoder().encode([reopened]))
+        #expect(WorkTaskPlanning.upcoming(restored, now: after, timeZone: zone).isEmpty)
+    }
+
+    @Test func upcomingUsesStartDateAndStableStageOrderAndCalendarDSTBoundary() throws {
+        let parse = ISO8601DateFormatter()
+        let now = try #require(parse.date(from: "2026-10-04T00:00:00Z"))
+        let zone = try #require(TimeZone(identifier: "Australia/Sydney"))
+        let stage12 = WorkTask(date: now.addingTimeInterval(-864000), scheduleBasis: "el_stage", targetELStage: 12)
+        let stage35 = WorkTask(date: now.addingTimeInterval(864000), scheduleBasis: "el_stage", targetELStage: 35)
+        var edited = WorkTask(date: now.addingTimeInterval(-864000))
+        edited.startDate = now
+        #expect(WorkTaskPlanning.upcoming([stage12, edited, stage35], now: now, timeZone: zone).map(\.id) == [stage35.id, stage12.id, edited.id])
+        let start = WorkTaskCompletion.calendar(zone).startOfDay(for: now)
+        #expect(WorkTaskPlanning.nextDayBoundary(after: start, timeZone: zone).timeIntervalSince(start) == 23 * 3600)
+        #expect(WorkTaskPlanning.ordered([edited, stage35], now: now, timeZone: zone).count == 2)
+    }
+
     @Test func portalOrderSeparatesCompletionStageAndUpcomingDates() throws {
         let now = try #require(ISO8601DateFormatter().date(from: "2026-10-08T10:00:00Z"))
         let vineyard = UUID()

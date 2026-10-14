@@ -1,0 +1,29 @@
+// Narrow host regression selection; does not alter app/release configuration.
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    app.tasks.named('compileDebugUnitTestKotlin').configure {
+        setSource(app.fileTree('src/test/java') {
+            include '**/ChemicalInventorySummaryTest.kt'
+            include '**/ChemicalStorePresentationTest.kt'
+            include '**/ChemicalInventoryTraceabilityTest.kt'
+            include '**/WorkTaskPlanningParityTest.kt'
+            include '**/WorkTaskCompletionTest.kt'
+            include '**/WorkTaskFullRefreshParityTest.kt'
+            include '**/WorkTaskWriteParityTest.kt'
+            include '**/WorkTaskEditorLifecycleTest.kt'
+        })
+    }
+    app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        filter {
+            includeTestsMatching 'com.rork.vinetrack.data.ChemicalInventorySummaryTest'
+            includeTestsMatching 'com.rork.vinetrack.data.ChemicalStorePresentationTest'
+            includeTestsMatching 'com.rork.vinetrack.data.ChemicalInventoryTraceabilityTest'
+            includeTestsMatching 'com.rork.vinetrack.data.WorkTaskPlanningParityTest'
+            includeTestsMatching 'com.rork.vinetrack.data.WorkTaskCompletionTest'
+            includeTestsMatching 'com.rork.vinetrack.data.WorkTaskFullRefreshParityTest'
+            includeTestsMatching 'com.rork.vinetrack.data.WorkTaskWriteParityTest'
+            includeTestsMatching 'com.rork.vinetrack.data.WorkTaskEditorLifecycleTest'
+        }
+        testLogging { events 'passed', 'failed', 'skipped' }
+    }
+}

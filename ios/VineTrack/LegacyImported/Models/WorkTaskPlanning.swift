@@ -35,6 +35,31 @@ nonisolated enum WorkTaskPlanning {
         }
     }
 
+    /// Hub-only projection; Task Log and all stored history remain unchanged.
+    static func upcoming(_ tasks: [WorkTask], now: Date, timeZone: TimeZone) -> [WorkTask] {
+        let today = WorkTaskCompletion.calendar(timeZone).startOfDay(for: now)
+        return tasks.filter { task in
+            guard !task.isArchived && !task.isFinalized else { return false }
+            return task.isStageScheduled || WorkTaskCompletion.workDate(task, timeZone: timeZone) >= today
+        }.sorted { lhs, rhs in
+            if lhs.isStageScheduled != rhs.isStageScheduled { return lhs.isStageScheduled }
+            if lhs.isStageScheduled {
+                if lhs.targetELStage != rhs.targetELStage { return (lhs.targetELStage ?? 0) > (rhs.targetELStage ?? 0) }
+            } else {
+                let left = WorkTaskCompletion.workDate(lhs, timeZone: timeZone)
+                let right = WorkTaskCompletion.workDate(rhs, timeZone: timeZone)
+                if left != right { return left < right }
+            }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    /// Calendar arithmetic, not a fixed 24 hours (DST days may have 23 or 25).
+    static func nextDayBoundary(after now: Date, timeZone: TimeZone) -> Date {
+        let calendar = WorkTaskCompletion.calendar(timeZone)
+        return calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now)) ?? now.addingTimeInterval(86400)
+    }
+
     static func completingUser(_ task: WorkTask, trips: [Trip], verifiedMemberIDs: Set<UUID>) -> UUID? {
         guard task.isFinalized else { return nil }
         if let recorded = task.completedBy { return recorded }

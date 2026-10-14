@@ -12,6 +12,13 @@ struct WorkTasksHubView: View {
     @Environment(BackendAccessControl.self) private var backendAccessControl
     @Environment(\.accessControl) private var accessControl
 
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var presentationNow: Date = Date()
+    @State private var clockRevision: Int = 0
+    private struct DayClockKey: Hashable {
+        let user: UUID?; let vineyard: UUID?; let zone: String; let isActive: Bool; let clockRevision: Int
+    }
+
     @State private var showLog: Bool = false
     @State private var showCalculator: Bool = false
     @State private var showAddTask: Bool = false
@@ -26,7 +33,7 @@ struct WorkTasksHubView: View {
         ).isAllowed
     }
 
-    private var visibleTasks: [WorkTask] { store.workTasks.filter { !$0.isArchived } }
+    private var visibleTasks: [WorkTask] { store.workTasks.filter { !$0.isArchived && $0.vineyardId == store.selectedVineyardId } }
     private var totalTasks: Int { visibleTasks.count }
 
     /// Start of the current season — the most recent occurrence of the
@@ -63,7 +70,7 @@ struct WorkTasksHubView: View {
                     .font(.subheadline).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
                 summaryCard
                 toolsSection
-                recentSection
+                upcomingSection
             }
             .padding(.horizontal)
             .padding(.bottom, 24)
@@ -92,11 +99,27 @@ struct WorkTasksHubView: View {
         .refreshable {
             await syncWorkTaskData()
         }
-        // Auto-sync on open so Recent Tasks and the season total are current
+        // Auto-sync on open so Upcoming Tasks and the season total are current
         // without requiring a manual pull-to-refresh. Cached data (if any)
         // stays visible while the sync runs.
         .task {
             await syncWorkTaskData()
+        }
+        // NewMainTabView already syncs on foreground/reconnect. This clock is local-only.
+        .task(id: DayClockKey(user: auth.userId, vineyard: store.selectedVineyardId,
+                              zone: store.settings.resolvedTimeZone.identifier, isActive: scenePhase == .active, clockRevision: clockRevision)) {
+            guard scenePhase == .active else { return }
+            while !Task.isCancelled {
+                let now = Date()
+                presentationNow = now
+                let next = WorkTaskPlanning.nextDayBoundary(after: now, timeZone: store.settings.resolvedTimeZone)
+                do { try await Task.sleep(for: .seconds(max(0.1, next.timeIntervalSince(now)))) }
+                catch { return }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+            presentationNow = Date()
+            clockRevision += 1
         }
     }
 
@@ -195,22 +218,22 @@ struct WorkTasksHubView: View {
         }
     }
 
-    private var recentSection: some View {
+    private var upcomingSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Recent Tasks")
+            Text("Upcoming Tasks")
                 .font(.headline)
 
-            let recent = Array(WorkTaskPlanning.ordered(visibleTasks, now: Date(), timeZone: store.settings.resolvedTimeZone).prefix(5))
+            let upcoming = Array(WorkTaskPlanning.upcoming(visibleTasks, now: presentationNow, timeZone: store.settings.resolvedTimeZone).prefix(5))
 
-            if recent.isEmpty {
+            if upcoming.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "checkmark.seal")
                         .font(.system(size: 36))
                         .foregroundStyle(.tertiary)
-                    Text("No tasks yet")
+                    Text("No upcoming tasks")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    Text("Tap + to log your first task.")
+                    Text("Plan a task using a date or E-L growth stage.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -219,7 +242,7 @@ struct WorkTasksHubView: View {
                 .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
             } else {
                 VStack(spacing: 8) {
-                    ForEach(recent) { task in
+                    ForEach(upcoming) { task in
                         WorkTaskRow(task: task, includeMaterials: materialCostsAllowed)
                     }
                 }

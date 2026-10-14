@@ -1,0 +1,173 @@
+{
+  "workspaceHeadAtPackaging": "3dc0f247c092be10e2a5514754ce41a4aedf2854",
+  "startingRevision": "3dc0f247c092be10e2a5514754ce41a4aedf2854",
+  "prHead": "0889a6614bc77fa9ece468d5020f83fc288884ff",
+  "sourceManifest": [
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/InventoryUpcomingPersistenceAndroidTest.kt",
+      "sha256": "613c70234b96dfad50b669ca93ce592a2de90f1b6a71372a51f9e1fa6fc9f226",
+      "existsInPR": false
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/ChemicalInventorySummaryState.kt",
+      "sha256": "8bf221cb647cfb6aba69aa51f9ac4a7028e88dcdb2575054670e1dada8a563dc",
+      "existsInPR": false
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/WorkTaskPlanning.kt",
+      "sha256": "3c5483e7fa08370ce0c7f23107fb8e3af0f1d4b9c85f58afd96873c73eebcecd",
+      "existsInPR": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalInventoryScreen.kt",
+      "sha256": "4fbf2bf7d35a52a3520741feec41054fe4d7b6f66604010b9bb8c0083dda3dae",
+      "existsInPR": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt",
+      "sha256": "0eb12954eecc83d4dfdec562259b93a25141428b69c3d8377702745b1b6400a8",
+      "existsInPR": true
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/ChemicalInventorySummaryTest.kt",
+      "sha256": "31026b1402b4fd29ed87fddf024fa03fcb60bbd8ced73bae8c4b152ac643bd87",
+      "existsInPR": false
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/WorkTaskPlanningParityTest.kt",
+      "sha256": "08aabb359f72c594e2aa65278267e474d293d7a6e7f6f660fb24fb33dd52bbb7",
+      "existsInPR": true
+    },
+    {
+      "path": "ios/VineTrack/App/ChemicalIntelligence/ChemicalInventorySummaryState.swift",
+      "sha256": "caf31a21f277157886b4dcff80e0f88296de941cd61ee2ca4f97b407652c56cb",
+      "existsInPR": false
+    },
+    {
+      "path": "ios/VineTrack/App/ChemicalIntelligence/ChemicalInventoryView.swift",
+      "sha256": "8d6f193190e59d5b323990e87e7b3510559040570e67223894275dd5217306fd",
+      "existsInPR": true
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Models/WorkTaskPlanning.swift",
+      "sha256": "a6ba3eb607506975f53be4ea6c6ca930e8d5e35ad451c88f766e2bb90248cd5b",
+      "existsInPR": true
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Tasks/WorkTasksHubView.swift",
+      "sha256": "eb040c9d91799362be4973e07f13828dc0643a1539d1b2b31480ae43c7f49191",
+      "existsInPR": true
+    },
+    {
+      "path": "ios/VineTrackTests/ChemicalInventorySummaryTests.swift",
+      "sha256": "7497598cc12000224afa6b30a9ca15692e0ceb9b6b7166d4a77f2629772d6e22",
+      "existsInPR": false
+    },
+    {
+      "path": "ios/VineTrackTests/WorkTaskHeaderFullPullTests.swift",
+      "sha256": "b8c79e5ad669e267e00a330d24b0d9b3a59d293e747aad399d7ab7e3f1ad001a",
+      "existsInPR": true
+    },
+    {
+      "path": "ios/VineTrackTests/WorkTaskPlanningParityTests.swift",
+      "sha256": "cf994011f0d73b8e4b5dc133859f24160bf19812e0b63b1c04c5f6d46c7d6519",
+      "existsInPR": true
+    },
+    {
+      "path": "scripts/inventory-upcoming-tests.init.gradle",
+      "sha256": "a939adef33a7659f762b750ca9db3238febcb0c0bbbae8a8bd71cf7b6d7946e4",
+      "existsInPR": false
+    },
+    {
+      "path": "scripts/run-inventory-upcoming-regressions.py",
+      "sha256": "3da07047d8235922519a39bce6b689b6ebd0969d70f2f608cdd344753a24ee8a",
+      "existsInPR": false
+    }
+  ],
+  "sourceFingerprintSHA256": "29228d43e0187ab9518e186bcc2fbb53db1d28d3dc32caff3c27bafabc1312b9",
+  "patch": "docs/reviews/inventory-upcoming-option-b-pr2.patch",
+  "patchSHA256": "37ba35d7dbb1ab217370894920cb771758c2dd1d22c37919c5827f23f7795a7c",
+  "patchApplyCheckAgainstExactPR": "passed",
+  "androidBaselineTrackedFilesVerifiedAfterExecution": 1081,
+  "androidComparison": {
+    "commonCases": 60,
+    "missingCases": 0,
+    "changedCases": [],
+    "addedCases": [
+      {
+        "suite": "com.rork.vinetrack.data.ChemicalInventorySummaryTest",
+        "test": "archiveEvictsTotalsAndReloadNeverRequestsHistoricalRows",
+        "result": "passed"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.ChemicalInventorySummaryTest",
+        "test": "offlineRetainsUnchangedRowsAndPermissionChangeClearsCache",
+        "result": "passed"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.ChemicalInventorySummaryTest",
+        "test": "oldScopeAndMutationCannotPublishAndRequestsAreSerialized",
+        "result": "passed"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.ChemicalInventorySummaryTest",
+        "test": "onlyChangedSummaryReloadsAndMutationInvalidatesOne",
+        "result": "passed"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.WorkTaskPlanningParityTest",
+        "test": "upcoming hub excludes old completed and archived without hiding stage plans",
+        "result": "passed"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.WorkTaskPlanningParityTest",
+        "test": "upcoming uses start date stage order and DST calendar boundary",
+        "result": "passed"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.WorkTaskPlanningParityTest",
+        "test": "vineyard midnight updates offline projection and completion reopen",
+        "result": "passed"
+      }
+    ],
+    "current": {
+      "passed": 62,
+      "failed": 5,
+      "error": 0,
+      "skipped": 0
+    },
+    "baseline": {
+      "passed": 55,
+      "failed": 5,
+      "error": 0,
+      "skipped": 0
+    },
+    "baselineMatchingFailures": [
+      {
+        "suite": "com.rork.vinetrack.data.WorkTaskCompletionTest",
+        "test": "Sydney Work Date selection round trips the UTC picker calendar day",
+        "message": "java.lang.AssertionError: expected:<2026-10-05> but was:<2026-10-04>"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.WorkTaskCompletionTest",
+        "test": "customer A B C keeps work date and separate audit",
+        "message": "java.lang.AssertionError: expected:<2026-09-30> but was:<2026-09-29>"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.WorkTaskCompletionTest",
+        "test": "duplicate pending create patches folded completion before acknowledgement",
+        "message": "java.util.NoSuchElementException: List is empty."
+      },
+      {
+        "suite": "com.rork.vinetrack.data.WorkTaskCompletionTest",
+        "test": "new local midnight Work Date resolves through vineyard timezone",
+        "message": "java.lang.AssertionError: expected:<2026-10-04> but was:<2026-10-05>"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.WorkTaskCompletionTest",
+        "test": "offline update survives restart overlay full refresh and replay with original audit",
+        "message": "java.lang.AssertionError: expected:<WorkTask(id=task, vineyardId=vineyard, paddockId=null, paddockName=null, date=2026-09-28T09:00:00+09:30, taskType=null, durationHours=0.0, notes=Keep me, status=planned, isArchived=false, isFinalized=true, finalizedAt=2026-10-05T01:20:30Z, finalizedBy=original-user, startDate=2026-09-28T09:00:00+09:30, endDate=2026-09-29T14:30:00Z, costingMethod=piece_rate, pieceRatePerVine=1.27, pieceVineCount=499, pruningActivityId=pruning, assignedTo=null, assignedExternalResourceId=null, scheduleBasis=null, targetELStage=null, completedBy=original-user, completedAt=2026-10-05T01:20:30Z, syncVersion=null, deletedAt=null)> but was:<WorkTask(id=task, vineyardId=vineyard, paddockId=null, paddockName=null, date=2026-09-28T09:00:00+09:30, taskType=null, durationHours=0.0, notes=Keep me, status=planned, isArchived=false, isFinalized=true, finalizedAt=2026-10-05T01:20:30Z, finalizedBy=original-user, startDate=2026-09-28T09:00:00+09:30, endDate=2026-09-29T14:30:00Z, costingMethod=piece_rate, pieceRatePerVine=1.27, pieceVineCount=499, pruningActivityId=pruning, assignedTo=null, assignedExternalResourceId=null, scheduleBasis=null, targetELStage=null, completedBy=null, completedAt=null, syncVersion=null, deletedAt=null)>"
+      }
+    ]
+  }
+}

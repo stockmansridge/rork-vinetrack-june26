@@ -14,6 +14,7 @@ import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.data.chemical.*
 import com.rork.vinetrack.data.model.SavedChemical
 import kotlinx.coroutines.launch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.serialization.json.*
 import java.time.LocalDate
 import android.app.DatePickerDialog
@@ -25,22 +26,28 @@ internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, mod
     val context = LocalContext.current
     val repository = remember { CatalogueRepository(context) }
     val overviewScope = rememberCoroutineScope()
-    val vineyardChemicals = state.savedChemicals.filter { it.vineyardId == state.selectedVineyardId }
-    var loading by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf(false) }
-    var summaries by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf<Map<String, CatalogueRow>>(emptyMap()) }
-    var selected by remember(state.selectedVineyardId, state.currentRole) { mutableStateOf<SavedChemical?>(vineyardChemicals.firstOrNull { it.id == initialChemicalId }) }
+    val inventory = remember(repository) { ChemicalInventorySummaryState(overviewScope) { id ->
+        repository.rows(repository.rpc("chemical_inventory_summary", buildJsonObject { put("p_saved_chemical_id", id) })).single()
+    } }
+    val vineyardChemicals = remember(state.savedChemicals, state.selectedVineyardId) {
+        ChemicalStorePresentation.active(state.savedChemicals.filter { it.vineyardId == state.selectedVineyardId })
+    }
+    val inventoryScope = listOf(state.currentUserId, state.selectedVineyardId, state.currentRole,
+        state.canViewInventoryCosts, state.canRecordInventoryPurchase, state.canManageInventory).joinToString("|")
+    val latestScope by rememberUpdatedState(inventoryScope)
+    val latestChemicals by rememberUpdatedState(vineyardChemicals)
+    val snapshot by inventory.state.collectAsStateWithLifecycle()
+    val summaries = if (snapshot.scope == inventoryScope) snapshot.summaries.filterKeys { id -> vineyardChemicals.any { it.id == id } } else emptyMap()
+    val loading = snapshot.loading
+    val error = snapshot.error
+    var selected by remember(inventoryScope) { mutableStateOf<SavedChemical?>(vineyardChemicals.firstOrNull { it.id == initialChemicalId }) }
     var search by remember { mutableStateOf("") }
     var filter by remember { mutableStateOf("All") }
-    var error by remember { mutableStateOf<String?>(null) }
-    suspend fun refresh(id: String) {
-        try { val row = repository.rows(repository.rpc("chemical_inventory_summary", buildJsonObject { put("p_saved_chemical_id", id) })).single(); summaries = summaries + (id to row) }
-        catch (_: Exception) { error = "Unable to load inventory. Check access and try again." }
+    LaunchedEffect(inventoryScope, vineyardChemicals) {
+        if (vineyardChemicals.none { it.id == selected?.id }) selected = null
+        inventory.update(inventoryScope, vineyardChemicals)
     }
-    suspend fun loadSummaries() {
-        loading = true; error = null
-        try { vineyardChemicals.forEach { refresh(it.id) } } finally { loading = false }
-    }
-    LaunchedEffect(state.selectedVineyardId, state.currentRole, vineyardChemicals.map { it.id }) { summaries = emptyMap(); loadSummaries() }
+    DisposableEffect(inventory) { onDispose { inventory.update(null, emptyList()) } }
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(if (recordPurchase) "Chemical Purchase" else "Chemical Inventory", style = MaterialTheme.typography.headlineSmall)
         if (recordPurchase && state.canRecordInventoryPurchase) Text("Select a chemical to record a purchase.")
@@ -82,10 +89,15 @@ internal fun ChemicalInventoryScreen(state: AppUiState, onClose: () -> Unit, mod
         if (loading) CircularProgressIndicator()
         error?.let { message ->
             Text(message, color = MaterialTheme.colorScheme.error)
-            TextButton(onClick = { overviewScope.launch { loadSummaries() } }) { Text("Retry") }
+            TextButton(onClick = { inventory.retry() }) { Text("Retry") }
         }
     }
-    selected?.takeIf { it.vineyardId == state.selectedVineyardId }?.let { chemical -> InventoryActions(chemical, summaries[chemical.id], canViewInventory = state.canViewInventory, canRecordInventoryPurchase = state.canRecordInventoryPurchase, canManageInventory = state.canManageInventory, canViewInventoryCosts = state.canViewInventoryCosts, onDismiss = { selected = null }, onMutation = { refresh(chemical.id) }, recordPurchase = recordPurchase) }
+    selected?.takeIf { candidate -> vineyardChemicals.any { it.id == candidate.id } }?.let { chemical -> InventoryActions(chemical, summaries[chemical.id], canViewInventory = state.canViewInventory, canRecordInventoryPurchase = state.canRecordInventoryPurchase, canManageInventory = state.canManageInventory, canViewInventoryCosts = state.canViewInventoryCosts, onDismiss = { selected = null }, onMutation = {
+        if (latestScope == inventoryScope && latestChemicals.any { it.id == chemical.id }) {
+            inventory.update(latestScope, latestChemicals, setOf(chemical.id))
+            inventory.waitForRefresh()
+        }
+    }, recordPurchase = recordPurchase) }
 }
 
 @Composable

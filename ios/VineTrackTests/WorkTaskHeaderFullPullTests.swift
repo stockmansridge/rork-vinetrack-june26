@@ -30,14 +30,14 @@ struct WorkTaskHeaderFullPullTests {
         ISO8601DateFormatter().date(from: "\(text)T12:00:00Z")!
     }
 
-    private func row(_ id: UUID, vineyard: UUID, day: Date, cost: Double = 0, updated: Date? = nil, deleted: Date? = nil, name: String = "Pruning") -> BackendWorkTask {
+    private func row(_ id: UUID, vineyard: UUID, day: Date, cost: Double = 0, updated: Date? = nil, deleted: Date? = nil, name: String = "Pruning", start: Date? = nil, finalized: Bool = false, end: Date? = nil) -> BackendWorkTask {
         BackendWorkTask(
             id: id, vineyardId: vineyard, paddockId: nil, paddockName: nil,
             date: day, taskType: name, durationHours: 1,
             resources: cost == 0 ? [] : [WorkTaskResource(hourlyRate: cost)],
             notes: nil, isArchived: false, archivedAt: nil, archivedBy: nil,
-            isFinalized: false, finalizedAt: nil, finalizedBy: nil,
-            startDate: nil, endDate: nil, areaHa: nil, taskDescription: nil,
+            isFinalized: finalized, finalizedAt: nil, finalizedBy: nil,
+            startDate: start, endDate: end, areaHa: nil, taskDescription: nil,
             status: nil, costingMethod: nil, pieceRatePerVine: nil,
             pieceVineCount: nil, pruningActivityId: nil, createdBy: nil,
             createdAt: nil, updatedAt: updated ?? day, deletedAt: deleted,
@@ -59,6 +59,32 @@ struct WorkTaskHeaderFullPullTests {
         service.configure(store: store, auth: NewBackendAuthService())
         metadata.setLastSync(date("2026-09-10"), for: vineyard)
         return (vineyard, store, metadata, server, service)
+    }
+
+    @Test func upcomingReprojectsAfterSyncedCreateEditCompletionAndReopen() async throws {
+        let (vineyard, store, _, server, service) = environment()
+        let now = date("2026-10-14")
+        let zone = try #require(TimeZone(identifier: "Australia/Sydney"))
+        let task = row(UUID(), vineyard: vineyard, day: date("2026-10-15"))
+        server.rows = [task]
+        try await service.pull(vineyardId: vineyard)
+        #expect(WorkTaskPlanning.upcoming(store.workTasks, now: now, timeZone: zone).map(\.id) == [task.id])
+        server.rows = [row(task.id, vineyard: vineyard, day: date("2026-10-15"), start: date("2026-10-13"))]
+        try await service.pull(vineyardId: vineyard)
+        #expect(WorkTaskPlanning.upcoming(store.workTasks, now: now, timeZone: zone).isEmpty)
+        server.rows = [row(task.id, vineyard: vineyard, day: date("2026-10-15"), finalized: true, end: date("2026-10-15"))]
+        try await service.pull(vineyardId: vineyard)
+        #expect(WorkTaskPlanning.upcoming(store.workTasks, now: now, timeZone: zone).isEmpty)
+        server.rows = [task]
+        try await service.pull(vineyardId: vineyard)
+        #expect(WorkTaskPlanning.upcoming(store.workTasks, now: now, timeZone: zone).map(\.id) == [task.id])
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let originalTasks = try encoder.encode(store.workTasks)
+        store.selectedVineyardId = UUID()
+        try await service.pull(vineyardId: vineyard)
+        #expect(try encoder.encode(store.workTasks) == originalTasks)
+        #expect(store.workTasks.filter { $0.vineyardId == store.selectedVineyardId }.isEmpty)
     }
 
     @Test func recoversSeventeenToTwentyFourAndIsIdempotentWithOldServerTimestamps() async throws {

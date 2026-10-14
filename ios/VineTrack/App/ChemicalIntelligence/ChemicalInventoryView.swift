@@ -7,14 +7,26 @@ struct ChemicalInventoryView: View {
     private var canViewInventory: Bool { store.selectedVineyardId != nil && accessControl?.inventoryVineyardId == store.selectedVineyardId && accessControl?.canViewInventory == true }
     private var canViewInventoryCosts: Bool { canViewInventory && accessControl?.canViewInventoryCosts == true }
     @Environment(MigratedDataStore.self) private var store
-    @State private var summaries: [UUID: CatalogueWire] = [:]
+    @Environment(NewBackendAuthService.self) private var auth
+    @State private var inventory: ChemicalInventorySummaryState = ChemicalInventorySummaryState()
+    private var inventoryScope: String? {
+        guard canViewInventory, auth.isSignedIn, let user = auth.userId, let vineyard = store.selectedVineyardId else { return nil }
+        return "\(user)|\(auth.completedSignOutSequence)|\(vineyard)|\(canViewInventoryCosts)|\(accessControl?.canRecordInventoryPurchase == true)|\(accessControl?.canManageInventory == true)"
+    }
+    private var inventoryChemicals: [SavedChemical] {
+        ChemicalStorePresentation.active(store.savedChemicals.filter { $0.vineyardId == store.selectedVineyardId })
+    }
+    private var summaries: [UUID: CatalogueWire] {
+        inventory.values(for: inventoryScope).filter { id, _ in inventoryChemicals.contains { $0.id == id } }
+    }
+    private struct LoadKey: Hashable { let scope: String?; let chemicals: [SavedChemical] }
     @State private var selected: SavedChemical?
     @State private var search: String = ""
     @State private var filter: String = "All"
-    @State private var error: String?
-    @State private var loading: Bool = false
+    private var error: String? { inventory.error }
+    private var loading: Bool { inventory.loading }
     private var rows: [SavedChemical] {
-        store.savedChemicals.filter { chemical in
+        inventoryChemicals.filter { chemical in
             let status = summaries[chemical.id]?.inventoryStatus
             return chemical.vineyardId == store.selectedVineyardId && (filter == "All" || status == filter) && (search.isEmpty || (chemical.name + " " + chemical.manufacturer).localizedStandardContains(search))
         }
@@ -69,34 +81,27 @@ struct ChemicalInventoryView: View {
                     if rows.isEmpty && !loading { Text("No chemicals match this search or filter.") }
                     if let error {
                         Text(error)
-                        Button("Retry") { Task { await loadSummaries() } }
+                        Button("Retry") { inventory.retry() }
                     }
                 }
                 .searchable(text: $search)
-                .task(id: store.selectedVineyardId) {
-                    summaries = [:]
-                    await loadSummaries()
+                .task(id: LoadKey(scope: inventoryScope, chemicals: inventoryChemicals)) {
+                    inventory.update(scope: inventoryScope, chemicals: inventoryChemicals)
+                    if let selected, !inventoryChemicals.contains(where: { $0.id == selected.id }) { self.selected = nil }
                 }
-                .onChange(of: store.savedChemicals.map(\.id)) { _, _ in Task { await loadSummaries() } }
                 .sheet(item: $selected) { chemical in
-                    ChemicalInventoryActionsView(chemical: chemical, summary: summaries[chemical.id], recordPurchase: recordPurchase) { await refresh(chemical.id) }
+                    if inventoryChemicals.contains(where: { $0.id == chemical.id }), let requestScope = inventoryScope {
+                        ChemicalInventoryActionsView(chemical: chemical, summary: summaries[chemical.id], recordPurchase: recordPurchase) {
+                            guard requestScope == inventoryScope else { return }
+                            inventory.update(scope: requestScope, chemicals: inventoryChemicals, force: [chemical.id])
+                            await inventory.waitForRefresh()
+                        }
+                    }
                 }
             } else { ContentUnavailableView("Inventory access", systemImage: "lock", description: Text("Selected-vineyard membership required.")) }
-        }.navigationTitle(recordPurchase ? "Chemical Purchase" : "Chemical Inventory")
-    }
-    private func loadSummaries() async {
-        loading = true; error = nil
-        defer { loading = false }
-        for chemical in store.savedChemicals where chemical.vineyardId == store.selectedVineyardId { await refresh(chemical.id) }
-    }
-    private func refresh(_ id: UUID) async {
-        guard canViewInventory, let vineyardId = store.selectedVineyardId,
-              store.savedChemicals.contains(where: { $0.id == id && $0.vineyardId == vineyardId }) else { return }
-        do {
-            let row = try await CatalogueRepository().rpc("chemical_inventory_summary", ["p_saved_chemical_id": .string(id.uuidString)]).first
-            guard !Task.isCancelled, canViewInventory, store.selectedVineyardId == vineyardId else { return }
-            summaries[id] = row
         }
-        catch { self.error = "Unable to load inventory. Check access and try again." }
+        .onDisappear { inventory.update(scope: nil, chemicals: []); selected = nil }
+        .onChange(of: inventoryScope) { _, _ in selected = nil; inventory.update(scope: inventoryScope, chemicals: inventoryChemicals) }
+        .navigationTitle(recordPurchase ? "Chemical Purchase" : "Chemical Inventory")
     }
 }

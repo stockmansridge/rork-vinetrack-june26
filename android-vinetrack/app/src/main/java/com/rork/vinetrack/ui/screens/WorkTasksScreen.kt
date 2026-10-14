@@ -81,6 +81,11 @@ import androidx.compose.material3.rememberDatePickerState
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.awaitCancellation
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -148,9 +153,14 @@ fun WorkTasksScreen(
     var nav by remember { mutableStateOf(WTNav.Hub) }
     val selected = state.workTasks.firstOrNull { it.id == selectedId }
 
-    // Auto-sync on open so Recent Tasks and the season total are current
-    // without a manual refresh. Existing data stays visible while it runs.
-    LaunchedEffect(Unit) { vm.refreshWorkTasks() }
+    // One refresh on entering/resuming this area; no polling or midnight RPC.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle, state.currentUserId, state.selectedVineyardId, state.isOnline) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            if (state.isOnline) vm.refreshWorkTasks()
+            awaitCancellation()
+        }
+    }
 
     AnimatedContent(
         targetState = Triple(selected, nav, Unit),
@@ -352,8 +362,19 @@ private fun WorkTasksHub(
     onSelect: (WorkTask) -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val tasks = remember(state.workTasks) { state.workTasks.filterNot { it.isArchived } }
-    val recent = remember(tasks) { WorkTaskPlanning.ordered(tasks, Instant.now(), state.seasonZone).take(5) }
+    val tasks = remember(state.workTasks, state.selectedVineyardId) { state.workTasks.filter { !it.isArchived && it.vineyardId == state.selectedVineyardId } }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var presentationNow by remember(state.currentUserId, state.selectedVineyardId, state.seasonZone) { mutableStateOf(Instant.now()) }
+    LaunchedEffect(lifecycle, state.currentUserId, state.selectedVineyardId, state.seasonZone) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                val now = Instant.now()
+                presentationNow = now
+                delay(java.time.Duration.between(now, WorkTaskPlanning.nextDayBoundary(now, state.seasonZone)).toMillis().coerceAtLeast(100))
+            }
+        }
+    }
+    val upcoming = remember(tasks, state.seasonZone, presentationNow) { WorkTaskPlanning.upcoming(tasks, presentationNow, state.seasonZone).take(5) }
 
     // Season-to-date total uses the same component roll-up as task detail.
     val canViewFinancials = state.currentRole == "owner" || state.currentRole == "manager"
@@ -466,12 +487,12 @@ private fun WorkTasksHub(
 
             // Recent
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                SectionHeader("Recent Tasks", onLight = true)
+                SectionHeader("Upcoming Tasks", onLight = true)
                 if (state.isLoadingVineyardData && tasks.isEmpty()) {
                     Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = VineColors.Primary)
                     }
-                } else if (recent.isEmpty()) {
+                } else if (upcoming.isEmpty()) {
                     VineyardCard {
                         Column(
                             Modifier.fillMaxWidth().padding(vertical = 20.dp),
@@ -479,12 +500,12 @@ private fun WorkTasksHub(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(36.dp))
-                            Text("No tasks yet", fontSize = 14.sp, color = vine.textSecondary)
-                            Text("Tap + to log your first task.", fontSize = 12.sp, color = vine.textSecondary)
+                            Text("No upcoming tasks", fontSize = 14.sp, color = vine.textSecondary)
+                            Text("Plan a task using a date or E-L growth stage.", fontSize = 12.sp, color = vine.textSecondary)
                         }
                     }
                 } else {
-                    recent.forEach { task ->
+                    upcoming.forEach { task ->
                         WorkTaskListRow(
                             task = task,
                             state = state,

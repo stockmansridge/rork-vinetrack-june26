@@ -10,6 +10,47 @@ import java.time.LocalDate
 import java.io.File
 
 class WorkTaskPlanningParityTest {
+    @Test fun `upcoming hub excludes old completed and archived without hiding stage plans`() {
+        val now = Instant.parse("2026-10-14T00:00:00Z")
+        val zone = ZoneId.of("Australia/Sydney")
+        val today = WorkTask("today", "vineyard", date = "2026-10-14T00:00:00Z")
+        val later = today.copy(id = "later", date = "2026-10-15T00:00:00Z")
+        val old = today.copy(id = "old", date = "2026-10-13T00:00:00Z")
+        val completed = today.copy(id = "completed", isFinalized = true)
+        val archived = today.copy(id = "archived", isArchived = true)
+        val stage = today.copy(id = "stage", scheduleBasis = "el_stage", targetELStage = 35, date = "2000-01-01T00:00:00Z")
+        assertEquals(listOf("stage", "today", "later"), WorkTaskPlanning.upcoming(listOf(old, completed, later, archived, today, stage), now, zone).map { it.id })
+    }
+
+    @Test fun `vineyard midnight updates offline projection and completion reopen`() {
+        val before = Instant.parse("2026-10-14T12:59:59Z")
+        val after = before.plusSeconds(1)
+        val zone = ZoneId.of("Australia/Sydney")
+        val task = WorkTask("task", "vineyard", date = "2026-10-14T00:00:00Z")
+        assertEquals(listOf(task), WorkTaskPlanning.upcoming(listOf(task), before, zone))
+        assertTrue(WorkTaskPlanning.upcoming(listOf(task), after, zone).isEmpty())
+        assertEquals(listOf(task), WorkTaskPlanning.upcoming(listOf(task), after, ZoneId.of("UTC")))
+        assertEquals(after, WorkTaskPlanning.nextDayBoundary(before, zone))
+        val complete = WorkTaskCompletion.complete(task, LocalDate.parse("2026-10-14"), zone, before, "operator")
+        assertTrue(WorkTaskPlanning.upcoming(listOf(complete), before, zone).isEmpty())
+        val reopened = WorkTaskCompletion.reopen(complete)
+        assertEquals(listOf(task), WorkTaskPlanning.upcoming(listOf(reopened), before, zone))
+        assertNull(reopened.endDate); assertNull(reopened.completedAt)
+        val restored = SupabaseClient.json.decodeFromString<List<WorkTask>>(SupabaseClient.json.encodeToString(listOf(reopened)))
+        assertTrue(WorkTaskPlanning.upcoming(restored, after, zone).isEmpty())
+    }
+
+    @Test fun `upcoming uses start date stage order and DST calendar boundary`() {
+        val now = Instant.parse("2026-10-04T00:00:00Z")
+        val zone = ZoneId.of("Australia/Sydney")
+        val stage12 = WorkTask("stage12", "vineyard", date = "2000-01-01T00:00:00Z", scheduleBasis = "el_stage", targetELStage = 12)
+        val stage35 = stage12.copy(id = "stage35", date = "2030-01-01T00:00:00Z", targetELStage = 35)
+        val edited = WorkTask("edited", "vineyard", date = "2000-01-01T00:00:00Z", startDate = "2026-10-04T00:00:00Z")
+        assertEquals(listOf(stage35, stage12, edited), WorkTaskPlanning.upcoming(listOf(edited, stage12, stage35), now, zone))
+        val start = now.atZone(zone).toLocalDate().atStartOfDay(zone).toInstant()
+        assertEquals(23 * 3600L, java.time.Duration.between(start, WorkTaskPlanning.nextDayBoundary(start, zone)).seconds)
+    }
+
     @Test fun `portal order keeps to do first then descending stages and upcoming dates`() {
         val now = Instant.parse("2026-10-08T10:00:00Z")
         val stage35 = WorkTask("stage35", "vineyard", date = "2030-01-01T00:00:00Z", scheduleBasis = "el_stage", targetELStage = 35)
