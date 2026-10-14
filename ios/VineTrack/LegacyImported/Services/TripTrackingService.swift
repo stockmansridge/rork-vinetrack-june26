@@ -611,11 +611,7 @@ final class TripTrackingService {
     @discardableResult
     func endTrip() -> TripEndOutcome {
         guard let current = activeTrip else { return .noActiveTrip }
-        guard current.coverageBasis == .legacy else {
-            let message = "Occurrence End Review is not yet enabled. Saved pass states are retained; numeric finalisation was not applied."
-            errorMessage = message
-            return .persistenceFailed(message)
-        }
+        if current.coverageBasis != .legacy { return endOccurrenceTrip(current) }
         let gateTrip = TankSessionLifecycle.reconciled(current)
         if gateTrip != current {
             do {
@@ -2055,6 +2051,37 @@ final class TripTrackingService {
             errorMessage = state.heldReason ?? "Occurrence action saved; awaiting sync."
         } catch { errorMessage = error.localizedDescription }
         return true
+    }
+
+    func reviewOccurrence(_ id: String, status: String) {
+        _ = performOccurrenceAction { journal, trip in
+            try journal.setStatus(id, status: status,
+                tankSessionIds: trip.tankSessions.filter { $0.endTime == nil }.map { $0.id.uuidString.lowercased() }, source: "endReview")
+        }
+    }
+
+    private func endOccurrenceTrip(_ current: Trip) -> TripEndOutcome {
+        guard current.coverageBasis == .occurrence, let store else { return .persistenceFailed(TripOccurrenceCoverage.Failure.updateRequired.localizedDescription) }
+        if case let .blocked(blocker) = TripEndGate.evaluate(trip: current) { errorMessage = blocker.message; return .blocked(blocker) }
+        do {
+            let journal = try occurrenceJournal(for: current)
+            let ended = Date()
+            var metadata: [String: TripOccurrenceCoverage.JSON] = ["endTime": .string(ISO8601DateFormatter().string(from: ended))]
+            if let hours = current.endEngineHours { metadata["endEngineHours"] = .number(hours) }
+            if let notes = current.completionNotes { metadata["completionNotes"] = .string(notes) }
+            try journal.finalize(.object(metadata))
+            guard let state = try journal.load() else { throw TripOccurrenceCoverage.Failure.missing }
+            var local = try current.withOccurrenceProjection(state.projected)
+            local.isActive = false; local.isPaused = false; local.endTime = ended
+            try store.updateTripOrThrow(local)
+            store.releaseDeviceTrip(local.id)
+            stopTrackingLoops(stopLocation: true); isTracking = false; isPaused = false
+            errorMessage = "Trip stopped locally. Occurrence review is saved; finalisation awaits dependency-safe sync."
+            return .ended
+        } catch {
+            errorMessage = error.localizedDescription
+            return .persistenceFailed(error.localizedDescription)
+        }
     }
 
     func selectOccurrence(_ id: String) {

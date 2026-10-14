@@ -575,10 +575,11 @@ final class TripSyncService {
             // An admin end wins over an offline active snapshot regardless of its
             // client timestamp. Read before replay; do not upload that snapshot.
             let endedOnServer = try await repository.fetchAllTrips(vineyardId: vineyardId)
-                .filter { dirty[$0.id] != nil && ($0.isActive == false || $0.endTime != nil) }
+                .filter { dirty[$0.id] != nil && ($0.endTime != nil ||
+                    (TripOccurrenceCoverage.basis($0.occurrenceCoverage) == .legacy && $0.isActive == false)) }
             let endedIds = Set(endedOnServer.map(\.id))
             for ended in endedOnServer {
-                applyRemote(ended, vineyardId: vineyardId, store: store)
+                await applyRemote(ended, vineyardId: vineyardId, store: store)
             }
             let byId = Dictionary(store.trips.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             // Build a paddockId -> vineyardId lookup for repair inference.
@@ -622,6 +623,7 @@ final class TripSyncService {
                     // The hold now only keeps the trip queued locally until its
                     // actuals clear; it never falsifies server state.
                     deferredEndIds.insert(tripId)
+                    if trip.coverageBasis != .legacy { continue }
                 }
                 payloads.append(BackendTrip.upsert(from: trip, createdBy: createdBy, clientUpdatedAt: ts))
                 pushedIds.append(tripId)
@@ -771,11 +773,11 @@ final class TripSyncService {
         }
 
         for backendTrip in remote {
-            applyRemote(backendTrip, vineyardId: vineyardId, store: store)
+            await applyRemote(backendTrip, vineyardId: vineyardId, store: store)
         }
     }
 
-    private func applyRemote(_ backendTrip: BackendTrip, vineyardId: UUID, store: MigratedDataStore) {
+    private func applyRemote(_ backendTrip: BackendTrip, vineyardId: UUID, store: MigratedDataStore) async {
         // Soft-deleted remotely.
         if backendTrip.deletedAt != nil {
             store.applyRemoteTripDelete(backendTrip.id)
@@ -796,12 +798,18 @@ final class TripSyncService {
                 guard let account = store.currentUserIdProvider?() else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                 let journal = try TripOccurrenceJournal(scope: .init(ownerId: account.uuidString.lowercased(),
                     vineyardId: mapped.vineyardId.uuidString.lowercased(), tripId: mapped.id.uuidString.lowercased()))
-                if let saved = try journal.load() {
-                    if backendTrip.isActive == false || backendTrip.endTime != nil { try journal.hold("OCCURRENCE_TRIP_CLOSED") }
-                    else if let raw = backendTrip.occurrenceCoverage { try journal.reconcile(raw) }
-                    if let retained = try journal.load() { mapped = try mapped.withOccurrenceProjection(retained.projected) }
+                let saved = try journal.load()
+                let recovery = try await repository.fetchOccurrenceRecovery(tripId: backendTrip.id, operationIds: saved?.pending.map(\.id) ?? [])
+                guard store.currentUserIdProvider?() == account else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                try journal.recover(recovery)
+                if saved != nil {
+                    if backendTrip.endTime != nil, try journal.load()?.pending.isEmpty == false {
+                        try journal.hold("OCCURRENCE_TRIP_CLOSED")
+                    }
+                    guard let retained = try journal.load() else { throw TripOccurrenceCoverage.Failure.missing }
+                    mapped = try mapped.withOccurrenceProjection(retained.projected)
                     store.applyRemoteTripUpsert(mapped)
-                    if saved.pending.isEmpty, saved.heldReason == nil { metadata.clearDirty([backendTrip.id]) }
+                    if retained.pending.isEmpty, retained.heldReason == nil { metadata.clearDirty([backendTrip.id]) }
                     else { syncStatus = .failure("Occurrence reconciliation pending. Saved actions are retained.") }
                 } else {
                     // A read never adopts historical numeric state or fabricates operation history.

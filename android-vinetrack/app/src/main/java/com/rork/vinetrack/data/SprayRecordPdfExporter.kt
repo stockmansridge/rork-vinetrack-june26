@@ -352,7 +352,8 @@ object SprayRecordPdfExporter {
             s.y += 14f
             for (reportRow in payload.rows) {
                 s.ensure(18f)
-                val rowAndBlock = "${TripRowSequencePlanner.formatPath(reportRow.rowNumber)} · ${reportRow.blockName ?: "Not recorded"}"
+                val rowAndBlock = if (reportRow.occurrenceId == null) "${TripRowSequencePlanner.formatPath(reportRow.rowNumber)} · ${reportRow.blockName ?: "Not recorded"}"
+                    else "${TripRowSequencePlanner.formatPath(reportRow.rowNumber)} P${reportRow.passOrdinal ?: 1} · ${reportRow.blockName ?: "Block"}${if (reportRow.isRetired == true) " retired" else ""}"
                 s.canvas.drawText(rowAndBlock, c0, s.y, bodyPaint)
                 s.canvas.drawText(reportRow.status, c1, s.y, bodyBoldPaint)
                 s.canvas.drawText(reportRow.source, c2, s.y, captionPaint)

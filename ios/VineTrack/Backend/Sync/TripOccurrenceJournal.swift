@@ -16,6 +16,14 @@ import Foundation
         let before: JSON
         let after: JSON
         let params: JSON
+        var rpc: String {
+            switch action[occurrence: "kind"]?.occurrenceString {
+            case "create": return "create_trip_with_occurrences_v1"
+            case "activate": return "activate_trip_occurrences_v1"
+            case "finalize": return "finalize_trip_occurrences_v1"
+            default: return "apply_trip_occurrence_action_v1"
+            }
+        }
     }
     nonisolated struct Snapshot: Codable, Sendable, Equatable {
         let scope: Scope
@@ -23,6 +31,8 @@ import Foundation
         var pending: [Operation] = []
         var history: [Operation] = []
         var heldReason: String? = nil
+        var creationConfirmed: Bool? = nil
+        var serverActive: Bool? = nil
         var projected: JSON { pending.last?.after ?? acknowledged }
     }
     private let scope: Scope
@@ -51,8 +61,115 @@ import Foundation
         guard try load() == nil else { throw Failure.reconciliation }
         try save(Snapshot(scope: scope, acknowledged: coverage))
     }
+    @discardableResult func prepareCreation(trip: JSON, coverage: JSON) throws -> Operation {
+        guard trip[occurrence: "id"]?.occurrenceString?.lowercased() == scope.tripId,
+              trip[occurrence: "vineyard_id"]?.occurrenceString?.lowercased() == scope.vineyardId else { throw Failure.scopeConflict }
+        let d = try TripOccurrenceCoverage.requireDocument(coverage)
+        guard d.revision == 0, d.planRevision == 1, d.states.values.allSatisfy({ $0.status == "incomplete" }),
+              try load() == nil else { throw Failure.reconciliation }
+        let id = UUID().uuidString.lowercased()
+        let action: JSON = .object(["kind": .string("create"), "planId": .string(d.planId), "trip": trip])
+        let params: JSON = .object(["p_operation_id": .string(id), "p_trip": trip, "p_coverage": coverage])
+        let op = Operation(id: id, action: action, before: coverage, after: coverage, params: params)
+        var state = Snapshot(scope: scope, acknowledged: coverage)
+        state.pending = [op]; state.history = [op]; state.creationConfirmed = false; state.serverActive = false
+        try save(state)
+        return op
+    }
+    @discardableResult func activate(_ start: JSON) throws -> Operation { try lifecycle("activate", metadata: start) }
+    @discardableResult func finalize(_ end: JSON) throws -> Operation { try lifecycle("finalize", metadata: end) }
+    private func lifecycle(_ kind: String, metadata: JSON) throws -> Operation {
+        guard var state = try load(), state.creationConfirmed != false, state.heldReason == nil,
+              !state.pending.contains(where: { ["activate", "finalize"].contains($0.action[occurrence: "kind"]?.occurrenceString ?? "") }) else { throw Failure.reconciliation }
+        if kind == "activate" { guard state.serverActive == false, state.pending.isEmpty else { throw Failure.reconciliation } }
+        else { guard state.serverActive != false else { throw Failure.reconciliation } }
+        let before = state.projected; let d = try TripOccurrenceCoverage.requireDocument(before)
+        guard var fields = before.occurrenceObject else { throw Failure.updateRequired }
+        let id = UUID().uuidString.lowercased()
+        fields["revision"] = .number(Double(d.revision + 1))
+        if kind == "finalize" { fields["selectedOccurrenceId"] = .null }
+        var params: [String: JSON] = ["p_operation_id": .string(id), "p_trip_id": .string(scope.tripId),
+            "p_expected_revision": .number(Double(d.revision)), "p_expected_plan_revision": .number(Double(d.planRevision))]
+        if kind == "activate" { params["p_start"] = metadata }
+        else { params["p_reviewed_states"] = before[occurrence: "states"]; params["p_end"] = metadata }
+        let op = Operation(id: id, action: .object(["kind": .string(kind), "planId": .string(d.planId), "metadata": metadata]),
+            before: before, after: .object(fields), params: .object(params))
+        state.pending.append(op); state.history.append(op); try save(state)
+        return op
+    }
+
+    /// Server evidence is scoped and validated before replacing any local base or history.
+    func recover(_ response: JSON) throws {
+        guard response[occurrence: "contract"] == .string("vinetrack.occurrence-recovery"), response[occurrence: "schemaVersion"] == .number(1),
+              response[occurrence: "tripId"] == .string(scope.tripId), response[occurrence: "vineyardId"] == .string(scope.vineyardId),
+              let remote = response[occurrence: "coverage"], case .bool(let active) = response[occurrence: "isActive"],
+              case .array(let receipts) = response[occurrence: "receipts"],
+              case .array(let reversible) = response[occurrence: "reversibleOperations"] else { throw Failure.scopeConflict }
+        let d = try TripOccurrenceCoverage.requireDocument(remote)
+        if let initial = try load() {
+            guard try TripOccurrenceCoverage.requireDocument(initial.acknowledged).planId == d.planId else { throw Failure.scopeConflict }
+        } else {
+            var initial = Snapshot(scope: scope, acknowledged: remote)
+            initial.creationConfirmed = true; initial.serverActive = active; try save(initial)
+        }
+        for _ in 0..<256 {
+            guard let op = try load()?.pending.first,
+                  let receipt = receipts.first(where: { $0[occurrence: "operationId"] == .string(op.id) }) else { break }
+            guard receipt[occurrence: "actorId"] == .string(scope.ownerId), receipt[occurrence: "request"] == serverRequest(op),
+                  let result = receipt[occurrence: "result"] else { throw Failure.scopeConflict }
+            try acknowledge(result)
+        }
+        guard var state = try load() else { throw Failure.missing }
+        let base = try TripOccurrenceCoverage.requireDocument(state.acknowledged)
+        if d.revision < base.revision { return }
+        if (!state.pending.isEmpty || d.revision == base.revision) && remote != state.acknowledged {
+            state.heldReason = Failure.reconciliation.localizedDescription; try save(state); return
+        }
+        var recovered: [Operation] = []
+        for row in reversible {
+            guard let id = row[occurrence: "operationId"]?.occurrenceString,
+                  row[occurrence: "tripId"] == .string(scope.tripId),
+                  let result = row[occurrence: "result"], result[occurrence: "tripId"] == .string(scope.tripId), result[occurrence: "operationId"] == .string(id),
+                  let after = result[occurrence: "coverage"], let action = row[occurrence: "request"]?[occurrence: "action"],
+                  let target = action[occurrence: "occurrenceId"]?.occurrenceString,
+                  ["setStatus", "undo"].contains(action[occurrence: "kind"]?.occurrenceString ?? ""),
+                  d.activeOrder.contains(target), d.states[target]?.lastOperationId == id,
+                  row[occurrence: "resultingState"] == remote[occurrence: "states"]?[occurrence: target],
+                  let previous = row[occurrence: "previousState"], var before = after.occurrenceObject,
+                  var states = before["states"]?.occurrenceObject else { throw Failure.reconciliation }
+            let accepted = try TripOccurrenceCoverage.requireDocument(after)
+            guard accepted.planId == d.planId, accepted.revision <= d.revision,
+                  after[occurrence: "states"]?[occurrence: target] == remote[occurrence: "states"]?[occurrence: target] else { throw Failure.reconciliation }
+            states[target] = previous; before["states"] = .object(states); before["revision"] = .number(Double(accepted.revision - 1))
+            _ = try TripOccurrenceCoverage.requireDocument(.object(before))
+            recovered.append(Operation(id: id, action: action, before: .object(before), after: after, params: .object([:])))
+        }
+        let pendingIds = Set(state.pending.map(\.id))
+        var history = state.history.filter { pendingIds.contains($0.id) || ["create", "activate", "finalize"].contains($0.action[occurrence: "kind"]?.occurrenceString ?? "") }
+        for op in recovered where !history.contains(where: { $0.id == op.id }) { history.append(op) }
+        history.sort { (TripOccurrenceCoverage.read($0.after)?.revision ?? 0) < (TripOccurrenceCoverage.read($1.after)?.revision ?? 0) }
+        state.acknowledged = remote; state.history = history; state.serverActive = active
+        try save(state)
+    }
+    private func serverRequest(_ op: Operation) -> JSON {
+        let kind = op.action[occurrence: "kind"]?.occurrenceString
+        if kind == "create" {
+            return .object(["kind": .string("create"), "trip": op.params[occurrence: "p_trip"] ?? .null, "coverage": op.params[occurrence: "p_coverage"] ?? .null])
+        }
+        var request: [String: JSON] = ["tripId": .string(scope.tripId),
+            "expectedRevision": op.params[occurrence: "p_expected_revision"] ?? .null,
+            "expectedPlanRevision": op.params[occurrence: "p_expected_plan_revision"] ?? .null]
+        if kind == "activate" { request["kind"] = .string("activate"); request["start"] = op.params[occurrence: "p_start"] }
+        else if kind == "finalize" {
+            request["kind"] = .string("finalize"); request["reviewedStates"] = op.params[occurrence: "p_reviewed_states"]; request["end"] = op.params[occurrence: "p_end"]
+        } else { request["action"] = op.action }
+        return .object(request)
+    }
+
     func undoTarget() throws -> Operation? {
         guard let state = try load() else { throw Failure.missing }
+        guard state.creationConfirmed != false, state.serverActive != false, state.heldReason == nil,
+              !state.pending.contains(where: { ["activate", "finalize"].contains($0.action[occurrence: "kind"]?.occurrenceString ?? "") }) else { return nil }
         let d = try TripOccurrenceCoverage.requireDocument(state.projected)
         return state.history.reversed().first { op in
             guard let id = op.action[occurrence: "occurrenceId"]?.occurrenceString,
@@ -98,7 +215,8 @@ import Foundation
     }
     private func append(_ build: (TripOccurrenceCoverage.Document, JSON) throws -> JSON) throws -> Operation {
         guard var state = try load() else { throw Failure.missing }
-        guard state.heldReason == nil else { throw Failure.reconciliation }
+        guard state.heldReason == nil, state.creationConfirmed != false, state.serverActive != false,
+              !state.pending.contains(where: { ["activate", "finalize"].contains($0.action[occurrence: "kind"]?.occurrenceString ?? "") }) else { throw Failure.reconciliation }
         let before = state.projected
         let d = try TripOccurrenceCoverage.requireDocument(before)
         let action = try build(d, before)
@@ -119,6 +237,15 @@ import Foundation
         guard let coverage = result[occurrence: "coverage"] else { throw Failure.updateRequired }
         _ = try TripOccurrenceCoverage.requireDocument(coverage)
         guard coverage == op.after else { state.heldReason = Failure.reconciliation.localizedDescription; try save(state); return }
+        switch op.action[occurrence: "kind"]?.occurrenceString {
+        case "create":
+            if case .bool(let active) = op.action[occurrence: "trip"]?[occurrence: "is_active"] { state.serverActive = active }
+            else { state.serverActive = false }
+        case "activate": state.serverActive = true
+        case "finalize": state.serverActive = false
+        default: break
+        }
+        state.creationConfirmed = true
         state.acknowledged = coverage; state.pending.removeFirst()
         try save(state)
     }

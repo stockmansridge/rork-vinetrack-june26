@@ -45,7 +45,7 @@ final class SprayReportRepository {
             return try await reportFetcher(tripId)
         }
         return try await SupabaseClientProvider.shared.client
-            .rpc("get_spray_report_v1", params: FetchRequest(p_trip_id: tripId))
+            .rpc("get_spray_report_v2", params: FetchRequest(p_trip_id: tripId))
             .execute()
             .value
     }

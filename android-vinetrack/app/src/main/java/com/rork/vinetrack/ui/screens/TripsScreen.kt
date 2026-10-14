@@ -4688,8 +4688,20 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
                 Text("Add any completion notes before finishing.", fontSize = 13.sp, color = vine.textSecondary)
 
                 if (trip.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY) {
-                    OccurrenceTripRows(trip)
-                    Text("Occurrence finalisation is not yet enabled. Numeric review cannot change these independent passes.")
+                    val live = vm.ui.value.trips.firstOrNull { it.id == trip.id } ?: trip
+                    OccurrenceTripRows(live)
+                    live.occurrenceDocument?.let { document ->
+                        document.order.forEach { id ->
+                            val item = document.items.single { it.id == id }
+                            Text("${item.blockName} · ${TripRowSequencePlanner.formatPath(item.label)} · Pass ${item.pass}")
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf("done", "skipped", "incomplete").forEach { status ->
+                                    OutlinedButton(onClick = { vm.reviewTripOccurrence(trip.id, id, status) }, enabled = !saving) { Text(status) }
+                                }
+                            }
+                        }
+                    }
+                    Text("Review changes are saved per pass. Finalisation waits for occurrence actions and tank data to sync.")
                 } else if (hasRowPlan) {
                     EndTripRowReview(
                         sequence = sequence,
@@ -4746,7 +4758,12 @@ private fun EndTripSheet(vm: AppViewModel, trip: Trip, onDismiss: () -> Unit, on
                     finishBlocked = null
                     val extra = reviewCompletes.toList()
                     val savedEndHours = if (trip.shouldCaptureEndEngineHours) endEngineHours else null
-                    vm.endTripWithRowReview(extra, notes.trim().ifBlank { null }, savedEndHours) { ok ->
+                    val finish: ((Boolean) -> Unit) -> Unit = { callback ->
+                        if (trip.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY)
+                            vm.endTrip(notes.trim().ifBlank { null }, savedEndHours, callback)
+                        else vm.endTripWithRowReview(extra, notes.trim().ifBlank { null }, savedEndHours, callback)
+                    }
+                    finish { ok ->
                         saving = false
                         if (ok) {
                             onEnded()

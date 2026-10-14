@@ -106,6 +106,90 @@ final class TripOccurrenceJournalTests: XCTestCase {
         XCTAssertEqual(future.coverageBasis,.updateRequired); XCTAssertTrue(RowCompletionDeriver.results(for:future).isEmpty)
         var legacy=trip; legacy.occurrenceCoverage=nil; XCTAssertEqual(RowCompletionDeriver.results(for:legacy).filter { $0.status == .complete }.count,2)
     }
+    @MainActor private func recovery(_ journal: TripOccurrenceJournal, _ op: TripOccurrenceJournal.Operation, receipt: Bool = false) throws -> TripOccurrenceCoverage.JSON {
+        let state = try XCTUnwrap(journal.load()); let id = try XCTUnwrap(op.action[occurrence:"occurrenceId"]?.occurrenceString)
+        let row: TripOccurrenceCoverage.JSON = .object(["operationId":.string(op.id),"tripId":.string(scope.tripId),"actorId":.string(scope.ownerId),
+            "request":.object(["tripId":.string(scope.tripId),"expectedRevision":op.params[occurrence:"p_expected_revision"]!,"expectedPlanRevision":op.params[occurrence:"p_expected_plan_revision"]!,"action":op.action]),
+            "result":ack(op),"previousState":op.before[occurrence:"states"]![occurrence:id]!,"resultingState":op.after[occurrence:"states"]![occurrence:id]!])
+        return .object(["contract":.string("vinetrack.occurrence-recovery"),"schemaVersion":.number(1),"tripId":.string(scope.tripId),"vineyardId":.string(scope.vineyardId),
+            "isActive":.bool(true),"coverage":state.projected,"reversibleOperations":.array([row]),"receipts":.array(receipt ? [row] : [])])
+    }
+    @MainActor func testReinstallRecoversActualUndoFromServerLedger() throws {
+        let dir=directory(); let other=directory(); defer { try? FileManager.default.removeItem(at:dir); try? FileManager.default.removeItem(at:other) }
+        let server=try journal(dir); try server.setStatus(a,status:"done"); let skip=try server.setStatus(a,status:"skipped")
+        let restored=try TripOccurrenceJournal(scope:scope,directory:other); try restored.recover(recovery(server,skip))
+        XCTAssertEqual(try restored.undoTarget()?.id,skip.id); try restored.undo(skip.id)
+        XCTAssertEqual(try status(restored,a),"done"); XCTAssertEqual(try status(restored,b),"incomplete")
+    }
+    @MainActor func testUncertainAcceptedActionRecoveredByExactReceipt() throws {
+        let dir=directory(); defer { try? FileManager.default.removeItem(at:dir) }; let j=try journal(dir)
+        let op=try j.setStatus(a,status:"done"); try j.recover(recovery(j,op,receipt:true))
+        XCTAssertTrue(try j.load()?.pending.isEmpty == true); XCTAssertEqual(try j.undoTarget()?.id,op.id)
+    }
+    @MainActor func testUnverifiedReceiptCannotClearPendingWork() throws {
+        let dir=directory(); defer { try? FileManager.default.removeItem(at:dir) }; let j=try journal(dir)
+        let op=try j.setStatus(a,status:"done"); var response=try XCTUnwrap(recovery(j,op,receipt:true).occurrenceObject)
+        guard case .array(let receipts)=response["receipts"], var row=receipts.first?.occurrenceObject else { return XCTFail("Missing receipt") }
+        row["actorId"] = .string("99999999-9999-4999-8999-999999999999"); response["receipts"] = .array([.object(row)])
+        XCTAssertThrowsError(try j.recover(.object(response))); XCTAssertEqual(try j.load()?.pending,[op])
+    }
+    @MainActor func testCreationActivationNeedExactDurableAcknowledgement() throws {
+        let dir=directory(); defer { try? FileManager.default.removeItem(at:dir) }; let j=try TripOccurrenceJournal(scope:scope,directory:dir)
+        let metadata: TripOccurrenceCoverage.JSON = .object(["id":.string(scope.tripId),"vineyard_id":.string(scope.vineyardId),"is_active":.bool(false),"trip_title":.string("Keep this"),"seeding_details":.object(["note":.string("retain")])])
+        let create=try j.prepareCreation(trip:metadata,coverage:fixture()); XCTAssertEqual(create.params[occurrence:"p_trip"],metadata)
+        XCTAssertThrowsError(try j.setStatus(a,status:"done")); XCTAssertEqual(try j.load()?.creationConfirmed,false)
+        try j.acknowledge(ack(create)); let activation=try j.activate(.object(["startTime":.string("2026-10-14T08:00:00Z")]))
+        XCTAssertThrowsError(try j.setStatus(a,status:"done")); try j.acknowledge(ack(activation)); try j.setStatus(a,status:"done")
+        XCTAssertEqual(try status(j,a),"done")
+    }
+    @MainActor func testFinalisationFreezesExactReviewAndPendingOrder() throws {
+        let dir=directory(); defer { try? FileManager.default.removeItem(at:dir) }; let j=try journal(dir)
+        let done=try j.setStatus(a,status:"done"); let skip=try j.setStatus(b,status:"skipped")
+        let final=try j.finalize(.object(["endTime":.string("2026-10-14T09:00:00Z")]))
+        XCTAssertEqual(try j.load()?.pending.map(\.id),[done.id,skip.id,final.id])
+        XCTAssertEqual(final.params[occurrence:"p_reviewed_states"],skip.after[occurrence:"states"])
+        XCTAssertThrowsError(try j.setStatus(a,status:"incomplete"))
+        try j.acknowledge(ack(done)); try j.acknowledge(ack(skip)); try j.acknowledge(ack(final))
+        XCTAssertEqual(try j.load()?.serverActive,false); XCTAssertEqual(try status(j,a),"done"); XCTAssertEqual(try status(j,b),"skipped")
+    }
+    @MainActor func testSharedPostgresTranscriptSurvivesSwiftRecoveryUndoAndFinalReload() throws {
+        let url=try XCTUnwrap(Bundle(for:Self.self).url(forResource:"occurrence-recovery-postgres",withExtension:"json"))
+        let root=try JSONDecoder().decode(TripOccurrenceCoverage.JSON.self,from:Data(contentsOf:url))
+        guard case .array(let fixtures)=root[occurrence:"fixtures"] else { return XCTFail("Shared PostgreSQL transcript missing") }
+        XCTAssertEqual(fixtures.count,2)
+        for fixture in fixtures {
+            let decoder=JSONDecoder()
+            let fixtureScope=try decoder.decode(TripOccurrenceJournal.Scope.self,from:JSONEncoder().encode(fixture[occurrence:"scope"]!))
+            let dir=directory(); defer { try? FileManager.default.removeItem(at:dir) }
+            let j=try TripOccurrenceJournal(scope:fixtureScope,directory:dir); try j.recover(fixture[occurrence:"recovery"]!)
+            let current=try TripOccurrenceCoverage.requireDocument(XCTUnwrap(j.load()).projected)
+            XCTAssertEqual(current.items.map { current.states[$0.occurrenceId]?.status },["skipped","incomplete"])
+            let operation=try XCTUnwrap(j.undoTarget()); try j.undo(operation.id)
+            let local=try TripOccurrenceCoverage.requireDocument(XCTUnwrap(j.load()).projected)
+            let expected=try TripOccurrenceCoverage.requireDocument(fixture[occurrence:"undoResult"]![occurrence:"coverage"]!)
+            XCTAssertEqual(local.items,expected.items); XCTAssertEqual(local.activeOrder,expected.activeOrder)
+            XCTAssertEqual(local.items.map { local.states[$0.occurrenceId]?.status },expected.items.map { expected.states[$0.occurrenceId]?.status })
+            decoder.dateDecodingStrategy = .custom { decoder in
+                let value=try decoder.singleValueContainer().decode(String.self)
+                let fractional=ISO8601DateFormatter(); fractional.formatOptions=[.withInternetDateTime,.withFractionalSeconds]
+                if let date=fractional.date(from:value) ?? ISO8601DateFormatter().date(from:value) { return date }
+                throw TripOccurrenceCoverage.Failure.invalidAction
+            }
+            let backend=try decoder.decode(BackendTrip.self,from:JSONEncoder().encode(fixture[occurrence:"backendTrip"]!))
+            let trip=backend.toTrip(); let result=RowCompletionDeriver.results(for:trip)
+            XCTAssertEqual(result.map(\.occurrenceState),["done","skipped"])
+            XCTAssertEqual(Set(result.map(\.id)).count,2); XCTAssertFalse(trip.isActive); XCTAssertTrue(trip.completedPaths.isEmpty)
+        }
+    }
+    @MainActor func testV2RowsRetainPassIdentityAndDisplayContext() throws {
+        let raw = """
+        {"rowNumber":38.5,"blockName":"Block X","status":"Complete","source":"manual","tank":null,"rowIdentity":"\(a)","occurrenceId":"\(a)","blockId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","planId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","passOrdinal":1,"state":"done","isRetired":false,"tankSessionIds":[],"lastOperationId":null}
+        """
+        let row=try JSONDecoder().decode(SprayReportPayloadV1.Row.self,from:Data(raw.utf8))
+        XCTAssertEqual(row.occurrenceId,a); XCTAssertEqual(row.state,"done"); XCTAssertEqual(row.displayLabel,"Block X · 38.5 · Pass 1")
+        let restored=try JSONDecoder().decode(SprayReportPayloadV1.Row.self,from:JSONEncoder().encode(row))
+        XCTAssertEqual(restored,row)
+    }
     @MainActor func testUnknownFieldsSurviveJournalProjection() throws {
         let dir=directory(); defer { try? FileManager.default.removeItem(at: dir) }; let j=try journal(dir)
         try j.setStatus(a,status:"done"); XCTAssertEqual(try j.load()?.projected[occurrence:"extension"],try fixture()[occurrence:"extension"])

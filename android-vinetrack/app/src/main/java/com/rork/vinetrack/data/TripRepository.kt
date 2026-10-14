@@ -274,6 +274,8 @@ class TripRepository(private val session: SessionStore) {
         currentRowNumber: Double? = null,
         nextRowNumber: Double? = null,
         totalTanks: Int? = null,
+        occurrenceCoverage: JsonObject? = null,
+        occurrenceJournal: TripOccurrenceJournal? = null,
     ): Trip = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -305,6 +307,23 @@ class TripRepository(private val session: SessionStore) {
             createdBy = session.userId,
             clientUpdatedAt = clientUpdatedAt ?: now,
         )
+        if (occurrenceCoverage != null) {
+            val journal = occurrenceJournal ?: error("Occurrence creation requires its durable scoped journal. Numeric insertion was not attempted.")
+            val creationAccess = session.accountAccess() ?: throw BackendError.Unauthorized
+            check(body.createdBy == creationAccess.userId) { "Creation account changed. Original work was retained." }
+            check(id != null && startTime != null && clientUpdatedAt != null) { "Occurrence creation requires durably retained identity and timestamps. No numeric trip was inserted." }
+            val metadata = SupabaseClient.json.encodeToJsonElement(TripInsert.serializer(), body) as JsonObject
+            if (journal.load() == null) journal.prepareCreation(metadata, occurrenceCoverage)
+            val operation = journal.load()?.history?.firstOrNull { it.rpc == "create_trip_with_occurrences_v1" }
+                ?: error("Occurrence creation needs authoritative reconciliation, not another insert.")
+            check(operation.rpc == "create_trip_with_occurrences_v1" && operation.params["p_trip"] == metadata && operation.params["p_coverage"] == occurrenceCoverage)
+            val result = applyOccurrenceOperation(operation.params, operation.rpc, creationAccess)
+            if (!session.withAccountAccess(creationAccess) { journal.acknowledge(result) }) throw BackendError.Unauthorized
+            val stored = fetchTrip(body.id, creationAccess) ?: error("Occurrence create acknowledged but authoritative trip reload is unavailable.")
+            check(stored.occurrenceCoverage == journal.load()?.acknowledged) { "Occurrence identity needs reconciliation." }
+            return@withContext stored
+        }
+        check(occurrenceJournal == null) { "Occurrence journal must never use numeric trip creation." }
         val response = SupabaseClient.http.post(SupabaseClient.restUrl("trips")) {
             authHeaders(token)
             headers { append("Prefer", "return=representation") }
@@ -721,10 +740,14 @@ class TripRepository(private val session: SessionStore) {
     }
 
     /** Exact persisted request; uncertain retries must reuse it unchanged. */
-    suspend fun applyOccurrenceOperation(params: JsonObject): JsonObject = withContext(Dispatchers.IO) {
+    suspend fun applyOccurrenceOperation(params: JsonObject, rpc: String = "apply_trip_occurrence_action_v1",
+        accountAccess: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null): JsonObject = withContext(Dispatchers.IO) {
+        if (accountAccess != null && !session.isAccountAccessCurrent(accountAccess)) throw BackendError.Unauthorized
+        require(rpc in setOf("apply_trip_occurrence_action_v1", "create_trip_with_occurrences_v1", "activate_trip_occurrences_v1", "finalize_trip_occurrences_v1", "get_trip_occurrence_recovery_v1"))
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.post(SupabaseClient.restUrl("rpc/apply_trip_occurrence_action_v1")) {
+        val response = SupabaseClient.http.post(SupabaseClient.restUrl("rpc/$rpc")) {
+            accountAccess?.let { attributes.put(SupabaseClient.accountRequestScope, it) }
             authHeaders(token)
             contentType(ContentType.Application.Json)
             setBody(params)
@@ -738,6 +761,13 @@ class TripRepository(private val session: SessionStore) {
         }
         response.body<JsonObject>()
     }
+
+    suspend fun fetchOccurrenceRecovery(tripId: String, operationIds: List<String>,
+        accountAccess: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null): JsonObject =
+        applyOccurrenceOperation(buildJsonObject {
+            put("p_trip_id", tripId)
+            put("p_operation_ids", kotlinx.serialization.json.JsonArray(operationIds.take(256).map(::JsonPrimitive)))
+        }, "get_trip_occurrence_recovery_v1", accountAccess)
 
     class OccurrenceRejected(val code: String) : Exception("Occurrence sync needs review ($code). Saved work is retained.")
 

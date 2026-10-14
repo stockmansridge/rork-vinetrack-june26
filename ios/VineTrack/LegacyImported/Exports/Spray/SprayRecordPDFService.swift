@@ -535,7 +535,7 @@ struct SprayRecordPDFService {
 
                 for row in payload.rows {
                     checkPageBreak(needed: 18)
-                    let rowLabel = "Row \(formatPath(row.rowNumber))"
+                    let rowLabel = row.occurrenceId == nil ? "Row \(formatPath(row.rowNumber))" : "\(formatPath(row.rowNumber)) P\(row.passOrdinal ?? 1)\(row.isRetired == true ? " retired" : "")"
                     let status = row.status
                     let statusColor: UIColor = status == "Complete" ? VineyardTheme.uiOlive : (status == "Skipped/Not complete" ? UIColor(red: 0.8, green: 0.2, blue: 0.2, alpha: 1.0) : UIColor.darkGray)
                     let tankLabel = row.tank?.displayText ?? "Not recorded"

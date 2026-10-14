@@ -48,7 +48,7 @@ class SprayReportRepository private constructor(
     )
 
     suspend fun fetch(tripId: String): SprayReportPayloadV1 =
-        reportFetcher?.invoke(tripId) ?: rpc("get_spray_report_v1", ReportArgs(tripId))
+        reportFetcher?.invoke(tripId) ?: rpc("get_spray_report_v2", ReportArgs(tripId))
 
     /** Fetches every distinct trip separately; failures are omitted for caller fallback. */
     suspend fun fetchAll(tripIds: List<String>): Map<String, SprayReportPayloadV1> = buildMap {

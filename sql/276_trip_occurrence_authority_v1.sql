@@ -53,7 +53,9 @@ begin
   end if;
   if (setup->>'machine_id' is not null and not exists(select 1 from public.vineyard_machines where id=(setup->>'machine_id')::uuid and vineyard_id=v and deleted_at is null)) or
      (setup->>'tractor_id' is not null and not exists(select 1 from public.tractors where id=(setup->>'tractor_id')::uuid and vineyard_id=v and deleted_at is null)) or
-     (setup->>'operator_user_id' is not null and not exists(select 1 from public.vineyard_members where user_id=(setup->>'operator_user_id')::uuid and vineyard_id=v)) then
+     (setup->>'operator_user_id' is not null and not exists(select 1 from public.vineyard_members where user_id=(setup->>'operator_user_id')::uuid and vineyard_id=v)) or
+     (setup->>'work_task_id' is not null and not exists(select 1 from public.work_tasks where id=(setup->>'work_task_id')::uuid and vineyard_id=v and deleted_at is null)) or
+     (setup->>'worker_type_id' is not null and not exists(select 1 from public.worker_types where id=(setup->>'worker_type_id')::uuid and vineyard_id=v and deleted_at is null)) then
     raise exception 'OCCURRENCE_SETUP_SCOPE_CONFLICT' using errcode='22023';
   end if;
   if setup->>'operator_user_id' is not null and (setup->>'operator_user_id')::uuid<>auth.uid() and
@@ -334,7 +336,8 @@ grant execute on function public.apply_trip_occurrence_action_v1(uuid,uuid,bigin
 
 create function public.create_trip_with_occurrences_v1(p_operation_id uuid,p_trip jsonb,p_coverage jsonb) returns jsonb
 language plpgsql security definer set search_path=pg_catalog,public as $fn$
-declare t public.trips; prior public.trip_occurrence_operations; request jsonb; result jsonb; trip_id uuid; vineyard uuid; first_id text; n double precision; item jsonb;
+declare t public.trips; prior public.trip_occurrence_operations; request jsonb; result jsonb; trip_id uuid; vineyard uuid; first_id text; n double precision; next_n double precision; item jsonb;
+  projection jsonb; key text; provided_blocks jsonb;
 begin
   if auth.uid() is null then raise exception 'OCCURRENCE_AUTH_REQUIRED' using errcode='42501'; end if;
   if p_operation_id is null or jsonb_typeof(p_trip) is distinct from 'object' then raise exception 'OCCURRENCE_INVALID_REQUEST' using errcode='22023'; end if;
@@ -355,7 +358,12 @@ begin
   end if;
   if exists(select 1 from jsonb_object_keys(p_trip) k where not k=any(array[
     'id','vineyard_id','paddock_name','tracking_pattern','start_time','is_active','is_paused','person_name',
-    'trip_function','tractor_id','operator_user_id','machine_id','start_engine_hours','total_tanks'])) then
+    'trip_function','trip_title','tractor_id','operator_user_id','worker_type_id','machine_id','work_task_id',
+    'start_engine_hours','end_engine_hours','seeding_details','total_tanks','paddock_id','paddock_ids',
+    'total_distance','current_path_distance','path_points','pin_ids','tank_sessions','active_tank_number',
+    'pause_timestamps','resume_timestamps','is_filling_tank','filling_tank_number','manual_correction_events',
+    'completion_notes','created_by','client_updated_at','end_time','row_sequence','sequence_index',
+    'current_row_number','next_row_number','completed_paths','skipped_paths'])) then
     raise exception 'OCCURRENCE_INVALID_CREATE_FIELDS' using errcode='22023';
   end if;
   perform public.validate_occurrence_setup_links_v1(vineyard,p_trip);
@@ -365,14 +373,38 @@ begin
   first_id:=p_coverage#>>'{activeOrder,0}';
   if p_coverage->>'plannedCursorId' is distinct from first_id then raise exception 'OCCURRENCE_INITIAL_CURSOR_REQUIRED' using errcode='22023'; end if;
   select (value->>'pathNumber')::double precision into n from jsonb_array_elements(p_coverage->'items') where value->>'occurrenceId'=first_id;
-  select * into t from jsonb_populate_record(null::public.trips,p_trip||jsonb_build_object(
-    'occurrence_coverage',p_coverage,'operator_user_id',coalesce((p_trip->>'operator_user_id')::uuid,auth.uid()),'created_by',auth.uid(),'updated_by',auth.uid(),'created_at',clock_timestamp(),'updated_at',clock_timestamp(),
-    'client_updated_at',clock_timestamp(),'sync_version',1,'is_active',coalesce((p_trip->>'is_active')::boolean,false),'is_paused',coalesce((p_trip->>'is_paused')::boolean,false),
-    'completed_paths','[]'::jsonb,'skipped_paths','[]'::jsonb,
-    'row_sequence',(select jsonb_agg(i->'pathNumber' order by ord) from jsonb_array_elements_text(p_coverage->'activeOrder') with ordinality x(id,ord)
+  select (value->>'pathNumber')::double precision into next_n from jsonb_array_elements(p_coverage->'items') where value->>'occurrenceId'=p_coverage#>>'{activeOrder,1}';
+  projection:=jsonb_build_object('row_sequence',(select jsonb_agg(i->'pathNumber' order by ord) from
+      jsonb_array_elements_text(p_coverage->'activeOrder') with ordinality x(id,ord)
       join lateral(select value i from jsonb_array_elements(p_coverage->'items') where value->>'occurrenceId'=x.id)y on true),
-    'paddock_ids',(select jsonb_agg(distinct value->'blockId') from jsonb_array_elements(p_coverage->'items')),
-    'sequence_index',0,'current_row_number',n,'next_row_number',null,'total_distance',0,'current_path_distance',0,'path_points','[]'::jsonb,'tank_sessions','[]'::jsonb));
+    'sequence_index',0,'current_row_number',n,'next_row_number',next_n,'completed_paths','[]'::jsonb,'skipped_paths','[]'::jsonb);
+  for key in select jsonb_object_keys(projection) loop
+    if p_trip ? key and p_trip->key is distinct from projection->key then
+      raise exception 'OCCURRENCE_CREATE_PROJECTION_CONFLICT' using errcode='22023';
+    end if;
+  end loop;
+  if p_trip->>'end_time' is not null or
+     (p_trip->>'created_by' is not null and (p_trip->>'created_by')::uuid<>auth.uid()) or
+     (p_trip->>'paddock_id' is not null and not exists(select 1 from public.paddocks where
+       id=(p_trip->>'paddock_id')::uuid and vineyard_id=vineyard and deleted_at is null)) then
+    raise exception 'OCCURRENCE_SETUP_SCOPE_CONFLICT' using errcode='22023';
+  end if;
+  provided_blocks:=coalesce(nullif(p_trip->'paddock_ids','null'::jsonb),
+    (select jsonb_agg(distinct value->'blockId') from jsonb_array_elements(p_coverage->'items')));
+  if jsonb_typeof(provided_blocks) is distinct from 'array' or
+     exists(select 1 from jsonb_array_elements_text(provided_blocks) id where not exists(
+       select 1 from public.paddocks where paddocks.id=id::uuid and vineyard_id=vineyard and deleted_at is null)) or
+     exists(select 1 from jsonb_array_elements(p_coverage->'items') i where not provided_blocks ? (i->>'blockId')) then
+    raise exception 'OCCURRENCE_SETUP_SCOPE_CONFLICT' using errcode='22023';
+  end if;
+  select * into t from jsonb_populate_record(null::public.trips,jsonb_build_object(
+    'total_distance',0,'current_path_distance',0,'path_points','[]'::jsonb,'pin_ids','[]'::jsonb,
+    'tank_sessions','[]'::jsonb,'pause_timestamps','[]'::jsonb,'resume_timestamps','[]'::jsonb,
+    'is_filling_tank',false,'total_tanks',0,'manual_correction_events','[]'::jsonb)||p_trip||projection||jsonb_build_object(
+    'occurrence_coverage',p_coverage,'operator_user_id',coalesce((p_trip->>'operator_user_id')::uuid,auth.uid()),'created_by',auth.uid(),'updated_by',auth.uid(),'created_at',clock_timestamp(),'updated_at',clock_timestamp(),
+    'client_updated_at',coalesce((p_trip->>'client_updated_at')::timestamptz,clock_timestamp()),'sync_version',1,
+    'is_active',coalesce((p_trip->>'is_active')::boolean,false),'is_paused',coalesce((p_trip->>'is_paused')::boolean,false),
+    'paddock_ids',provided_blocks));
   insert into public.trips select t.* returning * into t;
   result:=jsonb_build_object('operationId',p_operation_id,'tripId',t.id,'coverage',t.occurrence_coverage);
   insert into public.trip_occurrence_operations(operation_id,trip_id,vineyard_id,actor_id,request,result) values(p_operation_id,t.id,t.vineyard_id,auth.uid(),request,result);

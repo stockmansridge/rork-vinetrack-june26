@@ -387,7 +387,7 @@ object SprayProgramCsvExporter {
             val treatedBlocks = record.applicationGeometry?.blocks
             row.add(canonical?.blocks?.joinToString("; ") { it.blockId } ?: SprayBlockAttributionDisplay.idsCell(treatedBlocks))
             row.add(canonical?.blocks?.joinToString("; ") { it.name } ?: SprayBlockAttributionDisplay.namesCell(treatedBlocks, paddocks))
-            row.add(canonical?.rows?.joinToString("; ") { String.format(Locale.US, "%g", it.rowNumber) }.orEmpty())
+            row.add(canonical?.rows?.joinToString("; ") { if (it.occurrenceId == null) String.format(Locale.US, "%g", it.rowNumber) else "${it.displayLabel} — ${it.status} [${it.occurrenceId}]" }.orEmpty())
 
             // Row-coverage columns — populated only for planned trips; blank otherwise.
             if (trip != null && trip.hasRowPlan) {

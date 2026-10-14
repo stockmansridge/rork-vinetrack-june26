@@ -9,6 +9,8 @@ create table auth.users(id uuid primary key);
 create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
 create table public.vineyards(id uuid primary key);
 create table public.vineyard_members(vineyard_id uuid,user_id uuid,role text,primary key(vineyard_id,user_id));
+create table public.work_tasks(id uuid primary key,vineyard_id uuid,deleted_at timestamptz);
+create table public.worker_types(id uuid primary key,vineyard_id uuid,deleted_at timestamptz);
 create table public.tractors(id uuid primary key,vineyard_id uuid,deleted_at timestamptz);
 create table public.vineyard_machines(id uuid primary key,vineyard_id uuid,deleted_at timestamptz);
 create table public.paddocks(id uuid primary key,vineyard_id uuid references public.vineyards(id),name text,deleted_at timestamptz,rows jsonb);
@@ -20,7 +22,9 @@ create function public.is_vineyard_member(v uuid) returns boolean language sql s
 create function public.set_updated_at() returns trigger language plpgsql as $$begin new.updated_at=now(); return new; end$$;
 \ir ../006_trips_sync.sql
 alter table public.trips add column trip_function text,add column tractor_id uuid,add column operator_user_id uuid,
- add column machine_id uuid,add column start_engine_hours numeric,add column end_engine_hours numeric,add column completion_notes text;
+ add column machine_id uuid,add column start_engine_hours numeric,add column end_engine_hours numeric,add column completion_notes text,
+ add column work_task_id uuid references public.work_tasks(id),add column worker_type_id uuid references public.worker_types(id),
+ add column seeding_details jsonb,add column trip_title text,add column manual_correction_events jsonb;
 grant usage on schema public,auth to authenticated,anon,service_role;
 grant select,insert,update on public.trips to authenticated;
 grant select,insert,update on public.trips to service_role;

@@ -40,6 +40,8 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
     static let routeStyleVersion: String = "spray-route-red-green-v1"
 
     let schemaVersion: String
+    var coverageBasis: String? = nil
+    var coverageContract: JSONValue? = nil
     let identity: Identity
     var provenance: Provenance? = nil
     var recordingEvidence: RecordingEvidence? = nil
@@ -166,6 +168,8 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         )
         return SprayReportPayloadV1(
             schemaVersion: schemaVersion,
+            coverageBasis: coverageBasis,
+            coverageContract: coverageContract,
             identity: identity,
             provenance: provenance,
             recordingEvidence: recordingEvidence,
@@ -228,6 +232,7 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         let pathsCovered: [Double]
         let status: String
         let assignmentSource: String
+        var occurrenceIds: [String]? = nil
     }
 
     nonisolated struct Cost: Codable, Sendable, Hashable {
@@ -293,6 +298,30 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         var isDerived: Bool? = nil
         var tankSessionId: String? = nil
         var originalEvidence: [String: JSONValue]? = nil
+        var occurrenceId: String? = nil
+        var planId: String? = nil
+        var passOrdinal: Int? = nil
+        var state: String? = nil
+        var isRetired: Bool? = nil
+        var tankSessionIds: [String]? = nil
+        var lastOperationId: String? = nil
+        var displayLabel: String {
+            let path = String(format: "%g", rowNumber)
+            guard occurrenceId != nil else { return path }
+            return "\(blockName ?? "Block") · \(path) · Pass \(passOrdinal ?? 1)\(isRetired == true ? " (retired)" : "")"
+        }
+    }
+
+    private static func occurrenceRows(_ trip: Trip) -> [Row] {
+        guard let d = trip.occurrenceDocument else { return [] }
+        return (d.activeOrder + d.retired).compactMap { id in
+            guard let item = d.items.first(where: { $0.occurrenceId == id }), let state = d.states[id] else { return nil }
+            return Row(rowNumber: item.pathNumber, blockName: item.blockNameSnapshot,
+                status: state.status == "done" ? "Complete" : state.status == "skipped" ? "Skipped" : "Not recorded",
+                source: state.source ?? "notRecorded", tank: nil, rowIdentity: id, blockId: UUID(uuidString: item.blockId),
+                occurrenceId: id, planId: d.planId, passOrdinal: item.passOrdinal, state: state.status,
+                isRetired: d.retired.contains(id), tankSessionIds: state.tankSessionIds, lastOperationId: state.lastOperationId)
+        }
     }
 
     nonisolated enum TankReference: Codable, Sendable, Hashable {
@@ -476,7 +505,7 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         if canonicalBlocks == nil { warnings.append("Blocks treated were not recorded.") }
 
         let isManual = record.entrySource == "manual"
-        let rows: [Row] = (isManual ? [] : trip.rowSequence.sorted()).map { rowNumber in
+        let rows: [Row] = trip.coverageBasis != .legacy ? occurrenceRows(trip) : (isManual ? [] : trip.rowSequence.sorted()).map { rowNumber in
             let status: String
             let source: String
             if trip.completedPaths.contains(rowNumber) {
@@ -499,6 +528,10 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
             let matches = !exact.isEmpty ? exact : (!planned.isEmpty ? planned : legacy)
             let tank: TankReference? = matches.count > 1 ? .multiple : matches.first.map(TankReference.number)
             return Row(rowNumber: rowNumber, blockName: singleBlockName, status: status, source: source, tank: tank)
+        }
+        if trip.coverageBasis != .legacy {
+            warnings.append(trip.coverageBasis == .updateRequired ? "Update required. Occurrence coverage unavailable; numeric history was not used."
+                : "Local occurrence evidence — canonical v2 report could not be loaded. Non-coverage facts are an offline projection.")
         }
         if rows.contains(where: { $0.tank == .multiple }) { warnings.append("One or more rows overlap multiple tank sessions.") }
 
@@ -561,7 +594,9 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
         warnings.append("Shared route image is not available yet; this export uses the deterministic v1 route renderer.")
         let engineDelta = trip.startEngineHours.flatMap { start in trip.endEngineHours.flatMap { end in end > start ? end - start : nil } }
         return SprayReportPayloadV1(
-            schemaVersion: currentSchemaVersion,
+            schemaVersion: trip.coverageBasis == .legacy ? currentSchemaVersion : "2.0",
+            coverageBasis: trip.coverageBasis == .legacy ? "legacyNumeric" : trip.coverageBasis == .occurrence ? "localPlannedOccurrencesV1" : "occurrenceUnavailable",
+            coverageContract: trip.occurrenceCoverage,
             identity: Identity(tripId: trip.id, sprayRecordId: record.id, vineyardId: trip.vineyardId, vineyardName: vineyardName, reference: record.sprayReference, vineyardTimeZone: timeZone.identifier),
             provenance: Provenance(source: record.entrySource, manualEntryId: record.manualEntryId, isManualEntry: isManual, label: isManual ? "Manual entry" : (record.entrySource == "tracked" ? "Tracked application" : "Origin not recorded")),
             recordingEvidence: isManual ? RecordingEvidence(route: "Not recorded — manual application", rows: "Not recorded — manual application") : nil,

@@ -45,5 +45,81 @@ class TripOccurrenceJournalTest {
         assertEquals(TripOccurrenceCoverage.Basis.UPDATE_REQUIRED,held.coverageBasis); assertNotNull(held.coverageMessage); assertEquals(0,held.completedRowCount)
         assertEquals(1,source.copy(occurrenceCoverage=null).completedRowCount)
     }
+    private fun recovery(j: TripOccurrenceJournal, op: TripOccurrenceJournal.Operation?, receipts: Boolean = false): JsonObject {
+        val coverage = j.projected(j.load()!!)
+        val row = op?.let { buildJsonObject {
+            put("operationId",it.id); put("tripId",scope.tripId); put("actorId",scope.ownerId)
+            put("request",buildJsonObject { put("tripId",scope.tripId); put("expectedRevision",it.params.getValue("p_expected_revision")); put("expectedPlanRevision",it.params.getValue("p_expected_plan_revision")); put("action",it.action) })
+            put("result",ack(it)); put("previousState",TripOccurrenceCoverage.requireDocument(it.before).state(a))
+            put("resultingState",TripOccurrenceCoverage.requireDocument(it.after).state(a))
+        } }
+        return buildJsonObject {
+            put("contract","vinetrack.occurrence-recovery"); put("schemaVersion",1); put("tripId",scope.tripId); put("vineyardId",scope.vineyardId)
+            put("isActive",true); put("coverage",coverage); put("reversibleOperations",JsonArray(listOfNotNull(row)))
+            put("receipts",JsonArray(if (receipts) listOfNotNull(row) else emptyList()))
+        }
+    }
+    @Test fun reinstallRecoversActualUndoFromServerLedger() {
+        val server=journal(); server.setStatus(a,"done"); val skip=server.setStatus(a,"skipped")
+        val restored=TripOccurrenceJournal(Memory(),scope); restored.recover(recovery(server,skip))
+        assertEquals(skip.id,restored.undoTarget()!!.id); restored.undo(skip.id)
+        assertEquals("done",status(restored,a)); assertEquals("incomplete",status(restored,b))
+    }
+    @Test fun uncertainAcceptedActionRecoveredByExactReceipt() {
+        val j=journal(); val op=j.setStatus(a,"done")
+        j.recover(recovery(j,op,receipts=true)); assertTrue(j.load()!!.pending.isEmpty()); assertEquals("done",status(j,a))
+        assertEquals(op.id,j.undoTarget()!!.id)
+    }
+    @Test fun unverifiedReceiptCannotClearPendingWork() {
+        val j=journal(); val op=j.setStatus(a,"done"); val response=recovery(j,op,true)
+        val bad=JsonObject(response.toMutableMap().also { it["receipts"]=JsonArray(response.getValue("receipts").jsonArray.map { row -> JsonObject(row.jsonObject.toMutableMap().also { r -> r["actorId"]=JsonPrimitive("99999999-9999-4999-8999-999999999999") }) }) })
+        assertTrue(runCatching { j.recover(bad) }.isFailure); assertEquals(listOf(op),j.load()!!.pending)
+    }
+    @Test fun creationAndActivationNeedExactDurableAcknowledgement() {
+        val j=TripOccurrenceJournal(Memory(),scope)
+        val metadata=buildJsonObject { put("id",scope.tripId); put("vineyard_id",scope.vineyardId); put("is_active",false); put("trip_title","Keep this"); put("seeding_details",buildJsonObject { put("note","retain") }) }
+        val create=j.prepareCreation(metadata,fixture()); assertEquals(metadata,create.params["p_trip"])
+        assertTrue(runCatching { j.setStatus(a,"done") }.isFailure); assertFalse(j.load()!!.creationConfirmed)
+        j.acknowledge(ack(create)); val activation=j.activate(buildJsonObject { put("startTime","2026-10-14T08:00:00Z") })
+        assertTrue(runCatching { j.setStatus(a,"done") }.isFailure); j.acknowledge(ack(activation)); j.setStatus(a,"done")
+        assertEquals("done",status(j,a))
+    }
+    @Test fun finalisationFreezesExactOccurrenceReviewAndRetainsPendingActionOrder() {
+        val j=journal(); val done=j.setStatus(a,"done"); val skip=j.setStatus(b,"skipped")
+        val final=j.finalize(buildJsonObject { put("endTime","2026-10-14T09:00:00Z") })
+        assertEquals(listOf(done.id,skip.id,final.id),j.load()!!.pending.map { it.id })
+        assertEquals(TripOccurrenceCoverage.requireDocument(skip.after).raw["states"],final.params["p_reviewed_states"])
+        assertTrue(runCatching { j.setStatus(a,"incomplete") }.isFailure)
+        j.acknowledge(ack(done)); j.acknowledge(ack(skip)); j.acknowledge(ack(final))
+        assertFalse(j.load()!!.serverActive!!); assertEquals("done",status(j,a)); assertEquals("skipped",status(j,b))
+    }
+    @Test fun sharedPostgresTranscriptSurvivesKotlinRecoveryUndoAndFinalReload() {
+        val resource=javaClass.classLoader!!.getResourceAsStream("occurrence-recovery-postgres.json") ?: error("Shared PostgreSQL transcript missing")
+        val fixtures=resource.bufferedReader().use { Json.parseToJsonElement(it.readText()).jsonObject.getValue("fixtures").jsonArray }
+        assertEquals(2,fixtures.size)
+        fixtures.forEach { value ->
+            val f=value.jsonObject; val fixtureScope=Json.decodeFromJsonElement(TripOccurrenceJournal.Scope.serializer(),f.getValue("scope"))
+            val journal=TripOccurrenceJournal(Memory(),fixtureScope); journal.recover(f.getValue("recovery").jsonObject)
+            val remote=TripOccurrenceCoverage.requireDocument(journal.projected(journal.load()!!)); val id=remote.items.first().id
+            assertEquals(listOf("skipped","incomplete"),remote.items.map { remote.status(it.id) })
+            val reversible=journal.undoTarget() ?: error("Actual server ledger operation not recovered")
+            journal.undo(reversible.id)
+            val local=TripOccurrenceCoverage.requireDocument(journal.projected(journal.load()!!))
+            val expected=TripOccurrenceCoverage.requireDocument(f.getValue("undoResult").jsonObject.getValue("coverage"))
+            assertEquals(expected.items,local.items); assertEquals(expected.order,local.order)
+            assertEquals(expected.items.map { expected.status(it.id) },local.items.map { local.status(it.id) })
+            assertEquals("done",local.status(id))
+            val trip=Json { ignoreUnknownKeys=true }.decodeFromJsonElement(Trip.serializer(),f.getValue("backendTrip"))
+            assertEquals(listOf("done","skipped"),trip.occurrenceDocument!!.items.map { trip.occurrenceDocument!!.status(it.id) })
+            assertEquals(1,trip.completedRowCount); assertEquals(1,trip.skippedRowCount); assertTrue(trip.completedPaths!!.isEmpty()); assertFalse(trip.isActive)
+        }
+    }
+    @Test fun v2ReportRowsRetainPassIdentityAndDisplayContext() {
+        val json=Json { ignoreUnknownKeys=true }
+        val raw="""{"rowNumber":38.5,"blockName":"Block X","status":"Complete","source":"manual","tank":null,"rowIdentity":"$a","occurrenceId":"$a","blockId":"eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee","planId":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","passOrdinal":1,"state":"done","isRetired":false,"tankSessionIds":[],"lastOperationId":null}"""
+        val row=json.decodeFromString<com.rork.vinetrack.data.reporting.SprayReportPayloadV1.Row>(raw)
+        assertEquals(a,row.occurrenceId); assertEquals("done",row.state); assertEquals("Block X · 38.5 · Pass 1",row.displayLabel)
+        assertEquals(row,json.decodeFromString<com.rork.vinetrack.data.reporting.SprayReportPayloadV1.Row>(json.encodeToString(com.rork.vinetrack.data.reporting.SprayReportPayloadV1.Row.serializer(),row)))
+    }
     @Test fun unknownFieldsSurviveJournalProjection() { val j=journal(); j.setStatus(a,"done"); assertEquals(fixture()["extension"],j.projected(j.load()!!)["extension"]) }
 }

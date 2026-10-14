@@ -2,6 +2,7 @@ package com.rork.vinetrack.ui
 
 import android.app.Activity
 import android.app.Application
+import kotlinx.serialization.json.put
 import com.rork.vinetrack.data.TripOccurrenceNativeStore
 import com.rork.vinetrack.data.TripOccurrenceJournal
 import com.rork.vinetrack.data.withOccurrenceProjection
@@ -8808,8 +8809,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             onResult(false); return
         }
         if (trip.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY) {
-            _ui.update { it.copy(tripError = "Occurrence End Review is not yet enabled. Saved pass states are retained; numeric finalisation was not applied.") }
-            onResult(false); return
+            endOccurrenceTrip(trip, notes, endEngineHours, onResult)
+            return
         }
         // Only unfinished records that ending would corrupt may hold a trip
         // open. The gate takes no planned-path input at all, so a Free Drive
@@ -9714,14 +9715,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val journal = occurrenceJournal(saved.takeIf { it.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE }
                     ?: occurrenceRemote ?: saved)
                 if (tripsFromServer) {
-                    if (occurrenceRemote == null || !occurrenceRemote.isActive || occurrenceRemote.endTime != null) {
-                        journal.hold("OCCURRENCE_TRIP_CLOSED")
-                    } else if (occurrenceRemote.coverageBasis != TripOccurrenceCoverage.Basis.OCCURRENCE) {
+                    if (occurrenceRemote != null && occurrenceRemote.coverageBasis != TripOccurrenceCoverage.Basis.OCCURRENCE) {
                         journal.hold("OCCURRENCE_UPDATE_REQUIRED")
-                    } else journal.reconcile(occurrenceRemote.occurrenceCoverage as kotlinx.serialization.json.JsonObject)
+                    }
+                    // Exact receipt recovery runs asynchronously before replay. A newer pull may be
+                    // our own lost acknowledgement, so it must not pre-emptively hold that request.
                 }
                 val retained = journal.load() ?: error("Occurrence journal unavailable.")
                 val serverClosed = tripsFromServer && (occurrenceRemote == null || !occurrenceRemote.isActive || occurrenceRemote.endTime != null)
+                val pendingFinal = retained.pending.any { it.action["kind"] == kotlinx.serialization.json.JsonPrimitive("finalize") }
+                if (pendingFinal) {
+                    tracker?.stop(); tracker = null
+                    _ui.update { it.copy(locallyEndedTripIds = it.locallyEndedTripIds + saved.id, isTracking = false) }
+                }
                 val projected = (occurrenceRemote ?: saved).withOccurrenceProjection(journal.projected(retained)).copy(
                     pathPoints = if (saved.pathPoints.orEmpty().size > occurrenceRemote?.pathPoints.orEmpty().size) saved.pathPoints else occurrenceRemote?.pathPoints,
                     totalDistance = if (saved.pathPoints.orEmpty().size > occurrenceRemote?.pathPoints.orEmpty().size) saved.totalDistance else occurrenceRemote?.totalDistance,
@@ -11907,6 +11913,46 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         applyOccurrenceAction(trip) { it.reorder(order) }
     }
 
+    fun reviewTripOccurrence(tripId: String, occurrenceId: String, status: String) {
+        val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return
+        applyOccurrenceAction(trip) { it.setStatus(occurrenceId, status,
+            trip.tankSessions.filter { session -> session.endTime == null }.map { session -> session.id }, source = "endReview") }
+    }
+
+    private fun endOccurrenceTrip(trip: Trip, notes: String?, hours: Double?, onResult: (Boolean) -> Unit) {
+        try {
+            check(trip.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE) { trip.coverageMessage ?: "Update required." }
+            val decision = com.rork.vinetrack.data.TripEndGate.evaluate(trip)
+            check(decision !is com.rork.vinetrack.data.TripEndDecision.Blocked) {
+                (decision as com.rork.vinetrack.data.TripEndDecision.Blocked).blocker.message
+            }
+            require(hours == null || (hours.isFinite() && hours >= (trip.startEngineHours ?: 0.0)))
+            val owner = session.userId ?: error("Account access required.")
+            val endTime = java.time.Instant.now().toString()
+            val captured = trip.copy(pathPoints = tracker?.points?.toList() ?: trip.pathPoints,
+                totalDistance = tracker?.distanceMetres ?: trip.totalDistance, completionNotes = notes, endEngineHours = hours)
+            check(activeTripStore.saveDurably(owner, trip.vineyardId, captured)) { "Couldn't save the final route. Trip is retained." }
+            val journal = occurrenceJournal(trip)
+            journal.finalize(kotlinx.serialization.json.buildJsonObject {
+                put("endTime", endTime); if (hours != null) put("endEngineHours", hours)
+                if (notes != null) put("completionNotes", notes)
+            })
+            val state = journal.load() ?: error("Occurrence journal missing.")
+            val projected = captured.withOccurrenceProjection(journal.projected(state))
+            tripGpsSync.enqueue(projected)
+            _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == trip.id) projected else it },
+                locallyEndedTripIds = st.locallyEndedTripIds + trip.id, isTracking = false,
+                tripError = "Trip stopped locally. Occurrence review and finalisation are saved; awaiting dependency-safe sync.") }
+            tracker?.stop(); tracker = null; trackingOperation?.complete(); trackingOperation = null
+            persistActiveTripSnapshot()
+            replayOccurrenceActions(projected)
+            onResult(true)
+        } catch (e: Exception) {
+            _ui.update { it.copy(tripError = e.message ?: "Occurrence finalisation needs review. Saved actions were retained.") }
+            onResult(false)
+        }
+    }
+
     private fun occurrenceJournal(trip: Trip): TripOccurrenceJournal {
         val owner = session.userId ?: error("Sign in to the account that owns this trip.")
         val journal = occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, trip.vineyardId, trip.id))
@@ -11936,23 +11982,55 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun replayOccurrenceActions(trip: Trip) {
         if (!_ui.value.isOnline || session.accessToken == null || !replayingOccurrenceTrips.add(trip.id)) return
         val owner = session.userId
+        val access = session.retentionGuard.captureAccount(owner)
+        if (access == null) { replayingOccurrenceTrips.remove(trip.id); return }
         viewModelScope.launch {
             try {
                 val journal = occurrenceJournal(trip)
+                val initial = journal.load() ?: error("Occurrence journal missing.")
+                if (initial.creationConfirmed) {
+                    val recovery = tripRepo.fetchOccurrenceRecovery(trip.id, initial.pending.map { it.id }, access)
+                    if (!session.retentionGuard.withAccount(access, { session.userId }) {
+                        journal.recover(recovery)
+                        val recovered = journal.load() ?: error("Occurrence journal missing.")
+                        val remoteEnded = (recovery["endTime"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+                        val closed = remoteEnded != null && recovered.pending.isEmpty() && recovered.heldReason == null
+                        _ui.update { st -> st.copy(trips = st.trips.map { current -> if (current.id == trip.id)
+                            current.withOccurrenceProjection(journal.projected(recovered)).let { projected ->
+                                if (closed) projected.copy(isActive = false, endTime = remoteEnded) else projected
+                            } else current }, tripError = recovered.heldReason,
+                            locallyEndedTripIds = if (closed) st.locallyEndedTripIds - trip.id else st.locallyEndedTripIds,
+                            deviceActiveTripId = if (closed && st.deviceActiveTripId == trip.id) null else st.deviceActiveTripId) }
+                        if (closed && activeTripStore.load()?.trip?.id == trip.id) activeTripStore.clear()
+                    }) return@launch
+                }
                 repeat(128) {
                     val state = journal.load() ?: return@launch
                     if (state.heldReason != null) {
                         _ui.update { it.copy(tripError = state.heldReason) }; return@launch
                     }
                     val operation = state.pending.firstOrNull() ?: return@launch
-                    val result = tripRepo.applyOccurrenceOperation(operation.params)
-                    if (session.userId != owner) return@launch
-                    journal.acknowledge(result)
+                    val dependencies = pendingWrites.list().any { write ->
+                        write.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved && write.clientId == trip.id &&
+                        (write.entityType in setOf(com.rork.vinetrack.data.model.PendingEntityType.TRIP_START,
+                            com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK) ||
+                            (operation.rpc == "finalize_trip_occurrences_v1" && write.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS))
+                    } || sprayTankActualStore.pending(trip.id).isNotEmpty()
+                    if (dependencies) return@launch
+                    val result = tripRepo.applyOccurrenceOperation(operation.params, operation.rpc, access)
+                    if (!session.retentionGuard.withAccount(access, { session.userId }) { journal.acknowledge(result) }) return@launch
                     val next = journal.load() ?: return@launch
                     _ui.update { st -> st.copy(trips = st.trips.map { current ->
                         if (current.id == trip.id) current.withOccurrenceProjection(journal.projected(next)) else current
                     }, tripError = next.heldReason) }
-                    persistActiveTripSnapshot()
+                    if (operation.action["kind"] == kotlinx.serialization.json.JsonPrimitive("finalize") && next.pending.isEmpty() && next.heldReason == null) {
+                        val end = operation.params["p_end"] as? kotlinx.serialization.json.JsonObject
+                        val time = (end?.get("endTime") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                        _ui.update { st -> st.copy(trips = st.trips.map { current -> if (current.id == trip.id)
+                            current.copy(isActive = false, endTime = time) else current }, locallyEndedTripIds = st.locallyEndedTripIds - trip.id,
+                            deviceActiveTripId = if (st.deviceActiveTripId == trip.id) null else st.deviceActiveTripId) }
+                        if (activeTripStore.load()?.trip?.id == trip.id) activeTripStore.clear()
+                    } else persistActiveTripSnapshot()
                 }
             } catch (e: TripRepository.OccurrenceRejected) {
                 if (session.userId == owner) {

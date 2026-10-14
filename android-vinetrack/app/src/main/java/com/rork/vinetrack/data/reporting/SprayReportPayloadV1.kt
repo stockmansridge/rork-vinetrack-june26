@@ -60,6 +60,8 @@ data class SprayReportPayloadV1(
     val metadataAmendments: List<MetadataAmendment> = emptyList(),
     val provenance: Provenance? = null,
     val recordingEvidence: RecordingEvidence? = null,
+    val coverageBasis: String? = null,
+    val coverageContract: JsonElement? = null,
 ) {
     @Serializable data class Identity(val tripId: String, val sprayRecordId: String, val vineyardId: String, val vineyardName: String, val reference: String, val vineyardTimeZone: String)
     @Serializable data class Provenance(val source: String? = null, val manualEntryId: String? = null, val isManualEntry: Boolean, val label: String)
@@ -69,11 +71,18 @@ data class SprayReportPayloadV1(
     @Serializable data class Equipment(val tractorName: String?, val startEngineHours: Double?, val endEngineHours: Double?, val engineHoursUsed: Double?, val sprayUnitName: String?, val machineId: String? = null, val tractorId: String? = null, val sprayEquipmentId: String? = null, val equipmentSource: String? = null, val tractorGear: String? = null, val numberOfFansJets: String? = null, val averageSpeedKmh: Double? = null, val fuelConsumptionLPerHour: Double? = null, val fuelConsumptionSource: String? = null, val fuelHours: Double? = null, val fuelHoursSource: String? = null)
     @Serializable data class Application(val operationType: String? = null, val applicationMode: String? = null, val grossAreaHa: Double? = null, val treatedAreaHa: Double? = null, val treatedAreaMethod: String? = null, val geometrySource: String? = null, val geometryQuality: String? = null, val carrierVolumeBasis: String? = null, val totalCarrierLitres: Double? = null, val carrierLitresPerHectare: Double? = null, val diluteLitresPer100m: Double? = null, val appliedLitresPer100m: Double? = null, val concentrationFactor: Double? = null, val notes: String? = null, val actualUseBasis: String? = null)
     @Serializable data class ProgramStep(val linkState: String, val sprayJobId: String? = null, val name: String? = null, val status: String? = null, val plannedDate: String? = null, val operationType: String? = null, val target: String? = null, val notes: String? = null)
-    @Serializable data class TankSessionSummary(val tankSessionId: String? = null, val tankNumber: Int, val startedAt: String? = null, val endedAt: String? = null, val startRow: Double? = null, val endRow: Double? = null, val pathsCovered: List<Double> = emptyList(), val status: String, val assignmentSource: String)
+    @Serializable data class TankSessionSummary(val tankSessionId: String? = null, val tankNumber: Int, val startedAt: String? = null, val endedAt: String? = null, val startRow: Double? = null, val endRow: Double? = null, val pathsCovered: List<Double> = emptyList(), val status: String, val assignmentSource: String, val occurrenceIds: List<String>? = null)
     @Serializable data class Cost(val visibility: String, val currencyCode: String, val fuelLitres: Double? = null, val fuelRateLPerHour: Double? = null, val fuelHours: Double? = null, val fuelPricePerLitre: Double? = null, val fuelCost: Double? = null, val chemicalCost: Double? = null, val chemicalCostBasis: String? = null, val labourRatePerHour: Double? = null, val labourRateSource: String? = null, val labourCost: Double? = null, val knownCostSubtotal: Double? = null, val totalCost: Double? = null, val treatedAreaHa: Double? = null, val costPerTreatedHa: Double? = null, val isComplete: Boolean, val incompleteReasons: List<CostReason> = emptyList(), val basis: String)
     @Serializable data class CostReason(val component: String, val code: String, val kind: String)
     @Serializable data class MetadataAmendment(val id: String, val operationId: String, val revision: Long, val previousValue: JsonElement, val newValue: JsonElement, val editedBy: String, val editorName: String, val editedAt: String)
-    @Serializable data class Row(val rowNumber: Double, val blockName: String?, val status: String, val source: String, val tank: JsonElement = JsonNull, val rowIdentity: String? = null, val blockId: String? = null, val confidence: Double? = null, val isDerived: Boolean? = null, val tankSessionId: String? = null, val originalEvidence: JsonElement = JsonNull) {
+    @Serializable data class Row(val rowNumber: Double, val blockName: String?, val status: String, val source: String, val tank: JsonElement = JsonNull, val rowIdentity: String? = null, val blockId: String? = null, val confidence: Double? = null, val isDerived: Boolean? = null, val tankSessionId: String? = null, val originalEvidence: JsonElement = JsonNull, val occurrenceId: String? = null, val planId: String? = null,
+        val passOrdinal: Int? = null, val state: String? = null, val isRetired: Boolean? = null,
+        val tankSessionIds: List<String>? = null, val lastOperationId: String? = null) {
+        val displayLabel: String get() {
+            val label = java.math.BigDecimal.valueOf(rowNumber).stripTrailingZeros().toPlainString()
+            return if (occurrenceId == null) label
+                else "${blockName ?: "Block"} · $label · Pass ${passOrdinal ?: 1}${if (isRetired == true) " (retired)" else ""}"
+        }
         val tankLabel: String get() = when {
             tank is JsonPrimitive && tank.isString -> tank.content
             tank is JsonPrimitive -> "Tank ${tank.content}"
@@ -156,7 +165,18 @@ data class SprayReportPayloadV1(
             if (blocks == null) warnings += "Blocks treated were not recorded."
             val singleBlockName = blocks?.singleOrNull()?.name
             val isManual = record.entrySource == "manual"
-            val rows = (if (isManual) emptyList() else trip.rowSequence.sorted()).map { rowNumber ->
+            val rows = if (trip.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY) {
+                warnings += if (trip.occurrenceDocument == null) "Update required. Occurrence coverage unavailable; numeric history was not used."
+                    else "Local occurrence evidence — canonical v2 report could not be loaded. Non-coverage facts are an offline projection."
+                trip.occurrenceDocument?.let { d -> (d.order + d.retired).map { id ->
+                    val item = d.items.single { it.id == id }; val state = d.state(id)
+                    Row(item.label, item.blockName, when (d.status(id)) { "done" -> "Complete"; "skipped" -> "Skipped"; else -> "Not recorded" },
+                        (state["source"] as? JsonPrimitive)?.content?.takeUnless { it == "null" } ?: "notRecorded", rowIdentity = id, blockId = item.blockId,
+                        occurrenceId = id, planId = d.planId, passOrdinal = item.pass, state = d.status(id), isRetired = id in d.retired,
+                        tankSessionIds = (state["tankSessionIds"] as kotlinx.serialization.json.JsonArray).map { (it as JsonPrimitive).content },
+                        lastOperationId = (state["lastOperationId"] as? JsonPrimitive)?.content?.takeUnless { it == "null" })
+                } }.orEmpty()
+            } else (if (isManual) emptyList() else trip.rowSequence.sorted()).map { rowNumber ->
                 val (status, source) = when {
                     trip.completedPaths.orEmpty().contains(rowNumber) -> "Complete" to "completedPaths"
                     trip.skippedPaths.orEmpty().contains(rowNumber) -> "Skipped/Not complete" to "skippedPaths"
@@ -235,7 +255,10 @@ data class SprayReportPayloadV1(
             val machineName = record.displayMachine(machines)
             val unitName = resolveSprayEquipmentName(record, sprayEquipment)
             return SprayReportPayloadV1(
-                schemaVersion = SCHEMA_VERSION,
+                schemaVersion = if (trip.coverageBasis == com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY) SCHEMA_VERSION else "2.0",
+                coverageBasis = if (trip.coverageBasis == com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY) "legacyNumeric"
+                    else if (trip.occurrenceDocument == null) "occurrenceUnavailable" else "localPlannedOccurrencesV1",
+                coverageContract = trip.occurrenceCoverage,
                 identity = Identity(trip.id, record.id, trip.vineyardId, vineyardName, record.sprayReference.orEmpty(), vineyardTimeZone),
                 trip = TripSummary(
                     startUtc = trip.startTime,

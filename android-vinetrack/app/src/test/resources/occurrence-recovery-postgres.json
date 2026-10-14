@@ -1,0 +1,2904 @@
+{
+  "evidence": "real-local-postgresql-rpc-transcript-not-device-handover",
+  "fixtures": [
+    {
+      "origin": "android-shaped-create",
+      "scope": {
+        "ownerId": "10000000-0000-4000-8000-000000000001",
+        "vineyardId": "20000000-0000-4000-8000-000000000001",
+        "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4"
+      },
+      "initial": {
+        "items": [
+          {
+            "blockId": "30000000-0000-4000-8000-000000000001",
+            "direction": null,
+            "pathNumber": 38.5,
+            "passOrdinal": 1,
+            "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+            "physicalPathRef": {
+              "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+              "rowIds": [
+                "31000000-0000-4000-8000-000000000001",
+                "31000000-0000-4000-8000-000000000002"
+              ],
+              "rowSnapshots": [
+                {
+                  "id": "31000000-0000-4000-8000-000000000001",
+                  "number": 38,
+                  "endPoint": {
+                    "latitude": -33.399,
+                    "longitude": 149.1
+                  },
+                  "startPoint": {
+                    "latitude": -33.4,
+                    "longitude": 149.1
+                  }
+                },
+                {
+                  "id": "31000000-0000-4000-8000-000000000002",
+                  "number": 39,
+                  "endPoint": {
+                    "latitude": -33.399,
+                    "longitude": 149.10003
+                  },
+                  "startPoint": {
+                    "latitude": -33.4,
+                    "longitude": 149.10003
+                  }
+                }
+              ],
+              "geometryRevision": "stored-rows-fixture-v1"
+            },
+            "blockNameSnapshot": "Block X"
+          },
+          {
+            "blockId": "30000000-0000-4000-8000-000000000001",
+            "direction": null,
+            "pathNumber": 38.5,
+            "passOrdinal": 2,
+            "occurrenceId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+            "physicalPathRef": {
+              "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+              "rowIds": [
+                "31000000-0000-4000-8000-000000000001",
+                "31000000-0000-4000-8000-000000000002"
+              ],
+              "rowSnapshots": [
+                {
+                  "id": "31000000-0000-4000-8000-000000000001",
+                  "number": 38,
+                  "endPoint": {
+                    "latitude": -33.399,
+                    "longitude": 149.1
+                  },
+                  "startPoint": {
+                    "latitude": -33.4,
+                    "longitude": 149.1
+                  }
+                },
+                {
+                  "id": "31000000-0000-4000-8000-000000000002",
+                  "number": 39,
+                  "endPoint": {
+                    "latitude": -33.399,
+                    "longitude": 149.10003
+                  },
+                  "startPoint": {
+                    "latitude": -33.4,
+                    "longitude": 149.10003
+                  }
+                }
+              ],
+              "geometryRevision": "stored-rows-fixture-v1"
+            },
+            "blockNameSnapshot": "Block X"
+          }
+        ],
+        "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+        "states": {
+          "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557": {
+            "source": null,
+            "status": "incomplete",
+            "tankSessionIds": [],
+            "lastOperationId": null
+          },
+          "709cac1b-183a-400d-b398-1a78a1f09a12": {
+            "source": null,
+            "status": "incomplete",
+            "tankSessionIds": [],
+            "lastOperationId": null
+          }
+        },
+        "retired": [],
+        "contract": "vinetrack.planned-occurrence",
+        "revision": 0,
+        "activeOrder": [
+          "709cac1b-183a-400d-b398-1a78a1f09a12",
+          "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557"
+        ],
+        "planRevision": 1,
+        "schemaVersion": 1,
+        "plannedCursorId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+        "selectedOccurrenceId": null
+      },
+      "doneResult": {
+        "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+        "coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            }
+          ],
+          "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+          "states": {
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557": {
+              "source": null,
+              "status": "incomplete",
+              "tankSessionIds": [],
+              "lastOperationId": null
+            },
+            "709cac1b-183a-400d-b398-1a78a1f09a12": {
+              "source": "manual",
+              "status": "done",
+              "tankSessionIds": [],
+              "lastOperationId": "d1a29c0e-8b44-4fde-9db3-132c2b766c1d"
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 1,
+          "activeOrder": [
+            "709cac1b-183a-400d-b398-1a78a1f09a12",
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+          "selectedOccurrenceId": null
+        },
+        "operationId": "d1a29c0e-8b44-4fde-9db3-132c2b766c1d"
+      },
+      "skipResult": {
+        "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+        "coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            }
+          ],
+          "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+          "states": {
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557": {
+              "source": null,
+              "status": "incomplete",
+              "tankSessionIds": [],
+              "lastOperationId": null
+            },
+            "709cac1b-183a-400d-b398-1a78a1f09a12": {
+              "source": "manual",
+              "status": "skipped",
+              "tankSessionIds": [],
+              "lastOperationId": "3f7f1f85-0eda-4c8f-ac71-d9a3af228a55"
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 2,
+          "activeOrder": [
+            "709cac1b-183a-400d-b398-1a78a1f09a12",
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+          "selectedOccurrenceId": null
+        },
+        "operationId": "3f7f1f85-0eda-4c8f-ac71-d9a3af228a55"
+      },
+      "recovery": {
+        "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+        "endTime": null,
+        "contract": "vinetrack.occurrence-recovery",
+        "coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            }
+          ],
+          "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+          "states": {
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557": {
+              "source": null,
+              "status": "incomplete",
+              "tankSessionIds": [],
+              "lastOperationId": null
+            },
+            "709cac1b-183a-400d-b398-1a78a1f09a12": {
+              "source": "manual",
+              "status": "skipped",
+              "tankSessionIds": [],
+              "lastOperationId": "3f7f1f85-0eda-4c8f-ac71-d9a3af228a55"
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 2,
+          "activeOrder": [
+            "709cac1b-183a-400d-b398-1a78a1f09a12",
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+          "selectedOccurrenceId": null
+        },
+        "isActive": true,
+        "receipts": [
+          {
+            "result": {
+              "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+              "coverage": {
+                "items": [
+                  {
+                    "blockId": "30000000-0000-4000-8000-000000000001",
+                    "direction": null,
+                    "pathNumber": 38.5,
+                    "passOrdinal": 1,
+                    "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+                    "physicalPathRef": {
+                      "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                      "rowIds": [
+                        "31000000-0000-4000-8000-000000000001",
+                        "31000000-0000-4000-8000-000000000002"
+                      ],
+                      "rowSnapshots": [
+                        {
+                          "id": "31000000-0000-4000-8000-000000000001",
+                          "number": 38,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.1
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.1
+                          }
+                        },
+                        {
+                          "id": "31000000-0000-4000-8000-000000000002",
+                          "number": 39,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.10003
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.10003
+                          }
+                        }
+                      ],
+                      "geometryRevision": "stored-rows-fixture-v1"
+                    },
+                    "blockNameSnapshot": "Block X"
+                  },
+                  {
+                    "blockId": "30000000-0000-4000-8000-000000000001",
+                    "direction": null,
+                    "pathNumber": 38.5,
+                    "passOrdinal": 2,
+                    "occurrenceId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+                    "physicalPathRef": {
+                      "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                      "rowIds": [
+                        "31000000-0000-4000-8000-000000000001",
+                        "31000000-0000-4000-8000-000000000002"
+                      ],
+                      "rowSnapshots": [
+                        {
+                          "id": "31000000-0000-4000-8000-000000000001",
+                          "number": 38,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.1
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.1
+                          }
+                        },
+                        {
+                          "id": "31000000-0000-4000-8000-000000000002",
+                          "number": 39,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.10003
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.10003
+                          }
+                        }
+                      ],
+                      "geometryRevision": "stored-rows-fixture-v1"
+                    },
+                    "blockNameSnapshot": "Block X"
+                  }
+                ],
+                "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+                "states": {
+                  "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557": {
+                    "source": null,
+                    "status": "incomplete",
+                    "tankSessionIds": [],
+                    "lastOperationId": null
+                  },
+                  "709cac1b-183a-400d-b398-1a78a1f09a12": {
+                    "source": "manual",
+                    "status": "done",
+                    "tankSessionIds": [],
+                    "lastOperationId": "d1a29c0e-8b44-4fde-9db3-132c2b766c1d"
+                  }
+                },
+                "retired": [],
+                "contract": "vinetrack.planned-occurrence",
+                "revision": 1,
+                "activeOrder": [
+                  "709cac1b-183a-400d-b398-1a78a1f09a12",
+                  "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557"
+                ],
+                "planRevision": 1,
+                "schemaVersion": 1,
+                "plannedCursorId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+                "selectedOccurrenceId": null
+              },
+              "operationId": "d1a29c0e-8b44-4fde-9db3-132c2b766c1d"
+            },
+            "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+            "actorId": "10000000-0000-4000-8000-000000000001",
+            "request": {
+              "action": {
+                "kind": "setStatus",
+                "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+                "source": "manual",
+                "blockId": "30000000-0000-4000-8000-000000000001",
+                "toStatus": "done",
+                "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+                "tankSessionIds": [],
+                "expectedBeforeState": {
+                  "source": null,
+                  "status": "incomplete",
+                  "tankSessionIds": [],
+                  "lastOperationId": null
+                }
+              },
+              "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+              "expectedRevision": 0,
+              "expectedPlanRevision": 1
+            },
+            "operationId": "d1a29c0e-8b44-4fde-9db3-132c2b766c1d"
+          },
+          {
+            "result": {
+              "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+              "coverage": {
+                "items": [
+                  {
+                    "blockId": "30000000-0000-4000-8000-000000000001",
+                    "direction": null,
+                    "pathNumber": 38.5,
+                    "passOrdinal": 1,
+                    "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+                    "physicalPathRef": {
+                      "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                      "rowIds": [
+                        "31000000-0000-4000-8000-000000000001",
+                        "31000000-0000-4000-8000-000000000002"
+                      ],
+                      "rowSnapshots": [
+                        {
+                          "id": "31000000-0000-4000-8000-000000000001",
+                          "number": 38,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.1
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.1
+                          }
+                        },
+                        {
+                          "id": "31000000-0000-4000-8000-000000000002",
+                          "number": 39,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.10003
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.10003
+                          }
+                        }
+                      ],
+                      "geometryRevision": "stored-rows-fixture-v1"
+                    },
+                    "blockNameSnapshot": "Block X"
+                  },
+                  {
+                    "blockId": "30000000-0000-4000-8000-000000000001",
+                    "direction": null,
+                    "pathNumber": 38.5,
+                    "passOrdinal": 2,
+                    "occurrenceId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+                    "physicalPathRef": {
+                      "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                      "rowIds": [
+                        "31000000-0000-4000-8000-000000000001",
+                        "31000000-0000-4000-8000-000000000002"
+                      ],
+                      "rowSnapshots": [
+                        {
+                          "id": "31000000-0000-4000-8000-000000000001",
+                          "number": 38,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.1
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.1
+                          }
+                        },
+                        {
+                          "id": "31000000-0000-4000-8000-000000000002",
+                          "number": 39,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.10003
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.10003
+                          }
+                        }
+                      ],
+                      "geometryRevision": "stored-rows-fixture-v1"
+                    },
+                    "blockNameSnapshot": "Block X"
+                  }
+                ],
+                "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+                "states": {
+                  "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557": {
+                    "source": null,
+                    "status": "incomplete",
+                    "tankSessionIds": [],
+                    "lastOperationId": null
+                  },
+                  "709cac1b-183a-400d-b398-1a78a1f09a12": {
+                    "source": "manual",
+                    "status": "skipped",
+                    "tankSessionIds": [],
+                    "lastOperationId": "3f7f1f85-0eda-4c8f-ac71-d9a3af228a55"
+                  }
+                },
+                "retired": [],
+                "contract": "vinetrack.planned-occurrence",
+                "revision": 2,
+                "activeOrder": [
+                  "709cac1b-183a-400d-b398-1a78a1f09a12",
+                  "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557"
+                ],
+                "planRevision": 1,
+                "schemaVersion": 1,
+                "plannedCursorId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+                "selectedOccurrenceId": null
+              },
+              "operationId": "3f7f1f85-0eda-4c8f-ac71-d9a3af228a55"
+            },
+            "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+            "actorId": "10000000-0000-4000-8000-000000000001",
+            "request": {
+              "action": {
+                "kind": "setStatus",
+                "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+                "source": "manual",
+                "blockId": "30000000-0000-4000-8000-000000000001",
+                "toStatus": "skipped",
+                "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+                "tankSessionIds": [],
+                "expectedBeforeState": {
+                  "source": "manual",
+                  "status": "done",
+                  "tankSessionIds": [],
+                  "lastOperationId": "d1a29c0e-8b44-4fde-9db3-132c2b766c1d"
+                }
+              },
+              "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+              "expectedRevision": 1,
+              "expectedPlanRevision": 1
+            },
+            "operationId": "3f7f1f85-0eda-4c8f-ac71-d9a3af228a55"
+          }
+        ],
+        "vineyardId": "20000000-0000-4000-8000-000000000001",
+        "schemaVersion": 1,
+        "reversibleOperations": [
+          {
+            "result": {
+              "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+              "coverage": {
+                "items": [
+                  {
+                    "blockId": "30000000-0000-4000-8000-000000000001",
+                    "direction": null,
+                    "pathNumber": 38.5,
+                    "passOrdinal": 1,
+                    "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+                    "physicalPathRef": {
+                      "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                      "rowIds": [
+                        "31000000-0000-4000-8000-000000000001",
+                        "31000000-0000-4000-8000-000000000002"
+                      ],
+                      "rowSnapshots": [
+                        {
+                          "id": "31000000-0000-4000-8000-000000000001",
+                          "number": 38,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.1
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.1
+                          }
+                        },
+                        {
+                          "id": "31000000-0000-4000-8000-000000000002",
+                          "number": 39,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.10003
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.10003
+                          }
+                        }
+                      ],
+                      "geometryRevision": "stored-rows-fixture-v1"
+                    },
+                    "blockNameSnapshot": "Block X"
+                  },
+                  {
+                    "blockId": "30000000-0000-4000-8000-000000000001",
+                    "direction": null,
+                    "pathNumber": 38.5,
+                    "passOrdinal": 2,
+                    "occurrenceId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+                    "physicalPathRef": {
+                      "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                      "rowIds": [
+                        "31000000-0000-4000-8000-000000000001",
+                        "31000000-0000-4000-8000-000000000002"
+                      ],
+                      "rowSnapshots": [
+                        {
+                          "id": "31000000-0000-4000-8000-000000000001",
+                          "number": 38,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.1
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.1
+                          }
+                        },
+                        {
+                          "id": "31000000-0000-4000-8000-000000000002",
+                          "number": 39,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.10003
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.10003
+                          }
+                        }
+                      ],
+                      "geometryRevision": "stored-rows-fixture-v1"
+                    },
+                    "blockNameSnapshot": "Block X"
+                  }
+                ],
+                "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+                "states": {
+                  "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557": {
+                    "source": null,
+                    "status": "incomplete",
+                    "tankSessionIds": [],
+                    "lastOperationId": null
+                  },
+                  "709cac1b-183a-400d-b398-1a78a1f09a12": {
+                    "source": "manual",
+                    "status": "skipped",
+                    "tankSessionIds": [],
+                    "lastOperationId": "3f7f1f85-0eda-4c8f-ac71-d9a3af228a55"
+                  }
+                },
+                "retired": [],
+                "contract": "vinetrack.planned-occurrence",
+                "revision": 2,
+                "activeOrder": [
+                  "709cac1b-183a-400d-b398-1a78a1f09a12",
+                  "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557"
+                ],
+                "planRevision": 1,
+                "schemaVersion": 1,
+                "plannedCursorId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+                "selectedOccurrenceId": null
+              },
+              "operationId": "3f7f1f85-0eda-4c8f-ac71-d9a3af228a55"
+            },
+            "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+            "actorId": "10000000-0000-4000-8000-000000000001",
+            "request": {
+              "action": {
+                "kind": "setStatus",
+                "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+                "source": "manual",
+                "blockId": "30000000-0000-4000-8000-000000000001",
+                "toStatus": "skipped",
+                "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+                "tankSessionIds": [],
+                "expectedBeforeState": {
+                  "source": "manual",
+                  "status": "done",
+                  "tankSessionIds": [],
+                  "lastOperationId": "d1a29c0e-8b44-4fde-9db3-132c2b766c1d"
+                }
+              },
+              "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+              "expectedRevision": 1,
+              "expectedPlanRevision": 1
+            },
+            "operationId": "3f7f1f85-0eda-4c8f-ac71-d9a3af228a55",
+            "previousState": {
+              "source": "manual",
+              "status": "done",
+              "tankSessionIds": [],
+              "lastOperationId": "d1a29c0e-8b44-4fde-9db3-132c2b766c1d"
+            },
+            "resultingState": {
+              "source": "manual",
+              "status": "skipped",
+              "tankSessionIds": [],
+              "lastOperationId": "3f7f1f85-0eda-4c8f-ac71-d9a3af228a55"
+            }
+          }
+        ]
+      },
+      "undoResult": {
+        "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+        "coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            }
+          ],
+          "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+          "states": {
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557": {
+              "source": null,
+              "status": "incomplete",
+              "tankSessionIds": [],
+              "lastOperationId": null
+            },
+            "709cac1b-183a-400d-b398-1a78a1f09a12": {
+              "source": "correction",
+              "status": "done",
+              "tankSessionIds": [],
+              "lastOperationId": "a77ddcd4-0592-4e48-a46a-358ec5ada6b5"
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 3,
+          "activeOrder": [
+            "709cac1b-183a-400d-b398-1a78a1f09a12",
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+          "selectedOccurrenceId": null
+        },
+        "operationId": "a77ddcd4-0592-4e48-a46a-358ec5ada6b5"
+      },
+      "bResult": {
+        "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+        "coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            }
+          ],
+          "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+          "states": {
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557": {
+              "source": "manual",
+              "status": "skipped",
+              "tankSessionIds": [],
+              "lastOperationId": "3e1ae1ef-5bea-43bd-b75d-c64a0df43bba"
+            },
+            "709cac1b-183a-400d-b398-1a78a1f09a12": {
+              "source": "correction",
+              "status": "done",
+              "tankSessionIds": [],
+              "lastOperationId": "a77ddcd4-0592-4e48-a46a-358ec5ada6b5"
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 4,
+          "activeOrder": [
+            "709cac1b-183a-400d-b398-1a78a1f09a12",
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": null,
+          "selectedOccurrenceId": null
+        },
+        "operationId": "3e1ae1ef-5bea-43bd-b75d-c64a0df43bba"
+      },
+      "finalResult": {
+        "tripId": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+        "endTime": "2026-10-14T09:00:00+00:00",
+        "coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            }
+          ],
+          "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+          "states": {
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557": {
+              "source": "manual",
+              "status": "skipped",
+              "tankSessionIds": [],
+              "lastOperationId": "3e1ae1ef-5bea-43bd-b75d-c64a0df43bba"
+            },
+            "709cac1b-183a-400d-b398-1a78a1f09a12": {
+              "source": "correction",
+              "status": "done",
+              "tankSessionIds": [],
+              "lastOperationId": "a77ddcd4-0592-4e48-a46a-358ec5ada6b5"
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 5,
+          "activeOrder": [
+            "709cac1b-183a-400d-b398-1a78a1f09a12",
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": null,
+          "selectedOccurrenceId": null
+        },
+        "isActive": false,
+        "operationId": "fb85819f-4f67-481e-a65c-4b46bd15eb68"
+      },
+      "backendTrip": {
+        "id": "6df8e706-3267-4c7f-9b08-c043f4ae15f4",
+        "pin_ids": [],
+        "end_time": "2026-10-14T09:00:00+00:00",
+        "is_active": false,
+        "is_paused": false,
+        "created_at": "2026-10-14T11:52:20.85259+00:00",
+        "created_by": "10000000-0000-4000-8000-000000000001",
+        "deleted_at": null,
+        "machine_id": null,
+        "paddock_id": null,
+        "start_time": "2026-10-14T08:00:00+00:00",
+        "tractor_id": null,
+        "trip_title": null,
+        "updated_at": "2026-10-14T11:52:20.938848+00:00",
+        "updated_by": "10000000-0000-4000-8000-000000000001",
+        "paddock_ids": [
+          "30000000-0000-4000-8000-000000000001"
+        ],
+        "path_points": [],
+        "person_name": null,
+        "total_tanks": 0,
+        "vineyard_id": "20000000-0000-4000-8000-000000000001",
+        "paddock_name": null,
+        "row_sequence": [
+          38.5,
+          38.5
+        ],
+        "sync_version": 6,
+        "work_task_id": null,
+        "skipped_paths": [],
+        "tank_sessions": [],
+        "trip_function": null,
+        "sequence_index": 2,
+        "total_distance": 0,
+        "worker_type_id": null,
+        "completed_paths": [],
+        "is_filling_tank": false,
+        "next_row_number": null,
+        "seeding_details": null,
+        "completion_notes": null,
+        "end_engine_hours": null,
+        "operator_user_id": "10000000-0000-4000-8000-000000000001",
+        "pause_timestamps": [],
+        "tracking_pattern": null,
+        "client_updated_at": "2026-10-14T11:52:20.944863+00:00",
+        "resume_timestamps": [],
+        "active_tank_number": null,
+        "current_row_number": null,
+        "start_engine_hours": null,
+        "filling_tank_number": null,
+        "occurrence_coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "709cac1b-183a-400d-b398-1a78a1f09a12",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557",
+              "physicalPathRef": {
+                "pathId": "ad5437a7-8bfc-4a2d-9567-7c78b4143a2b",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            }
+          ],
+          "planId": "5c531dab-e54f-4316-897e-d5d71490e953",
+          "states": {
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557": {
+              "source": "manual",
+              "status": "skipped",
+              "tankSessionIds": [],
+              "lastOperationId": "3e1ae1ef-5bea-43bd-b75d-c64a0df43bba"
+            },
+            "709cac1b-183a-400d-b398-1a78a1f09a12": {
+              "source": "correction",
+              "status": "done",
+              "tankSessionIds": [],
+              "lastOperationId": "a77ddcd4-0592-4e48-a46a-358ec5ada6b5"
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 5,
+          "activeOrder": [
+            "709cac1b-183a-400d-b398-1a78a1f09a12",
+            "099e80a4-0e0f-4c0e-9e65-fd0bfc45f557"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": null,
+          "selectedOccurrenceId": null
+        },
+        "current_path_distance": 0,
+        "manual_correction_events": []
+      }
+    },
+    {
+      "origin": "ios-shaped-create",
+      "scope": {
+        "ownerId": "10000000-0000-4000-8000-000000000001",
+        "vineyardId": "20000000-0000-4000-8000-000000000001",
+        "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5"
+      },
+      "initial": {
+        "items": [
+          {
+            "blockId": "30000000-0000-4000-8000-000000000001",
+            "direction": null,
+            "pathNumber": 38.5,
+            "passOrdinal": 1,
+            "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+            "physicalPathRef": {
+              "pathId": "4f3e735b-374d-449b-a1ff-265f57cc71cf",
+              "rowIds": [
+                "31000000-0000-4000-8000-000000000001",
+                "31000000-0000-4000-8000-000000000002"
+              ],
+              "rowSnapshots": [
+                {
+                  "id": "31000000-0000-4000-8000-000000000001",
+                  "number": 38,
+                  "endPoint": {
+                    "latitude": -33.399,
+                    "longitude": 149.1
+                  },
+                  "startPoint": {
+                    "latitude": -33.4,
+                    "longitude": 149.1
+                  }
+                },
+                {
+                  "id": "31000000-0000-4000-8000-000000000002",
+                  "number": 39,
+                  "endPoint": {
+                    "latitude": -33.399,
+                    "longitude": 149.10003
+                  },
+                  "startPoint": {
+                    "latitude": -33.4,
+                    "longitude": 149.10003
+                  }
+                }
+              ],
+              "geometryRevision": "stored-rows-fixture-v1"
+            },
+            "blockNameSnapshot": "Block X"
+          },
+          {
+            "blockId": "30000000-0000-4000-8000-000000000002",
+            "direction": null,
+            "pathNumber": 38.5,
+            "passOrdinal": 2,
+            "occurrenceId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+            "physicalPathRef": {
+              "pathId": "3d1d6c54-253f-48b0-b62f-62cd40c97bc8",
+              "rowIds": [
+                "31000000-0000-4000-8000-000000000001",
+                "31000000-0000-4000-8000-000000000002"
+              ],
+              "rowSnapshots": [
+                {
+                  "id": "31000000-0000-4000-8000-000000000001",
+                  "number": 38,
+                  "endPoint": {
+                    "latitude": -33.399,
+                    "longitude": 149.1
+                  },
+                  "startPoint": {
+                    "latitude": -33.4,
+                    "longitude": 149.1
+                  }
+                },
+                {
+                  "id": "31000000-0000-4000-8000-000000000002",
+                  "number": 39,
+                  "endPoint": {
+                    "latitude": -33.399,
+                    "longitude": 149.10003
+                  },
+                  "startPoint": {
+                    "latitude": -33.4,
+                    "longitude": 149.10003
+                  }
+                }
+              ],
+              "geometryRevision": "stored-rows-fixture-v1"
+            },
+            "blockNameSnapshot": "Block Y"
+          }
+        ],
+        "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+        "states": {
+          "58a16798-30dd-4327-aa8d-8dc0c9d22f44": {
+            "source": null,
+            "status": "incomplete",
+            "tankSessionIds": [],
+            "lastOperationId": null
+          },
+          "68d1b4ab-32d1-4e47-867a-10205a5c826b": {
+            "source": null,
+            "status": "incomplete",
+            "tankSessionIds": [],
+            "lastOperationId": null
+          }
+        },
+        "retired": [],
+        "contract": "vinetrack.planned-occurrence",
+        "revision": 0,
+        "activeOrder": [
+          "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+          "68d1b4ab-32d1-4e47-867a-10205a5c826b"
+        ],
+        "planRevision": 1,
+        "schemaVersion": 1,
+        "plannedCursorId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+        "selectedOccurrenceId": null
+      },
+      "doneResult": {
+        "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+        "coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+              "physicalPathRef": {
+                "pathId": "4f3e735b-374d-449b-a1ff-265f57cc71cf",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000002",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+              "physicalPathRef": {
+                "pathId": "3d1d6c54-253f-48b0-b62f-62cd40c97bc8",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block Y"
+            }
+          ],
+          "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+          "states": {
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44": {
+              "source": "manual",
+              "status": "done",
+              "tankSessionIds": [],
+              "lastOperationId": "e66fae77-c547-4952-9e98-05837e648022"
+            },
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b": {
+              "source": null,
+              "status": "incomplete",
+              "tankSessionIds": [],
+              "lastOperationId": null
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 1,
+          "activeOrder": [
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+          "selectedOccurrenceId": null
+        },
+        "operationId": "e66fae77-c547-4952-9e98-05837e648022"
+      },
+      "skipResult": {
+        "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+        "coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+              "physicalPathRef": {
+                "pathId": "4f3e735b-374d-449b-a1ff-265f57cc71cf",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000002",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+              "physicalPathRef": {
+                "pathId": "3d1d6c54-253f-48b0-b62f-62cd40c97bc8",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block Y"
+            }
+          ],
+          "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+          "states": {
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44": {
+              "source": "manual",
+              "status": "skipped",
+              "tankSessionIds": [],
+              "lastOperationId": "7dc140e7-51f9-4135-a296-02bc53c55fd4"
+            },
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b": {
+              "source": null,
+              "status": "incomplete",
+              "tankSessionIds": [],
+              "lastOperationId": null
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 2,
+          "activeOrder": [
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+          "selectedOccurrenceId": null
+        },
+        "operationId": "7dc140e7-51f9-4135-a296-02bc53c55fd4"
+      },
+      "recovery": {
+        "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+        "endTime": null,
+        "contract": "vinetrack.occurrence-recovery",
+        "coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+              "physicalPathRef": {
+                "pathId": "4f3e735b-374d-449b-a1ff-265f57cc71cf",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000002",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+              "physicalPathRef": {
+                "pathId": "3d1d6c54-253f-48b0-b62f-62cd40c97bc8",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block Y"
+            }
+          ],
+          "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+          "states": {
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44": {
+              "source": "manual",
+              "status": "skipped",
+              "tankSessionIds": [],
+              "lastOperationId": "7dc140e7-51f9-4135-a296-02bc53c55fd4"
+            },
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b": {
+              "source": null,
+              "status": "incomplete",
+              "tankSessionIds": [],
+              "lastOperationId": null
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 2,
+          "activeOrder": [
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+          "selectedOccurrenceId": null
+        },
+        "isActive": true,
+        "receipts": [
+          {
+            "result": {
+              "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+              "coverage": {
+                "items": [
+                  {
+                    "blockId": "30000000-0000-4000-8000-000000000001",
+                    "direction": null,
+                    "pathNumber": 38.5,
+                    "passOrdinal": 1,
+                    "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+                    "physicalPathRef": {
+                      "pathId": "4f3e735b-374d-449b-a1ff-265f57cc71cf",
+                      "rowIds": [
+                        "31000000-0000-4000-8000-000000000001",
+                        "31000000-0000-4000-8000-000000000002"
+                      ],
+                      "rowSnapshots": [
+                        {
+                          "id": "31000000-0000-4000-8000-000000000001",
+                          "number": 38,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.1
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.1
+                          }
+                        },
+                        {
+                          "id": "31000000-0000-4000-8000-000000000002",
+                          "number": 39,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.10003
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.10003
+                          }
+                        }
+                      ],
+                      "geometryRevision": "stored-rows-fixture-v1"
+                    },
+                    "blockNameSnapshot": "Block X"
+                  },
+                  {
+                    "blockId": "30000000-0000-4000-8000-000000000002",
+                    "direction": null,
+                    "pathNumber": 38.5,
+                    "passOrdinal": 2,
+                    "occurrenceId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+                    "physicalPathRef": {
+                      "pathId": "3d1d6c54-253f-48b0-b62f-62cd40c97bc8",
+                      "rowIds": [
+                        "31000000-0000-4000-8000-000000000001",
+                        "31000000-0000-4000-8000-000000000002"
+                      ],
+                      "rowSnapshots": [
+                        {
+                          "id": "31000000-0000-4000-8000-000000000001",
+                          "number": 38,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.1
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.1
+                          }
+                        },
+                        {
+                          "id": "31000000-0000-4000-8000-000000000002",
+                          "number": 39,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.10003
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.10003
+                          }
+                        }
+                      ],
+                      "geometryRevision": "stored-rows-fixture-v1"
+                    },
+                    "blockNameSnapshot": "Block Y"
+                  }
+                ],
+                "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+                "states": {
+                  "58a16798-30dd-4327-aa8d-8dc0c9d22f44": {
+                    "source": "manual",
+                    "status": "done",
+                    "tankSessionIds": [],
+                    "lastOperationId": "e66fae77-c547-4952-9e98-05837e648022"
+                  },
+                  "68d1b4ab-32d1-4e47-867a-10205a5c826b": {
+                    "source": null,
+                    "status": "incomplete",
+                    "tankSessionIds": [],
+                    "lastOperationId": null
+                  }
+                },
+                "retired": [],
+                "contract": "vinetrack.planned-occurrence",
+                "revision": 1,
+                "activeOrder": [
+                  "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+                  "68d1b4ab-32d1-4e47-867a-10205a5c826b"
+                ],
+                "planRevision": 1,
+                "schemaVersion": 1,
+                "plannedCursorId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+                "selectedOccurrenceId": null
+              },
+              "operationId": "e66fae77-c547-4952-9e98-05837e648022"
+            },
+            "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+            "actorId": "10000000-0000-4000-8000-000000000001",
+            "request": {
+              "action": {
+                "kind": "setStatus",
+                "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+                "source": "manual",
+                "blockId": "30000000-0000-4000-8000-000000000001",
+                "toStatus": "done",
+                "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+                "tankSessionIds": [],
+                "expectedBeforeState": {
+                  "source": null,
+                  "status": "incomplete",
+                  "tankSessionIds": [],
+                  "lastOperationId": null
+                }
+              },
+              "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+              "expectedRevision": 0,
+              "expectedPlanRevision": 1
+            },
+            "operationId": "e66fae77-c547-4952-9e98-05837e648022"
+          },
+          {
+            "result": {
+              "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+              "coverage": {
+                "items": [
+                  {
+                    "blockId": "30000000-0000-4000-8000-000000000001",
+                    "direction": null,
+                    "pathNumber": 38.5,
+                    "passOrdinal": 1,
+                    "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+                    "physicalPathRef": {
+                      "pathId": "4f3e735b-374d-449b-a1ff-265f57cc71cf",
+                      "rowIds": [
+                        "31000000-0000-4000-8000-000000000001",
+                        "31000000-0000-4000-8000-000000000002"
+                      ],
+                      "rowSnapshots": [
+                        {
+                          "id": "31000000-0000-4000-8000-000000000001",
+                          "number": 38,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.1
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.1
+                          }
+                        },
+                        {
+                          "id": "31000000-0000-4000-8000-000000000002",
+                          "number": 39,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.10003
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.10003
+                          }
+                        }
+                      ],
+                      "geometryRevision": "stored-rows-fixture-v1"
+                    },
+                    "blockNameSnapshot": "Block X"
+                  },
+                  {
+                    "blockId": "30000000-0000-4000-8000-000000000002",
+                    "direction": null,
+                    "pathNumber": 38.5,
+                    "passOrdinal": 2,
+                    "occurrenceId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+                    "physicalPathRef": {
+                      "pathId": "3d1d6c54-253f-48b0-b62f-62cd40c97bc8",
+                      "rowIds": [
+                        "31000000-0000-4000-8000-000000000001",
+                        "31000000-0000-4000-8000-000000000002"
+                      ],
+                      "rowSnapshots": [
+                        {
+                          "id": "31000000-0000-4000-8000-000000000001",
+                          "number": 38,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.1
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.1
+                          }
+                        },
+                        {
+                          "id": "31000000-0000-4000-8000-000000000002",
+                          "number": 39,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.10003
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.10003
+                          }
+                        }
+                      ],
+                      "geometryRevision": "stored-rows-fixture-v1"
+                    },
+                    "blockNameSnapshot": "Block Y"
+                  }
+                ],
+                "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+                "states": {
+                  "58a16798-30dd-4327-aa8d-8dc0c9d22f44": {
+                    "source": "manual",
+                    "status": "skipped",
+                    "tankSessionIds": [],
+                    "lastOperationId": "7dc140e7-51f9-4135-a296-02bc53c55fd4"
+                  },
+                  "68d1b4ab-32d1-4e47-867a-10205a5c826b": {
+                    "source": null,
+                    "status": "incomplete",
+                    "tankSessionIds": [],
+                    "lastOperationId": null
+                  }
+                },
+                "retired": [],
+                "contract": "vinetrack.planned-occurrence",
+                "revision": 2,
+                "activeOrder": [
+                  "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+                  "68d1b4ab-32d1-4e47-867a-10205a5c826b"
+                ],
+                "planRevision": 1,
+                "schemaVersion": 1,
+                "plannedCursorId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+                "selectedOccurrenceId": null
+              },
+              "operationId": "7dc140e7-51f9-4135-a296-02bc53c55fd4"
+            },
+            "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+            "actorId": "10000000-0000-4000-8000-000000000001",
+            "request": {
+              "action": {
+                "kind": "setStatus",
+                "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+                "source": "manual",
+                "blockId": "30000000-0000-4000-8000-000000000001",
+                "toStatus": "skipped",
+                "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+                "tankSessionIds": [],
+                "expectedBeforeState": {
+                  "source": "manual",
+                  "status": "done",
+                  "tankSessionIds": [],
+                  "lastOperationId": "e66fae77-c547-4952-9e98-05837e648022"
+                }
+              },
+              "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+              "expectedRevision": 1,
+              "expectedPlanRevision": 1
+            },
+            "operationId": "7dc140e7-51f9-4135-a296-02bc53c55fd4"
+          }
+        ],
+        "vineyardId": "20000000-0000-4000-8000-000000000001",
+        "schemaVersion": 1,
+        "reversibleOperations": [
+          {
+            "result": {
+              "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+              "coverage": {
+                "items": [
+                  {
+                    "blockId": "30000000-0000-4000-8000-000000000001",
+                    "direction": null,
+                    "pathNumber": 38.5,
+                    "passOrdinal": 1,
+                    "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+                    "physicalPathRef": {
+                      "pathId": "4f3e735b-374d-449b-a1ff-265f57cc71cf",
+                      "rowIds": [
+                        "31000000-0000-4000-8000-000000000001",
+                        "31000000-0000-4000-8000-000000000002"
+                      ],
+                      "rowSnapshots": [
+                        {
+                          "id": "31000000-0000-4000-8000-000000000001",
+                          "number": 38,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.1
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.1
+                          }
+                        },
+                        {
+                          "id": "31000000-0000-4000-8000-000000000002",
+                          "number": 39,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.10003
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.10003
+                          }
+                        }
+                      ],
+                      "geometryRevision": "stored-rows-fixture-v1"
+                    },
+                    "blockNameSnapshot": "Block X"
+                  },
+                  {
+                    "blockId": "30000000-0000-4000-8000-000000000002",
+                    "direction": null,
+                    "pathNumber": 38.5,
+                    "passOrdinal": 2,
+                    "occurrenceId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+                    "physicalPathRef": {
+                      "pathId": "3d1d6c54-253f-48b0-b62f-62cd40c97bc8",
+                      "rowIds": [
+                        "31000000-0000-4000-8000-000000000001",
+                        "31000000-0000-4000-8000-000000000002"
+                      ],
+                      "rowSnapshots": [
+                        {
+                          "id": "31000000-0000-4000-8000-000000000001",
+                          "number": 38,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.1
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.1
+                          }
+                        },
+                        {
+                          "id": "31000000-0000-4000-8000-000000000002",
+                          "number": 39,
+                          "endPoint": {
+                            "latitude": -33.399,
+                            "longitude": 149.10003
+                          },
+                          "startPoint": {
+                            "latitude": -33.4,
+                            "longitude": 149.10003
+                          }
+                        }
+                      ],
+                      "geometryRevision": "stored-rows-fixture-v1"
+                    },
+                    "blockNameSnapshot": "Block Y"
+                  }
+                ],
+                "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+                "states": {
+                  "58a16798-30dd-4327-aa8d-8dc0c9d22f44": {
+                    "source": "manual",
+                    "status": "skipped",
+                    "tankSessionIds": [],
+                    "lastOperationId": "7dc140e7-51f9-4135-a296-02bc53c55fd4"
+                  },
+                  "68d1b4ab-32d1-4e47-867a-10205a5c826b": {
+                    "source": null,
+                    "status": "incomplete",
+                    "tankSessionIds": [],
+                    "lastOperationId": null
+                  }
+                },
+                "retired": [],
+                "contract": "vinetrack.planned-occurrence",
+                "revision": 2,
+                "activeOrder": [
+                  "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+                  "68d1b4ab-32d1-4e47-867a-10205a5c826b"
+                ],
+                "planRevision": 1,
+                "schemaVersion": 1,
+                "plannedCursorId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+                "selectedOccurrenceId": null
+              },
+              "operationId": "7dc140e7-51f9-4135-a296-02bc53c55fd4"
+            },
+            "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+            "actorId": "10000000-0000-4000-8000-000000000001",
+            "request": {
+              "action": {
+                "kind": "setStatus",
+                "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+                "source": "manual",
+                "blockId": "30000000-0000-4000-8000-000000000001",
+                "toStatus": "skipped",
+                "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+                "tankSessionIds": [],
+                "expectedBeforeState": {
+                  "source": "manual",
+                  "status": "done",
+                  "tankSessionIds": [],
+                  "lastOperationId": "e66fae77-c547-4952-9e98-05837e648022"
+                }
+              },
+              "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+              "expectedRevision": 1,
+              "expectedPlanRevision": 1
+            },
+            "operationId": "7dc140e7-51f9-4135-a296-02bc53c55fd4",
+            "previousState": {
+              "source": "manual",
+              "status": "done",
+              "tankSessionIds": [],
+              "lastOperationId": "e66fae77-c547-4952-9e98-05837e648022"
+            },
+            "resultingState": {
+              "source": "manual",
+              "status": "skipped",
+              "tankSessionIds": [],
+              "lastOperationId": "7dc140e7-51f9-4135-a296-02bc53c55fd4"
+            }
+          }
+        ]
+      },
+      "undoResult": {
+        "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+        "coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+              "physicalPathRef": {
+                "pathId": "4f3e735b-374d-449b-a1ff-265f57cc71cf",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000002",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+              "physicalPathRef": {
+                "pathId": "3d1d6c54-253f-48b0-b62f-62cd40c97bc8",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block Y"
+            }
+          ],
+          "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+          "states": {
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44": {
+              "source": "correction",
+              "status": "done",
+              "tankSessionIds": [],
+              "lastOperationId": "6ef85edc-5612-4c8b-85fe-f41edc825cb3"
+            },
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b": {
+              "source": null,
+              "status": "incomplete",
+              "tankSessionIds": [],
+              "lastOperationId": null
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 3,
+          "activeOrder": [
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+          "selectedOccurrenceId": null
+        },
+        "operationId": "6ef85edc-5612-4c8b-85fe-f41edc825cb3"
+      },
+      "bResult": {
+        "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+        "coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+              "physicalPathRef": {
+                "pathId": "4f3e735b-374d-449b-a1ff-265f57cc71cf",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000002",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+              "physicalPathRef": {
+                "pathId": "3d1d6c54-253f-48b0-b62f-62cd40c97bc8",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block Y"
+            }
+          ],
+          "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+          "states": {
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44": {
+              "source": "correction",
+              "status": "done",
+              "tankSessionIds": [],
+              "lastOperationId": "6ef85edc-5612-4c8b-85fe-f41edc825cb3"
+            },
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b": {
+              "source": "manual",
+              "status": "skipped",
+              "tankSessionIds": [],
+              "lastOperationId": "a8061dc0-1bea-4d64-89ef-cadb0262531f"
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 4,
+          "activeOrder": [
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": null,
+          "selectedOccurrenceId": null
+        },
+        "operationId": "a8061dc0-1bea-4d64-89ef-cadb0262531f"
+      },
+      "finalResult": {
+        "tripId": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+        "endTime": "2026-10-14T09:00:00+00:00",
+        "coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+              "physicalPathRef": {
+                "pathId": "4f3e735b-374d-449b-a1ff-265f57cc71cf",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000002",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+              "physicalPathRef": {
+                "pathId": "3d1d6c54-253f-48b0-b62f-62cd40c97bc8",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block Y"
+            }
+          ],
+          "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+          "states": {
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44": {
+              "source": "correction",
+              "status": "done",
+              "tankSessionIds": [],
+              "lastOperationId": "6ef85edc-5612-4c8b-85fe-f41edc825cb3"
+            },
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b": {
+              "source": "manual",
+              "status": "skipped",
+              "tankSessionIds": [],
+              "lastOperationId": "a8061dc0-1bea-4d64-89ef-cadb0262531f"
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 5,
+          "activeOrder": [
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": null,
+          "selectedOccurrenceId": null
+        },
+        "isActive": false,
+        "operationId": "3100f509-772f-46b5-bdbf-af05a03393ea"
+      },
+      "backendTrip": {
+        "id": "2bd78038-abf7-4275-bab0-e6739c6e78a5",
+        "pin_ids": [],
+        "end_time": "2026-10-14T09:00:00+00:00",
+        "is_active": false,
+        "is_paused": false,
+        "created_at": "2026-10-14T11:52:20.968042+00:00",
+        "created_by": "10000000-0000-4000-8000-000000000001",
+        "deleted_at": null,
+        "machine_id": null,
+        "paddock_id": null,
+        "start_time": "2026-10-14T08:00:00+00:00",
+        "tractor_id": null,
+        "trip_title": null,
+        "updated_at": "2026-10-14T11:52:21.056837+00:00",
+        "updated_by": "10000000-0000-4000-8000-000000000001",
+        "paddock_ids": [
+          "30000000-0000-4000-8000-000000000001",
+          "30000000-0000-4000-8000-000000000002"
+        ],
+        "path_points": [],
+        "person_name": null,
+        "total_tanks": 0,
+        "vineyard_id": "20000000-0000-4000-8000-000000000001",
+        "paddock_name": null,
+        "row_sequence": [
+          38.5,
+          38.5
+        ],
+        "sync_version": 6,
+        "work_task_id": null,
+        "skipped_paths": [],
+        "tank_sessions": [],
+        "trip_function": null,
+        "sequence_index": 2,
+        "total_distance": 0,
+        "worker_type_id": null,
+        "completed_paths": [],
+        "is_filling_tank": false,
+        "next_row_number": null,
+        "seeding_details": null,
+        "completion_notes": null,
+        "end_engine_hours": null,
+        "operator_user_id": "10000000-0000-4000-8000-000000000001",
+        "pause_timestamps": [],
+        "tracking_pattern": null,
+        "client_updated_at": "2026-10-14T11:52:21.062819+00:00",
+        "resume_timestamps": [],
+        "active_tank_number": null,
+        "current_row_number": null,
+        "start_engine_hours": null,
+        "filling_tank_number": null,
+        "occurrence_coverage": {
+          "items": [
+            {
+              "blockId": "30000000-0000-4000-8000-000000000001",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 1,
+              "occurrenceId": "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+              "physicalPathRef": {
+                "pathId": "4f3e735b-374d-449b-a1ff-265f57cc71cf",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block X"
+            },
+            {
+              "blockId": "30000000-0000-4000-8000-000000000002",
+              "direction": null,
+              "pathNumber": 38.5,
+              "passOrdinal": 2,
+              "occurrenceId": "68d1b4ab-32d1-4e47-867a-10205a5c826b",
+              "physicalPathRef": {
+                "pathId": "3d1d6c54-253f-48b0-b62f-62cd40c97bc8",
+                "rowIds": [
+                  "31000000-0000-4000-8000-000000000001",
+                  "31000000-0000-4000-8000-000000000002"
+                ],
+                "rowSnapshots": [
+                  {
+                    "id": "31000000-0000-4000-8000-000000000001",
+                    "number": 38,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.1
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.1
+                    }
+                  },
+                  {
+                    "id": "31000000-0000-4000-8000-000000000002",
+                    "number": 39,
+                    "endPoint": {
+                      "latitude": -33.399,
+                      "longitude": 149.10003
+                    },
+                    "startPoint": {
+                      "latitude": -33.4,
+                      "longitude": 149.10003
+                    }
+                  }
+                ],
+                "geometryRevision": "stored-rows-fixture-v1"
+              },
+              "blockNameSnapshot": "Block Y"
+            }
+          ],
+          "planId": "2c28ef8d-26ff-41fb-b9fc-67a3d65128e6",
+          "states": {
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44": {
+              "source": "correction",
+              "status": "done",
+              "tankSessionIds": [],
+              "lastOperationId": "6ef85edc-5612-4c8b-85fe-f41edc825cb3"
+            },
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b": {
+              "source": "manual",
+              "status": "skipped",
+              "tankSessionIds": [],
+              "lastOperationId": "a8061dc0-1bea-4d64-89ef-cadb0262531f"
+            }
+          },
+          "retired": [],
+          "contract": "vinetrack.planned-occurrence",
+          "revision": 5,
+          "activeOrder": [
+            "58a16798-30dd-4327-aa8d-8dc0c9d22f44",
+            "68d1b4ab-32d1-4e47-867a-10205a5c826b"
+          ],
+          "planRevision": 1,
+          "schemaVersion": 1,
+          "plannedCursorId": null,
+          "selectedOccurrenceId": null
+        },
+        "current_path_distance": 0,
+        "manual_correction_events": []
+      }
+    }
+  ]
+}

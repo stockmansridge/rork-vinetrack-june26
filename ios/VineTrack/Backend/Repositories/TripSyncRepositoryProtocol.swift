@@ -17,4 +17,11 @@ protocol TripSyncRepositoryProtocol: Sendable {
     /// actually clear the server value. See sql/102_trips_work_task_link.sql.
     func updateTripWorkTaskLink(id: UUID, workTaskId: UUID?) async throws
     func softDeleteTrip(id: UUID) async throws
+    func fetchOccurrenceRecovery(tripId: UUID, operationIds: [String]) async throws -> TripOccurrenceCoverage.JSON
+}
+
+extension TripSyncRepositoryProtocol {
+    func fetchOccurrenceRecovery(tripId: UUID, operationIds: [String]) async throws -> TripOccurrenceCoverage.JSON {
+        throw TripOccurrenceCoverage.Failure.updateRequired
+    }
 }

@@ -175,7 +175,7 @@ struct SprayProgramCSVService {
             let treatedBlocks = record.applicationGeometry?.blocks
             row.append(escapeCSV(canonical?.blocks?.map(\.blockId).joined(separator: "; ") ?? SprayBlockAttributionDisplay.idsCell(treatedBlocks)))
             row.append(escapeCSV(canonical?.blocks?.map(\.name).joined(separator: "; ") ?? SprayBlockAttributionDisplay.namesCell(treatedBlocks, paddocks: paddocks)))
-            row.append(escapeCSV(canonical?.rows.map { String(format: "%g", $0.rowNumber) }.joined(separator: "; ") ?? ""))
+            row.append(escapeCSV(canonical?.rows.map { $0.occurrenceId == nil ? String(format: "%g", $0.rowNumber) : "\($0.displayLabel) — \($0.status) [\($0.occurrenceId ?? "")]" }.joined(separator: "; ") ?? ""))
 
             let actuals = SprayTankActualStore.shared.records.filter { $0.sprayRecordId == record.id }
             row.append(String(actuals.count))

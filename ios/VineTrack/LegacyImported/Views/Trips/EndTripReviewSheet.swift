@@ -85,7 +85,7 @@ struct EndTripReviewSheet: View {
                     Section {
                         Text(liveTrip.coverageBasis == .updateRequired
                             ? "Update required. Numeric coverage cannot describe this trip."
-                            : "Pass states are shown independently. Occurrence finalisation is not yet enabled; saved work is retained.")
+                            : "Review changes are saved per pass. Finalisation waits for occurrence actions and tank data to sync.")
                     }
                 }
 
@@ -119,6 +119,15 @@ struct EndTripReviewSheet: View {
                     Section("Row completion") {
                         ForEach(rows) { row in
                             rowItem(row)
+                            if let id = row.result.occurrenceId {
+                                Picker("Pass status", selection: Binding<String>(
+                                    get: { liveTrip.occurrenceDocument?.states[id]?.status ?? "incomplete" },
+                                    set: { tracking.reviewOccurrence(id, status: $0) })) {
+                                    Text("Done").tag("done")
+                                    Text("Skip").tag("skipped")
+                                    Text("Incomplete").tag("incomplete")
+                                }
+                            }
                         }
                     }
                 }
@@ -571,8 +580,16 @@ struct EndTripReviewSheet: View {
     }
 
     private func applyAndFinish() {
-        guard liveTrip.coverageBasis == .legacy else {
-            finishBlockedMessage = "Occurrence End Review is held. Saved pass states are retained; numeric finalisation was not applied."
+        if liveTrip.coverageBasis != .legacy {
+            guard liveTrip.coverageBasis == .occurrence, var current = tracking.activeTrip else {
+                finishBlockedMessage = "Update required. Saved occurrence states were retained."; return
+            }
+            current.completionNotes = completionNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+            current.endEngineHours = parsedEndEngineHours
+            do { try store.updateTripOrThrow(current) }
+            catch { finishBlockedMessage = error.localizedDescription; return }
+            let outcome = tracking.endTrip()
+            if outcome.isEnded { dismiss() } else { finishBlockedMessage = outcome.operatorMessage }
             return
         }
         // Persist any manual ticks AND the optional completion notes

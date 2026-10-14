@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import unittest
 import uuid
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 BIN = Path('/usr/lib/postgresql/17/bin')
@@ -97,6 +98,58 @@ class AuthorityTests(unittest.TestCase):
 
     def states(self, d):
         return [d['states'][i['occurrenceId']]['status'] for i in d['items']]
+
+    def test_native_create_metadata_superset_preserved(self):
+        for platform in ['android','ios']:
+            d=document(); t=str(uuid.uuid4()); task=str(uuid.uuid4()); worker=str(uuid.uuid4())
+            sql(f"insert into public.work_tasks values('{task}','{VINEYARD}',null); insert into public.worker_types values('{worker}','{VINEYARD}',null);",role='super')
+            metadata={'id':t,'vineyard_id':VINEYARD,'paddock_id':BLOCK,'paddock_ids':[BLOCK,BLOCK_Y],
+                'paddock_name':'Frozen selection','tracking_pattern':'upAndBack','start_time':'2026-10-14T08:00:00Z',
+                'is_active':False,'is_paused':False,'person_name':'Operator','trip_function':'seeding',
+                'trip_title':platform+' title','work_task_id':task,'worker_type_id':worker,'operator_user_id':ACTOR,
+                'start_engine_hours':120.5,'seeding_details':{'notes':'do not trim','products':[{'name':'Rye','kg_per_ha':12}]},
+                'total_tanks':3,'total_distance':12.5,'current_path_distance':4.2,'path_points':[{'latitude':-33.4,'longitude':149.1}],
+                'pin_ids':[str(uuid.uuid4())],'pause_timestamps':['2026-10-14T08:01:00Z'],'resume_timestamps':['2026-10-14T08:02:00Z'],
+                'tank_sessions':[],'active_tank_number':None,'is_filling_tank':False,'filling_tank_number':None,
+                'manual_correction_events':['existing diagnostic'],'completion_notes':'retained note','created_by':ACTOR,
+                'client_updated_at':'2026-10-14T08:00:01Z','row_sequence':[38.5,38.5],'sequence_index':0,
+                'current_row_number':38.5,'next_row_number':38.5,'completed_paths':[],'skipped_paths':[]}
+            stmt=f"select public.create_trip_with_occurrences_v1('{uuid.uuid4()}',{literal(metadata)},{literal(d)});"
+            accepted=sql(stmt); self.assertEqual(sql(stmt),accepted)
+            stored=sql(f"select to_jsonb(t) from public.trips t where id='{t}';")
+            for key,value in metadata.items():
+                if key in ['start_time','client_updated_at']: continue
+                self.assertEqual(stored[key],value,(platform,key))
+            self.assertEqual(stored['occurrence_coverage'],d)
+
+    def test_create_does_not_silently_override_numeric_projection(self):
+        d=document(); fields={'id':str(uuid.uuid4()),'vineyard_id':VINEYARD,'row_sequence':[38.5],'completed_paths':[38.5]}
+        self.assert_error(f"select public.create_trip_with_occurrences_v1('{uuid.uuid4()}',{literal(fields)},{literal(d)});",'OCCURRENCE_CREATE_PROJECTION_CONFLICT')
+        self.assertIsNone(sql(f"select to_jsonb(t) from public.trips t where id='{fields['id']}';"))
+
+    def test_create_rejects_cross_scope_task_and_worker(self):
+        for key,table in [('work_task_id','work_tasks'),('worker_type_id','worker_types')]:
+            foreign=str(uuid.uuid4()); sql(f"insert into public.{table} values('{foreign}','20000000-0000-4000-8000-000000000002',null);",role='super')
+            fields={'id':str(uuid.uuid4()),'vineyard_id':VINEYARD,key:foreign}
+            self.assert_error(f"select public.create_trip_with_occurrences_v1('{uuid.uuid4()}',{literal(fields)},{literal(document())});",'OCCURRENCE_SETUP_SCOPE_CONFLICT')
+
+    def test_recovery_returns_actual_reversible_state_and_exact_receipt(self):
+        t,d,_=create(); done=str(uuid.uuid4()); d=sql(request(t,d,action(t,d),done))['coverage']
+        skip=str(uuid.uuid4()); skip_stmt=request(t,d,action(t,d,to='skipped'),skip); result=sql(skip_stmt)
+        recovery=sql(f"select public.get_trip_occurrence_recovery_v1('{t}',array['{done}'::uuid,'{skip}'::uuid]);")
+        self.assertEqual(recovery['coverage'],result['coverage']); self.assertEqual(len(recovery['reversibleOperations']),1)
+        recovered=recovery['reversibleOperations'][0]; self.assertEqual(recovered['operationId'],skip)
+        self.assertEqual(recovered['previousState']['status'],'done'); self.assertEqual(recovered['resultingState']['status'],'skipped')
+        self.assertEqual(recovery['receipts'][-1]['result'],result)
+        self.assert_error(f"select public.get_trip_occurrence_recovery_v1('{t}');",'OCCURRENCE_TRIP_FORBIDDEN',actor=OTHER_ACTOR)
+
+    def test_recovery_no_undo_for_retired_or_finalised_occurrence(self):
+        t,d,_=create(); d=sql(request(t,d,action(t,d)))['coverage']
+        edit={'kind':'editPlan','planId':d['planId'],'items':d['items'],'activeOrder':[d['items'][1]['occurrenceId']],'retired':[d['items'][0]['occurrenceId']]}
+        d=sql(request(t,d,edit))['coverage']
+        self.assertEqual(sql(f"select public.get_trip_occurrence_recovery_v1('{t}');")['reversibleOperations'],[])
+        sql(f"select public.finalize_trip_occurrences_v1('{uuid.uuid4()}','{t}',{d['revision']},{d['planRevision']},{literal(d['states'])},{literal({'endTime':'2026-10-14T09:00:00Z'})});")
+        self.assertFalse(sql(f"select public.get_trip_occurrence_recovery_v1('{t}');")['isActive'])
 
     def test_first_done_second_incomplete(self):
         t,d,_=create(); result=sql(request(t,d,action(t,d)))
@@ -405,7 +458,7 @@ if __name__ == '__main__':
         subprocess.run([str(BIN/'initdb'),'-D',str(data),'-A','trust','--no-locale'],env=ENV,check=True,capture_output=True)
         subprocess.run([str(BIN/'pg_ctl'),'-D',str(data),'-l',str(log),'-o',f"-k {work} -p 55439 -c listen_addresses=''",'-w','start'],env=ENV,check=True,capture_output=True)
         try:
-            for file in ['sql/tests/276_trip_occurrence_bootstrap.sql','sql/276_trip_occurrence_authority_v1.sql','sql/277_trip_occurrence_reports_v2.sql']:
+            for file in ['sql/tests/276_trip_occurrence_bootstrap.sql','sql/276_trip_occurrence_authority_v1.sql','sql/277_trip_occurrence_reports_v2.sql','sql/278_trip_occurrence_recovery_v1.sql']:
                 run=subprocess.run([str(BIN/'psql'),'-X','-v','ON_ERROR_STOP=1','-h',work,'-p','55439','-d','postgres','-f',str(ROOT/file)],env=ENV,text=True,capture_output=True,timeout=30)
                 if run.returncode:
                     raise RuntimeError(run.stderr)
@@ -413,5 +466,24 @@ if __name__ == '__main__':
             result=unittest.TextTestRunner(verbosity=2).run(suite)
             if not result.wasSuccessful():
                 raise SystemExit(1)
+            if '--export-native-recovery-fixtures' in sys.argv:
+                fixtures=[]
+                for origin,blocks in [('android-shaped-create',[BLOCK,BLOCK]),('ios-shaped-create',[BLOCK,BLOCK_Y])]:
+                    t,d,_=create(document(blocks)); initial=d
+                    done=str(uuid.uuid4()); done_result=sql(request(t,d,action(t,d),done)); d=done_result['coverage']
+                    skip=str(uuid.uuid4()); skip_result=sql(request(t,d,action(t,d,to='skipped'),skip)); d=skip_result['coverage']
+                    recovery=sql(f"select public.get_trip_occurrence_recovery_v1('{t}',array['{done}'::uuid,'{skip}'::uuid]);")
+                    undo={'kind':'undo','planId':d['planId'],'occurrenceId':d['items'][0]['occurrenceId'],'blockId':blocks[0],'undoOfOperationId':skip}
+                    undo_result=sql(request(t,d,undo)); d=undo_result['coverage']
+                    b_result=sql(request(t,d,action(t,d,1,to='skipped'))); d=b_result['coverage']
+                    ended=sql(f"select public.finalize_trip_occurrences_v1('{uuid.uuid4()}','{t}',{d['revision']},{d['planRevision']},{literal(d['states'])},{literal({'endTime':'2026-10-14T09:00:00Z'})});")
+                    fixtures.append({'origin':origin,'scope':{'ownerId':ACTOR,'vineyardId':VINEYARD,'tripId':t},
+                        'initial':initial,'doneResult':done_result,'skipResult':skip_result,'recovery':recovery,
+                        'undoResult':undo_result,'bResult':b_result,'finalResult':ended,
+                        'backendTrip':sql(f"select to_jsonb(t) from public.trips t where id='{t}';")})
+                contents=json.dumps({'evidence':'real-local-postgresql-rpc-transcript-not-device-handover','fixtures':fixtures},indent=2)+'\n'
+                for target in ['ios/VineTrackTests/occurrence-recovery-postgres.json','android-vinetrack/app/src/test/resources/occurrence-recovery-postgres.json']:
+                    (ROOT/target).write_text(contents)
+                print('Exported identical real PostgreSQL recovery transcripts for Kotlin and Swift native tests.')
         finally:
             subprocess.run([str(BIN/'pg_ctl'),'-D',str(data),'-m','immediate','-w','stop'],env=ENV,check=True,capture_output=True)

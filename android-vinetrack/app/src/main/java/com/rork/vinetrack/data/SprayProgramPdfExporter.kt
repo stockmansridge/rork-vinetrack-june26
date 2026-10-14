@@ -336,7 +336,7 @@ object SprayProgramPdfExporter {
         val blocksRecorded = canonical?.blocks?.isNotEmpty() == true || treatedBlocks != null
         val blockCell = canonical?.blocks?.takeIf { it.isNotEmpty() }?.let { blocks ->
             val names = blocks.joinToString(", ") { it.name }
-            val rows = canonical.rows.joinToString(", ") { String.format(Locale.US, "%g", it.rowNumber) }
+            val rows = canonical.rows.joinToString(", ") { if (it.occurrenceId == null) String.format(Locale.US, "%g", it.rowNumber) else "${it.displayLabel} — ${it.status}" }
             if (rows.isBlank()) names else "$names · rows $rows"
         } ?: treatedBlocks?.joinToString(", ") { it.name } ?: "Not recorded"
         cell(s, 2, blockCell, rowY, bodyPaint)

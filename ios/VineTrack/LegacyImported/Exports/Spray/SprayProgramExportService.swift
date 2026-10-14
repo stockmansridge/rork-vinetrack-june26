@@ -159,7 +159,7 @@ struct SprayProgramExportService {
                 let blockCell: String = {
                     if let canonical, let blocks = canonical.blocks, !blocks.isEmpty {
                         let names = blocks.map(\.name).joined(separator: ", ")
-                        let rows = canonical.rows.map { String(format: "%g", $0.rowNumber) }.joined(separator: ", ")
+                        let rows = canonical.rows.map { $0.occurrenceId == nil ? String(format: "%g", $0.rowNumber) : "\($0.displayLabel) — \($0.status)" }.joined(separator: ", ")
                         return rows.isEmpty ? names : "\(names) · rows \(rows)"
                     }
                     guard let resolved = SprayBlockAttributionDisplay.resolve(treatedBlocks, paddocks: paddocks) else {

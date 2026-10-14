@@ -54,6 +54,35 @@ class TripOccurrencePersistenceAndroidTest {
         assertEquals("done",d.status(a)); assertEquals("skipped",d.status(b)); assertEquals(done.params,state.pending.first().params)
         assertEquals(skip.id,state.history[1].id); assertEquals(4,state.pending.size)
     }
+    @Test fun realPreferenceLifecycleRequestsSurviveRecreationBeforeAcknowledgement() {
+        val owner=UUID.randomUUID().toString(); SessionStore(context).save("synthetic-access","synthetic-refresh",owner,null)
+        val scope=TripOccurrenceJournal.Scope(owner,UUID.randomUUID().toString(),UUID.randomUUID().toString())
+        var j=TripOccurrenceNativeStore(context).journal(scope)
+        val metadata=buildJsonObject { put("id",scope.tripId); put("vineyard_id",scope.vineyardId); put("is_active",false); put("trip_title","Retained title") }
+        val create=j.prepareCreation(metadata,fixture()); j=TripOccurrenceNativeStore(context).journal(scope)
+        assertEquals(create.params,j.load()!!.pending.first().params); assertFalse(j.load()!!.creationConfirmed)
+        assertTrue(runCatching { j.setStatus(a,"done") }.isFailure)
+        j.acknowledge(buildJsonObject { put("tripId",scope.tripId); put("operationId",create.id); put("coverage",create.after) })
+        val activation=j.activate(buildJsonObject { put("startTime","2026-10-14T08:00:00Z") })
+        j=TripOccurrenceNativeStore(context).journal(scope); assertEquals(activation.params,j.load()!!.pending.single().params)
+        j.acknowledge(buildJsonObject { put("tripId",scope.tripId); put("operationId",activation.id); put("coverage",activation.after) })
+        j.setStatus(a,"done"); val final=j.finalize(buildJsonObject { put("endTime","2026-10-14T09:00:00Z") })
+        j=TripOccurrenceNativeStore(context).journal(scope); assertEquals(final.params,j.load()!!.pending.last().params)
+        assertEquals("done",TripOccurrenceCoverage.requireDocument(j.projected(j.load()!!)).status(a))
+        assertNull(j.undoTarget())
+    }
+    @Test fun oldAccountCannotCommitDelayedOccurrenceAcknowledgement() {
+        val session=SessionStore(context); val owner=UUID.randomUUID().toString(); session.save("access-one","refresh-one",owner,null)
+        val scope=TripOccurrenceJournal.Scope(owner,UUID.randomUUID().toString(),UUID.randomUUID().toString())
+        val j=TripOccurrenceNativeStore(context).journal(scope); j.initialize(fixture()); val op=j.setStatus(a,"done")
+        assertTrue(runCatching { session.save("access-two","refresh-two",UUID.randomUUID().toString(),null) }.isFailure)
+        assertTrue(session.retentionGuard.isLocked)
+        val result=buildJsonObject { put("tripId",scope.tripId); put("operationId",op.id); put("coverage",op.after) }
+        assertTrue(runCatching { j.acknowledge(result) }.isFailure)
+        val retained = context.getSharedPreferences("trip_occurrence_journals_v1", Context.MODE_PRIVATE)
+            .getString("${scope.ownerId}/${scope.vineyardId}/${scope.tripId}", null) ?: error("Retained scoped journal missing")
+        assertEquals(op.id, Json.parseToJsonElement(retained).jsonObject.getValue("pending").jsonArray.single().jsonObject.getValue("id").jsonPrimitive.content)
+    }
     @Test fun realPreferenceDelayedAckCannotRestoreOlderCoverage() {
         val owner=UUID.randomUUID().toString(); SessionStore(context).save("synthetic-access","synthetic-refresh",owner,null)
         val scope=TripOccurrenceJournal.Scope(owner,UUID.randomUUID().toString(),UUID.randomUUID().toString())
