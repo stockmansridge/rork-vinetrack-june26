@@ -179,6 +179,18 @@ nonisolated struct SpraySelectableRate: Identifiable, Sendable, Hashable {
     /// A derived point reads as its value plus a neutral qualifier —
     /// `"175 g/100 L (mid-range)"` — so the operator can tell at a glance which
     /// numbers the label printed and which one is arithmetic.
+    /// Presentation only: numeric/unit text leads, while each registered use remains distinct.
+    var selectionDetails: [String] {
+        var text = [useTitle, label.trimmedNonEmpty, condition?.trimmedNonEmpty,
+                    preset?.qualifier, registeredUse?.restrictions, registeredUse?.reEntryStatement].compactMap { $0?.trimmedNonEmpty }
+        if let days = registeredUse?.withholdingPeriodDays { text.append("Withholding period: \(days) days") }
+        if let hours = registeredUse?.reEntryPeriodHours { text.append("Re-entry interval: \(hours) hours") }
+        for key in ["method", "withholding_statement"] {
+            if case let .string(value) = registeredUse?.unknownFields[key], let value = value.trimmedNonEmpty { text.append(value) }
+        }
+        return text.reduce(into: [String]()) { if !$0.contains($1) && $1 != displayText { $0.append($1) } }
+    }
+
     var menuText: String {
         let caption = [label.trimmedNonEmpty, condition?.trimmedNonEmpty].compactMap { $0 }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.joined(separator: " — ")
         if let preset {

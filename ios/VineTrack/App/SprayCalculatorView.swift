@@ -3059,7 +3059,8 @@ struct SprayCalculatorView: View {
     }
 
     private var reviewSummary: String {
-        flow.isComplete ? "Ready to save or start" : (flow.firstBlocker?.title ?? "Incomplete")
+        guard flow.isComplete else { return flow.firstBlocker?.title ?? "Incomplete" }
+        return flow.operationalBlocker == nil ? "Ready to save or start" : "Calculation complete — action unavailable"
     }
 
     // MARK: - Step 2 — calculated block geometry
@@ -3824,6 +3825,8 @@ struct SprayCalculatorView: View {
                     }
                 }
             }
+            SprayConcentrationWarningView(products: SprayPlanningOperationalGate.warningProducts(
+                guidedInputs.products.filter { $0.basis == .per100Litres }.map(\.name)))
             GuidedReviewGroup(title: "Application", onEdit: { toggle(.application) }) {
                 VStack(alignment: .leading, spacing: 6) {
                     GuidedReviewRow(label: "Method", value: operationType.rawValue)
@@ -4541,6 +4544,10 @@ private struct CalcChemicalLineCard: View {
     @State private var overrideText: String = ""
     /// Why the typed dose was refused against the confirmed band, if it was.
     @State private var rangeRejection: String?
+    @State private var rateSheetOptions: [SpraySelectableRate] = []
+    @State private var showsRateSheet: Bool = false
+    @State private var cachedRateChemical: SavedChemical?
+    @State private var cachedRates: [SpraySelectableRate] = []
 
     /// The CONFIRMED rate governing this line's basis, from `default_rates`.
     private var confirmedResolution: ChemicalSprayRateHandoff.Resolution? {
@@ -4577,6 +4584,7 @@ private struct CalcChemicalLineCard: View {
     /// the Chemical editor's own all-crops view.
     private var offeredRates: [SpraySelectableRate] {
         guard let chem = selectedChemical else { return [] }
+        if cachedRateChemical == chem { return cachedRates }
         return SprayRegisteredUseRates.vineyardRates(for: chem)
     }
 
@@ -4773,35 +4781,6 @@ private struct CalcChemicalLineCard: View {
         )
     }
 
-    /// Offered rates grouped by the registered use they belong to.
-    ///
-    /// A rate detached from its crop and target is just a number, so the menu
-    /// keeps them under their own heading rather than pooling everything into
-    /// one anonymous list.
-    private var rateGroups: [RateGroup] {
-        var order: [String] = []
-        var byTitle: [String: [SpraySelectableRate]] = [:]
-        for rate in offeredRates {
-            let key = rate.useTitle ?? ""
-            if byTitle[key] == nil { order.append(key) }
-            byTitle[key, default: []].append(rate)
-        }
-        return order.map { key in
-            RateGroup(id: key, title: key.isEmpty ? nil : key, rates: byTitle[key] ?? [])
-        }
-    }
-
-    private struct RateGroup: Identifiable {
-        let id: String
-        let title: String?
-        let rates: [SpraySelectableRate]
-
-        /// True when VineTrack derived selectable points from this use's band.
-        /// The band itself then becomes context rather than an option, because
-        /// choosing "150–200" calculates nothing.
-        var hasPresets: Bool { rates.contains { $0.isRangePreset } }
-    }
-
     /// The unit the applied-rate field reads and writes in.
     ///
     /// The LABEL's unit whenever the selected rate states one that converts,
@@ -4875,51 +4854,6 @@ private struct CalcChemicalLineCard: View {
             labelUnit: appliedRateUnit,
             chemical: chem
         ) ?? chem.unit.fromBase(base)
-    }
-
-    /// The rate menu, shared by the compact basis chip and the Rate row.
-    @ViewBuilder
-    private func rateMenuItems(showsCheckmark: Bool) -> some View {
-        ForEach(rateGroups) { group in
-            Section(group.title ?? "Saved rates") {
-                ForEach(group.rates) { rate in
-                    // A band whose points are offered below it stops being an
-                    // option and becomes the heading those points sit under.
-                    // Leaving it selectable gave the operator a fourth choice
-                    // that calculated nothing — which is the defect this whole
-                    // change exists to remove.
-                    let isBandWithPoints = rate.requiresOperatorRate && group.hasPresets
-                    if rate.isSelectable, !isBandWithPoints {
-                        Button {
-                            line.selectedRateId = rate.id
-                            if let basis = rate.basis { line.basis = basis }
-                        } label: {
-                            HStack {
-                                Text(rate.menuText)
-                                if showsCheckmark, line.selectedRateId == rate.id {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    } else if isBandWithPoints {
-                        Button {} label: {
-                            Label("Label range: \(rate.displayText)", systemImage: "ruler")
-                        }
-                        .disabled(true)
-                    } else {
-                        // Reference-only (`basis:"other"`) and number-less rates
-                        // are SHOWN so the operator can read what the label
-                        // actually says, but they can never be chosen as an
-                        // application rate.
-                        Button {} label: {
-                            Label(rate.menuText, systemImage: "info.circle")
-                        }
-                        .disabled(true)
-                    }
-                }
-            }
-        }
     }
 
     var body: some View {
@@ -5075,15 +5009,17 @@ private struct CalcChemicalLineCard: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Rate").font(.caption).foregroundStyle(.secondary)
-                        Menu {
-                            rateMenuItems(showsCheckmark: true)
+                        Button {
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                            rateSheetOptions = offeredRates
+                            showsRateSheet = true
                         } label: {
-                            let label: String = selectedOfferedRate?.menuText ?? "Select rate"
+                            let label: String = selectedOfferedRate?.displayText ?? "Select rate"
                             HStack(spacing: 8) {
                                 Text(label)
                                     .font(.subheadline.weight(.medium))
                                     .foregroundStyle(.primary)
-                                    .lineLimit(1)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 Spacer()
                                 Image(systemName: "chevron.up.chevron.down")
                                     .font(.caption2)
@@ -5115,7 +5051,21 @@ private struct CalcChemicalLineCard: View {
         }
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(.rect(cornerRadius: 10))
-        .onAppear { syncOverrideText() }
+        .sheet(isPresented: $showsRateSheet) {
+            SprayLabelRateSelectionView(rates: rateSheetOptions, selectedID: line.selectedRateId) { rate in
+                line.selectedRateId = rate.id
+                if let basis = rate.basis { line.basis = basis }
+            }
+        }
+        .onAppear {
+            syncOverrideText()
+            cachedRateChemical = selectedChemical
+            cachedRates = selectedChemical.map { SprayRegisteredUseRates.vineyardRates(for: $0) } ?? []
+        }
+        .onChange(of: selectedChemical) { _, chemical in
+            cachedRateChemical = chemical
+            cachedRates = chemical.map { SprayRegisteredUseRates.vineyardRates(for: $0) } ?? []
+        }
         .onChange(of: line.overrideRate) { _, _ in syncOverrideText() }
         .onChange(of: line.selectedRateId) { _, _ in
             // A registered-rate selection clears an override. A synthetic id

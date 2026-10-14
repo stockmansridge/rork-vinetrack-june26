@@ -88,6 +88,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -143,6 +145,8 @@ import com.rork.vinetrack.data.spray.SprayCarrierAreaBasis
 import com.rork.vinetrack.data.spray.SprayVolumeChoice
 import com.rork.vinetrack.data.spray.SprayVolumeHelp
 import com.rork.vinetrack.ui.components.SprayPlanningCards
+import com.rork.vinetrack.ui.components.SprayConcentrationWarning
+import com.rork.vinetrack.ui.components.SprayLabelRateSheet
 import com.rork.vinetrack.data.spray.SprayPlanningIntent
 import com.rork.vinetrack.data.spray.SprayPlanningInputProvenance
 import com.rork.vinetrack.data.spray.SprayPlanningWireProvenance
@@ -891,7 +895,7 @@ fun SprayCalculatorScreen(
         }
     }
     val reviewSummary = if (guidedFlow.isComplete) {
-        "Ready to save or start"
+        if (guidedFlow.operationalBlocker == null) "Ready to save or start" else "Calculation complete — action unavailable"
     } else {
         guidedFlow.firstBlocker?.title ?: "Incomplete"
     }
@@ -2260,6 +2264,8 @@ fun SprayCalculatorScreen(
                         }
                     }
 
+                    SprayConcentrationWarning(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.warningProducts(
+                        guidedFlow.inputs.products.filter { it.basis == com.rork.vinetrack.data.spray.SprayProductRateBasis.PER_100_LITRES }.map { it.name }))
                     GuidedReviewGroup(
                         title = "Application",
                         accent = VineColors.Olive,
@@ -3592,6 +3598,8 @@ private fun SuggestedRegisteredRatePickerRow(
         SprayRegisteredUseRates.vineyardRates(chem)
     }
     val selected = rates.firstOrNull { it.id == line.selectedRateId }
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     Box {
         var menu by remember { mutableStateOf(false) }
         Row(
@@ -3599,12 +3607,12 @@ private fun SuggestedRegisteredRatePickerRow(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(8.dp))
                 .background(vine.appBackground)
-                .clickable(enabled = rates.isNotEmpty()) { menu = true }
+                .clickable(enabled = rates.isNotEmpty()) { focus.clearFocus(); keyboard?.hide(); menu = true }
                 .padding(horizontal = 10.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                selected?.menuText ?: line.rateAmount?.let {
+                selected?.displayText ?: line.rateAmount?.let {
                     "Confirmed default: ${fmtRate(it)} ${line.rateUnit.orEmpty()}${sprayBasisSuffix(line.basis)}"
                 } ?: if (rates.isEmpty()) "No selectable vineyard rate" else "Select rate",
                 fontSize = 13.sp,
@@ -3617,34 +3625,11 @@ private fun SuggestedRegisteredRatePickerRow(
                 Icon(Icons.Filled.SwapVert, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(14.dp))
             }
         }
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-            rates.groupBy { it.groupTitle }.forEach { (group, groupedRates) ->
-                DropdownMenuItem(
-                    text = {
-                        Text(group.uppercase(Locale.getDefault()), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
-                    },
-                    enabled = false,
-                    onClick = {},
-                )
-                groupedRates.forEach { rate ->
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text(rate.menuText, fontSize = 13.sp)
-                                rate.condition?.takeIf { it.isNotBlank() && !rate.menuText.startsWith(it) }?.let {
-                                    Text(it, fontSize = 10.sp, color = vine.textSecondary)
-                                }
-                            }
-                        },
-                        enabled = rate.isSelectable,
-                        onClick = {
-                            applySuggestedRate(line, rate)
-                            onChanged()
-                            menu = false
-                        },
-                    )
-                }
-            }
+        if (menu) {
+            SprayLabelRateSheet(rates, line.selectedRateId, onSelect = { rate ->
+                applySuggestedRate(line, rate)
+                onChanged()
+            }, onDismiss = { menu = false })
         }
     }
 }

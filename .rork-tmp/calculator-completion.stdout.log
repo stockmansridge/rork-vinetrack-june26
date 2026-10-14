@@ -22,8 +22,8 @@ Daemon will be stopped at the end of the build
 > Task :app:compileDebugKotlin UP-TO-DATE
 > Task :app:javaPreCompileDebug UP-TO-DATE
 > Task :app:compileDebugJavaWithJavac UP-TO-DATE
-> Task :app:bundleDebugClassesToRuntimeJar UP-TO-DATE
 > Task :app:bundleDebugClassesToCompileJar UP-TO-DATE
+> Task :app:bundleDebugClassesToRuntimeJar
 > Task :app:preDebugUnitTestBuild UP-TO-DATE
 > Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
 > Task :app:processDebugJavaRes UP-TO-DATE
@@ -44,66 +44,6 @@ w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinet
 > Task :app:processDebugUnitTestJavaRes UP-TO-DATE
 
 > Task :app:testDebugUnitTest
-
-SprayGuidedFlowTest > the persisted snapshot is a projection of the plan Review displays PASSED
-
-SprayGuidedFlowTest > targets persist as stable identifiers, not display text PASSED
-
-SprayGuidedFlowTest > changing band width recalculates treated area and treated-area products PASSED
-
-SprayGuidedFlowTest > adding a block recalculates geometry, carrier and every product total PASSED
-
-SprayGuidedFlowTest > banded whole-block product doses against gross hectares PASSED
-
-SprayGuidedFlowTest > custom targets ride the inputs into the persisted snapshot PASSED
-
-SprayGuidedFlowTest > whole-block L per ha still needs spacing for a canopy recommendation conversion PASSED
-
-SprayGuidedFlowTest > foliar L per ha dilute reference above applied rate concentrates PASSED
-
-SprayGuidedFlowTest > foliar L per 100m spec example gives 2x, 6250 L and 625 L per ha PASSED
-
-SprayGuidedFlowTest > before a carrier exists treated area previews but per-100 L stays unresolved PASSED
-
-SprayGuidedFlowTest > switching to L per 100m introduces the geometry requirement PASSED
-
-SprayGuidedFlowTest > steps unlock strictly in order as each decision is made PASSED
-
-SprayGuidedFlowTest > foliar L per ha uses whole-block treated area and hectare carrier PASSED
-
-SprayGuidedFlowTest > mixed bases in one tank give 20 L, 5 L and 6 point 25 L from a single plan PASSED
-
-SprayGuidedFlowTest > resistance check applicability is flagged but ships no rules or warnings PASSED
-
-SprayGuidedFlowTest > mixed row spacings refuse a uniform spacing rather than averaging PASSED
-
-SprayGuidedFlowTest > banded treated-area product doses against the 2 point 5 ha band PASSED
-
-SprayGuidedFlowTest > a treated-area product with no band width is unresolved, never silently zero PASSED
-
-SprayGuidedFlowTest > per-100 L rates are written against dilute so concentrating keeps the dose PASSED
-
-SprayGuidedFlowTest > changing applied L per 100m recalculates carrier, concentration and dose PASSED
-
-SprayGuidedFlowTest > L per 100m without row spacing resolves carrier but not derived L per ha PASSED
-
-SprayGuidedFlowTest > australian profile allows either basis and offers the choice PASSED
-
-SprayGuidedFlowTest > banded per-100 L product doses against carrier litres PASSED
-
-SprayGuidedFlowTest > completed steps behind the active step collapse to summaries PASSED
-
-SprayGuidedFlowTest > banded without a band width blocks the target step and leaves treated area null PASSED
-
-SprayGuidedFlowTest > progress fraction reflects completed gated steps PASSED
-
-SprayGuidedFlowTest > SWNZ profile locks carrier entry to L per 100m with no choice offered PASSED
-
-SprayGuidedFlowTest > an explicitly entered 2 point 5 m spacing is a real measurement PASSED
-
-SprayGuidedFlowTest > spreader shows neither a spray head target nor a band width PASSED
-
-SprayGuidedFlowTest > banded with no spacing and no rows blocks progression at the blocks step PASSED
 
 ChemicalLabelRateNormalizerTest > per 100 litre range is retained with bare unit PASSED
 
@@ -186,9 +126,69 @@ SprayCalculatorCompletionTest > failedPendingCreateReplacementRetainsOriginalDur
 SprayCalculatorCompletionTest > blockedAndInFlightCreatesCannotBeReplacedOrUnblocked PASSED
 
 SprayCalculatorTimingTest > repeatedPlanReads STANDARD_OUT
-    CALCULATOR_TIMING repeated_plan_300 ms=1.06052 checksum=540000.0
+    CALCULATOR_TIMING repeated_plan_300 ms=5.756748 checksum=540000.0
 
 SprayCalculatorTimingTest > repeatedPlanReads PASSED
+
+SprayGuidedFlowTest > the persisted snapshot is a projection of the plan Review displays PASSED
+
+SprayGuidedFlowTest > targets persist as stable identifiers, not display text PASSED
+
+SprayGuidedFlowTest > changing band width recalculates treated area and treated-area products PASSED
+
+SprayGuidedFlowTest > adding a block recalculates geometry, carrier and every product total PASSED
+
+SprayGuidedFlowTest > banded whole-block product doses against gross hectares PASSED
+
+SprayGuidedFlowTest > custom targets ride the inputs into the persisted snapshot PASSED
+
+SprayGuidedFlowTest > whole-block L per ha still needs spacing for a canopy recommendation conversion PASSED
+
+SprayGuidedFlowTest > foliar L per ha dilute reference above applied rate concentrates PASSED
+
+SprayGuidedFlowTest > foliar L per 100m spec example gives 2x, 6250 L and 625 L per ha PASSED
+
+SprayGuidedFlowTest > before a carrier exists treated area previews but per-100 L stays unresolved PASSED
+
+SprayGuidedFlowTest > switching to L per 100m introduces the geometry requirement PASSED
+
+SprayGuidedFlowTest > steps unlock strictly in order as each decision is made PASSED
+
+SprayGuidedFlowTest > foliar L per ha uses whole-block treated area and hectare carrier PASSED
+
+SprayGuidedFlowTest > mixed bases in one tank give 20 L, 5 L and 6 point 25 L from a single plan PASSED
+
+SprayGuidedFlowTest > resistance check applicability is flagged but ships no rules or warnings PASSED
+
+SprayGuidedFlowTest > mixed row spacings refuse a uniform spacing rather than averaging PASSED
+
+SprayGuidedFlowTest > banded treated-area product doses against the 2 point 5 ha band PASSED
+
+SprayGuidedFlowTest > a treated-area product with no band width is unresolved, never silently zero PASSED
+
+SprayGuidedFlowTest > per-100 L rates are written against dilute so concentrating keeps the dose PASSED
+
+SprayGuidedFlowTest > changing applied L per 100m recalculates carrier, concentration and dose PASSED
+
+SprayGuidedFlowTest > L per 100m without row spacing resolves carrier but not derived L per ha PASSED
+
+SprayGuidedFlowTest > australian profile allows either basis and offers the choice PASSED
+
+SprayGuidedFlowTest > banded per-100 L product doses against carrier litres PASSED
+
+SprayGuidedFlowTest > completed steps behind the active step collapse to summaries PASSED
+
+SprayGuidedFlowTest > banded without a band width blocks the target step and leaves treated area null PASSED
+
+SprayGuidedFlowTest > progress fraction reflects completed gated steps PASSED
+
+SprayGuidedFlowTest > SWNZ profile locks carrier entry to L per 100m with no choice offered PASSED
+
+SprayGuidedFlowTest > an explicitly entered 2 point 5 m spacing is a real measurement PASSED
+
+SprayGuidedFlowTest > spreader shows neither a spray head target nor a band width PASSED
+
+SprayGuidedFlowTest > banded with no spacing and no rows blocks progression at the blocks step PASSED
 
 SprayGuidedWorkflowParityTest > switching foliar to banded clears the spray head target at flow level PASSED
 
@@ -258,9 +258,13 @@ SprayMobileSafetyTest > revisionConflictRetainsPayloadAndPriorAttempts PASSED
 
 SprayPlanningIntentTest > byAreaCardUsesExistingMappedRowCarrierNotAnIndependentAreaTotal PASSED
 
+SprayPlanningIntentTest > labelUncertaintyAloneDoesNotBlockSaveOrStart PASSED
+
 SprayPlanningIntentTest > acceptanceNumbersAndTamperedFullTankResolution PASSED
 
 SprayPlanningIntentTest > capturedGallonsNeverUseCurrentAccountCountry PASSED
+
+SprayPlanningIntentTest > aboveReferenceLabelReviewIsAdvisoryWithoutChangingCF PASSED
 
 SprayPlanningIntentTest > clearedPlanningRetainsUnrelatedFieldsAndDurableNullIntent PASSED
 
@@ -269,8 +273,6 @@ SprayPlanningIntentTest > unrelatedPortalEditsPreserveTargetWordingWithoutChangi
 SprayPlanningIntentTest > cfNeverAuthorisesConcentrateAndUndeployedIntentAlwaysBlocks PASSED
 
 SprayPlanningIntentTest > targetAreaAndCalibrationAgreeForFullTank PASSED
-
-SprayPlanningIntentTest > aboveReferenceCannotBeAuthorisedByFactorOne PASSED
 
 SprayPlanningIntentTest > physicalRowAndControllerTravelNeverShareAnOverRowMultiplier PASSED
 
@@ -379,5 +381,5 @@ StartTankCommitCoordinatorTest > repeatedRecoveryFromEachIncompleteStoreStateNev
 StartTankCommitCoordinatorTest > failedJournalWriteMutatesNothing PASSED
 
 BUILD SUCCESSFUL in 24s
-26 actionable tasks: 2 executed, 24 up-to-date
+26 actionable tasks: 3 executed, 23 up-to-date
 CALCULATOR_REGRESSION_EXIT=0

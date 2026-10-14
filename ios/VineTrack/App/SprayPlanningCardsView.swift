@@ -25,7 +25,7 @@ struct SprayPlanningCardsView: View {
                 if let configuration {
                     SprayPassIllustration(configuration: configuration)
                     Text(configuration == .standardPass
-                         ? "Two adjacent half-row faces: one complete-row equivalent per pass."
+                         ? "Sprays the facing sides of two adjacent vine rows. Each pass covers one complete-row equivalent."
                          : "Both sides of two complete vine rows per pass.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
@@ -52,7 +52,7 @@ struct SprayPlanningCardsView: View {
                 }.pickerStyle(.segmented)
                 if method == .fullTank {
                     field("Intended tank volume (\(region.volumeUnitAbbreviation))", text: $tankText)
-                    Picker("Specify full tank", selection: $specification) {
+                    Picker("Specify Only Full Tanks", selection: $specification) {
                         ForEach(SprayFullTankSpecification.allCases, id: \.self) { Text($0.title).tag($0) }
                     }.pickerStyle(.segmented)
                     if specification == .targetArea {
@@ -81,7 +81,9 @@ struct SprayPlanningCardsView: View {
                     Text("Confirm canopy and configuration; enter a positive volume and area/rate within the selected blocks.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Text(SprayPlanningOperationalGate.migrationMessage).font(.caption).foregroundStyle(.secondary)
+                if configuration != nil || method == .fullTank {
+                    Text(SprayPlanningOperationalGate.migrationMessage).font(.caption).foregroundStyle(.secondary)
+                }
             }.padding(14).background(Color(.secondarySystemGroupedBackground)).clipShape(.rect(cornerRadius: 14))
         }
     }
@@ -115,10 +117,17 @@ private struct SprayPassIllustration: View {
             }
             let heads: [CGFloat] = configuration == .standardPass ? [0.42, 0.58] : [0.23, 0.43, 0.57, 0.77]
             for (index, x) in heads.enumerated() {
-                let end: CGFloat = configuration == .standardPass ? (index == 0 ? 0.22 : 0.78) : (index < 2 ? 0.33 : 0.67)
-                context.stroke(Path { p in p.move(to: CGPoint(x: size.width * x, y: 61)); p.addLine(to: CGPoint(x: size.width * end, y: 61)) }, with: .color(.cyan), style: StrokeStyle(lineWidth: 3, dash: [4, 3]))
-                context.fill(Path(ellipseIn: CGRect(x: size.width * x - 4, y: 57, width: 8, height: 8)), with: .color(.cyan))
+                let row: CGFloat = configuration == .standardPass ? (index == 0 ? 0.18 : 0.82) : (index < 2 ? 0.33 : 0.67)
+                let direction: CGFloat = row > x ? 1 : -1
+                let tip = size.width * row - direction * 13
+                context.stroke(Path { p in p.move(to: CGPoint(x: size.width * x, y: 61)); p.addLine(to: CGPoint(x: tip - direction * 7, y: 61)) }, with: .color(.cyan), style: StrokeStyle(lineWidth: 3, dash: [4, 3]))
+                context.fill(Path { p in
+                    p.move(to: CGPoint(x: tip, y: 61))
+                    p.addLine(to: CGPoint(x: tip - direction * 8, y: 56))
+                    p.addLine(to: CGPoint(x: tip - direction * 8, y: 66))
+                    p.closeSubpath()
+                }, with: .color(.cyan))
             }
-        }.frame(height: 106).accessibilityLabel(configuration == .standardPass ? "Standard sprayer between two rows, treating the adjacent half faces" : "Over-row boom with four spray heads treating both sides of two rows")
+        }.frame(height: 106).accessibilityLabel(configuration == .standardPass ? "Single Row sprayer, arrows pointing left and right toward adjacent vine-row faces" : "Over-row boom with four spray heads treating both sides of two rows")
     }
 }

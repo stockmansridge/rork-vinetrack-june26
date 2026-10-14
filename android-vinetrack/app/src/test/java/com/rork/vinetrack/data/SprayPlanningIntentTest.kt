@@ -8,12 +8,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SprayPlanningIntentTest {
-    @Test fun aboveReferenceCannotBeAuthorisedByFactorOne() {
+    @Test fun aboveReferenceLabelReviewIsAdvisoryWithoutChangingCF() {
         assertEquals(1.0, SprayCarrierConversion.concentrationFactor(713.0, 750.0), 0.0)
-        assertEquals(SprayPlanningOperationalGate.ABOVE_REFERENCE_MESSAGE,
-            SprayPlanningOperationalGate.aboveReferenceBlocker(750.0, 713.0, true))
-        assertNull(SprayPlanningOperationalGate.aboveReferenceBlocker(713.0, 713.0, true))
-        assertNull(SprayPlanningOperationalGate.aboveReferenceBlocker(750.0, 713.0, false))
+        assertNull(SprayPlanningOperationalGate.blocker(false, 1.0, true))
+        assertEquals(listOf("Copper", "Sulphur"), SprayPlanningOperationalGate.warningProducts(listOf(" Sulphur ", "Sulphur", "", "Copper")))
+        assertFalse(SprayPlanningOperationalGate.WARNING_MESSAGE.contains("blocked"))
+        assertEquals("Single Row", SprayPassConfiguration.STANDARD_PASS.title)
+        assertEquals("Only Full Tanks", SprayPlanningMethod.FULL_TANK.title)
+        assertEquals("\"standard_pass\"", Json.encodeToString(SprayPassConfiguration.serializer(), SprayPassConfiguration.STANDARD_PASS))
+        assertEquals("\"full_tank\"", Json.encodeToString(SprayPlanningMethod.serializer(), SprayPlanningMethod.FULL_TANK))
+    }
+
+    @Test fun labelUncertaintyAloneDoesNotBlockSaveOrStart() {
+        val tank = SprayTank("tank", concentrationFactor = 2.0, chemicals = listOf(SprayChemical("chemical", name = "Unverified sulphur", ratePer100L = 100.0)))
+        val record = SprayRecord(id = "record", vineyardId = "vineyard", tanks = listOf(tank))
+        assertNull(SprayPlanningOperationalGate.blocker(null, listOf(tank)))
+        assertNull(SprayPlanningOperationalGate.tankConfirmationBlocker(record, record))
     }
 
     @Test fun regionalDecimalPlanningEntryRefusesPartialAndNonfiniteValues() {
@@ -287,7 +297,7 @@ class SprayPlanningIntentTest {
         val area = SprayChemical("area", name = "Area product", ratePerHa = 2.0, rateBasis = SprayProductRateBasis.WHOLE_BLOCK_AREA.raw)
         val mixed = listOf(SprayTank("safe", concentrationFactor = 1.0, chemicals = listOf(dilute)), SprayTank("area", concentrationFactor = 4.0, chemicals = listOf(area)))
         assertNull(SprayPlanningOperationalGate.blocker(null, mixed))
-        for (factor in listOf(0.0, -1.0, 0.9, 1.426, Double.POSITIVE_INFINITY, Double.NaN)) {
+        for (factor in listOf(0.0, -1.0, 0.9, Double.POSITIVE_INFINITY, Double.NaN)) {
             assertTrue(SprayPlanningOperationalGate.blocker(null, listOf(SprayTank("invalid", concentrationFactor = factor, chemicals = listOf(dilute))))!!.contains("Dilute product"))
         }
         assertNotNull(SprayPlanningOperationalGate.blocker(false, null, true))
@@ -305,13 +315,13 @@ class SprayPlanningIntentTest {
     @Test fun namedChemicalBlockerDoesNotBlockAreaOnlyMixes() {
         val dilute = SprayChemical("dilute", name = "Unverified sulphur", ratePer100L = 100.0)
         val tanks = listOf(SprayTank("tank", concentrationFactor = 2.0, chemicals = listOf(dilute)))
-        assertTrue(SprayPlanningOperationalGate.blocker(null, tanks)!!.contains("Unverified sulphur"))
+        assertNull(SprayPlanningOperationalGate.blocker(null, tanks))
         val area = SprayChemical("area", name = "Area only", ratePerHa = 2000.0, rateBasis = SprayProductRateBasis.WHOLE_BLOCK_AREA.raw)
         assertNull(SprayPlanningOperationalGate.blocker(null, listOf(tanks.single().copy(chemicals = listOf(area)))))
     }
 
     @Test fun cfNeverAuthorisesConcentrateAndUndeployedIntentAlwaysBlocks() {
-        assertEquals(SprayPlanningOperationalGate.CONCENTRATE_MESSAGE, SprayPlanningOperationalGate.blocker(false, 2.0, true))
+        assertNull(SprayPlanningOperationalGate.blocker(false, 2.0, true))
         assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, SprayPlanningOperationalGate.blocker(true, 1.0, false))
         assertNull(SprayPlanningOperationalGate.blocker(false, 1.0, true))
     }

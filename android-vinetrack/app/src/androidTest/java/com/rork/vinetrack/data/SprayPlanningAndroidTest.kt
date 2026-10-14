@@ -56,10 +56,11 @@ class SprayPlanningAndroidTest {
                 }
             }
         }
-        compose.onNodeWithText("Standard Pass").assertIsNotSelected()
+        compose.onNodeWithText("Single Row").assertIsNotSelected()
+        compose.onNodeWithText(SprayPlanningOperationalGate.MIGRATION_MESSAGE).assertDoesNotExist()
         compose.onNodeWithText("Over-Row").performClick().assertIsSelected()
         compose.onNodeWithContentDescription("Over-row boom with four heads treating both sides of two rows").assertExists()
-        compose.onNodeWithText("Full Tank").performScrollTo().performClick().assertIsSelected()
+        compose.onNodeWithText("Only Full Tanks").performScrollTo().performClick().assertIsSelected()
         compose.onNodeWithText("Intended tank volume (L)").performScrollTo().performTextInput("1500")
         compose.onNodeWithText("Planned area (ha)").performScrollTo().performTextInput("3")
         compose.onNodeWithText("Planned area (ha)").performImeAction()
@@ -68,8 +69,8 @@ class SprayPlanningAndroidTest {
         compose.onNodeWithText("Controller travel: ${fmt.formatVolumePer100Length(28.0)}").performScrollTo().assertExists()
         compose.onNodeWithText("Intended water: ${fmt.formatVolume(1500.0)}").performScrollTo().assertExists()
         compose.onNodeWithText("Application rate: ${fmt.formatVolumePerArea(500.0)}").performScrollTo().assertExists()
-        compose.onNodeWithText("Standard Pass").performScrollTo().performClick().assertIsSelected()
-        compose.onNodeWithContentDescription("Standard sprayer between two rows, treating adjacent half faces").assertExists()
+        compose.onNodeWithText("Single Row").performScrollTo().performClick().assertIsSelected()
+        compose.onNodeWithContentDescription("Single Row sprayer, arrows pointing left and right toward adjacent vine-row faces").assertExists()
         compose.onNodeWithText("Controller travel: ${fmt.formatVolumePer100Length(14.0)}").performScrollTo().assertExists()
         compose.onNodeWithText("Calibrated rate").performScrollTo().performClick().assertIsSelected()
         compose.onNodeWithText("Calibrated rate (${fmt.volumePerAreaUnit})").performScrollTo().performTextInput("500")
@@ -125,7 +126,7 @@ class SprayPlanningAndroidTest {
                     temperature = null, windSpeed = null, windDirection = null, humidity = null, sprayReference = null,
                     notes = null, numberOfFansJets = null, averageSpeed = null, equipmentType = null, tractor = null,
                     tractorGear = null, machineId = null, sprayEquipmentId = null, operationType = null, tripId = null,
-                    tanks = listOf(SprayTank(id = "tank", concentrationFactor = 1.426,
+                    tanks = listOf(SprayTank(id = "tank", concentrationFactor = 0.9,
                         chemicals = listOf(SprayChemical("line", name = "Unverified concentrate", ratePer100L = 100.0)))))
                 assertTrue(runCatching { SprayRecordUpdateSync(reopened).enqueue("must-not-enqueue", concentrated, "revision") }.exceptionOrNull() is IllegalStateException)
                 assertEquals(listOf(blocked), PendingWriteRepository(PendingWriteStore(context)).list())
@@ -192,8 +193,68 @@ class SprayPlanningAndroidTest {
         } finally { file.delete() }
     }
 
-    @Test fun concentrateReplayBlocksEvenWithoutNewConfiguration() = runBlocking {
-        val tank = SprayTank(id = "tank", concentrationFactor = 2.0, chemicals = listOf(SprayChemical("chemical", ratePer100L = 100.0)))
+    @Test fun warningSheetIsOptionalAndPreservesPlan() {
+        val intent = SprayPlanningIntent(SprayPassConfiguration.OVER_ROW, SprayPlanningMethod.FULL_TANK,
+            SprayFullTankSpecification.TARGET_AREA, 1500.0, 3.0)
+        val before = intent.resolve(10.0, 2.8, 713.0)
+        compose.setContent { MaterialTheme {
+            com.rork.vinetrack.ui.components.SprayConcentrationWarning(listOf("Synthetic sulphur", "Synthetic copper"))
+        } }
+        compose.onNodeWithText("WARNING").performClick()
+        compose.onNodeWithText(SprayPlanningOperationalGate.WARNING_TITLE).assertExists()
+        compose.onNodeWithText(SprayPlanningOperationalGate.WARNING_MESSAGE).assertExists()
+        compose.onNodeWithText("Synthetic sulphur").assertExists()
+        compose.onNodeWithText("Synthetic copper").assertExists()
+        compose.onNodeWithText("Close").performClick()
+        compose.onNodeWithText("WARNING").assertExists()
+        compose.onNodeWithText(SprayPlanningOperationalGate.WARNING_TITLE).assertDoesNotExist()
+        assertEquals(before, intent.resolve(10.0, 2.8, 713.0))
+    }
+
+    @Test fun numericFirstRateSheetKeepsDistinctDirectionsAndDoesNotAutomaticallySelect() {
+        val use = com.rork.vinetrack.data.chemical.ChemicalRegisteredUse(crop = "Wine grapevines", targetRaw = "Powdery mildew",
+            restrictions = "Do not exceed the seasonal maximum.")
+        val first = com.rork.vinetrack.data.chemical.SpraySelectableRate("first", com.rork.vinetrack.data.chemical.SprayRateOrigin.REGISTERED_USE,
+            "use-1", "Wine grapevines", "Powdery mildew", "Dilute", "Apply from budburst onwards. Complete long instructions stay readable.",
+            SprayCalculator.RateBasis.PER_100L, com.rork.vinetrack.data.chemical.SprayRateAmount.Range(200.0, 600.0), "g", "200–600 g/100 L", registeredUse = use)
+        val second = first.copy(id = "second", registeredUseId = "use-2", targetRaw = "Downy mildew", displayText = "150–200 g/100 L",
+            amount = com.rork.vinetrack.data.chemical.SprayRateAmount.Range(150.0, 200.0))
+        var chosen: String? = null
+        compose.setContent {
+            var open by remember { mutableStateOf(true) }
+            MaterialTheme {
+                if (open) com.rork.vinetrack.ui.components.SprayLabelRateSheet(listOf(first, second), null,
+                    onSelect = { chosen = it.id }, onDismiss = { open = false })
+            }
+        }
+        compose.onNodeWithText("200–600 g/100 L").assertExists()
+        compose.onAllNodesWithText("Do not exceed the seasonal maximum.").onFirst().assertExists()
+        compose.onAllNodesWithText("Apply from budburst onwards. Complete long instructions stay readable.").onFirst().assertExists()
+        assertNull(chosen)
+        assertNull(first.appliedValue)
+        compose.onNode(hasScrollToIndexAction()).performScrollToIndex(1)
+        compose.onNodeWithText("150–200 g/100 L").performClick()
+        compose.runOnIdle { assertEquals("second", chosen) }
+        assertEquals("g", second.unit)
+        assertEquals(use, first.registeredUse)
+    }
+
+    @Test fun unverifiedConcentrateCanEnqueueAndPassStartAdmissionWithoutNewPlanning() = runBlocking {
+        val pending = PendingWriteRepository(InMemoryPendingWriteStore())
+        val tank = SprayTank("tank", concentrationFactor = 2.0, chemicals = listOf(SprayChemical("chemical", name = "Unverified sulphur", ratePer100L = 100.0)))
+        val input = SprayRecordRepository.SprayInput(date = "2026-10-14", startTime = "2026-10-14",
+            temperature = null, windSpeed = null, windDirection = null, humidity = null, sprayReference = null,
+            notes = null, numberOfFansJets = null, averageSpeed = null, equipmentType = null, tractor = null,
+            tractorGear = null, machineId = null, sprayEquipmentId = null, operationType = null, tripId = null, tanks = listOf(tank))
+        SprayRecordUpdateSync(pending).enqueue("same-record", input, "revision")
+        assertEquals(1, pending.list().size)
+        val record = SprayRecord("same-record", "vineyard", tanks = listOf(tank))
+        assertNull(SprayPlanningOperationalGate.tankConfirmationBlocker(record, record))
+        assertEquals(listOf(tank), input.tanks)
+    }
+
+    @Test fun invalidFactorReplayBlocksEvenWithoutNewConfiguration() = runBlocking {
+        val tank = SprayTank(id = "tank", concentrationFactor = 0.9, chemicals = listOf(SprayChemical("chemical", ratePer100L = 100.0)))
         val payload = SprayRecordUpdateSync.Payload("original", "2026-10-12", "2026-10-12", tanks = listOf(tank), clientUpdatedAt = "original-revision")
         val json = Json { encodeDefaults = true }
         val bytes = json.encodeToString(SprayRecordUpdateSync.Payload.serializer(), payload)

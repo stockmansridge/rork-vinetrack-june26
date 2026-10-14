@@ -4,14 +4,14 @@ import Foundation
 nonisolated enum SprayPassConfiguration: String, Codable, Sendable, CaseIterable {
     case standardPass = "standard_pass"
     case overRow = "over_row_two_rows"
-    var title: String { self == .standardPass ? "Standard Pass" : "Over-Row" }
+    var title: String { self == .standardPass ? "Single Row" : "Over-Row" }
     var rowEquivalents: Double { self == .standardPass ? 1 : 2 }
 }
 
 nonisolated enum SprayPlanningMethod: String, Codable, Sendable, CaseIterable {
     case byArea = "by_area"
     case fullTank = "full_tank"
-    var title: String { self == .byArea ? "By Area" : "Full Tank" }
+    var title: String { self == .byArea ? "By Area" : "Only Full Tanks" }
 }
 
 nonisolated enum SprayFullTankSpecification: String, Codable, Sendable, CaseIterable {
@@ -33,7 +33,7 @@ nonisolated struct SprayPlanningIntent: Codable, Sendable, Hashable {
     /// Full-Tank execution validation only. Historical records and non-executable drafts do not call this.
     func fullTankExecutionBlocker(resolution: SprayPlanningResolution?, selectedGrossAreaHa: Double?) -> String? {
         guard method == .fullTank else { return nil }
-        let message = "Full Tank plan is incomplete or inconsistent. Recalculate before saving or starting."
+        let message = "Only Full Tanks plan is incomplete or inconsistent. Recalculate before saving or starting."
         guard let configuration, let tank = intendedTankLitres, tank.isFinite, tank > 0,
               let resolution, let gross = selectedGrossAreaHa, gross.isFinite, gross > 0 else { return message }
         func matches(_ a: Double, _ b: Double) -> Bool {
@@ -120,21 +120,20 @@ nonisolated struct SprayPlanningResolution: Codable, Sendable, Hashable {
 /// No mutable capability flag: activation requires a separately reviewed integration.
 nonisolated enum SprayPlanningOperationalGate {
     static let migrationMessage = "Calculation preview only. New spray planning save/start and replay are disabled until the schema and operational workflows are approved and validated."
-    static let concentrateMessage = "Concentrate spraying permission and limits are unverified for this dilute-rate mix. Save/start is blocked. A displayed CF is not label approval."
-    static let aboveReferenceMessage = "Above-reference spray volume requires independent label review for dilute-rate products. Save/start is blocked; CF 1.00 or an entered rate is not approval."
+    static let concentrateMessage = "The concentration factor must be finite and at least 1.00. Recalculate before saving or starting."
+    static let warningTitle = "Concentration / Label Warning"
+    static let warningMessage = "VineTrack has calculated the chemical concentration factor (CF), but concentrate-spraying permission and applicable limits have not been verified against the product label.\n\nA calculated CF does not confirm label approval. Check the relevant product labels and application directions before spraying."
 
-    static func aboveReferenceBlocker(actual: Double?, reference: Double?, hasDiluteRateProducts: Bool) -> String? {
-        guard hasDiluteRateProducts, let actual, let reference, actual.isFinite, reference.isFinite,
-              reference > 0, actual > reference + max(0.000001, reference * 0.00000001) else { return nil }
-        return aboveReferenceMessage
+    /// Advisory only; never feeds operational readiness or durable write admission.
+    static func warningProducts(_ names: [String]) -> [String] {
+        Array(Set(names.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
     }
-
     /// Evaluate each chemical against its own tank, not the maximum CF of unrelated tanks.
     static func tankComplianceBlocker(_ tanks: [SprayTank]) -> String? {
         for tank in tanks {
             let ambiguous = tank.chemicals.filter { $0.rateBasis == nil && $0.ratePer100L > 0 && $0.ratePerHa > 0 }
             if !ambiguous.isEmpty {
-                return concentrateMessage + " Ambiguous rate basis: " + ambiguous.map(\.name).joined(separator: ", ")
+                return "Choose an explicit rate basis before saving or starting. Ambiguous rate basis: " + ambiguous.map(\.name).joined(separator: ", ")
             }
             let dilute = tank.chemicals.filter { $0.rateBasis == .per100Litres || ($0.rateBasis == nil && $0.ratePer100L > 0) }
             if let message = blocker(hasPlanningIntent: false, concentrationFactor: tank.concentrationFactor,
@@ -145,7 +144,7 @@ nonisolated enum SprayPlanningOperationalGate {
 
     static func blocker(hasPlanningIntent: Bool, concentrationFactor: Double?, hasDiluteRateProducts: Bool, chemicalNames: [String] = []) -> String? {
         if hasDiluteRateProducts {
-            let factorIsSafe = concentrationFactor.map { $0.isFinite && $0 >= 1 && $0 <= 1.000001 } ?? false
+            let factorIsSafe = concentrationFactor.map { $0.isFinite && $0 >= 1 } ?? false
             if !factorIsSafe {
                 let names = Array(Set(chemicalNames.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
                 return names.isEmpty ? concentrateMessage : concentrateMessage + " Products: " + names.joined(separator: ", ")

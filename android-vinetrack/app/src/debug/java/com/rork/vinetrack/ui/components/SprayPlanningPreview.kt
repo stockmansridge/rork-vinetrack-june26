@@ -34,12 +34,13 @@ private fun SprayPlanningPreview(configuration: SprayPassConfiguration, specific
                 SprayPlanningCards(configuration, {}, SprayPlanningMethod.FULL_TANK, {}, specification, {},
                     "1500", {}, "3", {}, if (configuration == SprayPassConfiguration.STANDARD_PASS) "14" else "28", {},
                     RegionFormatter(), intent.resolve(10.0, 2.8, 500.0), rateUnit = "L/100m", rowSpacingMetres = 2.8)
+                SprayConcentrationWarning(listOf("Synthetic sulphur"))
             }
         }
     }
 }
 
-@Preview(name = "Standard Pass • 1500 L / 3 ha", widthDp = 412, heightDp = 1100, showBackground = true)
+@Preview(name = "Single Row • 1500 L / 3 ha", widthDp = 412, heightDp = 1100, showBackground = true)
 @Composable
 private fun StandardPassPreview() = SprayPlanningPreview(SprayPassConfiguration.STANDARD_PASS, SprayFullTankSpecification.TARGET_AREA)
 

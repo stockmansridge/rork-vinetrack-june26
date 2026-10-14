@@ -4,11 +4,23 @@ import Testing
 
 @MainActor
 struct SprayPlanningIntentTests {
-    @Test func aboveReferenceCannotBeAuthorisedByFactorOne() {
+    @Test func labelUncertaintyAloneDoesNotBlockSaveOrStart() {
+        let dilute = SprayChemical(name: "Unverified sulphur", ratePer100L: 100)
+        let record = SprayRecord(tanks: [SprayTank(concentrationFactor: 2, chemicals: [dilute])])
+        #expect(record.operationalPlanningBlocker == nil)
+        #expect(SprayPlanningOperationalGate.tankConfirmationBlocker(current: record, captured: record) == nil)
+        #expect(BackendSprayRecord.upsert(from: record, createdBy: nil, clientUpdatedAt: Date()).operationalPlanningBlocker == nil)
+    }
+
+    @Test func aboveReferenceLabelReviewIsAdvisoryWithoutChangingCF() {
         #expect(SprayCarrierConversion.concentrationFactor(dilute: 713, actual: 750) == 1)
-        #expect(SprayPlanningOperationalGate.aboveReferenceBlocker(actual: 750, reference: 713, hasDiluteRateProducts: true) == SprayPlanningOperationalGate.aboveReferenceMessage)
-        #expect(SprayPlanningOperationalGate.aboveReferenceBlocker(actual: 713, reference: 713, hasDiluteRateProducts: true) == nil)
-        #expect(SprayPlanningOperationalGate.aboveReferenceBlocker(actual: 750, reference: 713, hasDiluteRateProducts: false) == nil)
+        #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: 1, hasDiluteRateProducts: true) == nil)
+        #expect(SprayPlanningOperationalGate.warningProducts([" Sulphur ", "Sulphur", "", "Copper"]) == ["Copper", "Sulphur"])
+        #expect(!SprayPlanningOperationalGate.warningMessage.contains("blocked"))
+        #expect(SprayPassConfiguration.standardPass.title == "Single Row")
+        #expect(SprayPassConfiguration.standardPass.rawValue == "standard_pass")
+        #expect(SprayPlanningMethod.fullTank.title == "Only Full Tanks")
+        #expect(SprayPlanningMethod.fullTank.rawValue == "full_tank")
     }
 
     @Test func regionalDecimalPlanningEntryRefusesPartialAndNonfiniteValues() {
@@ -359,7 +371,7 @@ struct SprayPlanningIntentTests {
         let area = SprayChemical(name: "Area product", ratePerHa: 2, rateBasis: .wholeBlockArea)
         let mixed = [SprayTank(concentrationFactor: 1, chemicals: [dilute]), SprayTank(concentrationFactor: 4, chemicals: [area])]
         #expect(SprayRecord(tanks: mixed).operationalPlanningBlocker == nil)
-        for factor in [0.0, -1.0, 0.9, 1.426, Double.infinity, Double.nan] {
+        for factor in [0.0, -1.0, 0.9, Double.infinity, Double.nan] {
             #expect(SprayRecord(tanks: [SprayTank(concentrationFactor: factor, chemicals: [dilute])]).operationalPlanningBlocker?.contains("Dilute product") == true)
         }
         #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: nil, hasDiluteRateProducts: true) != nil)
@@ -378,29 +390,29 @@ struct SprayPlanningIntentTests {
     @Test func namedChemicalBlockerDoesNotBlockAreaOnlyMixes() {
         let dilute = SprayChemical(name: "Unverified sulphur", ratePer100L: 100)
         let record = SprayRecord(tanks: [SprayTank(concentrationFactor: 2, chemicals: [dilute])])
-        #expect(record.operationalPlanningBlocker?.contains("Unverified sulphur") == true)
+        #expect(record.operationalPlanningBlocker == nil)
         let area = SprayChemical(name: "Area only", ratePerHa: 2000, rateBasis: .wholeBlockArea)
         #expect(SprayRecord(tanks: [SprayTank(concentrationFactor: 2, chemicals: [area])]).operationalPlanningBlocker == nil)
     }
 
     @Test func concentrateCannotBeApprovedByANumericFactor() {
-        #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: 2, hasDiluteRateProducts: true) == SprayPlanningOperationalGate.concentrateMessage)
+        #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: 2, hasDiluteRateProducts: true) == nil)
         #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: true, concentrationFactor: 1, hasDiluteRateProducts: false) == SprayPlanningOperationalGate.migrationMessage)
         #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: 1, hasDiluteRateProducts: true) == nil)
     }
 
     @Test(arguments: [0, 1, 2])
-    func persistedQueuedIntentAndUnverifiedConcentrateStayBlockedAcrossReplay(_ scenario: Int) async throws {
-        let concentrated = scenario == 1
+    func persistedQueuedIntentAndInvalidFactorStayBlockedAcrossReplay(_ scenario: Int) async throws {
+        let invalidFactor = scenario == 1
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let persistence = PersistenceStore(directory: directory)
         let store = MigratedDataStore(persistence: persistence)
-        var snapshot = SprayApplicationSnapshot(carrierVolumeBasis: .litresPer100Metres, concentrationFactor: concentrated ? 2 : 1)
-        if !concentrated { snapshot.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank, fullTankSpecification: .targetArea, intendedTankLitres: 1000, targetAreaHa: 2) }
+        var snapshot = SprayApplicationSnapshot(carrierVolumeBasis: .litresPer100Metres, concentrationFactor: invalidFactor ? 0.9 : 1)
+        if !invalidFactor { snapshot.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank, fullTankSpecification: .targetArea, intendedTankLitres: 1000, targetAreaHa: 2) }
         if scenario == 2 { snapshot = snapshot.clearingPlanning() }
-        let tanks: [SprayTank] = concentrated ? [SprayTank(concentrationFactor: 2, chemicals: [SprayChemical(ratePer100L: 100)])] : []
+        let tanks: [SprayTank] = invalidFactor ? [SprayTank(concentrationFactor: 0.9, chemicals: [SprayChemical(ratePer100L: 100)])] : []
         let eventTime = Date(timeIntervalSince1970: 1_800_000_000)
         let record = SprayRecord(date: eventTime, startTime: eventTime, tanks: tanks, applicationGeometry: snapshot)
         store.selectedVineyardId = record.vineyardId
@@ -416,7 +428,7 @@ struct SprayPlanningIntentTests {
             try await service.pushLocalSprayRecords(vineyardId: record.vineyardId)
             Issue.record("Blocked planning record unexpectedly replayed")
         } catch let error as SprayPlanningAdmissionError {
-            #expect(error.message == (concentrated ? SprayPlanningOperationalGate.concentrateMessage : SprayPlanningOperationalGate.migrationMessage))
+            #expect(error.message == (invalidFactor ? SprayPlanningOperationalGate.concentrateMessage : SprayPlanningOperationalGate.migrationMessage))
         }
         let calls = await repository.writeCalls
         #expect(calls == 0)

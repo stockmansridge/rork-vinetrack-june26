@@ -419,11 +419,7 @@ data class SprayGuidedFlow(
         }
 
     val operationalBlocker: String?
-        get() = SprayPlanningOperationalGate.aboveReferenceBlocker(
-            planningResolution?.litresPerHectare ?: volumeDecision?.actualLitresPerHectare,
-            volumeDecision?.recommendedLitresPerHectare,
-            inputs.products.any { it.basis == SprayProductRateBasis.PER_100_LITRES })
-            ?: inputs.planningIntent?.fullTankExecutionBlocker(planningResolution, geometry.grossAreaHectares)
+        get() = inputs.planningIntent?.fullTankExecutionBlocker(planningResolution, geometry.grossAreaHectares)
             ?: SprayPlanningOperationalGate.blocker(inputs.planningIntent != null, carrier?.concentrationFactor,
                 inputs.products.any { it.basis == SprayProductRateBasis.PER_100_LITRES },
                 inputs.products.filter { it.basis == SprayProductRateBasis.PER_100_LITRES }.map { it.name })

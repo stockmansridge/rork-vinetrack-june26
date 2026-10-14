@@ -6,14 +6,14 @@ import kotlinx.serialization.SerialName
 /** Declared complete-row equivalents per travel pass; never changes vineyard spacing. */
 @Serializable
 enum class SprayPassConfiguration(val title: String, val rowEquivalents: Double) {
-    @SerialName("standard_pass") STANDARD_PASS("Standard Pass", 1.0),
+    @SerialName("standard_pass") STANDARD_PASS("Single Row", 1.0),
     @SerialName("over_row_two_rows") OVER_ROW("Over-Row", 2.0),
 }
 
 @Serializable
 enum class SprayPlanningMethod(val title: String) {
     @SerialName("by_area") BY_AREA("By Area"),
-    @SerialName("full_tank") FULL_TANK("Full Tank"),
+    @SerialName("full_tank") FULL_TANK("Only Full Tanks"),
 }
 
 @Serializable
@@ -36,7 +36,7 @@ data class SprayPlanningIntent(
     /** Execution-only completeness boundary; do not apply to historical records or editable drafts. */
     fun fullTankExecutionBlocker(resolution: SprayPlanningResolution?, selectedGrossAreaHa: Double?): String? {
         if (method != SprayPlanningMethod.FULL_TANK) return null
-        val message = "Full Tank plan is incomplete or inconsistent. Recalculate before saving or starting."
+        val message = "Only Full Tanks plan is incomplete or inconsistent. Recalculate before saving or starting."
         val pass = configuration ?: return message
         val tank = intendedTankLitres?.takeIf { it.isFinite() && it > 0 } ?: return message
         val resolved = resolution ?: return message
@@ -129,21 +129,19 @@ object SprayPlanningOperationalGate {
         return blocker(current.applicationGeometry, current.tanks.orEmpty())
     }
     const val MIGRATION_MESSAGE = "Calculation preview only. New spray planning save/start and replay are disabled until the schema and operational workflows are approved and validated."
-    const val CONCENTRATE_MESSAGE = "Concentrate spraying permission and limits are unverified for this dilute-rate mix. Save/start is blocked. A displayed CF is not label approval."
-    const val ABOVE_REFERENCE_MESSAGE = "Above-reference spray volume requires independent label review for dilute-rate products. Save/start is blocked; CF 1.00 or an entered rate is not approval."
-    fun aboveReferenceBlocker(actual: Double?, reference: Double?, hasDiluteRateProducts: Boolean): String? {
-        if (!hasDiluteRateProducts || actual == null || reference == null || !actual.isFinite() || !reference.isFinite() || reference <= 0) return null
-        return if (actual > reference + maxOf(0.000001, reference * 0.00000001)) ABOVE_REFERENCE_MESSAGE else null
-    }
+    const val CONCENTRATE_MESSAGE = "The concentration factor must be finite and at least 1.00. Recalculate before saving or starting."
+    const val WARNING_TITLE = "Concentration / Label Warning"
+    const val WARNING_MESSAGE = "VineTrack has calculated the chemical concentration factor (CF), but concentrate-spraying permission and applicable limits have not been verified against the product label.\n\nA calculated CF does not confirm label approval. Check the relevant product labels and application directions before spraying."
+
+    /** Advisory only; never feeds operational readiness or write admission. */
+    fun warningProducts(names: List<String>): List<String> = names.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
     fun blocker(snapshot: SprayApplicationSnapshot?, tanks: List<com.rork.vinetrack.data.model.SprayTank>): String? {
-        aboveReferenceBlocker(snapshot?.appliedLitresPer100m, snapshot?.diluteLitresPer100m,
-            tanks.any { tank -> tank.chemicals.any { it.rateBasis == SprayProductRateBasis.PER_100_LITRES.raw || (it.rateBasis == null && it.ratePer100L > 0) } })?.let { return it }
         if (snapshot?.planningResolution != null) {
             snapshot.planningIntent?.fullTankExecutionBlocker(snapshot.planningResolution, snapshot.grossAreaHa)?.let { return it }
         }
         for (tank in tanks) {
             val ambiguous = tank.chemicals.filter { it.rateBasis == null && it.ratePer100L > 0 && it.ratePerHa > 0 }
-            if (ambiguous.isNotEmpty()) return CONCENTRATE_MESSAGE + " Ambiguous rate basis: " + ambiguous.joinToString(", ") { it.name }
+            if (ambiguous.isNotEmpty()) return "Choose an explicit rate basis before saving or starting. Ambiguous rate basis: " + ambiguous.joinToString(", ") { it.name }
             val dilute = tank.chemicals.filter { it.rateBasis == SprayProductRateBasis.PER_100_LITRES.raw ||
                 (it.rateBasis == null && it.ratePer100L > 0) }
             blocker(false, tank.concentrationFactor, dilute.isNotEmpty(), dilute.map { it.name })?.let { return it }
@@ -151,7 +149,7 @@ object SprayPlanningOperationalGate {
         return blocker(snapshot?.planningFieldsCleared == true || snapshot?.planningIntent != null || snapshot?.planningResolution != null, null, false)
     }
     fun blocker(hasPlanningIntent: Boolean, concentrationFactor: Double?, hasDiluteRateProducts: Boolean, chemicalNames: List<String> = emptyList()): String? {
-        if (hasDiluteRateProducts && (concentrationFactor == null || !concentrationFactor.isFinite() || concentrationFactor < 1.0 || concentrationFactor > 1.000001)) {
+        if (hasDiluteRateProducts && (concentrationFactor == null || !concentrationFactor.isFinite() || concentrationFactor < 1.0)) {
             val names = chemicalNames.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
             return if (names.isEmpty()) CONCENTRATE_MESSAGE else CONCENTRATE_MESSAGE + " Products: " + names.joinToString(", ")
         }

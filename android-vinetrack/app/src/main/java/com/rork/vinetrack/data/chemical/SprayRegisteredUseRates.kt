@@ -62,6 +62,21 @@ data class SpraySelectableRate(
             else -> "Saved rates"
         }
 
+    /** Display-only detail projection; never merges registered uses or mutates their evidence. */
+    val selectionDetails: List<String>
+        get() = buildList {
+            add(groupTitle)
+            add(label)
+            condition?.let { add(it) }
+            preset?.let { add(it.qualifier) }
+            registeredUse?.restrictions?.let { add(it) }
+            registeredUse?.reEntryStatement?.let { add(it) }
+            registeredUse?.withholdingStatement?.let { add(it) }
+            registeredUse?.withholdingPeriodDays?.let { add("Withholding period: $it days") }
+            registeredUse?.reEntryPeriodHours?.let { add("Re-entry interval: $it hours") }
+            (registeredUse?.unknownFields?.get("method") as? kotlinx.serialization.json.JsonPrimitive)?.content?.let { add(it) }
+        }.map { it.trim() }.filter { it.isNotEmpty() && it != displayText }.distinct()
+
     val menuText: String
         get() {
             val caption = listOfNotNull(label.trim().takeIf { it.isNotEmpty() }, condition?.trim()?.takeIf { it.isNotEmpty() }).distinct().joinToString(" — ")

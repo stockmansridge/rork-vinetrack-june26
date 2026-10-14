@@ -50,7 +50,7 @@ fun SprayPlanningCards(
                 if (configuration != null) {
                     SprayPassIllustration(configuration)
                     Text(if (configuration == SprayPassConfiguration.STANDARD_PASS)
-                        "Two adjacent half-row faces: one complete-row equivalent per pass."
+                        "Sprays the facing sides of two adjacent vine rows. Each pass covers one complete-row equivalent."
                         else "Both sides of two complete vine rows per pass.", style = MaterialTheme.typography.bodySmall)
                 } else Text("Choose the configuration. Historical configuration is not assumed.", style = MaterialTheme.typography.bodySmall)
                 rowSpacingMetres?.let { Text("Vineyard row spacing: ${region.formatLength(it)}") }
@@ -91,7 +91,9 @@ fun SprayPlanningCards(
                 } else if (method == SprayPlanningMethod.FULL_TANK) {
                     Text("Confirm canopy/configuration; enter positive volume and area/rate within the selected blocks.", style = MaterialTheme.typography.bodySmall)
                 }
-                Text(SprayPlanningOperationalGate.MIGRATION_MESSAGE, style = MaterialTheme.typography.bodySmall)
+                if (configuration != null || method == SprayPlanningMethod.FULL_TANK) {
+                    Text(SprayPlanningOperationalGate.MIGRATION_MESSAGE, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }
@@ -111,7 +113,7 @@ private fun PlanningField(title: String, value: String, onChange: (String) -> Un
 private fun SprayPassIllustration(configuration: SprayPassConfiguration, modifier: Modifier = Modifier) {
     Canvas(modifier.fillMaxWidth().height(106.dp).semantics {
         contentDescription = if (configuration == SprayPassConfiguration.STANDARD_PASS)
-            "Standard sprayer between two rows, treating adjacent half faces"
+            "Single Row sprayer, arrows pointing left and right toward adjacent vine-row faces"
         else "Over-row boom with four heads treating both sides of two rows"
     }) {
         val over = configuration == SprayPassConfiguration.OVER_ROW
@@ -128,9 +130,17 @@ private fun SprayPassIllustration(configuration: SprayPassConfiguration, modifie
         }
         val heads = if (over) listOf(.23f, .43f, .57f, .77f) else listOf(.42f, .58f)
         heads.forEachIndexed { index, x ->
-            val end = if (over) (if (index < 2) .33f else .67f) else (if (index == 0) .22f else .78f)
-            drawLine(Color(0xFF35A7BA), Offset(size.width * x, 61.dp.toPx()), Offset(size.width * end, 61.dp.toPx()), 3.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())))
-            drawCircle(Color(0xFF35A7BA), 4.dp.toPx(), Offset(size.width * x, 61.dp.toPx()))
+            val row = if (over) (if (index < 2) .33f else .67f) else (if (index == 0) .18f else .82f)
+            val direction = if (row > x) 1f else -1f
+            val tip = size.width * row - direction * 13.dp.toPx()
+            drawLine(Color(0xFF35A7BA), Offset(size.width * x, 61.dp.toPx()), Offset(tip - direction * 7.dp.toPx(), 61.dp.toPx()), 3.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())))
+            val arrow = androidx.compose.ui.graphics.Path().apply {
+                moveTo(tip, 61.dp.toPx())
+                lineTo(tip - direction * 8.dp.toPx(), 56.dp.toPx())
+                lineTo(tip - direction * 8.dp.toPx(), 66.dp.toPx())
+                close()
+            }
+            drawPath(arrow, Color(0xFF35A7BA))
         }
     }
 }

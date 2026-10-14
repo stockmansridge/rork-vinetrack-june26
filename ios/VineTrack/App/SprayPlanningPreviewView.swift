@@ -23,12 +23,13 @@ struct SprayPlanningPreviewView: View {
                     rateText: .constant(configuration == .standardPass ? "14" : "28"), region: .australian,
                     rateUnit: "L/100m", rowSpacingMetres: 2.8,
                     resolution: intent.resolve(selectedAreaHa: 10, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 500))
+                SprayConcentrationWarningView(products: ["Synthetic sulphur"])
             }.padding(16)
         }.background(Color(.systemGroupedBackground))
     }
 }
 
-#Preview("Standard Pass • 1500 L / 3 ha") {
+#Preview("Single Row • 1500 L / 3 ha") {
     SprayPlanningPreviewView(configuration: .standardPass, specification: .targetArea)
 }
 
