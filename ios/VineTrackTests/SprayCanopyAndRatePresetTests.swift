@@ -18,6 +18,21 @@ import UIKit
 /// arithmetic between them is VineTrack's job and it was not doing it.
 struct SprayCanopyAndRatePresetTests {
 
+    @Test func distinctRegisteredDirectionsWithEqualNumbersKeepTheirOwnRangesAndPresets() throws {
+        var product = rangeProduct()
+        let first = try #require(product.chemicalIntelligence?.registeredUses.first)
+        var second = first
+        second.restrictions = "Different legal restriction"
+        product.chemicalIntelligence?.registeredUses = [first, second]
+        let rates = SprayRegisteredUseRates.vineyardRates(for: product)
+        #expect(rates.count == 8)
+        #expect(Set(rates.map(\.id)).count == 8)
+        #expect(rates.filter { $0.registeredUse?.restrictions == second.restrictions }.count == 4)
+        #expect(SprayRegisteredUseRates.defaultSelection(for: product, preferring: [.per100Litres]) == nil)
+        product.chemicalIntelligence?.registeredUses = [second, first]
+        #expect(Set(SprayRegisteredUseRates.vineyardRates(for: product).map(\.id)) == Set(rates.map(\.id)))
+    }
+
     // MARK: - Fixtures
 
     private static let vineyardId = UUID()

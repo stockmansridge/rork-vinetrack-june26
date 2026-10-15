@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
@@ -202,7 +204,7 @@ import kotlin.math.abs
  * `ChemicalLine`. The line references a saved chemical and one of its stored
  * rates; an optional override replaces the recommended rate value.
  */
-private class CalcChemLine(
+internal class CalcChemLine(
     chemicalId: String,
     selectedRateId: String?,
     basis: SprayCalculator.RateBasis,
@@ -335,10 +337,13 @@ private fun recommendedRateDisplay(chem: SavedChemical, line: CalcChemLine): Dou
 private fun lineCostPerUnit(chem: SavedChemical, rateUnit: String, prices: List<com.rork.vinetrack.data.chemical.ChemicalSeasonPrice>): Double? =
     ChemicalSprayDefaultHandoff.costPerRateUnit(chem, rateUnit, prices)
 
-/** Effective rate: manual override (when valid) else the recommended rate. */
-private fun effectiveRateDisplay(chem: SavedChemical, line: CalcChemLine): Double {
+/** Nonblank editor drafts are authoritative: invalid input never borrows a saved dose. */
+internal fun effectiveRateDisplay(chem: SavedChemical, line: CalcChemLine): Double {
     if (SprayRegisteredUseRates.productUnitReviewMessage(chem) != null) return Double.NaN
-    if (line.operationalSource != null) return line.overrideText.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0 } ?: recommendedRateDisplay(chem, line)
+    val draft = line.overrideText
+    val typed = chemicalEditorValue(draft)
+    if (draft.isNotBlank() && typed == null) return Double.NaN
+    if (line.operationalSource != null) return typed ?: recommendedRateDisplay(chem, line)
     if (SprayRegisteredUseRates.hasInvalidStructuredRates(chem)) return Double.NaN
     val selected = SprayRegisteredUseRates.rate(chem, line.selectedRateId)
     selected?.labelRange?.let {
@@ -350,7 +355,14 @@ private fun effectiveRateDisplay(chem: SavedChemical, line: CalcChemLine): Doubl
     SprayConfirmedRateSeeding.rangeFor(chem, line.basis)?.let { range ->
         if (line.rateAmount == null) return SprayConfirmedRateSeeding.plannerRate(range, line.overrideText)
     }
-    return line.overrideText.toDoubleOrNull()?.takeIf { it > 0 } ?: recommendedRateDisplay(chem, line)
+    return typed ?: recommendedRateDisplay(chem, line)
+}
+
+/** Retain the raw text separately; a trailing decimal separator is an unfinished draft. */
+private fun chemicalEditorValue(text: String): Double? {
+    val trimmed = text.trim()
+    if (trimmed.endsWith('.') || trimmed.endsWith(',')) return null
+    return SprayControllerRateEntry.parse(trimmed)?.takeIf { it.isFinite() && it > 0 }
 }
 
 /**
@@ -1107,7 +1119,11 @@ fun SprayCalculatorScreen(
             errorMessage = "Water rate must be greater than zero."
             return null
         }
-        val lines = buildLines().filter { it.rate > 0 }
+        val lines = buildLines()
+        if (lines.any { !it.rate.isFinite() || it.rate <= 0 }) {
+            errorMessage = "Resolve every chemical application rate before calculating the mix."
+            return null
+        }
         if (lines.isEmpty()) {
             errorMessage = "Add at least one chemical with a rate to calculate the mix."
             return null
@@ -1157,7 +1173,7 @@ fun SprayCalculatorScreen(
                 basis = persistedBasis,
                 appliedRate = effectiveRateDisplay(chem, line),
                 unit = lineRateUnit(chem, line),
-                isOverride = line.overrideText.toDoubleOrNull()?.let { it > 0 } == true,
+                isOverride = chemicalEditorValue(line.overrideText) != null,
                 capturedAt = iso,
                 selectedRate = SprayRegisteredUseRates.rate(chem, line.selectedRateId),
                 isOperationalPreference = line.operationalSource != null,
@@ -3303,7 +3319,7 @@ private fun SelectorOptionRow(
 
 /** iOS-style chemical line card: picker, rate menu, override, label links. */
 @Composable
-private fun CalcChemicalLineCard(
+internal fun CalcChemicalLineCard(
     line: CalcChemLine,
     savedChemicals: List<SavedChemical>,
     onChanged: () -> Unit,
@@ -3317,7 +3333,10 @@ private fun CalcChemicalLineCard(
     val chem = savedChemicals.firstOrNull { it.id == line.chemicalId }
     val recommended = chem?.let { recommendedRateDisplay(it, line) } ?: 0.0
     val basisSuffix = if (line.basis == SprayCalculator.RateBasis.PER_100L) "/100L" else "/ha"
-    val isOverridden = line.overrideText.toDoubleOrNull()?.let { it > 0 } == true
+    val isOverridden = line.overrideText.isNotBlank()
+    val invalidDraft = isOverridden && chemicalEditorValue(line.overrideText) == null
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     // The rate's OWN unit. Displaying the product's inventory unit beside a
     // confirmed 560 g/ha default prints "560 Kg/ha" - the same number with a
     // thousandfold different meaning.
@@ -3524,20 +3543,25 @@ private fun CalcChemicalLineCard(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = line.overrideText,
-                    onValueChange = { line.overrideText = it.filter { c -> c.isDigit() || c == '.' }; onChanged() },
+                    onValueChange = { line.overrideText = it; onChanged() },
                     placeholder = { Text(if (selectedRate?.requiresManualRate == true || confirmedRange != null) "Application rate" else fmtRate(recommended)) },
-                    isError = rangeRejection != null,
+                    isError = invalidDraft || rangeRejection != null,
                     enabled = !hasInvalidStoredRate && (ChemicalSprayDefaultHandoff.isLegacyRateRecord(chem) ||
                         selectedRate != null || line.rateAmount != null || confirmedRange != null),
                     singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focus.clearFocus(); keyboard?.hide() }),
                     modifier = Modifier
                         .weight(1f)
                         .semantics { contentDescription = "applicationRateField" },
                 )
                 Text("$rateUnit$basisSuffix", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = vine.textSecondary)
             }
-            if (selectedRange != null || confirmedRange != null) {
+            if (invalidDraft) {
+                Text("Enter a valid positive application rate.", color = VineColors.Orange,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.semantics { contentDescription = "applicationRateRejection" })
+            } else if (selectedRange != null || confirmedRange != null) {
                 Text(
                     rangeRejection ?: if (isOverridden) {
                         "Applying ${line.overrideText.trim()} $rateUnit$basisSuffix within the confirmed range."
@@ -3662,7 +3686,7 @@ private fun SuggestedRegisteredRatePickerRow(
     }
 }
 
-private fun applySuggestedRate(line: CalcChemLine, rate: SpraySelectableRate) {
+internal fun applySuggestedRate(line: CalcChemLine, rate: SpraySelectableRate) {
     val basis = rate.basis ?: return
     val unit = ChemicalLabelRateNormalizer.canonicalBareUnit(rate.unit) ?: return
     line.selectedRateId = rate.id

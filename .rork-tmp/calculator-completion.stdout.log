@@ -3,9 +3,9 @@ Daemon will be stopped at the end of the build
 > Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
 > Task :app:preBuild UP-TO-DATE
 > Task :app:preDebugBuild UP-TO-DATE
-> Task :app:generateDebugBuildConfig FROM-CACHE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
 > Task :app:checkDebugAarMetadata UP-TO-DATE
-> Task :app:processDebugNavigationResources FROM-CACHE
+> Task :app:processDebugNavigationResources UP-TO-DATE
 > Task :app:compileDebugNavigationResources UP-TO-DATE
 > Task :app:generateDebugResValues UP-TO-DATE
 > Task :app:mapDebugSourceSetPaths UP-TO-DATE
@@ -14,11 +14,11 @@ Daemon will be stopped at the end of the build
 > Task :app:packageDebugResources UP-TO-DATE
 > Task :app:parseDebugLocalResources UP-TO-DATE
 > Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
-> Task :app:extractDeepLinksDebug FROM-CACHE
-> Task :app:processDebugMainManifest FROM-CACHE
-> Task :app:processDebugManifest FROM-CACHE
-> Task :app:processDebugManifestForPackage FROM-CACHE
-> Task :app:processDebugResources FROM-CACHE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
 > Task :app:javaPreCompileDebug UP-TO-DATE
 > Task :app:preDebugUnitTestBuild UP-TO-DATE
 > Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
@@ -136,12 +136,12 @@ w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinet
 w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SettingsScreen.kt:1152:79 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
 w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SoilProfileEditorSheet.kt:27:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
 w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SoilProfileEditorSheet.kt:370:41 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
-w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:64:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
-w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:1391:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
-w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:2036:47 Unnecessary safe call on a non-null receiver of type 'Double'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:4026:63 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
-w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:4040:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
-w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:4323:79 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:66:8 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:1407:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:2052:47 Unnecessary safe call on a non-null receiver of type 'Double'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:4050:63 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:4064:67 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
+w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt:4347:79 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
 w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayEquipmentScreen.kt:251:186 Elvis operator (?:) always returns the left operand of non-nullable type 'Double'.
 w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayEquipmentScreen.kt:256:53 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SprayEquipment'.
 w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayPresetsScreen.kt:237:55 Unnecessary non-null assertion (!!) on a non-null receiver of type 'SavedSprayPreset'.
@@ -215,28 +215,45 @@ w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinet
 w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:2224:51 Elvis operator (?:) always returns the left operand of non-nullable type 'Double'.
 w: file:///home/user/rork-app/android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt:2267:71 'typealias MenuAnchorType = ExposedDropdownMenuAnchorType' is deprecated. Renamed to ExposedDropdownMenuAnchorType.
 
-> Task :app:compileDebugJavaWithJavac
-> Task :app:bundleDebugClassesToCompileJar
+> Task :app:compileDebugJavaWithJavac UP-TO-DATE
 > Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
 > Task :app:processDebugJavaRes UP-TO-DATE
-
-> Task :app:compileDebugUnitTestKotlin
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/CropSilRateRegressionTest.kt:82:131 Unnecessary non-null assertion (!!) on a non-null receiver of type 'List<ChemicalRegisteredUse>'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/CropSilRateRegressionTest.kt:141:81 Unnecessary non-null assertion (!!) on a non-null receiver of type 'ChemicalLineSnapshot'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/CropSilRateRegressionTest.kt:155:46 Unnecessary non-null assertion (!!) on a non-null receiver of type 'List<ChemicalActiveIngredient>'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayApplicationSnapshotTest.kt:387:51 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayApplicationSnapshotTest.kt:487:40 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayApplicationSnapshotTest.kt:487:67 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayGuidedFlowTest.kt:613:61 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayGuidedFlowTest.kt:614:76 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayPlanningAttemptTest.kt:200:24 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'String?'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayPlanningProcessRestartTest.kt:26:24 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'String?'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayPlanningProcessRestartTest.kt:88:21 Redundant creation of Json format. Creating instances for each usage can be slow.
-
+> Task :app:compileDebugUnitTestKotlin UP-TO-DATE
 > Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
 > Task :app:processDebugUnitTestJavaRes UP-TO-DATE
 
 > Task :app:testDebugUnitTest
+
+SprayRegisteredUseRatesTest > multiple named conditions do not manufacture range presets PASSED
+
+SprayRegisteredUseRatesTest > Dithane plain range offers minimum midpoint maximum in label grams PASSED
+
+SprayRegisteredUseRatesTest > unconfirmed structured rate is offered but never becomes confirmed default PASSED
+
+SprayRegisteredUseRatesTest > Dithane per-100-L rate uses actual carrier and concentration without changing 3000 litres PASSED
+
+SprayRegisteredUseRatesTest > basis availability follows genuine offered label bases without conversion PASSED
+
+SprayRegisteredUseRatesTest > preset and identical manual value calculate equally but retain distinct provenance PASSED
+
+SprayRegisteredUseRatesTest > confirmed default seeds only its exact amount unit and basis PASSED
+
+SprayRegisteredUseRatesTest > structured vineyard picker excludes tobacco citrus and unrelated crops PASSED
+
+SprayRegisteredUseRatesTest > legacy rates are used only when structured rates are absent PASSED
+
+SprayRegisteredUseRatesTest > structured non-vineyard rates suppress legacy fallback PASSED
+
+SprayRegisteredUseRatesTest > product-level rates are included but rates assigned to another crop are not PASSED
+
+SprayRegisteredUseRatesTest > equalNumericRangesUnderDistinctRestrictionsRetainEachChoiceAndPreset PASSED
+
+SprayRegisteredUseRatesTest > a confirmed default citing another crop never seeds a vineyard line PASSED
+
+SprayRegisteredUseRatesTest > Dithane manual range validation accepts 175 and rejects empty 149 and 201 PASSED
+
+SprayRegisteredUseRatesTest > fixed registered rate is directly selectable with stable identity and grouping PASSED
 
 ChemicalLabelRateNormalizerTest > per 100 litre range is retained with bare unit PASSED
 
@@ -319,7 +336,7 @@ SprayCalculatorCompletionTest > failedPendingCreateReplacementRetainsOriginalDur
 SprayCalculatorCompletionTest > blockedAndInFlightCreatesCannotBeReplacedOrUnblocked PASSED
 
 SprayCalculatorTimingTest > repeatedPlanReads STANDARD_OUT
-    CALCULATOR_TIMING repeated_plan_300 ms=2.592026 checksum=540000.0
+    CALCULATOR_TIMING repeated_plan_300 ms=2.529465 checksum=540000.0
 
 SprayCalculatorTimingTest > repeatedPlanReads PASSED
 
@@ -541,34 +558,6 @@ SprayPlanningIntentTest > regionalDecimalPlanningEntryRefusesPartialAndNonfinite
 
 SprayPlanningProcessRestartTest > abruptProcessTerminationRetainsBlockedOriginalPayloadAndRetryCount PASSED
 
-SprayRegisteredUseRatesTest > multiple named conditions do not manufacture range presets PASSED
-
-SprayRegisteredUseRatesTest > Dithane plain range offers minimum midpoint maximum in label grams PASSED
-
-SprayRegisteredUseRatesTest > unconfirmed structured rate is offered but never becomes confirmed default PASSED
-
-SprayRegisteredUseRatesTest > Dithane per-100-L rate uses actual carrier and concentration without changing 3000 litres PASSED
-
-SprayRegisteredUseRatesTest > basis availability follows genuine offered label bases without conversion PASSED
-
-SprayRegisteredUseRatesTest > preset and identical manual value calculate equally but retain distinct provenance PASSED
-
-SprayRegisteredUseRatesTest > confirmed default seeds only its exact amount unit and basis PASSED
-
-SprayRegisteredUseRatesTest > structured vineyard picker excludes tobacco citrus and unrelated crops PASSED
-
-SprayRegisteredUseRatesTest > legacy rates are used only when structured rates are absent PASSED
-
-SprayRegisteredUseRatesTest > structured non-vineyard rates suppress legacy fallback PASSED
-
-SprayRegisteredUseRatesTest > product-level rates are included but rates assigned to another crop are not PASSED
-
-SprayRegisteredUseRatesTest > a confirmed default citing another crop never seeds a vineyard line PASSED
-
-SprayRegisteredUseRatesTest > Dithane manual range validation accepts 175 and rejects empty 149 and 201 PASSED
-
-SprayRegisteredUseRatesTest > fixed registered rate is directly selectable with stable identity and grouping PASSED
-
 SprayVolumeDecisionTest > recommended choice tracks canopy and is always CF one PASSED
 
 SprayVolumeDecisionTest > L per 100m recommendation remains available without row spacing PASSED
@@ -615,6 +604,6 @@ StartTankCommitCoordinatorTest > repeatedRecoveryFromEachIncompleteStoreStateNev
 
 StartTankCommitCoordinatorTest > failedJournalWriteMutatesNothing PASSED
 
-BUILD SUCCESSFUL in 2m 54s
-26 actionable tasks: 6 executed, 7 from cache, 13 up-to-date
+BUILD SUCCESSFUL in 2m 27s
+26 actionable tasks: 4 executed, 22 up-to-date
 CALCULATOR_REGRESSION_EXIT=0

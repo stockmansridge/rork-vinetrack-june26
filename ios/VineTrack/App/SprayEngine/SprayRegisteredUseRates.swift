@@ -518,7 +518,7 @@ nonisolated enum SprayRegisteredUseRates {
             else { continue }
             for point in presetPoints(minimum: minimum, maximum: maximum) {
                 let id = stableIdentifier(
-                    "preset|\(use.crop)|\(use.targetRaw)|\(only.labelRate.basis.rawValue)"
+                    "preset|\(only.entry.id)|\(use.crop)|\(use.targetRaw)|\(only.labelRate.basis.rawValue)"
                         + "|\(only.labelRate.unit)|\(minimum)|\(maximum)|\(point.preset.rawValue)"
                 )
                 guard seen.insert(id).inserted,
@@ -608,6 +608,16 @@ nonisolated enum SprayRegisteredUseRates {
         let minimumValue: String = rate.minValue.map { String($0) } ?? ""
         let maximumValue: String = rate.maxValue.map { String($0) } ?? ""
         var parts: [String] = ["use"]
+        // Equal numeric rates under different legal directions are separate choices.
+        parts.append(use.directionId ?? "")
+        parts.append(rate.rateId ?? "")
+        parts.append(rate.applicationCondition ?? "")
+        parts.append(use.restrictions ?? "")
+        if case let .string(statement) = use.unknownFields["withholding_statement"] { parts.append(statement) }
+        else { parts.append("") }
+        parts.append(use.reEntryStatement ?? "")
+        parts.append(use.withholdingPeriodDays.map(String.init) ?? "")
+        parts.append(use.reEntryPeriodHours.map(String.init) ?? "")
         parts.append(use.crop)
         parts.append(use.targetRaw)
         parts.append(rate.label)

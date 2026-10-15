@@ -26,6 +26,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SprayRegisteredUseRatesTest {
+    @Test fun equalNumericRangesUnderDistinctRestrictionsRetainEachChoiceAndPreset() {
+        val first = use("Grapevines", "Mildew", listOf(grapeRange.copy(rateId = null)))
+        val second = first.copy(restrictions = "Different legal restriction")
+        val product = chemical(uses = listOf(first, second))
+        val rates = SprayRegisteredUseRates.vineyardRates(product)
+        assertEquals(8, rates.size)
+        assertEquals(8, rates.map { it.id }.distinct().size)
+        assertEquals(4, rates.count { it.registeredUse?.restrictions == second.restrictions })
+        assertNull(SprayRegisteredUseRates.firstOffered(product, SprayCalculator.RateBasis.PER_100L))
+        assertEquals(rates.map { it.id }.toSet(), SprayRegisteredUseRates.vineyardRates(product.copy(registeredUses = listOf(second, first))).map { it.id }.toSet())
+    }
+
     private fun rate(
         id: String,
         basis: ChemicalLabelRateBasis,

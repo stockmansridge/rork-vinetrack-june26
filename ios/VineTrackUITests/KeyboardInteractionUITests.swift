@@ -197,8 +197,16 @@ final class KeyboardInteractionUITests: XCTestCase {
         let alertDone = app.buttons.matching(identifier: "keyboard.dismiss").firstMatch
         let alertDoneExists = alertDone.waitForExistence(timeout: 5)
         XCTAssertTrue(alertDoneExists, "App-owned alert text control")
-        guard alertDoneExists else { return }
+        guard alertDoneExists else {
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "Alert keyboard accessibility hierarchy"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+            return
+        }
         alertDone.tap()
+        let alertKeyboardHidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+        XCTAssertEqual(XCTWaiter.wait(for: [alertKeyboardHidden], timeout: 5), .completed, "Alert Done dismisses only the keyboard")
         XCTAssertTrue(popup.exists, "Done must not confirm or cancel the popup")
         XCTAssertEqual(draft.value as? String, "Popup draft")
         popup.buttons["Cancel"].tap()

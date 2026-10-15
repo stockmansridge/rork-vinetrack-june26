@@ -4800,10 +4800,17 @@ struct CalcChemicalLineCard: View {
             }
             return
         }
-        guard let rate = offeredRates.first(where: { $0.isSelectable && $0.basis == basis })
-        else { return }
-        line.selectedRateId = rate.id
+        guard let chem = selectedChemical else { return }
+        let rate = SprayRegisteredUseRates.defaultSelection(for: chem, preferring: [basis])
         line.basis = basis
+        line.applicationRateDraft = nil
+        overrideText = ""
+        rangeRejection = nil
+        line.operationalRateSource = nil
+        line.operationalRateUnit = nil
+        line.overrideRate = nil
+        // Choosing a denominator must not choose one of several legal conditions.
+        line.selectedRateId = rate?.basis == basis ? (rate?.id ?? UUID()) : UUID()
     }
 
     /// The `[ Per 100 L ] [ Per ha ]` control — the PRODUCT'S LABEL RATE BASIS.

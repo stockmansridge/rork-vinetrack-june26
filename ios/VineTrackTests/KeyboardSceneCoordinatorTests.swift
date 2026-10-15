@@ -120,6 +120,33 @@ struct KeyboardSceneCoordinatorTests {
         #expect(field.text == "42")
     }
 
+    @Test func nativeAlertHasVisibleDismissAccessoryWithoutChangingDraft() async throws {
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = UIViewController()
+        let coordinator = KeyboardSceneCoordinator()
+        coordinator.attach(to: window)
+        window.makeKeyAndVisible()
+        defer { coordinator.detach(); window.isHidden = true }
+        let alert = UIAlertController(title: "Alert accessory diagnostic", message: nil, preferredStyle: .alert)
+        alert.addTextField { $0.text = "Original draft" }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        window.rootViewController?.present(alert, animated: false)
+        try await Task.sleep(for: .milliseconds(500))
+        let field = try #require(alert.textFields?.first)
+        #expect(field.becomeFirstResponder())
+        try await Task.sleep(for: .milliseconds(300))
+        let accessory = try #require(field.inputAccessoryView as? KeyboardAccessoryView)
+        #expect(accessory.window != nil, "Accessory must be installed in a visible native window")
+        #expect(!accessory.isHidden && !accessory.dismissButton.isHidden)
+        #expect(accessory.dismissButton.accessibilityIdentifier == "keyboard.dismiss")
+        accessory.dismissButton.sendActions(for: .touchUpInside)
+        #expect(!field.isFirstResponder)
+        #expect(field.text == "Original draft")
+        #expect(alert.presentingViewController != nil)
+        alert.dismiss(animated: false)
+    }
+
     @Test func foreignWindowInputsAreNotModified() {
         let window = UIWindow(), otherWindow = UIWindow()
         let field = UITextField(); otherWindow.addSubview(field)

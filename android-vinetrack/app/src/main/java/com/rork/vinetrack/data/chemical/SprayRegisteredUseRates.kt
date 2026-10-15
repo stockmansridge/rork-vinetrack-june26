@@ -191,7 +191,7 @@ object SprayRegisteredUseRates {
                     val range = only.amount as? SprayRateAmount.Range ?: continue
                     for ((preset, value) in presetPoints(range.minimum, range.maximum)) {
                         val id = stableId(
-                            "preset|${use.crop}|${use.targetRaw}|${only.basis}|${only.unit}|" +
+                            "preset|${only.id}|${use.crop}|${use.targetRaw}|${only.basis}|${only.unit}|" +
                                 "${range.minimum}|${range.maximum}|${preset.raw}",
                         )
                         if (!seen.add(id)) continue
@@ -236,10 +236,13 @@ object SprayRegisteredUseRates {
             normalized.value != null -> SprayRateAmount.Fixed(normalized.value)
             else -> SprayRateAmount.Unresolved
         }
-        val id = rate.rateId?.trim()?.takeIf { it.isNotEmpty() } ?: stableId(
-            "use|${use.crop}|${use.targetRaw}|${rate.label}|${rate.basis.raw}|${rate.unit}|" +
-                "${rate.value ?: ""}|${rate.minValue ?: ""}|${rate.maxValue ?: ""}",
-        )
+        val id = rate.rateId?.trim()?.takeIf { it.isNotEmpty() } ?: stableId(listOf("use", use.directionId.orEmpty(),
+            rate.applicationCondition.orEmpty(), use.restrictions.orEmpty(),
+            use.withholdingStatement.orEmpty(), use.reEntryStatement.orEmpty(),
+            use.withholdingPeriodDays?.toString().orEmpty(), use.reEntryPeriodHours?.toString().orEmpty(),
+            use.crop, use.targetRaw, rate.label, rate.basis.raw, rate.unit,
+            rate.value?.toString().orEmpty(), rate.minValue?.toString().orEmpty(), rate.maxValue?.toString().orEmpty()
+        ).joinToString("|"))
         val range = (amount as? SprayRateAmount.Range)?.let { it.minimum..it.maximum }
         return SpraySelectableRate(
             id = id,
