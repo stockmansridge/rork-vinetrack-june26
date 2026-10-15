@@ -584,6 +584,10 @@ final class TripSyncService {
 
     func pushLocalTrips(vineyardId: UUID) async throws {
         guard let store else { return }
+        await store.recoverLegacySprayReceipts()
+        let accepted = try store.unchangedAcceptedLegacySprays().map { $0.trip.id }
+        metadata.clearDirty(accepted)
+        metadata.markParentsEstablished(accepted)
         try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
         let createdBy = auth?.userId
         var dirty = metadata.pendingUpserts
@@ -593,8 +597,14 @@ final class TripSyncService {
         if !dirty.isEmpty {
             // An admin end wins over an offline active snapshot regardless of its
             // client timestamp. Read before replay; do not upload that snapshot.
-            let endedOnServer = try await repository.fetchAllTrips(vineyardId: vineyardId)
-                .filter { dirty[$0.id] != nil && ($0.endTime != nil ||
+            let serverTrips = try await repository.fetchAllTrips(vineyardId: vineyardId)
+            let serverIds = Set(serverTrips.map { $0.id })
+            let acceptedIds = Set(try store.acceptedLegacySprayPairs(vineyard: vineyardId).map { $0.trip.id })
+            for id in Array(dirty.keys) where acceptedIds.contains(id) && !serverIds.contains(id) {
+                dirty.removeValue(forKey: id)
+                metadata.markUpsertsFailed([id])
+            }
+            let endedOnServer = serverTrips.filter { dirty[$0.id] != nil && ($0.endTime != nil ||
                     (TripOccurrenceCoverage.basis($0.occurrenceCoverage) == .legacy && $0.isActive == false)) }
             let endedIds = Set(endedOnServer.map(\.id))
             for ended in endedOnServer {
@@ -764,7 +774,10 @@ final class TripSyncService {
                 uniquingKeysWith: { first, _ in first }
             )
             var localForVineyard: [Trip] = []
+            let acceptedOriginalIds = Set(try store.acceptedLegacySprayPairs(vineyard: vineyardId).map { $0.trip.id })
             for trip in store.trips {
+                // Immutable acceptance is not permission to recreate an absent/deleted row through initial fallback.
+                if acceptedOriginalIds.contains(trip.id) { continue }
                 if try store.isLegacySpraySyncHeld(trip: trip.id) { continue }
                 if trip.vineyardId == vineyardId {
                     localForVineyard.append(trip)

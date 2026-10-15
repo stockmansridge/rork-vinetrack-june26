@@ -128,6 +128,8 @@ final class SprayRecordSyncService {
 
     func pushLocalSprayRecords(vineyardId: UUID) async throws {
         guard let store else { return }
+        await store.recoverLegacySprayReceipts()
+        metadata.clearDirty(try store.unchangedAcceptedLegacySprays().map { $0.record.id })
         try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
         let createdBy = auth?.userId
         var dirty = metadata.pendingUpserts
@@ -139,12 +141,17 @@ final class SprayRecordSyncService {
             // clearing a completion confirmed on another device.
             let remote = try await repository.fetchAllSprayRecords(vineyardId: vineyardId)
             let serverById = Dictionary(remote.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            let acceptedIds = Set(try store.acceptedLegacySprayPairs(vineyard: vineyardId).map { $0.record.id })
             let byId = Dictionary(store.sprayRecords.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendSprayRecordUpsert] = []
             var pushedIds: [UUID] = []
             for (recordId, ts) in dirty {
                 guard var record = byId[recordId], record.vineyardId == vineyardId else { continue }
                 try store.requireLegacySpraySyncAdmission(record: recordId)
+                if acceptedIds.contains(recordId), serverById[recordId] == nil {
+                    metadata.markUpsertsFailed([recordId])
+                    continue // Acceptance does not authorize recreating a now-absent original.
+                }
                 if let blocker = record.operationalPlanningBlocker {
                     metadata.markUpsertsFailed([recordId])
                     throw SprayPlanningAdmissionError(message: blocker)
@@ -220,8 +227,9 @@ final class SprayRecordSyncService {
         // Initial sync: if remote is empty AND we have local records AND we have
         // never synced before, push them all up.
         if remote.isEmpty, lastSync == nil {
+            let acceptedOriginalIds = Set(try store.acceptedLegacySprayPairs(vineyard: vineyardId).map { $0.record.id })
             let localForVineyard = try store.sprayRecords.filter {
-                guard $0.vineyardId == vineyardId else { return false }
+                guard $0.vineyardId == vineyardId, !acceptedOriginalIds.contains($0.id) else { return false }
                 return try !store.isLegacySpraySyncHeld(record: $0.id)
             }
             if !localForVineyard.isEmpty {

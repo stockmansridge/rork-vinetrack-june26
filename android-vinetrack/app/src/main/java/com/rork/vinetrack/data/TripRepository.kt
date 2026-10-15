@@ -373,6 +373,19 @@ class TripRepository(private val session: SessionStore) {
         return remote.withOccurrenceProjection(journal.projected(state))
     }
 
+    /** The legacy no-route insert uses the same typed imported-trip contract, without end/runtime fields. */
+    fun legacyReceiptInsert(original: LegacySpraySaveStore.TripIntent): JsonObject {
+        check(original.rowSequence.isEmpty())
+        val body = ImportedTripInsert(id = original.id, vineyardId = original.vineyardId,
+            paddockId = original.paddockId, paddockIds = original.paddockIds, paddockName = original.paddockName,
+            startTime = original.startTime, endTime = null, personName = original.personName,
+            tripFunction = "spraying", tripTitle = "Spraying", machineId = null, tractorId = original.tractorId,
+            operatorUserId = original.actorId, trackingPattern = original.trackingPattern,
+            rowSequence = original.rowSequence, sequenceIndex = 0, currentRowNumber = null, nextRowNumber = null,
+            totalTanks = original.totalTanks, createdBy = original.actorId, clientUpdatedAt = original.createdAt)
+        return SupabaseClient.json.encodeToJsonElement(ImportedTripInsert.serializer(), body) as JsonObject
+    }
+
     /**
      * Create an inactive, already-finished trip to carry an imported spray
      * record's block + operator. Mirrors the iOS importer, which makes a

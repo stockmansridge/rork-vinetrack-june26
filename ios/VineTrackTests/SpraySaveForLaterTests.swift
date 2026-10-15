@@ -275,6 +275,50 @@ final class SpraySaveForLaterTests: XCTestCase {
         XCTAssertThrowsError(try SpraySaveForLaterCoordinator.save(record: record, trip: trip, saveRecord: { _ in writes += 1 }, saveTrip: { _ in writes += 1 }))
         XCTAssertEqual(writes, 0)
     }
+    @MainActor func testVerifiedReceiptReleasesParentAndTaskLinkWithoutRecreatingOriginalPair() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let p = PersistenceStore(directory: root); let store = MigratedDataStore(persistence: p)
+        let scope = LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: UUID())
+        store.selectedVineyardId = scope.vineyard
+        let trips = LegacyTripSyncProbe(); let records = LegacyRecordSyncProbe(); let auth = NewBackendAuthService()
+        let ts = TripSyncService(repository: trips, metadata: TripSyncMetadata(persistence: p))
+        let rs = SprayRecordSyncService(repository: records, metadata: SprayRecordSyncMetadata(persistence: p))
+        ts.configure(store: store, auth: auth); rs.configure(store: store, auth: auth)
+        store.legacySprayScopeProvider = { scope }
+        let trip = Trip(vineyardId: scope.vineyard, isActive: false)
+        let record = SprayRecord(tripId: trip.id, vineyardId: scope.vineyard)
+        try store.saveSprayForLater(record: record, trip: trip)
+        XCTAssertFalse(ts.isParentEstablished(trip.id))
+        await ts.setWorkTaskLink(tripId: trip.id, workTaskId: UUID()); XCTAssertTrue(trips.writes.isEmpty)
+        let journal = LegacySpraySaveRecovery(persistence: p); let a = try XCTUnwrap(journal.attempts().first)
+        let receipt = try JSONSerialization.data(withJSONObject: ["version": 1, "status": "accepted",
+            "operation_id": try XCTUnwrap(a.rpc?.operation).uuidString.lowercased(), "vineyard_id": scope.vineyard.uuidString.lowercased(),
+            "trip_id": trip.id.uuidString.lowercased(), "spray_record_id": record.id.uuidString.lowercased(),
+            "request_sha256": String(repeating: "a", count: 64), "committed_at": "2026-10-15T03:00:01Z"])
+        try await journal.replay(scope: scope, isCurrent: { true }) { _, _ in receipt }
+        try await ts.pushLocalTrips(vineyardId: scope.vineyard)
+        try await rs.pushLocalSprayRecords(vineyardId: scope.vineyard)
+        try await ts.pullRemoteTrips(vineyardId: scope.vineyard)
+        try await rs.pullRemoteSprayRecords(vineyardId: scope.vineyard)
+        XCTAssertTrue(trips.writes.isEmpty && records.writes.isEmpty)
+        XCTAssertTrue(ts.isParentEstablished(trip.id))
+        try store.requireLegacySpraySyncAdmission(trip: trip.id)
+        await ts.setWorkTaskLink(tripId: trip.id, workTaskId: UUID())
+        XCTAssertEqual(trips.writes, [trip.id])
+        // A later session or local edit must not reclassify the original as a generic CREATE.
+        let newSession = LegacySpraySaveRecovery.Scope(actor: scope.actor, session: UUID(), vineyard: scope.vineyard)
+        store.legacySprayScopeProvider = { newSession }
+        store.sprayRecords[0].notes = "Later local edit"
+        rs.markSprayRecordDirty(record.id); ts.markTripDirty(trip.id)
+        try await ts.pushLocalTrips(vineyardId: scope.vineyard)
+        try await rs.pushLocalSprayRecords(vineyardId: scope.vineyard)
+        try await ts.pullRemoteTrips(vineyardId: scope.vineyard)
+        try await rs.pullRemoteSprayRecords(vineyardId: scope.vineyard)
+        XCTAssertEqual(trips.writes, [trip.id]); XCTAssertTrue(records.writes.isEmpty)
+        XCTAssertEqual(try journal.attempts()[0].rpc, a.rpc)
+    }
 }
 
 @MainActor private final class LegacyRecordSyncProbe: SprayRecordSyncRepositoryProtocol {

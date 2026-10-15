@@ -219,6 +219,18 @@ class SprayRecordRepository(private val session: SessionStore) {
     private fun SprayInput.geometryToPersist(): SprayApplicationSnapshot? =
         if (isTemplate) applicationGeometry?.templateConfiguration() else applicationGeometry
 
+    /** Hydration after verified receipt only, with the original account request fence. */
+    suspend fun fetchAcceptedRow(id: String, access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess): SprayRecord = withContext(Dispatchers.IO) {
+        check(session.isAccountAccessCurrent(access))
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl("spray_records")) {
+            attributes.put(SupabaseClient.accountRequestScope, access)
+            authHeaders(token); url { parameters.append("id", "eq.$id"); parameters.append("select", "*") }
+        }
+        check(session.isAccountAccessCurrent(access))
+        firstRow(response)
+    }
+
     fun nowIso(): String = Instant.now().toString()
 
     /** Generate a fresh client-side spray-record id (UUID). */
@@ -248,7 +260,37 @@ class SprayRecordRepository(private val session: SessionStore) {
             val token = capturedToken ?: session.accessToken ?: throw BackendError.Unauthorized
             val now = clientUpdatedAt ?: nowIso()
             val geometry = input.geometryToPersist()
-            val body = SprayInsert(
+            val body = insertBody(vineyardId, input, id, now, capturedActor ?: session.userId)
+            val response = SupabaseClient.http.post(SupabaseClient.restUrl("spray_records")) {
+                authHeaders(token)
+                headers { append("Prefer", "return=representation") }
+                contentType(ContentType.Application.Json)
+                val legacy = SupabaseClient.json.encodeToJsonElement(SprayInsert.serializer(), body) as kotlinx.serialization.json.JsonObject
+                setBody(com.rork.vinetrack.data.spray.SprayPlanningWireFields.from(geometry, input.isTemplate).merging(legacy, SupabaseClient.json, explicitClear = geometry?.planningFieldsCleared == true))
+            }
+            if (capturedToken != null) {
+                if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, "Legacy recipe creation was not confirmed")
+                val raw = SupabaseClient.json.parseToJsonElement(response.bodyAsText()) as? kotlinx.serialization.json.JsonArray
+                    ?: error(LegacySpraySaveStore.MESSAGE)
+                val actual = raw.singleOrNull() as? kotlinx.serialization.json.JsonObject ?: error(LegacySpraySaveStore.MESSAGE)
+                val expected = legacyReceiptInsert(vineyardId, input, id, now, capturedActor ?: session.userId)
+                LegacySpraySaveStore.requireEcho(expected, actual)
+                SupabaseClient.json.decodeFromJsonElement(SprayRecord.serializer(), actual)
+            } else firstRow(response)
+        }
+
+    /** Same validated typed insert projection as ordinary creation; frozen before any RPC. */
+    fun legacyReceiptInsert(vineyardId: String, input: SprayInput, id: String, now: String, actor: String?): kotlinx.serialization.json.JsonObject {
+        input.operationalBlocker()?.let { error(it) }
+        val geometry = input.geometryToPersist()
+        val legacy = SupabaseClient.json.encodeToJsonElement(SprayInsert.serializer(), insertBody(vineyardId, input, id, now, actor)) as kotlinx.serialization.json.JsonObject
+        return com.rork.vinetrack.data.spray.SprayPlanningWireFields.from(geometry, input.isTemplate)
+            .merging(legacy, SupabaseClient.json, explicitClear = geometry?.planningFieldsCleared == true)
+    }
+
+    private fun insertBody(vineyardId: String, input: SprayInput, id: String, now: String, actor: String?): SprayInsert {
+        val geometry = input.geometryToPersist()
+        return SprayInsert(
                 id = id,
                 vineyardId = vineyardId,
                 sprayJobId = input.sprayJobId,
@@ -297,28 +339,10 @@ class SprayRecordRepository(private val session: SessionStore) {
                 // per-block geometry outputs — `geometryToPersist()` has already
                 // applied that rule, so this is a straight read.
                 applicationBlocks = geometry?.blocks,
-                createdBy = capturedActor ?: session.userId,
+                createdBy = actor,
                 clientUpdatedAt = now,
             )
-            val response = SupabaseClient.http.post(SupabaseClient.restUrl("spray_records")) {
-                authHeaders(token)
-                headers { append("Prefer", "return=representation") }
-                contentType(ContentType.Application.Json)
-                val legacy = SupabaseClient.json.encodeToJsonElement(SprayInsert.serializer(), body) as kotlinx.serialization.json.JsonObject
-                setBody(com.rork.vinetrack.data.spray.SprayPlanningWireFields.from(geometry, input.isTemplate).merging(legacy, SupabaseClient.json, explicitClear = geometry?.planningFieldsCleared == true))
-            }
-            if (capturedToken != null) {
-                if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, "Legacy recipe creation was not confirmed")
-                val raw = SupabaseClient.json.parseToJsonElement(response.bodyAsText()) as? kotlinx.serialization.json.JsonArray
-                    ?: error(LegacySpraySaveStore.MESSAGE)
-                val actual = raw.singleOrNull() as? kotlinx.serialization.json.JsonObject ?: error(LegacySpraySaveStore.MESSAGE)
-                val legacy = SupabaseClient.json.encodeToJsonElement(SprayInsert.serializer(), body) as kotlinx.serialization.json.JsonObject
-                val expected = com.rork.vinetrack.data.spray.SprayPlanningWireFields.from(geometry, input.isTemplate)
-                    .merging(legacy, SupabaseClient.json, explicitClear = geometry?.planningFieldsCleared == true)
-                LegacySpraySaveStore.requireEcho(expected, actual)
-                SupabaseClient.json.decodeFromJsonElement(SprayRecord.serializer(), actual)
-            } else firstRow(response)
-        }
+    }
 
     /**
      * Patch the form-owned columns of a spray record. The live online edit path

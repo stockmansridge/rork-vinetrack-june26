@@ -100,15 +100,15 @@ class LegacySpraySaveAndroidTest {
             }
             error("Bounded process probe did not publish $prefix")
         }
-        for (stage in LegacySpraySaveStore.Stage.entries.filter { it != LegacySpraySaveStore.Stage.COMPLETE }) {
+        for (stage in LegacySpraySaveStore.Stage.entries.filter { it != LegacySpraySaveStore.Stage.COMPLETE }.map { it.name } + "RPC_CLAIMED") {
             val id = UUID.randomUUID().toString()
-            launch(id, stage.name)
+            launch(id, stage)
             val pid = result("LEGACY_RETAINED_").removePrefix("LEGACY_RETAINED_").toInt()
             check(pid != android.os.Process.myPid())
             android.os.Process.killProcess(pid)
             android.os.SystemClock.sleep(400)
             launch(id, "read")
-            assertEquals("LEGACY_RECOVERED_${stage.name}", result("LEGACY_RECOVERED_"))
+            assertEquals("LEGACY_RECOVERED_$stage", result("LEGACY_RECOVERED_"))
             launch(id, "cleanup")
             assertEquals("LEGACY_CLEANED", result("LEGACY_CLEANED"))
         }
@@ -127,14 +127,14 @@ class LegacySpraySaveAndroidTest {
         } finally { context.dispose() }
     }
 
-    @Test fun provablyUnsentRestartUsesOnlyTheExactOriginalAndCanComplete() = kotlinx.coroutines.runBlocking {
+    @Test fun historicalRESTCompletionRetainsExactOriginalButCannotBecomeImmutableAcceptance() = kotlinx.coroutines.runBlocking {
         val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
         try {
             val original = fixture(context)
             LegacySpraySaveStore(context).prepare(original)
             val restarted = LegacySpraySaveStore(context)
             val retained = restarted.pending(original.trip.vineyardId).single()
-            assertEquals(LegacySpraySaveStore.UNSENT_MESSAGE, LegacySpraySaveStore.status(listOf(retained)))
+            assertEquals(LegacySpraySaveStore.MESSAGE, LegacySpraySaveStore.status(listOf(retained))) // Old-format evidence is held, not adopted by RPC.
             var requests = 0
             val result = restarted.sendPrepared(retained, { true }, { trip ->
                 requests++
@@ -150,8 +150,8 @@ class LegacySpraySaveAndroidTest {
             assertEquals(2, requests)
             assertEquals(original.trip.id, result.first.id)
             assertEquals(original.recordId, result.second.id)
-            assertTrue(restarted.pending(original.trip.vineyardId).isEmpty())
-            assertFalse(restarted.blocks(original.trip.id))
+            assertEquals(LegacySpraySaveStore.Stage.COMPLETE, restarted.pending(original.trip.vineyardId).single().stage)
+            assertTrue(restarted.blocks(original.trip.id)) // Pre-contract completion is not an immutable RPC receipt.
             assertTrue(runCatching { restarted.sendPrepared(original, { true }, { error("duplicate") }, { error("duplicate") }) }.isFailure)
         } finally { context.dispose() }
     }
@@ -188,6 +188,118 @@ class LegacySpraySaveAndroidTest {
             SessionStore(context).clear()
             assertTrue(runCatching { LegacySpraySaveStore(context).sendPrepared(original, { true }, { requests++; error("not admitted") }, { error("not admitted") }) }.isFailure)
             assertEquals(0, requests)
+        } finally { context.dispose() }
+    }
+
+    private fun rpcFixture(context: Context): LegacySpraySaveStore.Attempt {
+        val original = fixture(context)
+        val session = SessionStore(context)
+        return original.copy(rpc = LegacySprayPairReceipt.prepare(TripRepository(session).legacyReceiptInsert(original.trip),
+            SprayRecordRepository(session).legacyReceiptInsert(original.trip.vineyardId, original.input, original.recordId, original.trip.createdAt, original.actorId)))
+    }
+    private fun receipt(item: LegacySpraySaveStore.Attempt, status: String = "accepted", code: String? = null, hash: String = "a".repeat(64)) =
+        LegacySprayPairReceipt.Receipt(1, status, item.rpc!!.operation, item.trip.vineyardId, item.trip.id, item.recordId,
+            hash, "2026-10-15T03:00:01+00:00", code)
+
+    @Test fun atomicRPCSaveAndIdenticalRecoveryReleaseOnlyAfterBothReceiptsMatch() = kotlinx.coroutines.runBlocking {
+        val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            val a = rpcFixture(context); val store = LegacySpraySaveStore(context); store.prepare(a)
+            val calls = mutableListOf<String>()
+            assertTrue(store.sendReceipt(a, { true }) { rpc, request ->
+                calls += rpc; assertEquals(a.rpc, request); assertTrue(store.blocks(a.trip.id)); receipt(a)
+            })
+            assertEquals(listOf("save_legacy_spray_pair_v1", "recover_legacy_spray_pair_v1"), calls)
+            assertFalse(LegacySpraySaveStore(context).blocks(a.trip.id))
+            assertTrue(runCatching { store.sendReceipt(a, { true }) { _, _ -> error("duplicate") } }.isFailure)
+        } finally { context.dispose() }
+    }
+    @Test fun lostSuccessfulResponseRecoversAfterRestartWithoutCreateReplay() = kotlinx.coroutines.runBlocking {
+        val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            val a = rpcFixture(context); val store = LegacySpraySaveStore(context); store.prepare(a)
+            assertTrue(runCatching { store.sendReceipt(a, { true }) { _, _ -> error("Lost response") } }.isFailure)
+            val restarted = LegacySpraySaveStore(context); val retained = restarted.pending(a.trip.vineyardId).single()
+            assertTrue(retained.rpcClaimed)
+            assertTrue(restarted.sendReceipt(retained, { true }) { rpc, request ->
+                assertEquals("recover_legacy_spray_pair_v1", rpc); assertEquals(a.rpc, request); receipt(a)
+            })
+        } finally { context.dispose() }
+    }
+    @Test fun sameIdsRejectionAndSecondInsertFailurePreserveEvidenceAndBlockDependencies() = kotlinx.coroutines.runBlocking {
+        for (code in listOf("identity_conflict", "validation_or_reference_conflict")) {
+            val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+            try {
+                val a = rpcFixture(context); val store = LegacySpraySaveStore(context); store.prepare(a)
+                assertFalse(store.sendReceipt(a, { true }) { _, _ -> receipt(a, "rejected", code) })
+                val rejected = store.pending(a.trip.vineyardId).single()
+                assertEquals(a.trip, rejected.trip); assertEquals(a.input, rejected.input)
+                assertTrue(store.blocks(a.trip.id)); assertTrue(LegacySpraySaveStore.status(listOf(rejected))!!.contains(code))
+                assertTrue(runCatching { store.sendReceipt(rejected, { true }) { _, _ -> error("terminal") } }.isFailure)
+            } finally { context.dispose() }
+        }
+    }
+    @Test fun unknownConflictMalformedHashAndChangedPayloadCannotReleaseHold() = kotlinx.coroutines.runBlocking {
+        for (mode in listOf("unknown", "conflict", "hash", "identity", "version", "followup")) {
+            val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+            try {
+                val a = rpcFixture(context); val store = LegacySpraySaveStore(context); store.prepare(a)
+                assertTrue(runCatching { store.sendReceipt(a, { true }) { rpc, _ -> when (mode) {
+                    "unknown", "conflict" -> LegacySprayPairReceipt.Receipt(1, mode)
+                    "hash" -> receipt(a, hash = "BAD")
+                    "identity" -> receipt(a).copy(trip_id = UUID.randomUUID().toString())
+                    "version" -> receipt(a).copy(version = 2)
+                    else -> receipt(a, hash = (if (rpc.startsWith("save")) "a" else "b").repeat(64))
+                } } }.isFailure)
+                assertTrue(store.blocks(a.trip.id))
+                assertTrue(runCatching { store.prepare(a.copy(input = a.input.copy(notes = "Changed"))) }.isFailure)
+            } finally { context.dispose() }
+        }
+    }
+    @Test fun concurrentReconnectCannotSendCreateTwice() = kotlinx.coroutines.runBlocking {
+        val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            val a = rpcFixture(context); val store = LegacySpraySaveStore(context); store.prepare(a)
+            var creates = 0
+            assertTrue(store.sendReceipt(a, { true }) { rpc, request ->
+                if (rpc.startsWith("save")) {
+                    creates++
+                    val pending = store.pending(a.trip.vineyardId).single()
+                    assertTrue(runCatching { LegacySpraySaveStore(context).sendReceipt(pending, { true }) { retryRPC, retryRequest ->
+                        assertEquals("recover_legacy_spray_pair_v1", retryRPC)
+                        assertEquals(request, retryRequest)
+                        LegacySprayPairReceipt.Receipt(1, "unknown")
+                    } }.isFailure)
+                }
+                receipt(a)
+            })
+            assertEquals(1, creates); assertFalse(store.blocks(a.trip.id))
+        } finally { context.dispose() }
+    }
+
+    @Test fun oldRESTUnknownAndOldPreparedAttemptsNeverEnterRPC() = kotlinx.coroutines.runBlocking {
+        val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            val a = fixture(context); val store = LegacySpraySaveStore(context); store.prepare(a)
+            assertTrue(runCatching { store.sendReceipt(a, { true }) { _, _ -> error("adopted") } }.isFailure)
+            store.mark(a, LegacySpraySaveStore.Stage.TRIP_UNKNOWN)
+            assertTrue(runCatching { store.sendReceipt(a, { true }) { _, _ -> error("replayed REST") } }.isFailure)
+            assertTrue(store.blocks(a.trip.id))
+        } finally { context.dispose() }
+    }
+    @Test fun failedDurabilityAndRevokedAuthorityPreventRPCPublication() = kotlinx.coroutines.runBlocking {
+        val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            val a = rpcFixture(context); val store = LegacySpraySaveStore(context); store.prepare(a)
+            context.failCommit = true
+            assertTrue(runCatching { store.sendReceipt(a, { true }) { _, _ -> error("send before durability") } }.isFailure)
+            context.failCommit = false
+            assertFalse(store.pending(a.trip.vineyardId).single().rpcClaimed)
+            var current = true
+            assertTrue(runCatching { store.sendReceipt(a, { current }) { _, _ -> current = false; receipt(a) } }.isFailure)
+            assertTrue(store.blocks(a.trip.id))
+            SessionStore(context).clear()
+            assertTrue(runCatching { store.sendReceipt(a, { true }) { _, _ -> error("revoked") } }.isFailure)
         } finally { context.dispose() }
     }
 

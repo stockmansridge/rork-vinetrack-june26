@@ -49,9 +49,32 @@ class LegacySprayProcessProbeActivity : ComponentActivity() {
         if (mode == "read") {
             val raw = isolated.getSharedPreferences(LegacySpraySaveStore.PREFERENCES, MODE_PRIVATE).getString("attempts", null) ?: error("Missing")
             val retained = Json.decodeFromString<List<LegacySpraySaveStore.Attempt>>(raw).single()
+            if (retained.rpc != null) {
+                check(retained == original.copy(rpc = retained.rpc, rpcClaimed = true))
+                check(store.blocks(trip))
+                val accepted = kotlinx.coroutines.runBlocking {
+                    store.sendReceipt(retained, { true }) { rpc, request ->
+                        check(rpc == "recover_legacy_spray_pair_v1" && request == retained.rpc)
+                        LegacySprayPairReceipt.Receipt(1, "accepted", request.operation, vineyard, trip, record,
+                            "a".repeat(64), "2026-10-15T03:00:01Z")
+                    }
+                }
+                check(accepted && !store.blocks(trip))
+                return "LEGACY_RECOVERED_RPC_CLAIMED"
+            }
             check(retained.copy(stage = LegacySpraySaveStore.Stage.PREPARED) == original)
             check(store.pending(vineyard).single() == retained && store.blocks(trip))
             return "LEGACY_RECOVERED_${retained.stage}"
+        }
+        if (mode == "RPC_CLAIMED") {
+            val attempt = original.copy(rpc = LegacySprayPairReceipt.prepare(TripRepository(session).legacyReceiptInsert(original.trip),
+                SprayRecordRepository(session).legacyReceiptInsert(vineyard, input, record, original.trip.createdAt, actor)))
+            store.prepare(attempt)
+            kotlinx.coroutines.runBlocking { runCatching {
+                store.sendReceipt(attempt, { true }) { _, _ -> error("Synthetic lost successful response") }
+            } }
+            check(store.pending(vineyard).single().rpcClaimed)
+            return "LEGACY_RETAINED_${Process.myPid()}"
         }
         val stage = LegacySpraySaveStore.Stage.valueOf(mode)
         check(stage != LegacySpraySaveStore.Stage.COMPLETE)

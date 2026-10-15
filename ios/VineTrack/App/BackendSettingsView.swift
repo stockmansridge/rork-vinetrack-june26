@@ -1450,7 +1450,7 @@ struct SyncSettingsView: View {
             Text("Status")
         } footer: {
             Text(syncCenter.heldSprayPairs > 0
-                 ? "Held spray jobs are protected on this device and cannot Start or become server-ready until verified paired-create recovery is available. Refresh syncs unrelated work; it does not bypass this hold."
+                 ? (store.legacySprayReceiptNotice ?? "Held spray jobs cannot Start until the original paired-create receipt is verified. Refresh recovers eligible RPC attempts and syncs unrelated work; old REST-uncertain saves remain held.")
                  : network.isOnline
                     ? "Everything you record is queued and uploaded automatically. Tap Refresh & sync now to push immediately."
                     : "You're offline. Records keep saving locally and will sync as soon as you reconnect.")

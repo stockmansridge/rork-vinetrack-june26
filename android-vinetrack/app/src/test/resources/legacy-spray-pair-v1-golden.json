@@ -1,0 +1,37 @@
+{
+  "fixture_version": 1,
+  "synthetic_only": true,
+  "notes": "DO NOT SUBMIT to production; IDs do not belong to an authenticated test vineyard. Fingerprint derived read-only from live PG17.",
+  "authenticated_actor_uuid": "11111111-1111-4111-8111-111111111111",
+  "request": {
+    "p_operation_id": "33333333-3333-4333-8333-333333333333",
+    "p_trip": {
+      "id": "44444444-4444-4444-8444-444444444444",
+      "vineyard_id": "22222222-2222-4222-8222-222222222222",
+      "start_time": "2026-10-15T03:00:00.000Z",
+      "is_active": false,
+      "is_paused": false,
+      "created_by": "11111111-1111-4111-8111-111111111111",
+      "client_updated_at": "2026-10-15T03:00:00.000Z",
+      "row_sequence": [],
+      "path_points": [],
+      "paddock_ids": [],
+      "total_distance": 0
+    },
+    "p_record": {
+      "id": "55555555-5555-4555-8555-555555555555",
+      "vineyard_id": "22222222-2222-4222-8222-222222222222",
+      "trip_id": "44444444-4444-4444-8444-444444444444",
+      "date": "2026-10-15T03:00:00.000Z",
+      "start_time": "2026-10-15T03:00:00.000Z",
+      "is_template": false,
+      "entry_source": "tracked",
+      "created_by": "11111111-1111-4111-8111-111111111111",
+      "client_updated_at": "2026-10-15T03:00:00.000Z",
+      "tanks": []
+    }
+  },
+  "postgres_jsonb_canonical_text": "{\"v\": 1, \"trip\": {\"id\": \"44444444-4444-4444-8444-444444444444\", \"is_active\": false, \"is_paused\": false, \"created_by\": \"11111111-1111-4111-8111-111111111111\", \"start_time\": \"2026-10-15T03:00:00.000Z\", \"paddock_ids\": [], \"path_points\": [], \"vineyard_id\": \"22222222-2222-4222-8222-222222222222\", \"row_sequence\": [], \"total_distance\": 0, \"client_updated_at\": \"2026-10-15T03:00:00.000Z\"}, \"actor\": \"11111111-1111-4111-8111-111111111111\", \"record\": {\"id\": \"55555555-5555-4555-8555-555555555555\", \"date\": \"2026-10-15T03:00:00.000Z\", \"tanks\": [], \"trip_id\": \"44444444-4444-4444-8444-444444444444\", \"created_by\": \"11111111-1111-4111-8111-111111111111\", \"start_time\": \"2026-10-15T03:00:00.000Z\", \"is_template\": false, \"vineyard_id\": \"22222222-2222-4222-8222-222222222222\", \"entry_source\": \"tracked\", \"client_updated_at\": \"2026-10-15T03:00:00.000Z\"}, \"vineyard\": \"22222222-2222-4222-8222-222222222222\", \"operation\": \"33333333-3333-4333-8333-333333333333\"}",
+  "postgres_utf8_byte_length": 944,
+  "postgres_sha256_hex": "f1950e94f85c8c3c3c431d74fcc83a17b7428a0b13e38a6c23f33aedab992a23"
+}

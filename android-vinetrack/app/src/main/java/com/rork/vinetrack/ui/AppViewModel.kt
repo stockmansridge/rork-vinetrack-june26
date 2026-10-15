@@ -11729,18 +11729,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val originalRecordId = sprayRepo.newId()
         val originalPlan = rowPlan ?: SprayJobRowPlan("freeDrive", emptyList(), input.tanks.size)
         val originalInput = input.copy(tripId = originalTripId)
-        val attempt = com.rork.vinetrack.data.LegacySpraySaveStore.Attempt(
+        var attempt = com.rork.vinetrack.data.LegacySpraySaveStore.Attempt(
             actorId = originalAccess.userId, identityEpoch = session.retentionGuard.identityEpoch.value,
             trip = com.rork.vinetrack.data.LegacySpraySaveStore.TripIntent(originalTripId, vineyardId, paddockId,
                 paddockIds.distinct(), paddockName?.ifBlank { null }, userName, input.startTime, input.tractorId,
                 originalAccess.userId, originalPlan.trackingPattern, originalPlan.rowSequence, originalPlan.totalTanks, originalTimestamp),
             recordId = originalRecordId, input = originalInput,
         )
+        attempt = try {
+            attempt.copy(rpc = com.rork.vinetrack.data.LegacySprayPairReceipt.prepare(
+                tripRepo.legacyReceiptInsert(attempt.trip),
+                sprayRepo.legacyReceiptInsert(vineyardId, originalInput, originalRecordId, originalTimestamp, originalAccess.userId)))
+        } catch (_: Exception) {
+            attempt.copy(receiptBlocker = "Legacy receipt v1 does not admit this mix's fields. Original evidence is retained locally; nothing was stripped or sent.")
+        }
         try { legacySpraySaves.prepare(attempt) } catch (_: Exception) {
             _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; onResult(false); return
         }
-        if (!_ui.value.isOnline) {
-            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.UNSENT_MESSAGE) }
+        if (!_ui.value.isOnline || attempt.rpc == null) {
+            _ui.update { it.copy(sprayError = attempt.receiptBlocker ?: com.rork.vinetrack.data.LegacySpraySaveStore.UNSENT_MESSAGE) }
             onResult(true) // Durable device save only, never a remote acceptance claim.
             return
         }
@@ -11751,34 +11758,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun resumePreparedLegacySpraySaves(items: List<com.rork.vinetrack.data.LegacySpraySaveStore.Attempt>) {
         if (!_ui.value.isOnline) return
-        items.filter { it.stage == com.rork.vinetrack.data.LegacySpraySaveStore.Stage.PREPARED &&
+        items.filter { it.stage == com.rork.vinetrack.data.LegacySpraySaveStore.Stage.PREPARED && it.rpc != null && it.verified == null &&
             it.actorId == session.userId && it.identityEpoch == session.retentionGuard.identityEpoch.value }
             .forEach { submitPreparedLegacySpray(it) {} }
     }
 
     private fun submitPreparedLegacySpray(attempt: com.rork.vinetrack.data.LegacySpraySaveStore.Attempt, onResult: (Boolean) -> Unit) {
         val originalAccess = session.accountAccess() ?: return
-        val originalToken = session.accessToken ?: return
+        if (session.accessToken == null || attempt.rpc == null || attempt.verified != null) { onResult(false); return }
         if (originalAccess.userId != attempt.actorId || attempt.identityEpoch != session.retentionGuard.identityEpoch.value ||
             _ui.value.selectedVineyardId != attempt.trip.vineyardId || !legacySpraySends.add(attempt.recordId)) return
         viewModelScope.launch {
             try {
                 if (!session.withAccountAccess(originalAccess) { _ui.update { it.copy(sprayBusy = true) } }) return@launch
-                val (seededTrip, created) = legacySpraySaves.sendPrepared(attempt,
+                val accepted = legacySpraySaves.sendReceipt(attempt,
                     isAuthorityCurrent = { session.isAccountAccessCurrent(originalAccess) &&
-                        _ui.value.selectedVineyardId == attempt.trip.vineyardId },
-                    sendTrip = { original -> tripRepo.createImportedTrip(
-                        vineyardId = original.vineyardId, paddockId = original.paddockId,
-                        paddockIds = original.paddockIds, paddockName = original.paddockName,
-                        personName = original.personName, startTime = original.startTime, endTime = null,
-                        machineId = null, tractorId = original.tractorId, operatorUserId = original.actorId,
-                        trackingPattern = original.trackingPattern, rowSequence = original.rowSequence,
-                        sequenceIndex = 0, totalTanks = original.totalTanks,
-                        originalId = original.id, originalTimestamp = original.createdAt,
-                        capturedToken = originalToken, capturedActor = original.actorId) },
-                    sendRecord = { original -> sprayRepo.createSprayRecord(original.trip.vineyardId,
-                        original.input, original.recordId, original.trip.createdAt,
-                        capturedToken = originalToken, capturedActor = original.actorId) })
+                        _ui.value.selectedVineyardId == attempt.trip.vineyardId }) { rpc, request ->
+                    com.rork.vinetrack.data.LegacySprayPairReceipt.transport(session, originalAccess, rpc, request)
+                }
+                check(accepted) { "Original request rejected; local evidence retained." }
+                // Row reads hydrate UI only AFTER immutable acceptance; they never prove acceptance.
+                val seededTrip = tripRepo.fetchTrip(attempt.trip.id, originalAccess) ?: error("Accepted job reload pending")
+                val created = sprayRepo.fetchAcceptedRow(attempt.recordId, originalAccess)
+                check(created.id == attempt.recordId && created.tripId == attempt.trip.id && created.vineyardId == attempt.trip.vineyardId)
+                check(_ui.value.selectedVineyardId == attempt.trip.vineyardId)
                 session.withAccountAccess(originalAccess) {
                     _ui.update {
                         it.copy(
@@ -11798,7 +11801,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 // A timeout can follow a committed insert. Never delete a possibly valid pair or remint IDs.
                 if (session.isAccountAccessCurrent(originalAccess)) {
-                    _ui.update { it.copy(sprayBusy = false, sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
+                    _ui.update { it.copy(sprayBusy = false, sprayError = runCatching { com.rork.vinetrack.data.LegacySpraySaveStore.status(legacySpraySaves.pending(attempt.trip.vineyardId)) }
+                        .getOrNull() ?: com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
                     onResult(false)
                 }
             } finally {

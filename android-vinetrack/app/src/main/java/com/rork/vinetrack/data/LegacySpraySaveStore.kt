@@ -20,7 +20,14 @@ class LegacySpraySaveStore(context: Context) {
         val actorId: String, val identityEpoch: Long, val trip: TripIntent,
         val recordId: String, val input: SprayRecordRepository.SprayInput,
         val stage: Stage = Stage.PREPARED,
-    )
+        val rpc: LegacySprayPairReceipt.Request? = null,
+        val rpcClaimed: Boolean = false,
+        val candidate: LegacySprayPairReceipt.Receipt? = null,
+        val verified: LegacySprayPairReceipt.Receipt? = null,
+        val receiptBlocker: String? = null,
+    ) {
+        val isHeld: Boolean get() = rpc == null || verified?.status != "accepted"
+    }
     private val access = FieldStoreAccess(context)
     private val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = false }
@@ -34,6 +41,16 @@ class LegacySpraySaveStore(context: Context) {
         listOf(item.actorId, item.trip.vineyardId, item.trip.id, item.recordId).forEach { java.util.UUID.fromString(it) }
         check(item.actorId == item.trip.actorId && item.input.tripId == item.trip.id && item.trip.rowSequence.isEmpty() &&
             item.identityEpoch >= 0 && item.input.operationalBlocker() == null)
+        item.rpc?.let { request ->
+            java.util.UUID.fromString(request.operation)
+            check(request.trip.keys.all { it in LegacySprayPairReceipt.tripKeys } && request.record.keys.all { it in LegacySprayPairReceipt.recordKeys })
+            check(request.trip["id"]?.jsonPrimitive?.content == item.trip.id && request.record["id"]?.jsonPrimitive?.content == item.recordId &&
+                request.trip["vineyard_id"]?.jsonPrimitive?.content == item.trip.vineyardId && request.record["vineyard_id"]?.jsonPrimitive?.content == item.trip.vineyardId &&
+                request.record["trip_id"]?.jsonPrimitive?.content == item.trip.id && request.trip["created_by"]?.jsonPrimitive?.content == item.actorId &&
+                request.record["created_by"]?.jsonPrimitive?.content == item.actorId)
+            check(item.stage == Stage.PREPARED || item.stage == Stage.COMPLETE && item.verified?.status == "accepted")
+            item.candidate?.validate(item); item.verified?.validate(item)
+        }
     }
     private fun write(items: List<Attempt>) {
         val value = json.encodeToString(items)
@@ -46,11 +63,12 @@ class LegacySpraySaveStore(context: Context) {
         val previous = items.firstOrNull { it.recordId == item.recordId || it.trip.id == item.trip.id }
         if (previous != null) check(previous.copy(stage = Stage.PREPARED) == item)
         else {
-            check(items.none { it.actorId == item.actorId && it.trip.vineyardId == item.trip.vineyardId && it.stage != Stage.COMPLETE }) { MESSAGE }
+            check(items.none { it.actorId == item.actorId && it.trip.vineyardId == item.trip.vineyardId && it.isHeld }) { MESSAGE }
             write(items + item)
         }
     } }
     fun mark(item: Attempt, stage: Stage) = access.admittedForOwner(item.actorId) { synchronized(this) {
+        check(item.rpc == null) { "RPC attempts require immutable receipt transitions." }
         check(item.identityEpoch == access.identityEpoch)
         val items = read()
         val index = items.indexOfFirst { it.recordId == item.recordId }
@@ -62,15 +80,16 @@ class LegacySpraySaveStore(context: Context) {
             (before == Stage.RECORD_UNKNOWN && stage == Stage.COMPLETE))
         write(items.mapIndexed { i, value -> if (i == index) value.copy(stage = stage) else value })
     } }
-    /** Only PREPARED is provably unsent: every transport call follows a checked UNKNOWN commit.
-     * Once claimed, even a cancellation immediately before HTTP stays uncertain, never reset to PREPARED.
+    /** Retired REST transport seam retained for historical containment regressions only.
+     * No production caller uses this method. Even COMPLETE stays held without an immutable RPC receipt.
      */
-    suspend fun sendPrepared(
+    internal suspend fun sendPrepared(
         item: Attempt,
         isAuthorityCurrent: () -> Boolean,
         sendTrip: suspend (TripIntent) -> com.rork.vinetrack.data.model.Trip,
         sendRecord: suspend (Attempt) -> com.rork.vinetrack.data.model.SprayRecord,
     ): Pair<com.rork.vinetrack.data.model.Trip, com.rork.vinetrack.data.model.SprayRecord> {
+        check(item.rpc == null) { "RPC attempts cannot use the old REST writer." }
         check(isAuthorityCurrent())
         // This atomic transition also prevents concurrent reconnect/save paths from double sending.
         mark(item, Stage.TRIP_UNKNOWN)
@@ -88,12 +107,48 @@ class LegacySpraySaveStore(context: Context) {
         return trip to record
     }
 
+    /** RPC attempts never enter the legacy REST transition chain. UNKNOWN recovery cannot authorize create. */
+    suspend fun sendReceipt(item: Attempt, isAuthorityCurrent: () -> Boolean,
+        transport: suspend (String, LegacySprayPairReceipt.Request) -> LegacySprayPairReceipt.Receipt): Boolean {
+        check(isAuthorityCurrent())
+        var current = access.admittedForOwner(item.actorId) { synchronized(this) {
+            check(item.identityEpoch == access.identityEpoch)
+            read().single { it.recordId == item.recordId }.also {
+                check(it.rpc == item.rpc && it.trip == item.trip && it.input == item.input && it.verified == null && it.stage == Stage.PREPARED)
+            }
+        } }
+        val request = current.rpc ?: error(MESSAGE) // Old REST attempts are never adopted.
+        if (!current.rpcClaimed) {
+            current = current.copy(rpcClaimed = true)
+            replaceReceipt(item, current)
+            check(isAuthorityCurrent())
+            val candidate = transport("save_legacy_spray_pair_v1", request)
+            check(isAuthorityCurrent()); candidate.validate(current)
+            val next = current.copy(candidate = candidate)
+            replaceReceipt(current, next); current = next
+        }
+        check(isAuthorityCurrent())
+        val receipt = transport("recover_legacy_spray_pair_v1", request)
+        check(isAuthorityCurrent()); receipt.validate(current)
+        check(current.candidate == null || current.candidate == receipt)
+        val next = current.copy(verified = receipt, stage = if (receipt.status == "accepted") Stage.COMPLETE else Stage.PREPARED,
+            receiptBlocker = if (receipt.status == "rejected") "Original spray save rejected: ${receipt.code}. Evidence retained; Start is blocked." else null)
+        replaceReceipt(current, next)
+        return receipt.status == "accepted"
+    }
+    private fun replaceReceipt(before: Attempt, after: Attempt) = access.admittedForOwner(before.actorId) { synchronized(this) {
+        check(before.identityEpoch == access.identityEpoch)
+        val items = read(); val index = items.indexOfFirst { it.recordId == before.recordId }
+        check(index >= 0 && items[index] == before)
+        write(items.mapIndexed { i, value -> if (i == index) after else value })
+    } }
+
     /** Uncertain REST outcomes remain contained until immutable acceptance can be verified. */
     fun pending(vineyardId: String): List<Attempt> = access.admitted { synchronized(this) {
-        read().filter { it.actorId == access.ownerUserId && it.trip.vineyardId == vineyardId && it.stage != Stage.COMPLETE }
+        read().filter { it.actorId == access.ownerUserId && it.trip.vineyardId == vineyardId && it.isHeld }
     } }
     fun blocks(tripId: String): Boolean = access.admitted { synchronized(this) {
-        read().any { it.trip.id == tripId && it.stage != Stage.COMPLETE }
+        read().any { it.trip.id == tripId && it.isHeld }
     } }
     companion object {
         /** Successful initial REST responses must echo all submitted fields; a recovery read is NOT this proof. */
@@ -117,12 +172,14 @@ class LegacySpraySaveStore(context: Context) {
             check(same(expected, actual)) { MESSAGE }
         }
         const val PREFERENCES = "vinetrack_legacy_spray_saves_v1"
-        const val UNSENT_MESSAGE = "Spray job saved on this device — not sent yet. The original job will send when online with the same authorised account. Start is unavailable until both original writes are confirmed."
+        const val UNSENT_MESSAGE = "Spray job saved on this device — not sent yet. The original job will send when online with the same authorised account. Start is unavailable until the original pair has a verified acceptance receipt."
         fun status(items: List<Attempt>, currentEpoch: Long? = null): String? = when {
             items.isEmpty() -> null
             currentEpoch != null && items.any { it.identityEpoch != currentEpoch } ->
                 "Retained spray work belongs to an earlier account session. It is protected and was not reassigned or sent; account recovery is required."
-            items.any { it.stage != Stage.PREPARED } -> MESSAGE
+            items.any { it.verified?.status == "rejected" } -> items.first { it.verified?.status == "rejected" }.receiptBlocker
+            items.any { it.receiptBlocker != null } -> items.first { it.receiptBlocker != null }.receiptBlocker
+            items.any { it.stage != Stage.PREPARED || it.rpcClaimed || it.rpc == null } -> MESSAGE
             else -> UNSENT_MESSAGE
         }
         const val MESSAGE = "A legacy Save for Later attempt is retained for review. No duplicate or rollback was attempted. Verified paired-create recovery is required before retry or dependent sync."
