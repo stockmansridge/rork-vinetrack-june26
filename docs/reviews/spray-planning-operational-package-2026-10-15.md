@@ -1,5 +1,7 @@
 # Spray Planning operational integration package — 15 October 2026
 
+> **Owner directive supersession — 15 October 2026:** Rork has no database access and must not seek credentials, inspect the live catalog, execute SQL or deploy. ChatGPT/backend owns schema reconciliation, migrations, server authority and installation under separate approval. L1, R1, R3, R4 and R5 are approved: dedicated ledger; whole passes only; `saved_unbound` without executable Trip; Over-Row as one physical travel occurrence with separate treatment context; initial online admission. R2 remains undecided. References below to access repair or requesting those five approvals are historical, not current Rork tasks. The client implementation/evidence and exact wire handoff are in `spray-planning-mobile-client-implementation-2026-10-15.md`. No server capability is asserted installed or enabled.
+
 ## 0. Review status and execution boundary
 
 **Source-reviewed contract package; final executable migration BLOCKED by current catalog access.** This is further development under the accepted October 15 proposal, not permission to install, deploy, activate or distribute. No mobile source, frozen Live Trip implementation, SQL migration, Edge Function or production data was changed by this package.

@@ -1,6 +1,7 @@
 package com.rork.vinetrack.ui.screens
 
 import androidx.compose.material3.MaterialTheme
+import com.rork.vinetrack.data.spray.SprayWorkAreaSelection
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -528,6 +529,8 @@ fun SprayCalculatorScreen(
     var sprayHeadTarget by remember { mutableStateOf<SprayHeadTarget?>(null) }
     var groundTarget by remember { mutableStateOf<SprayGroundTarget?>(null) }
     var bandWidthText by remember { mutableStateOf("") }
+    val selectedPhysicalWork = remember { mutableStateListOf<SprayWorkAreaSelection.Selected>() }
+    var showingWorkArea by remember { mutableStateOf(false) }
     var passConfiguration by rememberSaveable { mutableStateOf<SprayPassConfiguration?>(null) }
     var planningMethod by rememberSaveable { mutableStateOf(SprayPlanningMethod.BY_AREA) }
     var fullTankSpecification by rememberSaveable { mutableStateOf(SprayFullTankSpecification.TARGET_AREA) }
@@ -2248,7 +2251,7 @@ fun SprayCalculatorScreen(
                 ) {
                     val carrier = guidedPlan.carrier
                     guidedFlow.inputs.planningIntent?.let { intent ->
-                        GuidedReviewGroup(title = "Spray planning", accent = VineColors.Olive, onEdit = { toggleStep(SprayGuidedStep.CARRIER) }) {
+                        GuidedReviewGroup(title = "Planned Spray Mix", accent = VineColors.Olive, onEdit = { toggleStep(SprayGuidedStep.CARRIER) }) {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 GuidedReviewRow("Configuration", intent.configuration?.title ?: "Not recorded")
                                 GuidedReviewRow("Planning method", intent.method?.title ?: "Not recorded")
@@ -2257,12 +2260,38 @@ fun SprayCalculatorScreen(
                                     GuidedReviewRow("Intended water", fmt.formatVolume(resolved.intendedLitres))
                                     resolved.controllerLitresPer100mTravel?.let { GuidedReviewRow("Controller / travel", fmt.formatVolumePer100Length(it)) }
                                 }
-                                Text("Actual Trip coverage is not allocated by this plan. CF is not label approval.", style = MaterialTheme.typography.bodySmall)
+                                guidedFlow.planningResolution?.let { resolved ->
+                                    GuidedReviewRow("Application rate", fmt.formatVolumePerArea(resolved.litresPerHectare))
+                                    GuidedReviewRow("CF", String.format(java.util.Locale.US, "%.2f", resolved.concentrationFactor))
+                                }
+                                Text("Local draft — not server saved. CF is not label approval.", style = MaterialTheme.typography.bodySmall)
                                 guidedFlow.operationalBlocker?.let { Text(it, color = VineColors.Warning, style = MaterialTheme.typography.bodySmall) }
                             }
                         }
                     }
 
+                    guidedFlow.inputs.planningIntent?.let { intent ->
+                        val workChoices = SprayWorkAreaSelection.choices(plannedCandidates)
+                        GuidedReviewGroup(title = "Selected Physical Work", accent = VineColors.Olive) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = { showingWorkArea = true }, enabled = intent.configuration != null) { Text("Select Work Area") }
+                                Text(if (selectedPhysicalWork.isEmpty()) "Work area not selected — an admitted unbound save will not create an executable Trip."
+                                    else "${selectedPhysicalWork.size} whole travel passes selected")
+                                selectedPhysicalWork.forEach { item ->
+                                    Text(item.title, style = MaterialTheme.typography.bodySmall)
+                                    if (!SprayWorkAreaSelection.retained(item, workChoices, intent.configuration))
+                                        Text("Retained selection is stale or unavailable. Re-select explicitly.", color = VineColors.Warning)
+                                }
+                                Text("Known selected treatment area: not certified", style = MaterialTheme.typography.bodySmall)
+                                Text(SprayWorkAreaSelection.ROUTE_MESSAGE, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        GuidedReviewGroup(title = "Actual Spray Coverage", accent = VineColors.Olive) {
+                            Text("Not recorded by this plan. Only genuine tracked and recorded operations establish coverage.", style = MaterialTheme.typography.bodySmall)
+                        }
+                        if (showingWorkArea) SprayWorkAreaSelectionSheet(workChoices, intent.configuration ?: SprayPassConfiguration.STANDARD_PASS,
+                            selectedPhysicalWork.toList(), onChange = { selectedPhysicalWork.clear(); selectedPhysicalWork.addAll(it) }, onDismiss = { showingWorkArea = false })
+                    }
                     SprayConcentrationWarning(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.warningProducts(
                         guidedFlow.inputs.products.filter { it.basis == com.rork.vinetrack.data.spray.SprayProductRateBasis.PER_100_LITRES }.map { it.name }))
                     GuidedReviewGroup(

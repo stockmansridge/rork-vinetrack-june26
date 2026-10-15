@@ -84,6 +84,8 @@ struct SprayCalculatorView: View {
     /// `clampStartPath()` whenever the paddock selection changes.
     @State private var startPath: Double = 0.5
     @State private var startCandidateKey: String? = nil
+    @State private var selectedPhysicalWork: [SprayWorkAreaSelection.Selected] = []
+    @State private var showingWorkArea: Bool = false
     /// Sequence direction. `true` = lower rows first (ascending), `false` =
     /// higher rows first (descending). Mirrors `StartTripSheet`'s
     /// `directionHigherFirst` so both flows share semantics.
@@ -3913,7 +3915,7 @@ struct SprayCalculatorView: View {
 
         VStack(alignment: .leading, spacing: 10) {
             if let intent = guidedInputs.planningIntent {
-                GuidedReviewGroup(title: "Spray planning", onEdit: { toggle(.carrier) }) {
+                GuidedReviewGroup(title: "Planned Spray Mix", onEdit: { toggle(.carrier) }) {
                     VStack(alignment: .leading, spacing: 6) {
                         GuidedReviewRow(label: "Configuration", value: intent.configuration?.title ?? "Not recorded")
                         GuidedReviewRow(label: "Planning method", value: intent.method?.title ?? "Not recorded")
@@ -3924,9 +3926,38 @@ struct SprayCalculatorView: View {
                                 GuidedReviewRow(label: "Controller / travel", value: region.formatVolumePer100Length(travel))
                             }
                         }
-                        Text("Actual Trip coverage is not allocated by this plan. CF is not label approval.").font(.caption).foregroundStyle(.secondary)
+                        if let resolved = flow.planningResolution {
+                            GuidedReviewRow(label: "Application rate", value: region.formatVolumePerArea(litresPerHectare: resolved.litresPerHectare))
+                            GuidedReviewRow(label: "CF", value: String(format: "%.2f", resolved.concentrationFactor))
+                        }
+                        Text("Local draft — not server saved. CF is not label approval.").font(.caption).foregroundStyle(.secondary)
                         if let blocker = flow.operationalBlocker { Text(blocker).font(.caption).foregroundStyle(.orange) }
                     }
+                }
+            }
+            if let intent = guidedInputs.planningIntent {
+                GuidedReviewGroup(title: "Selected Physical Work") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Button("Select Work Area") { showingWorkArea = true }
+                            .disabled(intent.configuration == nil)
+                            .frame(minHeight: 44).accessibilityIdentifier("spray.selectWorkArea")
+                        Text(selectedPhysicalWork.isEmpty ? "Work area not selected — an admitted unbound save will not create an executable Trip." : "\(selectedPhysicalWork.count) whole travel passes selected")
+                        ForEach(selectedPhysicalWork) { item in
+                            Text(item.title).font(.caption)
+                            if !SprayWorkAreaSelection.retained(item, choices: SprayWorkAreaSelection.choices(plannedCandidates), configuration: intent.configuration) {
+                                Text("Retained selection is stale or unavailable. Re-select explicitly.").font(.caption).foregroundStyle(.orange)
+                            }
+                        }
+                        Text("Known selected treatment area: not certified").font(.caption)
+                        Text(SprayWorkAreaSelection.routeAdmissionMessage).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .sheet(isPresented: $showingWorkArea) {
+                    SprayWorkAreaSelectionView(choices: SprayWorkAreaSelection.choices(plannedCandidates),
+                        configuration: intent.configuration ?? .standardPass, selected: $selectedPhysicalWork)
+                }
+                GuidedReviewGroup(title: "Actual Spray Coverage") {
+                    Text("Not recorded by this plan. Only genuine tracked and recorded operations establish coverage.").font(.caption).foregroundStyle(.secondary)
                 }
             }
             SprayConcentrationWarningView(products: SprayPlanningOperationalGate.warningProducts(

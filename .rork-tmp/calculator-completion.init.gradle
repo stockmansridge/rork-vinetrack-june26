@@ -5,7 +5,7 @@ gradle.projectsEvaluated {
             include '**/SprayCalculatorTimingTest.kt', '**/SprayPlanningIntentTest.kt', '**/SprayMobileSafetyTest.kt'
             include '**/SprayPlanningProcessRestartTest.kt', '**/StartTankCommitCoordinatorTest.kt'
             include '**/CropSilRateRegressionTest.kt', '**/ChemicalLabelRateNormalizerTest.kt', '**/SprayRegisteredUseRatesTest.kt'
-            include '**/SprayCalculatorCompletionTest.kt'
+            include '**/SprayCalculatorCompletionTest.kt', '**/SprayPlanningAttemptTest.kt'
             include '**/SprayGuidedWorkflowParityTest.kt', '**/SprayGuidedFlowTest.kt', '**/SprayBandedGroundCarrierTest.kt'
             include '**/SprayVolumeDecisionTest.kt', '**/SprayGeometryTest.kt', '**/SprayApplicationSnapshotTest.kt', '**/SprayRegionalInputTest.kt'
         })
