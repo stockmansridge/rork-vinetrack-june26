@@ -63,7 +63,6 @@ struct SprayCalculatorView: View {
     /// happened to sort first in the store — so a line arrived pre-bound to a
     /// product nobody chose. Adding a line now starts by asking which product.
     @State private var showAddChemicalPicker: Bool = false
-    @State private var showSupportedDraft: Bool = false
     @FocusState private var isCustomRateFocused: Bool
     /// The chemical line whose product is currently open in the Chemical
     /// Store editor, so the sheet's dismissal/save handler knows which
@@ -243,7 +242,7 @@ struct SprayCalculatorView: View {
 
     #if DEBUG
     /// Seeds only local editing state for the actual calculator UI regression.
-    static func keyboardRegression(blockID: UUID, equipmentID: UUID? = nil) -> SprayCalculatorView {
+    static func keyboardRegression(blockID: UUID, equipmentID: UUID? = nil, chemicalID: UUID? = nil) -> SprayCalculatorView {
         var view = SprayCalculatorView()
         view._operationType = State(initialValue: .spreader)
         view._selectedPaddockIds = State(initialValue: [blockID])
@@ -271,6 +270,16 @@ struct SprayCalculatorView: View {
             view._canopy = State(initialValue: .prefilled(type: .vsp, size: .medium, density: .low))
             view._sprayVolumeChoice = State(initialValue: .useCustomSprayerRate)
             view._customSprayerRateText = State(initialValue: "600")
+        }
+        if CommandLine.arguments.contains("--spray-direct-start-validation"), let chemicalID {
+            view._operationType = State(initialValue: .foliarSpray)
+            view._planningMethod = State(initialValue: .byArea)
+            view._passConfiguration = State(initialValue: .standardPass)
+            view._canopy = State(initialValue: .prefilled(type: .vsp, size: .medium, density: .low))
+            view._sprayVolumeChoice = State(initialValue: .useCustomSprayerRate)
+            view._customSprayerRateText = State(initialValue: "600")
+            view._chemicalLines = State(initialValue: [ChemicalLine(chemicalId: chemicalID, selectedRateId: UUID(), basis: .perHectare, overrideRate: 200)])
+            view._openedStep = State(initialValue: .review)
         }
         return view
     }
@@ -754,6 +763,11 @@ struct SprayCalculatorView: View {
     /// THE single bridge to `SprayApplicationPlanner.plan`. Every calculated
     /// figure this screen displays is read back off `flow.plan` — the View does
     /// no arithmetic of its own.
+    private var calculatorOperationalBlocker: String? {
+        if !selectedPhysicalWork.isEmpty { return LegacySpraySetup.workMessage }
+        return flow.operationalBlocker
+    }
+
     private var flow: SprayGuidedFlow {
         let timing = PerformanceCapture.shared.beginComputation()
         defer { PerformanceCapture.shared.endComputation(timing, label: "calculator flow construction", records: chemicalLines.count) }
@@ -1080,7 +1094,6 @@ struct SprayCalculatorView: View {
             .sheet(isPresented: $showStartConfirmation) {
                 startConfirmationSheet
             }
-            .sheet(isPresented: $showSupportedDraft) { SprayCalculatorView() }
             .sheet(isPresented: $showAddChemicalPicker) {
                 NavigationStack {
                     SprayLineChemicalPicker(selectedId: nil) { chosen in
@@ -2945,8 +2958,9 @@ struct SprayCalculatorView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(VineyardTheme.olive)
-                        .disabled(isStartingJob || flow.operationalBlocker != nil)
-                        if let blocker = flow.operationalBlocker {
+                        .disabled(isStartingJob || calculatorOperationalBlocker != nil)
+                        .accessibilityIdentifier("spray.startTrip")
+                        if let blocker = calculatorOperationalBlocker {
                             Text(blocker).font(.caption).foregroundStyle(.orange)
                         }
 
@@ -3016,6 +3030,7 @@ struct SprayCalculatorView: View {
             .buttonStyle(.borderedProminent)
             .tint(VineyardTheme.olive)
             .disabled(!formIsValid)
+            .accessibilityIdentifier("spray.reviewTankMix")
 
             Button {
                 saveForLater()
@@ -3155,7 +3170,7 @@ struct SprayCalculatorView: View {
 
     private var reviewSummary: String {
         guard flow.isComplete else { return flow.firstBlocker?.title ?? "Incomplete" }
-        return flow.operationalBlocker == nil ? "Ready to save or start" : "Calculation complete — action unavailable"
+        return calculatorOperationalBlocker == nil ? "Ready to save or start" : "Calculation complete — action unavailable"
     }
 
     // MARK: - Step 2 — calculated block geometry
@@ -3327,8 +3342,7 @@ struct SprayCalculatorView: View {
             }
             if operationType == .foliarSpray {
                 if guidedInputs.planningIntent != nil {
-                    Button("Open supported spraying workflow — new draft") { showSupportedDraft = true }
-                    Text("Your planning preview stays here unchanged. The new draft has no proposed pass plan; reselect blocks, equipment and valid product rates before Tank Mixing.")
+                    Text("By Area can start here. Single Row/Over-Row and controller settings are retained in the record's sprayer setup note; physical rates and tank quantities remain unchanged. For Only Full Tanks, choose By Area below to modify this same draft.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 SprayPlanningCardsView(configuration: passConfigurationBinding, method: $planningMethod,
@@ -3947,8 +3961,8 @@ struct SprayCalculatorView: View {
                             GuidedReviewRow(label: "CF", value: String(format: "%.2f", resolved.concentrationFactor))
                         }
                         Text("Local draft — not server saved. CF is not label approval.").font(.caption).foregroundStyle(.secondary)
-                        if let blocker = flow.operationalBlocker { Text(blocker).font(.caption).foregroundStyle(.orange) }
-                        Button("Open supported spraying workflow — new draft") { showSupportedDraft = true }
+                        if let blocker = calculatorOperationalBlocker { Text(blocker).font(.caption).foregroundStyle(.orange) }
+                        Button("Edit this draft's carrier settings") { openedStep = .carrier }
                     }
                 }
             }
@@ -4459,7 +4473,7 @@ struct SprayCalculatorView: View {
 
     private func confirmAndStartJob() async {
         if let blocker = flow.firstBlocker { errorMessage = blocker.message; return }
-        if let blocker = flow.operationalBlocker { errorMessage = blocker; return }
+        if let blocker = calculatorOperationalBlocker { errorMessage = blocker; return }
         guard formIsValid, !isStartingJob else { return }
         guard let equipId = selectedEquipmentId,
               let equip = store.sprayEquipment.first(where: { $0.id == equipId }) else { return }
@@ -4524,7 +4538,7 @@ struct SprayCalculatorView: View {
         let initialPath = sequence.first
         // Final frozen mix admission must precede Trip/marker side effects.
         let admissionRecord = SprayRecord(vineyardId: vineyardId, tanks: tanks, applicationGeometry: flow.snapshot)
-        if let blocker = flow.operationalBlocker ?? admissionRecord.operationalPlanningBlocker {
+        if let blocker = calculatorOperationalBlocker ?? admissionRecord.operationalPlanningBlocker {
             errorMessage = blocker
             isStartingJob = false
             return
@@ -4591,7 +4605,7 @@ struct SprayCalculatorView: View {
 
     private func saveForLater() {
         if let blocker = flow.firstBlocker { errorMessage = blocker.message; return }
-        if let blocker = flow.operationalBlocker { errorMessage = blocker; return }
+        if let blocker = calculatorOperationalBlocker { errorMessage = blocker; return }
         guard formIsValid else { return }
         guard accessControl.canCreateOperationalRecords else {
             errorMessage = "Your role does not allow creating spray records."

@@ -26,7 +26,7 @@ class SprayPlanningIntentTest {
             assertEquals(output, restored.resolution())
             // Unknown label approval contributes no denial; only the independent migration gate remains.
             assertNull(SprayPlanningOperationalGate.blocker(false, output.concentrationFactor, true))
-            assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, SprayPlanningOperationalGate.blocker(snapshot, emptyList()))
+            assertEquals(if (snapshot.planningIntent?.method == SprayPlanningMethod.BY_AREA) null else LegacySpraySetup.FULL_TANK_MESSAGE, SprayPlanningOperationalGate.blocker(snapshot, emptyList()))
             assertNotNull(intent.frozenResolutionBlocker(output.copy(controllerLitresPer100mTravel = 999.0)))
             assertNotNull(intent.frozenResolutionBlocker(output.copy(effectiveWorkingWidthMetres = null)))
             assertNotNull(intent.frozenResolutionBlocker(output.copy(concentrationFactor = Double.NaN)))
@@ -80,7 +80,7 @@ class SprayPlanningIntentTest {
         assertEquals(captured.id, changed.id)
         assertNotNull(SprayPlanningOperationalGate.tankConfirmationBlocker(changed, captured))
         assertNotNull(SprayPlanningOperationalGate.tankConfirmationBlocker(null, captured))
-        assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, SprayPlanningOperationalGate.tankConfirmationBlocker(changed, changed))
+        assertEquals(LegacySpraySetup.FULL_TANK_MESSAGE, SprayPlanningOperationalGate.tankConfirmationBlocker(changed, changed))
     }
 
     @Test fun clearedPlanningRetainsUnrelatedFieldsAndDurableNullIntent() {
@@ -100,7 +100,7 @@ class SprayPlanningIntentTest {
         SprayPlanningWireFields.RECORD_KEYS.forEach { assertEquals(kotlinx.serialization.json.JsonNull, body[it]) }
         assertEquals(base["notes"], body["notes"])
         assertFalse(body.containsKey("planningFieldsCleared"))
-        assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, SprayPlanningOperationalGate.blocker(reloaded, emptyList()))
+        assertNotNull(SprayPlanningOperationalGate.blocker(reloaded, emptyList()))
         assertEquals(base, SprayPlanningWireFields.from(null).merging(base, json))
     }
 
@@ -208,7 +208,7 @@ class SprayPlanningIntentTest {
         assertNull(snapshot.blocks)
         assertNull(snapshot.canonicalRowLengthMetres)
         assertEquals(2.0, snapshot.planningResolution!!.plannedAreaHa, 0.0)
-        assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, flow.operationalBlocker)
+        assertEquals(LegacySpraySetup.FULL_TANK_MESSAGE, flow.operationalBlocker)
         val row = inputs.copy(products = listOf(SprayProductLineInput("row", "Row product", "L", SprayProductRateBasis.PER_100_METRES, 1.0)))
         assertFalse(SprayGuidedFlow(row).isComplete)
         assertNull(SprayGuidedFlow(inputs.copy(planningIntent = inputs.planningIntent!!.copy(intendedTankLitres = 1001.0))).planningResolution)
@@ -281,7 +281,7 @@ class SprayPlanningIntentTest {
         val empty = kotlinx.serialization.json.JsonObject(emptyMap())
         assertEquals(empty, SprayPlanningWireFields.from(null).merging(empty, json))
         assertNull(SprayPlanningWireFields.from(snapshot, template = true).controllerLitresPer100mTravel)
-        assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, SprayPlanningOperationalGate.blocker(snapshot, emptyList()))
+        assertEquals(if (snapshot.planningIntent?.method == SprayPlanningMethod.BY_AREA) null else LegacySpraySetup.FULL_TANK_MESSAGE, SprayPlanningOperationalGate.blocker(snapshot, emptyList()))
     }
 
     @Test fun v2ProjectionSeparatesInputsOutputsAndClearsStaleResolution() {
@@ -374,6 +374,6 @@ class SprayPlanningIntentTest {
         assertEquals(bytes, restored.payloadJson)
         assertEquals(PendingWriteStatus.BLOCKED, restored.status)
         assertEquals(0, restored.attemptCount)
-        assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, restored.lastError)
+        assertEquals(LegacySpraySetup.FULL_TANK_MESSAGE, restored.lastError)
     }
 }

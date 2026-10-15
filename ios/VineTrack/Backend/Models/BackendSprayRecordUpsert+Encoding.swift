@@ -1,6 +1,25 @@
 import Foundation
 
 extension BackendSprayRecordUpsert {
+    nonisolated var legacySetupFields: SprayPlanningWireFields {
+        var fields = SprayPlanningWireFields(intent: nil)
+        fields.sprayerConfiguration = sprayerConfiguration
+        fields.sprayPlanningMethod = sprayPlanningMethod
+        fields.fullTankSpecification = fullTankSpecification
+        fields.planningInputProvenance = planningInputProvenance
+        fields.planningIntendedTankLitres = planningIntendedTankLitres
+        fields.planningTargetAreaHa = planningTargetAreaHa
+        fields.planningCalibratedLitresPerHectare = planningCalibratedLitresPerHectare
+        fields.plannedApplicationAreaHa = plannedApplicationAreaHa
+        fields.resolvedPlanningCarrierLitres = resolvedPlanningCarrierLitres
+        fields.resolvedPlanningLitresPerHectare = resolvedPlanningLitresPerHectare
+        fields.resolvedPlanningPhysicalRowLitresPer100m = resolvedPlanningPhysicalRowLitresPer100m
+        fields.resolvedPlanningConcentrationFactor = resolvedPlanningConcentrationFactor
+        fields.controllerLitresPer100mTravel = controllerLitresPer100mTravel
+        fields.effectiveWorkingWidthMetres = effectiveWorkingWidthMetres
+        return fields
+    }
+
     /// Declared planning edits replace all v2 fields atomically, including obsolete NULL outputs.
     /// Historical records with no planning evidence keep the legacy wire inventory.
     nonisolated func encode(to encoder: Encoder) throws {
@@ -16,7 +35,7 @@ extension BackendSprayRecordUpsert {
         try c.encode(windDirection, forKey: .windDirection)
         try c.encodeIfPresent(humidity, forKey: .humidity)
         try c.encode(sprayReference, forKey: .sprayReference)
-        try c.encode(notes, forKey: .notes)
+        try c.encode(isTemplate ? notes : LegacySpraySetup.notes(notes, fields: legacySetupFields), forKey: .notes)
         try c.encode(numberOfFansJets, forKey: .numberOfFansJets)
         try c.encodeIfPresent(averageSpeed, forKey: .averageSpeed)
         try c.encode(equipmentType, forKey: .equipmentType)
@@ -68,6 +87,8 @@ extension BackendSprayRecordUpsert {
         fields.resolvedPlanningConcentrationFactor = resolvedPlanningConcentrationFactor
         fields.controllerLitresPer100mTravel = controllerLitresPer100mTravel
         fields.effectiveWorkingWidthMetres = effectiveWorkingWidthMetres
-        try fields.encode(to: encoder, inputsOnly: false, explicitClear: planningFieldsCleared)
+        if isTemplate || !LegacySpraySetup.canCarry(fields, cleared: planningFieldsCleared) {
+            try fields.encode(to: encoder, inputsOnly: false, explicitClear: planningFieldsCleared)
+        }
     }
 }

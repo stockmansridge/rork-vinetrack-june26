@@ -2,6 +2,7 @@ package com.rork.vinetrack.ui.screens
 
 import androidx.compose.material3.MaterialTheme
 import com.rork.vinetrack.data.spray.SprayWorkAreaSelection
+import com.rork.vinetrack.data.spray.LegacySpraySetup
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.relocation.BringIntoViewRequester
@@ -464,14 +465,6 @@ fun SprayCalculatorScreen(
     /** Blocks the originating plan proposes — applied once at prefill. */
     prefillPaddockIds: List<String> = emptyList(),
 ) {
-    var showSupportedDraft by rememberSaveable { mutableStateOf(false) }
-    if (showSupportedDraft) {
-        androidx.compose.ui.window.Dialog(onDismissRequest = { showSupportedDraft = false },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
-            SprayCalculatorScreen(vm = vm, state = state, modifier = Modifier.fillMaxSize(),
-                onBack = { showSupportedDraft = false }, onSaved = onSaved, onJobStarted = onJobStarted)
-        }
-    }
     val vine = LocalVineColors.current
     val context = LocalContext.current
     val fmt = LocalRegionFormatter.current
@@ -831,6 +824,7 @@ fun SprayCalculatorScreen(
                         if (customSprayerBasis == SprayCarrierBasis.LITRES_PER_100_METRES) (if (fmt.lengthUnitAbbreviation == "ft") "100ft_travel" else "100m_travel") else fmt.settings.sprayRateAreaUnit, fmt.settings.countryCode)) else null,
         )
     val guidedFlow = remember(guidedInputs, sprayProfile) { SprayGuidedFlow(guidedInputs, sprayProfile) }
+    val calculatorOperationalBlocker = if (selectedPhysicalWork.isNotEmpty()) LegacySpraySetup.WORK_MESSAGE else guidedFlow.operationalBlocker
     val guidedPlan = guidedFlow.plan
 
     // Expansion is operator-owned after a one-time seed from the flow. Both
@@ -923,7 +917,7 @@ fun SprayCalculatorScreen(
         }
     }
     val reviewSummary = if (guidedFlow.isComplete) {
-        if (guidedFlow.operationalBlocker == null) "Ready to save or start" else "Calculation complete — action unavailable"
+        if (calculatorOperationalBlocker == null) "Ready to save or start" else "Calculation complete — action unavailable"
     } else {
         guidedFlow.firstBlocker?.title ?: "Incomplete"
     }
@@ -1260,7 +1254,7 @@ fun SprayCalculatorScreen(
     }
 
     fun saveJobForLater() {
-        guidedFlow.operationalBlocker?.let { errorMessage = it; return }
+        calculatorOperationalBlocker?.let { errorMessage = it; return }
         val r = runCalculation() ?: return
         if (saving) return
         saving = true
@@ -1279,7 +1273,7 @@ fun SprayCalculatorScreen(
     }
 
     fun startJobNow(startEngineHours: Double?) {
-        guidedFlow.operationalBlocker?.let { errorMessage = it; return }
+        calculatorOperationalBlocker?.let { errorMessage = it; return }
         val r = runCalculation() ?: return
         if (saving) return
         if (state.activeTrip?.let { it.isActive && it.endTime.isNullOrBlank() } == true) {
@@ -1344,11 +1338,11 @@ fun SprayCalculatorScreen(
             onPatternChange = { trackingPattern = it },
             onStartPathChange = { startCandidateKey = it },
             onDirectionChange = { directionHigherFirst = it },
-            errorMessage = guidedFlow.operationalBlocker ?: errorMessage ?: state.sprayError,
+            errorMessage = calculatorOperationalBlocker ?: errorMessage ?: state.sprayError,
             saving = saving,
             hasActiveTrip = state.activeTrip?.let { it.isActive && it.endTime.isNullOrBlank() } == true,
-            operationalBlocker = guidedFlow.operationalBlocker,
-            onStart = { if (guidedFlow.operationalBlocker == null) showOperationalStartConfirmation = true },
+            operationalBlocker = calculatorOperationalBlocker,
+            onStart = { if (calculatorOperationalBlocker == null) showOperationalStartConfirmation = true },
             onCancel = { if (!saving) showReview = false },
             modifier = modifier,
         )
@@ -1787,10 +1781,7 @@ fun SprayCalculatorScreen(
                 ) {
                 if (operationType == "Foliar Spray") {
                     if (passConfiguration != null || planningMethod == SprayPlanningMethod.FULL_TANK) {
-                        OutlinedButton(onClick = { showSupportedDraft = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Open supported spraying workflow — new draft")
-                        }
-                        Text("This preview is retained unchanged. In the new draft, reselect blocks, equipment and valid rates; Free Drive does not invent proposed passes or actual coverage.", style = MaterialTheme.typography.bodySmall)
+                        Text("By Area can start here. Single Row/Over-Row and controller settings are retained in the record's sprayer setup note; physical rates and tank quantities remain unchanged. For Only Full Tanks, choose By Area below to modify this same draft.", style = MaterialTheme.typography.bodySmall)
                     }
                     SprayPlanningCards(configuration = passConfiguration, onConfiguration = { changeRateDisplay(effectiveEntryBasis, it) },
                         method = planningMethod, onMethod = { planningMethod = it; result = null },
@@ -2302,8 +2293,8 @@ fun SprayCalculatorScreen(
                                     GuidedReviewRow("CF", String.format(java.util.Locale.US, "%.2f", resolved.concentrationFactor))
                                 }
                                 Text("Local draft — not server saved. CF is not label approval.", style = MaterialTheme.typography.bodySmall)
-                                guidedFlow.operationalBlocker?.let { Text(it, color = VineColors.Warning, style = MaterialTheme.typography.bodySmall) }
-                                OutlinedButton(onClick = { showSupportedDraft = true }) { Text("Open supported spraying workflow — new draft") }
+                                calculatorOperationalBlocker?.let { Text(it, color = VineColors.Warning, style = MaterialTheme.typography.bodySmall) }
+                                OutlinedButton(onClick = { toggleStep(SprayGuidedStep.CARRIER) }) { Text("Edit this draft's carrier settings") }
                             }
                         }
                     }

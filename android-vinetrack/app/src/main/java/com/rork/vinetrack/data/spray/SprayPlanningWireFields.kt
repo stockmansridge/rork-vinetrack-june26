@@ -47,6 +47,10 @@ data class SprayPlanningWireFields(
 
     /** Declared changes replace the tuple, including NULLs. Historical omission remains distinct. */
     fun merging(base: JsonObject, json: Json, template: Boolean = false, explicitClear: Boolean = false): JsonObject {
+        if (!template && LegacySpraySetup.canCarry(this, explicitClear)) {
+            val notes = (base["notes"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            return JsonObject(base + ("notes" to kotlinx.serialization.json.JsonPrimitive(LegacySpraySetup.notes(notes, this))))
+        }
         if (!explicitClear && intent == null && resolution() == null) return base
         val encoded = json.encodeToJsonElement(serializer(), this) as JsonObject
         val keys = if (template) INPUT_KEYS else RECORD_KEYS

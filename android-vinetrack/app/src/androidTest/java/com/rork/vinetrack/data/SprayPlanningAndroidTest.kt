@@ -77,7 +77,12 @@ class SprayPlanningAndroidTest {
         compose.onNodeWithText("Planned area: ${fmt.formatArea(3.0)}").performScrollTo().assertExists()
         compose.onNodeWithText("Target area").performScrollTo().performClick().assertIsSelected()
         compose.onNodeWithText("Planned area (ha)").assertTextContains("3")
-        compose.onNodeWithText(SprayPlanningOperationalGate.MIGRATION_MESSAGE).performScrollTo().assertExists()
+        compose.onNodeWithText(LegacySpraySetup.FULL_TANK_MESSAGE).performScrollTo().assertExists()
+        compose.onNodeWithText("By Area").performScrollTo().performClick().assertIsSelected()
+        compose.onNodeWithText(LegacySpraySetup.FULL_TANK_MESSAGE).assertDoesNotExist()
+        compose.onNodeWithText("Only Full Tanks").performScrollTo().performClick()
+        compose.onNodeWithText("Planned area (ha)").assertTextContains("3")
+        compose.onNodeWithText("Intended tank volume (L)").assertTextContains("1500")
     }
 
     @Test fun realPreferenceRecreationPreservesPlanningTypingIdentityAndBlockedRetryState() = runBlocking {
@@ -118,7 +123,7 @@ class SprayPlanningAndroidTest {
                 val blocked = PendingWriteRepository(PendingWriteStore(context)).list().single()
                 assertTrue(blocked.updatedAt >= before.updatedAt)
                 assertEquals(before.copy(updatedAt = blocked.updatedAt, status = PendingWriteStatus.BLOCKED,
-                    lastError = SprayPlanningOperationalGate.MIGRATION_MESSAGE), blocked)
+                    lastError = LegacySpraySetup.FULL_TANK_MESSAGE), blocked)
                 SprayRecordUpdateSync(PendingWriteRepository(PendingWriteStore(context))).replayAll { publications++ }
                 assertEquals(blocked, PendingWriteRepository(PendingWriteStore(context)).list().single())
                 assertEquals(0, publications)
@@ -189,7 +194,7 @@ class SprayPlanningAndroidTest {
             assertEquals(bytes, retained.payloadJson)
             assertEquals(PendingWriteStatus.BLOCKED, retained.status)
             assertEquals(0, retained.attemptCount)
-            assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, retained.lastError)
+            assertEquals("Planning evidence is incomplete. Recalculate this draft before starting.", retained.lastError)
         } finally { file.delete() }
     }
 

@@ -503,8 +503,9 @@ extension BackendSprayRecord {
             // like "no resistance issue on this block".
             blocks: applicationBlocks
         )
-        snapshot.planningIntent = planning.intent
-        snapshot.planningResolution = planning.resolution()
+        let recordedSetup = planning.intent != nil || planning.resolution() != nil ? planning : (LegacySpraySetup.fields(in: notes ?? "") ?? planning)
+        snapshot.planningIntent = recordedSetup.intent
+        snapshot.planningResolution = recordedSetup.resolution()
         return snapshot.isEmpty ? nil : snapshot
     }
 }

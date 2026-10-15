@@ -19,13 +19,13 @@ struct SprayPlanningCardsView: View {
                 Text("Spraying workflow").font(.headline)
                 if configuration == nil && method == .byArea {
                     Label("Supported legacy spray", systemImage: "checkmark.circle")
-                    Text("Use the existing Tank Mixing → Trip workflow. Free Drive records actual coverage; selected blocks are calculation context, not confirmed travel passes. New configurations below are preview only.")
+                    Text("Use the existing Tank Mixing → Trip workflow. Selected blocks are calculation context, not confirmed actual coverage.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text("New planning preview — not an active Trip. This configuration cannot be silently converted to legacy spraying. Start a new calculator draft with the supported legacy workflow and confirm its rates; this preview is not operational authority.")
+                    Text("By Area Single Row/Over-Row uses this same draft and existing Tank Mixing → Trip. Pass/controller setup is retained in record notes. Only Full Tanks and proposed pass selection need the unavailable planning contract; edit those choices here without re-entering the mix.")
                         .font(.caption).foregroundStyle(.orange)
                 }
-                Text("New planning configuration (preview only)").font(.subheadline)
+                Text("Sprayer configuration").font(.subheadline)
                 Picker("Sprayer configuration", selection: $configuration) {
                     if configuration == nil { Text("Legacy").tag(SprayPassConfiguration?.none) }
                     ForEach(SprayPassConfiguration.allCases, id: \.self) { pass in
@@ -91,8 +91,8 @@ struct SprayPlanningCardsView: View {
                     Text("Confirm canopy and configuration; enter a positive volume and area/rate within the selected blocks.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                if configuration != nil || method == .fullTank {
-                    Text(SprayPlanningOperationalGate.migrationMessage).font(.caption).foregroundStyle(.secondary)
+                if method == .fullTank {
+                    Text(LegacySpraySetup.fullTankMessage).font(.caption).foregroundStyle(.secondary)
                 }
             }.padding(14).background(Color(.secondarySystemGroupedBackground)).clipShape(.rect(cornerRadius: 14))
         }

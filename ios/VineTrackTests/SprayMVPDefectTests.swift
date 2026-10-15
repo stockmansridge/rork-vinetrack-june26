@@ -6,6 +6,68 @@ import PDFKit
 @MainActor
 @Suite("MVP spray defect regression")
 struct SprayMVPDefectTests {
+    @Test("Same configured By Area mix reaches receipt v1 and round-trips pass and controller setup")
+    func configuredLegacyStart() throws {
+        for configuration in SprayPassConfiguration.allCases {
+            let intent = SprayPlanningIntent(configuration: configuration, method: .byArea,
+                calibratedLitresPerHectare: 600)
+            let resolved = try #require(intent.resolve(selectedAreaHa: 1, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 612))
+            #expect(abs((resolved.physicalRowLitresPer100m ?? 0) - 16.8) < 1e-10)
+            #expect(abs((resolved.controllerLitresPer100mTravel ?? 0) - 16.8 * configuration.rowEquivalents) < 1e-10)
+            #expect(resolved.concentrationFactor == 1.02)
+            var geometry = SprayApplicationSnapshot(grossAreaHa: 1, rowSpacingMetres: 2.8,
+                totalCarrierLitres: 600, carrierLitresPerHectare: 600, appliedLitresPer100m: resolved.physicalRowLitresPer100m,
+                concentrationFactor: 1.02, targets: [.powderyMildew], sprayHeadTarget: .fullCanopy)
+            geometry.planningIntent = intent; geometry.planningResolution = resolved
+            let scope = LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: UUID())
+            let trip = Trip(vineyardId: scope.vineyard, isActive: false, tripFunction: "spraying")
+            let chemicals = [SprayChemical(name: "Dilute", volumePerTank: 612, ratePer100L: 100, unit: .grams),
+                             SprayChemical(name: "Area", volumePerTank: 200, ratePerHa: 200, unit: .grams)]
+            let record = SprayRecord(tripId: trip.id, vineyardId: scope.vineyard,
+                tanks: [SprayTank(tankNumber: 1, waterVolume: 600, concentrationFactor: 1.02, chemicals: chemicals)],
+                notes: "Keep operator notes", applicationGeometry: geometry)
+            #expect(record.operationalPlanningBlocker == nil)
+            #expect(SprayTripStartAdmission.blocker(isSpray: true, vineyardId: scope.vineyard, record: record) == nil)
+            let request = try LegacySprayPairReceipt.prepare(scope: scope, record: record, trip: trip)
+            let json = try #require(JSONSerialization.jsonObject(with: request.record) as? [String: Any])
+            #expect(Set(json.keys).isSubset(of: LegacySprayPairReceipt.recordKeys))
+            #expect(json["sprayer_configuration"] == nil)
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            let remote = try decoder.decode(BackendSprayRecord.self, from: request.record).toSprayRecord()
+            #expect(remote.applicationGeometry?.planningIntent == intent)
+            #expect(remote.applicationGeometry?.planningResolution == resolved)
+            #expect(remote.tanks == record.tanks)
+            #expect(remote.notes.hasPrefix("Keep operator notes"))
+            #expect(remote.operationalPlanningBlocker == nil)
+            let encodedAgain = try JSONSerialization.jsonObject(with: JSONEncoder().encode(BackendSprayRecord.upsert(from: remote, createdBy: scope.actor, clientUpdatedAt: Date()))) as? [String: Any]
+            #expect(encodedAgain?["notes"] as? String == remote.notes)
+            #expect(trip.completedPaths.isEmpty && trip.tankSessions.isEmpty)
+            for factor in [0.99, Double.nan, Double.infinity] {
+                #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: factor, hasDiluteRateProducts: true) != nil)
+            }
+            var invalid = record
+            invalid.tanks[0].chemicals[0].ratePer100L = 0
+            #expect(SprayStartRecipeValidation.blocker(invalid.tanks) != nil)
+        }
+    }
+
+    @Test("Full Tank remains exact and editable but cannot be silently downgraded")
+    func fullTankRequiresExactPersistence() throws {
+        let intent = SprayPlanningIntent(configuration: .overRow, method: .fullTank,
+            fullTankSpecification: .targetArea, intendedTankLitres: 600, targetAreaHa: 1)
+        let resolved = try #require(intent.resolve(selectedAreaHa: 2, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 612))
+        #expect(LegacySpraySetup.blocker(intent: intent, resolution: resolved) == LegacySpraySetup.fullTankMessage)
+        let fields = SprayPlanningWireFields(intent: intent, resolution: resolved)
+        #expect(!LegacySpraySetup.canCarry(fields))
+        #expect(try LegacySpraySetup.notes("Keep", fields: fields) == "Keep")
+        var modified = intent
+        modified.method = .byArea
+        modified.calibratedLitresPerHectare = 600
+        let supported = try #require(modified.resolve(selectedAreaHa: 2, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 612))
+        #expect(LegacySpraySetup.blocker(intent: modified, resolution: supported) == nil)
+        #expect(intent.method == .fullTank && intent.intendedTankLitres == 600)
+    }
+
     @Test("Recorded multi-target full canopy appears in PDF and CSV without inference")
     func recordedTargetsExport() throws {
         let snapshot = SprayApplicationSnapshot(applicationMode: .wholeBlock,

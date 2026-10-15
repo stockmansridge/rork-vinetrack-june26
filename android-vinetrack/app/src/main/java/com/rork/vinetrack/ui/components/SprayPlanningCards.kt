@@ -43,8 +43,8 @@ fun SprayPlanningCards(
                 Text("Spraying workflow", fontWeight = FontWeight.SemiBold)
                 Text(if (configuration == null && method == SprayPlanningMethod.BY_AREA)
                     "Supported legacy spray: Tank Mixing → Trip. Free Drive records actual coverage; selected blocks are calculation context, not confirmed travel passes."
-                    else "New planning preview — not an active Trip. This configuration cannot be silently converted to legacy spraying. Start a new calculator draft using the supported legacy workflow and confirm its rates.", style = MaterialTheme.typography.bodySmall)
-                Text("New planning configuration (preview only)", fontWeight = FontWeight.Medium)
+                    else "By Area Single Row/Over-Row uses this same draft and existing Tank Mixing → Trip. Pass/controller setup is retained in record notes. Only Full Tanks and proposed pass selection need the unavailable planning contract; edit those choices here without re-entering the mix.", style = MaterialTheme.typography.bodySmall)
+                Text("Sprayer configuration", fontWeight = FontWeight.Medium)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     SprayPassConfiguration.entries.forEachIndexed { index, pass ->
                         SegmentedButton(selected = configuration == pass, onClick = { onConfiguration(pass) },
@@ -95,8 +95,8 @@ fun SprayPlanningCards(
                 } else if (method == SprayPlanningMethod.FULL_TANK) {
                     Text("Confirm canopy/configuration; enter positive volume and area/rate within the selected blocks.", style = MaterialTheme.typography.bodySmall)
                 }
-                if (configuration != null || method == SprayPlanningMethod.FULL_TANK) {
-                    Text(SprayPlanningOperationalGate.MIGRATION_MESSAGE, style = MaterialTheme.typography.bodySmall)
+                if (method == SprayPlanningMethod.FULL_TANK) {
+                    Text(LegacySpraySetup.FULL_TANK_MESSAGE, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

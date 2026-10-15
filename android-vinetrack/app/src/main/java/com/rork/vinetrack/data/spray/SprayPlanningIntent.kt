@@ -166,7 +166,7 @@ object SprayPlanningOperationalGate {
                 (it.rateBasis == null && it.ratePer100L > 0) }
             blocker(false, tank.concentrationFactor, dilute.isNotEmpty(), dilute.map { it.name })?.let { return it }
         }
-        return blocker(snapshot?.planningFieldsCleared == true || snapshot?.planningIntent != null || snapshot?.planningResolution != null, null, false)
+        return LegacySpraySetup.blocker(snapshot?.planningIntent, snapshot?.planningResolution, snapshot?.planningFieldsCleared == true)
     }
     fun blocker(hasPlanningIntent: Boolean, concentrationFactor: Double?, hasDiluteRateProducts: Boolean, chemicalNames: List<String> = emptyList()): String? {
         if (hasDiluteRateProducts && (concentrationFactor == null || !concentrationFactor.isFinite() || concentrationFactor < 1.0)) {

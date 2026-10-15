@@ -1,6 +1,38 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
-## Final MVP operational release gate — newest checkpoint, 15 October 2026
+## Urgent same-draft Start Spray correction — newest checkpoint, 15 October 2026
+
+**Mobile correction implemented and native checks passed; issue remains OPEN until the authenticated complete operational path is verified.** The owner reports successful authenticated-role transaction-rollback tests of linked pair insertion, accepted receipt, exact recovery, idempotent retry and changed-request conflict, with no permanent rows. That is accepted as backend-owner evidence, not represented as native authenticated acceptance or rerun here.
+
+### What changed
+
+- Both native calculator flows no longer reject a valid By Area mix merely because Single Row/Over-Row was selected. They use the SAME configured calculator, Review, Tank Mixing, existing receipt-v1 paired save and original Trip activation implementation. No alternate Start pipeline or fresh empty calculator recovery remains.
+- Lossless contract adapter: existing physical fields and tank recipe/IDs/quantities remain unchanged. Complete supported By Area pass intent, original input provenance, frozen physical/controller outputs and CF are serialized into the existing `notes` field inside `[VineTrack sprayer setup v1]` delimiters using the shared snake-case `SprayPlanningWireFields` shape. Existing operator notes remain verbatim as a prefix. iOS/Android reconstruct the frozen setup from this note when dedicated planning columns are absent; no mutable vineyard geometry or new equations are used. Re-encoding an unchanged setup does not append it again, regardless of JSON property ordering. This note is visible record data, not a claim that receipt-v1 gained new top-level columns or a new server planning/coverage authority.
+- Only valid By Area tuples use this adapter. Full Tank inputs/outputs and explicit-clear/malformed intent are not silently stripped or admitted. Full Tank still requires its intended tank litres, specification, planned area/frozen outputs and operational attribution through the reviewed planning contract, not just storage of explanatory text. Its precise blocker tells the operator to choose By Area in the CURRENT draft. Existing inline controls retain unrelated inputs and retain the typed Full Tank fields when toggled back.
+- Selected proposed passes explicitly block the calculator action until the operator deselects them in the existing Select Work Area sheet. This prevents a supported mix from silently discarding work selection. The original blocks, targets, location, equipment, products/rates and carrier remain in place. No proposed work or actual coverage is manufactured.
+- CF permission uncertainty remains orange advisory text. Invalid/nonfinite/below1 CF for dilute products, invalid product rate/quantity, changed frozen recipe, account/vineyard/device ownership, retained uncertain receipt and active Trip protections remain enforced. Dose, CF, Full Tank and controller equations unchanged.
+
+### Examples and executed evidence
+
+| Requirement | Result and evidence level |
+|---|---|
+| Single Row600L/ha,2.8m | PASS native production resolver/serializer fixture: physical16.8L/100m; controller16.8; exact setup/targets/tanks round-trip through allowed receipt fields. |
+| Over-Row same physical setup | PASS: physical16.8; controller33.6; effective width5.6m while physical spacing stays2.8m; no doubled chemical dose or carrier total. |
+| Per100L chemical,CF1.02 plus valid per-hectare product | PASS on both native fixtures: positive frozen recipe accepted, CF label uncertainty contributes no denial; original per-tank quantities retained. |
+| Rate0 and invalid/nonfinite CF | PASS rejection fixtures; no equation/assertion relaxation. |
+| Full Tank/proposed passes | Deliberately blocked with specific same-draft edit guidance; never silently downgraded. Android Compose control test switches Full Tank→By Area→Full Tank and retains original1500L/3ha entries. |
+| Direct same-calculator Review→Mixing UI | iOS production-calculator UI1/0,104s: configured Single Row By Area Review opens Tank Mixing with enabled Start, Cancel retains the draft, no Trip/Record is saved. Isolated local fixture role only, no authenticated session and Start was not submitted. Android has production inline-control UI plus configured serializer/confirmation instrumentation; full production-screen Start through AppViewModel was NOT driven. |
+| Unit/native regression | iOS final97/0,80s: SprayMVPDefectTests, SprayPlanningIntentTests, LegacySprayPairReceiptTests, SprayTripStartAdmissionTests, DeviceTripOwnershipTests, ActiveTripRouteRecoveryTests, TankSessionLifecycleTests, SprayTripPhase5FinalisationTests. Skipped metric not exposed. Android final159/0/0/0 across15 host XML suites; combined runner exit0/build32s. |
+| Android instrumentation | Final30/0/0,55s: SprayReleaseGateAndroidTest, LegacySpraySaveAndroidTest, SprayPlanningAndroidTest, SprayChemicalEditorAndroidTest. Actual preference/transport mocks, valid configured receipt serialization/read-back and unchanged-recipe tank admission; no live JWT/backend/GPS start. |
+| Native debug correctness | iOS runChecks simulator PASS; Android local assembleDebug and instrumentation app/test builds PASS. Android managed runChecks avoided because it produces/uploads Release artifacts. No device distribution. |
+| Verified paired receipt→original Trip activation→required Tank1→GPS→End/restart | **NOT verified end-to-end.** Existing receipt/ownership/tank lifecycle/reconciliation component tests pass, but their aggregate is not a real authenticated operational Start. Need an explicitly isolated test account/vineyard and authorised native sessions. Owner's rollback SQL evidence does not close this gate. |
+| Physical-device acceptance | Still pending. Issue is not marked closed. |
+
+Earlier failures in this pass were resolved, not hidden: missing Android LegacySpraySetup import; test input missing required sprayEquipmentId; iOS new fixture decoder initially used numeric rather than ISO date strategy; historical blanket-message assertions failed after precise blockers replaced them (Android host2 and instrumentation2), then were updated while preserving blocked status/unchanged bytes/no transport assertions. Final runs above passed; overlapping runs are not added.
+
+Exact tested source: baseline **`f90d4f06982f12131a514c3082da56a1d7ff83ac`** plus final binary diff for `ios android-vinetrack scripts`, SHA-256 **`bb87469c296e1240e7791a92119232529e72850b2904ba29d25e8918e0bc899f`**. The managed end-of-turn commit SHA is not exposed during this turn; no manual Git commit/push. Application baseline was clean, managed history left untouched. Scoped whitespace checks PASS. No SQL/Edge, release metadata, stores, uploads, distribution, customer record operations, queue purge, uninstall or completed-history changes. New source must not be confused with earlier171/code12 signed artifacts.
+
+## Final MVP operational release gate — previous checkpoint, 15 October 2026
 
 **Decision: FAIL / NO-GO for operational release.** Passing native fixtures, instrumentation and builds do not establish an authenticated server-backed Start or original-handset reconciliation. No stores, publishing, artifact upload/distribution, database reads/writes or release-metadata changes were performed in this pass. Debug test APKs were installed only on the isolated instrumentation emulator as explicitly requested, not on the owner's handset. Existing UI, dose equations and planning architecture remain unchanged.
 

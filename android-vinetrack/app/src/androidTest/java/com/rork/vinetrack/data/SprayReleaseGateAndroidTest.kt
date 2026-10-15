@@ -17,6 +17,40 @@ import java.util.UUID
 
 /** Offline native render/receipt assertions only; never starts a real job or contacts a backend. */
 class SprayReleaseGateAndroidTest {
+    @Test fun configuredSingleAndOverRowRetainExactSetupThroughReceiptAndReload() {
+        val session = com.rork.vinetrack.data.auth.SessionStore(InstrumentationRegistry.getInstrumentation().targetContext)
+        for (pass in com.rork.vinetrack.data.spray.SprayPassConfiguration.entries) {
+            val intent = com.rork.vinetrack.data.spray.SprayPlanningIntent(pass, com.rork.vinetrack.data.spray.SprayPlanningMethod.BY_AREA, calibratedLitresPerHectare = 600.0)
+            val resolved = requireNotNull(intent.resolve(1.0, 2.8, 612.0))
+            assertEquals(16.8, resolved.physicalRowLitresPer100m!!, 1e-10)
+            assertEquals(16.8 * pass.rowEquivalents, resolved.controllerLitresPer100mTravel!!, 1e-10)
+            assertEquals(1.02, resolved.concentrationFactor, 0.0)
+            val tank = com.rork.vinetrack.data.model.SprayTank(UUID.randomUUID().toString(), tankNumber = 1, waterVolume = 600.0, concentrationFactor = 1.02,
+                chemicals = listOf(com.rork.vinetrack.data.model.SprayChemical(UUID.randomUUID().toString(), name = "Dilute", volumePerTank = 612.0, ratePer100L = 100.0, unit = "g"),
+                    com.rork.vinetrack.data.model.SprayChemical(UUID.randomUUID().toString(), name = "Area", volumePerTank = 200.0, ratePerHa = 200.0, unit = "g")))
+            val geometry = com.rork.vinetrack.data.spray.SprayApplicationSnapshot(grossAreaHa = 1.0, rowSpacingMetres = 2.8, totalCarrierLitres = 600.0,
+                carrierLitresPerHectare = 600.0, appliedLitresPer100m = resolved.physicalRowLitresPer100m, concentrationFactor = 1.02,
+                planningIntent = intent, planningResolution = resolved,
+                targets = listOf(com.rork.vinetrack.data.spray.SprayTarget.POWDERY_MILDEW), sprayHeadTarget = com.rork.vinetrack.data.spray.SprayHeadTarget.FULL_CANOPY)
+            val input = SprayRecordRepository.SprayInput("2026-10-15", "2026-10-15T08:00:00Z", null, null, null, null, "Configured", "Keep notes", null, null, null, null, null, null,
+                sprayEquipmentId = null, operationType = "foliar_spray", tripId = UUID.randomUUID().toString(), tanks = listOf(tank), applicationGeometry = geometry)
+            assertNull(input.operationalBlocker())
+            assertNull(com.rork.vinetrack.data.spray.SprayStartRecipeValidation.blocker(input.tanks))
+            val fields = SprayRecordRepository(session).legacyReceiptInsert(UUID.randomUUID().toString(), input, UUID.randomUUID().toString(), input.startTime, UUID.randomUUID().toString())
+            assertTrue(fields.keys.all { it in LegacySprayPairReceipt.recordKeys })
+            val remote = SupabaseClient.json.decodeFromJsonElement(SprayRecord.serializer(), fields)
+            assertEquals(intent, remote.applicationGeometry!!.planningIntent)
+            assertEquals(resolved, remote.applicationGeometry!!.planningResolution)
+            assertEquals(listOf(tank), remote.tanks)
+            assertTrue(remote.notes!!.startsWith("Keep notes"))
+            assertNull(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.tankConfirmationBlocker(remote, remote))
+            val saved = SupabaseClient.json.encodeToString(SprayRecord.serializer(), remote)
+            assertEquals(resolved, SupabaseClient.json.decodeFromString(SprayRecord.serializer(), saved).applicationGeometry!!.planningResolution)
+            for (factor in listOf(0.99, Double.NaN, Double.POSITIVE_INFINITY)) assertNotNull(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(false, factor, true))
+            assertNotNull(com.rork.vinetrack.data.spray.SprayStartRecipeValidation.blocker(listOf(tank.copy(chemicals = listOf(tank.chemicals.first().copy(ratePer100L = 0.0))))))
+        }
+    }
+
     @Test fun freshLegacyRecipeAdmitsRecordedIntentWithoutPlanningFields() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val session = com.rork.vinetrack.data.auth.SessionStore(context)

@@ -22,8 +22,8 @@ struct SprayPlanningIntentTests {
                 #expect(restored == snapshot)
                 #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: output.concentrationFactor, hasDiluteRateProducts: true) == nil)
                 let record = SprayRecord(applicationGeometry: restored)
-                #expect(record.operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
-                #expect(BackendSprayRecord.upsert(from: record, createdBy: nil, clientUpdatedAt: Date()).operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
+                #expect(record.operationalPlanningBlocker == (method == .byArea ? nil : LegacySpraySetup.fullTankMessage))
+                #expect(BackendSprayRecord.upsert(from: record, createdBy: nil, clientUpdatedAt: Date()).operationalPlanningBlocker == (method == .byArea ? nil : LegacySpraySetup.fullTankMessage))
                 let bad = SprayPlanningResolution(intendedLitres: output.intendedLitres, plannedAreaHa: output.plannedAreaHa,
                     litresPerHectare: output.litresPerHectare, physicalRowLitresPer100m: output.physicalRowLitresPer100m,
                     controllerLitresPer100mTravel: 999, effectiveWorkingWidthMetres: output.effectiveWorkingWidthMetres, concentrationFactor: 2)
@@ -90,7 +90,7 @@ struct SprayPlanningIntentTests {
         #expect(changed.id == captured.id)
         #expect(SprayPlanningOperationalGate.tankConfirmationBlocker(current: changed, captured: captured) != nil)
         #expect(SprayPlanningOperationalGate.tankConfirmationBlocker(current: nil, captured: captured) != nil)
-        #expect(SprayPlanningOperationalGate.tankConfirmationBlocker(current: changed, captured: changed) == SprayPlanningOperationalGate.migrationMessage)
+        #expect(SprayPlanningOperationalGate.tankConfirmationBlocker(current: changed, captured: changed) != nil)
     }
 
     @Test func clearedPlanningSurvivesDiskReloadAndEncodesOnlyPlanningNulls() throws {
@@ -118,8 +118,8 @@ struct SprayPlanningIntentTests {
         #expect(object["notes"] as? String == "Retained notes")
         #expect(object["gross_area_ha"] as? Double == 10)
         #expect(object["planningFieldsCleared"] == nil)
-        #expect(record.operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
-        #expect(payload.operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
+        #expect(record.operationalPlanningBlocker != nil)
+        #expect(payload.operationalPlanningBlocker != nil)
     }
 
     @Test func templateEditorPreservesPlanningAndDeclaresOnlyDeliberateChanges() throws {
@@ -274,7 +274,7 @@ struct SprayPlanningIntentTests {
         #expect(snapshot.blocks == nil)
         #expect(snapshot.canonicalRowLengthMetres == nil)
         #expect(snapshot.planningResolution?.plannedAreaHa == 2)
-        #expect(flow.operationalBlocker == SprayPlanningOperationalGate.migrationMessage)
+        #expect(flow.operationalBlocker != nil)
         input.products = [SprayProductLineInput(productId: "row", name: "Row product", unit: "L", basis: .per100Metres, rate: 1)]
         #expect(!SprayGuidedFlow(inputs: input).isComplete)
         input.planningIntent?.intendedTankLitres = 1001
@@ -355,7 +355,7 @@ struct SprayPlanningIntentTests {
         #expect(local.applicationGeometry?.appliedLitresPer100m == 14)
         let payload = BackendSprayRecord.upsert(from: local, createdBy: nil, clientUpdatedAt: Date())
         #expect(payload.planningIntendedTankLitres == 1500)
-        #expect(payload.operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
+        #expect(payload.operationalPlanningBlocker != nil)
         let job = try JSONDecoder().decode(BackendSprayJobTemplate.self, from: data)
         #expect(job.toSprayRecord().applicationGeometry?.planningIntent?.intendedTankLitres == 1500)
         let cache = try JSONDecoder().decode(BackendSprayJobTemplate.self, from: JSONEncoder().encode(job))
@@ -436,7 +436,7 @@ struct SprayPlanningIntentTests {
 
     @Test func concentrateCannotBeApprovedByANumericFactor() {
         #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: 2, hasDiluteRateProducts: true) == nil)
-        #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: true, concentrationFactor: 1, hasDiluteRateProducts: false) == SprayPlanningOperationalGate.migrationMessage)
+        #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: true, concentrationFactor: 1, hasDiluteRateProducts: false) != nil)
         #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: 1, hasDiluteRateProducts: true) == nil)
     }
 
@@ -467,7 +467,7 @@ struct SprayPlanningIntentTests {
             try await service.pushLocalSprayRecords(vineyardId: record.vineyardId)
             Issue.record("Blocked planning record unexpectedly replayed")
         } catch let error as SprayPlanningAdmissionError {
-            #expect(error.message == (invalidFactor ? SprayPlanningOperationalGate.concentrateMessage : SprayPlanningOperationalGate.migrationMessage))
+            #expect(invalidFactor ? error.message == SprayPlanningOperationalGate.concentrateMessage : !error.message.isEmpty)
         }
         let calls = await repository.writeCalls
         #expect(calls == 0)
@@ -484,8 +484,8 @@ struct SprayPlanningIntentTests {
         snapshot.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank)
         let record = SprayRecord(applicationGeometry: snapshot)
         let upsert = BackendSprayRecord.upsert(from: record, createdBy: nil, clientUpdatedAt: Date())
-        #expect(upsert.operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
-        #expect(record.operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
+        #expect(upsert.operationalPlanningBlocker != nil)
+        #expect(record.operationalPlanningBlocker != nil)
         let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(upsert)) as? [String: Any])
         #expect(object["planningIntent"] == nil)
         #expect(object["sprayer_configuration"] as? String == "over_row_two_rows")

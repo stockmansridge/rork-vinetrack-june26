@@ -1876,9 +1876,12 @@ data class SprayRecord(
             groundTarget = groundApplicationTarget,
             carrierAreaBasis = carrierAreaBasis,
             blocks = applicationBlocks,
-            planningIntent = planningFields.intent,
-            planningResolution = planningFields.resolution(),
+            planningIntent = recordedSetupFields.intent,
+            planningResolution = recordedSetupFields.resolution(),
         )
+
+    private val recordedSetupFields get() = planningFields.takeIf { it.intent != null || it.resolution() != null }
+        ?: com.rork.vinetrack.data.spray.LegacySpraySetup.fields(notes) ?: planningFields
 
     private val planningFields get() = com.rork.vinetrack.data.spray.SprayPlanningWireFields(
         sprayerConfiguration = sprayerConfiguration, sprayPlanningMethod = sprayPlanningMethod,

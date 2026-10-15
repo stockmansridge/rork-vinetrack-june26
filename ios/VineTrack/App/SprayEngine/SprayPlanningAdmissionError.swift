@@ -24,9 +24,8 @@ extension SprayRecord {
            geometry.planningResolution != nil,
            let blocker = intent.fullTankExecutionBlocker(resolution: geometry.planningResolution, selectedGrossAreaHa: geometry.grossAreaHa) { return blocker }
         if let blocker = SprayPlanningOperationalGate.tankComplianceBlocker(tanks) { return blocker }
-        return SprayPlanningOperationalGate.blocker(
-            hasPlanningIntent: applicationGeometry?.planningFieldsCleared == true || applicationGeometry?.planningIntent != nil || applicationGeometry?.planningResolution != nil,
-            concentrationFactor: nil, hasDiluteRateProducts: false)
+        return LegacySpraySetup.blocker(intent: applicationGeometry?.planningIntent,
+            resolution: applicationGeometry?.planningResolution, cleared: applicationGeometry?.planningFieldsCleared == true)
     }
 }
 
@@ -42,12 +41,7 @@ extension BackendSprayRecordUpsert {
             if let blocker = intent.fullTankExecutionBlocker(resolution: resolution, selectedGrossAreaHa: grossAreaHa) { return blocker }
         }
         if let blocker = SprayPlanningOperationalGate.tankComplianceBlocker(tanks) { return blocker }
-        return SprayPlanningOperationalGate.blocker(
-            hasPlanningIntent: planningFieldsCleared || planningIntent != nil || sprayerConfiguration != nil || sprayPlanningMethod != nil ||
-                plannedApplicationAreaHa != nil || planningIntendedTankLitres != nil || controllerLitresPer100mTravel != nil ||
-                effectiveWorkingWidthMetres != nil || fullTankSpecification != nil || planningCalibratedLitresPerHectare != nil ||
-                planningInputProvenance != nil || planningTargetAreaHa != nil || resolvedPlanningCarrierLitres != nil ||
-                resolvedPlanningLitresPerHectare != nil || resolvedPlanningPhysicalRowLitresPer100m != nil || resolvedPlanningConcentrationFactor != nil,
-            concentrationFactor: nil, hasDiluteRateProducts: false)
+        return LegacySpraySetup.blocker(intent: legacySetupFields.intent,
+            resolution: legacySetupFields.resolution(), cleared: planningFieldsCleared)
     }
 }

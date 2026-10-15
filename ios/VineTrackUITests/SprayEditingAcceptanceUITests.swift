@@ -12,6 +12,29 @@ final class SprayEditingAcceptanceUITests: XCTestCase {
         field.typeText(text)
     }
 
+    @MainActor func testConfiguredByAreaReviewReachesEnabledStartInSameCalculator() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--keyboard-validation", "--spray-calculator-keyboard-validation", "--spray-regional-validation", "--spray-direct-start-validation"]
+        app.launch()
+        let open = app.buttons["Open Spray Calculator"]
+        XCTAssertTrue(open.waitForExistence(timeout: 8)); open.tap()
+        let review = app.buttons["spray.reviewTankMix"]
+        for _ in 0..<18 where !review.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(review.waitForExistence(timeout: 8))
+        XCTAssertTrue(review.isEnabled)
+        review.tap()
+        let start = app.buttons["spray.startTrip"]
+        for _ in 0..<12 where !start.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(start.waitForExistence(timeout: 8))
+        XCTAssertTrue(start.isEnabled, "Single Row By Area must not be denied as new planning")
+        // No real account/receipt transport is installed in this isolated presentation fixture.
+        app.buttons["Cancel"].firstMatch.tap()
+        for _ in 0..<12 where !review.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(review.isEnabled, "Cancel keeps the same configured mix available")
+        app.buttons["Cancel"].firstMatch.tap()
+        XCTAssertEqual(app.staticTexts["spray.keyboard.records"].label, "Sprays: 0; Trips: 0")
+    }
+
     @MainActor func testProductionChemicalCardRetainsExactDraftAndRejectsInvalidPreviousDose() {
         let app = XCUIApplication()
         app.launchArguments = ["--keyboard-validation", "--spray-chemical-editing-validation"]

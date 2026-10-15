@@ -48,7 +48,7 @@ class SprayPlanningProcessRestartTest {
             assertEquals(original.payloadJson, before.payloadJson)
             assertEquals(PendingWriteStatus.BLOCKED, before.status)
             assertEquals(2, before.attemptCount)
-            assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, before.lastError)
+            assertEquals("Planning evidence is incomplete. Recalculate this draft before starting.", before.lastError)
             val payload = Json.decodeFromString(SprayRecordUpdateSync.Payload.serializer(), before.payloadJson)
             assertEquals(true, payload.applicationGeometry?.planningFieldsCleared)
             assertEquals("Preserved factual notes", payload.notes)
