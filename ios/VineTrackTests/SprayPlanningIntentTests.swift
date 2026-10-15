@@ -4,6 +4,45 @@ import Testing
 
 @MainActor
 struct SprayPlanningIntentTests {
+    @Test func fourPlanningCombinationsRetainFrozenOutputsAndAdvisoryCFBehindGate() throws {
+        for pass in SprayPassConfiguration.allCases {
+            for method in SprayPlanningMethod.allCases {
+                let intent = SprayPlanningIntent(configuration: pass, method: method,
+                    fullTankSpecification: method == .fullTank ? .targetArea : nil,
+                    intendedTankLitres: method == .fullTank ? 1500 : nil,
+                    targetAreaHa: method == .fullTank ? 3 : nil, calibratedLitresPerHectare: 500)
+                let output = try #require(intent.resolve(selectedAreaHa: 10, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 1000))
+                #expect(intent.frozenResolutionBlocker(output) == nil)
+                #expect(output.concentrationFactor == 2)
+                #expect(output.intendedLitres == (method == .fullTank ? 1500 : 5000))
+                var snapshot = SprayApplicationSnapshot(grossAreaHa: 10)
+                snapshot.planningIntent = intent
+                snapshot.planningResolution = output
+                let restored = try JSONDecoder().decode(SprayApplicationSnapshot.self, from: JSONEncoder().encode(snapshot))
+                #expect(restored == snapshot)
+                #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: output.concentrationFactor, hasDiluteRateProducts: true) == nil)
+                let record = SprayRecord(applicationGeometry: restored)
+                #expect(record.operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
+                #expect(BackendSprayRecord.upsert(from: record, createdBy: nil, clientUpdatedAt: Date()).operationalPlanningBlocker == SprayPlanningOperationalGate.migrationMessage)
+                let bad = SprayPlanningResolution(intendedLitres: output.intendedLitres, plannedAreaHa: output.plannedAreaHa,
+                    litresPerHectare: output.litresPerHectare, physicalRowLitresPer100m: output.physicalRowLitresPer100m,
+                    controllerLitresPer100mTravel: 999, effectiveWorkingWidthMetres: output.effectiveWorkingWidthMetres, concentrationFactor: 2)
+                #expect(intent.frozenResolutionBlocker(bad) != nil)
+            }
+        }
+    }
+
+    @Test func byAreaMeasuredRowCarrierIsNotRewrittenAsGrossAreaVolume() throws {
+        let intent = SprayPlanningIntent(configuration: .overRow, method: .byArea, calibratedLitresPerHectare: 500)
+        let output = try #require(intent.resolve(selectedAreaHa: 10, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 1000))
+        let frozen = SprayPlanningResolution(intendedLitres: 4800, plannedAreaHa: output.plannedAreaHa,
+            litresPerHectare: output.litresPerHectare, physicalRowLitresPer100m: output.physicalRowLitresPer100m,
+            controllerLitresPer100mTravel: output.controllerLitresPer100mTravel,
+            effectiveWorkingWidthMetres: output.effectiveWorkingWidthMetres, concentrationFactor: output.concentrationFactor)
+        #expect(intent.frozenResolutionBlocker(frozen) == nil)
+        #expect(frozen.intendedLitres == 4800)
+    }
+
     @Test func labelUncertaintyAloneDoesNotBlockSaveOrStart() {
         let dilute = SprayChemical(name: "Unverified sulphur", ratePer100L: 100)
         let record = SprayRecord(tanks: [SprayTank(concentrationFactor: 2, chemicals: [dilute])])

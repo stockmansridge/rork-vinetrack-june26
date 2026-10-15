@@ -1,5 +1,7 @@
 # Spray label admission — separate review proposal
 
+**SUPERSEDED FOR CF LABEL-APPROVAL ADMISSION — 2026-10-15.** The accepted policy makes label-approval uncertainty advisory only for legacy AND new planning. Do not implement the unknown-authority rejection, CF>1 permission prerequisite, or unverified-label rejection fixtures below. This historical proposal is retained for traceability, not installation approval. See `docs/reviews/spray-planning-operational-integration-2026-10-15.md` for the current approval proposal. Genuine calculation/quantity errors and incomplete planning remain separate blockers.
+
 Status: NOT IMPLEMENTED, 2026-10-13. No production deployment, authority data seeding, workflow activation or production DDL authorised. Owner authorises separate gate implementation and synthetic testing only AFTER complete restoration has been verified in an approved isolated staging environment. This is separate from `sql/review/spray_configuration_full_tank_planning_draft.sql`. Application and chemical quantity engines stay frozen.
 
 ## Inspected evidence and reuse

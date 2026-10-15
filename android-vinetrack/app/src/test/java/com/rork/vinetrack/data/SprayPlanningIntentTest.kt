@@ -8,6 +8,38 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SprayPlanningIntentTest {
+    @Test fun fourPlanningCombinationsRetainFrozenOutputsAndAdvisoryCFBehindGate() {
+        for (pass in SprayPassConfiguration.entries) for (method in SprayPlanningMethod.entries) {
+            val intent = SprayPlanningIntent(configuration = pass, method = method,
+                fullTankSpecification = if (method == SprayPlanningMethod.FULL_TANK) SprayFullTankSpecification.TARGET_AREA else null,
+                intendedTankLitres = if (method == SprayPlanningMethod.FULL_TANK) 1500.0 else null,
+                targetAreaHa = if (method == SprayPlanningMethod.FULL_TANK) 3.0 else null,
+                calibratedLitresPerHectare = 500.0)
+            val output = requireNotNull(intent.resolve(10.0, 2.8, 1000.0))
+            assertNull(intent.frozenResolutionBlocker(output))
+            assertEquals(2.0, output.concentrationFactor, 0.0)
+            assertEquals(if (method == SprayPlanningMethod.FULL_TANK) 1500.0 else 5000.0, output.intendedLitres, 0.0)
+            val snapshot = SprayApplicationSnapshot(grossAreaHa = 10.0, planningIntent = intent, planningResolution = output)
+            val wire = SprayPlanningWireFields.from(snapshot)
+            val restored = Json.decodeFromString(SprayPlanningWireFields.serializer(), Json.encodeToString(SprayPlanningWireFields.serializer(), wire))
+            assertEquals(intent, restored.intent)
+            assertEquals(output, restored.resolution())
+            // Unknown label approval contributes no denial; only the independent migration gate remains.
+            assertNull(SprayPlanningOperationalGate.blocker(false, output.concentrationFactor, true))
+            assertEquals(SprayPlanningOperationalGate.MIGRATION_MESSAGE, SprayPlanningOperationalGate.blocker(snapshot, emptyList()))
+            assertNotNull(intent.frozenResolutionBlocker(output.copy(controllerLitresPer100mTravel = 999.0)))
+            assertNotNull(intent.frozenResolutionBlocker(output.copy(effectiveWorkingWidthMetres = null)))
+            assertNotNull(intent.frozenResolutionBlocker(output.copy(concentrationFactor = Double.NaN)))
+        }
+    }
+
+    @Test fun byAreaMeasuredRowCarrierIsNotRewrittenAsGrossAreaVolume() {
+        val intent = SprayPlanningIntent(SprayPassConfiguration.OVER_ROW, SprayPlanningMethod.BY_AREA, calibratedLitresPerHectare = 500.0)
+        val frozen = requireNotNull(intent.resolve(10.0, 2.8, 1000.0)).copy(intendedLitres = 4800.0)
+        assertNull(intent.frozenResolutionBlocker(frozen))
+        assertEquals(4800.0, frozen.intendedLitres, 0.0)
+    }
+
     @Test fun aboveReferenceLabelReviewIsAdvisoryWithoutChangingCF() {
         assertEquals(1.0, SprayCarrierConversion.concentrationFactor(713.0, 750.0), 0.0)
         assertNull(SprayPlanningOperationalGate.blocker(false, 1.0, true))

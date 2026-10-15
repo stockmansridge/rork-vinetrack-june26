@@ -57,6 +57,25 @@ data class SprayPlanningIntent(
         return null
     }
 
+    /** Validate frozen outputs without recalculating quantities or granting operational authority. */
+    fun frozenResolutionBlocker(resolution: SprayPlanningResolution): String? {
+        val message = "Spray planning outputs are incomplete or inconsistent. Recalculate before saving or starting."
+        val pass = configuration ?: return message
+        if (method == null) return message
+        if (listOf(resolution.intendedLitres, resolution.plannedAreaHa, resolution.litresPerHectare)
+                .any { !it.isFinite() || it <= 0 } || !resolution.concentrationFactor.isFinite() || resolution.concentrationFactor < 1) return message
+        val geometry = listOf(resolution.physicalRowLitresPer100m, resolution.controllerLitresPer100mTravel, resolution.effectiveWorkingWidthMetres)
+        if (geometry.any { it != null } && geometry.any { it == null || !it.isFinite() || it <= 0 }) return message
+        fun matches(a: Double, b: Double): Boolean = a.isFinite() && b.isFinite() &&
+            kotlin.math.abs(a - b) <= maxOf(0.000001, maxOf(kotlin.math.abs(a), kotlin.math.abs(b)) * 0.00000001)
+        resolution.physicalRowLitresPer100m?.let { physical ->
+            if (!matches(resolution.controllerLitresPer100mTravel!!, physical * pass.rowEquivalents) ||
+                !matches(resolution.controllerLitresPer100mTravel, resolution.litresPerHectare * resolution.effectiveWorkingWidthMetres!! / 100)) return message
+        }
+        // By Area may use measured row length for carrier total; do not replace it with gross-area arithmetic.
+        return null
+    }
+
     fun resolve(selectedAreaHa: Double, physicalRowSpacingMetres: Double?, diluteLitresPerHectare: Double?): SprayPlanningResolution? {
         val pass = configuration ?: return null
         val planning = method ?: return null
@@ -137,6 +156,7 @@ object SprayPlanningOperationalGate {
     fun warningProducts(names: List<String>): List<String> = names.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
     fun blocker(snapshot: SprayApplicationSnapshot?, tanks: List<com.rork.vinetrack.data.model.SprayTank>): String? {
         if (snapshot?.planningResolution != null) {
+            snapshot.planningIntent?.frozenResolutionBlocker(snapshot.planningResolution)?.let { return it }
             snapshot.planningIntent?.fullTankExecutionBlocker(snapshot.planningResolution, snapshot.grossAreaHa)?.let { return it }
         }
         for (tank in tanks) {

@@ -57,6 +57,24 @@ nonisolated struct SprayPlanningIntent: Codable, Sendable, Hashable {
         return nil
     }
 
+    /// Checks frozen outputs without recalculating quantities or granting operational authority.
+    func frozenResolutionBlocker(_ resolution: SprayPlanningResolution) -> String? {
+        let message = "Spray planning outputs are incomplete or inconsistent. Recalculate before saving or starting."
+        guard let configuration, method != nil,
+              [resolution.intendedLitres, resolution.plannedAreaHa, resolution.litresPerHectare].allSatisfy({ $0.isFinite && $0 > 0 }),
+              resolution.concentrationFactor.isFinite, resolution.concentrationFactor >= 1 else { return message }
+        let geometry = [resolution.physicalRowLitresPer100m, resolution.controllerLitresPer100mTravel, resolution.effectiveWorkingWidthMetres]
+        if geometry.contains(where: { $0 != nil }) && !geometry.allSatisfy({ $0.map { $0.isFinite && $0 > 0 } ?? false }) { return message }
+        func matches(_ a: Double, _ b: Double) -> Bool {
+            a.isFinite && b.isFinite && abs(a - b) <= max(0.000001, max(abs(a), abs(b)) * 0.00000001)
+        }
+        if let physical = resolution.physicalRowLitresPer100m,
+           let travel = resolution.controllerLitresPer100mTravel, let width = resolution.effectiveWorkingWidthMetres,
+           (!matches(travel, physical * configuration.rowEquivalents) || !matches(travel, resolution.litresPerHectare * width / 100)) { return message }
+        // By Area may retain measured-row carrier totals; do not substitute gross-area arithmetic.
+        return nil
+    }
+
     func resolve(selectedAreaHa: Double, physicalRowSpacingMetres: Double?, diluteLitresPerHectare: Double?) -> SprayPlanningResolution? {
         guard let configuration, let method, selectedAreaHa.isFinite, selectedAreaHa > 0 else { return nil }
         let litres: Double

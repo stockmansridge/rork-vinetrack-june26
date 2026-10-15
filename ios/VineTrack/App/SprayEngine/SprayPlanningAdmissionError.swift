@@ -18,6 +18,9 @@ extension SprayPlanningOperationalGate {
 extension SprayRecord {
     nonisolated var operationalPlanningBlocker: String? {
         if !isTemplate, let geometry = applicationGeometry, let intent = geometry.planningIntent,
+           let resolution = geometry.planningResolution,
+           let blocker = intent.frozenResolutionBlocker(resolution) { return blocker }
+        if !isTemplate, let geometry = applicationGeometry, let intent = geometry.planningIntent,
            geometry.planningResolution != nil,
            let blocker = intent.fullTankExecutionBlocker(resolution: geometry.planningResolution, selectedGrossAreaHa: geometry.grossAreaHa) { return blocker }
         if let blocker = SprayPlanningOperationalGate.tankComplianceBlocker(tanks) { return blocker }
@@ -29,12 +32,13 @@ extension SprayRecord {
 
 extension BackendSprayRecordUpsert {
     nonisolated var operationalPlanningBlocker: String? {
-        if !isTemplate, let intent = planningIntent, intent.method == .fullTank,
+        if !isTemplate, let intent = planningIntent,
            let area = plannedApplicationAreaHa, let litres = resolvedPlanningCarrierLitres, let rate = resolvedPlanningLitresPerHectare,
            let factor = resolvedPlanningConcentrationFactor {
             let resolution = SprayPlanningResolution(intendedLitres: litres, plannedAreaHa: area, litresPerHectare: rate,
                 physicalRowLitresPer100m: resolvedPlanningPhysicalRowLitresPer100m, controllerLitresPer100mTravel: controllerLitresPer100mTravel,
                 effectiveWorkingWidthMetres: effectiveWorkingWidthMetres, concentrationFactor: factor)
+            if let blocker = intent.frozenResolutionBlocker(resolution) { return blocker }
             if let blocker = intent.fullTankExecutionBlocker(resolution: resolution, selectedGrossAreaHa: grossAreaHa) { return blocker }
         }
         if let blocker = SprayPlanningOperationalGate.tankComplianceBlocker(tanks) { return blocker }
