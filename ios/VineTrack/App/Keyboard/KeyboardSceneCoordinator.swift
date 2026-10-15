@@ -31,6 +31,7 @@ final class KeyboardSceneCoordinator: NSObject, UIGestureRecognizerDelegate {
         center.addObserver(self, selector: #selector(editingEnded), name: UITextField.textDidEndEditingNotification, object: nil)
         center.addObserver(self, selector: #selector(editingEnded), name: UITextView.textDidEndEditingNotification, object: nil)
         center.addObserver(self, selector: #selector(textChanged), name: UITextView.textDidChangeNotification, object: nil)
+        center.addObserver(self, selector: #selector(textChanged), name: UITextField.textDidChangeNotification, object: nil)
         center.addObserver(self, selector: #selector(keyboardChanged), name: UIResponder.keyboardDidChangeFrameNotification, object: nil)
         center.addObserver(self, selector: #selector(keyboardHidden), name: UIResponder.keyboardDidHideNotification, object: nil)
         if let responder = firstInput(in: window) { activate(responder) }
@@ -48,17 +49,20 @@ final class KeyboardSceneCoordinator: NSObject, UIGestureRecognizerDelegate {
 
     /// Resigns the actual active native control; does not call submit, validation or persistence.
     func dismissKeyboard() {
-        guard let input = activeInput, input.window === window, input.isFirstResponder else { return }
-        input.resignFirstResponder()
+        if let input = activeInput, ownsInput(input), input.isFirstResponder {
+            input.resignFirstResponder()
+        } else if let window, let input = firstInput(in: window) {
+            input.resignFirstResponder()
+        }
     }
 
     @objc private func editingBegan(_ notification: Notification) {
-        guard let input = notification.object as? UIView, input.window === window else { return }
+        guard let input = notification.object as? UIView, ownsInput(input) else { return }
         activate(input)
     }
 
     func activate(_ input: UIView) {
-        guard input.window === window, input is UITextField || input is UITextView else { return }
+        guard ownsInput(input), input is UITextField || input is UITextView else { return }
         restoreScrollViews()
         activeInput = input
         isKeyboardReceding = false
@@ -72,6 +76,13 @@ final class KeyboardSceneCoordinator: NSObject, UIGestureRecognizerDelegate {
             }
             ancestor = view.superview
         }
+        // SwiftUI can replace input traits/accessories during the same focus transaction.
+        // Reconcile only this still-focused responder after that transaction completes.
+        DispatchQueue.main.async { [weak self, weak input] in
+            guard let self, let input, self.activeInput === input,
+                  input.isFirstResponder, self.ownsInput(input) else { return }
+            self.installAccessory(on: input)
+        }
         scheduleVisibilityUpdate()
     }
 
@@ -81,9 +92,10 @@ final class KeyboardSceneCoordinator: NSObject, UIGestureRecognizerDelegate {
         else if let editor = input as? UITextView { existing = editor.inputAccessoryView }
         else { return }
         guard !(existing is KeyboardAccessoryView) else { return }
-        let accessory = KeyboardAccessoryView(preserving: existing) { [weak self, weak input] in
-            guard let self, self.activeInput === input else { return }
-            self.dismissKeyboard()
+        // SwiftUI may transfer the accessory along with input traits between controls.
+        // Resolve the scene's current responder at invocation, not the original field.
+        let accessory = KeyboardAccessoryView(preserving: existing) { [weak self] in
+            self?.dismissKeyboard()
         }
         if let field = input as? UITextField { field.inputAccessoryView = accessory }
         else if let editor = input as? UITextView { editor.inputAccessoryView = accessory }
@@ -94,15 +106,40 @@ final class KeyboardSceneCoordinator: NSObject, UIGestureRecognizerDelegate {
         guard let input = notification.object as? UIView, input === activeInput else { return }
         restoreScrollViews()
         activeInput = nil
+        DispatchQueue.main.async { [weak self] in self?.reconcileFirstResponder() }
+    }
+
+    /// SwiftUI alerts may own a different application window in the SAME scene.
+    /// Native editing notifications originate in this process; never cross scene boundaries.
+    private func ownsInput(_ input: UIView) -> Bool {
+        guard let window, let inputWindow = input.window else { return false }
+        if inputWindow === window { return true }
+        guard let scene = window.windowScene else { return false }
+        return inputWindow.windowScene === scene && inputWindow.rootViewController != nil
+    }
+
+    private func reconcileFirstResponder() {
+        guard let window else { return }
+        let input = firstInput(in: window) ?? window.windowScene?.windows
+            .compactMap { firstInput(in: $0) }.first(where: { ownsInput($0) })
+        guard let input else { return }
+        if activeInput !== input { activate(input) }
+        else { installAccessory(on: input) }
     }
 
     @objc private func textChanged(_ notification: Notification) {
-        guard let input = notification.object as? UIView, input === activeInput else { return }
+        guard let input = notification.object as? UIView, ownsInput(input) else { return }
+        if activeInput !== input, input.isFirstResponder { activate(input) }
+        DispatchQueue.main.async { [weak self, weak input] in
+            guard let self, let input, self.activeInput === input, input.isFirstResponder else { return }
+            self.installAccessory(on: input)
+        }
         scheduleVisibilityUpdate()
     }
 
     @objc private func keyboardChanged(_ notification: Notification) {
-        guard let window, activeInput?.window === window,
+        reconcileFirstResponder()
+        guard let window = activeInput?.window, let input = activeInput, ownsInput(input),
               let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
         let nextFrame = window.convert(frame, from: window.screen.coordinateSpace)
         isKeyboardReceding = Self.isReceding(previous: keyboardFrame, next: nextFrame,
@@ -111,6 +148,7 @@ final class KeyboardSceneCoordinator: NSObject, UIGestureRecognizerDelegate {
         // Interactive dismissal sends a shrinking frame on each drag update.
         // Never scroll the form back towards its responder while UIKit is dismissing.
         guard !isKeyboardReceding else { return }
+        if let input = activeInput, input.isFirstResponder { installAccessory(on: input) }
         scheduleVisibilityUpdate()
     }
 
@@ -134,7 +172,7 @@ final class KeyboardSceneCoordinator: NSObject, UIGestureRecognizerDelegate {
     }
 
     func revealActiveInput() {
-        guard let window, let input = activeInput, input.window === window, input.isFirstResponder,
+        guard let input = activeInput, let window = input.window, ownsInput(input), input.isFirstResponder,
               !isKeyboardReceding, !keyboardFrame.isNull, keyboardFrame.intersects(window.bounds),
               !scrollStates.contains(where: { $0.scrollView?.isTracking == true || $0.scrollView?.isDragging == true || $0.scrollView?.isDecelerating == true })
         else { return }

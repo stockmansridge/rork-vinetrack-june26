@@ -11,6 +11,8 @@ gradle.projectsEvaluated {
         })
     }
     app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
         testLogging { events 'passed', 'failed', 'skipped'; showStandardStreams = true }
     }
 }

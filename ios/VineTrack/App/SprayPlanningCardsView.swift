@@ -51,14 +51,14 @@ struct SprayPlanningCardsView: View {
                     ForEach(SprayPlanningMethod.allCases, id: \.self) { Text($0.title).tag($0) }
                 }.pickerStyle(.segmented)
                 if method == .fullTank {
-                    field("Intended tank volume (\(region.volumeUnitAbbreviation))", text: $tankText)
+                    field("Intended tank volume (\(region.volumeUnitAbbreviation))", text: $tankText, id: "spray.planning.tank")
                     Picker("Specify Only Full Tanks", selection: $specification) {
                         ForEach(SprayFullTankSpecification.allCases, id: \.self) { Text($0.title).tag($0) }
                     }.pickerStyle(.segmented)
                     if specification == .targetArea {
-                        field("Planned area (\(region.areaUnitAbbreviation))", text: $areaText)
+                        field("Planned area (\(region.areaUnitAbbreviation))", text: $areaText, id: "spray.planning.area")
                     } else {
-                        field("Calibrated rate (\(rateUnit ?? region.volumePerAreaUnit))", text: $rateText)
+                        field("Calibrated rate (\(rateUnit ?? region.volumePerAreaUnit))", text: $rateText, id: "spray.planning.rate")
                     }
                     Text("Planned area only. Actual block and row coverage is recorded during the Trip; no partial-block allocation is assumed.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -88,10 +88,10 @@ struct SprayPlanningCardsView: View {
         }
     }
 
-    private func field(_ title: String, text: Binding<String>) -> some View {
+    private func field(_ title: String, text: Binding<String>, id: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title).font(.caption.weight(.semibold))
-            TextField(title, text: text).keyboardType(.decimalPad).textFieldStyle(.roundedBorder)
+            TextField(title, text: text).keyboardType(.decimalPad).textFieldStyle(.roundedBorder).accessibilityIdentifier(id)
         }
     }
 }

@@ -22,25 +22,13 @@ Daemon will be stopped at the end of the build
 > Task :app:compileDebugKotlin UP-TO-DATE
 > Task :app:javaPreCompileDebug UP-TO-DATE
 > Task :app:compileDebugJavaWithJavac UP-TO-DATE
+> Task :app:bundleDebugClassesToRuntimeJar UP-TO-DATE
 > Task :app:bundleDebugClassesToCompileJar UP-TO-DATE
-> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:compileDebugUnitTestKotlin UP-TO-DATE
 > Task :app:preDebugUnitTestBuild UP-TO-DATE
 > Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
-> Task :app:processDebugJavaRes UP-TO-DATE
-
-> Task :app:compileDebugUnitTestKotlin
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/CropSilRateRegressionTest.kt:82:131 Unnecessary non-null assertion (!!) on a non-null receiver of type 'List<ChemicalRegisteredUse>'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/CropSilRateRegressionTest.kt:141:81 Unnecessary non-null assertion (!!) on a non-null receiver of type 'ChemicalLineSnapshot'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/CropSilRateRegressionTest.kt:155:46 Unnecessary non-null assertion (!!) on a non-null receiver of type 'List<ChemicalActiveIngredient>'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayApplicationSnapshotTest.kt:387:51 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayApplicationSnapshotTest.kt:487:40 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayApplicationSnapshotTest.kt:487:67 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayGuidedFlowTest.kt:613:61 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayGuidedFlowTest.kt:614:76 Unnecessary non-null assertion (!!) on a non-null receiver of type 'Double'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayPlanningProcessRestartTest.kt:26:24 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'String?'.
-w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayPlanningProcessRestartTest.kt:88:21 Redundant creation of Json format. Creating instances for each usage can be slow.
-
 > Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugJavaRes UP-TO-DATE
 > Task :app:processDebugUnitTestJavaRes UP-TO-DATE
 
 > Task :app:testDebugUnitTest
@@ -126,7 +114,7 @@ SprayCalculatorCompletionTest > failedPendingCreateReplacementRetainsOriginalDur
 SprayCalculatorCompletionTest > blockedAndInFlightCreatesCannotBeReplacedOrUnblocked PASSED
 
 SprayCalculatorTimingTest > repeatedPlanReads STANDARD_OUT
-    CALCULATOR_TIMING repeated_plan_300 ms=3.433807 checksum=540000.0
+    CALCULATOR_TIMING repeated_plan_300 ms=2.249092 checksum=540000.0
 
 SprayCalculatorTimingTest > repeatedPlanReads PASSED
 
@@ -384,6 +372,6 @@ StartTankCommitCoordinatorTest > repeatedRecoveryFromEachIncompleteStoreStateNev
 
 StartTankCommitCoordinatorTest > failedJournalWriteMutatesNothing PASSED
 
-BUILD SUCCESSFUL in 24s
-26 actionable tasks: 3 executed, 23 up-to-date
+BUILD SUCCESSFUL in 12s
+26 actionable tasks: 1 executed, 25 up-to-date
 CALCULATOR_REGRESSION_EXIT=0

@@ -172,11 +172,19 @@ final class KeyboardInteractionUITests: XCTestCase {
         let text = app.textFields["input.text"]
         XCTAssertTrue(text.waitForExistence(timeout: 5))
         text.tap(); text.typeText("Draft")
+        XCTAssertTrue(app.buttons["keyboard.dismiss"].waitForExistence(timeout: 5), "Text input accessory before transfer")
         let number = app.textFields["input.number"]
-        number.tap(); number.typeText("42")
+        number.tap()
+        XCTAssertTrue(app.buttons["keyboard.dismiss"].waitForExistence(timeout: 5), "Numeric accessory before typing")
+        number.typeText("42")
         let done = app.buttons["keyboard.dismiss"]
-        XCTAssertTrue(done.waitForExistence(timeout: 5), "Dismiss accessory after text-to-number focus transfer")
+        let transferDoneExists = done.waitForExistence(timeout: 5)
+        XCTAssertTrue(transferDoneExists, "Dismiss accessory after text-to-number focus transfer")
+        guard transferDoneExists else { return }
+        guard done.exists else { XCTFail("Focus-transfer Done disappeared after existence wait"); return }
         done.tap()
+        let transferHidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
+        XCTAssertEqual(XCTWaiter.wait(for: [transferHidden], timeout: 5), .completed, "Focus-transfer Done dismisses keyboard")
         XCTAssertEqual(text.value as? String, "Draft")
         XCTAssertEqual(number.value as? String, "42")
         app.buttons["keyboard.alert"].tap()
@@ -184,8 +192,13 @@ final class KeyboardInteractionUITests: XCTestCase {
         XCTAssertTrue(popup.waitForExistence(timeout: 5), "Keyboard popup is presented after tapping alert action")
         let draft = popup.textFields.firstMatch
         draft.tap(); draft.typeText("Popup draft")
-        XCTAssertTrue(done.waitForExistence(timeout: 5), "App-owned alert text control")
-        done.tap()
+        // The first keyboard accessory was destroyed on dismissal. Resolve the
+        // alert's accessory independently, retaining the same visibility assertion.
+        let alertDone = app.buttons.matching(identifier: "keyboard.dismiss").firstMatch
+        let alertDoneExists = alertDone.waitForExistence(timeout: 5)
+        XCTAssertTrue(alertDoneExists, "App-owned alert text control")
+        guard alertDoneExists else { return }
+        alertDone.tap()
         XCTAssertTrue(popup.exists, "Done must not confirm or cancel the popup")
         XCTAssertEqual(draft.value as? String, "Popup draft")
         popup.buttons["Cancel"].tap()

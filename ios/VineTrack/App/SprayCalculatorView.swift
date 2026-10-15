@@ -111,6 +111,38 @@ struct SprayCalculatorView: View {
     @State private var planningTankText: String = ""
     @State private var planningAreaText: String = ""
     @State private var planningRateText: String = ""
+    @State private var planningEntrySettings: OrganizationRegionSettings?
+    @State private var planningOriginalProvenance: SprayPlanningInputProvenance?
+    private var planningRegion: RegionFormatter { RegionFormatter(settings: planningEntrySettings ?? region.settings) }
+
+    private func planningBinding(_ value: Binding<String>) -> Binding<String> {
+        Binding(get: { value.wrappedValue }, set: { text in
+            value.wrappedValue = text
+            planningOriginalProvenance = currentPlanningProvenance
+            transitionPlanningRegion(to: region.settings)
+        })
+    }
+
+    private var currentPlanningProvenance: SprayPlanningInputProvenance {
+        SprayPlanningInputProvenance(tankText: planningTankText, areaText: planningAreaText,
+            rateText: planningRateText, volumeUnit: planningRegion.settings.volumeUnit,
+            areaUnit: planningRegion.settings.areaUnit,
+            rateAreaUnit: customSprayerInputBasis == .litresPer100Metres
+                ? (planningRegion.lengthUnitAbbreviation == "ft" ? "100ft_travel" : "100m_travel")
+                : planningRegion.settings.sprayRateAreaUnit, countryCode: planningRegion.settings.countryCode)
+    }
+
+    private func transitionPlanningRegion(to settings: OrganizationRegionSettings) {
+        guard planningRegion.settings != settings else { return }
+        if planningOriginalProvenance == nil { planningOriginalProvenance = currentPlanningProvenance }
+        guard let converted = SprayPlanningDraftTransition.convert(tank: planningTankText, area: planningAreaText,
+            rate: planningRateText, from: planningRegion, to: RegionFormatter(settings: settings), basis: customSprayerInputBasis)
+        else { return } // Keep ALL fields and their labels in their original units until resolved.
+        planningTankText = converted.tank
+        planningAreaText = converted.area
+        planningRateText = converted.rate
+        planningEntrySettings = settings
+    }
     @State private var carrierBasisChoice: SprayCarrierBasis = .litresPerHectare
     @State private var carrierAreaBasis: SprayCarrierAreaBasis = .treatedArea
     @State private var diluteLitresPer100mText: String = ""
@@ -207,7 +239,7 @@ struct SprayCalculatorView: View {
 
     #if DEBUG
     /// Seeds only local editing state for the actual calculator UI regression.
-    static func keyboardRegression(blockID: UUID) -> SprayCalculatorView {
+    static func keyboardRegression(blockID: UUID, equipmentID: UUID? = nil) -> SprayCalculatorView {
         var view = SprayCalculatorView()
         view._operationType = State(initialValue: .spreader)
         view._selectedPaddockIds = State(initialValue: [blockID])
@@ -216,28 +248,42 @@ struct SprayCalculatorView: View {
         view._carrierBasisChoice = State(initialValue: .manualTotalVolume)
         view._openedStep = State(initialValue: .equipment)
         view._hasSeededOpenedStep = State(initialValue: true)
+        if CommandLine.arguments.contains("--spray-regional-validation") {
+            view._operationType = State(initialValue: .foliarSpray)
+            view._sprayHeadTarget = State(initialValue: .fullCanopy)
+            view._selectedEquipmentId = State(initialValue: equipmentID)
+            view._isEquipmentConfirmed = State(initialValue: true)
+            view._openedStep = State(initialValue: .carrier)
+            view._carrierBasisChoice = State(initialValue: .litresPerHectare)
+            view._passConfiguration = State(initialValue: .standardPass)
+            view._planningMethod = State(initialValue: .fullTank)
+            view._planningTankText = State(initialValue: "600")
+            view._planningAreaText = State(initialValue: "1")
+            view._planningRateText = State(initialValue: "600")
+        }
         return view
     }
     #endif
 
-    @State private var carrierInputText: [String: (canonical: String, display: String)] = [:]
+    @State private var carrierInputText: [String: (canonical: String, display: String, settings: OrganizationRegionSettings)] = [:]
     private var region: RegionFormatter { store.settings.regionFormatter }
     private var guidedFormat: SprayGuidedFormat { SprayGuidedFormat(formatter: region) }
 
     /// Keep engine state canonical, while retaining partial local-unit typing in the editor.
     private func carrierBinding(_ key: String, _ canonical: Binding<String>, forward: @escaping (Double) -> Double, inverse: @escaping (Double) -> Double) -> Binding<String> {
         Binding(get: {
-            let scopedKey = "\(key)|\(region.settings.countryCode)|\(region.settings.volumeUnit)|\(region.settings.areaUnit)|\(region.lengthUnitAbbreviation)"
-            if let cached = carrierInputText[scopedKey], cached.canonical == canonical.wrappedValue { return cached.display }
+            if let cached = carrierInputText[key], cached.canonical == canonical.wrappedValue,
+               cached.settings == region.settings || Double(cached.canonical) == nil { return cached.display }
             return Double(canonical.wrappedValue).map { String(forward($0)) } ?? canonical.wrappedValue
         }, set: { text in
+            // An unresolved old-unit draft must be explicitly cleared, never parsed as new units.
+            if let cached = carrierInputText[key], cached.settings != region.settings,
+               Double(cached.canonical) == nil, !text.isEmpty { return }
             let seed = RegionalInput(canonical: Double(canonical.wrappedValue), forward: forward)
             if text == seed.text { return }
-            let raw = seed.resolve(text, inverse: inverse).map { String($0) } ?? ""
+            let raw = SprayEditingNumber.completeValue(text).flatMap { _ in seed.resolve(text, inverse: inverse) }.map { String($0) } ?? ""
             canonical.wrappedValue = raw
-            let scopedKey = "\(key)|\(region.settings.countryCode)|\(region.settings.volumeUnit)|\(region.settings.areaUnit)|\(region.lengthUnitAbbreviation)"
-            carrierInputText[scopedKey] = (raw, text)
-            carrierInputText[key] = (raw, text)
+            carrierInputText[key] = (raw, text, region.settings)
         })
     }
 
@@ -449,8 +495,8 @@ struct SprayCalculatorView: View {
     }
 
     private var planningRateCanonical: Double? {
-        let value = SprayControllerRateEntry.parse(planningRateText).map { customSprayerInputBasis == .litresPer100Metres
-            ? region.volumePer100LengthToCanonical($0) : region.volumePerAreaToCanonical($0) }
+        let value = SprayEditingNumber.completeValue(planningRateText).map { customSprayerInputBasis == .litresPer100Metres
+            ? planningRegion.volumePer100LengthToCanonical($0) : planningRegion.volumePerAreaToCanonical($0) }
         return SprayControllerRateEntry.canonical(value, basis: customSprayerInputBasis,
             configuration: passConfiguration, spacing: resolvedRowSpacingMetres)
     }
@@ -484,7 +530,7 @@ struct SprayCalculatorView: View {
         if let newCustom { customSprayerRateText = String(newCustom) }
         if let newPlanning {
             planningRateText = String(newBasis == .litresPer100Metres
-                ? region.volumePer100LengthValue(newPlanning) : region.volumePerAreaValue(litresPerHectare: newPlanning))
+                ? planningRegion.volumePer100LengthValue(newPlanning) : planningRegion.volumePerAreaValue(litresPerHectare: newPlanning))
         }
         carrierBasisChoice = basis
         passConfiguration = configuration
@@ -686,12 +732,10 @@ struct SprayCalculatorView: View {
         if operationType == .foliarSpray, passConfiguration != nil || planningMethod == .fullTank {
             inputs.planningIntent = SprayPlanningIntent(configuration: passConfiguration, method: planningMethod,
                 fullTankSpecification: planningMethod == .fullTank ? fullTankSpecification : nil,
-                intendedTankLitres: planningMethod == .fullTank ? SprayControllerRateEntry.parse(planningTankText).map(region.volumeToCanonical) : nil,
-                targetAreaHa: planningMethod == .fullTank && fullTankSpecification == .targetArea ? SprayControllerRateEntry.parse(planningAreaText).map(region.areaToCanonical) : nil,
+                intendedTankLitres: planningMethod == .fullTank ? SprayEditingNumber.completeValue(planningTankText).map(planningRegion.volumeToCanonical) : nil,
+                targetAreaHa: planningMethod == .fullTank && fullTankSpecification == .targetArea ? SprayEditingNumber.completeValue(planningAreaText).map(planningRegion.areaToCanonical) : nil,
                 calibratedLitresPerHectare: planningMethod == .fullTank && fullTankSpecification == .calibratedRate ? planningRateCanonical : nil,
-                inputProvenance: SprayPlanningInputProvenance(tankText: planningTankText, areaText: planningAreaText,
-                    rateText: planningRateText, volumeUnit: region.settings.volumeUnit, areaUnit: region.settings.areaUnit,
-                    rateAreaUnit: customSprayerInputBasis == .litresPer100Metres ? (region.lengthUnitAbbreviation == "ft" ? "100ft_travel" : "100m_travel") : region.settings.sprayRateAreaUnit, countryCode: region.settings.countryCode))
+                inputProvenance: planningOriginalProvenance ?? currentPlanningProvenance)
         }
         return inputs
     }
@@ -859,6 +903,12 @@ struct SprayCalculatorView: View {
             ScrollView {
                 ScrollViewReader { proxy in
                     VStack(spacing: 12) {
+                        #if DEBUG
+                        if CommandLine.arguments.contains("--spray-regional-validation") {
+                            Text("blocks=\(String(describing: flow.blocker(for: .blocks))) target=\(String(describing: flow.blocker(for: .target))) stage=\(String(describing: flow.blocker(for: .growthStage))) equipment=\(String(describing: flow.blocker(for: .equipment))) open=\(String(describing: openedStep))")
+                                .accessibilityIdentifier("spray.regional.prerequisites")
+                        }
+                        #endif
                         guidedCard(.application, 1, summary: applicationSummary) {
                             sprayNameSection
                             operationTypeSection
@@ -967,6 +1017,17 @@ struct SprayCalculatorView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+                #if DEBUG
+                if CommandLine.arguments.contains("--spray-regional-validation") {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Switch units") {
+                            store.settings.regionSettings = region.settings.countryCode == "US"
+                                ? .australianDefaults
+                                : OrganizationRegionSettings(countryCode: "US", areaUnit: "acres", volumeUnit: "gallons", distanceUnit: "imperial", sprayRateAreaUnit: "acre")
+                        }
+                    }
+                }
+                #endif
             }
             .sheet(isPresented: $showSummary, onDismiss: { dismiss() }) {
                 if let result = calculationResult {
@@ -1019,7 +1080,12 @@ struct SprayCalculatorView: View {
                     revalidateSelectedRate(afterEditing: saved)
                 }
             }
+            .onChange(of: region.settings) { old, new in
+                if planningEntrySettings == nil { planningEntrySettings = old }
+                transitionPlanningRegion(to: new)
+            }
             .onAppear {
+                if planningEntrySettings == nil { planningEntrySettings = region.settings }
                 applyPrefillIfNeeded()
                 autoSelectEquipmentIfSingle()
                 clampStartPath()
@@ -1109,6 +1175,7 @@ struct SprayCalculatorView: View {
         customSprayTargets = programCustomTargets.isEmpty ? recordCustomTargets : programCustomTargets
 
         if let intent = r.applicationGeometry?.planningIntent {
+            planningOriginalProvenance = intent.inputProvenance
             passConfiguration = intent.configuration
             planningMethod = intent.method ?? .byArea
             fullTankSpecification = intent.fullTankSpecification ?? .targetArea
@@ -1127,9 +1194,14 @@ struct SprayCalculatorView: View {
             if let original = intent.inputProvenance, original.countryCode == region.settings.countryCode,
                SprayPlanningWireProvenance(original).volumeUnit == selectedVolumeUnit, original.areaUnit == region.settings.areaUnit,
                original.rateAreaUnit == (customSprayerInputBasis == .litresPer100Metres ? (region.lengthUnitAbbreviation == "ft" ? "100ft_travel" : "100m_travel") : region.settings.sprayRateAreaUnit) {
-                planningTankText = original.tankText
-                planningAreaText = original.areaText
-                planningRateText = original.rateText
+                func sameValue(_ a: String, _ b: String) -> Bool {
+                    guard let x = SprayEditingNumber.completeValue(a), let y = SprayEditingNumber.completeValue(b) else { return a == b }
+                    return abs(x - y) <= max(0.000001, max(abs(x), abs(y)) * 0.00000001)
+                }
+                // Original text may describe a prior configuration; never override the frozen physical value.
+                if sameValue(original.tankText, planningTankText) { planningTankText = original.tankText }
+                if sameValue(original.areaText, planningAreaText) { planningAreaText = original.areaText }
+                if sameValue(original.rateText, planningRateText) { planningRateText = original.rateText }
             }
         }
         if let geometry = r.applicationGeometry {
@@ -3231,12 +3303,30 @@ struct SprayCalculatorView: View {
     @ViewBuilder
     private var carrierVolumeSection: some View {
         VStack(alignment: .leading, spacing: 14) {
+            #if DEBUG
+            if CommandLine.arguments.contains("--spray-regional-validation") {
+                let intent = guidedInputs.planningIntent
+                let sample = intent?.resolve(selectedAreaHa: 10, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 600)
+                Text(String(format: "litres=%.6f ha=%.6f travel=%.6f", intent?.intendedTankLitres ?? -1,
+                    intent?.targetAreaHa ?? -1, sample?.controllerLitresPer100mTravel ?? -1))
+                    .accessibilityIdentifier("spray.regional.canonical")
+            }
+            #endif
+            if carrierInputText.values.contains(where: { $0.settings != region.settings && Double($0.canonical) == nil && !$0.display.isEmpty }) {
+                Text("An incomplete spray-volume draft is retained in its original units. Clear that field before entering a value in the new units.")
+                    .font(.caption).foregroundStyle(.orange)
+            }
             if operationType == .foliarSpray {
                 SprayPlanningCardsView(configuration: passConfigurationBinding, method: $planningMethod,
-                    specification: $fullTankSpecification, tankText: $planningTankText,
-                    areaText: $planningAreaText, rateText: $planningRateText, region: region,
-                    rateUnit: customSprayerInputBasis == .litresPer100Metres ? region.volumePer100LengthUnit : region.volumePerAreaUnit,
+                    specification: $fullTankSpecification, tankText: planningBinding($planningTankText),
+                    areaText: planningBinding($planningAreaText), rateText: planningBinding($planningRateText), region: planningRegion,
+                    rateUnit: customSprayerInputBasis == .litresPer100Metres ? planningRegion.volumePer100LengthUnit : planningRegion.volumePerAreaUnit,
                     rowSpacingMetres: resolvedRowSpacingMetres, resolution: flow.planningResolution)
+                if planningRegion.settings != region.settings {
+                    Text("Incomplete planning entries are retained in their original units. Complete or clear them before the new regional units can be displayed.")
+                        .font(.caption).foregroundStyle(.orange)
+                        .accessibilityIdentifier("spray.planning.unitsHeld")
+                }
             }
             // Only offer a choice when the vineyard profile genuinely allows one.
             // An NZ/SWNZ vineyard is locked to L/100 m and sees no L/ha option.
@@ -4546,7 +4636,7 @@ struct SprayCalculatorView: View {
 
 // MARK: - Chemical Line Card
 
-private struct CalcChemicalLineCard: View {
+struct CalcChemicalLineCard: View {
     @Binding var line: ChemicalLine
     let chemicals: [SavedChemical]
     /// The vineyard workflow's label rate-basis preference, strongest first.
@@ -5078,7 +5168,8 @@ private struct CalcChemicalLineCard: View {
             }
         }
         .onAppear {
-            syncOverrideText()
+            if let draft = line.applicationRateDraft { overrideText = draft }
+            else { syncOverrideText() }
             cachedRateChemical = selectedChemical
             cachedRates = selectedChemical.map { SprayRegisteredUseRates.vineyardRates(for: $0) } ?? []
         }
@@ -5092,7 +5183,10 @@ private struct CalcChemicalLineCard: View {
         .onChange(of: line.selectedRateId) { _, _ in
             // A registered-rate selection clears an override. A synthetic id
             // used by a confirmed manual/default rate must retain that rate.
-            if selectedOfferedRate != nil, line.overrideRate != nil {
+            if selectedOfferedRate != nil {
+                line.applicationRateDraft = nil
+                overrideText = ""
+                rangeRejection = nil
                 line.operationalRateSource = nil
                 line.operationalRateUnit = nil
                 line.overrideRate = nil
@@ -5133,10 +5227,12 @@ private struct CalcChemicalLineCard: View {
                 Spacer()
                 if isOverridden {
                     Button {
+                        line.applicationRateDraft = nil
                         line.overrideRate = nil
                         line.operationalRateSource = nil
                         line.operationalRateUnit = nil
                         overrideText = ""
+                        rangeRejection = nil
                     } label: {
                         Label("Reset", systemImage: "arrow.uturn.backward")
                             .font(.caption2.weight(.semibold))
@@ -5219,8 +5315,9 @@ private struct CalcChemicalLineCard: View {
                 .background(Color(.tertiarySystemGroupedBackground))
                 .clipShape(.rect(cornerRadius: 8))
                 .onChange(of: overrideText) { _, newValue in
-                    let trimmed = newValue.trimmingCharacters(in: .whitespaces)
-                    let typed = SprayControllerRateEntry.parse(trimmed)
+                    line.applicationRateDraft = newValue
+                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let typed = SprayEditingNumber.completeValue(trimmed)
                     if trimmed.isEmpty {
                         line.overrideRate = nil
                         rangeRejection = nil
@@ -5237,7 +5334,7 @@ private struct CalcChemicalLineCard: View {
                             ) ?? accepted
                             rangeRejection = nil
                         } else {
-                            line.overrideRate = nil
+                            line.overrideRate = 0
                             rangeRejection = SprayConfirmedRateSeeding.rejectionMessage(
                                 outcome, range: range, basisSuffix: basisLabel
                             )
@@ -5339,6 +5436,11 @@ private struct CalcChemicalLineCard: View {
     }
 
     private func syncOverrideText() {
+        if let draft = line.applicationRateDraft, line.overrideRate == 0,
+           SprayEditingNumber.completeValue(draft) == nil {
+            overrideText = draft
+            return
+        }
         if let value = line.overrideRate {
             let operationalShown = line.operationalRateUnit.map { VineyardPreferredRate(amount: 1, unit: $0, basis: line.basis).chemicalUnit.fromBase(value) }
             let shown = operationalShown ?? selectedChemical.flatMap {
@@ -5348,6 +5450,13 @@ private struct CalcChemicalLineCard: View {
                     chemical: $0
                 )
             } ?? value
+            if let draft = line.applicationRateDraft,
+               let entered = SprayEditingNumber.completeValue(draft),
+               abs(entered - shown) <= max(0.000001, abs(shown) * 0.00000001) {
+                overrideText = draft
+                return
+            }
+            line.applicationRateDraft = nil
             let formatted = SprayRateFormatter.format(shown)
             if overrideText != formatted, SprayControllerRateEntry.parse(overrideText) != shown {
                 overrideText = formatted

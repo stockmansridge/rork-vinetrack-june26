@@ -23,7 +23,9 @@ struct KeyboardSceneCoordinatorTests {
             #expect(field.inputAccessoryView === first)
             #expect(field.text == "Unsubmitted 12.50")
             #expect(field.keyboardType == type && field.returnKeyType == .next)
-            #expect(first.toolbar.items?.last?.accessibilityIdentifier == "keyboard.dismiss")
+            #expect(first.dismissButton.accessibilityIdentifier == "keyboard.dismiss")
+            #expect(first.dismissButton.superview === first)
+            #expect(first.dismissButton.bounds.height >= 44)
             field.removeFromSuperview()
         }
         let secure = UITextField(); secure.isSecureTextEntry = true; secure.text = "secret"

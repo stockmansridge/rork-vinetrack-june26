@@ -39,11 +39,13 @@ nonisolated struct ChemicalLine: Identifiable, Sendable, Codable {
     var chemicalId: UUID
     var selectedRateId: UUID
     var basis: RateBasis
-    /// Operator-entered override expressed in the chemical's display unit
-    /// (e.g. mL or g) per the selected basis. When non-nil, the calculator
+    /// Operator-entered override expressed in canonical chemical base units
+    /// per the selected basis. When non-nil, the calculator
     /// uses this value instead of the saved/recommended rate, and the UI
     /// flags the line as manually overridden until the operator taps Reset.
     var overrideRate: Double?
+    /// Exact editor text, including unresolved drafts; never a calculation authority.
+    var applicationRateDraft: String? = nil
     var operationalRateUnit: String? = nil
     var operationalRateSource: OperationalRateResolver.Source? = nil
 
@@ -62,7 +64,7 @@ nonisolated struct ChemicalLine: Identifiable, Sendable, Codable {
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
-        case id, chemicalId, selectedRateId, basis, overrideRate, operationalRateUnit, operationalRateSource
+        case id, chemicalId, selectedRateId, basis, overrideRate, applicationRateDraft, operationalRateUnit, operationalRateSource
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -72,6 +74,7 @@ nonisolated struct ChemicalLine: Identifiable, Sendable, Codable {
         selectedRateId = try c.decode(UUID.self, forKey: .selectedRateId)
         basis = try c.decodeIfPresent(RateBasis.self, forKey: .basis) ?? .perHectare
         overrideRate = try c.decodeIfPresent(Double.self, forKey: .overrideRate)
+        applicationRateDraft = try c.decodeIfPresent(String.self, forKey: .applicationRateDraft)
         operationalRateUnit = try c.decodeIfPresent(String.self, forKey: .operationalRateUnit)
         operationalRateSource = try c.decodeIfPresent(OperationalRateResolver.Source.self, forKey: .operationalRateSource)
     }

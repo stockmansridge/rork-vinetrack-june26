@@ -118,7 +118,11 @@ struct VineTrackApp: App {
             Group {
                 if isKeyboardValidationEnabled {
                     #if DEBUG
-                    if CommandLine.arguments.contains("--spray-presentation-validation") {
+                    if CommandLine.arguments.contains("--spray-performance-validation") {
+                        SprayPerformanceValidationView()
+                    } else if CommandLine.arguments.contains("--spray-chemical-editing-validation") {
+                        SprayChemicalEditingValidationView()
+                    } else if CommandLine.arguments.contains("--spray-presentation-validation") {
                         SprayPresentationValidationView()
                     } else if CommandLine.arguments.contains("--spray-calculator-keyboard-validation") {
                         SprayCalculatorKeyboardValidationView()
