@@ -69,6 +69,19 @@ struct RegionalInputTests {
         }
     }
 
+    @Test func sprayDecimalDraftsPreservePhysicalValueAcrossRepeatedResolution() {
+        for (raw, expected) in [("25.75", 25.75), ("0.75", 0.75), ("1250.5", 1250.5), ("25,75", 25.75), ("0,75", 0.75), ("1250,5", 1250.5)] {
+            let seed = RegionalInput(canonical: nil, forward: { $0 })
+            for _ in 0..<4 {
+                #expect(seed.resolve(raw, inverse: { $0 }) == expected)
+                #expect(SprayControllerRateEntry.parse(raw) == expected)
+            }
+        }
+        for raw in [".", ",", "25,7.5", "NaN", "inf", "--"] {
+            #expect(SprayControllerRateEntry.parse(raw) == nil)
+        }
+    }
+
     @Test func emptyAndInvalidInputsRemainUnavailable() {
         let input = RegionalInput(canonical: nil, forward: { $0 })
         #expect(input.resolve("", inverse: { $0 }) == nil)

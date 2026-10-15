@@ -58,8 +58,18 @@ final class KeyboardInteractionUITests: XCTestCase {
             XCTAssertTrue(field.waitForExistence(timeout: 5), kind)
             field.tap()
             XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), kind)
-            if kind == "formatted" { field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4)) }
+            if kind == "formatted" {
+                // Replace the whole formatted value, independent of caret position and grouping.
+                field.press(forDuration: 1.2)
+                let selectAll = app.menuItems["Select All"]
+                XCTAssertTrue(selectAll.waitForExistence(timeout: 3), "Select the complete existing number before replacing it")
+                selectAll.tap()
+            }
             field.typeText(value)
+            if kind == "formatted" {
+                XCTAssertEqual(field.value as? String, value, "Replacement must be correct BEFORE dismissal")
+                XCTAssertEqual(app.staticTexts["input.formatted.canonical"].label, value, "Canonical value BEFORE dismissal")
+            }
             let done = app.buttons["keyboard.dismiss"]
             XCTAssertTrue(done.waitForExistence(timeout: 5), kind)
             done.tap()
@@ -165,13 +175,13 @@ final class KeyboardInteractionUITests: XCTestCase {
         let number = app.textFields["input.number"]
         number.tap(); number.typeText("42")
         let done = app.buttons["keyboard.dismiss"]
-        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        XCTAssertTrue(done.waitForExistence(timeout: 5), "Dismiss accessory after text-to-number focus transfer")
         done.tap()
         XCTAssertEqual(text.value as? String, "Draft")
         XCTAssertEqual(number.value as? String, "42")
         app.buttons["keyboard.alert"].tap()
         let popup = app.alerts["Keyboard popup"]
-        XCTAssertTrue(popup.waitForExistence(timeout: 5))
+        XCTAssertTrue(popup.waitForExistence(timeout: 5), "Keyboard popup is presented after tapping alert action")
         let draft = popup.textFields.firstMatch
         draft.tap(); draft.typeText("Popup draft")
         XCTAssertTrue(done.waitForExistence(timeout: 5), "App-owned alert text control")

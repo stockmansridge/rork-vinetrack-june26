@@ -97,7 +97,9 @@ private struct KeyboardValidationInputs: View {
             TextField("Multiline", text: $multiline, axis: .vertical).lineLimit(2...4).accessibilityIdentifier("input.\(prefix)multiline")
             TextEditor(text: $editor).frame(height: 120).accessibilityIdentifier("input.\(prefix)editor")
             KeyboardValidationNativeInput(text: $native, identifier: "input.\(prefix)native").frame(height: 44)
-            TextField("Formatted number", value: $formattedNumber, format: .number).keyboardType(.decimalPad).accessibilityIdentifier("input.\(prefix)formatted")
+            // This fixture types dot-decimal literals; do not interpret '.' as locale grouping.
+            TextField("Formatted number", value: $formattedNumber, format: .number.locale(Locale(identifier: "en_AU"))).keyboardType(.decimalPad).accessibilityIdentifier("input.\(prefix)formatted")
+            Text(String(formattedNumber)).accessibilityIdentifier("input.\(prefix)formatted.canonical")
             Toggle("Keep control interactions", isOn: $toggle).accessibilityIdentifier("keyboard.toggle")
             Button("Save counter") { saves += 1 }.accessibilityIdentifier("keyboard.save")
             Text("Bottom of form").frame(height: 100)

@@ -20,7 +20,9 @@ final class SprayRepository {
     // MARK: - SprayRecord
 
     func loadAllRecords() -> [SprayRecord] {
-        persistence.load(key: Self.recordsKey) ?? []
+        let timing = PerformanceCapture.shared.begin("spray record repository load")
+        defer { PerformanceCapture.shared.end(timing) }
+        return persistence.load(key: Self.recordsKey) ?? []
     }
 
     func loadRecords(for vineyardId: UUID) -> [SprayRecord] {
@@ -35,6 +37,8 @@ final class SprayRepository {
     }
 
     func saveRecordsSliceOrThrow(_ items: [SprayRecord], for vineyardId: UUID) throws {
+        let timing = PerformanceCapture.shared.begin("spray record durable slice save")
+        defer { PerformanceCapture.shared.end(timing) }
         var all = loadAllRecords()
         all.removeAll { $0.vineyardId == vineyardId }
         all.append(contentsOf: items)

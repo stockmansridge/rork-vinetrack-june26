@@ -282,7 +282,9 @@ struct SprayCalculatorView: View {
     /// Canonical geometry for the current selection — the single source of
     /// truth for row length and row spacing in this screen.
     private var applicationGeometry: SprayApplicationGeometry {
-        SprayGeometryResolver.resolve(selectedPaddocks.map { SprayBlockInput.from(paddock: $0) })
+        let timing = PerformanceCapture.shared.beginComputation()
+        defer { PerformanceCapture.shared.endComputation(timing, label: "calculator geometry", records: selectedPaddockIds.count) }
+        return SprayGeometryResolver.resolve(selectedPaddocks.map { SprayBlockInput.from(paddock: $0) })
     }
 
     /// Row spacing for the selection, ONLY when every selected block has an
@@ -455,6 +457,8 @@ struct SprayCalculatorView: View {
 
     /// Re-express both entries before changing display/configuration; preserve physical L/ha.
     private func changeRateDisplay(basis: SprayCarrierBasis, configuration: SprayPassConfiguration?) {
+        let timing = PerformanceCapture.shared.beginComputation()
+        defer { PerformanceCapture.shared.endComputation(timing, label: "calculator rate selection callback", records: 1) }
         let oldBasis = customSprayerInputBasis
         let newBasis = basis == .manualTotalVolume ? sprayProfile.customSprayerInputBasis : basis
         if newBasis == oldBasis && configuration == passConfiguration { return }
@@ -516,7 +520,9 @@ struct SprayCalculatorView: View {
     /// and an area-rated label resolves to whole-block unless the operator chose
     /// the treated band for that specific line.
     private var guidedProductLines: [SprayProductLineInput] {
-        chemicalLines.compactMap { line -> SprayProductLineInput? in
+        let timing = PerformanceCapture.shared.beginComputation()
+        defer { PerformanceCapture.shared.endComputation(timing, label: "calculator product lookup", records: chemicalLines.count) }
+        return chemicalLines.compactMap { line -> SprayProductLineInput? in
             guard let chemical = store.savedChemicals.first(where: { $0.id == line.chemicalId })
             else { return nil }
             // Structured `registeredUses[].rates` are authoritative; the
@@ -694,7 +700,9 @@ struct SprayCalculatorView: View {
     /// figure this screen displays is read back off `flow.plan` — the View does
     /// no arithmetic of its own.
     private var flow: SprayGuidedFlow {
-        SprayGuidedFlow(inputs: guidedInputs, profile: sprayProfile)
+        let timing = PerformanceCapture.shared.beginComputation()
+        defer { PerformanceCapture.shared.endComputation(timing, label: "calculator flow construction", records: chemicalLines.count) }
+        return SprayGuidedFlow(inputs: guidedInputs, profile: sprayProfile)
     }
 
     // MARK: - Live Resistance Check
@@ -729,6 +737,8 @@ struct SprayCalculatorView: View {
     /// product lines, rather than per line: the history scan is over every spray
     /// record the vineyard holds.
     private var resistanceCheck: SprayResistanceCheck.Result {
+        let timing = PerformanceCapture.shared.beginComputation()
+        defer { PerformanceCapture.shared.endComputation(timing, label: "calculator resistance history", records: store.sprayRecords.count) }
         let diseases = SprayResistanceCheck.diseases(from: sprayTargets)
         guard !diseases.isEmpty, let vineyardId = store.selectedVineyardId else {
             return .notApplicable
@@ -2542,6 +2552,8 @@ struct SprayCalculatorView: View {
     /// rule as `guidedProductLines`, so two lines using one chemical stay
     /// distinct — matching on product id alone would collapse them.
     private var planLinesByChemicalLineId: [UUID: SprayProductLineResult] {
+        let timing = PerformanceCapture.shared.beginComputation()
+        defer { PerformanceCapture.shared.endComputation(timing, label: "calculator product plan mapping", records: chemicalLines.count) }
         let planLines = flow.plan.productLines
         var mapped: [UUID: SprayProductLineResult] = [:]
         var index = 0
@@ -2566,6 +2578,9 @@ struct SprayCalculatorView: View {
         // Evaluated once here and shared by every line below, rather than recomputed
         // per product: the check reads the vineyard's whole spray history.
         let check = resistanceCheck
+        let planLines = planLinesByChemicalLineId
+        let resistanceApplicable = flow.isResistanceCheckApplicable
+        let asksAreaBasis = flow.requiresBandWidth
         return VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Chemicals", icon: "flask")
 
@@ -2580,7 +2595,7 @@ struct SprayCalculatorView: View {
                         chemicalLines.removeAll { $0.id == line.id }
                     }
 
-                    if showsAreaBasisPicker(for: line) {
+                    if asksAreaBasis && line.basis == .perHectare {
                         GuidedProductBasisPicker(
                             selected: productAreaBasis[line.id] ?? .wholeBlockArea
                         ) { basis in
@@ -2596,7 +2611,7 @@ struct SprayCalculatorView: View {
                     }
 
                     // The calculated explanation, straight off the plan.
-                    if let planLine = planLinesByChemicalLineId[line.id] {
+                    if let planLine = planLines[line.id] {
                         GuidedProductCalculationRow(line: planLine)
                     }
 
@@ -2604,7 +2619,7 @@ struct SprayCalculatorView: View {
                     // it judges. Shows only the findings that concern the groups
                     // THIS product carries; silence is never dressed up as a pass.
                     ResistanceCheckSlot(
-                        isApplicable: flow.isResistanceCheckApplicable,
+                        isApplicable: resistanceApplicable,
                         findings: check.findings(forProductId: line.id.uuidString)
                     )
                 }
@@ -4546,6 +4561,7 @@ private struct CalcChemicalLineCard: View {
 
     @Environment(\.openURL) private var openURL
     @State private var overrideText: String = ""
+    @FocusState private var isRateFocused: Bool
     /// Why the typed dose was refused against the confirmed band, if it was.
     @State private var rangeRejection: String?
     @State private var rateSheetOptions: [SpraySelectableRate] = []
@@ -5070,7 +5086,9 @@ private struct CalcChemicalLineCard: View {
             cachedRateChemical = chemical
             cachedRates = chemical.map { SprayRegisteredUseRates.vineyardRates(for: $0) } ?? []
         }
-        .onChange(of: line.overrideRate) { _, _ in syncOverrideText() }
+        .onChange(of: line.overrideRate) { _, _ in
+            if !isRateFocused { syncOverrideText() }
+        }
         .onChange(of: line.selectedRateId) { _, _ in
             // A registered-rate selection clears an override. A synthetic id
             // used by a confirmed manual/default rate must retain that rate.
@@ -5193,6 +5211,7 @@ private struct CalcChemicalLineCard: View {
                     text: $overrideText
                 )
                 .accessibilityIdentifier("applicationRateField")
+                .focused($isRateFocused)
                 .keyboardType(.decimalPad)
                 .disabled(hasInvalidStoredRate)
                 .padding(.horizontal, 10)
@@ -5201,7 +5220,7 @@ private struct CalcChemicalLineCard: View {
                 .clipShape(.rect(cornerRadius: 8))
                 .onChange(of: overrideText) { _, newValue in
                     let trimmed = newValue.trimmingCharacters(in: .whitespaces)
-                    let typed = Double(trimmed.replacingOccurrences(of: ",", with: "."))
+                    let typed = SprayControllerRateEntry.parse(trimmed)
                     if trimmed.isEmpty {
                         line.overrideRate = nil
                         rangeRejection = nil
@@ -5223,7 +5242,7 @@ private struct CalcChemicalLineCard: View {
                                 outcome, range: range, basisSuffix: basisLabel
                             )
                         }
-                    } else if let typed, typed > 0 {
+                    } else if let typed, typed.isFinite, typed > 0 {
                         // Stored in BASE units, the same space
                         // `SprayRegisteredUseRates.seedValue` returns, so the
                         // typed and the seeded paths cannot mean different
@@ -5234,6 +5253,11 @@ private struct CalcChemicalLineCard: View {
                         } else {
                             line.overrideRate = SprayRegisteredUseRates.baseValue(typed, labelUnit: unitLabel, chemical: chem) ?? typed
                         }
+                        rangeRejection = nil
+                    } else {
+                        // An unresolved draft must not silently reuse a previous or recommended dose.
+                        line.overrideRate = 0
+                        rangeRejection = "Enter a valid positive application rate."
                     }
                 }
                 Text("\(unitLabel)\(basisLabel)")
@@ -5325,7 +5349,7 @@ private struct CalcChemicalLineCard: View {
                 )
             } ?? value
             let formatted = SprayRateFormatter.format(shown)
-            if overrideText != formatted, Double(overrideText) != shown {
+            if overrideText != formatted, SprayControllerRateEntry.parse(overrideText) != shown {
                 overrideText = formatted
             }
         } else if !overrideText.isEmpty {
