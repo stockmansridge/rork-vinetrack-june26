@@ -4,7 +4,7 @@ import Observation
 /// Local-first sync service for per-vineyard repair/growth button configuration.
 /// Tracks dirty state for the currently selected vineyard's button sets and
 /// pushes/pulls them against Supabase via `SupabaseButtonConfigSyncRepository`.
-/// Conflict resolution is last-write-wins based on `client_updated_at`.
+/// Dirty local edits survive pulls; conditional writes require an exact returned acknowledgement.
 @Observable
 @MainActor
 final class ButtonConfigSyncService {
@@ -24,12 +24,16 @@ final class ButtonConfigSyncService {
     private weak var auth: NewBackendAuthService?
     private let repository: any ButtonConfigSyncRepositoryProtocol
     private let metadata: ButtonConfigSyncMetadata
+    private let isBackendConfigured: () -> Bool
     private var isConfigured: Bool = false
+    private var isSyncing: Bool = false
 
     init(
         repository: (any ButtonConfigSyncRepositoryProtocol)? = nil,
-        metadata: ButtonConfigSyncMetadata? = nil
+        metadata: ButtonConfigSyncMetadata? = nil,
+        isBackendConfigured: @escaping () -> Bool = { SupabaseClientProvider.shared.isConfigured }
     ) {
+        self.isBackendConfigured = isBackendConfigured
         self.repository = repository ?? SupabaseButtonConfigSyncRepository()
         self.metadata = metadata ?? ButtonConfigSyncMetadata()
     }
@@ -72,17 +76,25 @@ final class ButtonConfigSyncService {
     }
 
     func sync(vineyardId: UUID) async {
-        guard SupabaseClientProvider.shared.isConfigured else {
+        guard isBackendConfigured() else {
             errorMessage = "Supabase not configured"
             syncStatus = .failure("Supabase not configured")
             return
         }
+        guard !isSyncing else { return }
+        isSyncing = true
+        defer { isSyncing = false }
         syncStatus = .syncing
         errorMessage = nil
         do {
             try await pullRemoteButtonConfig(vineyardId: vineyardId)
             try await pushLocalButtonConfig(vineyardId: vineyardId)
+            guard metadata.pendingTimestamp(vineyardId: vineyardId, type: .repairButtons) == nil,
+                  metadata.pendingTimestamp(vineyardId: vineyardId, type: .growthButtons) == nil else {
+                throw ButtonConfigSyncError.reviewRequired
+            }
             metadata.setLastSync(Date(), for: vineyardId)
+            guard metadata.persistenceError == nil else { throw ButtonConfigSyncError.reviewRequired }
             lastSyncDate = Date()
             syncStatus = .success
         } catch {
@@ -95,14 +107,18 @@ final class ButtonConfigSyncService {
 
     func pullRemoteButtonConfig(vineyardId: UUID) async throws {
         guard let store else { return }
+        let actor = auth?.userId
+        let signOutSequence = auth?.completedSignOutSequence
         let remote = try await repository.fetchButtonConfigs(vineyardId: vineyardId)
+        guard auth?.userId == actor, auth?.completedSignOutSequence == signOutSequence, store.selectedVineyardId == vineyardId else { throw ButtonConfigSyncError.scopeChanged }
 
         for row in remote {
             guard let type = row.type, row.deletedAt == nil else { continue }
-            // Last-write-wins: skip remote if the local pending change is newer.
-            if let pendingDirtyAt = metadata.pendingTimestamp(vineyardId: vineyardId, type: type) {
-                let remoteAt = row.clientUpdatedAt ?? row.updatedAt ?? .distantPast
-                if pendingDirtyAt > remoteAt { continue }
+            guard row.vineyardId == vineyardId else { throw ButtonConfigSyncError.reviewRequired }
+            metadata.rememberRowId(row.id, vineyardId: vineyardId, type: type)
+            if let dirty = metadata.pendingTimestamp(vineyardId: vineyardId, type: type), dirty != .distantPast {
+                // A remote timestamp is not an acknowledgement of our unsent edit.
+                continue
             }
             switch type {
             case .repairButtons:
@@ -121,9 +137,11 @@ final class ButtonConfigSyncService {
 
     func pushLocalButtonConfig(vineyardId: UUID) async throws {
         guard let store else { return }
+        guard store.selectedVineyardId == vineyardId else { throw ButtonConfigSyncError.scopeChanged }
         let createdBy = auth?.userId
+        let signOutSequence = auth?.completedSignOutSequence
+        guard metadata.persistenceError == nil else { throw ButtonConfigSyncError.reviewRequired }
         var payloads: [BackendButtonConfigUpsert] = []
-        var pushed: [(BackendButtonConfigType, Date)] = []
 
         if let dirtyAt = metadata.pendingTimestamp(vineyardId: vineyardId, type: .repairButtons),
            !store.repairButtons.isEmpty {
@@ -136,7 +154,7 @@ final class ButtonConfigSyncService {
                 createdBy: createdBy,
                 clientUpdatedAt: dirtyAt
             ))
-            pushed.append((.repairButtons, dirtyAt))
+
         }
 
         if let dirtyAt = metadata.pendingTimestamp(vineyardId: vineyardId, type: .growthButtons),
@@ -150,13 +168,29 @@ final class ButtonConfigSyncService {
                 createdBy: createdBy,
                 clientUpdatedAt: dirtyAt
             ))
-            pushed.append((.growthButtons, dirtyAt))
+
         }
 
-        if !payloads.isEmpty {
-            try await repository.upsertButtonConfigs(payloads)
-            for (type, _) in pushed {
-                metadata.clearDirty(vineyardId: vineyardId, type: type)
+        for payload in payloads {
+            let rows = try await repository.fetchButtonConfigs(vineyardId: vineyardId)
+            guard auth?.userId == createdBy, auth?.completedSignOutSequence == signOutSequence, store.selectedVineyardId == vineyardId else { throw ButtonConfigSyncError.scopeChanged }
+            let matches = rows.filter { $0.configType == payload.configType && $0.vineyardId == vineyardId }
+            guard matches.count <= 1 else { throw ButtonConfigSyncError.reviewRequired }
+            let expected = matches.first
+            if let expected, (expected.clientUpdatedAt ?? expected.updatedAt ?? .distantPast) > payload.clientUpdatedAt,
+               expected.configData != payload.configData { throw ButtonConfigSyncError.reviewRequired }
+            let request = BackendButtonConfigUpsert(id: expected?.id ?? payload.id, vineyardId: vineyardId,
+                configType: payload.configType, configData: payload.configData,
+                createdBy: expected == nil ? createdBy : expected?.createdBy, clientUpdatedAt: payload.clientUpdatedAt)
+            let ack = try await repository.saveButtonConfig(request, replacing: expected)
+            guard auth?.userId == createdBy, auth?.completedSignOutSequence == signOutSequence, store.selectedVineyardId == vineyardId else { throw ButtonConfigSyncError.scopeChanged }
+            guard ack.id == request.id, ack.vineyardId == vineyardId, ack.configType == request.configType,
+                  ack.deletedAt == nil, ack.configData == request.configData else { throw ButtonConfigSyncError.reviewRequired }
+            guard let type = BackendButtonConfigType(rawValue: payload.configType) else { throw ButtonConfigSyncError.reviewRequired }
+            metadata.rememberRowId(ack.id, vineyardId: vineyardId, type: type)
+            let current = type == .repairButtons ? store.repairButtons : store.growthButtons
+            if current == payload.configData {
+                metadata.clearDirty(vineyardId: vineyardId, type: type, matching: payload.clientUpdatedAt)
             }
         }
     }
@@ -169,6 +203,7 @@ final class ButtonConfigSyncMetadata {
     private let persistence: PersistenceStore
     private let key: String = "vinetrack_button_config_sync_metadata"
     private var state: State
+    private(set) var persistenceError: String?
 
     nonisolated struct PendingKey: Codable, Sendable, Hashable {
         let vineyardId: UUID
@@ -209,7 +244,18 @@ final class ButtonConfigSyncMetadata {
     }
 
     func clearDirty(vineyardId: UUID, type: BackendButtonConfigType) {
+        let previous = state
         state.pendingByKey.removeValue(forKey: compositeKey(vineyardId, type))
+        if !save() { state = previous }
+    }
+
+    func clearDirty(vineyardId: UUID, type: BackendButtonConfigType, matching timestamp: Date) {
+        guard pendingTimestamp(vineyardId: vineyardId, type: type) == timestamp else { return }
+        clearDirty(vineyardId: vineyardId, type: type)
+    }
+
+    func rememberRowId(_ id: UUID, vineyardId: UUID, type: BackendButtonConfigType) {
+        state.rowIdsByKey[compositeKey(vineyardId, type)] = id
         save()
     }
 
@@ -227,7 +273,14 @@ final class ButtonConfigSyncMetadata {
         return new
     }
 
-    private func save() {
-        persistence.save(state, key: key)
+    @discardableResult private func save() -> Bool {
+        do {
+            try persistence.saveOrThrow(state, key: key)
+            persistenceError = nil
+            return true
+        } catch {
+            persistenceError = "Button sync state could not be saved. Keep this app open, free storage and retry."
+            return false
+        }
     }
 }

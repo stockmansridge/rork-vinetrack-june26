@@ -9727,6 +9727,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun retainGpsMarker(trip: Trip) {
+        if (runCatching { tripGpsSync.enqueue(trip) }.isFailure) {
+            _ui.update { it.copy(tripError = "GPS remains saved on this device, but its sync marker needs review. Keep this installation and open Sync Status; do not replace or delete the saved trip.") }
+        }
+    }
+
     /** Throttle server writes: persist roughly every 8 fixes or 20 seconds. */
     private fun maybeAutosave(tripId: String, points: List<CoordinatePoint>, distance: Double) {
         pointsSinceSave++
@@ -9744,7 +9750,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // (persisted via maybeAutosaveLocal); the marker only flags that this
         // active server trip has unsynced progress to merge/replay later.
         if (!_ui.value.isOnline) {
-            if (trip.isActive) tripGpsSync.enqueue(trip)
+            if (trip.isActive) retainGpsMarker(trip)
             return
         }
         viewModelScope.launch {
@@ -9764,7 +9770,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // never bloat the outbox.
                 val current = _ui.value.trips.firstOrNull { it.id == tripId }
                     ?: runCatching { activeTripStore.load()?.takeIf { it.trip.id == tripId }?.trip }.getOrNull()
-                if (current != null && current.isActive) tripGpsSync.enqueue(current)
+                if (current != null && current.isActive) retainGpsMarker(current)
             }
         }
     }
@@ -9910,8 +9916,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             sprayWeatherJob = null
             clearRowLockState()
             val completedLocal = completedServer.copy(
-                pathPoints = if (saved.pathPoints.orEmpty().size > completedServer.pathPoints.orEmpty().size) saved.pathPoints else completedServer.pathPoints,
-                totalDistance = if (saved.pathPoints.orEmpty().size > completedServer.pathPoints.orEmpty().size) saved.totalDistance else completedServer.totalDistance,
+                // Keep this device's exact route until GPS recovery proves inclusion.
+                // A longer server route is not proof that a shorter local branch survived.
+                pathPoints = saved.pathPoints ?: completedServer.pathPoints,
+                totalDistance = saved.totalDistance ?: completedServer.totalDistance,
                 tankSessions = completedServer.tankSessions + saved.tankSessions.filter { local ->
                     completedServer.tankSessions.none { server -> server.id == local.id }
                 },
@@ -9921,8 +9929,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(tripError = "Trip finished on the server, but its local history could not be saved. Free up storage and retry sync.") }
                 return loadedTrips
             }
-            pendingWrites.list().filter { it.clientId == saved.id &&
-                it.entityType.startsWith("trip_") }.forEach { pendingWrites.remove(it.id) }
+            // Each coordinator must verify its own retained intent. Server completion
+            // alone cannot acknowledge GPS, tank, coverage or metadata evidence.
             _ui.update { it.copy(deviceActiveTripId = null, isTracking = false,
                 lastServerCompletedTripId = saved.id,
                 tripError = "This trip was finished on the server. Its history remains available.") }

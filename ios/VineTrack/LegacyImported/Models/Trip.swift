@@ -39,6 +39,65 @@ nonisolated struct TankSession: Codable, Identifiable, Sendable, Hashable {
         self.fillEndTime = fillEndTime
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case id, tankNumber, startTime, endTime, pathsCovered, startRow, endRow, fillStartTime, fillEndTime
+    }
+
+    private enum WireKeys: String, CodingKey {
+        case id, tankNumber = "tank_number", startTime = "start_time", endTime = "end_time"
+        case pathsCovered = "paths_covered", startRow = "start_row", endRow = "end_row"
+        case fillStartTime = "fill_start_time", fillEndTime = "fill_end_time"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let w = try decoder.container(keyedBy: WireKeys.self)
+        func value<T: Decodable & Equatable>(_ type: T.Type, _ key: CodingKeys, _ wire: WireKeys) throws -> T? {
+            let local = try c.decodeIfPresent(type, forKey: key)
+            let remote = try w.decodeIfPresent(type, forKey: wire)
+            if let local, let remote, local != remote {
+                throw DecodingError.dataCorruptedError(forKey: key, in: c, debugDescription: "Conflicting tank-session aliases")
+            }
+            return local ?? remote
+        }
+        func date(_ key: CodingKeys, _ wire: WireKeys) throws -> Date? {
+            func parse<K: CodingKey>(_ container: KeyedDecodingContainer<K>, _ k: K) throws -> Date? {
+                guard container.contains(k), try !container.decodeNil(forKey: k) else { return nil }
+                if let text = try? container.decode(String.self, forKey: k) {
+                    let formatter = ISO8601DateFormatter()
+                    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                    if let result = formatter.date(from: text) { return result }
+                    formatter.formatOptions = [.withInternetDateTime]
+                    guard let result = formatter.date(from: text) else {
+                        throw DecodingError.dataCorruptedError(forKey: k, in: container, debugDescription: "Invalid tank-session date")
+                    }
+                    return result
+                }
+                // Preserve the caller's historical numeric Date strategy for local caches.
+                return try container.decode(Date.self, forKey: k)
+            }
+            let local = try parse(c, key)
+            let remote = try parse(w, wire)
+            if let local, let remote, local != remote {
+                throw DecodingError.dataCorruptedError(forKey: key, in: c, debugDescription: "Conflicting tank-session dates")
+            }
+            return local ?? remote
+        }
+        id = try c.decode(UUID.self, forKey: .id)
+        guard let number = try value(Int.self, .tankNumber, .tankNumber),
+              let start = try date(.startTime, .startTime) else {
+            throw DecodingError.dataCorruptedError(forKey: .startTime, in: c, debugDescription: "Missing tank number or start time")
+        }
+        tankNumber = number
+        startTime = start
+        endTime = try date(.endTime, .endTime)
+        pathsCovered = try value([Double].self, .pathsCovered, .pathsCovered) ?? []
+        startRow = try value(Double.self, .startRow, .startRow)
+        endRow = try value(Double.self, .endRow, .endRow)
+        fillStartTime = try date(.fillStartTime, .fillStartTime)
+        fillEndTime = try date(.fillEndTime, .fillEndTime)
+    }
+
     var rowRange: String {
         guard let start = startRow, let end = endRow else { return "" }
         if start == end { return "Row \(formatRow(start))" }

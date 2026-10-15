@@ -110,7 +110,7 @@ class RetentionReviewTest {
         } finally { root.deleteRecursively() }
     }
 
-    @Test(timeout = 10000) fun allAuditedGenericClaimsRemainStrandedExceptWorkTaskHeaders() {
+    @Test(timeout = 10000) fun auditedClaimsRemainStrandedExceptWorkTaskHeadersAndReadVerifiedGpsRecovery() {
         val root = directory()
         try {
             val types = listOf(PendingEntityType.PIN, PendingEntityType.PIN_EDIT,
@@ -124,14 +124,19 @@ class RetentionReviewTest {
             val claims = types.map { type -> requireNotNull(queue.claimReplay(queue.enqueue(type,
                 PendingOpType.UPDATE, """{"vineyard_id":"vineyard-A","authored":"$type"}""", type))) }
             val restarted = PendingWriteRepository(ReviewWriteDisk(File(root, "writes")))
-            for (claim in claims.filter { it.entityType != PendingEntityType.WORK_TASK }) {
+            for (claim in claims.filter { it.entityType !in setOf(PendingEntityType.WORK_TASK, PendingEntityType.TRIP_GPS) }) {
                 assertEquals(claim, restarted.list().single { it.id == claim.id })
                 assertNull(restarted.claimReplay(claim))
                 assertFalse(restarted.resetFailedRowForRetry(claim.id))
             }
             assertEquals(PendingWriteStatus.FAILED, restarted.list().single { it.entityType == PendingEntityType.WORK_TASK }.status)
-            assertEquals(1, restarted.resetFailedForRetry())
-            assertEquals(14, restarted.list().count { it.status == PendingWriteStatus.IN_PROGRESS })
+            val gps = restarted.list().single { it.entityType == PendingEntityType.TRIP_GPS }
+            assertEquals(PendingWriteStatus.FAILED, gps.status)
+            val originalGps = claims.single { it.id == gps.id }
+            assertEquals(originalGps.payloadJson, gps.payloadJson)
+            assertEquals(originalGps.attemptCount, gps.attemptCount)
+            assertEquals(2, restarted.resetFailedForRetry())
+            assertEquals(13, restarted.list().count { it.status == PendingWriteStatus.IN_PROGRESS })
         } finally { root.deleteRecursively() }
     }
 

@@ -30,7 +30,7 @@ class LegacySprayProcessProbeActivity : ComponentActivity() {
             override fun getSharedPreferences(name: String, mode: Int) = baseContext.getSharedPreferences(prefix + name, mode)
         }
         if (mode == "cleanup") {
-            listOf("vinetrack_session", LegacySpraySaveStore.PREFERENCES).forEach { deleteSharedPreferences(prefix + it) }
+            listOf("vinetrack_session", LegacySpraySaveStore.PREFERENCES, "vinetrack_pending_writes", "vinetrack_active_trip").forEach { deleteSharedPreferences(prefix + it) }
             return "LEGACY_CLEANED"
         }
         val actor = UUID.nameUUIDFromBytes("actor$id".toByteArray()).toString()
@@ -39,6 +39,32 @@ class LegacySprayProcessProbeActivity : ComponentActivity() {
         val record = UUID.nameUUIDFromBytes("record$id".toByteArray()).toString()
         val session = SessionStore(isolated)
         if (!session.hasSession) session.save("synthetic-access", "synthetic-refresh", actor, null)
+        if (mode == "GPS_CLAIMED" || mode == "GPS_RECOVER") {
+            val queue = PendingWriteRepository(isolated)
+            queue.configureReplayScope { PendingWriteRepository.ReplayScope(actor, session.retentionGuard.identityEpoch.value) }
+            val snapshots = ActiveTripStore(isolated)
+            val points = List(4584) { com.rork.vinetrack.data.model.CoordinatePoint(-33.0 + it * 0.000001, 149.0 + it * 0.000001) }
+            val completed = com.rork.vinetrack.data.model.Trip(trip, vineyard, isActive = false,
+                endTime = "2026-10-14T10:00:00Z", pathPoints = points)
+            val sync = TripGpsSync(queue, snapshots, { completed }) { _, _, _, _ -> error("Completed trip write forbidden") }
+            if (mode == "GPS_CLAIMED") {
+                check(snapshots.saveDurably(actor, vineyard, completed))
+                // Exact old marker shape: no embedded path or provenance fields.
+                val payload = """{"tripId":"$trip","baseServerPointCount":4584,"clientUpdatedAt":"2026-10-14T10:00:00Z","savedAt":1}"""
+                val marker = queue.enqueue(com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS,
+                    com.rork.vinetrack.data.model.PendingOpType.UPDATE, payload, trip)
+                check(queue.claimReplay(marker) != null)
+                return "GPS_RETAINED_${Process.myPid()}"
+            }
+            check(queue.list().single().status == com.rork.vinetrack.data.model.PendingWriteStatus.FAILED)
+            val original = queue.list().single().payloadJson
+            kotlinx.coroutines.runBlocking { sync.replayAll { error("Completed trip active publication forbidden") } }
+            check(queue.currentPendingCount() == 0)
+            val retained = Json.decodeFromString(TripGpsSync.Payload.serializer(), queue.list().single().payloadJson)
+            check(retained.originalPayloadJson == original && retained.pathEvidence == points)
+            check(snapshots.load()?.trip == completed)
+            return "GPS_RECOVERED_${Process.myPid()}"
+        }
         val input = SprayRecordRepository.SprayInput("2026-10-15", "2026-10-15T08:00:00Z", null, null, null, null,
             "Original", "Frozen", null, null, null, null, null, null, sprayEquipmentId = null,
             operationType = "foliar_spray", tripId = trip, tanks = emptyList())

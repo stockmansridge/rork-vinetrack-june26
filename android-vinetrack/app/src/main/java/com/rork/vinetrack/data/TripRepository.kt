@@ -566,6 +566,27 @@ class TripRepository(private val session: SessionStore) {
         patchTrip(id, patch, token)
     }
 
+    /** Account-incarnation fenced GPS read, also used for completed-trip read-only recovery. */
+    internal suspend fun fetchGpsTrip(id: String, isAdmitted: () -> Boolean): Trip? {
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        if (!isAdmitted() || !session.isAccountAccessCurrent(access)) throw BackendError.Unauthorized
+        return fetchTrip(id, access).also {
+            if (!session.isAccountAccessCurrent(access)) throw BackendError.Unauthorized
+        }
+    }
+
+    /** GPS-only conditional write: never patches an ended trip, even if it ends after the read. */
+    internal suspend fun saveGpsProgress(expected: Trip, points: List<CoordinatePoint>, distance: Double, paused: Boolean,
+        isAdmitted: () -> Boolean): Trip {
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        if (!isAdmitted() || !session.isAccountAccessCurrent(access)) throw BackendError.Unauthorized
+        val patch = TripProgressPatch(points, distance, paused, clientUpdatedAt = nowIso())
+        val result = patchTrip(expected.id, patch, token, access, expectedGpsTrip = expected)
+        if (!session.isAccountAccessCurrent(access)) throw BackendError.Unauthorized
+        return result
+    }
+
     suspend fun saveProgress(
         id: String,
         pathPoints: List<CoordinatePoint>,
@@ -793,8 +814,14 @@ class TripRepository(private val session: SessionStore) {
         patch: T,
         token: String,
         accountAccess: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null,
+        expectedGpsTrip: Trip? = null,
     ): Trip {
-        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("trips?id=eq.$id")) {
+        val filter = if (expectedGpsTrip != null) {
+            val stamp = requireNotNull(expectedGpsTrip.updatedAt) { "Server GPS revision unavailable. Retained evidence needs review." }
+            "&is_active=eq.true&end_time=is.null&deleted_at=is.null&vineyard_id=eq.${expectedGpsTrip.vineyardId}" +
+                "&updated_at=eq.${java.net.URLEncoder.encode(stamp, "UTF-8")}"
+        } else ""
+        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("trips?id=eq.$id$filter")) {
             authHeaders(token)
             accountAccess?.let { attributes.put(SupabaseClient.accountRequestScope, it) }
             headers { append("Prefer", "return=representation") }

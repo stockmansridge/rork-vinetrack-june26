@@ -64,9 +64,13 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         // A terminated process cannot still own an in-flight Work Task upload.
         // Retain the frozen payload and make just these header writes retryable.
         _writes.value.filter {
-            it.entityType == com.rork.vinetrack.data.model.PendingEntityType.WORK_TASK &&
+            it.entityType in setOf(com.rork.vinetrack.data.model.PendingEntityType.WORK_TASK,
+                com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS) &&
                 it.status == PendingWriteStatus.IN_PROGRESS
-        }.forEach { updateStatus(it.id, PendingWriteStatus.FAILED, "Work task sync was interrupted. Ready to retry.") }
+        }.forEach { updateStatus(it.id, PendingWriteStatus.FAILED,
+            if (it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS)
+                "Trip GPS sync was interrupted. Retry to verify retained evidence against the server."
+            else "Work task sync was interrupted. Ready to retry.") }
     }
 
     /** Current pending count without collecting the flow. */
@@ -322,6 +326,20 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     @Synchronized
     fun isCurrent(expected: PendingWrite): Boolean = _writes.value.any { it == expected } &&
         (claimedScopes[expected]?.let { it == scopeProvider?.invoke() } ?: true)
+
+    /** Retain additional owned GPS evidence before transport; original payload is embedded
+     * by the GPS coordinator. Never upgrades another entity or an unclaimed version. */
+    internal fun retainGpsPayloadIfCurrent(expected: PendingWrite, payload: String): PendingWrite? = admitted {
+        synchronized(this) {
+            if (expected.entityType != com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS ||
+                expected.status != PendingWriteStatus.IN_PROGRESS || !isCurrent(expected)) return@synchronized null
+            val scope = claimedScopes[expected]
+            val next = expected.copy(payloadJson = payload, updatedAt = System.currentTimeMillis())
+            if (!mutateIfCurrent(expected) { next }) return@synchronized null
+            if (scope != null) claimedScopes[next] = scope
+            next
+        }
+    }
 
     /** Durable compare-and-remove under the same lock as every queue write. */
     fun removeIfCurrent(expected: PendingWrite): Boolean = admitted { mutateIfCurrent(expected) { null } }

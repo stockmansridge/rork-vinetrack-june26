@@ -16,55 +16,34 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Offline replay coordinator for trip GPS/path progress only (Tier-A Stage
- * C-1), for an existing active server trip.
- *
- * Unlike the other replay paths, the outbox row is NOT the source of the path
- * data: high-frequency GPS fixes would bloat the outbox if one row were queued
- * per fix. Instead a single coalesced [PendingEntityType.TRIP_GPS] / UPDATE
- * MARKER per trip ([PendingWrite.clientId] = tripId) records only that the trip
- * has unsynced captured path progress. The captured path itself is read from
- * the Stage A active-trip snapshot ([ActiveTripStore]) at replay time.
- *
- * Discriminator: TRIP_GPS / UPDATE so it never collides with the Stage B-1
- * scalar metadata queue ([PendingEntityType.TRIP_METADATA]), the broad
- * [PendingEntityType.TRIP] reserved for later trip start/end work, or any
- * future row-coverage / tank-session streams.
- *
- * Merge strategy (conservative, deterministic, never destructive): the live
- * server trip is fetched, the local snapshot path is read, and a merged path is
- * produced that is NEVER shorter than the server path. The local snapshot is
- * seeded from the live trip path at capture start and only ever appended to, so
- * it is the authoritative superset of this device's progress; the merge takes
- * the local path when it has more points than the server, de-dupes
- * near-identical consecutive coordinates, and recomputes `total_distance` from
- * scratch (no additive drift). When local adds nothing over the server, the
- * marker is removed without a PATCH. The progress PATCH preserves the live
- * server `is_paused` flag and never touches metadata, coverage, tank sessions,
- * row-plan, engine hours, or trip start/end/delete fields.
- *
- * Conflict / safety: a missing / soft-deleted / no-longer-active server trip is
- * blocked; a missing or mismatched local snapshot means there is no local work
- * to replay, so the marker is safely removed; transient failures retry up to a
- * cap; permanent failures and corrupt payloads block.
+ * GPS-only replay with exact observation verification and completed-trip read-only recovery.
+ * New markers retain scoped path evidence; legacy markers require an owned snapshot.
+ * Missing evidence is held, never acknowledged from point count or trip status alone.
+ * Active writes require a local superset and a conditional still-active server row.
+ * Completed trips are never patched. Verified markers retain their payload as SYNCED.
  */
-class TripGpsSync(
-    private val tripRepo: TripRepository,
+class TripGpsSync private constructor(
     private val pending: PendingWriteRepository,
     private val activeTripStore: ActiveTripStore,
+    private val fetch: suspend (String, () -> Boolean) -> Trip?,
+    private val save: suspend (Trip, List<CoordinatePoint>, Double, Boolean, () -> Boolean) -> Trip,
 ) {
+    constructor(tripRepo: TripRepository, pending: PendingWriteRepository, activeTripStore: ActiveTripStore) :
+        this(pending, activeTripStore, { id, admitted -> tripRepo.fetchGpsTrip(id, admitted) },
+            { expected, path, distance, paused, admitted -> tripRepo.saveGpsProgress(expected, path, distance, paused, admitted) })
+
+    /** Synthetic transport seam; production always uses the captured-account repository above. */
+    internal constructor(pending: PendingWriteRepository, activeTripStore: ActiveTripStore,
+        fetch: suspend (String) -> Trip?, save: suspend (Trip, List<CoordinatePoint>, Double, Boolean) -> Trip) :
+        this(pending, activeTripStore, { id, _ -> fetch(id) },
+            { expected, path, distance, paused, _ -> save(expected, path, distance, paused) })
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     /** Serialises replay so overlapping connectivity events can't double-fire. */
     private val replayLock = Mutex()
 
-    /**
-     * Lightweight GPS-progress marker. Carries only the trip id and baseline
-     * bookkeeping — never the path points themselves (those live in the Stage A
-     * snapshot). [baseServerPointCount] / [baseClientUpdatedAt] capture the
-     * progress baseline when the marker was first queued; they are informational
-     * and preserved across coalescing.
-     */
+    /** Frozen scoped GPS evidence and original baseline. Missing new fields decode
+     * old markers without inventing ownership or points. */
     @Serializable
     data class Payload(
         val tripId: String,
@@ -72,6 +51,10 @@ class TripGpsSync(
         val baseClientUpdatedAt: String? = null,
         val clientUpdatedAt: String,
         val savedAt: Long,
+        val ownerUserId: String? = null,
+        val vineyardId: String? = null,
+        val pathEvidence: List<CoordinatePoint>? = null,
+        val originalPayloadJson: String? = null,
     )
 
     /**
@@ -91,11 +74,27 @@ class TripGpsSync(
         }
         val decoded = existing
             .mapNotNull { runCatching { json.decodeFromString(Payload.serializer(), it.payloadJson) }.getOrNull() }
+        check(decoded.size == existing.size && existing.none { it.status == PendingWriteStatus.BLOCKED }) {
+            "Retained GPS marker needs review before it can be replaced."
+        }
         val preservedBaseCount = decoded.firstOrNull()?.baseServerPointCount
             ?: (trip.pathPoints?.size ?: 0)
         val preservedBaseStamp = decoded.firstNotNullOfOrNull { it.baseClientUpdatedAt }
             ?: trip.clientUpdatedAt
-        existing.forEach { pending.remove(it.id) }
+        val scope = pending.currentReplayScope()
+        val snapshot = activeTripStore.load()
+        check(scope != null && snapshot?.ownerUserId == scope.userId &&
+            snapshot.vineyardId == trip.vineyardId && snapshot.trip.id == tripId) {
+            "GPS evidence requires the original account and retained trip snapshot."
+        }
+        check(decoded.all { it.tripId == tripId && (it.ownerUserId == null || it.ownerUserId == scope.userId) &&
+            (it.vineyardId == null || it.vineyardId == trip.vineyardId) }) {
+            "Original GPS marker belongs to another scope. Its evidence was not replaced."
+        }
+        val path = trip.pathPoints ?: error("Missing GPS evidence; original markers retained.")
+        check(decoded.all { old -> old.pathEvidence == null || containsEvidence(path, old.pathEvidence) }) {
+            "New GPS snapshot does not contain the retained evidence. Review sync before continuing."
+        }
         val payload = json.encodeToString(
             Payload.serializer(),
             Payload(
@@ -104,31 +103,18 @@ class TripGpsSync(
                 baseClientUpdatedAt = preservedBaseStamp,
                 clientUpdatedAt = java.time.Instant.now().toString(),
                 savedAt = System.currentTimeMillis(),
+                ownerUserId = scope.userId,
+                vineyardId = trip.vineyardId,
+                pathEvidence = path,
+                originalPayloadJson = decoded.firstNotNullOfOrNull { it.originalPayloadJson },
             ),
         )
-        return pending.enqueue(
-            entityType = PendingEntityType.TRIP_GPS,
-            opType = PendingOpType.UPDATE,
-            payloadJson = payload,
-            clientId = tripId,
-        )
+        return pending.upsertCoalesced(PendingEntityType.TRIP_GPS, tripId, payload)
     }
 
-    /**
-     * Replay every retry-eligible GPS marker. No-ops (returns) if a replay is
-     * already running. For each marker: mark in-progress, decode (block if
-     * corrupt), read the local snapshot path, then resolve the outcome:
-     *  - no matching local snapshot -> nothing to replay, remove the marker,
-     *  - server trip missing/deleted -> blocked,
-     *  - server trip no longer active -> blocked,
-     *  - merged path adds nothing over the server -> remove the marker (synced),
-     *  - otherwise PATCH the merged path + recomputed distance, preserving the
-     *    server pause flag; on success remove the marker and fire [onSynced],
-     *  - transient (network / 5xx / expired session) -> back to failed,
-     *  - permanent (validation / forbidden) or attempt cap -> blocked.
-     *
-     * Caller must only invoke this when online and a session token exists.
-     */
+    /** Replay retry-eligible markers under exact queue-version/account fences.
+     * Read-only reconciliation of a completed trip can acknowledge only exact evidence
+     * inclusion; missing, foreign, diverging or unreadable evidence remains reviewable. */
     suspend fun replayAll(permittedWrites: Map<String, PendingWrite>? = null, onSynced: (Trip) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
@@ -139,7 +125,7 @@ class TripGpsSync(
                     (permittedWrites == null || permittedWrites[it.id] == it)
             }
             for (candidate in candidates) {
-                val write = pending.claimReplay(candidate, permittedWrites) ?: continue
+                var write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
@@ -158,46 +144,94 @@ class TripGpsSync(
                     )
                     continue
                 }
-                // The captured path lives in the Stage A snapshot. No matching
-                // snapshot means there is no local work to replay (e.g. ended on
-                // this device, or a different trip is now active) — remove the
-                // marker safely rather than invent path data.
-                val localPath = localPathFor(payload.tripId)
-                if (localPath == null) {
-                    pending.removeIfCurrent(write)
+                // Old markers require their original owned snapshot. New markers carry
+                // frozen evidence so replacing the active snapshot cannot erase it.
+                val scope = pending.currentReplayScope()
+                val snapshot = runCatching { activeTripStore.load() }.getOrNull()
+                val ownedSnapshot = snapshot?.takeIf { it.ownerUserId == scope?.userId &&
+                    it.vineyardId == it.trip.vineyardId && it.trip.id == payload.tripId }
+                val frozenPath = payload.pathEvidence
+                val snapshotPath = ownedSnapshot?.trip?.pathPoints
+                val localPath = if (frozenPath != null && snapshotPath != null) {
+                    if (!containsEvidence(snapshotPath, frozenPath)) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                            "Retained GPS routes diverge. Both local sources are preserved; contact support before replacing this trip.")
+                        continue
+                    }
+                    snapshotPath
+                } else frozenPath ?: snapshotPath
+                val vineyard = payload.vineyardId ?: ownedSnapshot?.vineyardId
+                val owner = payload.ownerUserId ?: ownedSnapshot?.ownerUserId
+                if (scope == null || scope.userId != owner || vineyard == null || localPath == null ||
+                    localPath.isEmpty() || write.clientId != payload.tripId) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                        "GPS evidence or original ownership is unavailable. Keep this installation; open the saved trip and contact support to recover GPS. Nothing was discarded.")
                     continue
                 }
+                if (payload.pathEvidence != localPath || payload.ownerUserId == null || payload.vineyardId == null) {
+                    val frozen = payload.copy(ownerUserId = owner, vineyardId = vineyard, pathEvidence = localPath,
+                        originalPayloadJson = payload.originalPayloadJson ?: write.payloadJson)
+                    write = pending.retainGpsPayloadIfCurrent(write, json.encodeToString(Payload.serializer(), frozen)) ?: continue
+                }
                 try {
-                    val server = tripRepo.fetchTrip(payload.tripId)
+                    if (!pending.isCurrent(write)) continue
+                    val server = fetch(payload.tripId) { pending.isCurrent(write) && pending.currentReplayScope() == scope }
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     if (!pending.isCurrent(write)) continue
                     if (server == null) {
                         pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "This trip no longer exists.")
                         continue
                     }
-                    if (!server.isActive) {
+                    if (server.id != payload.tripId || server.vineyardId != vineyard || server.deletedAt != null ||
+                        pending.currentReplayScope() != scope) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                            "GPS scope or retained evidence changed during verification. Original marker retained for review.")
+                        continue
+                    }
+                    if (ownedSnapshot != null && activeTripStore.load() != snapshot) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED,
+                            "GPS snapshot changed during verification. Retry to reconcile the newest retained evidence.")
+                        continue
+                    }
+                    val serverPath = server.pathPoints.orEmpty()
+                    if (containsEvidence(serverPath, localPath)) {
+                        // Keep the original payload as durable acknowledged evidence, not a queue deletion.
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.SYNCED,
+                            "Verified: every retained GPS observation is present in the server trip. No trip status was changed.")
+                        continue
+                    }
+                    if (!server.isActive || server.endTime != null) {
                         pending.updateStatusIfCurrent(
                             write,
                             PendingWriteStatus.BLOCKED,
-                            "This trip was finished elsewhere. Open it to review.",
+                            "Completed trip GPS differs from this device. Retained local evidence needs support review; no completed history was changed.",
                         )
                         continue
                     }
-                    val serverPath = server.pathPoints ?: emptyList()
-                    val merged = mergePaths(serverPath, localPath)
-                    // Nothing new beyond the server path — don't PATCH, just clear.
-                    if (merged.size <= serverPath.size) {
-                        pending.removeIfCurrent(write)
+                    if (!containsEvidence(localPath, serverPath)) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                            "GPS routes diverge. Original evidence retained; review before merging.")
                         continue
                     }
-                    val trip = tripRepo.saveProgress(
-                        id = payload.tripId,
-                        pathPoints = merged,
-                        totalDistance = pathLength(merged),
-                        isPaused = server.isPaused,
-                    )
+                    if (server.updatedAt == null) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                            "Server GPS revision is unavailable. Original evidence retained; contact support before merging.")
+                        continue
+                    }
+                    val trip = save(server, localPath, pathLength(localPath), server.isPaused) {
+                        pending.isCurrent(write) && pending.currentReplayScope() == scope
+                    }
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                    if (pending.removeIfCurrent(write)) onSynced(trip)
+                    if (trip.id != payload.tripId || trip.vineyardId != vineyard || !containsEvidence(trip.pathPoints.orEmpty(), localPath)) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "GPS acknowledgement is incomplete. Original evidence retained for review.")
+                        continue
+                    }
+                    if (ownedSnapshot != null && activeTripStore.load() != snapshot) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED,
+                            "More GPS evidence was saved during upload. Retry to verify the newest retained route.")
+                        continue
+                    }
+                    if (pending.updateStatusIfCurrent(write, PendingWriteStatus.SYNCED)) onSynced(trip)
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to sync trip progress.")
                 } catch (e: BackendError.Server) {
@@ -219,45 +253,6 @@ class TripGpsSync(
         } finally {
             replayLock.unlock()
         }
-    }
-
-    /**
-     * The locally captured path for [tripId] from the Stage A active-trip
-     * snapshot, or null when no snapshot matches this trip (so the caller knows
-     * there is no local work to replay). Never invents path data.
-     */
-    private fun localPathFor(tripId: String): List<CoordinatePoint>? {
-        val snapshot = runCatching { activeTripStore.load() }.getOrNull() ?: return null
-        if (snapshot.trip.id != tripId) return null
-        return snapshot.trip.pathPoints ?: emptyList()
-    }
-
-    /**
-     * Conservative, deterministic merge that is never shorter than [server].
-     * The local snapshot is seeded from the live trip path at capture start and
-     * only appended to, so it is the authoritative superset; take it when it has
-     * strictly more points than the server, otherwise keep the server path. The
-     * chosen path is then de-duped of near-identical consecutive coordinates.
-     */
-    private fun mergePaths(
-        server: List<CoordinatePoint>,
-        local: List<CoordinatePoint>,
-    ): List<CoordinatePoint> {
-        val base = if (local.size > server.size) local else server
-        return dedupeConsecutive(base)
-    }
-
-    /** Drop consecutive points closer than [MIN_STEP_METRES] (GPS jitter). */
-    private fun dedupeConsecutive(points: List<CoordinatePoint>): List<CoordinatePoint> {
-        if (points.size < 2) return points
-        val out = ArrayList<CoordinatePoint>(points.size)
-        out.add(points.first())
-        for (i in 1 until points.size) {
-            val prev = out.last()
-            val cur = points[i]
-            if (haversine(prev, cur) >= MIN_STEP_METRES) out.add(cur)
-        }
-        return out
     }
 
     /** Great-circle length of [pts] in metres, recomputed from scratch. */
@@ -284,11 +279,29 @@ class TripGpsSync(
         pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
-    private companion object {
+    companion object {
+        /** Ordered exact observation inclusion, including optional evidence when locally present.
+         * Point counts, rounded coordinates and distance totals never establish inclusion. */
+        internal fun containsEvidence(server: List<CoordinatePoint>, local: List<CoordinatePoint>): Boolean {
+            var cursor = 0
+            for (point in local) {
+                if (!point.latitude.isFinite() || !point.longitude.isFinite()) return false
+                while (cursor < server.size && !sameObservation(server[cursor], point)) cursor++
+                if (cursor == server.size) return false
+                cursor++
+            }
+            return true
+        }
+
+        private fun sameObservation(remote: CoordinatePoint, local: CoordinatePoint): Boolean =
+            remote.latitude == local.latitude && remote.longitude == local.longitude &&
+                (local.bearing == null || remote.bearing == local.bearing) &&
+                (local.speed == null || remote.speed == local.speed) &&
+                (local.accuracy == null || remote.accuracy == local.accuracy)
+
         /** Cap retries so a persistently-failing marker can't loop indefinitely. */
         const val MAX_ATTEMPTS = 8
 
-        /** Consecutive points closer than this are treated as the same fix. */
-        const val MIN_STEP_METRES = 1.0
+
     }
 }

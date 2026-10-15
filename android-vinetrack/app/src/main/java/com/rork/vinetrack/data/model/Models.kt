@@ -713,6 +713,8 @@ data class Trip(
     @SerialName("entry_source") val entrySource: String? = null,
     @SerialName("manual_entry_id") val manualEntryId: String? = null,
     @SerialName("occurrence_coverage") val occurrenceCoverage: kotlinx.serialization.json.JsonElement? = null,
+    /** Exact server-issued timestamp used only for conditional GPS replay. */
+    @SerialName("updated_at") val updatedAt: String? = null,
 ) {
     val coverageBasis: TripOccurrenceCoverage.Basis get() = TripOccurrenceCoverage.basis(occurrenceCoverage)
     val occurrenceDocument: TripOccurrenceCoverage.Document? get() = TripOccurrenceCoverage.read(occurrenceCoverage)
