@@ -286,7 +286,7 @@ data class SprayGuidedFlow(
         get() = inputs.operationType == SprayOperationType.FOLIAR_SPRAY
 
     val requiresCanopyConfirmation: Boolean
-        get() = SprayCanopyRequirement.requiresConfirmation(inputs.operationType)
+        get() = SprayCanopyRequirement.requiresConfirmation(inputs.operationType) && effectiveCarrierBasis != SprayCarrierBasis.MANUAL_TOTAL_VOLUME
 
     // endregion
 
@@ -432,6 +432,11 @@ data class SprayGuidedFlow(
                     resolved.concentrationFactor, rowSpacingMetres = geometry.uniformRowSpacingMetres).copy(
                         appliedLitresPer100Metres = resolved.physicalRowLitresPer100m,
                         diluteLitresPer100Metres = volumeDecision?.recommendedLitresPer100Metres)
+            }
+            if (effectiveCarrierBasis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) {
+                val total = positive(inputs.manualTotalLitres) ?: return null
+                return SprayCarrierVolumeCalculator.manual(totalLitres = total, areaHectares = carrierAreaHectares,
+                    rowLengthMetres = geometry.totalRowLengthMetres, rowSpacingMetres = geometry.uniformRowSpacingMetres)
             }
             val decision = volumeDecision
             if (inputs.operationType == SprayOperationType.FOLIAR_SPRAY) {
@@ -624,7 +629,7 @@ data class SprayGuidedFlow(
                 else -> null
             }
         } else {
-            if (inputs.operationType == SprayOperationType.FOLIAR_SPRAY) {
+            if (requiresCanopyConfirmation) {
                 val decision = volumeDecision
                 when {
                     !inputs.isCanopyConfirmed || decision?.recommendation == null ->
@@ -682,7 +687,9 @@ data class SprayGuidedFlow(
                     emptyList()
                 }
                 val unresolved = plan.unresolvedProductLines
+                val invalidRates = inputs.products.filter { !it.rate.isFinite() || it.rate <= 0 }
                 when {
+                    invalidRates.isNotEmpty() -> SprayGuidedBlocker.UnresolvedProducts(invalidRates.map { it.name })
                     undecided.isNotEmpty() ->
                         SprayGuidedBlocker.ProductAreaBasisRequired(undecided.map { it.name })
                     treatedAreaLines.isNotEmpty() && plan.treatedAreaHectares == null ->

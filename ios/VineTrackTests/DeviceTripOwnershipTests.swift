@@ -95,6 +95,9 @@ final class DeviceTripOwnershipTests: XCTestCase {
         var endedA = a
         endedA.isActive = false
         store.applyRemoteTripUpsert(endedA)
+        XCTAssertEqual(store.deviceActiveTripId, a.id) // Unstarted placeholder cannot release ownership.
+        endedA.endTime = Date()
+        store.applyRemoteTripUpsert(endedA)
         XCTAssertNil(store.deviceActiveTripId)
         XCTAssertNil(MigratedDataStore(persistence: PersistenceStore(directory: directory)).deviceActiveTripId)
     }

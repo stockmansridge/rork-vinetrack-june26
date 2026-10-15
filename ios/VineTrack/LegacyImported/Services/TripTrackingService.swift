@@ -9,6 +9,7 @@ import Supabase
 @MainActor
 final class TripTrackingService {
     private let startTankCommitCoordinator = StartTankCommitCoordinator()
+    private var isLegacySprayStartPending: Bool = false
 
     var canOperateOccurrences: Bool {
         guard let trip = activeTrip, trip.coverageBasis == .occurrence else { return false }
@@ -295,7 +296,7 @@ final class TripTrackingService {
 
     var activeTrip: Trip? {
         guard let store, store.isDeviceTripOwner, let id = store.deviceActiveTripId else { return nil }
-        guard let trip = store.trips.first(where: { $0.id == id && $0.isActive && $0.vineyardId == store.selectedVineyardId }) else { return nil }
+        guard let trip = store.trips.first(where: { $0.id == id && $0.isActive && $0.endTime == nil && $0.vineyardId == store.selectedVineyardId }) else { return nil }
         guard trip.coverageBasis == .occurrence else { return trip }
         do {
             let journal = try occurrenceJournal(for: trip)
@@ -340,20 +341,24 @@ final class TripTrackingService {
         sprayRecord: SprayRecord? = nil,
         onStarted: @escaping (Bool) -> Void = { _ in }
     ) {
-        guard let store else { return }
+        guard let store else { onStarted(false); return }
         guard let vineyardId = store.selectedVineyardId else {
             errorMessage = "No vineyard selected."
-            return
+            onStarted(false); return
+        }
+        if isLegacySprayStartPending {
+            errorMessage = "The original spray start is awaiting acknowledgement. Recover that saved job; do not create another."
+            onStarted(false); return
         }
         if store.deviceActiveTripId != nil {
             errorMessage = deviceTripConflictMessage(in: store)
-            return
+            onStarted(false); return
         }
 
         let isSpray = type == .spray || tripFunction == TripFunction.spraying.rawValue
         if let blocker = SprayTripStartAdmission.blocker(isSpray: isSpray, vineyardId: vineyardId, record: sprayRecord) {
             errorMessage = blocker
-            return
+            onStarted(false); return
         }
 
         let normalizedPaddockIds = paddockIds.reduce(into: [UUID]()) { result, id in
@@ -430,10 +435,41 @@ final class TripTrackingService {
                 try store.saveSprayForLater(record: record, trip: inactive)
             } catch {
                 errorMessage = "Couldn't durably save the spray recipe. No spray has started."
-                return
+                onStarted(false); return
             }
+            guard let owner = authService?.userId else { onStarted(false); return }
+            let originalTrip = trip
+            isLegacySprayStartPending = true
+            Task { @MainActor in
+                defer { isLegacySprayStartPending = false }
+                await store.recoverLegacySprayReceipts()
+                guard authService?.userId == owner, store.selectedVineyardId == vineyardId,
+                      store.deviceActiveTripId == nil else {
+                    errorMessage = "Spray start authority changed. The original saved job is retained."
+                    onStarted(false); return
+                }
+                do {
+                    guard try !store.isLegacySpraySyncHeld(record: record.id, trip: originalTrip.id) else {
+                        errorMessage = store.legacySprayReceiptNotice ?? "The original spray job is saved but awaiting verified acceptance. Sync and start that saved job; do not create another."
+                        onStarted(false); return
+                    }
+                    finishLegacyTripStart(originalTrip, isSpray: true, onStarted: onStarted)
+                } catch {
+                    errorMessage = "Saved spray acceptance could not be verified. The original job is retained."
+                    onStarted(false)
+                }
+            }
+            return
         }
-        let category = operatorCategoryId.flatMap { id in
+        finishLegacyTripStart(trip, isSpray: false, onStarted: onStarted)
+    }
+
+    private func finishLegacyTripStart(_ trip: Trip, isSpray: Bool, onStarted: @escaping (Bool) -> Void) {
+        guard let store, store.selectedVineyardId == trip.vineyardId, store.deviceActiveTripId == nil else {
+            errorMessage = "Trip start authority changed. Return to the saved job."
+            onStarted(false); return
+        }
+        let category = trip.operatorCategoryId.flatMap { id in
             store.operatorCategories.first { $0.id == id && $0.vineyardId == trip.vineyardId }
         }
         do {
@@ -444,14 +480,14 @@ final class TripTrackingService {
             ))
         } catch {
             errorMessage = "Couldn't save the Trip start on this device. Free up storage and retry."
-            return
+            onStarted(false); return
         }
         // Persist one complete snapshot before GPS, sync callbacks, or any
         // dependent trip event can observe it.
         if isSpray {
             do { try store.updateTripOrThrow(trip) } catch {
                 errorMessage = "Couldn't durably start the spray Trip. The saved job remains inactive."
-                return
+                onStarted(false); return
             }
         } else {
             store.startTrip(trip)
@@ -461,7 +497,6 @@ final class TripTrackingService {
         beginSprayWeatherCapture(for: trip)
         beginTracking()
         onStarted(true)
-        _ = type
     }
 
     /// Online recording requires acknowledged lifecycle requests and an authoritative reload.
@@ -539,9 +574,19 @@ final class TripTrackingService {
             return
         }
 
-        if let blocker = store.sprayRecords[recordIndex].operationalPlanningBlocker {
+        let recipe = store.sprayRecords[recordIndex]
+        if let blocker = recipe.operationalPlanningBlocker ?? SprayStartRecipeValidation.blocker(recipe.tanks) {
             errorMessage = blocker
-            return
+            onStarted(false); return
+        }
+        do {
+            guard try !store.isLegacySpraySyncHeld(record: recipe.id, trip: savedTrip.id) else {
+                errorMessage = "This saved spray is awaiting its original paired acceptance. Sync/recover that job before starting."
+                onStarted(false); return
+            }
+        } catch {
+            errorMessage = "Saved spray acceptance needs recovery; original evidence retained."
+            onStarted(false); return
         }
         if savedTrip.coverageBasis != .legacy {
             Task { @MainActor in

@@ -24,7 +24,7 @@ struct SprayCarrierProvenanceTests {
             input.products = [SprayProductLineInput(productId: "product", name: "Product", unit: "mL", basis: .per100Litres, rate: 150)]
             if basis != .manualTotalVolume {
                 var canopy = SprayCanopySelection.unconfirmed
-                canopy.choose(type: .vsp); canopy.choose(size: .medium); canopy.choose(density: .high)
+                canopy.choose(type: .vsp); canopy.choose(size: .medium); canopy.choose(density: .high); canopy.confirm()
                 input.canopy = canopy
                 input.isCanopyConfirmed = true
                 input.sprayVolumeChoice = .useCustomSprayerRate

@@ -16,8 +16,18 @@ struct SprayPlanningCardsView: View {
     var body: some View {
         VStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Sprayer configuration").font(.headline)
+                Text("Spraying workflow").font(.headline)
+                if configuration == nil && method == .byArea {
+                    Label("Supported legacy spray", systemImage: "checkmark.circle")
+                    Text("Use the existing Tank Mixing → Trip workflow. Free Drive records actual coverage; selected blocks are calculation context, not confirmed travel passes. New configurations below are preview only.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("New planning preview — not an active Trip. This configuration cannot be silently converted to legacy spraying. Start a new calculator draft with the supported legacy workflow and confirm its rates; this preview is not operational authority.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                Text("New planning configuration (preview only)").font(.subheadline)
                 Picker("Sprayer configuration", selection: $configuration) {
+                    if configuration == nil { Text("Legacy").tag(SprayPassConfiguration?.none) }
                     ForEach(SprayPassConfiguration.allCases, id: \.self) { pass in
                         Text(pass.title).tag(Optional(pass))
                     }

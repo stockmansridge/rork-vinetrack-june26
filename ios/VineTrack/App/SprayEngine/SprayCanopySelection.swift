@@ -102,18 +102,19 @@ nonisolated struct SprayCanopySelection: Sendable, Hashable, Codable {
 
     /// Choosing the training system. Never implies the size was confirmed.
     mutating func choose(type newType: CanopyType) {
+        if type != newType { isSizeAndDensityConfirmed = false }
         type = newType
     }
 
-    /// Choosing a size IS confirming the size/density pair.
+    /// Material changes require explicit confirmation; reselecting retains it.
     mutating func choose(size newSize: CanopySize) {
+        if size != newSize { isSizeAndDensityConfirmed = false }
         size = newSize
-        isSizeAndDensityConfirmed = true
     }
 
     mutating func choose(density newDensity: CanopyDensity) {
+        if density != newDensity { isSizeAndDensityConfirmed = false }
         density = newDensity
-        isSizeAndDensityConfirmed = true
     }
 
     /// Accepts the size/density on screen unchanged. The operator whose canopy

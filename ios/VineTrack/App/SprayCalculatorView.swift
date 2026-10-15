@@ -63,6 +63,8 @@ struct SprayCalculatorView: View {
     /// happened to sort first in the store — so a line arrived pre-bound to a
     /// product nobody chose. Adding a line now starts by asking which product.
     @State private var showAddChemicalPicker: Bool = false
+    @State private var showSupportedDraft: Bool = false
+    @FocusState private var isCustomRateFocused: Bool
     /// The chemical line whose product is currently open in the Chemical
     /// Store editor, so the sheet's dismissal/save handler knows which
     /// `ChemicalLine` to re-validate.
@@ -78,7 +80,7 @@ struct SprayCalculatorView: View {
 
     // Trip setup
     @State private var numberOfFansJets: String = ""
-    @State private var trackingPatternChoice: TrackingPattern = .sequential
+    @State private var trackingPatternChoice: TrackingPattern = .freeDrive
     /// Selected start path across the multi-block selection. Path X.5 sits
     /// between rows X and X+1; defaults snap to the first available path in
     /// `clampStartPath()` whenever the paddock selection changes.
@@ -262,6 +264,13 @@ struct SprayCalculatorView: View {
             view._planningTankText = State(initialValue: "600")
             view._planningAreaText = State(initialValue: "1")
             view._planningRateText = State(initialValue: "600")
+        }
+        if CommandLine.arguments.contains("--spray-custom-rate-validation") {
+            view._passConfiguration = State(initialValue: nil)
+            view._planningMethod = State(initialValue: .byArea)
+            view._canopy = State(initialValue: .prefilled(type: .vsp, size: .medium, density: .low))
+            view._sprayVolumeChoice = State(initialValue: .useCustomSprayerRate)
+            view._customSprayerRateText = State(initialValue: "600")
         }
         return view
     }
@@ -509,7 +518,7 @@ struct SprayCalculatorView: View {
         defer { PerformanceCapture.shared.endComputation(timing, label: "calculator rate selection callback", records: 1) }
         let oldBasis = customSprayerInputBasis
         let newBasis = basis == .manualTotalVolume ? sprayProfile.customSprayerInputBasis : basis
-        if newBasis == oldBasis && configuration == passConfiguration { return }
+        if basis == carrierBasisChoice && configuration == passConfiguration { return }
         if newBasis == oldBasis && oldBasis == .litresPerHectare {
             carrierBasisChoice = basis
             passConfiguration = configuration
@@ -984,6 +993,15 @@ struct SprayCalculatorView: View {
                     // including the Products step's own "Continue" button.
                     // Collapsing (`nil`) deliberately leaves the scroll
                     // position alone: nothing new needs reading.
+                    .onChange(of: isCustomRateFocused) { _, focused in
+                        if focused {
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(300))
+                                guard isCustomRateFocused else { return }
+                                withAnimation { proxy.scrollTo("spray.customRate", anchor: .center) }
+                            }
+                        }
+                    }
                     .onChange(of: openedStep) { _, step in
                         guard let step else { return }
                         withAnimation(.spring(duration: 0.3)) {
@@ -1062,6 +1080,7 @@ struct SprayCalculatorView: View {
             .sheet(isPresented: $showStartConfirmation) {
                 startConfirmationSheet
             }
+            .sheet(isPresented: $showSupportedDraft) { SprayCalculatorView() }
             .sheet(isPresented: $showAddChemicalPicker) {
                 NavigationStack {
                     SprayLineChemicalPicker(selectedId: nil) { chosen in
@@ -1764,7 +1783,7 @@ struct SprayCalculatorView: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
                                 .lineLimit(1)
-                            Text("\(eq.tankCapacityLitres, specifier: "%.0f") L tank")
+                            Text("\(region.formatVolume(litres: eq.tankCapacityLitres)) tank")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -1823,7 +1842,7 @@ struct SprayCalculatorView: View {
                                     .foregroundStyle(isSelected ? AnyShapeStyle(VineyardTheme.olive) : AnyShapeStyle(.tertiary))
                                 Text(item.name).foregroundStyle(.primary)
                                 Spacer()
-                                Text("\(item.tankCapacityLitres, specifier: "%.0f") L")
+                                Text(region.formatVolume(litres: item.tankCapacityLitres))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -2687,7 +2706,7 @@ struct SprayCalculatorView: View {
 
                     // The calculated explanation, straight off the plan.
                     if let planLine = planLines[line.id] {
-                        GuidedProductCalculationRow(line: planLine)
+                        GuidedProductCalculationRow(line: planLine, concentrationFactor: flow.plan.carrier.concentrationFactor)
                     }
 
                     // The Live Resistance Check, immediately beneath the chemistry
@@ -2714,22 +2733,9 @@ struct SprayCalculatorView: View {
                     .background(VineyardTheme.olive.opacity(0.1))
                     .clipShape(.rect(cornerRadius: 10))
             }
-            .disabled(store.savedChemicals.isEmpty)
-
-            Button {
-                showAddChemicalToList = true
-            } label: {
-                Label("Add New Chemical to List", systemImage: "flask.fill")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(VineyardTheme.leafGreen)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(VineyardTheme.leafGreen.opacity(0.1))
-                    .clipShape(.rect(cornerRadius: 10))
-            }
 
             if store.savedChemicals.isEmpty {
-                Text("No chemicals configured. Tap “Add New Chemical to List” to create one.")
+                Text("No chemicals configured. Tap Add Chemical, then create a new product.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -3320,6 +3326,11 @@ struct SprayCalculatorView: View {
                     .font(.caption).foregroundStyle(.orange)
             }
             if operationType == .foliarSpray {
+                if guidedInputs.planningIntent != nil {
+                    Button("Open supported spraying workflow — new draft") { showSupportedDraft = true }
+                    Text("Your planning preview stays here unchanged. The new draft has no proposed pass plan; reselect blocks, equipment and valid product rates before Tank Mixing.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 SprayPlanningCardsView(configuration: passConfigurationBinding, method: $planningMethod,
                     specification: $fullTankSpecification, tankText: planningBinding($planningTankText),
                     areaText: planningBinding($planningAreaText), rateText: planningBinding($planningRateText), region: planningRegion,
@@ -3558,6 +3569,9 @@ struct SprayCalculatorView: View {
                     HStack(spacing: 8) {
                         TextField(isPerHectare ? "600" : "16.8", text: carrierBinding("custom-\(customSprayerInputBasis.rawValue)", $customSprayerRateText, forward: { customSprayerInputBasis == .litresPerHectare ? region.volumePerAreaValue(litresPerHectare: $0) : region.volumePer100LengthValue($0) }, inverse: { customSprayerInputBasis == .litresPerHectare ? region.volumePerAreaToCanonical($0) : region.volumePer100LengthToCanonical($0) }))
                             .keyboardType(.decimalPad)
+                            .focused($isCustomRateFocused)
+                            .id("spray.customRate")
+                            .accessibilityIdentifier("spray.customRate")
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
                             .background(Color(.tertiarySystemGroupedBackground))
@@ -3723,6 +3737,7 @@ struct SprayCalculatorView: View {
                 }
                 HStack(spacing: 8) {
                     TextField("400", text: carrierBinding("manual", $manualTotalLitresText, forward: region.volumeValue, inverse: region.volumeToCanonical))
+                        .accessibilityIdentifier("spray.manualWater")
                         .keyboardType(.decimalPad)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)
@@ -3933,6 +3948,7 @@ struct SprayCalculatorView: View {
                         }
                         Text("Local draft — not server saved. CF is not label approval.").font(.caption).foregroundStyle(.secondary)
                         if let blocker = flow.operationalBlocker { Text(blocker).font(.caption).foregroundStyle(.orange) }
+                        Button("Open supported spraying workflow — new draft") { showSupportedDraft = true }
                     }
                 }
             }
@@ -4092,7 +4108,7 @@ struct SprayCalculatorView: View {
                                 .foregroundStyle(.secondary)
                             // The same arithmetic the Products step showed, from
                             // the same plan — Review never recalculates.
-                            if let calculation = SprayGuidedFormat.productCalculation(line) {
+                            if let calculation = SprayGuidedFormat.productCalculation(line, concentrationFactor: carrier.concentrationFactor) {
                                 Text(calculation)
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
@@ -4415,7 +4431,7 @@ struct SprayCalculatorView: View {
     }
 
     private func saveAndStartJob() {
-        if guidedInputs.planningIntent != nil, let blocker = flow.firstBlocker { errorMessage = blocker.message; return }
+        if let blocker = flow.firstBlocker { errorMessage = blocker.message; return }
         guard formIsValid else { return }
         guard !accessControl.isLoading else { return }
         guard accessControl.canCreateOperationalRecords else {
@@ -4442,6 +4458,7 @@ struct SprayCalculatorView: View {
     }
 
     private func confirmAndStartJob() async {
+        if let blocker = flow.firstBlocker { errorMessage = blocker.message; return }
         if let blocker = flow.operationalBlocker { errorMessage = blocker; return }
         guard formIsValid, !isStartingJob else { return }
         guard let equipId = selectedEquipmentId,
@@ -4456,7 +4473,6 @@ struct SprayCalculatorView: View {
         }
         errorMessage = nil
         isStartingJob = true
-        defer { isStartingJob = false }
 
         await captureWeather()
         performCalculation()
@@ -4467,7 +4483,6 @@ struct SprayCalculatorView: View {
         // Mixing screen now shows the mix preview, so tapping Start Spray Trip
         // should begin live tracking directly.
         finalizeStartFromMixSummary()
-        showStartConfirmation = false
     }
 
     private var parsedStartEngineHours: Double? {
@@ -4485,14 +4500,17 @@ struct SprayCalculatorView: View {
     }
 
     private func finalizeStartFromMixSummary() {
+        if let blocker = flow.firstBlocker { errorMessage = blocker.message; isStartingJob = false; return }
         guard let equipId = selectedEquipmentId,
-              let equip = store.sprayEquipment.first(where: { $0.id == equipId }) else { return }
+              let equip = store.sprayEquipment.first(where: { $0.id == equipId }) else { isStartingJob = false; return }
         guard let vineyardId = store.selectedVineyardId else {
             errorMessage = "No vineyard selected."
+            isStartingJob = false
             return
         }
         if tracking.activeTrip != nil {
             errorMessage = "A trip is already in progress."
+            isStartingJob = false
             return
         }
 
@@ -4508,6 +4526,7 @@ struct SprayCalculatorView: View {
         let admissionRecord = SprayRecord(vineyardId: vineyardId, tanks: tanks, applicationGeometry: flow.snapshot)
         if let blocker = flow.operationalBlocker ?? admissionRecord.operationalPlanningBlocker {
             errorMessage = blocker
+            isStartingJob = false
             return
         }
 
@@ -4560,6 +4579,7 @@ struct SprayCalculatorView: View {
             startEngineHours: parsedStartEngineHours,
             sprayRecord: record,
             onStarted: { success in
+                isStartingJob = false
                 guard success else { errorMessage = tracking.errorMessage ?? "Planned start needs recovery."; return }
                 savedFeedback.toggle()
                 showSummary = false
@@ -4570,6 +4590,7 @@ struct SprayCalculatorView: View {
     }
 
     private func saveForLater() {
+        if let blocker = flow.firstBlocker { errorMessage = blocker.message; return }
         if let blocker = flow.operationalBlocker { errorMessage = blocker; return }
         guard formIsValid else { return }
         guard accessControl.canCreateOperationalRecords else {

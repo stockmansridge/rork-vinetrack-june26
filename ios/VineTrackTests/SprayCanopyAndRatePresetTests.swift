@@ -233,17 +233,27 @@ struct SprayCanopyAndRatePresetTests {
         #expect(!missingType.isConfirmed)
     }
 
-    @Test("With an explicit type, touching either picker confirms the canopy")
+    @Test("Changing controls requires explicit canopy confirmation")
     func touchingAPickerConfirms() {
         var bySize = SprayCanopySelection.unconfirmed
         bySize.choose(type: .vsp)
         bySize.choose(size: .large)
+        #expect(!bySize.isConfirmed)
+        bySize.confirm()
         #expect(bySize.isConfirmed)
+        bySize.choose(size: .large)
+        #expect(bySize.isConfirmed)
+        bySize.choose(size: .full)
+        #expect(!bySize.isConfirmed)
 
         var byDensity = SprayCanopySelection.unconfirmed
         byDensity.choose(type: .vsp)
         byDensity.choose(density: .high)
+        #expect(!byDensity.isConfirmed)
+        byDensity.confirm()
         #expect(byDensity.isConfirmed)
+        byDensity.choose(type: .sprawl)
+        #expect(!byDensity.isConfirmed)
     }
 
     /// The operator whose canopy really IS Medium / Low needs a way to say so

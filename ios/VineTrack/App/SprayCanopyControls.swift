@@ -185,9 +185,7 @@ struct SprayCanopyControls: View {
             if let type = selection.type {
                 canopySizeSection(type: type)
                 canopyDensitySection
-                if !selection.isSizeAndDensityConfirmed {
-                    confirmPrompt
-                }
+                confirmPrompt
             }
         }
         .task {
@@ -304,7 +302,7 @@ struct SprayCanopyControls: View {
         Button {
             selection.confirm()
         } label: {
-            Text("Confirm \(selection.size.rawValue) · \(selection.density.rawValue)")
+            Text(selection.isConfirmed ? "Canopy confirmed" : "Confirm Canopy — \(selection.type?.rawValue ?? "") · \(selection.size.rawValue) · \(selection.density.rawValue)")
                 .font(.caption.weight(.semibold))
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: 44)

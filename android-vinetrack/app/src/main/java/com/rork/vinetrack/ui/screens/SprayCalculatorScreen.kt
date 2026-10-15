@@ -4,6 +4,13 @@ import androidx.compose.material3.MaterialTheme
 import com.rork.vinetrack.data.spray.SprayWorkAreaSelection
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -457,6 +464,14 @@ fun SprayCalculatorScreen(
     /** Blocks the originating plan proposes — applied once at prefill. */
     prefillPaddockIds: List<String> = emptyList(),
 ) {
+    var showSupportedDraft by rememberSaveable { mutableStateOf(false) }
+    if (showSupportedDraft) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showSupportedDraft = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+            SprayCalculatorScreen(vm = vm, state = state, modifier = Modifier.fillMaxSize(),
+                onBack = { showSupportedDraft = false }, onSaved = onSaved, onJobStarted = onJobStarted)
+        }
+    }
     val vine = LocalVineColors.current
     val context = LocalContext.current
     val fmt = LocalRegionFormatter.current
@@ -569,7 +584,7 @@ fun SprayCalculatorScreen(
     var tractors by remember { mutableStateOf<List<SprayJobTemplateRepository.SprayTractor>>(emptyList()) }
     var equipmentConfirmedSignature by rememberSaveable { mutableStateOf<String?>(null) }
     var fansJets by remember { mutableStateOf("") }
-    var trackingPattern by remember { mutableStateOf(TrackingPattern.SEQUENTIAL) }
+    var trackingPattern by remember { mutableStateOf(TrackingPattern.FREE_DRIVE) }
     var startPath by remember { mutableStateOf(0.5) }
     var directionHigherFirst by remember { mutableStateOf(true) }
 
@@ -659,7 +674,7 @@ fun SprayCalculatorScreen(
         (if (basis == SprayCarrierBasis.LITRES_PER_100_METRES) fmt.volumePer100LengthValue(value) else fmt.volumePerAreaValue(value)).toString()
     fun changeRateDisplay(basis: SprayCarrierBasis, configuration: SprayPassConfiguration?) {
         val newBasis = if (basis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) SprayCarrierBasis.LITRES_PER_HECTARE else basis
-        if (newBasis == customSprayerBasis && configuration == passConfiguration) return
+        if (basis == carrierBasisChoice && configuration == passConfiguration) return
         if (newBasis == customSprayerBasis && newBasis == SprayCarrierBasis.LITRES_PER_HECTARE) {
             carrierBasisChoice = basis
             passConfiguration = configuration
@@ -1265,9 +1280,9 @@ fun SprayCalculatorScreen(
 
     fun startJobNow(startEngineHours: Double?) {
         guidedFlow.operationalBlocker?.let { errorMessage = it; return }
-        val r = result ?: return
+        val r = runCalculation() ?: return
         if (saving) return
-        if (state.activeTrip != null) {
+        if (state.activeTrip?.let { it.isActive && it.endTime.isNullOrBlank() } == true) {
             errorMessage = "Finish the active trip before starting another spray job."
             return
         }
@@ -1329,9 +1344,10 @@ fun SprayCalculatorScreen(
             onPatternChange = { trackingPattern = it },
             onStartPathChange = { startCandidateKey = it },
             onDirectionChange = { directionHigherFirst = it },
-            errorMessage = guidedFlow.operationalBlocker ?: errorMessage,
+            errorMessage = guidedFlow.operationalBlocker ?: errorMessage ?: state.sprayError,
             saving = saving,
-            hasActiveTrip = state.activeTrip != null || guidedFlow.operationalBlocker != null,
+            hasActiveTrip = state.activeTrip?.let { it.isActive && it.endTime.isNullOrBlank() } == true,
+            operationalBlocker = guidedFlow.operationalBlocker,
             onStart = { if (guidedFlow.operationalBlocker == null) showOperationalStartConfirmation = true },
             onCancel = { if (!saving) showReview = false },
             modifier = modifier,
@@ -1371,7 +1387,7 @@ fun SprayCalculatorScreen(
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().padding(padding).imePadding(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -1736,6 +1752,7 @@ fun SprayCalculatorScreen(
                     }
                     EquipmentPathSetupContent(
                         tractors = tractors,
+                        region = fmt,
                         tractorId = tractorId,
                         onTractorChange = { tractorId = SprayTractorOptions.selectedId(it, tractors) },
                         fansJets = fansJets,
@@ -1769,6 +1786,12 @@ fun SprayCalculatorScreen(
                     onToggle = { toggleStep(SprayGuidedStep.CARRIER) },
                 ) {
                 if (operationType == "Foliar Spray") {
+                    if (passConfiguration != null || planningMethod == SprayPlanningMethod.FULL_TANK) {
+                        OutlinedButton(onClick = { showSupportedDraft = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Open supported spraying workflow — new draft")
+                        }
+                        Text("This preview is retained unchanged. In the new draft, reselect blocks, equipment and valid rates; Free Drive does not invent proposed passes or actual coverage.", style = MaterialTheme.typography.bodySmall)
+                    }
                     SprayPlanningCards(configuration = passConfiguration, onConfiguration = { changeRateDisplay(effectiveEntryBasis, it) },
                         method = planningMethod, onMethod = { planningMethod = it; result = null },
                         specification = fullTankSpecification, onSpecification = { fullTankSpecification = it; result = null },
@@ -1806,6 +1829,8 @@ fun SprayCalculatorScreen(
                 // L/ha option or an "allow either" selector, so a compliance
                 // spray cannot be switched onto the wrong basis by accident.
                 if (!guidedFlow.requiresBandWidth && guidedFlow.isCarrierBasisLocked) {
+                    OutlinedButton(onClick = { changeRateDisplay(SprayCarrierBasis.MANUAL_TOTAL_VOLUME, passConfiguration) }) { Text("Manual total water") }
+                    OutlinedButton(onClick = { changeRateDisplay(guidedFlow.profile.defaultCarrierBasis, passConfiguration) }) { Text("Calibrated spray volume") }
                     Text(
                         "This vineyard records carrier volume in " +
                             "${carrierFormat.carrierBasisLabel(guidedFlow.effectiveCarrierBasis)}.",
@@ -1814,7 +1839,7 @@ fun SprayCalculatorScreen(
                     )
                 } else if (!guidedFlow.requiresBandWidth) {
                     Text(
-                        "Carrier volume basis",
+                        "Spray volume basis",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = vine.textPrimary,
@@ -1823,7 +1848,8 @@ fun SprayCalculatorScreen(
                         val bases = listOf(
                             SprayCarrierBasis.LITRES_PER_100_METRES,
                             SprayCarrierBasis.LITRES_PER_HECTARE,
-                        )
+                            SprayCarrierBasis.MANUAL_TOTAL_VOLUME,
+                        ).filter { planningMethod != SprayPlanningMethod.FULL_TANK || it != SprayCarrierBasis.MANUAL_TOTAL_VOLUME }
                         bases.forEachIndexed { i, basis ->
                             SegmentedButton(
                                 selected = guidedFlow.effectiveCarrierBasis == basis,
@@ -1834,10 +1860,11 @@ fun SprayCalculatorScreen(
                     }
                 }
 
-                if (operationType == "Foliar Spray") {
+                if (guidedFlow.requiresCanopyConfirmation) {
                     SprayCanopySelector(
                         selection = canopySelection,
                         rates = canopyRates,
+                        region = fmt,
                         isConfirmed = isCanopyConfirmed,
                         customImageFile = canopySelection.type?.let { type ->
                             canopyReferenceFiles[com.rork.vinetrack.data.spray.SprayCanopyReferenceImages.slotKey(type, canopySelection.size)]
@@ -1853,7 +1880,12 @@ fun SprayCalculatorScreen(
                     )
                 }
 
-                if (operationType == "Foliar Spray") {
+                if (guidedFlow.effectiveCarrierBasis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) {
+                    OutlinedTextField(value = manualTotalLitresText, onValueChange = { manualTotalLitresText = it; result = null },
+                        label = { Text("Total spray water (${fmt.volumeUnitAbbreviation})") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                    Text("Enter a positive total water volume. Manual water does not establish a dilute canopy reference or label approval; product rate validation still applies.", style = MaterialTheme.typography.bodySmall)
+                } else if (operationType == "Foliar Spray") {
                     val decision = guidedFlow.volumeDecision
                     decision?.recommendation?.let { recommendation ->
                         GuidedCalculatedPanel(title = "Recommended spray volume — CF 1.00", accent = VineColors.LeafGreen) {
@@ -1884,15 +1916,21 @@ fun SprayCalculatorScreen(
                             }
                         }
                         if (sprayVolumeChoice == SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE) {
+                            val bringRateIntoView = remember { BringIntoViewRequester() }
+                            val rateScope = rememberCoroutineScope()
+                            val rateFocus = LocalFocusManager.current
                             Text("What is your sprayer set to apply?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                             OutlinedTextField(
                                 value = customSprayerRateText,
-                                onValueChange = { customSprayerRateText = it.filter { c -> c.isDigit() || c == '.' }; result = null },
+                                onValueChange = { customSprayerRateText = it; result = null },
                                 label = { Text("Custom sprayer rate (${carrierFormat.carrierBasisLabel(customSprayerBasis)})") },
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                keyboardActions = KeyboardActions(onDone = { rateFocus.clearFocus() }),
                                 supportingText = { Text(SprayVolumeHelp.ACTUAL_SPRAYER_OUTPUT) },
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().bringIntoViewRequester(bringRateIntoView).onFocusChanged { focus ->
+                                    if (focus.isFocused) rateScope.launch { delay(350); bringRateIntoView.bringIntoView() }
+                                },
                             )
                         }
                         if (sprayVolumeChoice != SprayVolumeChoice.UNDECIDED) {
@@ -2175,6 +2213,7 @@ fun SprayCalculatorScreen(
                         guidedPlanLineFor(guidedPlan, chemLines, state.savedChemicals, idx)?.let { planLine ->
                             GuidedProductCalculationRow(
                                 line = planLine,
+                                concentrationFactor = guidedPlan.carrier.concentrationFactor,
                                 accent = VineColors.Olive,
                             )
                         }
@@ -2201,7 +2240,6 @@ fun SprayCalculatorScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
                         onClick = { showExistingChemicalPicker = true },
-                        enabled = state.savedChemicals.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = VineColors.Olive.copy(alpha = 0.12f),
@@ -2214,26 +2252,9 @@ fun SprayCalculatorScreen(
                         Text("  Add Chemical", fontWeight = FontWeight.Medium)
                     }
 
-                    Button(
-                            onClick = {
-                                chemicalIdsBeforeAdd =
-                                    state.savedChemicals.map { it.id }.toSet()
-                                // Not launched from a line: this one appends.
-                                pendingChemicalLineUid = null
-                                showAddChemicalToList = true
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = VineColors.LeafGreen.copy(alpha = 0.12f),
-                                contentColor = VineColors.LeafGreen,
-                            ),
-                        ) {
-                            Icon(Icons.Filled.Science, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Text("  Add New Chemical to List", fontWeight = FontWeight.Medium)
-                        }
                     if (state.savedChemicals.isEmpty()) {
                         Text(
-                            "No chemicals configured. Tap \u201CAdd New Chemical to List\u201D to create your first product.",
+                            "No chemicals configured. Tap Add Chemical, then Create new chemical.",
                             fontSize = 12.sp,
                             color = vine.textSecondary,
                         )
@@ -2282,6 +2303,7 @@ fun SprayCalculatorScreen(
                                 }
                                 Text("Local draft — not server saved. CF is not label approval.", style = MaterialTheme.typography.bodySmall)
                                 guidedFlow.operationalBlocker?.let { Text(it, color = VineColors.Warning, style = MaterialTheme.typography.bodySmall) }
+                                OutlinedButton(onClick = { showSupportedDraft = true }) { Text("Open supported spraying workflow — new draft") }
                             }
                         }
                     }
@@ -2479,7 +2501,7 @@ fun SprayCalculatorScreen(
                                     )
                                     // The same arithmetic the Products step showed,
                                     // from the same plan — Review never recalculates.
-                                    SprayGuidedFormat.productCalculation(line)?.let { calculation ->
+                                    SprayGuidedFormat.productCalculation(line, guidedPlan.carrier.concentrationFactor)?.let { calculation ->
                                         Text(
                                             calculation,
                                             fontSize = 11.sp,
@@ -2591,6 +2613,12 @@ fun SprayCalculatorScreen(
                 chemLines.add(newLineFor(chemical))
                 result = null
                 showExistingChemicalPicker = false
+            },
+            onCreateNew = {
+                showExistingChemicalPicker = false
+                chemicalIdsBeforeAdd = state.savedChemicals.map { it.id }.toSet()
+                pendingChemicalLineUid = null
+                showAddChemicalToList = true
             },
             onDismiss = { showExistingChemicalPicker = false },
         )
@@ -2840,6 +2868,7 @@ private fun AddChemicalToSprayFlow(
 private fun ExistingChemicalPickerSheet(
     chemicals: List<SavedChemical>,
     onSelect: (SavedChemical) -> Unit,
+    onCreateNew: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val vine = LocalVineColors.current
@@ -2856,6 +2885,7 @@ private fun ExistingChemicalPickerSheet(
         ) {
             Text("Add Chemical", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
             Text("Choose an existing Chemical Store product for this spray.", fontSize = 13.sp, color = vine.textSecondary)
+            OutlinedButton(onClick = onCreateNew, modifier = Modifier.fillMaxWidth()) { Text("Create new chemical") }
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -3942,6 +3972,7 @@ private fun LegacyRatePickerRow(
 @Composable
 private fun EquipmentPathSetupContent(
     tractors: List<SprayJobTemplateRepository.SprayTractor>,
+    region: com.rork.vinetrack.data.RegionFormatter,
     tractorId: String?,
     onTractorChange: (String?) -> Unit,
     fansJets: String,
@@ -3960,12 +3991,15 @@ private fun EquipmentPathSetupContent(
         isSet = selectedTractor != null,
         onClick = { tractorExpanded = !tractorExpanded },
     )
+    selectedTractor?.fuelUsageLPerHour?.takeIf { it.isFinite() && it > 0 }?.let {
+        Text("Fuel consumption: ${region.formatFuelRatePerHour(it)}", style = MaterialTheme.typography.bodySmall)
+    }
     if (tractorExpanded) {
         VineyardCard {
             tractors.forEachIndexed { index, tractor ->
                 if (index > 0) HorizontalDivider(color = vine.cardBorder)
                 SelectorOptionRow(
-                    label = tractor.displayName,
+                    label = tractor.displayName + (tractor.fuelUsageLPerHour?.takeIf { it.isFinite() && it > 0 }?.let { " · ${region.formatFuelRatePerHour(it)}" } ?: ""),
                     isSelected = tractor.id == tractorId,
                     onClick = {
                         onTractorChange(tractor.id)
@@ -4129,6 +4163,7 @@ private fun SprayTankMixReview(
     errorMessage: String?,
     saving: Boolean,
     hasActiveTrip: Boolean,
+    operationalBlocker: String?,
     onStart: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
@@ -4147,7 +4182,7 @@ private fun SprayTankMixReview(
         },
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().padding(padding).imePadding(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -4233,7 +4268,7 @@ private fun SprayTankMixReview(
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text("Total", fontSize = 11.sp, color = vine.textSecondary)
-                            Text("${fmtNum(cr.totalAmount, 1)} ${cr.unit}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Olive)
+                            Text(SprayGuidedFormat.quantity(cr.totalAmount, cr.unit), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Olive)
                         }
                     }
                     if (result.totalTanks > 0) {
@@ -4248,7 +4283,7 @@ private fun SprayTankMixReview(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text("Tank $tankNumber", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                                    Text("${fmtNum(amount, 2)} ${cr.unit}", fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
+                                    Text(SprayGuidedFormat.quantity(amount, cr.unit), fontSize = 12.sp, fontWeight = FontWeight.Medium, color = vine.textSecondary)
                                 }
                                 if (tankNumber < result.totalTanks) {
                                     Box(Modifier.fillMaxWidth().height(0.5.dp).background(vine.cardBorder))
@@ -4451,7 +4486,7 @@ private fun SprayTankMixReview(
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = onStart,
-                        enabled = !saving && !hasActiveTrip,
+                        enabled = !saving && !hasActiveTrip && operationalBlocker == null,
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
                     ) {

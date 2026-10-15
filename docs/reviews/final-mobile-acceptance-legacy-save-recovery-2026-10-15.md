@@ -1,6 +1,55 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
-## Urgent A/B/C sync corrections — newest checkpoint, 15 October 2026
+## Exact recorded fixtures / genuine handset candidates — newest checkpoint, 15 October 2026
+
+### A. Exact production samples — PASS, not reconstructed JSON
+
+- Downloaded the supplied ZIP unchanged to `/tmp/vinetrack-exact-fixtures.zip`; extracted original member bytes only outside the repository. The Swift test process separately downloads the same archive into memory, checks archive/member SHA-256 and inflates original bytes without JSON normalization. No production sample or archive was written into the project, committed or included in the handset app. A temporary test-only URL locator was removed before handset source upload. The retained generic test skips explicitly if no private locator is supplied; it is not evidence of a future exact-fixture run without the locator.
+- New reusable test source: `ios/VineTrackTests/RecordedSyncFixtureTests.swift`. Input arrays are passed unchanged to production `[TankSession]` and `BackendButtonConfig` decoders. Only surrounding transport rows are synthetic. Growth scope is the actual vineyard parsed from the supplied provenance, not a substituted synthetic vineyard; original array elements remain untouched.
+- Both recorded session IDs, tank numbers, fractional start/end dates, start/end row values and complete ordered coverage arrays compare equal to the independent original JSON fields. BackendTrip→Trip mapping and historical cache round-trip retain both sessions. No session IDs, times or coverage were reminted/defaulted.
+- All eight recorded Growth buttons compare equal to original names, colour strings, indices, modes and stage flags. All eight still lack original nested identity fields in the source bytes. Decoded scope/identities remain stable across repeated decoding and encode/decode; all eight derived IDs are distinct.
+- Production `ButtonConfigSyncService` pulls the exact legacy Growth array alongside a newer dirty synthetic Repairs edit. A deliberately mismatched acknowledgement produces failure/no full-sync date and retains the Repairs marker. A matching acknowledgement clears only that edit, preserves Repairs values and all original Growth values, and permits success. Transport replies are synthetic; this is **not** deployed CAS/RLS or authenticated cross-device acceptance.
+- Initial exact selection: **3 passed**, 93s. Final widened selection `RecordedSyncFixtureTests`, `SyncCompatibilityTests`, `TankSessionLifecycleTests`: **29 passed / 0 failed**, 123s; skipped metric not exposed. Initial three are included in 29, not additional passes.
+
+| Immutable input | Bytes | SHA-256 |
+|---|---:|---|
+| Original ZIP | 1665 | `ffb05870f11efd94336ccb78608001291afa15c694df60d327f6b8d0ca8dd833` |
+| Recorded tank_sessions JSON | 495 | `2af3729284692229c992f10e529232c2f78cfa7376b304a951894921ff436cfe` |
+| Recorded legacy growth_buttons JSON | 1021 | `36339f0b264b8059576ef32ddb57184a1d94f2ba716f131a9a3a8f1fcbf4c960` |
+| Supplied provenance text | 1369 | `5f6cd05ca9878ec6e824d852cc8317b31c6e0bcaee3f94fa055d1afce802084a` |
+
+### B. Source identity and regressions
+
+- Requested object **`1fd046f3d430e6454beb3ed0dd78070d5e42bdcc`** exists with message “Completed the urgent VineTrack sync fixes for iOS buttons, tank sessions and Android GPS recovery”. Its native diff contains the reported decoder, conditional acknowledgement and GPS recovery corrections (16 native implementation/test files, 860 insertions/157 deletions).
+- Starting current HEAD **`46501ab84239edade9d7a8a07398eb78f75cb9b8`**, clean application/index; managed history differences left untouched. The requested object is not an ancestor in the current managed history: do not claim otherwise. Content comparison confirms inspected BackendButtonConfig, ButtonConfigSyncService, SupabaseButtonConfigSyncRepository, TankSession/Trip, TripGpsSync and PendingWriteRepository are identical to the requested commit. Current history's sync checkpoint is `bdc74929`; only the generated empty Config.swift differs between that native tree and the requested object. Subsequent Insights access changes remain preserved; no rollback.
+- Android coherent host rerun: **84 passed / 0 failures / 0 errors / 0 skipped**, seven XML suites, runner exit0, 28s. GPS suite timestamp `2026-10-15T14:10:25.653Z`. Selection: TripGpsRecovery, ActiveTripStore, ReplayVersionIntegrity, AtomicPendingReplacement, AuthRetentionGate, RetentionReview and TankSessionLifecycle.
+- Android `TripGpsRecoveryAndroidTest`: **1 passed / 0 failed / 0 skipped**, 10s on code12. Real secondary debug-process termination/relaunch and scoped preferences, synthetic completed-trip transport. This is not the original handset, its original marker, or real backend inclusion evidence.
+- iOS `runChecks(ios)` simulator PASS after locator removal; Android `runChecks(android-vinetrack)` signed Release APK PASS after code12 increment. A release **build** is now authorized for test preparation, not a production release. Existing unrelated asset notices were not changed. Source-scoped diff whitespace check PASS.
+- New retained changes in this pass: generic test source, Android versionCode11→12, this existing report, and existing approved-plan checkpoint. No application runtime logic, calculations, SQL, Edge, Trips tracking, storage identifiers, database records or unrelated features changed. iOS build171 is a publish-service override; the checked-in project still says139, so identify the installed archive by171 rather than the simulator/project setting.
+- Final native source diff SHA-256 relative to starting HEAD: **`14783cf16c2a4e819e7e406eb135cb89b7dfd0885c6bfeeb05777da9e732caf0`**. No manual Git commit/push; final managed commit not exposed inside this turn.
+
+### C. Fresh signed handset build availability — separate from acceptance
+
+**iOS:** genuine signed **3.1.7 (171)**, bundle `app.rork.nt0v48tayl7v8noxcfe74`, existing Apple team `8Y879855VK`, ASC app `6761143377`. Existing ASC build170 was found before preparation, so169/170 were not reused. Certificate ready; capabilities unchanged. Managed submission **`8134acaa-0b55-41ea-81d9-086cb941dee1`** completed upload; ASC build **`f5647734-efe7-43e6-b6da-ac43729a6e9b`** confirmed **VALID**, uploaded `2026-10-15T14:17:49Z`. This is not simulator139. No App Store review submission/production release occurred. Tester-group availability and installation on iOS A/B are not yet proven; update the existing same-bundle TestFlight installation in place when171 is offered. A read-only attempt to inspect the build's betaGroups relationship was first rejected by CLI schema discovery and then by Apple's GET_RELATED restriction; no group/tester mutation or upload retry was made. This does not invalidate the confirmed VALID build, but is not proof a particular tester can see it.
+
+**Android:** signed universal APK **3.1.7 / code12**, package `com.rork.vinetrack`, API24+, target36, ARM64/ARMv7/x86/x86_64. Artifact `android-vinetrack/app/build/outputs/apk/release/app-release.apk`, SHA-256 **`8af712194eb7a3a31fd7c3b4d3c4413b948a99a09e64b4c1a4950f62e3756943`**. Signature verification PASS, certificate SHA-256 **`241548efe6df8100c833d4eaebd2b3cf22dd70ffb638d9faa77bbd03f0077ef3`**, CN=Rork Kotlin Play Upload. Matches the earlier documented signed code11 candidate, not the Debug certificate. No Play track publication or original-handset installation performed; no verified public download link claimed.
+
+**Update safety:** package/team/storage paths remain unchanged. Existing handset certificate equivalence is unknown until read from the installed Android app; a Play-signed install may use a different certificate from this APK's upload key. Install only as an in-place compatible update. If Android rejects it, stop and retain the existing installation and all evidence; use its original signing/distribution channel. Never uninstall/clear data or substitute a Debug APK to overcome incompatibility. No automatic claim of all local data surviving an unperformed installation.
+
+### D. Physical acceptance — PENDING, cannot be performed from this workspace
+
+No access to the actual iOS A, iOS B or original Android handset exists here. Do not mark the following as passed based on tests, ASC VALID status, process probes or reported server counts:
+
+1. Record each installed candidate/build and Android installed signing fingerprint/update origin; apply only compatible in-place updates. Preserve unsynced data, original GPS marker/payload and snapshot.
+2. On owner/manager iOS A in the same vineyard, change one Repairs colour and sync. Verify genuine acknowledgement, then sync/relaunch iOS B and Android and compare the same button identity/colour. Retain device/build/timestamps and Sync Status evidence. Do not replace/delete configuration rows to make this pass.
+3. On iOS, perform Trips and Button Config sync and confirm no missing-data decoder error. Inspect both exact sessions on the completed trip. This ZIP contains only sessions/Growth, not the full4584-point path or109-entry coverage array; full production-trip integrity is not proven by these fixtures.
+4. On the original Android handset, let guarded retry read the completed trip and compare every preserved ordered observation (including duplicate multiplicity and available metadata). Only complete evidence inclusion may retire that exact marker as retained SYNCED. Missing/uncertain evidence stays held; no completed-trip PATCH/reopen, blanket marker removal or queue purge.
+5. Capture authorized read-only before/after server integrity evidence: trip stays completed, exactly4584GPS points/109completed paths/two sessions with unchanged identities/content. No production database read/write was executed by Rork in this pass.
+6. Verify each Sync Status surface: genuinely reconciled items may succeed; any unresolved GPS/config/other held work must remain visible, not be cleared for a green screen. Mismatch/decode/network/permission failures are not success.
+
+Production release remains **NOT AUTHORIZED / gated on physical acceptance**. Supply handset screenshots/logs and installed Android signing/update origin to continue acceptance; do not send credentials or clear device storage. Exact-fixture gate is closed; physical gate is not.
+
+## Urgent A/B/C sync corrections — historical checkpoint, 15 October 2026
 
 ### Scope and evidence boundary
 

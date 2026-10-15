@@ -15,15 +15,16 @@ data class SprayCanopySelection(
     /** A complete answer needs a training system and a deliberately accepted size/density pair. */
     val isConfirmed: Boolean get() = isValid && isSizeAndDensityConfirmed
 
-    /** Choosing or changing the training system does not alter confirmation of the displayed pair. */
-    fun chooseType(value: SprayCalculator.CanopyType?): SprayCanopySelection = copy(type = value)
+    /** Material changes require explicit confirmation; reselecting retains it. */
+    fun chooseType(value: SprayCalculator.CanopyType?): SprayCanopySelection =
+        copy(type = value, isSizeAndDensityConfirmed = isSizeAndDensityConfirmed && value == type)
 
-    /** Touching either pair control deliberately confirms both displayed values. */
+    /** A highlighted value is not operator confirmation. */
     fun chooseSize(value: SprayCalculator.CanopySize): SprayCanopySelection =
-        copy(size = value, isSizeAndDensityConfirmed = true)
+        copy(size = value, isSizeAndDensityConfirmed = isSizeAndDensityConfirmed && value == size)
 
     fun chooseDensity(value: SprayCalculator.CanopyDensity): SprayCanopySelection =
-        copy(density = value, isSizeAndDensityConfirmed = true)
+        copy(density = value, isSizeAndDensityConfirmed = isSizeAndDensityConfirmed && value == density)
 
     /** Accepts the displayed pair unchanged; type is still independently required. */
     fun confirm(): SprayCanopySelection = copy(isSizeAndDensityConfirmed = true)

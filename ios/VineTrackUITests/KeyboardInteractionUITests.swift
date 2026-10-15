@@ -2,6 +2,41 @@ import XCTest
 
 final class KeyboardInteractionUITests: XCTestCase {
     @MainActor
+    func testCustomSprayerRateRemainsAboveKeyboardAndManualBasisCanBeSelected() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--keyboard-validation", "--spray-calculator-keyboard-validation", "--spray-regional-validation", "--spray-custom-rate-validation"]
+        app.launch()
+        let open = app.buttons["Open Spray Calculator"]
+        XCTAssertTrue(open.waitForExistence(timeout: 8)); open.tap()
+        let field = app.textFields["spray.customRate"]
+        for _ in 0..<8 where !field.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "Production custom rate field")
+        field.tap(); field.typeText("5")
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        let visible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            field.frame.maxY + 8 < keyboard.frame.minY
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 5), .completed)
+        let edited = field.value as? String
+        XCTAssertTrue(edited?.contains("5") == true)
+        app.buttons["keyboard.dismiss"].tap()
+        XCTAssertEqual(field.value as? String, edited)
+        let manual = app.buttons["Manual"]
+        for _ in 0..<8 where !manual.isHittable { app.scrollViews.firstMatch.swipeDown() }
+        XCTAssertTrue(manual.waitForExistence(timeout: 5), "Production Manual volume segment"); manual.tap()
+        let total = app.textFields["spray.manualWater"]
+        for _ in 0..<8 where !total.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(total.waitForExistence(timeout: 5), "Manual volume selection reveals water entry")
+        total.tap(); total.typeText("420")
+        app.buttons["keyboard.dismiss"].tap()
+        XCTAssertEqual(total.value as? String, "420")
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["spray.keyboard.records"].label, "Sprays: 0; Trips: 0")
+    }
+
+    @MainActor
     func testActualSprayCalculatorNumericDragDoneAndBackgroundKeepDraftWithoutSaving() {
         let app = XCUIApplication()
         app.launchArguments = ["--keyboard-validation", "--spray-calculator-keyboard-validation"]

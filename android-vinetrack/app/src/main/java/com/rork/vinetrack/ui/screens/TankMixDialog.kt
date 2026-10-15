@@ -196,7 +196,7 @@ internal fun ConfirmActualTankMixDialog(
                         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(chemical.name.ifBlank { "Unnamed chemical" }, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                             PlannedTankAmountRow(
-                                "${tankMixNumber(chemicalUnitFromBase(chemical.unit, chemical.volumePerTank))} ${chemical.unit}"
+                                com.rork.vinetrack.ui.components.SprayGuidedFormat.quantity(chemicalUnitFromBase(chemical.unit, chemical.volumePerTank), chemical.unit)
                             )
                             ActualTankAmountRow(
                                 value = chemicalTexts[chemical.id].orEmpty(),
@@ -471,7 +471,7 @@ private fun PlannedChemicalCard(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    "${tankMixNumber(displayAmount)} ${chemical.unit}",
+                    com.rork.vinetrack.ui.components.SprayGuidedFormat.quantity(displayAmount, chemical.unit),
                     color = vine.textPrimary,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.End,
@@ -481,7 +481,7 @@ private fun PlannedChemicalCard(
                 when {
                     actual == null -> "Actual: Not recorded"
                     actual.actualAmountBase == 0.0 -> "Actual: Not added"
-                    else -> "Actual: ${tankMixNumber(chemicalUnitFromBase(actual.unit, actual.actualAmountBase))} ${actual.unit}"
+                    else -> "Actual: ${com.rork.vinetrack.ui.components.SprayGuidedFormat.quantity(chemicalUnitFromBase(actual.unit, actual.actualAmountBase), actual.unit)}"
                 },
                 color = if (actual?.actualAmountBase == 0.0) VineColors.Orange else vine.textSecondary,
                 fontSize = 12.sp,

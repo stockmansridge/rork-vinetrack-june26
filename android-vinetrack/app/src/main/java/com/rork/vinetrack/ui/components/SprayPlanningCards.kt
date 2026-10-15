@@ -40,7 +40,11 @@ fun SprayPlanningCards(
     Column(modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Sprayer configuration", fontWeight = FontWeight.SemiBold)
+                Text("Spraying workflow", fontWeight = FontWeight.SemiBold)
+                Text(if (configuration == null && method == SprayPlanningMethod.BY_AREA)
+                    "Supported legacy spray: Tank Mixing → Trip. Free Drive records actual coverage; selected blocks are calculation context, not confirmed travel passes."
+                    else "New planning preview — not an active Trip. This configuration cannot be silently converted to legacy spraying. Start a new calculator draft using the supported legacy workflow and confirm its rates.", style = MaterialTheme.typography.bodySmall)
+                Text("New planning configuration (preview only)", fontWeight = FontWeight.Medium)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     SprayPassConfiguration.entries.forEachIndexed { index, pass ->
                         SegmentedButton(selected = configuration == pass, onClick = { onConfiguration(pass) },

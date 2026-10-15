@@ -113,6 +113,7 @@ struct SprayProgramCSVService {
                 "cost_per_tonne",
             ])
         }
+        headers.append(contentsOf: SprayApplicationReportFields.headers)
         var csv = headers.map { escapeCSV($0) }.joined(separator: ",") + "\n"
 
         let dateFormatter = DateFormatter()
@@ -267,6 +268,7 @@ struct SprayProgramCSVService {
                 }
             }
 
+            row.append(contentsOf: SprayApplicationReportFields(snapshot: record.applicationGeometry).values.map { escapeCSV($0) })
             csv += row.joined(separator: ",") + "\n"
         }
 

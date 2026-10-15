@@ -201,6 +201,14 @@ struct SprayProgramExportService {
                 (status as NSString).draw(at: CGPoint(x: columns[10].1 + 3, y: rowY), withAttributes: statusAttrs)
 
                 y += 20
+                let application = SprayApplicationReportFields(snapshot: record.applicationGeometry)
+                for (label, value) in zip(SprayApplicationReportFields.headers, application.values) {
+                    let text = "\(label): \(value)" as NSString
+                    let height = ceil(text.boundingRect(with: CGSize(width: contentWidth - 12, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: rowAttrs, context: nil).height)
+                    checkPageBreak(needed: height + 5)
+                    text.draw(in: CGRect(x: margin + 6, y: y, width: contentWidth - 12, height: height), withAttributes: rowAttrs)
+                    y += height + 5
+                }
             }
 
             y += 16

@@ -773,6 +773,8 @@ nonisolated struct SprayGuidedFlow: Sendable {
 
         case .products:
             guard !inputs.products.isEmpty else { return .noProductsAdded }
+            let invalidRates = inputs.products.filter { !$0.rate.isFinite || $0.rate <= 0 }
+            if !invalidRates.isEmpty { return .unresolvedProducts(names: invalidRates.map(\.name)) }
             // A product rated per TREATED hectare against geometry that cannot
             // produce one is called out specifically, so the operator is never
             // left guessing which of several possible inputs is missing — and is

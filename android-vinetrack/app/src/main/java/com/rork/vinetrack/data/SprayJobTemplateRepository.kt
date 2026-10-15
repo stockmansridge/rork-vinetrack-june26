@@ -134,6 +134,7 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
     @Serializable
     data class SprayTractor(
         val id: String,
+        @SerialName("fuel_usage_l_per_hour") val fuelUsageLPerHour: Double? = null,
         @SerialName("vineyard_id") val vineyardId: String? = null,
         val name: String? = null,
         val brand: String? = null,

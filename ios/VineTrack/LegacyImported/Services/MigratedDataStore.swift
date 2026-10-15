@@ -1492,6 +1492,12 @@ final class MigratedDataStore {
     /// Apply a trip upsert that originated from a remote sync pull. Does NOT
     /// trigger `onTripChanged` (avoids re-marking the trip dirty).
     func applyRemoteTripUpsert(_ trip: Trip) {
+        // An inactive saved placeholder is not a terminal server acknowledgement.
+        // Preserve the owned activation and its route/tank evidence until reconciled.
+        if deviceActiveTripId == trip.id, !trip.isActive, trip.endTime == nil,
+           trips.contains(where: { $0.id == trip.id && $0.vineyardId == trip.vineyardId && $0.isActive && $0.endTime == nil }) {
+            return
+        }
         if selectedVineyardId == trip.vineyardId {
             if let idx = trips.firstIndex(where: { $0.id == trip.id }) {
                 trips[idx] = trip
@@ -1512,7 +1518,7 @@ final class MigratedDataStore {
             }
             tripRepo.replace(all.filter { $0.vineyardId == trip.vineyardId }, for: trip.vineyardId)
         }
-        if !trip.isActive || trip.endTime != nil {
+        if !trip.isActive && trip.endTime != nil {
             let wasOwned = deviceActiveTripId == trip.id
             releaseDeviceTrip(trip.id)
             if wasOwned { onOwnedTripCompletedByServer?(trip.id) }

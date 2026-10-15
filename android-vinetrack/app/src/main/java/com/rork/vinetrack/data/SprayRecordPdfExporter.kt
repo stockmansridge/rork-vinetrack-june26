@@ -395,10 +395,15 @@ object SprayRecordPdfExporter {
             row(s, "Fuel consumption", payload.equipment.fuelConsumptionLPerHour?.let { "${regionFormatter.formatFuelRatePerHour(it)} · ${payload.equipment.fuelConsumptionSource?.replace('_', ' ')}" } ?: "Not recorded")
         }
 
+        val recordedApplication = com.rork.vinetrack.data.reporting.SprayApplicationReportFields.from(record.applicationGeometry)
+        sectionHeader(s, "Application")
+        row(s, "Disease/pest targets", recordedApplication.targets)
+        row(s, "Spray-head location", recordedApplication.sprayHead)
+        row(s, "Ground location", recordedApplication.ground)
+        if (payload.application == null) row(s, "Application mode", recordedApplication.mode)
         payload.application?.let { application ->
-            sectionHeader(s, "Application")
             row(s, "Operation", application.operationType ?: "Not recorded")
-            row(s, "Application mode", application.applicationMode?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: "Not recorded")
+            row(s, "Application mode", application.applicationMode?.replace('_', ' ')?.replaceFirstChar { it.uppercase() } ?: recordedApplication.mode)
             row(s, "Treated area", application.treatedAreaHa?.let { regionFormatter.formatArea(it) } ?: "Not recorded")
             row(s, "Carrier total", application.totalCarrierLitres?.let { regionFormatter.formatVolume(it) } ?: "Not recorded")
             application.notes?.let { text(s, "Notes: $it", bodyPaint) }
@@ -668,11 +673,15 @@ object SprayRecordPdfExporter {
     }
 
     private fun row(s: PageState, label: String, value: String) {
-        s.ensure(18f)
-        s.y += 12f
-        s.canvas.drawText(label, MARGIN, s.y, bodyPaint)
-        s.canvas.drawText(value, MARGIN + LABEL_WIDTH, s.y, bodyBoldPaint)
-        s.y += 6f
+        val labels = wrap(label, bodyPaint, LABEL_WIDTH - 8f)
+        val values = wrap(value, bodyBoldPaint, PAGE_WIDTH - 2 * MARGIN - LABEL_WIDTH)
+        repeat(maxOf(labels.size, values.size)) { index ->
+            s.ensure(18f)
+            s.y += 12f
+            labels.getOrNull(index)?.let { s.canvas.drawText(it, MARGIN, s.y, bodyPaint) }
+            values.getOrNull(index)?.let { s.canvas.drawText(it, MARGIN + LABEL_WIDTH, s.y, bodyBoldPaint) }
+            s.y += 6f
+        }
     }
 
     private fun rowIndented(s: PageState, label: String, value: String) {

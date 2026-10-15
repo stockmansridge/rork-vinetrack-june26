@@ -367,6 +367,18 @@ object SprayProgramPdfExporter {
         cell(s, 10, status, rowY, statusPaint)
 
         s.y += 20f
+        val application = com.rork.vinetrack.data.reporting.SprayApplicationReportFields.from(record.applicationGeometry)
+        com.rork.vinetrack.data.reporting.SprayApplicationReportFields.headers.zip(application.values).forEach { (label, value) ->
+            var remaining = "$label: $value"
+            while (remaining.isNotEmpty()) {
+                val count = bodyPaint.breakText(remaining, true, contentWidth - 12f, null).coerceAtLeast(1)
+                s.ensure(16f)
+                s.y += 12f
+                s.canvas.drawText(remaining.take(count), MARGIN + 6f, s.y, bodyPaint)
+                s.y += 4f
+                remaining = remaining.drop(count)
+            }
+        }
         return blocksRecorded
     }
 

@@ -16,7 +16,13 @@ struct EndSprayView: View {
     private var trip: Trip? { record.flatMap { record in store.trips.first { $0.id == record.canonicalTripId } } }
 
     var body: some View {
-        if let record, !record.isTemplate, record.endTime == nil,
+        if let endedAt = record?.endTime ?? trip?.endTime {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Completed", systemImage: "checkmark.circle.fill")
+                Text(endedAt.formattedTZ(date: .abbreviated, time: .shortened, in: store.settings.resolvedTimeZone))
+                    .font(.caption).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        } else if let record, !record.isTemplate, record.endTime == nil,
            record.entrySource != "manual", record.manualEntryId == nil, access.canEditRecords {
             Button("End Spray") {
                 if trip?.isActive == true {

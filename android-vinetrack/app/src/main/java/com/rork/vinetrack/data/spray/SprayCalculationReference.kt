@@ -243,7 +243,7 @@ object SprayCalculationReferenceBuilder {
                     when (product.basis) {
                         SprayProductRateBasis.PER_100_LITRES ->
                             "${trim(product.rate)} × ${number(input, 0)} ÷ 100" +
-                                if (!isManualVolume && factor > 1.0) " × ${number(factor, 2)}" else ""
+                                if (!isManualVolume && factor > 1.0) " × CF ${number(factor, 2)}" else ""
                         SprayProductRateBasis.WHOLE_BLOCK_AREA,
                         SprayProductRateBasis.TREATED_AREA,
                         -> "${trim(product.rate)} × ${number(input, 2)} ${product.basis.measuredUnit}"
@@ -278,6 +278,9 @@ object SprayCalculationReferenceBuilder {
     private fun quantity(value: Double, unit: String): String {
         if (unit.equals("mL", ignoreCase = true) && value >= 1000.0) {
             return "${number(value / 1000.0, 2)} L"
+        }
+        if (unit.equals("g", ignoreCase = true) && value >= 1000.0) {
+            return "${number(value / 1000.0, 2)} kg"
         }
         val decimals = when {
             value < 10.0 -> 3

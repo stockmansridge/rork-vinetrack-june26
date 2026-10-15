@@ -37,10 +37,10 @@ class SprayCanopyParityTest {
     }
 
     @Test
-    fun `rule 3 touching either size or density confirms the displayed pair`() {
+    fun `rule 3 explicit confirmation is required for displayed pair`() {
         val typed = SprayCanopySelection.unconfirmed.chooseType(SprayCalculator.CanopyType.VSP)
-        assertTrue(typed.chooseSize(SprayCalculator.CanopySize.MEDIUM).isConfirmed)
-        assertTrue(typed.chooseDensity(SprayCalculator.CanopyDensity.LOW).isConfirmed)
+        assertFalse(typed.chooseSize(SprayCalculator.CanopySize.MEDIUM).isConfirmed)
+        assertFalse(typed.chooseDensity(SprayCalculator.CanopyDensity.LOW).isConfirmed)
         assertTrue(typed.confirm().isConfirmed)
     }
 
@@ -169,7 +169,7 @@ class SprayCanopyParityTest {
     }
 
     @Test
-    fun `rule 8 changing confirmed canopy type preserves confirmed pair`() {
+    fun `rule 8 changing confirmed canopy type requires reconfirmation`() {
         val confirmedVsp = SprayCanopySelection.prefilled(
             SprayCalculator.CanopySize.LARGE,
             SprayCalculator.CanopyDensity.HIGH,
@@ -177,7 +177,9 @@ class SprayCanopyParityTest {
         val sprawl = confirmedVsp.chooseType(SprayCalculator.CanopyType.SPRAWL)
         assertEquals(confirmedVsp.size, sprawl.size)
         assertEquals(confirmedVsp.density, sprawl.density)
-        assertTrue(sprawl.isConfirmed)
+        assertFalse(sprawl.isConfirmed)
+        assertTrue(sprawl.confirm().isConfirmed)
+        assertTrue(confirmedVsp.chooseType(SprayCalculator.CanopyType.VSP).isConfirmed)
     }
 
     @Test

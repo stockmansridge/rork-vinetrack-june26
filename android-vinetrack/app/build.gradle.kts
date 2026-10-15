@@ -58,7 +58,7 @@ android {
         targetSdk = 36
         testInstrumentationRunner = "com.rork.vinetrack.data.auth.CleanExitTestRunner"
         // v3.1.7 release — keep versionCode monotonically increasing.
-        versionCode = 11
+        versionCode = 12
         versionName = "3.1.7"
 
         // No runtime/property override: live storage cutover needs separate approval.

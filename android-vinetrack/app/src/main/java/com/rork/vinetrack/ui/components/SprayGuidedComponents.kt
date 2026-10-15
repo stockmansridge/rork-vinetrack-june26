@@ -272,6 +272,7 @@ fun GuidedProductCalculationRow(
     line: SprayProductLineResult,
     accent: Color,
     modifier: Modifier = Modifier,
+    concentrationFactor: Double = 1.0,
 ) {
     val warning = Color(0xFFE65100)
     Column(
@@ -284,7 +285,7 @@ fun GuidedProductCalculationRow(
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        val calculation = SprayGuidedFormat.productCalculation(line)
+        val calculation = SprayGuidedFormat.productCalculation(line, concentrationFactor)
         if (calculation != null) {
             Text(
                 text = calculation,
@@ -539,6 +540,9 @@ object SprayGuidedFormat {
         if (unit.equals("mL", ignoreCase = true) && value >= 1000.0) {
             return "${grouped(value / 1000.0, 2)} L"
         }
+        if (unit.equals("g", ignoreCase = true) && value >= 1000.0) {
+            return "${grouped(value / 1000.0, 2)} kg"
+        }
         val decimals = if (value < 10) 2 else if (value < 100) 1 else 0
         return "${grouped(value, decimals)} $unit"
     }
@@ -570,9 +574,12 @@ object SprayGuidedFormat {
     }
 
     /** The full one-line explanation, e.g. `2 L/ha × 10.00 ha whole block`. */
-    fun productCalculation(line: SprayProductLineResult): String? {
+    fun productCalculation(line: SprayProductLineResult, concentrationFactor: Double = 1.0): String? {
+        if (!line.rate.isFinite() || line.rate <= 0) return null
         val measured = productMeasuredInput(line) ?: return null
-        return "${productRate(line)} × $measured"
+        val appliedCF = if (line.basis == SprayProductRateBasis.PER_100_LITRES && concentrationFactor.isFinite() && concentrationFactor > 1.0)
+            " × CF ${factor(concentrationFactor)}" else ""
+        return "${productRate(line)} × $measured$appliedCF"
     }
 
     /** The resulting requirement, e.g. `20.0 L required`. */

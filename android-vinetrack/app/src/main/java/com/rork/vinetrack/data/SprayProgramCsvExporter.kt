@@ -137,6 +137,7 @@ object SprayProgramCsvExporter {
         addAll(blockAttributionHeaders)
         addAll(coverageHeaders)
         if (includeCostings) addAll(costRollupHeaders)
+        addAll(com.rork.vinetrack.data.reporting.SprayApplicationReportFields.headers)
     }
 
     /**
@@ -286,7 +287,7 @@ object SprayProgramCsvExporter {
         }
     }
 
-    private fun buildCsv(
+    internal fun buildCsv(
         records: List<SprayRecord>,
         trips: List<Trip>,
         includeCostings: Boolean,
@@ -453,6 +454,7 @@ object SprayProgramCsvExporter {
                 }
             }
 
+            row.addAll(com.rork.vinetrack.data.reporting.SprayApplicationReportFields.from(record.applicationGeometry).values)
             sb.append(row.joinToString(",") { escape(it) }).append("\n")
         }
 

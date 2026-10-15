@@ -41,6 +41,7 @@ struct SprayVolumeDecisionTests {
         selection.choose(type: type)
         selection.choose(size: size)
         selection.choose(density: density)
+        selection.confirm()
         return selection
     }
 
@@ -208,6 +209,7 @@ struct SprayVolumeDecisionTests {
         #expect(vsp.recommendedLitresPer100Metres == 75)
 
         selection.choose(type: .sprawl)
+        selection.confirm()
         let sprawl = decision(canopy: selection, choice: .useRecommended)
         #expect(sprawl.recommendedLitresPer100Metres == 90)
         #expect(isClose(sprawl.recommendedLitresPerHectare, 90 * 100 / 2.8, tolerance: 0.000_1))
@@ -222,6 +224,7 @@ struct SprayVolumeDecisionTests {
         #expect(isClose(before.actualLitresPerHectare, 1428.571429, tolerance: 0.000_1))
 
         selection.choose(size: .full)
+        selection.confirm()
         let after = decision(canopy: selection, choice: .useRecommended)
         #expect(after.recommendedLitresPer100Metres == 75)
         #expect(isClose(after.actualLitresPerHectare, 75 * 100 / 2.8, tolerance: 0.000_1))
@@ -237,6 +240,7 @@ struct SprayVolumeDecisionTests {
         #expect(isClose(before.concentrationFactor, 2.380_952, tolerance: 0.000_01))
 
         selection.choose(size: .full)
+        selection.confirm()
         let after = decision(canopy: selection, choice: .useCustomSprayerRate, custom: 600)
         // The operator's figure is untouched...
         #expect(after.actualLitresPerHectare == 600)
@@ -494,6 +498,7 @@ struct SprayVolumeDecisionTests {
 
         // ONLY the training system changes.
         selection.choose(type: .sprawl)
+        selection.confirm()
         let sprawl = decision(canopy: selection, choice: .useRecommended)
         #expect(sprawl.recommendedLitresPer100Metres == 45)
         #expect(isClose(sprawl.recommendedLitresPerHectare, 1_607.142857, tolerance: 0.000_1))

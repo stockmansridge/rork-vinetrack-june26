@@ -40,6 +40,7 @@ struct SprayEquipmentAndCarrierHandoffTests {
         selection.choose(type: type)
         selection.choose(size: size)
         selection.choose(density: density)
+        selection.confirm()
         return selection
     }
 

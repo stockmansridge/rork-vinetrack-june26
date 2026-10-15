@@ -31,6 +31,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.R
+import com.rork.vinetrack.data.RegionFormatter
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.OutlinedButton
 import com.rork.vinetrack.data.CanopyWaterRates
 import com.rork.vinetrack.data.SprayCalculator
 import com.rork.vinetrack.data.spray.SprayCanopyReferenceImages
@@ -45,6 +48,7 @@ import java.util.Locale
 fun SprayCanopySelector(
     selection: SprayCanopySelection,
     rates: CanopyWaterRates,
+    region: RegionFormatter,
     isConfirmed: Boolean,
     customImageFile: File? = null,
     onSelectionChange: (SprayCanopySelection) -> Unit,
@@ -82,13 +86,16 @@ fun SprayCanopySelector(
             color = vine.textSecondary,
             modifier = Modifier.padding(top = 14.dp),
         )
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-            SprayCalculator.CanopySize.entries.forEachIndexed { index, size ->
-                SegmentedButton(
-                    selected = selection.size == size,
-                    onClick = { onSelectionChange(selection.chooseSize(size)) },
-                    shape = SegmentedButtonDefaults.itemShape(index, SprayCalculator.CanopySize.entries.size),
-                ) { Text(size.label, fontSize = 13.sp) }
+        Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SprayCalculator.CanopySize.entries.chunked(2).forEach { sizes ->
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    sizes.forEach { size ->
+                        OutlinedButton(onClick = { onSelectionChange(selection.chooseSize(size)) },
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                            Text("${if (selection.size == size) "✓ " else ""}${size.label}", textAlign = TextAlign.Center)
+                        }
+                    }
+                }
             }
         }
         Text(selection.size.description(type), fontSize = 11.sp, color = vine.textSecondary, modifier = Modifier.padding(top = 4.dp))
@@ -143,16 +150,15 @@ fun SprayCanopySelector(
 
         val band = selection.referenceBand(rates)
         val selectedValue = selection.litresPer100m(rates)
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth().padding(top = 14.dp)
                 .clip(RoundedCornerShape(10.dp)).background(VineColors.LeafGreen.copy(alpha = 0.10f)).padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Column {
                 Text("Reference band", fontSize = 12.sp, color = vine.textSecondary)
                 Text(
-                    "${formatRate(band?.low)}–${formatRate(band?.high)} L/100m",
+                    "${band?.low?.let { region.formatVolumePer100Length(it) } ?: "—"} – ${band?.high?.let { region.formatVolumePer100Length(it) } ?: "—"}",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = vine.textPrimary,
@@ -161,7 +167,7 @@ fun SprayCanopySelector(
             Column(horizontalAlignment = Alignment.End) {
                 Text("${selection.density.label} density", fontSize = 12.sp, color = vine.textSecondary)
                 Text(
-                    "${formatRate(selectedValue)} L/100m",
+                    selectedValue?.let { region.formatVolumePer100Length(it) } ?: "—",
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold,
                     color = VineColors.DarkGreen,
@@ -178,7 +184,7 @@ fun SprayCanopySelector(
             ),
         ) {
             Text(
-                if (isConfirmed) "Canopy confirmed" else "Confirm canopy",
+                if (isConfirmed) "Canopy confirmed" else "Confirm Canopy",
                 textAlign = TextAlign.Center,
                 fontWeight = FontWeight.SemiBold,
             )

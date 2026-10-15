@@ -304,7 +304,7 @@ nonisolated enum SprayCalculationReferenceBuilder {
                 if line.basis == .per100Litres, let basisInput = line.basisInput,
                    let labelRate = line.labelRate {
                     workings = "\(trim(labelRate.value)) × \(number(basisInput, decimals: 0)) ÷ 100"
-                        + (factor > 1.0 ? " × \(number(factor, decimals: 2))" : "")
+                        + (factor > 1.0 ? " × CF \(number(factor, decimals: 2))" : "")
                 } else if let basisInput = line.basisInput, let labelRate = line.labelRate {
                     workings = "\(trim(labelRate.value)) × "
                         + "\(number(basisInput, decimals: 2)) \(line.basis.measuredUnit)"

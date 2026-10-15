@@ -1,0 +1,20 @@
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    app.tasks.named('compileDebugUnitTestKotlin').configure {
+        setSource(app.fileTree('src/test/java') {
+            include '**/SprayMVPDefectTest.kt', '**/SprayCanopyParityTest.kt', '**/SprayCarrierRegionalFormatTest.kt'
+            if (System.getProperty('sprayMvpCombined') == 'true') {
+                include '**/SprayGuidedFlowTest.kt', '**/SprayVolumeDecisionTest.kt', '**/SprayPlanning*Test.kt'
+                include '**/SavedTripActivationTest.kt', '**/DeviceTripOwnershipTest.kt', '**/ActiveTripStoreTest.kt'
+                include '**/TankSessionLifecycleTest.kt', '**/TripGpsRecoveryTest.kt', '**/SprayCarrierProvenanceTest.kt'
+                include '**/SprayReportPayloadV1Test.kt', '**/LegacySprayPairReceiptTest.kt', '**/LegacySpraySaveRecoveryTest.kt'
+                include '**/SprayCalculationContractTest.kt', '**/SprayCalculationReferenceTest.kt'
+            }
+        })
+    }
+    app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        testLogging { events 'passed', 'failed', 'skipped' }
+    }
+}

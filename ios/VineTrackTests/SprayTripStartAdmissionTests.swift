@@ -10,7 +10,8 @@ final class SprayTripStartAdmissionTests: XCTestCase {
     }
     @MainActor func testValidatedLegacyRecipeIsEligibleButWrongScopeIsNot() {
         let vineyard = UUID()
-        let record = SprayRecord(vineyardId: vineyard)
+        let chemical = SprayChemical(name: "Fixture", volumePerTank: 1000, ratePerHa: 1000, unit: .grams)
+        let record = SprayRecord(vineyardId: vineyard, tanks: [SprayTank(tankNumber: 1, waterVolume: 420, chemicals: [chemical])])
         XCTAssertNil(SprayTripStartAdmission.blocker(isSpray: true, vineyardId: vineyard, record: record))
         XCTAssertNotNil(SprayTripStartAdmission.blocker(isSpray: true, vineyardId: UUID(), record: record))
     }

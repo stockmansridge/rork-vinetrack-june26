@@ -336,14 +336,14 @@ struct SprayRecordDetailView: View {
     }
 
     private func detailRow(_ label: String, value: String) -> some View {
-        HStack {
+        VStack(alignment: .leading, spacing: 4) {
             Text(label)
-                .font(.subheadline)
+                .font(.caption)
                 .foregroundStyle(.secondary)
-            Spacer()
             Text(value)
                 .font(.subheadline)
-        }
+                .fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Header

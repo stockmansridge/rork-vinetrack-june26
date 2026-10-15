@@ -77,6 +77,7 @@ struct RegionResidualBoundaryTests {
         canopy.choose(type: .vsp)
         canopy.choose(size: .medium)
         canopy.choose(density: .high)
+        canopy.confirm()
         inputs.canopy = canopy
         inputs.canopyWaterRates = .defaults
         inputs.carrierBasis = .litresPerHectare

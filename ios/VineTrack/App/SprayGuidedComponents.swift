@@ -325,10 +325,11 @@ struct GuidedProductBasisPicker: View {
 /// input instead of showing a zero.
 struct GuidedProductCalculationRow: View {
     let line: SprayProductLineResult
+    var concentrationFactor: Double = 1
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            if let calculation = SprayGuidedFormat.productCalculation(line) {
+            if let calculation = SprayGuidedFormat.productCalculation(line, concentrationFactor: concentrationFactor) {
                 Text(calculation)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -526,10 +527,12 @@ struct SprayGuidedFormat {
     /// `0.0 Kg/100 L × 351 L carrier`, which states two things that are not
     /// true: that a rate of zero has been chosen, and that an arithmetic is
     /// under way. There is no calculation to explain until there is a rate.
-    static func productCalculation(_ line: SprayProductLineResult) -> String? {
+    static func productCalculation(_ line: SprayProductLineResult, concentrationFactor: Double = 1) -> String? {
         guard line.rate.isFinite, line.rate > 0 else { return nil }
         guard let measured = productMeasuredInput(line) else { return nil }
-        return "\(productRate(line)) × \(measured)"
+        let appliedCF = line.basis == .per100Litres && concentrationFactor.isFinite && concentrationFactor > 1
+            ? " × CF \(factor(concentrationFactor))" : ""
+        return "\(productRate(line)) × \(measured)\(appliedCF)"
     }
 
     /// The resulting requirement, e.g. `20.0 L required`.

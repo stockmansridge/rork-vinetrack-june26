@@ -8,6 +8,6 @@ enum SprayTripStartAdmission {
         guard let record, record.vineyardId == vineyardId, !record.isTemplate, record.endTime == nil else {
             return "Start this spray from a validated saved recipe or the Spray Calculator. Generic start does not authorise spraying."
         }
-        return record.operationalPlanningBlocker
+        return record.operationalPlanningBlocker ?? SprayStartRecipeValidation.blocker(record.tanks)
     }
 }

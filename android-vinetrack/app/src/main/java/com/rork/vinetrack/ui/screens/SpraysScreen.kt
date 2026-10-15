@@ -1400,7 +1400,10 @@ private fun SprayDetailView(
                     }
                 }
             }
-            if (!record.isTemplate && record.endTime.isNullOrBlank() && record.entrySource != "manual" &&
+            if (!record.isTemplate && (!record.endTime.isNullOrBlank() || !completionTrip?.endTime.isNullOrBlank())) {
+                Text("Completed · ${completionTrip?.endTime ?: record.endTime}", style = androidx.compose.material3.MaterialTheme.typography.bodyMedium, color = VineColors.LeafGreen)
+            }
+            if (!record.isTemplate && completionTrip?.endTime.isNullOrBlank() && record.endTime.isNullOrBlank() && record.entrySource != "manual" &&
                 record.manualEntryId == null && state.currentRole in setOf("owner", "manager", "supervisor", "operator")) {
                 OutlinedButton(enabled = !state.sprayBusy, modifier = Modifier.fillMaxWidth(), onClick = {
                     when {
@@ -2737,8 +2740,10 @@ private fun DetailRowSP(icon: ImageVector, label: String, value: String, tint: C
         ) {
             Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
         }
-        Text(label, color = vine.textSecondary, fontSize = 14.sp, modifier = Modifier.weight(1f))
-        Text(value, color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(label, color = vine.textSecondary, fontSize = 13.sp)
+            Text(value, color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 

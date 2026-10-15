@@ -995,7 +995,7 @@ private fun TripDetailView(
     // iOS parity: ActiveTripView disables the idle timer while it is on screen
     // (including paused trips), gated by the "Keep screen awake during trips"
     // preference. Cleared automatically when the trip ends or the user leaves.
-    val isDeviceTrip = state.activeTrip?.id == trip.id
+    val isDeviceTrip = state.activeTrip?.id == trip.id && trip.isActive && trip.endTime.isNullOrBlank()
     KeepScreenAwake(enabled = isDeviceTrip, reason = ScreenAwakeController.Reason.ActiveTrip)
 
     var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -1399,7 +1399,7 @@ private fun TripDetailView(
                             DetailRow(
                                 Icons.Filled.Grass,
                                 "Chemicals",
-                                if (chems.size <= 2) chems.joinToString(", ") else "${chems.take(2).joinToString(", ")} +${chems.size - 2}",
+                                chems.joinToString("\n"),
                                 VineColors.LeafGreen,
                             )
                         }
@@ -5593,8 +5593,10 @@ private fun DetailRow(icon: ImageVector, label: String, value: String, tint: Col
         ) {
             Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(16.dp))
         }
-        Text(label, color = vine.textSecondary, fontSize = 14.sp, modifier = Modifier.weight(1f))
-        Text(value, color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(label, color = vine.textSecondary, fontSize = 13.sp)
+            Text(value, color = vine.textPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 

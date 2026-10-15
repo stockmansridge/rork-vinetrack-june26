@@ -96,10 +96,13 @@ struct SprayRecordPDFService {
 
             func drawRow(label: String, value: String, indent: CGFloat = 0) {
                 let labelWidth: CGFloat = 180
-                let rowHeight: CGFloat = 18
-                checkPageBreak(needed: rowHeight)
                 let labelAttrs: [NSAttributedString.Key: Any] = [.font: bodyFont, .foregroundColor: UIColor.black]
                 let valueAttrs: [NSAttributedString.Key: Any] = [.font: bodyBoldFont, .foregroundColor: UIColor.black]
+                let valueWidth = contentWidth - labelWidth - indent
+                let labelHeight = (label as NSString).boundingRect(with: CGSize(width: labelWidth - 8, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: labelAttrs, context: nil).height
+                let valueHeight = (value as NSString).boundingRect(with: CGSize(width: valueWidth, height: .greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: valueAttrs, context: nil).height
+                let rowHeight = max(18, ceil(max(labelHeight, valueHeight)) + 6)
+                checkPageBreak(needed: rowHeight)
                 (label as NSString).draw(in: CGRect(x: margin + indent, y: y, width: labelWidth, height: rowHeight), withAttributes: labelAttrs)
                 (value as NSString).draw(in: CGRect(x: margin + indent + labelWidth, y: y, width: contentWidth - labelWidth - indent, height: rowHeight), withAttributes: valueAttrs)
                 y += rowHeight
@@ -301,13 +304,19 @@ struct SprayRecordPDFService {
                 }
             }
 
+            let recordedApplication = SprayApplicationReportFields(snapshot: record.applicationGeometry)
+            drawSectionHeader("Application")
+            drawRow(label: "Disease/pest targets", value: recordedApplication.targets)
+            drawRow(label: "Spray-head location", value: recordedApplication.sprayHead)
+            drawRow(label: "Ground location", value: recordedApplication.ground)
             if let application = payload.application {
-                drawSectionHeader("Application")
                 drawRow(label: "Operation", value: application.operationType ?? "Not recorded")
-                drawRow(label: "Application mode", value: application.applicationMode?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Not recorded")
+                drawRow(label: "Application mode", value: application.applicationMode?.replacingOccurrences(of: "_", with: " ").capitalized ?? recordedApplication.mode)
                 drawRow(label: "Treated area", value: application.treatedAreaHa.map { formatter.formatArea(hectares: $0) } ?? "Not recorded")
                 drawRow(label: "Carrier total", value: application.totalCarrierLitres.map { formatter.formatVolume(litres: $0) } ?? "Not recorded")
                 if let notes = application.notes { drawText("Notes: \(notes)", font: bodyFont) }
+            } else {
+                drawRow(label: "Application mode", value: recordedApplication.mode)
             }
             if let step = payload.programStep {
                 drawSectionHeader("Program / Step")

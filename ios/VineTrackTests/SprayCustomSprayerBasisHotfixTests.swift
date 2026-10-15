@@ -17,6 +17,7 @@ struct SprayCustomSprayerBasisHotfixTests {
         canopy.choose(type: .vsp)
         canopy.choose(size: .small)
         canopy.choose(density: .low)
+        canopy.confirm()
 
         var inputs = SprayGuidedInputs()
         inputs.sprayName = "Reported Australian job"
