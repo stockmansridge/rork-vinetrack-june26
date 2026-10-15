@@ -13,13 +13,8 @@ struct OperationalTool: Identifiable, Equatable {
     enum Requirement: Equatable {
         case always
         case costing
-        /// Platform System Admin (`public.system_admins`) AND membership of the
-        /// selected vineyard.
-        ///
-        /// Deliberately separate from `.costing`: costing is a VINEYARD role
-        /// permission, whereas this is platform authority. A vineyard owner has
-        /// the former and never the latter, and conflating them would hand
-        /// every customer's owner an unreleased preview.
+        /// Historical case name for the resolved Vineyard Insights membership
+        /// decision. System Admin is now required only inside Vintage Report.
         case systemAdminPreview
     }
 
@@ -153,10 +148,8 @@ enum OperationalToolCatalog {
             icon: "shield.lefthalf.filled",
             tint: .purple
         ),
-        // System Admin preview (SQL 236). Not released: only an active row in
-        // public.system_admins who is ALSO a member of the selected vineyard
-        // may see or open it, and the server enforces the same conjunction on
-        // every read and write. `id` matches Android exactly.
+        // Scout and Notes are member-accessible; Vintage Report is admin-only.
+        // Preserve the stable tool ID and saved layout preferences.
         OperationalTool(
             id: "vineyard_insights",
             title: "Vineyard Insights",
@@ -178,10 +171,8 @@ enum OperationalToolCatalog {
     /// this, so a saved layout can never expose a restricted tool.
     ///
     /// `canUseVineyardInsights` must be the resolved `VineyardInsightsAccess`
-    /// decision — System Admin AND membership of the selected vineyard — not a
-    /// bare `isSystemAdmin` flag. It defaults to `false` so a caller that has
-    /// not yet resolved access (or an older call site) fails closed rather
-    /// than briefly exposing the preview while the admin check is in flight.
+    /// decision — authenticated membership of the selected vineyard. Defaults
+    /// to false until that scope is resolved, independently of admin loading.
     static func authorised(
         canViewCosting: Bool,
         canUseVineyardInsights: Bool = false

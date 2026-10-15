@@ -101,10 +101,7 @@ import com.rork.vinetrack.ui.theme.VineColors
 import java.time.LocalDate
 
 /**
- * Vineyard Insights — System Admin preview (SQL 236, Round 1).
- *
- * Hosts Scout, Vintage Notes and the Vintage Report workspace behind
- * a single continuously re-checked access gate.
+ * Member-accessible Scout and Vintage Notes, with a System Admin-only report.
  */
 
 private enum class InsightsPane { Hub, Scout, Notes, Report }
@@ -127,10 +124,7 @@ fun VineyardInsightsScreen(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
 ) {
-    // Access is resolved on EVERY composition, not once on entry. A restored
-    // navigation state, a deep link, a sign-out, or a System Admin row revoked
-    // while the screen is open must close the preview — an entry-time check
-    // would leave it visible until the user happened to navigate away.
+    // Re-check session and vineyard membership, including restored navigation.
     val access = VineyardInsightsAccess.resolve(
         sessionPhase = state.sessionPhase,
         isSystemAdmin = state.isSystemAdmin,
@@ -154,7 +148,7 @@ fun VineyardInsightsScreen(
     }
 
     when (pane) {
-        InsightsPane.Hub -> InsightsHub(modifier, onBack) { pane = it }
+        InsightsPane.Hub -> InsightsHub(modifier, state.isSystemAdmin, onBack) { pane = it }
         InsightsPane.Scout -> ScoutWorkspace(vm, state, modifier) { pane = InsightsPane.Hub }
         InsightsPane.Notes -> VintageNotesWorkspace(vm, state, modifier) { pane = InsightsPane.Hub }
         InsightsPane.Report -> VintageReportScreen(vm, state, modifier) { pane = InsightsPane.Hub }
@@ -204,6 +198,7 @@ private fun InsightsUnavailable(
 @Composable
 private fun InsightsHub(
     modifier: Modifier,
+    canUseVintageReport: Boolean,
     onBack: () -> Unit,
     onOpen: (InsightsPane) -> Unit,
 ) {
@@ -224,7 +219,6 @@ private fun InsightsHub(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            PreviewBadge()
             HubCard(
                 title = "Scout",
                 subtitle = "Block assessments, observations & photos",
@@ -239,13 +233,15 @@ private fun InsightsHub(
                 tint = VineColors.Orange,
                 actions = listOf("Add Vintage Note", "View notes for selected Vintage"),
             ) { onOpen(InsightsPane.Notes) }
-            HubCard(
-                title = "Vintage Report",
-                subtitle = "Build the plain-English story of the vintage",
-                icon = Icons.Filled.Article,
-                tint = VineColors.Indigo,
-                actions = listOf("Open report workspace"),
-            ) { onOpen(InsightsPane.Report) }
+            if (canUseVintageReport) {
+                HubCard(
+                    title = "Vintage Report",
+                    subtitle = "Build the plain-English story of the vintage",
+                    icon = Icons.Filled.Article,
+                    tint = VineColors.Indigo,
+                    actions = listOf("Open report workspace"),
+                ) { onOpen(InsightsPane.Report) }
+            }
         }
     }
 }
@@ -522,7 +518,6 @@ private fun ScoutWorkspace(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            if (!preparingNewTrip || current != null) item { PreviewBadge() }
 
             cameraError?.let { error ->
                 item { VineyardCard { Text(error, color = VineColors.Destructive); TextButton(onClick = { cameraError = null }) { Text("Dismiss") } } }
@@ -1607,7 +1602,6 @@ private fun VintageNotesWorkspace(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            item { PreviewBadge() }
             noteSyncError?.let { error ->
                 item {
                     VineyardCard {

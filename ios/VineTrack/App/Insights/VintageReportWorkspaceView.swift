@@ -37,7 +37,17 @@ struct VintageReportScreen: View {
         return RegionFormatter(settings: settings)
     }
     private var resolvedVintage: Int { vintage ?? VintageResolver.vintageYear(for: Date(), seasonStartMonth: store.settings.seasonStartMonth, seasonStartDay: store.settings.seasonStartDay, calendar: store.settings.resolvedCalendar) }
-    private var allowed: Bool { auth.isSignedIn && admin.isSystemAdmin && access.currentRole != nil && store.selectedVineyardId != nil }
+    private var allowed: Bool {
+        VineyardInsightsAccess.resolve(
+            isAuthenticated: auth.isSignedIn,
+            isResolving: access.isLoading || access.loadedVineyardId != store.selectedVineyardId
+                || access.loadedUserId != auth.userId || admin.isLoading || admin.lastLoadedAt == nil,
+            isSystemAdmin: admin.isSystemAdmin,
+            selectedVineyardID: store.selectedVineyardId,
+            isMemberOfSelectedVineyard: access.currentRole != nil,
+            requiresSystemAdmin: true
+        ).isAllowed
+    }
     private var selectedRevision: VintageReportRevision? {
         if let selected { return model.cache.revisions.first { $0.id == selected } }
         return model.current
@@ -55,7 +65,7 @@ struct VintageReportScreen: View {
             else { ContentUnavailableView("This tool is not available.", systemImage: "lock") }
         }
         .navigationTitle("Vintage Report").navigationBarTitleDisplayMode(.inline)
-        .task(id: scope) {
+        .task(id: "\(scope)/\(allowed)") {
             selected = nil; editing = false; editingRevisionID = nil; narrative = ""; proposedAction = nil; showGenerateConfirmation = false; showShare = false
             guard allowed, let id = store.selectedVineyardId else { return }
             let capturedVintage = resolvedVintage

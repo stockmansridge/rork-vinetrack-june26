@@ -216,7 +216,7 @@ struct VineTrackApp: App {
                     else { return false }
                     return VineyardInsightsAccess.resolve(
                         isAuthenticated: auth.isSignedIn,
-                        isResolving: systemAdminService.isLoading || systemAdminService.lastLoadedAt == nil,
+                        isResolving: backendAccessControl.isLoading,
                         isSystemAdmin: systemAdminService.isSystemAdmin,
                         selectedVineyardID: vineyardID,
                         isMemberOfSelectedVineyard: true

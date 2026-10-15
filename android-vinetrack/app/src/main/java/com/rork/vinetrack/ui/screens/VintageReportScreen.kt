@@ -29,6 +29,16 @@ fun VintageReportScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier 
     val context = LocalContext.current
     val account = state.currentUserId ?: return
     val vineyard = state.selectedVineyardId ?: return
+    if (!vm.canUseVintageReport(account, vineyard)) {
+        Scaffold(modifier = modifier, topBar = {
+            TopAppBar(title = { Text("Vintage Report") }, navigationIcon = {
+                TextButton(onClick = onBack) { Text("Back") }
+            })
+        }) { padding ->
+            Text("This tool is not available.", Modifier.padding(padding).padding(24.dp))
+        }
+        return
+    }
     var vintage by rememberSaveable(account, vineyard) { mutableStateOf(VintageResolver.vintageYear(LocalDate.now(state.seasonZone), state.seasonStartMonth, state.seasonStartDay)) }
     val key = "$account/$vineyard/$vintage"
     val activeVintage = rememberUpdatedState(vintage)

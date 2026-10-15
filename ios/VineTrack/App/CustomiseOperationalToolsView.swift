@@ -18,11 +18,11 @@ struct CustomiseOperationalToolsView: View {
 
     /// The same Vineyard Insights decision the Home grid uses. Customisation
     /// must never be able to reveal a tool the caller has no access to, so an
-    /// unauthorised preview is absent from BOTH sections here.
+    /// unauthorised tool is absent from BOTH sections here.
     private var vineyardInsightsAccess: VineyardInsightsAccess {
         VineyardInsightsAccess.resolve(
             isAuthenticated: auth.isSignedIn,
-            isResolving: systemAdmin.isLoading || systemAdmin.lastLoadedAt == nil,
+            isResolving: accessControl.isLoading || accessControl.loadedVineyardId != store.selectedVineyardId || accessControl.loadedUserId != auth.userId,
             isSystemAdmin: systemAdmin.isSystemAdmin,
             selectedVineyardID: store.selectedVineyardId,
             isMemberOfSelectedVineyard: accessControl.currentRole != nil

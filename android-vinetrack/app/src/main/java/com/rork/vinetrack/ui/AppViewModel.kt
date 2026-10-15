@@ -1456,7 +1456,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val operationalToolLayout: StateFlow<OperationalToolLayout> = operationalToolLayoutStore.layout
 
     /**
-     * Vineyard Insights preview (SQL 236) — System Admin only, offline-first.
+     * Vineyard Insights — member-accessible Scout/Notes, offline-first.
      *
      * Held as one self-contained controller rather than being spread through
      * this view model: the feature is unreleased, so it must be removable
@@ -1517,7 +1517,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * happens to be selected when connectivity returns.
      */
     private fun retryPendingVineyardInsights() {
-        if (!session.hasSession || !_ui.value.isSystemAdmin) return
+        if (!session.hasSession) return
         vineyardInsights.pendingVineyards().forEach(::scheduleVineyardInsightsSync)
     }
 
@@ -1527,6 +1527,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             com.rork.vinetrack.data.insights.VineyardInsightsAccess.resolve(
                 sessionPhase = _ui.value.sessionPhase, isSystemAdmin = _ui.value.isSystemAdmin,
                 selectedVineyardId = vineyardId, isMemberOfSelectedVineyard = _ui.value.currentRole != null,
+                requiresSystemAdmin = true,
             ).isAllowed
 
     fun hasPendingVintageReportEvidence(vineyardId: String): Boolean =

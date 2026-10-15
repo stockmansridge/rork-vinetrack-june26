@@ -1341,17 +1341,12 @@ private struct NewHomeTabView: View {
 
     // MARK: Operational Tools
 
-    /// The Vineyard Insights preview decision (SQL 236) — System Admin AND
-    /// membership of the selected vineyard.
-    ///
-    /// `isResolving` deliberately includes the in-flight admin check: while it
-    /// is loading the tile must be ABSENT rather than optimistically shown,
-    /// because a tile that flashes in and disappears discloses the feature to
-    /// someone who may not have it.
+    /// Insights is available to authenticated members of the selected vineyard.
+    /// Only its Vintage Report section requires System Admin authority.
     private var vineyardInsightsAccess: VineyardInsightsAccess {
         VineyardInsightsAccess.resolve(
             isAuthenticated: auth.isSignedIn,
-            isResolving: systemAdmin.isLoading || systemAdmin.lastLoadedAt == nil,
+            isResolving: accessControl.isLoading || accessControl.loadedVineyardId != store.selectedVineyardId || accessControl.loadedUserId != auth.userId,
             isSystemAdmin: systemAdmin.isSystemAdmin,
             selectedVineyardID: store.selectedVineyardId,
             isMemberOfSelectedVineyard: accessControl.currentRole != nil

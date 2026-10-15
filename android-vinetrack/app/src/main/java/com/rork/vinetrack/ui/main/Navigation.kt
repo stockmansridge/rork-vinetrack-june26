@@ -128,14 +128,9 @@ enum class ToolRoute(
     MapAlignment("Android Map Alignment", "System Admin Preview", Icons.Filled.Explore, VineColors.Purple, ToolGroup.Account),
 
     /**
-     * Vineyard Insights preview (SQL 236). System Admin gated and NOT released.
-     *
-     * Excluded from the More hub's tool list, which otherwise renders every
-     * entry of this enum to every user. It is reachable only from the Home
-     * Operational Tools grid, which resolves the full access decision (System
-     * Admin AND membership of the selected vineyard), and
-     * `VineyardInsightsScreen` re-resolves that decision itself so a restored
-     * or direct navigation cannot bypass the tile's absence.
+     * Vineyard Insights is reached through Home's member-scoped Operational
+     * Tools grid. The destination re-checks membership for restored/direct
+     * navigation; only its Vintage Report workspace requires System Admin.
      */
     VineyardInsights("Vineyard Insights", "Scouting, vintage notes & reports", Icons.Filled.Insights, VineColors.Purple, ToolGroup.Operations),
 }

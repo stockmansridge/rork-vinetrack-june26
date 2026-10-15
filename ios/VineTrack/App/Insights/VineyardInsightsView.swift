@@ -1,10 +1,7 @@
 import SwiftUI
 import CoreLocation
 
-/// Vineyard Insights — System Admin preview (SQL 236, Round 1).
-///
-/// Hosts Scout, Vintage Notes and the Vintage Report workspace behind
-/// a single continuously re-checked access gate.
+/// Member-accessible Scout and Vintage Notes, with a System Admin-only report.
 struct VineyardInsightsView: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(MigratedDataStore.self) private var store
@@ -12,18 +9,20 @@ struct VineyardInsightsView: View {
     @Environment(SystemAdminService.self) private var systemAdmin
     @Environment(VineyardInsightsService.self) private var insights
 
-    /// Access is resolved on EVERY evaluation, not once on entry. A restored
-    /// navigation state, a deep link, a sign-out, or a System Admin row revoked
-    /// while the screen is open must close the preview — an entry-time check
-    /// would leave it visible until the user happened to navigate away.
+    /// Re-check session and vineyard membership, including restored navigation.
     private var access: VineyardInsightsAccess {
         VineyardInsightsAccess.resolve(
             isAuthenticated: auth.isSignedIn,
-            isResolving: systemAdmin.isLoading || systemAdmin.lastLoadedAt == nil,
+            isResolving: accessControl.isLoading || accessControl.loadedVineyardId != store.selectedVineyardId || accessControl.loadedUserId != auth.userId,
             isSystemAdmin: systemAdmin.isSystemAdmin,
             selectedVineyardID: store.selectedVineyardId,
             isMemberOfSelectedVineyard: accessControl.currentRole != nil
         )
+    }
+
+    private var canUseVintageReport: Bool {
+        access.isAllowed && !systemAdmin.isLoading
+            && systemAdmin.lastLoadedAt != nil && systemAdmin.isSystemAdmin
     }
 
     var body: some View {
@@ -62,11 +61,6 @@ struct VineyardInsightsView: View {
     private var hub: some View {
         List {
             Section {
-                PreviewBadge()
-                    .listRowBackground(Color.clear)
-            }
-
-            Section {
                 NavigationLink {
                     ScoutWorkspaceView()
                 } label: {
@@ -89,16 +83,18 @@ struct VineyardInsightsView: View {
                         actions: ["Add Vintage Note", "View notes for selected Vintage"]
                     )
                 }
-                NavigationLink {
-                    VintageReportScreen()
-                } label: {
-                    HubCard(
-                        title: "Vintage Report",
-                        subtitle: "Build the plain-English story of the vintage",
-                        icon: "doc.text",
-                        tint: .indigo,
-                        actions: ["Open report workspace"]
-                    )
+                if canUseVintageReport {
+                    NavigationLink {
+                        VintageReportScreen()
+                    } label: {
+                        HubCard(
+                            title: "Vintage Report",
+                            subtitle: "Build the plain-English story of the vintage",
+                            icon: "doc.text",
+                            tint: .indigo,
+                            actions: ["Open report workspace"]
+                        )
+                    }
                 }
             }
         }

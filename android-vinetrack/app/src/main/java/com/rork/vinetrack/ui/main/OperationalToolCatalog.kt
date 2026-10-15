@@ -35,16 +35,9 @@ data class OperationalToolDefinition(
     /** Owner/Manager costing permission. Customisation never overrides this. */
     val requiresCosting: Boolean = false,
     /**
-     * Platform System Admin requirement (`public.system_admins`).
-     *
-     * Deliberately separate from [requiresCosting]: costing is a VINEYARD role
-     * permission, whereas this is platform authority. A vineyard owner has the
-     * former and never the latter, and conflating them would hand every
-     * customer's owner an unreleased preview.
-     *
-     * Like [requiresCosting], customisation never overrides this — an
-     * unauthorised tool is absent from the grid AND from both customisation
-     * sections, so a saved layout cannot reveal it.
+     * Historical field name for the resolved Vineyard Insights membership
+     * decision. System Admin is now required only inside Vintage Report.
+     * Customisation cannot override the selected-vineyard access decision.
      */
     val requiresSystemAdmin: Boolean = false,
 )
@@ -175,10 +168,8 @@ object OperationalToolCatalog {
             tint = VineColors.Purple,
             route = ToolRoute.ResistancePlanner,
         ),
-        // System Admin preview (SQL 236). Not released: only an active row in
-        // public.system_admins who is ALSO a member of the selected vineyard
-        // may see or open it, and the server enforces the same conjunction on
-        // every read and write. `id` matches iOS exactly.
+        // Scout and Notes are member-accessible; Vintage Report is admin-only.
+        // Preserve the stable tool ID and saved layout preferences.
         OperationalToolDefinition(
             id = "vineyard_insights",
             title = "Vineyard Insights",
@@ -201,10 +192,8 @@ object OperationalToolCatalog {
      *
      * [canUseVineyardInsights] must be the resolved
      * [com.rork.vinetrack.data.insights.VineyardInsightsAccess] decision —
-     * System Admin AND membership of the selected vineyard — not a bare
-     * `isSystemAdmin` flag. It defaults to false so a caller that has not yet
-     * resolved access (or an older call site) fails closed rather than
-     * briefly exposing the preview while the admin check is in flight.
+     * authenticated membership of the selected vineyard, not admin status.
+     * Defaults to false until that scope is resolved.
      */
     fun authorised(
         canViewCosting: Boolean,

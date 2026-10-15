@@ -70,11 +70,8 @@ fun MoreScreen(
                         // preview: it is reached only from the System Admin
                         // section of Settings, never from this hub.
                         tool != ToolRoute.MapAlignment &&
-                        // Vineyard Insights is an unreleased System Admin
-                        // preview: it is reached only from the Operational
-                        // Tools grid, which resolves the full access decision
-                        // (System Admin AND vineyard membership). This hub has
-                        // no such check, so listing it here would expose it.
+                        // Insights is reached from the member-scoped
+                        // Operational Tools grid, not duplicated in this hub.
                         tool != ToolRoute.VineyardInsights &&
                         // Material Library is temporarily System-Admin-only and
                         // is exposed exclusively through the centrally gated Settings row.
