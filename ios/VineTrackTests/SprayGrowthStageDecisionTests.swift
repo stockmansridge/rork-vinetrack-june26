@@ -58,6 +58,8 @@ struct SprayGrowthStageDecisionTests {
         inputs.sprayHeadTarget = .fullCanopy
         inputs.isGrowthStageResolved = growthStageResolved
         inputs.isEquipmentSelected = true
+        inputs.isEquipmentConfirmed = true
+        inputs.isCanopyConfirmed = true
         inputs.tankCapacityLitres = 2_000
         inputs.carrierBasis = .litresPerHectare
         inputs.litresPerHectare = 625

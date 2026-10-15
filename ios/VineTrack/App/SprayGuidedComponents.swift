@@ -448,9 +448,12 @@ struct SprayGuidedFormat {
     }
 
     /// Group-separated number, so 6250 reads as "6,250".
-    static func number(_ value: Double, decimals: Int = 0) -> String {
+    static func number(_ value: Double, decimals: Int = 0, locale: Locale = .current,
+                       roundingMode: NumberFormatter.RoundingMode = .halfEven) -> String {
         let formatter = NumberFormatter()
+        formatter.locale = locale
         formatter.numberStyle = .decimal
+        formatter.roundingMode = roundingMode
         formatter.maximumFractionDigits = decimals
         formatter.minimumFractionDigits = decimals
         return formatter.string(from: NSNumber(value: value)) ?? String(value)
@@ -458,10 +461,10 @@ struct SprayGuidedFormat {
 
     /// A product quantity in the line's own unit, or an explicit unavailable
     /// marker — never a fabricated zero.
-    static func quantity(_ value: Double?, unit: String) -> String {
+    static func quantity(_ value: Double?, unit: String, locale: Locale = .current) -> String {
         guard let value, value.isFinite else { return "Unavailable" }
         let decimals: Int = value < 10 ? 2 : (value < 100 ? 1 : 0)
-        return "\(number(value, decimals: decimals)) \(unit)"
+        return "\(number(value, decimals: decimals, locale: locale, roundingMode: .halfUp)) \(unit)"
     }
 
     func carrierBasisLabel(_ basis: SprayCarrierBasis) -> String {
@@ -500,9 +503,9 @@ struct SprayGuidedFormat {
     /// The engine works in base units throughout so a rate, a total and a tank
     /// share can never mean different things by the same number. This is the
     /// single conversion applied at the edge, for display only.
-    static func productQuantity(_ base: Double?, line: SprayProductLineResult) -> String {
+    static func productQuantity(_ base: Double?, line: SprayProductLineResult, locale: Locale = .current) -> String {
         guard let base, base.isFinite else { return "Unavailable" }
-        return quantity(line.unitDisplay.display(base), unit: line.unitDisplay.displayUnit)
+        return quantity(line.unitDisplay.display(base), unit: line.unitDisplay.displayUnit, locale: locale)
     }
 
     /// The MEASURED half of the calculation, e.g. `10.00 ha whole block`.
@@ -537,11 +540,11 @@ struct SprayGuidedFormat {
     /// since it was written — and nothing was rendering it. An operator told
     /// only "Unavailable" has to guess between the rate they have not picked
     /// and the canopy they have not set.
-    static func productRequirement(_ line: SprayProductLineResult) -> String {
+    static func productRequirement(_ line: SprayProductLineResult, locale: Locale = .current) -> String {
         guard line.totalQuantity != nil else {
             return line.unresolvedReason?.title ?? "Unavailable"
         }
-        return "\(productQuantity(line.totalQuantity, line: line)) required"
+        return "\(productQuantity(line.totalQuantity, line: line, locale: locale)) required"
     }
 
     /// The job's requirement per gross hectare, explicitly marked as DERIVED.
@@ -550,7 +553,7 @@ struct SprayGuidedFormat {
     /// — it is what an operator compares against last season — but the wording
     /// must never let it be read back as authority, so "Derived" is part of the
     /// string itself rather than a caption a layout change could drop.
-    static func productDerivedPerHectare(_ line: SprayProductLineResult) -> String? {
+    static func productDerivedPerHectare(_ line: SprayProductLineResult, locale: Locale = .current) -> String? {
         guard line.basis == .per100Litres,
               let perHectare = line.derivedQuantityPerHectare else { return nil }
         let value: Double
@@ -565,7 +568,7 @@ struct SprayGuidedFormat {
             unit = line.unitDisplay.displayUnit
         }
         let decimals: Int = value < 10 ? 2 : (value < 100 ? 1 : 0)
-        return "Derived equivalent: \(number(value, decimals: decimals)) \(unit)/ha"
+        return "Derived equivalent: \(number(value, decimals: decimals, locale: locale)) \(unit)/ha"
     }
 
     /// The action that would make an unresolved line calculable, in the

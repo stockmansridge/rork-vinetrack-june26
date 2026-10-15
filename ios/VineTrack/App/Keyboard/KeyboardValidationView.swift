@@ -67,11 +67,9 @@ private struct KeyboardValidationInputs: View {
             }
         }
         .onSubmit { submits += 1 }
-        .alert("Keyboard popup", isPresented: $showsAlert) {
-            TextField("Popup draft", text: $alertDraft).accessibilityIdentifier("input.alert")
-            Button("Cancel", role: .cancel) {}
-            Button("Confirm") { saves += 1 }
-        }
+        .keyboardInputAlert("Keyboard popup", isPresented: $showsAlert, draft: $alertDraft,
+            placeholder: "Popup draft", identifier: "input.alert", confirmTitle: "Confirm",
+            onConfirm: { saves += 1 })
         .toolbar {
             if !prefix.isEmpty {
                 ToolbarItem(placement: .topBarLeading) {

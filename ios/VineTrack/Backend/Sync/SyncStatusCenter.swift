@@ -34,6 +34,8 @@ final class SyncStatusCenter {
         case error
         /// Online and idle, with `count` items still queued to upload.
         case pending(Int)
+        /// Eligible work synchronized, but retained spray pairs await receipt authority.
+        case held(Int)
         /// Online and everything is uploaded.
         case synced
     }
@@ -41,6 +43,7 @@ final class SyncStatusCenter {
     private(set) var isSyncing: Bool = false
     private(set) var pendingUpserts: Int = 0
     private(set) var pendingDeletes: Int = 0
+    private(set) var heldSprayPairs: Int = 0
     /// Count of individual records whose last upload attempt failed and are
     /// queued to retry. Aggregated across every per-record sync service so the
     /// UI can say "3 records need retry" without flagging healthy records.
@@ -105,18 +108,22 @@ final class SyncStatusCenter {
     }
 
     /// True when uploads are still outstanding after the last online attempt.
-    var hasIncompleteUploads: Bool { pendingTotal > 0 }
+    var hasIncompleteUploads: Bool { pendingTotal > 0 || heldSprayPairs > 0 }
 
     /// Banner shown when a sweep finished but records are still queued —
     /// "Sync incomplete — 22 items still waiting".
     var incompleteSummary: String? {
+        if heldSprayPairs > 0 {
+            return "\(heldSprayPairs) saved spray job\(heldSprayPairs == 1 ? "" : "s") held on this device — verified receipt required; unrelated work continues syncing"
+        }
         guard pendingTotal > 0 else { return nil }
         return "Sync incomplete — \(pendingTotal) item\(pendingTotal == 1 ? "" : "s") still waiting"
     }
 
     /// Refresh the queued-item counts without touching sync timestamps. Used
     /// while offline so the indicator still reflects the local backlog.
-    func refreshPending(upserts: Int, deletes: Int, failedUpserts: Int = 0, failedDeletes: Int = 0) {
+    func refreshPending(upserts: Int, deletes: Int, failedUpserts: Int = 0, failedDeletes: Int = 0, heldSprayPairs: Int = 0) {
+        self.heldSprayPairs = heldSprayPairs
         pendingUpserts = upserts
         pendingDeletes = deletes
         self.failedUpserts = failedUpserts
@@ -134,15 +141,17 @@ final class SyncStatusCenter {
         failedUpserts: Int = 0,
         failedDeletes: Int = 0,
         pullSucceeded: Bool = true,
+        heldSprayPairs: Int = 0,
         error: String?
     ) {
         isSyncing = false
+        self.heldSprayPairs = heldSprayPairs
         pendingUpserts = upserts
         pendingDeletes = deletes
         self.failedUpserts = failedUpserts
         self.failedDeletes = failedDeletes
         let now = Date()
-        let uploadsDrained = (upserts + deletes) == 0
+        let uploadsDrained = (upserts + deletes) == 0 && heldSprayPairs == 0
 
         if pullSucceeded { lastPullAt = now }
         if uploadsDrained && error == nil { lastUploadAt = now }
@@ -159,8 +168,9 @@ final class SyncStatusCenter {
     func displayState(isOnline: Bool) -> DisplayState {
         if isSyncing { return .syncing }
         if !isOnline { return .offline }
-        if pendingTotal > 0 { return .pending(pendingTotal) }
         if lastError != nil { return .error }
+        if heldSprayPairs > 0 { return .held(heldSprayPairs) }
+        if pendingTotal > 0 { return .pending(pendingTotal) }
         return .synced
     }
 
@@ -172,6 +182,7 @@ final class SyncStatusCenter {
         case .error: return "Sync error · Will retry"
         case .pending(let count):
             return "Online · \(count) item\(count == 1 ? "" : "s") waiting to sync"
+        case .held(let count): return "Partial sync · \(count) spray job\(count == 1 ? "" : "s") held locally"
         case .synced: return "Online · Synced"
         }
     }

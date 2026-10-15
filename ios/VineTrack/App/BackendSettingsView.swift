@@ -1392,6 +1392,8 @@ struct SyncSettingsView: View {
 
             LabeledContent("Pending uploads", value: "\(syncCenter.pendingUpserts)")
                 .font(.footnote)
+            LabeledContent("Spray jobs held locally", value: "\(syncCenter.heldSprayPairs)")
+                .font(.footnote)
             LabeledContent("Pending deletes", value: "\(syncCenter.pendingDeletes)")
                 .font(.footnote)
             if let retrySummary = syncCenter.retrySummary {
@@ -1447,9 +1449,11 @@ struct SyncSettingsView: View {
         } header: {
             Text("Status")
         } footer: {
-            Text(network.isOnline
-                 ? "Everything you record is queued and uploaded automatically. Tap Refresh & sync now to push immediately."
-                 : "You're offline. Records keep saving locally and will sync as soon as you reconnect.")
+            Text(syncCenter.heldSprayPairs > 0
+                 ? "Held spray jobs are protected on this device and cannot Start or become server-ready until verified paired-create recovery is available. Refresh syncs unrelated work; it does not bypass this hold."
+                 : network.isOnline
+                    ? "Everything you record is queued and uploaded automatically. Tap Refresh & sync now to push immediately."
+                    : "You're offline. Records keep saving locally and will sync as soon as you reconnect.")
         }
     }
 
@@ -1540,7 +1544,7 @@ struct SyncSettingsView: View {
         case .offline: return "wifi.slash"
         case .syncing: return "arrow.triangle.2.circlepath"
         case .error: return "exclamationmark.triangle.fill"
-        case .pending: return "clock.arrow.circlepath"
+        case .pending, .held: return "clock.arrow.circlepath"
         case .synced: return "checkmark.icloud.fill"
         }
     }
@@ -1550,7 +1554,7 @@ struct SyncSettingsView: View {
         case .offline: return .secondary
         case .syncing: return .blue
         case .error: return .red
-        case .pending: return .orange
+        case .pending, .held: return .orange
         case .synced: return .green
         }
     }
@@ -1580,6 +1584,7 @@ struct SyncSettingsView: View {
     }
     private func tripStateFrom(_ status: TripSyncService.Status, lastSync: Date?) -> VineyardSyncState {
         switch status {
+        case .held(let count): return .held("Unrelated work synchronized; \(count) saved spray jobs held locally pending verified receipt.")
         case .idle: return .idle
         case .syncing: return .syncing
         case .success: return .success(lastSync)
@@ -1596,6 +1601,7 @@ struct SyncSettingsView: View {
     }
     private func sprayStateFrom(_ status: SprayRecordSyncService.Status, lastSync: Date?) -> VineyardSyncState {
         switch status {
+        case .held(let count): return .held("Unrelated work synchronized; \(count) saved spray jobs held locally pending verified receipt.")
         case .idle: return .idle
         case .syncing: return .syncing
         case .success: return .success(lastSync)

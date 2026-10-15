@@ -83,7 +83,11 @@ nonisolated struct SprayCarrierVolume: Sendable, Hashable {
     /// that 1.0 is not a finding — nothing was compared. The UI reads this to
     /// say "not used" rather than presenting a canopy result that was never
     /// calculated.
-    var hasCanopyConcentration: Bool { basis.usesCanopyRecommendation }
+    var hasCanopyConcentration: Bool {
+        // Manual totals normalize to canonical L/ha for persistence; that unit
+        // alone is not evidence that a canopy comparison was performed.
+        basis.usesCanopyRecommendation && (diluteLitresPer100Metres != nil || diluteLitresPerHectare != nil)
+    }
 }
 
 nonisolated enum SprayCarrierVolumeCalculator {

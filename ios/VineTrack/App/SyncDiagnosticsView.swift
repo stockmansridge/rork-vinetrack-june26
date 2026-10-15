@@ -1029,7 +1029,7 @@ struct SyncDiagnosticsView: View {
     }
 
     fileprivate enum GenericSyncStatus: String {
-        case idle, syncing, success, failure
+        case idle, syncing, success, held, failure
     }
 
     private var rows: [DiagnosticRow] {
@@ -1190,10 +1190,10 @@ struct SyncDiagnosticsView: View {
         switch s { case .idle: .idle; case .syncing: .syncing; case .success: .success; case .failure: .failure }
     }
     private func status(_ s: TripSyncService.Status) -> GenericSyncStatus {
-        switch s { case .idle: .idle; case .syncing: .syncing; case .success: .success; case .failure: .failure }
+        switch s { case .idle: .idle; case .syncing: .syncing; case .success: .success; case .held: .held; case .failure: .failure }
     }
     private func statusM(_ s: SprayRecordSyncService.Status) -> GenericSyncStatus {
-        switch s { case .idle: .idle; case .syncing: .syncing; case .success: .success; case .failure: .failure }
+        switch s { case .idle: .idle; case .syncing: .syncing; case .success: .success; case .held: .held; case .failure: .failure }
     }
     private func statusMgmt(_ s: ManagementSyncStatus) -> GenericSyncStatus {
         switch s { case .idle: .idle; case .syncing: .syncing; case .success: .success; case .failure: .failure }
@@ -1514,6 +1514,7 @@ private struct EntityDiagnosticRow: View {
             case .success:
                 if row.pendingUpserts > 0 || row.pendingDeletes > 0 { return ("pending", .orange) }
                 return ("synced", .green)
+            case .held: return ("spray work held locally", .orange)
             case .failure: return ("failed", .red)
             }
         }()

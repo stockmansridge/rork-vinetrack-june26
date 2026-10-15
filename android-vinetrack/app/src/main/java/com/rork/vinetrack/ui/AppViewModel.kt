@@ -3346,7 +3346,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             val retained = pending.getOrDefault(emptyList())
             if (retained.isNotEmpty()) {
-                _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
+                _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.status(retained, session.retentionGuard.identityEpoch.value)) }
+                resumePreparedLegacySpraySaves(retained)
                 // No legacy attempt enters a generic outbox. If another writer queued one,
                 // refuse the dependent pipeline rather than touching the held identities.
                 val ids = retained.flatMap { listOf(it.trip.id, it.recordId) }
@@ -11722,7 +11723,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val originalAccess = session.accountAccess() ?: run { onResult(false); return }
-        val originalToken = session.accessToken ?: run { onResult(false); return }
+        if (session.accessToken == null) { onResult(false); return }
         val originalTimestamp = sprayRepo.nowIso()
         val originalTripId = java.util.UUID.randomUUID().toString()
         val originalRecordId = sprayRepo.newId()
@@ -11739,47 +11740,45 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; onResult(false); return
         }
         if (!_ui.value.isOnline) {
-            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; onResult(false); return
+            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.UNSENT_MESSAGE) }
+            onResult(true) // Durable device save only, never a remote acceptance claim.
+            return
         }
+        submitPreparedLegacySpray(attempt, onResult)
+    }
+
+    private val legacySpraySends = mutableSetOf<String>()
+
+    private fun resumePreparedLegacySpraySaves(items: List<com.rork.vinetrack.data.LegacySpraySaveStore.Attempt>) {
+        if (!_ui.value.isOnline) return
+        items.filter { it.stage == com.rork.vinetrack.data.LegacySpraySaveStore.Stage.PREPARED &&
+            it.actorId == session.userId && it.identityEpoch == session.retentionGuard.identityEpoch.value }
+            .forEach { submitPreparedLegacySpray(it) {} }
+    }
+
+    private fun submitPreparedLegacySpray(attempt: com.rork.vinetrack.data.LegacySpraySaveStore.Attempt, onResult: (Boolean) -> Unit) {
+        val originalAccess = session.accountAccess() ?: return
+        val originalToken = session.accessToken ?: return
+        if (originalAccess.userId != attempt.actorId || attempt.identityEpoch != session.retentionGuard.identityEpoch.value ||
+            _ui.value.selectedVineyardId != attempt.trip.vineyardId || !legacySpraySends.add(attempt.recordId)) return
         viewModelScope.launch {
-            if (!session.withAccountAccess(originalAccess) { _ui.update { it.copy(sprayBusy = true, sprayError = null) } }) return@launch
-            var trip: Trip? = null
             try {
-                check(session.isAccountAccessCurrent(originalAccess))
-                legacySpraySaves.mark(attempt, com.rork.vinetrack.data.LegacySpraySaveStore.Stage.TRIP_UNKNOWN)
-                val plan = rowPlan ?: SprayJobRowPlan(
-                    trackingPattern = "freeDrive",
-                    rowSequence = emptyList(),
-                    totalTanks = input.tanks.size,
-                )
-                trip = tripRepo.createImportedTrip(
-                    vineyardId = vineyardId,
-                    paddockId = paddockId,
-                    paddockIds = paddockIds.distinct(),
-                    paddockName = paddockName?.ifBlank { null },
-                    personName = attempt.trip.personName,
-                    startTime = input.startTime,
-                    endTime = null,
-                    machineId = null,
-                    tractorId = input.tractorId,
-                    operatorUserId = originalAccess.userId,
-                    trackingPattern = plan.trackingPattern,
-                    rowSequence = plan.rowSequence,
-                    sequenceIndex = 0,
-                    totalTanks = plan.totalTanks,
-                    originalId = originalTripId, originalTimestamp = originalTimestamp,
-                    capturedToken = originalToken, capturedActor = originalAccess.userId,
-                )
-                check(session.isAccountAccessCurrent(originalAccess))
-                check(trip.id == originalTripId && trip.vineyardId == vineyardId && !trip.isActive && trip.endTime == null)
-                legacySpraySaves.mark(attempt, com.rork.vinetrack.data.LegacySpraySaveStore.Stage.TRIP_CONFIRMED)
-                legacySpraySaves.mark(attempt, com.rork.vinetrack.data.LegacySpraySaveStore.Stage.RECORD_UNKNOWN)
-                val created = sprayRepo.createSprayRecord(vineyardId, originalInput, originalRecordId, originalTimestamp,
-                    capturedToken = originalToken, capturedActor = originalAccess.userId)
-                check(session.isAccountAccessCurrent(originalAccess))
-                check(created.id == originalRecordId && created.tripId == originalTripId && created.vineyardId == vineyardId)
-                legacySpraySaves.mark(attempt, com.rork.vinetrack.data.LegacySpraySaveStore.Stage.COMPLETE)
-                val seededTrip: Trip = trip
+                if (!session.withAccountAccess(originalAccess) { _ui.update { it.copy(sprayBusy = true) } }) return@launch
+                val (seededTrip, created) = legacySpraySaves.sendPrepared(attempt,
+                    isAuthorityCurrent = { session.isAccountAccessCurrent(originalAccess) &&
+                        _ui.value.selectedVineyardId == attempt.trip.vineyardId },
+                    sendTrip = { original -> tripRepo.createImportedTrip(
+                        vineyardId = original.vineyardId, paddockId = original.paddockId,
+                        paddockIds = original.paddockIds, paddockName = original.paddockName,
+                        personName = original.personName, startTime = original.startTime, endTime = null,
+                        machineId = null, tractorId = original.tractorId, operatorUserId = original.actorId,
+                        trackingPattern = original.trackingPattern, rowSequence = original.rowSequence,
+                        sequenceIndex = 0, totalTanks = original.totalTanks,
+                        originalId = original.id, originalTimestamp = original.createdAt,
+                        capturedToken = originalToken, capturedActor = original.actorId) },
+                    sendRecord = { original -> sprayRepo.createSprayRecord(original.trip.vineyardId,
+                        original.input, original.recordId, original.trip.createdAt,
+                        capturedToken = originalToken, capturedActor = original.actorId) })
                 session.withAccountAccess(originalAccess) {
                     _ui.update {
                         it.copy(
@@ -11802,6 +11801,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     _ui.update { it.copy(sprayBusy = false, sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
                     onResult(false)
                 }
+            } finally {
+                legacySpraySends.remove(attempt.recordId)
             }
         }
     }
@@ -17125,8 +17126,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun loadVineyardDataBody(vineyardId: String) {
-        if (runCatching { legacySpraySaves.pending(vineyardId).isNotEmpty() }.getOrDefault(true)) {
+        val retainedLegacy = runCatching { legacySpraySaves.pending(vineyardId) }
+        if (retainedLegacy.isFailure) {
             _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
+        } else if (retainedLegacy.getOrDefault(emptyList()).isNotEmpty()) {
+            val attempts = retainedLegacy.getOrThrow()
+            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.status(attempts, session.retentionGuard.identityEpoch.value)) }
+            resumePreparedLegacySpraySaves(attempts)
         }
         val userId = session.userId ?: return
         val selectionEpoch = vineyardSelectionEpoch

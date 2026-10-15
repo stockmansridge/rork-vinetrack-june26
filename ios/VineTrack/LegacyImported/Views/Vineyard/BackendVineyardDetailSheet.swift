@@ -84,25 +84,12 @@ struct BackendVineyardDetailSheet: View {
                         .disabled(isWorking || isUploadingLogo)
                 }
             }
-            .alert("Rename Vineyard", isPresented: $showEditName) {
-                TextField("Vineyard name", text: $editedName)
-                Button("Save") {
-                    Task { await rename() }
-                }
-                Button("Cancel", role: .cancel) {}
-            }
-            .alert("Archive Vineyard?", isPresented: $showDeleteConfirm) {
-                TextField("Type DELETE to confirm", text: $deleteConfirmationText)
-                Button("Archive", role: .destructive) {
-                    Task { await deleteVineyard() }
-                }
-                .disabled(deleteConfirmationText != "DELETE")
-                Button("Cancel", role: .cancel) {
-                    deleteConfirmationText = ""
-                }
-            } message: {
-                Text(deleteWarningText)
-            }
+            .keyboardInputAlert("Rename Vineyard", isPresented: $showEditName, draft: $editedName,
+                placeholder: "Vineyard name", onConfirm: { Task { await rename() } })
+            .keyboardInputAlert("Archive Vineyard?", isPresented: $showDeleteConfirm, draft: $deleteConfirmationText,
+                placeholder: "Type DELETE to confirm", message: deleteWarningText,
+                confirmTitle: "Archive", confirmStyle: .destructive, canConfirm: { $0 == "DELETE" },
+                onConfirm: { Task { await deleteVineyard() } }, onCancel: { deleteConfirmationText = "" })
             .alert("Error", isPresented: errorBinding, presenting: errorMessage) { _ in
                 Button("OK", role: .cancel) { errorMessage = nil }
             } message: { message in

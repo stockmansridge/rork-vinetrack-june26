@@ -70,7 +70,10 @@ struct SprayManualVolumeTests {
 
         #expect(flow.isCarrierResolved)
         let carrier = try? #require(flow.carrier)
-        #expect(carrier?.basis == .manualTotalVolume)
+        #expect(flow.effectiveCarrierBasis == .manualTotalVolume)
+        // Manual remains the entry method; the existing wire contract normalizes
+        // the resolved carrier to canonical L/ha without fabricating geometry.
+        #expect(carrier?.basis == .litresPerHectare)
         #expect(abs((carrier?.totalLitres ?? 0) - 400) < tolerance)
         // Nothing to derive them FROM, and nothing that needed them.
         #expect(carrier?.litresPerHectare == nil)
@@ -199,7 +202,7 @@ struct SprayManualVolumeTests {
         let reference = SprayCalculationReferenceBuilder.make(flow: flow)
 
         let total = try? #require(reference.water.first { $0.id == "totalWater" })
-        #expect(total?.value == "400 L")
+        #expect(total?.value == "400.0 L")
         #expect(total?.workings?.contains("Entered directly") == true)
         #expect(total?.workings?.contains("L/ha ×") == false)
 
@@ -207,7 +210,7 @@ struct SprayManualVolumeTests {
         // the total rather than the other way round.
         let implied = try? #require(reference.water.first { $0.id == "impliedPerHa" })
         #expect(implied?.value == "40.00 L/ha")
-        #expect(implied?.workings?.contains("400 L ÷") == true)
+        #expect(implied?.workings?.contains("400.0 L ÷") == true)
         #expect(implied?.workings?.contains("for reference only") == true)
     }
 

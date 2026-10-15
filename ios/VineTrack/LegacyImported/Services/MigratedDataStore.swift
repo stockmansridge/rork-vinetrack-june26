@@ -1559,13 +1559,17 @@ final class MigratedDataStore {
     }
 
     /// Called at startup hydration and again before either dependent sync writer.
-    func reconcileLegacySpraySaves() throws {
+    func reconcileLegacySpraySaves(isolatingHeldFailures: Bool = false) throws {
         let journal = LegacySpraySaveRecovery(persistence: persistence)
         guard !((try journal.attempts()).isEmpty) else { return }
         guard let scope = legacySprayScopeProvider?(), selectedVineyardId == scope.vineyard else {
+            // Foreign retained evidence remains held but cannot veto unrelated work.
+            if isolatingHeldFailures { return }
             throw SprayTankActualValidationError.localSaveFailed
         }
-        let repaired = try journal.reconcile(scope: scope, record: { item in
+        let repaired: [LegacySpraySaveRecovery.Attempt]
+        do {
+        repaired = try journal.reconcile(scope: scope, record: { item in
             var next = self.sprayRecords
             if let index = next.firstIndex(where: { $0.id == item.id }) {
                 guard try LegacySpraySaveRecovery.sameProjection(next[index], item) else { throw SprayTankActualValidationError.localSaveFailed }
@@ -1584,11 +1588,21 @@ final class MigratedDataStore {
             try self.tripRepo.saveSliceOrThrow(next, for: item.vineyardId)
             self.trips = next
         })
+        } catch {
+            // No failed attempt is acknowledged or discarded. Only its identities
+            // remain held; sync preflights can still process unrelated records.
+            if isolatingHeldFailures { return }
+            throw error
+        }
         // Publication is AFTER both stores and the WAL completion marker are durable.
         for item in repaired {
             self.onTripChanged?(item.trip.id)
             self.onSprayRecordChanged?(item.record.id)
         }
+    }
+
+    func legacySprayHeldCount(vineyard: UUID) throws -> Int {
+        try LegacySpraySaveRecovery(persistence: persistence).attempts().filter { $0.scope.vineyard == vineyard }.count
     }
 
     func requireLegacySpraySweepCompletion(vineyard: UUID) throws {
@@ -1603,7 +1617,7 @@ final class MigratedDataStore {
 
     /// The ordinary REST upsert is not an immutable create receipt. Never replay a retained pair through LWW.
     func requireLegacySpraySyncAdmission(record: UUID? = nil, trip: UUID? = nil) throws {
-        try reconcileLegacySpraySaves()
+        try reconcileLegacySpraySaves(isolatingHeldFailures: true)
         if try LegacySpraySaveRecovery(persistence: persistence).contains(record: record, trip: trip) {
             throw SprayPlanningAdmissionError(message: "Legacy Save for Later is retained locally. Exact paired-create receipt verification is required before synchronization.")
         }

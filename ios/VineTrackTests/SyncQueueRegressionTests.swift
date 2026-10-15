@@ -401,6 +401,21 @@ struct UserVineyardDecodingTests {
 /// "Last full sync" must never advertise success while uploads are stuck.
 @MainActor
 struct SyncStatusTimestampTests {
+    @Test("Held pairs are partial synchronization, not retry failures or server success")
+    func heldPairsDoNotClaimCompleteSync() {
+        let center = SyncStatusCenter()
+        center.syncDidStart()
+        center.syncDidFinish(upserts: 0, deletes: 0, pullSucceeded: true, heldSprayPairs: 2, error: nil)
+        #expect(center.lastPullAt != nil)
+        #expect(center.lastFullSyncAt == nil && center.lastUploadAt == nil)
+        #expect(center.lastFailureAt == nil && center.lastError == nil)
+        #expect(center.displayState(isOnline: true) == .held(2))
+        #expect(center.hasIncompleteUploads)
+        #expect(center.retrySummary == nil)
+        #expect(center.incompleteSummary?.contains("unrelated work continues") == true)
+        center.refreshPending(upserts: 0, deletes: 0, heldSprayPairs: 0)
+        #expect(center.displayState(isOnline: true) == .synced)
+    }
 
     @Test("Full-sync timestamp does not advance while uploads remain")
     func fullSyncBlockedByPendingUploads() {

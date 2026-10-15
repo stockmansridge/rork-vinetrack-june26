@@ -80,18 +80,13 @@ private struct BunchWeightRow: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .alert("Bunch Weight", isPresented: $isEditing) {
-            TextField("Weight in grams", text: $weightText)
-                .keyboardType(.decimalPad)
-            Button("Cancel", role: .cancel) {}
-            Button("Save") {
+        .keyboardInputAlert("Bunch Weight", isPresented: $isEditing, draft: $weightText,
+            placeholder: "Weight in grams", message: "Enter the default bunch weight in grams for \(paddock.name).",
+            keyboardType: .decimalPad, onConfirm: {
                 guard let grams = Double(weightText), grams > 0 else { return }
                 var s = store.settings
                 s.defaultBlockBunchWeightsGrams[paddock.id] = grams
                 store.updateSettings(s)
-            }
-        } message: {
-            Text("Enter the default bunch weight in grams for \(paddock.name).")
-        }
+            })
     }
 }

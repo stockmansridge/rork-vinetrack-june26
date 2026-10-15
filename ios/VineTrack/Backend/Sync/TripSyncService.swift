@@ -13,6 +13,7 @@ final class TripSyncService {
         case idle
         case syncing
         case success
+        case held(Int)
         case failure(String)
     }
 
@@ -20,8 +21,12 @@ final class TripSyncService {
     var lastSyncDate: Date?
     var errorMessage: String?
 
-    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
-    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
+    private func isHeld(_ id: UUID) -> Bool {
+        guard let store else { return false }
+        return (try? store.isLegacySpraySyncHeld(trip: id)) ?? true
+    }
+    var pendingUpsertCount: Int { metadata.pendingUpserts.keys.filter { !isHeld($0) }.count }
+    var pendingDeleteCount: Int { metadata.pendingDeletes.keys.filter { !isHeld($0) }.count }
     /// Number of trips with a queued explicit `work_task_id = null` clear that
     /// has not yet been confirmed by the server.
     var pendingWorkTaskClearCount: Int { metadata.pendingWorkTaskClears.count }
@@ -34,7 +39,7 @@ final class TripSyncService {
     /// trip can be queued purely because its FINAL ended state is held back
     /// while its actual-use rows upload, and that must never block its own
     /// children.
-    func isParentEstablished(_ id: UUID) -> Bool { metadata.isParentEstablished(id) }
+    func isParentEstablished(_ id: UUID) -> Bool { !isHeld(id) && metadata.isParentEstablished(id) }
 
     /// True only when the parent row has never reached the server. This is the
     /// one legitimate reason to defer a child upload.
@@ -88,12 +93,12 @@ final class TripSyncService {
     /// Whether a specific trip's last push failed while still pending. Used for
     /// per-record error isolation so one failed trip never makes others look
     /// failed.
-    func hasFailure(_ id: UUID) -> Bool { metadata.isUpsertFailed(id) || metadata.isDeleteFailed(id) }
+    func hasFailure(_ id: UUID) -> Bool { !isHeld(id) && (metadata.isUpsertFailed(id) || metadata.isDeleteFailed(id)) }
 
     /// Trips whose last upsert push failed while still pending.
-    var failedUpsertIds: Set<UUID> { metadata.failedUpsertIds }
+    var failedUpsertIds: Set<UUID> { Set(metadata.failedUpsertIds.filter { !isHeld($0) }) }
     /// Trips whose last remote delete failed while still pending.
-    var failedDeleteIds: Set<UUID> { metadata.failedDeleteIds }
+    var failedDeleteIds: Set<UUID> { Set(metadata.failedDeleteIds.filter { !isHeld($0) }) }
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
@@ -156,6 +161,7 @@ final class TripSyncService {
     /// (non-nil), while a full unlink requires connectivity to clear.
     func setWorkTaskLink(tripId: UUID, workTaskId: UUID?) async {
         guard let store else { return }
+        guard !isHeld(tripId) else { return }
         guard var trip = store.trips.first(where: { $0.id == tripId }) else { return }
         trip.workTaskId = workTaskId
         store.updateTrip(trip)
@@ -214,10 +220,14 @@ final class TripSyncService {
             try await pushLocalTrips(vineyardId: vineyardId)
             await TripLabourSnapshotJournal.shared.replay(trips: store?.trips ?? [])
             try await pullRemoteTrips(vineyardId: vineyardId)
-            try store?.requireLegacySpraySweepCompletion(vineyard: vineyardId)
+            let held = try store?.legacySprayHeldCount(vineyard: vineyardId) ?? 0
             metadata.setLastSync(Date(), for: vineyardId)
-            lastSyncDate = Date()
-            syncStatus = .success
+            if held > 0 {
+                syncStatus = .held(held)
+            } else {
+                lastSyncDate = Date()
+                syncStatus = .success
+            }
         } catch {
             errorMessage = error.localizedDescription
             syncStatus = .failure(error.localizedDescription)
@@ -574,11 +584,11 @@ final class TripSyncService {
 
     func pushLocalTrips(vineyardId: UUID) async throws {
         guard let store else { return }
-        try store.reconcileLegacySpraySaves()
+        try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
         let createdBy = auth?.userId
         var dirty = metadata.pendingUpserts
         for id in Array(dirty.keys) where try store.isLegacySpraySyncHeld(trip: id) {
-            metadata.markUpsertsFailed([id]); dirty.removeValue(forKey: id)
+            dirty.removeValue(forKey: id)
         }
         if !dirty.isEmpty {
             // An admin end wins over an offline active snapshot regardless of its
@@ -702,7 +712,7 @@ final class TripSyncService {
         let deletes = metadata.pendingDeletes
         var deleteFailures: [String] = []
         for (tripId, _) in deletes {
-            if try store.isLegacySpraySyncHeld(trip: tripId) { metadata.markDeletesFailed([tripId]); continue }
+            if try store.isLegacySpraySyncHeld(trip: tripId) { continue }
             do {
                 try await repository.softDeleteTrip(id: tripId)
                 metadata.clearDeleted([tripId])

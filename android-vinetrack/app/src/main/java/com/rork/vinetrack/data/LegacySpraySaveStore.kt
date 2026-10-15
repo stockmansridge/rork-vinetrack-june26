@@ -62,7 +62,33 @@ class LegacySpraySaveStore(context: Context) {
             (before == Stage.RECORD_UNKNOWN && stage == Stage.COMPLETE))
         write(items.mapIndexed { i, value -> if (i == index) value.copy(stage = stage) else value })
     } }
-    /** Startup/reconnect is containment-only until immutable paired-create acceptance can be verified. */
+    /** Only PREPARED is provably unsent: every transport call follows a checked UNKNOWN commit.
+     * Once claimed, even a cancellation immediately before HTTP stays uncertain, never reset to PREPARED.
+     */
+    suspend fun sendPrepared(
+        item: Attempt,
+        isAuthorityCurrent: () -> Boolean,
+        sendTrip: suspend (TripIntent) -> com.rork.vinetrack.data.model.Trip,
+        sendRecord: suspend (Attempt) -> com.rork.vinetrack.data.model.SprayRecord,
+    ): Pair<com.rork.vinetrack.data.model.Trip, com.rork.vinetrack.data.model.SprayRecord> {
+        check(isAuthorityCurrent())
+        // This atomic transition also prevents concurrent reconnect/save paths from double sending.
+        mark(item, Stage.TRIP_UNKNOWN)
+        check(isAuthorityCurrent())
+        val trip = sendTrip(item.trip)
+        check(isAuthorityCurrent())
+        check(trip.id == item.trip.id && trip.vineyardId == item.trip.vineyardId && !trip.isActive && trip.endTime == null)
+        mark(item, Stage.TRIP_CONFIRMED)
+        mark(item, Stage.RECORD_UNKNOWN)
+        check(isAuthorityCurrent())
+        val record = sendRecord(item)
+        check(isAuthorityCurrent())
+        check(record.id == item.recordId && record.tripId == item.trip.id && record.vineyardId == item.trip.vineyardId)
+        mark(item, Stage.COMPLETE)
+        return trip to record
+    }
+
+    /** Uncertain REST outcomes remain contained until immutable acceptance can be verified. */
     fun pending(vineyardId: String): List<Attempt> = access.admitted { synchronized(this) {
         read().filter { it.actorId == access.ownerUserId && it.trip.vineyardId == vineyardId && it.stage != Stage.COMPLETE }
     } }
@@ -91,6 +117,14 @@ class LegacySpraySaveStore(context: Context) {
             check(same(expected, actual)) { MESSAGE }
         }
         const val PREFERENCES = "vinetrack_legacy_spray_saves_v1"
+        const val UNSENT_MESSAGE = "Spray job saved on this device — not sent yet. The original job will send when online with the same authorised account. Start is unavailable until both original writes are confirmed."
+        fun status(items: List<Attempt>, currentEpoch: Long? = null): String? = when {
+            items.isEmpty() -> null
+            currentEpoch != null && items.any { it.identityEpoch != currentEpoch } ->
+                "Retained spray work belongs to an earlier account session. It is protected and was not reassigned or sent; account recovery is required."
+            items.any { it.stage != Stage.PREPARED } -> MESSAGE
+            else -> UNSENT_MESSAGE
+        }
         const val MESSAGE = "A legacy Save for Later attempt is retained for review. No duplicate or rollback was attempted. Verified paired-create recovery is required before retry or dependent sync."
     }
 }

@@ -199,13 +199,9 @@ struct UnifiedPinComposerView: View {
         } message: {
             Text("Pin saved, but the photo could not be saved on this device.")
         }
-        .alert("Add custom item", isPresented: $showAddCustom) {
-            TextField("Custom item name", text: $newCustomName)
-            Button("Add") { addCustomItem() }
-            Button("Cancel", role: .cancel) { newCustomName = "" }
-        } message: {
-            Text("Shared with everyone in this vineyard.")
-        }
+        .keyboardInputAlert("Add custom item", isPresented: $showAddCustom, draft: $newCustomName,
+            placeholder: "Custom item name", message: "Shared with everyone in this vineyard.",
+            confirmTitle: "Add", onConfirm: { addCustomItem() }, onCancel: { newCustomName = "" })
     }
 
     // MARK: - Step 1: location method

@@ -79,7 +79,9 @@ final class SprayBandedGroundCarrierTests: XCTestCase {
 
     func testGroundTargetsHaveNoCanopyBlocker() {
         for target in SprayGroundTarget.allCases {
-            let flow = banded(basis: .litresPerHectare, areaBasis: .treatedArea, rate: 200, groundTarget: target)
+            let flow = banded(basis: .litresPerHectare, areaBasis: .treatedArea, rate: 200,
+                products: [SprayProductLineInput(productId: "ground", name: "Ground product", unit: "L", basis: .treatedArea, rate: 2)],
+                groundTarget: target)
             XCTAssertNil(flow.blocker(for: .carrier))
             XCTAssertEqual(flow.snapshot?.groundTarget, target)
             XCTAssertEqual(flow.snapshot?.carrierAreaBasis, .treatedArea)

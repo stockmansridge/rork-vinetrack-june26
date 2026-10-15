@@ -127,6 +127,70 @@ class LegacySpraySaveAndroidTest {
         } finally { context.dispose() }
     }
 
+    @Test fun provablyUnsentRestartUsesOnlyTheExactOriginalAndCanComplete() = kotlinx.coroutines.runBlocking {
+        val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            val original = fixture(context)
+            LegacySpraySaveStore(context).prepare(original)
+            val restarted = LegacySpraySaveStore(context)
+            val retained = restarted.pending(original.trip.vineyardId).single()
+            assertEquals(LegacySpraySaveStore.UNSENT_MESSAGE, LegacySpraySaveStore.status(listOf(retained)))
+            var requests = 0
+            val result = restarted.sendPrepared(retained, { true }, { trip ->
+                requests++
+                assertEquals(original.trip, trip)
+                assertEquals(LegacySpraySaveStore.Stage.TRIP_UNKNOWN, restarted.pending(trip.vineyardId).single().stage)
+                com.rork.vinetrack.data.model.Trip(trip.id, trip.vineyardId)
+            }, { item ->
+                requests++
+                assertEquals(original, item)
+                assertEquals(LegacySpraySaveStore.Stage.RECORD_UNKNOWN, restarted.pending(item.trip.vineyardId).single().stage)
+                com.rork.vinetrack.data.model.SprayRecord(item.recordId, item.trip.vineyardId, tripId = item.trip.id)
+            })
+            assertEquals(2, requests)
+            assertEquals(original.trip.id, result.first.id)
+            assertEquals(original.recordId, result.second.id)
+            assertTrue(restarted.pending(original.trip.vineyardId).isEmpty())
+            assertFalse(restarted.blocks(original.trip.id))
+            assertTrue(runCatching { restarted.sendPrepared(original, { true }, { error("duplicate") }, { error("duplicate") }) }.isFailure)
+        } finally { context.dispose() }
+    }
+
+    @Test fun uncertainSendIsNeverRetriedAndRevocationCannotReachTransport() = kotlinx.coroutines.runBlocking {
+        val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            val original = fixture(context); val store = LegacySpraySaveStore(context)
+            store.prepare(original)
+            var requests = 0
+            assertTrue(runCatching { store.sendPrepared(original, { false }, { requests++; error("revoked") }, { error("revoked") }) }.isFailure)
+            assertEquals(0, requests)
+            assertEquals(original, store.pending(original.trip.vineyardId).single())
+            assertTrue(runCatching { store.sendPrepared(original, { true }, { requests++; error("lost response") }, { error("not admitted") }) }.isFailure)
+            val retained = LegacySpraySaveStore(context).pending(original.trip.vineyardId).single()
+            assertEquals(original.copy(stage = LegacySpraySaveStore.Stage.TRIP_UNKNOWN), retained)
+            assertEquals(LegacySpraySaveStore.MESSAGE, LegacySpraySaveStore.status(listOf(retained)))
+            assertTrue(runCatching { store.sendPrepared(original, { true }, { requests++; error("duplicate") }, { error("duplicate") }) }.isFailure)
+            assertEquals(1, requests)
+        } finally { context.dispose() }
+    }
+
+    @Test fun failedUnsentClaimAndChangedAccountLeaveOriginalWithoutRequests() = kotlinx.coroutines.runBlocking {
+        val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            val original = fixture(context); val store = LegacySpraySaveStore(context)
+            store.prepare(original)
+            context.failCommit = true
+            var requests = 0
+            assertTrue(runCatching { store.sendPrepared(original, { true }, { requests++; error("not admitted") }, { error("not admitted") }) }.isFailure)
+            assertEquals(0, requests)
+            context.failCommit = false
+            assertEquals(original, store.pending(original.trip.vineyardId).single())
+            SessionStore(context).clear()
+            assertTrue(runCatching { LegacySpraySaveStore(context).sendPrepared(original, { true }, { requests++; error("not admitted") }, { error("not admitted") }) }.isFailure)
+            assertEquals(0, requests)
+        } finally { context.dispose() }
+    }
+
     @Test fun initialEchoMustIncludeOriginalEvidenceAndCannotTreatConflictAsAcknowledgement() {
         val request = buildJsonObject { put("id", "original"); put("amount", 25.75); put("conditions", "Frozen"); put("trip_id", JsonNull) }
         LegacySpraySaveStore.requireEcho(request, request)

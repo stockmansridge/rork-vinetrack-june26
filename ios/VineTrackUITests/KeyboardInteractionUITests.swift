@@ -188,13 +188,13 @@ final class KeyboardInteractionUITests: XCTestCase {
         XCTAssertEqual(text.value as? String, "Draft")
         XCTAssertEqual(number.value as? String, "42")
         app.buttons["keyboard.alert"].tap()
-        let popup = app.alerts["Keyboard popup"]
+        let popup = app.otherElements["keyboard.inputPrompt"]
         XCTAssertTrue(popup.waitForExistence(timeout: 5), "Keyboard popup is presented after tapping alert action")
         let draft = popup.textFields.firstMatch
         draft.tap(); draft.typeText("Popup draft")
         // The first keyboard accessory was destroyed on dismissal. Resolve the
         // alert's accessory independently, retaining the same visibility assertion.
-        let alertDone = app.buttons.matching(identifier: "keyboard.dismiss").firstMatch
+        let alertDone = popup.buttons.matching(identifier: "keyboard.dismiss").firstMatch
         let alertDoneExists = alertDone.waitForExistence(timeout: 5)
         XCTAssertTrue(alertDoneExists, "App-owned alert text control")
         guard alertDoneExists else {
@@ -204,6 +204,8 @@ final class KeyboardInteractionUITests: XCTestCase {
             add(hierarchy)
             return
         }
+        XCTAssertTrue(alertDone.isHittable, "Dialog Done must be visibly reachable")
+        XCTAssertEqual(alertDone.label, "Done")
         alertDone.tap()
         let alertKeyboardHidden = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
         XCTAssertEqual(XCTWaiter.wait(for: [alertKeyboardHidden], timeout: 5), .completed, "Alert Done dismisses only the keyboard")

@@ -4,7 +4,7 @@ import Testing
 
 @MainActor
 struct SprayStartPresentationTests {
-    @Test func advisoryRecipeCanBeDurablySavedAndAdmittedForStart() throws {
+    @Test func advisoryRecipeCanBeDurablySavedWithoutBypassingReceiptHold() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -12,6 +12,8 @@ struct SprayStartPresentationTests {
         let store = MigratedDataStore(persistence: persistence)
         let vineyard = UUID()
         store.selectedVineyardId = vineyard
+        let scope = LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: vineyard)
+        store.legacySprayScopeProvider = { scope }
         let time = Date(timeIntervalSince1970: 1_800_000_000)
         let trip = Trip(vineyardId: vineyard, paddockName: "Synthetic", startTime: time, isActive: false)
         let tank = SprayTank(concentrationFactor: 2, chemicals: [SprayChemical(name: "Unverified sulphur", ratePer100L: 100)])
@@ -22,6 +24,9 @@ struct SprayStartPresentationTests {
         #expect(SprayPlanningOperationalGate.tankConfirmationBlocker(current: record, captured: record) == nil)
         #expect(BackendSprayRecord.upsert(from: record, createdBy: nil, clientUpdatedAt: time).operationalPlanningBlocker == nil)
         #expect(record.tanks == [tank])
+        // WARNING-only chemistry does not remove the separate immutable-receipt gate.
+        #expect(try store.isLegacySpraySyncHeld(trip: trip.id))
+        #expect(throws: (any Error).self) { try store.requireLegacySpraySyncAdmission(trip: trip.id) }
     }
 
     @Test func numericFirstRateDetailsRetainDistinctUsesAndRestrictions() {

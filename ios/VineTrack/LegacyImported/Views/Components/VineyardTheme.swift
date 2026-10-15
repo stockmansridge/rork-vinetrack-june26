@@ -339,6 +339,7 @@ enum VineyardSyncState {
     case idle
     case syncing
     case success(Date?)
+    case held(String)
     case failure(String)
 }
 
@@ -369,6 +370,11 @@ struct VineyardSyncStatusRow: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+            case .held(let message):
+                Label(message, systemImage: "pause.circle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             case .failure(let message):
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")

@@ -113,13 +113,9 @@ struct ResistancePlannerView: View {
                 }
             )
         }
-        .alert("Rename plan", isPresented: renameAlertBinding) {
-            TextField("Plan name", text: $renameText)
-            Button("Save") { commitRename() }
-            Button("Cancel", role: .cancel) { renamingPlan = nil }
-        } message: {
-            Text("Shown in the plan list. Clear it to fall back to season and disease.")
-        }
+        .keyboardInputAlert("Rename plan", isPresented: renameAlertBinding, draft: $renameText,
+            placeholder: "Plan name", message: "Shown in the plan list. Clear it to fall back to season and disease.",
+            onConfirm: { commitRename() }, onCancel: { renamingPlan = nil })
         .confirmationDialog(
             "Archive this plan?",
             isPresented: archiveDialogBinding,

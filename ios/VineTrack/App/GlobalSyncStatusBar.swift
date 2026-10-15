@@ -34,7 +34,7 @@ struct GlobalSyncStatusBar: View {
             Text(sync.label(isOnline: network.isOnline))
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.primary)
-                .lineLimit(1)
+                .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 0)
 
@@ -70,7 +70,7 @@ struct GlobalSyncStatusBar: View {
         case .offline: return "wifi.slash"
         case .syncing: return "arrow.triangle.2.circlepath"
         case .error: return "exclamationmark.triangle.fill"
-        case .pending: return "clock.arrow.circlepath"
+        case .pending, .held: return "clock.arrow.circlepath"
         case .synced: return "checkmark.circle.fill"
         }
     }
@@ -80,7 +80,7 @@ struct GlobalSyncStatusBar: View {
         case .offline: return .secondary
         case .syncing: return .blue
         case .error: return .red
-        case .pending: return .orange
+        case .pending, .held: return .orange
         case .synced: return .green
         }
     }

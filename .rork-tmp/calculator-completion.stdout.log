@@ -127,7 +127,7 @@ SprayCalculatorCompletionTest > failedPendingCreateReplacementRetainsOriginalDur
 SprayCalculatorCompletionTest > blockedAndInFlightCreatesCannotBeReplacedOrUnblocked PASSED
 
 SprayCalculatorTimingTest > repeatedPlanReads STANDARD_OUT
-    CALCULATOR_TIMING repeated_plan_300 ms=2.854361 checksum=540000.0
+    CALCULATOR_TIMING repeated_plan_300 ms=3.124382 checksum=540000.0
 
 SprayCalculatorTimingTest > repeatedPlanReads PASSED
 
@@ -425,6 +425,6 @@ StartTankCommitCoordinatorTest > repeatedRecoveryFromEachIncompleteStoreStateNev
 
 StartTankCommitCoordinatorTest > failedJournalWriteMutatesNothing PASSED
 
-BUILD SUCCESSFUL in 27s
+BUILD SUCCESSFUL in 30s
 26 actionable tasks: 3 executed, 23 up-to-date
 CALCULATOR_REGRESSION_EXIT=0

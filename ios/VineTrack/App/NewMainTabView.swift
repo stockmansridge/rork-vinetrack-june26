@@ -272,7 +272,7 @@ struct NewMainTabView: View {
         .onChange(of: network.isOnline) { _, online in
             guard online else {
                 // Going offline: keep the indicator's backlog count fresh.
-                syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes, failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes)
+                syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes, failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes, heldSprayPairs: heldLegacySprayPairs)
                 return
             }
             Task {
@@ -395,7 +395,7 @@ struct NewMainTabView: View {
                 count: aggregatePendingUpserts + aggregatePendingDeletes
             )
         }
-        syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes, failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes)
+        syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes, failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes, heldSprayPairs: heldLegacySprayPairs)
 
         // Offline: everything stays queued locally and retries on reconnect.
         // We skip the network round-trips so we don't generate false errors
@@ -548,6 +548,7 @@ struct NewMainTabView: View {
             failedUpserts: aggregateFailedUpserts,
             failedDeletes: aggregateFailedDeletes,
             pullSucceeded: sweepError == nil,
+            heldSprayPairs: heldLegacySprayPairs,
             error: sweepError
         )
         if let sweepVineyardId {
@@ -792,6 +793,12 @@ struct NewMainTabView: View {
     /// First meaningful sync error reported by any service this sweep, if any.
     /// Plain "not configured" notices are ignored — they aren't actionable
     /// field errors.
+    private var heldLegacySprayPairs: Int {
+        guard let vineyard = store.selectedVineyardId else { return 0 }
+        // A corrupt retained store is not proof that the hold disappeared.
+        return (try? store.legacySprayHeldCount(vineyard: vineyard)) ?? 1
+    }
+
     private var aggregateSyncError: String? {
         let messages = [
             pinSync.errorMessage,

@@ -57,6 +57,7 @@ struct HomeSyncStatusChip: View {
         case .syncing: return "Syncing"
         case .error: return "Sync error"
         case .pending(let count): return "\(count) waiting"
+        case .held(let count): return "\(count) spray jobs held"
         case .synced: return "Synced"
         }
     }
@@ -66,7 +67,7 @@ struct HomeSyncStatusChip: View {
         case .offline: return "wifi.slash"
         case .syncing: return "arrow.triangle.2.circlepath"
         case .error: return "exclamationmark.triangle.fill"
-        case .pending: return "clock.arrow.circlepath"
+        case .pending, .held: return "clock.arrow.circlepath"
         case .synced: return "checkmark.circle.fill"
         }
     }
@@ -76,7 +77,7 @@ struct HomeSyncStatusChip: View {
         case .offline: return .secondary
         case .syncing: return .blue
         case .error: return .red
-        case .pending: return .orange
+        case .pending, .held: return .orange
         case .synced: return .green
         }
     }

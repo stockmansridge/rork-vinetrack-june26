@@ -211,12 +211,58 @@ final class SpraySaveForLaterTests: XCTestCase {
         try await tripSync.pushLocalTrips(vineyardId: vineyard)
         XCTAssertTrue(records.writes.isEmpty && trips.writes.isEmpty)
         XCTAssertTrue(records.deletes.isEmpty && trips.deletes.isEmpty)
+        await tripSync.setWorkTaskLink(tripId: trip.id, workTaskId: UUID())
+        XCTAssertTrue(trips.writes.isEmpty)
+        XCTAssertEqual(store.trips.first { $0.id == trip.id }, trip)
+        XCTAssertFalse(tripSync.isParentEstablished(trip.id))
         XCTAssertThrowsError(try store.requireLegacySpraySweepCompletion(vineyard: vineyard))
         let unrelated = SprayRecord(vineyardId: vineyard, notes: "Unrelated legacy record")
         XCTAssertTrue(store.addSprayRecord(unrelated))
         try await recordSync.pushLocalSprayRecords(vineyardId: vineyard)
         XCTAssertEqual(records.writes, [unrelated.id])
+        // A retained local conflict must not prevent a second unrelated upload.
+        var changed = record; changed.notes = "Conflicting projection"
+        store.sprayRecords = store.sprayRecords.map { $0.id == record.id ? changed : $0 }
+        let journal = LegacySpraySaveRecovery(persistence: p)
+        // The original exact pair and global identity hold survive foreign account scope.
+        store.legacySprayScopeProvider = { LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: vineyard) }
+        let historical = Trip(vineyardId: vineyard, paddockName: "Historical unrelated", isActive: true)
+        store.trips.append(historical); tripSync.markTripDirty(historical.id)
+        try await tripSync.pushLocalTrips(vineyardId: vineyard)
+        XCTAssertEqual(trips.writes, [historical.id])
+        XCTAssertEqual(try store.legacySprayHeldCount(vineyard: vineyard), 1)
+        XCTAssertTrue(try journal.contains(trip: trip.id))
+        XCTAssertFalse(try journal.contains(trip: historical.id))
         XCTAssertEqual(try LegacySpraySaveRecovery(persistence: p).attempts().first?.record, record)
+    }
+
+    @MainActor func testIncompleteRepairConflictCannotVetoUnrelatedUploadOrReleaseOriginal() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let p = PersistenceStore(directory: root)
+        let store = MigratedDataStore(persistence: p)
+        let vineyard = UUID(); store.selectedVineyardId = vineyard
+        let scope = LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: vineyard)
+        let trip = Trip(vineyardId: vineyard, paddockName: "Original", isActive: false)
+        let record = SprayRecord(tripId: trip.id, vineyardId: vineyard, notes: "Original")
+        let journal = LegacySpraySaveRecovery(persistence: p)
+        try journal.prepare(scope: scope, record: record, trip: trip)
+        var changed = record; changed.notes = "Conflict"
+        store.sprayRecords = [changed]
+        let records = LegacyRecordSyncProbe()
+        let sync = SprayRecordSyncService(repository: records, metadata: SprayRecordSyncMetadata(persistence: p))
+        sync.configure(store: store, auth: NewBackendAuthService())
+        store.legacySprayScopeProvider = { scope }
+        let unrelated = SprayRecord(vineyardId: vineyard, notes: "Unrelated")
+        XCTAssertTrue(store.addSprayRecord(unrelated))
+        try await sync.pushLocalSprayRecords(vineyardId: vineyard)
+        XCTAssertEqual(records.writes, [unrelated.id])
+        XCTAssertEqual(store.sprayRecords.first { $0.id == record.id }, changed)
+        XCTAssertEqual(try journal.attempts().first?.record, record)
+        XCTAssertFalse(try journal.attempts().first?.localComplete ?? true)
+        XCTAssertThrowsError(try store.requireLegacySpraySyncAdmission(record: record.id))
+        XCTAssertFalse(sync.hasFailure(record.id))
     }
 
     @MainActor func testPlanningGateRefusesBeforeEitherWrite() {

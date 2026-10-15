@@ -104,6 +104,7 @@ struct SprayCalculationContractTests {
     @Test("The same canopy states the same dilute demand in either basis")
     func canopyIsOneRequirement() throws {
         var canopy = SprayCanopySelection.unconfirmed
+        canopy.choose(type: .vsp)
         canopy.choose(size: .small)
         canopy.choose(density: .low)
         let per100m = canopy.litresPer100m()
@@ -297,8 +298,9 @@ struct SprayCalculationContractTests {
         let perHectare = try #require(line.derivedQuantityPerHectare)
         #expect(abs(perHectare - 1_074.489_795) < 0.001)
 
-        let text = try #require(SprayGuidedFormat.productDerivedPerHectare(line))
-        #expect(text == "Derived equivalent: 1.07 Kg/ha")
+        let text = try #require(SprayGuidedFormat.productDerivedPerHectare(line, locale: Locale(identifier: "en_AU")))
+        // The approved rate-unit correction keeps equivalents in the label's grams.
+        #expect(text == "Derived equivalent: 1,074 g/ha")
         // The wording carries the qualifier itself, so a layout change cannot
         // drop a caption and leave a derived figure reading as authority.
         #expect(text.hasPrefix("Derived"))
@@ -325,10 +327,12 @@ struct SprayCalculationContractTests {
     func totalConvertsToTheStockUnit() {
         let line = dithaneLine(totalQuantity: 526.5)
         #expect(line.unitDisplay.display(526.5) == 0.5265)
-        #expect(SprayGuidedFormat.productQuantity(526.5, line: line) == "0.53 Kg")
-        #expect(SprayGuidedFormat.productRequirement(line) == "0.53 Kg required")
+        #expect(SprayGuidedFormat.productQuantity(526.5, line: line, locale: Locale(identifier: "en_AU")) == "0.53 Kg")
+        #expect(SprayGuidedFormat.productRequirement(line, locale: Locale(identifier: "en_AU")) == "0.53 Kg required")
+        #expect(SprayGuidedFormat.productQuantity(525, line: line, locale: Locale(identifier: "en_AU")) == "0.53 Kg")
+        #expect(SprayGuidedFormat.productQuantity(525, line: line, locale: Locale(identifier: "de_DE")) == "0,53 Kg")
         // Never the raw base number wearing the stock unit's name.
-        #expect(SprayGuidedFormat.productRequirement(line) != "526.5 Kg required")
+        #expect(SprayGuidedFormat.productRequirement(line, locale: Locale(identifier: "en_AU")) != "526.5 Kg required")
     }
 
     @Test("The full calculation line states label rate × carrier, correctly")
@@ -385,7 +389,7 @@ struct SprayCalculationContractTests {
         // 150 × 350 / 100 × 1.0
         #expect(line.totalQuantity == 525)
         #expect(SprayGuidedFormat.productRate(line) == "150 g/100 L")
-        #expect(SprayGuidedFormat.productRequirement(line) == "0.53 Kg required")
+        #expect(SprayGuidedFormat.productRequirement(line, locale: Locale(identifier: "en_AU")) == "0.53 Kg required")
     }
 
     @Test("Several products stay independently calculable")

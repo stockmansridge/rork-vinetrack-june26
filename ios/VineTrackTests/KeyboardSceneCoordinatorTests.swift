@@ -149,7 +149,7 @@ struct KeyboardSceneCoordinatorTests {
     }
 
     @Test func swiftUIAlertOwnsAccessoryAndDismissesWithoutSubmitting() async throws {
-        // Hypothesis: unlike a directly presented UIKit alert, SwiftUI replaces or hides its accessory.
+        // Exercise the production SwiftUI-to-native editable alert presenter.
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         let state = SwiftUIAlertDiagnosticState()
@@ -169,12 +169,18 @@ struct KeyboardSceneCoordinatorTests {
         field.text = "Retained diagnostic draft"
         field.sendActions(for: .editingChanged)
         try await Task.sleep(for: .milliseconds(500))
-        let accessory = field.inputAccessoryView as? KeyboardAccessoryView
-        let button = accessory?.dismissButton
-        let nativeVisible = accessory?.window != nil && button?.isHidden == false && (button?.alpha ?? 0) > 0
+        func findPrompt(_ controller: UIViewController?) -> KeyboardInputPromptController? {
+            guard let controller else { return nil }
+            if let prompt = controller as? KeyboardInputPromptController { return prompt }
+            if let prompt = findPrompt(controller.presentedViewController) { return prompt }
+            return controller.children.compactMap(findPrompt).first
+        }
+        let prompt = try #require(findPrompt(window.rootViewController))
+        let button: UIButton? = prompt.doneButton
+        let nativeVisible = button?.window != nil && button?.isHidden == false && (button?.alpha ?? 0) > 0
         let axElement = button?.isAccessibilityElement == true && button?.accessibilityLabel == "Done"
-        print("SwiftUIAlertDiagnostic sameScene=\(field.window?.windowScene === scene) sameWindow=\(field.window === window) accessory=\(accessory != nil) nativeVisible=\(nativeVisible) axElement=\(axElement)")
-        #expect(nativeVisible, "SwiftUI alert must retain an installed visible Done accessory")
+        print("SwiftUIInputPrompt nativeVisible=\(nativeVisible) axElement=\(axElement)")
+        #expect(nativeVisible, "Editable prompt must retain a visible native Done control")
         #expect(axElement, "Done must remain a labelled native accessibility element")
         let retained = field.text
         button?.sendActions(for: .touchUpInside)
@@ -235,11 +241,8 @@ private struct SwiftUIAlertDiagnosticView: View {
     @Bindable var state: SwiftUIAlertDiagnosticState
     var body: some View {
         Text("Isolated alert diagnostic")
-            .alert("SwiftUI diagnostic", isPresented: $state.presented) {
-                TextField("Diagnostic draft", text: $state.draft)
-                Button("Cancel", role: .cancel) {}
-                Button("Confirm") { state.submissions += 1 }
-            }
+            .keyboardInputAlert("SwiftUI diagnostic", isPresented: $state.presented, draft: $state.draft,
+                placeholder: "Diagnostic draft", confirmTitle: "Confirm", onConfirm: { state.submissions += 1 })
     }
 }
 

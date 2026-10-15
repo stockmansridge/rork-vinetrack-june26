@@ -173,15 +173,12 @@ struct SprayTargetChooserSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .alert("Add Custom Target", isPresented: $isAddingCustom) {
-                TextField("e.g. Eutypa Dieback", text: $customWording)
-                    .textInputAutocapitalization(.words)
-                Button("Cancel", role: .cancel) { customWording = "" }
-                Button("Add") { add(custom: customWording) }
-                    .disabled(SprayTargetVocabulary.tag(wording: customWording) == nil)
-            } message: {
-                Text("Use the wording your vineyard uses. It's added to this Program Step and saved for the vineyard.")
-            }
+            .keyboardInputAlert("Add Custom Target", isPresented: $isAddingCustom, draft: $customWording,
+                placeholder: "e.g. Eutypa Dieback",
+                message: "Use the wording your vineyard uses. It's added to this Program Step and saved for the vineyard.",
+                capitalization: .words, confirmTitle: "Add",
+                canConfirm: { SprayTargetVocabulary.tag(wording: $0) != nil },
+                onConfirm: { add(custom: customWording) }, onCancel: { customWording = "" })
         }
     }
 

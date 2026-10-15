@@ -63,8 +63,11 @@ struct SprayGuidedFlowTests {
         inputs.targets = [.powderyMildew]
         inputs.sprayHeadTarget = operationType == .foliarSpray ? .fullCanopy : nil
         inputs.bandWidthTotalMetres = operationType == .bandedSpray ? 0.8 : nil
+        inputs.groundTarget = operationType == .bandedSpray ? .undervine : nil
+        inputs.isCanopyConfirmed = true
         inputs.isGrowthStageResolved = true
         inputs.isEquipmentSelected = true
+        inputs.isEquipmentConfirmed = true
         inputs.tankCapacityLitres = 2_000
         inputs.carrierBasis = .litresPerHectare
         inputs.litresPerHectare = 625
@@ -466,9 +469,12 @@ struct SprayGuidedFlowTests {
 
     @Test("The persisted snapshot is a projection of the plan the Review step displays")
     func snapshotMatchesReviewCalculation() {
-        var inputs = completeInputs(operationType: .bandedSpray)
-        inputs.carrierBasis = .litresPer100Metres
-        inputs.litresPerHectare = nil
+        for operation in [OperationType.bandedSpray, .foliarSpray] {
+        var inputs = completeInputs(operationType: operation)
+        // Ground carrier uses its explicitly selected area basis; row/controller
+        // entry belongs only to foliar applications in the approved workflow.
+        inputs.carrierBasis = operation == .foliarSpray ? .litresPer100Metres : .litresPerHectare
+        inputs.litresPerHectare = operation == .bandedSpray ? 625 : nil
         inputs.diluteLitresPer100Metres = 40
         inputs.appliedLitresPer100Metres = 20
         inputs.products = [
@@ -490,7 +496,14 @@ struct SprayGuidedFlowTests {
         #expect(abs((snapshot.treatedAreaHa ?? 0) - (plan.treatedAreaHectares ?? 0)) < tolerance)
         #expect(snapshot.applicationMode == plan.mode)
         #expect(snapshot.treatedAreaMethod == plan.treatedArea.method)
-        #expect(abs((snapshot.bandWidthTotalMetres ?? 0) - 0.8) < tolerance)
+        if operation == .bandedSpray {
+            #expect(abs((snapshot.bandWidthTotalMetres ?? 0) - 0.8) < tolerance)
+            #expect(snapshot.groundTarget == .undervine)
+            #expect(plan.concentrationFactor == 1)
+        } else {
+            #expect(snapshot.bandWidthTotalMetres == nil)
+            #expect(plan.concentrationFactor == 2)
+        }
         #expect(
             abs((snapshot.canonicalRowLengthMetres ?? 0) - (plan.geometry.totalRowLengthMetres ?? 0))
                 < tolerance
@@ -504,10 +517,13 @@ struct SprayGuidedFlowTests {
             abs((snapshot.carrierLitresPerHectare ?? 0) - (plan.carrier.litresPerHectare ?? 0))
                 < tolerance
         )
-        #expect(abs((snapshot.diluteLitresPer100m ?? 0) - 40) < tolerance)
+        #expect(snapshot.diluteLitresPer100m == plan.carrier.diluteLitresPer100Metres)
+        if operation == .foliarSpray { #expect(snapshot.diluteLitresPer100m == 40) }
         #expect(abs((snapshot.appliedLitresPer100m ?? 0) - 20) < tolerance)
+        #expect(abs((snapshot.totalCarrierLitres ?? 0) - 6_250) < tolerance)
         #expect(abs((snapshot.concentrationFactor ?? 0) - plan.concentrationFactor) < tolerance)
         #expect(snapshot.hasGenuineTreatedArea)
+        }
     }
 
     // MARK: - Progressive disclosure gating
@@ -547,6 +563,11 @@ struct SprayGuidedFlowTests {
         #expect(!flow.isUnlocked(.carrier))
 
         inputs.isEquipmentSelected = true
+        flow = SprayGuidedFlow(inputs: inputs)
+        #expect(!flow.isUnlocked(.carrier))
+        #expect(flow.blocker(for: .equipment) == .equipmentConfirmationRequired)
+        inputs.isEquipmentConfirmed = true
+        inputs.isCanopyConfirmed = true
         flow = SprayGuidedFlow(inputs: inputs)
         #expect(flow.isUnlocked(.carrier))
         #expect(!flow.isUnlocked(.products))

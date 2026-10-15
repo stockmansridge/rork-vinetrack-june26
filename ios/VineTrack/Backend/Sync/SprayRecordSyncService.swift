@@ -13,6 +13,7 @@ final class SprayRecordSyncService {
         case idle
         case syncing
         case success
+        case held(Int)
         case failure(String)
     }
 
@@ -20,8 +21,12 @@ final class SprayRecordSyncService {
     var lastSyncDate: Date?
     var errorMessage: String?
 
-    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
-    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
+    private func isHeld(_ id: UUID) -> Bool {
+        guard let store else { return false }
+        return (try? store.isLegacySpraySyncHeld(record: id)) ?? true
+    }
+    var pendingUpsertCount: Int { metadata.pendingUpserts.keys.filter { !isHeld($0) }.count }
+    var pendingDeleteCount: Int { metadata.pendingDeletes.keys.filter { !isHeld($0) }.count }
 
     /// Whether a specific spray record has local changes queued for upload.
     func isPendingUpsert(_ id: UUID) -> Bool { metadata.pendingUpserts[id] != nil }
@@ -38,10 +43,10 @@ final class SprayRecordSyncService {
     /// Whether a specific spray record's last push failed while still pending.
     /// Used for per-record error isolation so one failed record never makes
     /// others look failed. Resolves purely from this record's own state.
-    func hasFailure(_ id: UUID) -> Bool { metadata.isUpsertFailed(id) || metadata.isDeleteFailed(id) }
+    func hasFailure(_ id: UUID) -> Bool { !isHeld(id) && (metadata.isUpsertFailed(id) || metadata.isDeleteFailed(id)) }
 
-    var failedUpsertIds: Set<UUID> { metadata.failedUpsertIds }
-    var failedDeleteIds: Set<UUID> { metadata.failedDeleteIds }
+    var failedUpsertIds: Set<UUID> { Set(metadata.failedUpsertIds.filter { !isHeld($0) }) }
+    var failedDeleteIds: Set<UUID> { Set(metadata.failedDeleteIds.filter { !isHeld($0) }) }
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
@@ -105,10 +110,14 @@ final class SprayRecordSyncService {
         do {
             try await pushLocalSprayRecords(vineyardId: vineyardId)
             try await pullRemoteSprayRecords(vineyardId: vineyardId)
-            try store?.requireLegacySpraySweepCompletion(vineyard: vineyardId)
+            let held = try store?.legacySprayHeldCount(vineyard: vineyardId) ?? 0
             metadata.setLastSync(Date(), for: vineyardId)
-            lastSyncDate = Date()
-            syncStatus = .success
+            if held > 0 {
+                syncStatus = .held(held)
+            } else {
+                lastSyncDate = Date()
+                syncStatus = .success
+            }
         } catch {
             errorMessage = error.localizedDescription
             syncStatus = .failure(error.localizedDescription)
@@ -119,11 +128,11 @@ final class SprayRecordSyncService {
 
     func pushLocalSprayRecords(vineyardId: UUID) async throws {
         guard let store else { return }
-        try store.reconcileLegacySpraySaves()
+        try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
         let createdBy = auth?.userId
         var dirty = metadata.pendingUpserts
         for id in Array(dirty.keys) where try store.isLegacySpraySyncHeld(record: id) {
-            metadata.markUpsertsFailed([id]); dirty.removeValue(forKey: id)
+            dirty.removeValue(forKey: id)
         }
         if !dirty.isEmpty {
             // Read before replay. A failed read blocks replay rather than risking
@@ -165,7 +174,7 @@ final class SprayRecordSyncService {
         let deletes = metadata.pendingDeletes
         var deleteFailures: [String] = []
         for (recordId, _) in deletes {
-            if try store.isLegacySpraySyncHeld(record: recordId) { metadata.markDeletesFailed([recordId]); continue }
+            if try store.isLegacySpraySyncHeld(record: recordId) { continue }
             do {
                 try await repository.softDeleteSprayRecord(id: recordId)
                 metadata.clearDeleted([recordId])

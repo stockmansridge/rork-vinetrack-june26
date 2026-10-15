@@ -79,7 +79,7 @@ struct SprayCalculatorUXPassTests {
           "id": "bbbbbbbb-0000-0000-0000-000000000001",
           "vineyard_id": "22222222-2222-2222-2222-222222222222",
           "name": "Dilute Fungicide",
-          "unit": "Kilograms",
+          "unit": "Kg",
           "rate_per_ha": 0,
           "rates": [],
           "registered_uses": [
@@ -137,7 +137,7 @@ struct SprayCalculatorUXPassTests {
           "id": "bbbbbbbb-0000-0000-0000-000000000003",
           "vineyard_id": "22222222-2222-2222-2222-222222222222",
           "name": "Other Crop Dilute",
-          "unit": "Kilograms",
+          "unit": "Kg",
           "rate_per_ha": 0,
           "rates": [],
           "registered_uses": [
@@ -223,20 +223,20 @@ struct SprayCalculatorUXPassTests {
         #expect(chem.unitLabel == "Kg")
     }
 
-    /// The liquid regression: litres are already the base unit, so the same
-    /// boundary must be a no-op rather than a second conversion.
+    /// Liquids are retained in canonical millilitres and displayed in litres.
+    /// The boundary converts exactly once, just as grams convert to kilograms.
     ///
     /// `2 L/ha × 0.49 ha = 0.98 L`.
     @Test func liquidTankQuantityIsUnchangedByTheBoundary() {
         let chem = SprayChemical(
             name: "Liquid Fungicide",
-            volumePerTank: 0.98,
-            ratePerHa: 2.0,
+            volumePerTank: 980, // canonical mL
+            ratePerHa: 2000, // canonical mL/ha
             unit: .litres
         )
         #expect(abs(chem.displayVolume - 0.98) < 0.0001)
         #expect(abs(chem.displayRate - 2.0) < 0.0001)
-        #expect(chem.unitLabel == "L")
+        #expect(chem.unitLabel == "Litres")
     }
 
     /// A per-100 L product carries its rate in the other field, and that field
