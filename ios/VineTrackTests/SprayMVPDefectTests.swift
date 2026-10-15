@@ -29,8 +29,26 @@ struct SprayMVPDefectTests {
         let programURL = SprayProgramExportService.generateProgramPDF(records: [record], trips: [trip], paddocks: [], vineyardName: "MVPFixture", includeCostings: false, timeZone: .gmt)
         defer { try? FileManager.default.removeItem(at: programURL) }
         let programText = try #require(PDFDocument(url: programURL)?.string)
-        #expect(programText.contains("Full Canopy"))
-        #expect(programText.contains("Powdery Mildew"))
+        for entry in ["Powdery Mildew", "Downy Mildew", "historical_unknown_target", "Full Canopy"] {
+            #expect(programText.filter { !$0.isWhitespace }.contains(entry.filter { !$0.isWhitespace }))
+        }
+        for document in [try #require(PDFDocument(data: pdf)), try #require(PDFDocument(url: programURL))] {
+            let targets = document.findString("Powdery Mildew", withOptions: []) + document.findString("Downy Mildew", withOptions: [])
+            let locations = document.findString("Full Canopy", withOptions: [])
+            #expect(!targets.isEmpty && !locations.isEmpty)
+            for selection in targets + locations {
+                for page in selection.pages {
+                    #expect(page.bounds(for: .mediaBox).contains(selection.bounds(for: page)))
+                }
+            }
+            for target in targets {
+                for location in locations {
+                    for page in target.pages where location.pages.contains(page) {
+                        #expect(!target.bounds(for: page).intersects(location.bounds(for: page)))
+                    }
+                }
+            }
+        }
         #expect(try JSONDecoder().decode(SprayRecord.self, from: before) == record)
     }
 

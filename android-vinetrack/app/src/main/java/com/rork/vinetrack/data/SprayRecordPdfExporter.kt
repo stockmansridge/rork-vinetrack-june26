@@ -55,7 +55,7 @@ object SprayRecordPdfExporter {
     private val accent = Color.rgb(85, 107, 47) // olive, matching iOS VineyardTheme
 
     /** Drawing cursor + paging state for a single export. */
-    private class PageState(val doc: PdfDocument, private val officialLogo: Bitmap?, private val isManualEntry: Boolean) {
+    internal class PageState(val doc: PdfDocument, private val officialLogo: Bitmap?, private val isManualEntry: Boolean) {
         var page: PdfDocument.Page = doc.startPage(pageInfo(1))
         var canvas = page.canvas
         var y = MARGIN
@@ -259,7 +259,7 @@ object SprayRecordPdfExporter {
         }
     }
 
-    private fun render(
+    internal fun render(
         s: PageState,
         payload: SprayReportPayloadV1,
         record: SprayRecord,

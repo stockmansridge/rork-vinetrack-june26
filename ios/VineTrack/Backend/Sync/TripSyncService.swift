@@ -221,6 +221,10 @@ final class TripSyncService {
             await TripLabourSnapshotJournal.shared.replay(trips: store?.trips ?? [])
             try await pullRemoteTrips(vineyardId: vineyardId)
             let held = try store?.legacySprayHeldCount(vineyard: vineyardId) ?? 0
+            if !failedUpsertIds.isEmpty {
+                syncStatus = .failure("Trip reconciliation pending. Original device evidence is retained; completed trips will not be reopened.")
+                return
+            }
             metadata.setLastSync(Date(), for: vineyardId)
             if held > 0 {
                 syncStatus = .held(held)
@@ -604,8 +608,7 @@ final class TripSyncService {
                 dirty.removeValue(forKey: id)
                 metadata.markUpsertsFailed([id])
             }
-            let endedOnServer = serverTrips.filter { dirty[$0.id] != nil && ($0.endTime != nil ||
-                    (TripOccurrenceCoverage.basis($0.occurrenceCoverage) == .legacy && $0.isActive == false)) }
+            let endedOnServer = serverTrips.filter { dirty[$0.id] != nil && $0.endTime != nil }
             let endedIds = Set(endedOnServer.map(\.id))
             for ended in endedOnServer {
                 await applyRemote(ended, vineyardId: vineyardId, store: store)
@@ -861,8 +864,14 @@ final class TripSyncService {
             }
             return
         }
-        // Server completion is authoritative even against a newer queued device edit.
-        let serverCompleted = backendTrip.isActive == false || backendTrip.endTime != nil
+        // An inactive, unended saved parent is not completion or activation acknowledgement.
+        if backendTrip.isActive == false, backendTrip.endTime == nil,
+           store.deviceActiveTripId == backendTrip.id,
+           store.deviceOwnedTrip?.isActive == true {
+            return
+        }
+        // A recorded server end stops local operation, even when its active flag is contradictory.
+        let serverCompleted = backendTrip.endTime != nil
         if !serverCompleted, let pendingDirtyAt = metadata.pendingUpserts[backendTrip.id] {
             let remoteAt = backendTrip.clientUpdatedAt ?? backendTrip.updatedAt ?? .distantPast
             if pendingDirtyAt > remoteAt { return }
@@ -874,27 +883,46 @@ final class TripSyncService {
         let local = store.trips.first { $0.id == mapped.id }
             ?? store.deviceOwnedTrip.flatMap { $0.id == mapped.id ? $0 : nil }
         var reconciled = ActiveTripPathReconciler.reconcile(local: local, remote: mapped)
+        var retainedUnacknowledgedEvidence = false
         if serverCompleted, let local {
-            // Preserve device-recorded history even when the admin finished the
-            // server row before the last offline route/tank payload arrived.
-            if local.pathPoints.count > reconciled.pathPoints.count {
+            // Count is not inclusion: retain an equal/shorter divergent local branch too.
+            if !ActiveTripPathReconciler.containsRoute(local.pathPoints, in: mapped.pathPoints) {
+                retainedUnacknowledgedEvidence = true
                 reconciled.pathPoints = local.pathPoints
                 reconciled.totalDistance = local.totalDistance
             }
             for session in local.tankSessions {
                 if let index = reconciled.tankSessions.firstIndex(where: { $0.id == session.id }) {
-                    if reconciled.tankSessions[index].endTime == nil && session.endTime != nil {
+                    if reconciled.tankSessions[index] != session {
+                        retainedUnacknowledgedEvidence = true
                         reconciled.tankSessions[index] = session
                     }
                 } else {
+                    retainedUnacknowledgedEvidence = true
                     reconciled.tankSessions.append(session)
                 }
             }
+            if local.completedPaths.contains(where: { !mapped.completedPaths.contains($0) }) {
+                retainedUnacknowledgedEvidence = true
+                reconciled.completedPaths = local.completedPaths
+            }
+            if local.skippedPaths.contains(where: { !mapped.skippedPaths.contains($0) }) {
+                retainedUnacknowledgedEvidence = true
+                reconciled.skippedPaths = local.skippedPaths
+            }
             let existingIds = Set(reconciled.paddockIds)
-            reconciled.paddockIds.append(contentsOf: local.paddockIds.filter { !existingIds.contains($0) })
+            let missingBlocks = local.paddockIds.filter { !existingIds.contains($0) }
+            retainedUnacknowledgedEvidence = retainedUnacknowledgedEvidence || !missingBlocks.isEmpty
+            reconciled.paddockIds.append(contentsOf: missingBlocks)
         }
         store.applyRemoteTripUpsert(reconciled)
-        metadata.clearDirty([backendTrip.id])
+        if retainedUnacknowledgedEvidence {
+            if metadata.pendingUpserts[backendTrip.id] == nil { metadata.markDirty(backendTrip.id, at: Date()) }
+            metadata.markUpsertsFailed([backendTrip.id])
+            syncStatus = .failure("Completed trip has unreconciled device evidence. Original evidence retained; no completed-trip write was made.")
+        } else {
+            metadata.clearDirty([backendTrip.id])
+        }
     }
 }
 

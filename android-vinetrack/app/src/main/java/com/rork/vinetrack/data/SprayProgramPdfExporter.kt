@@ -79,7 +79,7 @@ object SprayProgramPdfExporter {
         Column("STATUS", 710f, 56f),
     )
 
-    private class PageState(val doc: PdfDocument, private val officialLogo: Bitmap?) {
+    internal class PageState(val doc: PdfDocument, private val officialLogo: Bitmap?) {
         var page: PdfDocument.Page = doc.startPage(pageInfo(1))
         var canvas = page.canvas
         var y = MARGIN
@@ -210,7 +210,7 @@ object SprayProgramPdfExporter {
         }
     }
 
-    private fun render(
+    internal fun render(
         s: PageState,
         records: List<SprayRecord>,
         trips: List<Trip>,

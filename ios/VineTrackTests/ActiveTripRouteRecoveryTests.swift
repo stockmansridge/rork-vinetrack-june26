@@ -75,6 +75,57 @@ final class ActiveTripRouteRecoveryTests: XCTestCase {
         XCTAssertEqual(reconciled.pathPoints.count, 5_000)
     }
 
+    func testPlaceholderPullCannotAcknowledgeOwnedActivation() async throws {
+        try await assertTerminalPull(endTime: nil)
+    }
+
+    func testCompletedPullRetainsEqualLengthDivergentEvidenceWithoutReopening() async throws {
+        try await assertTerminalPull(endTime: Date(timeIntervalSince1970: 1_780_000_000))
+    }
+
+    private func assertTerminalPull(endTime: Date?) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let store = MigratedDataStore(persistence: persistence)
+        let vineyard = UUID()
+        store.selectedVineyardId = vineyard
+        let local = Trip(vineyardId: vineyard, pathPoints: makeRoute(count: 4), isActive: true)
+        store.startTrip(local)
+        store.claimDeviceTrip(local.id)
+        var remote = local
+        remote.isActive = false
+        remote.endTime = endTime
+        remote.pathPoints = [CoordinatePoint(latitude: 10, longitude: 20)] + Array(local.pathPoints.dropFirst())
+        let repository = FakeTripSyncRepository()
+        repository.remoteTrips = [try JSONDecoder().decode(BackendTrip.self,
+            from: JSONEncoder().encode(BackendTrip.upsert(from: remote, createdBy: nil, clientUpdatedAt: Date())))]
+        let metadata = TripSyncMetadata(persistence: persistence)
+        let service = TripSyncService(repository: repository, metadata: metadata)
+        let auth = NewBackendAuthService()
+        service.configure(store: store, auth: auth)
+        metadata.markDirty(local.id, at: Date())
+        try await service.pullRemoteTrips(vineyardId: vineyard)
+        let retained = try XCTUnwrap(store.trips.first { $0.id == local.id })
+        XCTAssertEqual(retained.pathPoints, local.pathPoints)
+        XCTAssertNotNil(metadata.pendingUpserts[local.id], "A placeholder or missing evidence is not acknowledgement")
+        if endTime == nil {
+            XCTAssertTrue(retained.isActive)
+            XCTAssertEqual(store.deviceActiveTripId, local.id)
+            try await service.pushLocalTrips(vineyardId: vineyard)
+            XCTAssertEqual(repository.pushed.count, 1)
+            XCTAssertEqual(repository.pushed.first?.id, local.id)
+            XCTAssertEqual(repository.pushed.first?.isActive, true, "The accepted inactive parent must not suppress its original activation")
+        } else {
+            XCTAssertFalse(retained.isActive)
+            XCTAssertEqual(retained.endTime, endTime)
+            XCTAssertNil(store.deviceActiveTripId)
+            try await service.pushLocalTrips(vineyardId: vineyard)
+            XCTAssertTrue(repository.pushed.isEmpty, "Never reopen or patch completed history to resolve evidence")
+        }
+    }
+
     private func makeRoute(count: Int) -> [CoordinatePoint] {
         (0..<count).map { index in
             CoordinatePoint(

@@ -7,6 +7,7 @@ import XCTest
 /// against real pushed payloads rather than helper return values.
 @MainActor final class FakeTripSyncRepository: TripSyncRepositoryProtocol {
     private(set) var batches: [[BackendTripUpsert]] = []
+    var remoteTrips: [BackendTrip] = []
     /// Persistent, because SyncQueuePush retries each item individually after a
     /// failed batch — a one-shot failure would silently succeed on retry.
     private var failUpserts: Bool = false
@@ -22,8 +23,8 @@ import XCTest
     }
 
     func upsertTrip(_ trip: BackendTripUpsert) async throws { try await upsertTrips([trip]) }
-    func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip] { [] }
-    func fetchAllTrips(vineyardId: UUID) async throws -> [BackendTrip] { [] }
+    func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip] { remoteTrips }
+    func fetchAllTrips(vineyardId: UUID) async throws -> [BackendTrip] { remoteTrips }
     func fetchAllAccessibleTrips() async throws -> [BackendTrip] { [] }
     func updateTripVineyardAssignment(id: UUID, vineyardId: UUID, paddockId: UUID?) async throws {}
     func updateTripWorkTaskLink(id: UUID, workTaskId: UUID?) async throws {}

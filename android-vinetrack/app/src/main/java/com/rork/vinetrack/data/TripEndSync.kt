@@ -184,10 +184,13 @@ class TripEndSync(
                         pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "This trip no longer exists.")
                         continue
                     }
-                    if (!server.isActive) {
-                        // Already ended elsewhere (or a prior replay landed) —
-                        // the end work is done, drop the marker safely.
-                        pending.removeIfCurrent(write)
+                    if (!server.isActive || !server.endTime.isNullOrBlank()) {
+                        if (acknowledgesEnd(server, payload)) {
+                            if (pending.removeIfCurrent(write)) onSynced(server)
+                        } else {
+                            pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                                "Trip is inactive or ended with different completion evidence. Original end intent retained; no completed-trip write was made.")
+                        }
                         continue
                     }
                     // Final path/distance come from the LIVE server row (the GPS
@@ -202,7 +205,12 @@ class TripEndSync(
                         endTime = payload.requestedEndTime,
                     )
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                    if (pending.removeIfCurrent(write)) onSynced(trip)
+                    if (acknowledgesEnd(trip, payload)) {
+                        if (pending.removeIfCurrent(write)) onSynced(trip)
+                    } else {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                            "Trip end response did not confirm the original completion evidence. Original intent retained.")
+                    }
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to finish the trip.")
                 } catch (e: BackendError.Server) {
@@ -244,7 +252,13 @@ class TripEndSync(
         pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
-    private companion object {
+    companion object {
+        /** Inactivity alone is a saved parent, not acknowledgement of an end intent. */
+        internal fun acknowledgesEnd(trip: Trip, payload: Payload): Boolean =
+            trip.id == payload.tripId && !trip.isActive &&
+                runCatching { java.time.Instant.parse(trip.endTime) == java.time.Instant.parse(payload.requestedEndTime) }.getOrDefault(false) &&
+                trip.completionNotes == payload.completionNotes && trip.endEngineHours == payload.endEngineHours
+
         /** Cap retries so a persistently-failing marker can't loop indefinitely. */
         const val MAX_ATTEMPTS = 8
     }

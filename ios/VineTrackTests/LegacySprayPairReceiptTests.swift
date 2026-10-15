@@ -22,6 +22,24 @@ final class LegacySprayPairReceiptTests: XCTestCase {
         if let code { fields["code"] = code }
         return try JSONSerialization.data(withJSONObject: fields)
     }
+    @MainActor func testFreshLegacyRecipeAdmitsRecordedIntentWithoutPlanningFields() throws {
+        let scope = LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: UUID())
+        let trip = Trip(vineyardId: scope.vineyard, isActive: false, tripFunction: "spraying")
+        let tank = SprayTank(tankNumber: 1, waterVolume: 420,
+            chemicals: [SprayChemical(name: "Fixture", volumePerTank: 1500, ratePerHa: 750, unit: .grams)])
+        let record = SprayRecord(tripId: trip.id, vineyardId: scope.vineyard, tanks: [tank],
+            applicationGeometry: SprayApplicationSnapshot(applicationMode: .wholeBlock,
+                targets: [.powderyMildew, .downyMildew], sprayHeadTarget: .fullCanopy))
+        XCTAssertNil(SprayStartRecipeValidation.blocker(record.tanks))
+        let request = try LegacySprayPairReceipt.prepare(scope: scope, record: record, trip: trip)
+        let fields = try XCTUnwrap(JSONSerialization.jsonObject(with: request.record) as? [String: Any])
+        XCTAssertEqual(fields["targets"] as? [String], ["powdery_mildew", "downy_mildew"])
+        XCTAssertEqual(fields["spray_head_target"] as? String, "full_canopy")
+        XCTAssertNil(fields["sprayer_configuration"])
+        XCTAssertNil(fields["spray_planning_method"])
+        XCTAssertTrue(Set(fields.keys).isSubset(of: LegacySprayPairReceipt.recordKeys))
+    }
+
     @MainActor func testFirstAtomicSaveRequiresExactFollowupRecoveryBeforeRelease() async throws {
         let (_, journal, a, root) = try fixture(); defer { try? FileManager.default.removeItem(at: root) }
         var calls: [String] = []; let receipt = try response(a)
