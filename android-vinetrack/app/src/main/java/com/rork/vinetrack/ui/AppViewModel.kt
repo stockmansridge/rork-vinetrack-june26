@@ -1184,6 +1184,7 @@ internal fun resolveTripPinAttribution(
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val session = SessionStore(app)
+    private val legacySpraySaves = com.rork.vinetrack.data.LegacySpraySaveStore(app)
     private val performanceCapture = com.rork.vinetrack.data.AdminPerformanceCapture(app) { session.userId }
         .also { com.rork.vinetrack.data.SupabaseClient.performanceCapture = it }
     private var performanceAuthorizationEpoch: Long = 0L
@@ -3337,6 +3338,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Runs Phase 5 parent and dependent writes in one awaited, per-process pipeline. */
     private fun replayPhase5Writes() {
+        val legacyScope = _ui.value.selectedVineyardId
+        if (legacyScope != null && session.accessToken != null) {
+            val pending = runCatching { legacySpraySaves.pending(legacyScope) }
+            if (pending.isFailure) {
+                _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; return
+            }
+            val retained = pending.getOrDefault(emptyList())
+            if (retained.isNotEmpty()) {
+                _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
+                // No legacy attempt enters a generic outbox. If another writer queued one,
+                // refuse the dependent pipeline rather than touching the held identities.
+                val ids = retained.flatMap { listOf(it.trip.id, it.recordId) }
+                if (pendingWrites.list().any { write -> ids.any { write.payloadJson.contains(it) } }) return
+            }
+        }
         if (session.accessToken == null || !_ui.value.isOnline) return
         val versions = prepareFrozenReplayWrites() ?: return
         val tankAccountAccess = session.accountAccess() ?: return
@@ -11688,9 +11704,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * `SprayCalculatorView.saveForLater` flow (placeholder inactive trip + linked
      * record). The [input]'s `tripId` is overwritten with the new trip's id.
      *
-     * If the trip is created but the record insert fails, the orphan trip is
-     * rolled back via the existing `soft_delete_trip` RPC so no empty "Not
-     * Started" job is left behind.
+     * A separate durable original attempt precedes both writes. Uncertain outcomes
+     * are held across startup; no ambiguous rollback, reminted IDs or generic replay.
      */
     fun createSprayJobForLater(
         input: SprayRecordRepository.SprayInput,
@@ -11706,10 +11721,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             createQualifiedSpray(input, paddockId, paddockIds, paddockName, rowPlan, false, null, onResult)
             return
         }
+        val originalAccess = session.accountAccess() ?: run { onResult(false); return }
+        val originalToken = session.accessToken ?: run { onResult(false); return }
+        val originalTimestamp = sprayRepo.nowIso()
+        val originalTripId = java.util.UUID.randomUUID().toString()
+        val originalRecordId = sprayRepo.newId()
+        val originalPlan = rowPlan ?: SprayJobRowPlan("freeDrive", emptyList(), input.tanks.size)
+        val originalInput = input.copy(tripId = originalTripId)
+        val attempt = com.rork.vinetrack.data.LegacySpraySaveStore.Attempt(
+            actorId = originalAccess.userId, identityEpoch = session.retentionGuard.identityEpoch.value,
+            trip = com.rork.vinetrack.data.LegacySpraySaveStore.TripIntent(originalTripId, vineyardId, paddockId,
+                paddockIds.distinct(), paddockName?.ifBlank { null }, userName, input.startTime, input.tractorId,
+                originalAccess.userId, originalPlan.trackingPattern, originalPlan.rowSequence, originalPlan.totalTanks, originalTimestamp),
+            recordId = originalRecordId, input = originalInput,
+        )
+        try { legacySpraySaves.prepare(attempt) } catch (_: Exception) {
+            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; onResult(false); return
+        }
+        if (!_ui.value.isOnline) {
+            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; onResult(false); return
+        }
         viewModelScope.launch {
-            _ui.update { it.copy(sprayBusy = true, sprayError = null) }
+            if (!session.withAccountAccess(originalAccess) { _ui.update { it.copy(sprayBusy = true, sprayError = null) } }) return@launch
             var trip: Trip? = null
             try {
+                check(session.isAccountAccessCurrent(originalAccess))
+                legacySpraySaves.mark(attempt, com.rork.vinetrack.data.LegacySpraySaveStore.Stage.TRIP_UNKNOWN)
                 val plan = rowPlan ?: SprayJobRowPlan(
                     trackingPattern = "freeDrive",
                     rowSequence = emptyList(),
@@ -11720,44 +11757,51 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     paddockId = paddockId,
                     paddockIds = paddockIds.distinct(),
                     paddockName = paddockName?.ifBlank { null },
-                    personName = userName,
+                    personName = attempt.trip.personName,
                     startTime = input.startTime,
                     endTime = null,
                     machineId = null,
                     tractorId = input.tractorId,
-                    operatorUserId = session.userId,
+                    operatorUserId = originalAccess.userId,
                     trackingPattern = plan.trackingPattern,
                     rowSequence = plan.rowSequence,
                     sequenceIndex = 0,
                     totalTanks = plan.totalTanks,
+                    originalId = originalTripId, originalTimestamp = originalTimestamp,
+                    capturedToken = originalToken, capturedActor = originalAccess.userId,
                 )
-                val created = sprayRepo.createSprayRecord(vineyardId, input.copy(tripId = trip.id))
+                check(session.isAccountAccessCurrent(originalAccess))
+                check(trip.id == originalTripId && trip.vineyardId == vineyardId && !trip.isActive && trip.endTime == null)
+                legacySpraySaves.mark(attempt, com.rork.vinetrack.data.LegacySpraySaveStore.Stage.TRIP_CONFIRMED)
+                legacySpraySaves.mark(attempt, com.rork.vinetrack.data.LegacySpraySaveStore.Stage.RECORD_UNKNOWN)
+                val created = sprayRepo.createSprayRecord(vineyardId, originalInput, originalRecordId, originalTimestamp,
+                    capturedToken = originalToken, capturedActor = originalAccess.userId)
+                check(session.isAccountAccessCurrent(originalAccess))
+                check(created.id == originalRecordId && created.tripId == originalTripId && created.vineyardId == vineyardId)
+                legacySpraySaves.mark(attempt, com.rork.vinetrack.data.LegacySpraySaveStore.Stage.COMPLETE)
                 val seededTrip: Trip = trip
-                val rowPlanWarning: String? = null
-                _ui.update {
-                    it.copy(
-                        sprayBusy = false,
-                        sprayError = rowPlanWarning,
-                        trips = listOf(seededTrip) + it.trips,
-                        sprayRecords = listOf(created) + it.sprayRecords,
-                    )
-                }
-                onResult(true)
-            } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(sprayBusy = false) }; onUnauthorized("createSprayJobForLater"); onResult(false)
-            } catch (e: Exception) {
-                // Roll back the orphan trip so no empty "Not Started" job lingers.
-                trip?.let { t ->
-                    try {
-                        tripRepo.softDeleteTrip(t.id)
-                    } catch (cleanup: Exception) {
-                        android.util.Log.e("AppViewModel", "Failed to roll back spray job trip", cleanup)
+                session.withAccountAccess(originalAccess) {
+                    _ui.update {
+                        it.copy(
+                            sprayBusy = false,
+                            sprayError = null,
+                            trips = listOf(seededTrip) + it.trips.filterNot { t -> t.id == seededTrip.id },
+                            sprayRecords = listOf(created) + it.sprayRecords.filterNot { r -> r.id == created.id },
+                        )
                     }
+                    onResult(true)
                 }
-                val message = (e as? BackendError.Server)?.let { friendlyWriteError(it.code) }
-                    ?: "Couldn't save the spray job. Check your connection."
-                _ui.update { it.copy(sprayBusy = false, sprayError = message) }
-                onResult(false)
+            } catch (e: BackendError.Unauthorized) {
+                if (session.isAccountAccessCurrent(originalAccess)) {
+                    _ui.update { it.copy(sprayBusy = false, sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
+                    onUnauthorized("createSprayJobForLater"); onResult(false)
+                }
+            } catch (e: Exception) {
+                // A timeout can follow a committed insert. Never delete a possibly valid pair or remint IDs.
+                if (session.isAccountAccessCurrent(originalAccess)) {
+                    _ui.update { it.copy(sprayBusy = false, sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
+                    onResult(false)
+                }
             }
         }
     }
@@ -11777,6 +11821,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         startEngineHours: Double? = null,
         onResult: (Boolean) -> Unit,
     ) {
+        if (runCatching { legacySpraySaves.blocks(tripId) }.getOrDefault(true)) {
+            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; onResult(false); return
+        }
         val existing = _ui.value.trips.firstOrNull { it.id == tripId }
         if (existing == null) {
             _ui.update { it.copy(sprayError = "This spray job's trip is no longer available.") }
@@ -17078,6 +17125,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun loadVineyardDataBody(vineyardId: String) {
+        if (runCatching { legacySpraySaves.pending(vineyardId).isNotEmpty() }.getOrDefault(true)) {
+            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
+        }
         val userId = session.userId ?: return
         val selectionEpoch = vineyardSelectionEpoch
         val generation = ++vineyardDataLoadGeneration

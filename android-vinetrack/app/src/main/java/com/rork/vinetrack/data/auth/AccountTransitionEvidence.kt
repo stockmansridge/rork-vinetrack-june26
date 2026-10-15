@@ -157,6 +157,7 @@ internal class AccountTransitionEvidence(private val context: Context) {
             "vinetrack_chemical_label_photos" to setOf("attachments"),
         )
         val businessPreferences = setOf(
+            "vinetrack_legacy_spray_saves_v1",
             "vinetrack_pending_writes", "vinetrack_pending_photos", "vinetrack_active_trip",
             "vinetrack_spray_tank_actuals", "vinetrack_start_tank_journal", "vinetrack_chemical_label_photos",
             "vinetrack_manual_spray_operations_v1", "vinetrack_manual_spray_drafts_v1",

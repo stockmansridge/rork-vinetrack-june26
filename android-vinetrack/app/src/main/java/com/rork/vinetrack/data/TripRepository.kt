@@ -393,12 +393,16 @@ class TripRepository(private val session: SessionStore) {
         rowSequence: List<Double> = emptyList(),
         sequenceIndex: Int = 0,
         totalTanks: Int? = null,
+        originalId: String? = null,
+        originalTimestamp: String? = null,
+        capturedToken: String? = null,
+        capturedActor: String? = null,
     ): Trip = withContext(Dispatchers.IO) {
         requireConfig()
-        val token = session.accessToken ?: throw BackendError.Unauthorized
-        val now = nowIso()
+        val token = capturedToken ?: session.accessToken ?: throw BackendError.Unauthorized
+        val now = originalTimestamp ?: nowIso()
         val body = ImportedTripInsert(
-            id = UUID.randomUUID().toString(),
+            id = originalId ?: UUID.randomUUID().toString(),
             vineyardId = vineyardId,
             paddockId = paddockId,
             paddockName = paddockName,
@@ -417,7 +421,7 @@ class TripRepository(private val session: SessionStore) {
             currentRowNumber = rowSequence.getOrNull(sequenceIndex),
             nextRowNumber = rowSequence.getOrNull(sequenceIndex + 1),
             totalTanks = totalTanks,
-            createdBy = session.userId,
+            createdBy = capturedActor ?: session.userId,
             clientUpdatedAt = now,
         )
         val response = SupabaseClient.http.post(SupabaseClient.restUrl("trips")) {
@@ -426,7 +430,15 @@ class TripRepository(private val session: SessionStore) {
             contentType(ContentType.Application.Json)
             setBody(body)
         }
-        firstRow(response)
+        if (capturedToken != null) {
+            if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, "Legacy Trip creation was not confirmed")
+            val raw = SupabaseClient.json.parseToJsonElement(response.bodyAsText()) as? kotlinx.serialization.json.JsonArray
+                ?: error(LegacySpraySaveStore.MESSAGE)
+            val actual = raw.singleOrNull() as? kotlinx.serialization.json.JsonObject ?: error(LegacySpraySaveStore.MESSAGE)
+            val expected = SupabaseClient.json.encodeToJsonElement(ImportedTripInsert.serializer(), body) as kotlinx.serialization.json.JsonObject
+            LegacySpraySaveStore.requireEcho(expected, actual)
+            SupabaseClient.json.decodeFromJsonElement(Trip.serializer(), actual)
+        } else firstRow(response)
     }
 
     suspend fun updateMetadata(

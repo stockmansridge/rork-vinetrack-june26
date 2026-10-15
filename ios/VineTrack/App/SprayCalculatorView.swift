@@ -1037,6 +1037,7 @@ struct SprayCalculatorView: View {
                         result: result,
                         sprayName: sprayName,
                         mode: summaryMode,
+                        localSaveNotice: summaryMode == .savedForLater ? "Saved on this device. Synchronization and Start require verified paired-create recovery; no spray has started." : nil,
                         canViewFinancials: accessControl.canViewFinancials,
                         onContinue: summaryMode == .readyToStart ? { finalizeStartFromMixSummary() } : nil
                     )
@@ -4649,6 +4650,7 @@ struct SprayCalculatorView: View {
             }
             let attempt = pendingLaterSave ?? (record: record, trip: placeholderTrip)
             pendingLaterSave = attempt
+            try store.prepareLegacySpraySave(record: attempt.record, trip: attempt.trip)
             if attempt.trip.coverageBasis != .legacy {
                 guard let owner = auth.userId else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                 try SupabaseTripSyncRepository().prepareOccurrenceCreation(BackendTrip.upsert(from: attempt.trip, createdBy: owner, clientUpdatedAt: attempt.trip.startTime), ownerId: owner)

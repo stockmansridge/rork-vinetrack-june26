@@ -62,6 +62,10 @@ final class SprayRecordSyncService {
     func configure(store: MigratedDataStore, auth: NewBackendAuthService) {
         self.store = store
         self.auth = auth
+        store.legacySprayScopeProvider = { [weak store, weak auth] in
+            guard let vineyard = store?.selectedVineyardId else { return nil }
+            return auth?.legacySprayScope(vineyard: vineyard)
+        }
         guard !isConfigured else { return }
         isConfigured = true
         store.onSprayRecordChanged = { [weak self] id in
@@ -101,6 +105,7 @@ final class SprayRecordSyncService {
         do {
             try await pushLocalSprayRecords(vineyardId: vineyardId)
             try await pullRemoteSprayRecords(vineyardId: vineyardId)
+            try store?.requireLegacySpraySweepCompletion(vineyard: vineyardId)
             metadata.setLastSync(Date(), for: vineyardId)
             lastSyncDate = Date()
             syncStatus = .success
@@ -114,8 +119,12 @@ final class SprayRecordSyncService {
 
     func pushLocalSprayRecords(vineyardId: UUID) async throws {
         guard let store else { return }
+        try store.reconcileLegacySpraySaves()
         let createdBy = auth?.userId
-        let dirty = metadata.pendingUpserts
+        var dirty = metadata.pendingUpserts
+        for id in Array(dirty.keys) where try store.isLegacySpraySyncHeld(record: id) {
+            metadata.markUpsertsFailed([id]); dirty.removeValue(forKey: id)
+        }
         if !dirty.isEmpty {
             // Read before replay. A failed read blocks replay rather than risking
             // clearing a completion confirmed on another device.
@@ -126,6 +135,7 @@ final class SprayRecordSyncService {
             var pushedIds: [UUID] = []
             for (recordId, ts) in dirty {
                 guard var record = byId[recordId], record.vineyardId == vineyardId else { continue }
+                try store.requireLegacySpraySyncAdmission(record: recordId)
                 if let blocker = record.operationalPlanningBlocker {
                     metadata.markUpsertsFailed([recordId])
                     throw SprayPlanningAdmissionError(message: blocker)
@@ -155,6 +165,7 @@ final class SprayRecordSyncService {
         let deletes = metadata.pendingDeletes
         var deleteFailures: [String] = []
         for (recordId, _) in deletes {
+            if try store.isLegacySpraySyncHeld(record: recordId) { metadata.markDeletesFailed([recordId]); continue }
             do {
                 try await repository.softDeleteSprayRecord(id: recordId)
                 metadata.clearDeleted([recordId])
@@ -200,7 +211,10 @@ final class SprayRecordSyncService {
         // Initial sync: if remote is empty AND we have local records AND we have
         // never synced before, push them all up.
         if remote.isEmpty, lastSync == nil {
-            let localForVineyard = store.sprayRecords.filter { $0.vineyardId == vineyardId }
+            let localForVineyard = try store.sprayRecords.filter {
+                guard $0.vineyardId == vineyardId else { return false }
+                return try !store.isLegacySpraySyncHeld(record: $0.id)
+            }
             if !localForVineyard.isEmpty {
                 let now = Date()
                 let createdBy = auth?.userId
@@ -218,6 +232,9 @@ final class SprayRecordSyncService {
     }
 
     private func applyRemote(_ backendRecord: BackendSprayRecord, vineyardId: UUID, store: MigratedDataStore) {
+        guard (try? store.isLegacySpraySyncHeld(record: backendRecord.id)) == false else {
+            metadata.markUpsertsFailed([backendRecord.id]); return
+        }
         // Soft-deleted remotely.
         if backendRecord.deletedAt != nil {
             store.applyRemoteSprayRecordDelete(backendRecord.id)

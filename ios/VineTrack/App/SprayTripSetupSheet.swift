@@ -29,6 +29,7 @@ struct SprayTripSetupSheet: View {
     @State private var showCalculator: Bool = false
     @State private var planningStep: SprayProgramStep?
     @State private var pendingSavedTrip: Trip?
+    @State private var legacyRecoveryError: String?
 
     /// The vineyard's Program, from the SAME sources the Spray Program tab
     /// reads: local steps, portal steps, one dedup rule, one offline cache.
@@ -133,11 +134,17 @@ struct SprayTripSetupSheet: View {
                     machineName: machineName(for: trip),
                     latestEngineHours: latestEngineHours(for: trip)
                 ) { startEngineHours in
+                    do { try store.requireLegacySpraySyncAdmission(trip: trip.id) }
+                    catch { legacyRecoveryError = error.localizedDescription; return }
                     tracking.activateSavedTrip(trip, startEngineHours: startEngineHours, onStarted: { success in
                         if success { pendingSavedTrip = nil; dismiss() }
                     })
                 }
             }
+            .alert("Saved job needs reconciliation", isPresented: Binding(
+                get: { legacyRecoveryError != nil }, set: { if !$0 { legacyRecoveryError = nil } })) {
+                Button("OK", role: .cancel) { legacyRecoveryError = nil }
+            } message: { Text(legacyRecoveryError ?? "") }
             .task {
                 // Offline-safe hydration of portal Program Steps for this
                 // vineyard, so Resume works in a shed with no signal.

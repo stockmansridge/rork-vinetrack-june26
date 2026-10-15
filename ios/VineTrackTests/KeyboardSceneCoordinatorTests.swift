@@ -1,6 +1,7 @@
 import Testing
 import UIKit
 import MapKit
+import SwiftUI
 @testable import VineTrack
 
 @MainActor
@@ -147,6 +148,41 @@ struct KeyboardSceneCoordinatorTests {
         alert.dismiss(animated: false)
     }
 
+    @Test func swiftUIAlertOwnsAccessoryAndDismissesWithoutSubmitting() async throws {
+        // Hypothesis: unlike a directly presented UIKit alert, SwiftUI replaces or hides its accessory.
+        let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let state = SwiftUIAlertDiagnosticState()
+        window.rootViewController = UIHostingController(rootView: SwiftUIAlertDiagnosticView(state: state))
+        let coordinator = KeyboardSceneCoordinator()
+        coordinator.attach(to: window)
+        window.makeKeyAndVisible()
+        defer { coordinator.detach(); window.rootViewController?.dismiss(animated: false); window.isHidden = true }
+        try await Task.sleep(for: .milliseconds(800))
+        state.presented = true
+        try await Task.sleep(for: .milliseconds(800))
+        func fields(_ view: UIView) -> [UITextField] {
+            (view as? UITextField).map { [$0] } ?? view.subviews.flatMap(fields)
+        }
+        let field = try #require(scene.windows.flatMap { fields($0) }.first { $0.placeholder == "Diagnostic draft" })
+        field.becomeFirstResponder()
+        field.text = "Retained diagnostic draft"
+        field.sendActions(for: .editingChanged)
+        try await Task.sleep(for: .milliseconds(500))
+        let accessory = field.inputAccessoryView as? KeyboardAccessoryView
+        let button = accessory?.dismissButton
+        let nativeVisible = accessory?.window != nil && button?.isHidden == false && (button?.alpha ?? 0) > 0
+        let axElement = button?.isAccessibilityElement == true && button?.accessibilityLabel == "Done"
+        print("SwiftUIAlertDiagnostic sameScene=\(field.window?.windowScene === scene) sameWindow=\(field.window === window) accessory=\(accessory != nil) nativeVisible=\(nativeVisible) axElement=\(axElement)")
+        #expect(nativeVisible, "SwiftUI alert must retain an installed visible Done accessory")
+        #expect(axElement, "Done must remain a labelled native accessibility element")
+        let retained = field.text
+        button?.sendActions(for: .touchUpInside)
+        #expect(!field.isFirstResponder)
+        #expect(field.text == retained)
+        #expect(state.presented && state.submissions == 0)
+    }
+
     @Test func foreignWindowInputsAreNotModified() {
         let window = UIWindow(), otherWindow = UIWindow()
         let field = UITextField(); otherWindow.addSubview(field)
@@ -185,6 +221,25 @@ struct KeyboardSceneCoordinatorTests {
         defer { coordinator.detach() }
         #expect(window.gestureRecognizers?.last?.cancelsTouchesInView == false)
         #expect(window.gestureRecognizers?.last?.delaysTouchesBegan == false)
+    }
+}
+
+@MainActor @Observable
+private final class SwiftUIAlertDiagnosticState {
+    var presented: Bool = false
+    var draft: String = ""
+    var submissions: Int = 0
+}
+
+private struct SwiftUIAlertDiagnosticView: View {
+    @Bindable var state: SwiftUIAlertDiagnosticState
+    var body: some View {
+        Text("Isolated alert diagnostic")
+            .alert("SwiftUI diagnostic", isPresented: $state.presented) {
+                TextField("Diagnostic draft", text: $state.draft)
+                Button("Cancel", role: .cancel) {}
+                Button("Confirm") { state.submissions += 1 }
+            }
     }
 }
 

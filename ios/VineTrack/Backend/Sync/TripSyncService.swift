@@ -115,6 +115,10 @@ final class TripSyncService {
     func configure(store: MigratedDataStore, auth: NewBackendAuthService) {
         self.store = store
         self.auth = auth
+        store.legacySprayScopeProvider = { [weak store, weak auth] in
+            guard let vineyard = store?.selectedVineyardId else { return nil }
+            return auth?.legacySprayScope(vineyard: vineyard)
+        }
         guard !isConfigured else { return }
         isConfigured = true
         store.onTripChanged = { [weak self] id in
@@ -210,6 +214,7 @@ final class TripSyncService {
             try await pushLocalTrips(vineyardId: vineyardId)
             await TripLabourSnapshotJournal.shared.replay(trips: store?.trips ?? [])
             try await pullRemoteTrips(vineyardId: vineyardId)
+            try store?.requireLegacySpraySweepCompletion(vineyard: vineyardId)
             metadata.setLastSync(Date(), for: vineyardId)
             lastSyncDate = Date()
             syncStatus = .success
@@ -569,8 +574,12 @@ final class TripSyncService {
 
     func pushLocalTrips(vineyardId: UUID) async throws {
         guard let store else { return }
+        try store.reconcileLegacySpraySaves()
         let createdBy = auth?.userId
-        let dirty = metadata.pendingUpserts
+        var dirty = metadata.pendingUpserts
+        for id in Array(dirty.keys) where try store.isLegacySpraySyncHeld(trip: id) {
+            metadata.markUpsertsFailed([id]); dirty.removeValue(forKey: id)
+        }
         if !dirty.isEmpty {
             // An admin end wins over an offline active snapshot regardless of its
             // client timestamp. Read before replay; do not upload that snapshot.
@@ -593,6 +602,7 @@ final class TripSyncService {
             var orphans: [UUID] = []
             var deferredEndIds: Set<UUID> = []
             for (tripId, ts) in dirty {
+                try store.requireLegacySpraySyncAdmission(trip: tripId)
                 if endedIds.contains(tripId) { continue }
                 // Reclaim queue entries with no local trip — they can never
                 // upload and used to sit in the queue forever.
@@ -665,6 +675,7 @@ final class TripSyncService {
         if !clears.isEmpty {
             let byIdNow = Dictionary(store.trips.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             for (tripId, _) in clears {
+                if try store.isLegacySpraySyncHeld(trip: tripId) { continue }
                 // Conflict guard: if the user re-linked this trip locally before
                 // the sync, the newer link wins — drop the stale clear and let the
                 // upsert carry the link instead of wiping it.
@@ -691,6 +702,7 @@ final class TripSyncService {
         let deletes = metadata.pendingDeletes
         var deleteFailures: [String] = []
         for (tripId, _) in deletes {
+            if try store.isLegacySpraySyncHeld(trip: tripId) { metadata.markDeletesFailed([tripId]); continue }
             do {
                 try await repository.softDeleteTrip(id: tripId)
                 metadata.clearDeleted([tripId])
@@ -743,6 +755,7 @@ final class TripSyncService {
             )
             var localForVineyard: [Trip] = []
             for trip in store.trips {
+                if try store.isLegacySpraySyncHeld(trip: trip.id) { continue }
                 if trip.vineyardId == vineyardId {
                     localForVineyard.append(trip)
                     continue
@@ -778,6 +791,9 @@ final class TripSyncService {
     }
 
     private func applyRemote(_ backendTrip: BackendTrip, vineyardId: UUID, store: MigratedDataStore) async {
+        guard (try? store.isLegacySpraySyncHeld(trip: backendTrip.id)) == false else {
+            metadata.markUpsertsFailed([backendTrip.id]); return
+        }
         // Soft-deleted remotely.
         if backendTrip.deletedAt != nil {
             store.applyRemoteTripDelete(backendTrip.id)

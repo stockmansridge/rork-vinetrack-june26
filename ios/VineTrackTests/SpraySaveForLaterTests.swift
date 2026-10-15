@@ -10,6 +10,8 @@ final class SpraySaveForLaterTests: XCTestCase {
         let store = MigratedDataStore(persistence: persistence)
         let vineyard = UUID()
         store.selectedVineyardId = vineyard
+        let scope = LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: vineyard)
+        store.legacySprayScopeProvider = { scope }
         let trip = Trip(vineyardId: vineyard, paddockName: "Synthetic", startTime: Date(timeIntervalSince1970: 100), isActive: false)
         let record = SprayRecord(tripId: trip.id, vineyardId: vineyard, date: Date(timeIntervalSince1970: 100), startTime: Date(timeIntervalSince1970: 100))
         try store.saveSprayForLater(record: record, trip: trip)
@@ -27,6 +29,8 @@ final class SpraySaveForLaterTests: XCTestCase {
         let store = MigratedDataStore(persistence: persistence)
         let vineyard = UUID()
         store.selectedVineyardId = vineyard
+        let scope = LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: vineyard)
+        store.legacySprayScopeProvider = { scope }
         let trip = Trip(vineyardId: vineyard, paddockName: "Synthetic", isActive: false)
         let record = SprayRecord(tripId: trip.id, vineyardId: vineyard)
         var publications = 0
@@ -69,6 +73,8 @@ final class SpraySaveForLaterTests: XCTestCase {
         let store = MigratedDataStore(persistence: persistence)
         let vineyard = UUID()
         store.selectedVineyardId = vineyard
+        let scope = LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: vineyard)
+        store.legacySprayScopeProvider = { scope }
         let trip = Trip(vineyardId: vineyard, paddockName: "Synthetic", startTime: Date(timeIntervalSince1970: 100), isActive: false)
         let record = SprayRecord(tripId: trip.id, vineyardId: vineyard, date: Date(timeIntervalSince1970: 100), startTime: Date(timeIntervalSince1970: 100))
         persistence.durableSaveFailureForTesting = { key in key == TripRepository.storageKey ? SprayTankActualValidationError.localSaveFailed : nil }
@@ -89,6 +95,8 @@ final class SpraySaveForLaterTests: XCTestCase {
         let store = MigratedDataStore(persistence: persistence)
         let vineyard = UUID()
         store.selectedVineyardId = vineyard
+        let scope = LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: vineyard)
+        store.legacySprayScopeProvider = { scope }
         let original = SprayRecord(vineyardId: vineyard, date: Date(timeIntervalSince1970: 100), startTime: Date(timeIntervalSince1970: 100), notes: "Original")
         XCTAssertTrue(store.addSprayRecord(original))
         var edited = original
@@ -109,6 +117,108 @@ final class SpraySaveForLaterTests: XCTestCase {
         XCTAssertEqual(publications, 1)
     }
 
+    @MainActor func testStartupReconcilesEveryLocalPersistenceBoundaryBeforePublication() throws {
+        for boundary in ["intent", "record", "trip", "completion"] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let p = PersistenceStore(directory: root)
+            let vineyard = UUID()
+            let scope = LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: vineyard)
+            let original = MigratedDataStore(persistence: p)
+            original.selectedVineyardId = vineyard; original.legacySprayScopeProvider = { scope }
+            let trip = Trip(vineyardId: vineyard, paddockName: "Frozen original", startTime: Date(timeIntervalSince1970: 100), isActive: false)
+            let record = SprayRecord(tripId: trip.id, vineyardId: vineyard, date: Date(timeIntervalSince1970: 100), startTime: Date(timeIntervalSince1970: 100), notes: "Exact original")
+            var commits = 0
+            p.durableSaveFailureForTesting = { key in
+                if key == LegacySpraySaveRecovery.key { commits += 1 }
+                let fail = (boundary == "intent" && key == LegacySpraySaveRecovery.key && commits == 1) ||
+                    (boundary == "record" && key == SprayRepository.recordsKey) ||
+                    (boundary == "trip" && key == TripRepository.storageKey) ||
+                    (boundary == "completion" && key == LegacySpraySaveRecovery.key && commits == 2)
+                return fail ? SprayTankActualValidationError.localSaveFailed : nil
+            }
+            var publications = 0
+            original.onTripChanged = { _ in publications += 1 }
+            original.onSprayRecordChanged = { _ in publications += 1 }
+            XCTAssertThrowsError(try original.saveSprayForLater(record: record, trip: trip), boundary)
+            XCTAssertEqual(publications, 0, boundary)
+            let restarted = MigratedDataStore(persistence: PersistenceStore(directory: root))
+            restarted.selectedVineyardId = vineyard; restarted.legacySprayScopeProvider = { scope }
+            restarted.reloadCurrentVineyardData()
+            if boundary == "intent" {
+                XCTAssertTrue(restarted.trips.isEmpty && restarted.sprayRecords.isEmpty)
+            } else {
+                XCTAssertEqual(restarted.trips, [trip]); XCTAssertEqual(restarted.sprayRecords, [record])
+                try restarted.reconcileLegacySpraySaves()
+                XCTAssertEqual(restarted.trips.count, 1); XCTAssertEqual(restarted.sprayRecords.count, 1)
+                XCTAssertThrowsError(try restarted.requireLegacySpraySyncAdmission(record: record.id))
+                XCTAssertThrowsError(try restarted.requireLegacySpraySyncAdmission(trip: trip.id))
+                XCTAssertNil(restarted.deviceActiveTripId)
+            }
+        }
+    }
+
+    @MainActor func testChangedRecordAndForeignSessionAreHeldWithoutInventedRepair() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let p = PersistenceStore(directory: root)
+        let vineyard = UUID()
+        let scope = LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: vineyard)
+        let trip = Trip(vineyardId: vineyard, paddockName: "Original", isActive: false)
+        let record = SprayRecord(tripId: trip.id, vineyardId: vineyard, notes: "Original")
+        try LegacySpraySaveRecovery(persistence: p).prepare(scope: scope, record: record, trip: trip)
+        let store = MigratedDataStore(persistence: p); store.selectedVineyardId = vineyard
+        for foreign in [LegacySpraySaveRecovery.Scope(actor: UUID(), session: scope.session, vineyard: vineyard),
+                        LegacySpraySaveRecovery.Scope(actor: scope.actor, session: UUID(), vineyard: vineyard)] {
+            store.legacySprayScopeProvider = { foreign }
+            try store.reconcileLegacySpraySaves()
+            XCTAssertTrue(store.trips.isEmpty && store.sprayRecords.isEmpty)
+            XCTAssertThrowsError(try store.requireLegacySpraySyncAdmission(record: record.id))
+        }
+        var changed = record; changed.notes = "Changed"
+        try store.sprayRepo.saveRecordsSliceOrThrow([changed], for: vineyard)
+        store.sprayRecords = [changed]; store.legacySprayScopeProvider = { scope }
+        XCTAssertThrowsError(try store.reconcileLegacySpraySaves())
+        XCTAssertEqual(store.sprayRecords, [changed]); XCTAssertTrue(store.trips.isEmpty)
+        XCTAssertEqual(try LegacySpraySaveRecovery(persistence: p).attempts().first?.record, record)
+    }
+
+    @MainActor func testProductionSyncAndInitialFallbackContainOnlyTheRetainedPair() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let p = PersistenceStore(directory: root)
+        let store = MigratedDataStore(persistence: p)
+        let vineyard = UUID(); store.selectedVineyardId = vineyard
+        let auth = NewBackendAuthService()
+        let records = LegacyRecordSyncProbe(); let trips = LegacyTripSyncProbe()
+        let recordSync = SprayRecordSyncService(repository: records, metadata: SprayRecordSyncMetadata(persistence: p))
+        let tripSync = TripSyncService(repository: trips, metadata: TripSyncMetadata(persistence: p))
+        recordSync.configure(store: store, auth: auth); tripSync.configure(store: store, auth: auth)
+        let scope = LegacySpraySaveRecovery.Scope(actor: UUID(), session: UUID(), vineyard: vineyard)
+        store.legacySprayScopeProvider = { scope }
+        let trip = Trip(vineyardId: vineyard, paddockName: "Original", isActive: false)
+        let record = SprayRecord(tripId: trip.id, vineyardId: vineyard)
+        try store.saveSprayForLater(record: record, trip: trip)
+        try await recordSync.pushLocalSprayRecords(vineyardId: vineyard)
+        try await tripSync.pushLocalTrips(vineyardId: vineyard)
+        try await recordSync.pullRemoteSprayRecords(vineyardId: vineyard)
+        try await tripSync.pullRemoteTrips(vineyardId: vineyard)
+        recordSync.markSprayRecordDeleted(record.id); tripSync.markTripDeleted(trip.id)
+        try await recordSync.pushLocalSprayRecords(vineyardId: vineyard)
+        try await tripSync.pushLocalTrips(vineyardId: vineyard)
+        XCTAssertTrue(records.writes.isEmpty && trips.writes.isEmpty)
+        XCTAssertTrue(records.deletes.isEmpty && trips.deletes.isEmpty)
+        XCTAssertThrowsError(try store.requireLegacySpraySweepCompletion(vineyard: vineyard))
+        let unrelated = SprayRecord(vineyardId: vineyard, notes: "Unrelated legacy record")
+        XCTAssertTrue(store.addSprayRecord(unrelated))
+        try await recordSync.pushLocalSprayRecords(vineyardId: vineyard)
+        XCTAssertEqual(records.writes, [unrelated.id])
+        XCTAssertEqual(try LegacySpraySaveRecovery(persistence: p).attempts().first?.record, record)
+    }
+
     @MainActor func testPlanningGateRefusesBeforeEitherWrite() {
         let vineyard = UUID()
         let trip = Trip(vineyardId: vineyard, paddockName: "Synthetic", isActive: false)
@@ -119,4 +229,25 @@ final class SpraySaveForLaterTests: XCTestCase {
         XCTAssertThrowsError(try SpraySaveForLaterCoordinator.save(record: record, trip: trip, saveRecord: { _ in writes += 1 }, saveTrip: { _ in writes += 1 }))
         XCTAssertEqual(writes, 0)
     }
+}
+
+@MainActor private final class LegacyRecordSyncProbe: SprayRecordSyncRepositoryProtocol {
+    var writes: [UUID] = []; var deletes: [UUID] = []
+    func fetchSprayRecords(vineyardId: UUID, since: Date?) async throws -> [BackendSprayRecord] { [] }
+    func fetchAllSprayRecords(vineyardId: UUID) async throws -> [BackendSprayRecord] { [] }
+    func upsertSprayRecord(_ record: BackendSprayRecordUpsert) async throws { writes.append(record.id) }
+    func upsertSprayRecords(_ records: [BackendSprayRecordUpsert]) async throws { writes += records.map(\.id) }
+    func softDeleteSprayRecord(id: UUID) async throws { deletes.append(id) }
+}
+
+@MainActor private final class LegacyTripSyncProbe: TripSyncRepositoryProtocol {
+    var writes: [UUID] = []; var deletes: [UUID] = []
+    func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip] { [] }
+    func fetchAllTrips(vineyardId: UUID) async throws -> [BackendTrip] { [] }
+    func fetchAllAccessibleTrips() async throws -> [BackendTrip] { [] }
+    func upsertTrip(_ trip: BackendTripUpsert) async throws { writes.append(trip.id) }
+    func upsertTrips(_ trips: [BackendTripUpsert]) async throws { writes += trips.map(\.id) }
+    func updateTripVineyardAssignment(id: UUID, vineyardId: UUID, paddockId: UUID?) async throws { writes.append(id) }
+    func updateTripWorkTaskLink(id: UUID, workTaskId: UUID?) async throws { writes.append(id) }
+    func softDeleteTrip(id: UUID) async throws { deletes.append(id) }
 }

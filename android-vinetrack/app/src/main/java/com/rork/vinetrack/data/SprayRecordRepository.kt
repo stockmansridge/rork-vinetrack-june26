@@ -166,6 +166,7 @@ class SprayRecordRepository(private val session: SessionStore) {
     private data class SoftDeleteArgs(@SerialName("p_spray_record_id") val id: String)
 
     /** Fields the spray form edits, passed through both create and edit paths. */
+    @Serializable
     data class SprayInput(
         val date: String,
         val startTime: String,
@@ -238,11 +239,13 @@ class SprayRecordRepository(private val session: SessionStore) {
         input: SprayInput,
         id: String = newId(),
         clientUpdatedAt: String? = null,
+        capturedToken: String? = null,
+        capturedActor: String? = null,
     ): SprayRecord =
         withContext(Dispatchers.IO) {
             input.operationalBlocker()?.let { throw IllegalStateException(it) }
             requireConfig()
-            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val token = capturedToken ?: session.accessToken ?: throw BackendError.Unauthorized
             val now = clientUpdatedAt ?: nowIso()
             val geometry = input.geometryToPersist()
             val body = SprayInsert(
@@ -294,7 +297,7 @@ class SprayRecordRepository(private val session: SessionStore) {
                 // per-block geometry outputs — `geometryToPersist()` has already
                 // applied that rule, so this is a straight read.
                 applicationBlocks = geometry?.blocks,
-                createdBy = session.userId,
+                createdBy = capturedActor ?: session.userId,
                 clientUpdatedAt = now,
             )
             val response = SupabaseClient.http.post(SupabaseClient.restUrl("spray_records")) {
@@ -304,7 +307,17 @@ class SprayRecordRepository(private val session: SessionStore) {
                 val legacy = SupabaseClient.json.encodeToJsonElement(SprayInsert.serializer(), body) as kotlinx.serialization.json.JsonObject
                 setBody(com.rork.vinetrack.data.spray.SprayPlanningWireFields.from(geometry, input.isTemplate).merging(legacy, SupabaseClient.json, explicitClear = geometry?.planningFieldsCleared == true))
             }
-            firstRow(response)
+            if (capturedToken != null) {
+                if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, "Legacy recipe creation was not confirmed")
+                val raw = SupabaseClient.json.parseToJsonElement(response.bodyAsText()) as? kotlinx.serialization.json.JsonArray
+                    ?: error(LegacySpraySaveStore.MESSAGE)
+                val actual = raw.singleOrNull() as? kotlinx.serialization.json.JsonObject ?: error(LegacySpraySaveStore.MESSAGE)
+                val legacy = SupabaseClient.json.encodeToJsonElement(SprayInsert.serializer(), body) as kotlinx.serialization.json.JsonObject
+                val expected = com.rork.vinetrack.data.spray.SprayPlanningWireFields.from(geometry, input.isTemplate)
+                    .merging(legacy, SupabaseClient.json, explicitClear = geometry?.planningFieldsCleared == true)
+                LegacySpraySaveStore.requireEcho(expected, actual)
+                SupabaseClient.json.decodeFromJsonElement(SprayRecord.serializer(), actual)
+            } else firstRow(response)
         }
 
     /**

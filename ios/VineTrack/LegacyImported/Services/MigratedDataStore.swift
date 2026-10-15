@@ -162,6 +162,7 @@ final class MigratedDataStore {
     /// `createdByUserId` on pins that were saved before auth was wired up
     /// (or on creation paths that forgot to plumb auth in).
     var currentUserIdProvider: (() -> UUID?)?
+    @ObservationIgnored var legacySprayScopeProvider: (() -> LegacySpraySaveRecovery.Scope?)?
     /// Provides the currently-authenticated user display name. Used as a
     /// last-resort fallback for `createdBy` text when missing.
     var currentUserNameProvider: (() -> String?)?
@@ -564,6 +565,8 @@ final class MigratedDataStore {
 
         VineyardSelectionDiagnostics.stage("spray-records", vineyardId: vineyardId)
         sprayRecords = sprayRepo.loadRecords(for: vineyardId)
+        // Authentication may be configured after hydration; sync preflight retries this before any write.
+        try? reconcileLegacySpraySaves()
         savedChemicals = sprayRepo.loadChemicals(for: vineyardId)
         savedSprayPresets = sprayRepo.loadPresets(for: vineyardId)
         savedEquipmentOptions = sprayRepo.loadEquipmentOptions(for: vineyardId)
@@ -1539,30 +1542,71 @@ final class MigratedDataStore {
 
     /// Saves the validated recipe before publishing its inactive placeholder. Retry keeps both IDs.
     func saveSprayForLater(record: SprayRecord, trip: Trip) throws {
+        try prepareLegacySpraySave(record: record, trip: trip)
+        try reconcileLegacySpraySaves()
+    }
+
+    /// Must precede even local occurrence-parent preparation for this paired legacy save.
+    func prepareLegacySpraySave(record: SprayRecord, trip: Trip) throws {
         guard selectedVineyardId == record.vineyardId else {
             throw SprayTankActualValidationError.localSaveFailed
         }
-        try SpraySaveForLaterCoordinator.save(record: record, trip: trip, saveRecord: { item in
+        guard let scope = legacySprayScopeProvider?(), scope.vineyard == record.vineyardId else {
+            throw SprayTankActualValidationError.localSaveFailed
+        }
+        let journal = LegacySpraySaveRecovery(persistence: persistence)
+        try journal.prepare(scope: scope, record: record, trip: trip)
+    }
+
+    /// Called at startup hydration and again before either dependent sync writer.
+    func reconcileLegacySpraySaves() throws {
+        let journal = LegacySpraySaveRecovery(persistence: persistence)
+        guard !((try journal.attempts()).isEmpty) else { return }
+        guard let scope = legacySprayScopeProvider?(), selectedVineyardId == scope.vineyard else {
+            throw SprayTankActualValidationError.localSaveFailed
+        }
+        let repaired = try journal.reconcile(scope: scope, record: { item in
             var next = self.sprayRecords
             if let index = next.firstIndex(where: { $0.id == item.id }) {
-                guard next[index] == item else { throw SprayTankActualValidationError.localSaveFailed }
+                guard try LegacySpraySaveRecovery.sameProjection(next[index], item) else { throw SprayTankActualValidationError.localSaveFailed }
             } else {
                 next.append(item)
             }
             try self.sprayRepo.saveRecordsSliceOrThrow(next, for: item.vineyardId)
             self.sprayRecords = next
-            self.onSprayRecordChanged?(item.id)
-        }, saveTrip: { item in
+        }, trip: { item in
             var next = self.trips
             if let index = next.firstIndex(where: { $0.id == item.id }) {
-                guard next[index] == item else { throw SprayTankActualValidationError.localSaveFailed }
+                guard try LegacySpraySaveRecovery.sameProjection(next[index], item) else { throw SprayTankActualValidationError.localSaveFailed }
             } else {
                 next.append(item)
             }
             try self.tripRepo.saveSliceOrThrow(next, for: item.vineyardId)
             self.trips = next
-            self.onTripChanged?(item.id)
         })
+        // Publication is AFTER both stores and the WAL completion marker are durable.
+        for item in repaired {
+            self.onTripChanged?(item.trip.id)
+            self.onSprayRecordChanged?(item.record.id)
+        }
+    }
+
+    func requireLegacySpraySweepCompletion(vineyard: UUID) throws {
+        if try LegacySpraySaveRecovery(persistence: persistence).attempts().contains(where: { $0.scope.vineyard == vineyard }) {
+            throw SprayPlanningAdmissionError(message: "Legacy creation evidence remains held on this device pending verified paired-create recovery.")
+        }
+    }
+
+    func isLegacySpraySyncHeld(record: UUID? = nil, trip: UUID? = nil) throws -> Bool {
+        try LegacySpraySaveRecovery(persistence: persistence).contains(record: record, trip: trip)
+    }
+
+    /// The ordinary REST upsert is not an immutable create receipt. Never replay a retained pair through LWW.
+    func requireLegacySpraySyncAdmission(record: UUID? = nil, trip: UUID? = nil) throws {
+        try reconcileLegacySpraySaves()
+        if try LegacySpraySaveRecovery(persistence: persistence).contains(record: record, trip: trip) {
+            throw SprayPlanningAdmissionError(message: "Legacy Save for Later is retained locally. Exact paired-create receipt verification is required before synchronization.")
+        }
     }
 
     @discardableResult

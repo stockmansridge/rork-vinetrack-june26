@@ -141,7 +141,7 @@ struct SprayCanopyAndRatePresetTests {
         #expect(!flow.isComplete(.carrier))
         // The exact words the operator sees.
         #expect(SprayGuidedBlocker.canopyConfirmationRequired.title
-            == "Select canopy size and density")
+            == "Select canopy type, size and density")
     }
 
     /// The canopy is asked BEFORE the volume, because the volume is derived
@@ -167,7 +167,7 @@ struct SprayCanopyAndRatePresetTests {
         #expect(SprayGuidedStep.carrier < SprayGuidedStep.products)
         #expect(SprayGuidedStep.allCases.firstIndex(of: .carrier) == 5)
         #expect(SprayGuidedStep.allCases.firstIndex(of: .products) == 6)
-        #expect(SprayGuidedStep.carrier.title == "Canopy & Carrier")
+        #expect(SprayGuidedStep.carrier.title == "Canopy & Spray Volume")
         // Products is structurally unreachable while the canopy is outstanding.
         let flow = SprayGuidedFlow(inputs: foliarInputs(canopyConfirmed: false))
         #expect(!flow.isUnlocked(.products))
@@ -212,6 +212,7 @@ struct SprayCanopyAndRatePresetTests {
     @Test("The selection resolves through the existing CanopyWaterRate table")
     func selectionUsesTheExistingTable() {
         var selection = SprayCanopySelection.unconfirmed
+        selection.choose(type: .vsp)
         selection.choose(size: .full)
         selection.choose(density: .high)
         #expect(selection.litresPer100m() == CanopyWaterRate.litresPer100m(size: .full, density: .high))
@@ -226,15 +227,21 @@ struct SprayCanopyAndRatePresetTests {
         #expect(selection.size == .medium)
         #expect(selection.density == .low)
         #expect(!selection.isConfirmed)
+        #expect(selection.type == nil)
+        var missingType = selection
+        missingType.confirm()
+        #expect(!missingType.isConfirmed)
     }
 
-    @Test("Touching either picker confirms the canopy")
+    @Test("With an explicit type, touching either picker confirms the canopy")
     func touchingAPickerConfirms() {
         var bySize = SprayCanopySelection.unconfirmed
+        bySize.choose(type: .vsp)
         bySize.choose(size: .large)
         #expect(bySize.isConfirmed)
 
         var byDensity = SprayCanopySelection.unconfirmed
+        byDensity.choose(type: .vsp)
         byDensity.choose(density: .high)
         #expect(byDensity.isConfirmed)
     }
@@ -244,6 +251,7 @@ struct SprayCanopyAndRatePresetTests {
     @Test("Confirming the shown values counts, and changes nothing else")
     func confirmingUnchangedValuesCounts() {
         var selection = SprayCanopySelection.unconfirmed
+        selection.choose(type: .vsp)
         selection.confirm()
         #expect(selection.isConfirmed)
         #expect(selection.size == .medium)
@@ -453,6 +461,14 @@ struct SprayCanopyAndRatePresetTests {
     @Test("Completing Products makes Review the next step, never the current one")
     func completingProductsDoesNotEndTheStep() {
         var inputs = foliarInputs(canopyConfirmed: true)
+        inputs.canopy = .prefilled(type: .vsp, size: .full, density: .high)
+        inputs.targets = [.downyMildew]
+        inputs.sprayHeadTarget = .bunchLine
+        inputs.isGrowthStageResolved = true
+        inputs.isEquipmentSelected = true
+        inputs.isEquipmentConfirmed = true
+        inputs.tankCapacityLitres = 1500
+        inputs.sprayVolumeChoice = .useRecommended
         inputs.products = [
             SprayProductLineInput(
                 productId: "p1",

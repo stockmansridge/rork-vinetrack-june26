@@ -15,6 +15,7 @@ struct SprayCalculationSummarySheet: View {
     var mode: SprayCalculationSummaryMode = .savedForLater
     var canViewFinancials: Bool = true
     var onContinue: (() -> Void)? = nil
+    var localSaveNotice: String? = nil
 
     init(
         result: SprayCalculationResult,
@@ -33,12 +34,14 @@ struct SprayCalculationSummarySheet: View {
         result: SprayCalculationResult,
         sprayName: String,
         mode: SprayCalculationSummaryMode,
+        localSaveNotice: String? = nil,
         canViewFinancials: Bool = true,
         onContinue: (() -> Void)? = nil
     ) {
         self.result = result
         self.sprayName = sprayName
         self.mode = mode
+        self.localSaveNotice = localSaveNotice
         self.canViewFinancials = canViewFinancials
         self.onContinue = onContinue
     }
@@ -140,6 +143,9 @@ struct SprayCalculationSummarySheet: View {
                     .foregroundStyle(.secondary)
             }
 
+            if mode == .savedForLater, let localSaveNotice {
+                Text(localSaveNotice).font(.subheadline).foregroundStyle(.secondary)
+            }
             Text("Chemical amounts required per tank")
                 .font(.caption)
                 .foregroundStyle(.tertiary)

@@ -131,10 +131,30 @@ final class NewBackendAuthService {
         return raw
     }
 
+    /// Durable session fence survives process restoration but never an explicit sign-out.
+    func legacySprayScope(vineyard: UUID) -> LegacySpraySaveRecovery.Scope? {
+        guard isSignedIn, let actor = userId else { return nil }
+        let key = "legacy_spray_session_\(actor.uuidString)"
+        let persistence = PersistenceStore.shared
+        let token: UUID
+        switch persistence.loadOutcome(key: key) as PersistenceStore.LoadOutcome<UUID> {
+        case .decoded(let value): token = value
+        case .missing:
+            token = UUID()
+            guard (try? persistence.saveOrThrow(token, key: key)) != nil else { return nil }
+        case .failed: return nil
+        }
+        return .init(actor: actor, session: token, vineyard: vineyard)
+    }
+
     func signOut() async {
         isLoading = true
         errorMessage = nil
         defer { isLoading = false }
+        if let actor = userId {
+            do { try PersistenceStore.shared.saveOrThrow(UUID(), key: "legacy_spray_session_\(actor.uuidString)") }
+            catch { errorMessage = "Local recovery scope could not be secured. Sign-out was not completed."; return }
+        }
         do {
             try await authRepository.signOut()
         } catch {
