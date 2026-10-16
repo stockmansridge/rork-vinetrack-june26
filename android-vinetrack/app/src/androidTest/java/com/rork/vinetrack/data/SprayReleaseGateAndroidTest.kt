@@ -9,6 +9,7 @@ import android.os.ParcelFileDescriptor
 import androidx.test.platform.app.InstrumentationRegistry
 import com.rork.vinetrack.data.model.SprayRecord
 import com.rork.vinetrack.data.model.Trip
+import com.rork.vinetrack.data.spray.*
 import com.rork.vinetrack.data.reporting.SprayReportPayloadV1
 import org.junit.Assert.*
 import org.junit.Test
@@ -17,6 +18,33 @@ import java.util.UUID
 
 /** Offline native render/receipt assertions only; never starts a real job or contacts a backend. */
 class SprayReleaseGateAndroidTest {
+    @Test fun cfVolumeExamplesAdmitReceiptAndLegacyEvidenceRemainsUnchanged() {
+        val session = com.rork.vinetrack.data.auth.SessionStore(InstrumentationRegistry.getInstrumentation().targetContext)
+        for (actual in listOf(750.0, 600.0)) {
+            val intent = SprayPlanningIntent(SprayPassConfiguration.STANDARD_PASS, SprayPlanningMethod.BY_AREA, calibratedLitresPerHectare = actual)
+            val resolved = requireNotNull(intent.resolve(1.0, 2.8, 715.0))
+            val chemical = com.rork.vinetrack.data.model.SprayChemical(UUID.randomUUID().toString(), name = "Dilute", volumePerTank = actual * resolved.concentrationFactor,
+                ratePer100L = 100.0, unit = "g")
+            val tank = com.rork.vinetrack.data.model.SprayTank(UUID.randomUUID().toString(), waterVolume = actual, concentrationFactor = resolved.concentrationFactor, chemicals = listOf(chemical))
+            val snapshot = SprayApplicationSnapshot(grossAreaHa = 1.0, planningIntent = intent, planningResolution = resolved)
+            val input = SprayRecordRepository.SprayInput("2026-10-16", "2026-10-16T08:00:00Z", null, null, null, null, null, "Original", null, null, null, null, null, null,
+                sprayEquipmentId = null, operationType = "foliar_spray", tripId = UUID.randomUUID().toString(), tanks = listOf(tank), applicationGeometry = snapshot)
+            assertNull(input.operationalBlocker())
+            assertNull(SprayStartRecipeValidation.blocker(input.tanks))
+            val fields = SprayRecordRepository(session).legacyReceiptInsert(UUID.randomUUID().toString(), input, UUID.randomUUID().toString(), input.startTime, UUID.randomUUID().toString())
+            assertTrue(fields.keys.all { it in LegacySprayPairReceipt.recordKeys })
+            val restored = SupabaseClient.json.decodeFromJsonElement(SprayRecord.serializer(), fields)
+            assertEquals(maxOf(1.0, 715.0 / actual), restored.applicationGeometry!!.planningResolution!!.concentrationFactor, 1e-12)
+            assertNull(SprayPlanningOperationalGate.tankConfirmationBlocker(restored, restored))
+            val legacy = restored.copy(tanks = listOf(tank.copy(concentrationFactor = 0.95)))
+            val before = SupabaseClient.json.encodeToString(SprayRecord.serializer(), legacy)
+            assertNull(SprayStartRecipeValidation.blocker(legacy.tanks.orEmpty()))
+            assertNull(SprayPlanningOperationalGate.tankConfirmationBlocker(legacy, legacy))
+            assertEquals(before, SupabaseClient.json.encodeToString(SprayRecord.serializer(), legacy))
+            assertNotNull(SprayStartRecipeValidation.blocker(listOf(tank.copy(chemicals = listOf(chemical.copy(volumePerTank = Double.NaN))))))
+        }
+    }
+
     @Test fun configuredSingleAndOverRowRetainExactSetupThroughReceiptAndReload() {
         val session = com.rork.vinetrack.data.auth.SessionStore(InstrumentationRegistry.getInstrumentation().targetContext)
         for (pass in com.rork.vinetrack.data.spray.SprayPassConfiguration.entries) {
@@ -46,7 +74,7 @@ class SprayReleaseGateAndroidTest {
             assertNull(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.tankConfirmationBlocker(remote, remote))
             val saved = SupabaseClient.json.encodeToString(SprayRecord.serializer(), remote)
             assertEquals(resolved, SupabaseClient.json.decodeFromString(SprayRecord.serializer(), saved).applicationGeometry!!.planningResolution)
-            for (factor in listOf(0.99, Double.NaN, Double.POSITIVE_INFINITY)) assertNotNull(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(false, factor, true))
+            for (factor in listOf(0.95, Double.NaN, Double.POSITIVE_INFINITY)) assertNull(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(false, factor, true))
             assertNotNull(com.rork.vinetrack.data.spray.SprayStartRecipeValidation.blocker(listOf(tank.copy(chemicals = listOf(tank.chemicals.first().copy(ratePer100L = 0.0))))))
         }
     }

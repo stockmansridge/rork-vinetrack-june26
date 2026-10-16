@@ -8,7 +8,7 @@ nonisolated struct SprayPlanningAdmissionError: LocalizedError {
 extension SprayPlanningOperationalGate {
     /// A delayed confirmation must still describe the exact current frozen record.
     nonisolated static func tankConfirmationBlocker(current: SprayRecord?, captured: SprayRecord) -> String? {
-        guard let current, current == captured else {
+        guard let current, current.hasSameRecipeEvidence(as: captured) else {
             return "The planned mix changed while this tank was open. Reopen Start Tank and confirm again."
         }
         return current.operationalPlanningBlocker
@@ -16,6 +16,16 @@ extension SprayPlanningOperationalGate {
 }
 
 extension SprayRecord {
+    /// Exact evidence comparison, including unchanged legacy NaN CF; no quantity or history normalization.
+    nonisolated func hasSameRecipeEvidence(as other: SprayRecord) -> Bool {
+        if self == other { return true }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        encoder.nonConformingFloatEncodingStrategy = .convertToString(positiveInfinity: "Infinity", negativeInfinity: "-Infinity", nan: "NaN")
+        guard let current = try? encoder.encode(self), let captured = try? encoder.encode(other) else { return false }
+        return current == captured
+    }
+
     nonisolated var operationalPlanningBlocker: String? {
         if !isTemplate, let geometry = applicationGeometry, let intent = geometry.planningIntent,
            let resolution = geometry.planningResolution,

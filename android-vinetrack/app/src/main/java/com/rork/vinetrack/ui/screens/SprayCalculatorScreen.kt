@@ -4475,6 +4475,8 @@ private fun SprayTankMixReview(
 
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SprayConcentrationWarning(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.warningProducts(
+                        result.chemicalResults.filter { it.basis == SprayCalculator.RateBasis.PER_100L }.map { it.name }))
                     Button(
                         onClick = onStart,
                         enabled = !saving && !hasActiveTrip && operationalBlocker == null,

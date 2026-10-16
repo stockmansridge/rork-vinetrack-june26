@@ -63,7 +63,7 @@ data class SprayPlanningIntent(
         val pass = configuration ?: return message
         if (method == null) return message
         if (listOf(resolution.intendedLitres, resolution.plannedAreaHa, resolution.litresPerHectare)
-                .any { !it.isFinite() || it <= 0 } || !resolution.concentrationFactor.isFinite() || resolution.concentrationFactor < 1) return message
+                .any { !it.isFinite() || it <= 0 }) return message
         val geometry = listOf(resolution.physicalRowLitresPer100m, resolution.controllerLitresPer100mTravel, resolution.effectiveWorkingWidthMetres)
         if (geometry.any { it != null } && geometry.any { it == null || !it.isFinite() || it <= 0 }) return message
         fun matches(a: Double, b: Double): Boolean = a.isFinite() && b.isFinite() &&
@@ -106,13 +106,12 @@ data class SprayPlanningIntent(
         if (!litres.isFinite() || !area.isFinite() || !rate.isFinite()) return null
         val spacing = physicalRowSpacingMetres?.takeIf { it.isFinite() && it > 0 }
         val physicalRate = spacing?.let { rate * it / 100.0 }
-        val dilute = diluteLitresPerHectare?.takeIf { it.isFinite() && it > 0 }
         return SprayPlanningResolution(
             intendedLitres = litres, plannedAreaHa = area, litresPerHectare = rate,
             physicalRowLitresPer100m = physicalRate,
             controllerLitresPer100mTravel = physicalRate?.times(pass.rowEquivalents),
             effectiveWorkingWidthMetres = spacing?.times(pass.rowEquivalents),
-            concentrationFactor = if (dilute == null) 1.0 else maxOf(1.0, dilute / rate),
+            concentrationFactor = SprayCarrierConversion.concentrationFactor(diluteLitresPerHectare, rate),
         )
     }
 }
@@ -148,9 +147,8 @@ object SprayPlanningOperationalGate {
         return blocker(current.applicationGeometry, current.tanks.orEmpty())
     }
     const val MIGRATION_MESSAGE = "Calculation preview only. New spray planning save/start and replay are disabled until the schema and operational workflows are approved and validated."
-    const val CONCENTRATE_MESSAGE = "The concentration factor must be finite and at least 1.00. Recalculate before saving or starting."
     const val WARNING_TITLE = "Concentration / Label Warning"
-    const val WARNING_MESSAGE = "VineTrack has calculated the chemical concentration factor (CF), but concentrate-spraying permission and applicable limits have not been verified against the product label.\n\nA calculated CF does not confirm label approval. Check the relevant product labels and application directions before spraying."
+    const val WARNING_MESSAGE = "VineTrack has calculated the chemical concentration factor (CF), but concentrate-spraying permission and applicable limits have not been verified against the product label.\n\nFor new calculations CF is at least 1.00, calculated from valid recommended and actual volumes when available. Missing or invalid CF uses the applicable 1.00 baseline. This information never prevents Start Spray, Save for Later or Tank Mixing.\n\nA calculated CF does not confirm label approval. Check the relevant product labels and application directions before spraying."
 
     /** Advisory only; never feeds operational readiness or write admission. */
     fun warningProducts(names: List<String>): List<String> = names.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
@@ -162,17 +160,11 @@ object SprayPlanningOperationalGate {
         for (tank in tanks) {
             val ambiguous = tank.chemicals.filter { it.rateBasis == null && it.ratePer100L > 0 && it.ratePerHa > 0 }
             if (ambiguous.isNotEmpty()) return "Choose an explicit rate basis before saving or starting. Ambiguous rate basis: " + ambiguous.joinToString(", ") { it.name }
-            val dilute = tank.chemicals.filter { it.rateBasis == SprayProductRateBasis.PER_100_LITRES.raw ||
-                (it.rateBasis == null && it.ratePer100L > 0) }
-            blocker(false, tank.concentrationFactor, dilute.isNotEmpty(), dilute.map { it.name })?.let { return it }
         }
         return LegacySpraySetup.blocker(snapshot?.planningIntent, snapshot?.planningResolution, snapshot?.planningFieldsCleared == true)
     }
     fun blocker(hasPlanningIntent: Boolean, concentrationFactor: Double?, hasDiluteRateProducts: Boolean, chemicalNames: List<String> = emptyList()): String? {
-        if (hasDiluteRateProducts && (concentrationFactor == null || !concentrationFactor.isFinite() || concentrationFactor < 1.0)) {
-            val names = chemicalNames.map { it.trim() }.filter { it.isNotEmpty() }.distinct().sorted()
-            return if (names.isEmpty()) CONCENTRATE_MESSAGE else CONCENTRATE_MESSAGE + " Products: " + names.joinToString(", ")
-        }
+        // CF and label uncertainty are advisory, independent of planning-contract admission.
         return if (hasPlanningIntent) MIGRATION_MESSAGE else null
     }
 }

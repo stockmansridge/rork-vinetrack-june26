@@ -26,7 +26,16 @@ final class SprayEditingAcceptanceUITests: XCTestCase {
         let start = app.buttons["spray.startTrip"]
         for _ in 0..<12 where !start.isHittable { app.scrollViews.firstMatch.swipeUp() }
         XCTAssertTrue(start.waitForExistence(timeout: 8))
-        XCTAssertTrue(start.isEnabled, "Single Row By Area must not be denied as new planning")
+        XCTAssertTrue(start.isEnabled, "Valid dilute-rate mix must remain startable without acknowledging CF")
+        let warnings = app.buttons.matching(identifier: "spray.concentrationWarning")
+        guard let warning = warnings.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
+            XCTFail("Optional orange CF warning must be visible beside enabled Start in Mixing: \(app.debugDescription)")
+            return
+        }
+        warning.tap()
+        XCTAssertTrue(app.navigationBars["Concentration / Label Warning"].waitForExistence(timeout: 5))
+        app.buttons["Close"].tap()
+        XCTAssertTrue(start.isEnabled, "Opening or dismissing the optional warning never changes admission")
         // No real account/receipt transport is installed in this isolated presentation fixture.
         app.buttons["Cancel"].firstMatch.tap()
         for _ in 0..<12 where !review.isHittable { app.scrollViews.firstMatch.swipeUp() }

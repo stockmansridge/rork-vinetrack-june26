@@ -162,13 +162,7 @@ object SprayProductQuantityCalculator {
                 if (!litres.isFinite() || litres <= 0) {
                     null
                 } else {
-                    val factor = if (context.concentrationFactor.isFinite() &&
-                        context.concentrationFactor > 0
-                    ) {
-                        context.concentrationFactor
-                    } else {
-                        1.0
-                    }
+                    val factor = SprayCarrierConversion.effectiveConcentrationFactor(context.concentrationFactor)
                     rate * litres / 100.0 * factor
                 }
             }

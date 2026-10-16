@@ -157,11 +157,12 @@ class SprayPlanningAttemptTest {
         assertTrue(SprayWorkAreaSelection.retained(selected, choices, SprayPassConfiguration.OVER_ROW))
         assertFalse(SprayWorkAreaSelection.retained(selected, choices, SprayPassConfiguration.STANDARD_PASS))
     }
-    @Test fun invalidCFAndMalformedBasisStillReject() {
+    @Test fun legacyCFIsAdvisoryButMalformedBasisStillRejects() {
         val r = request()
         val lowCF = r.snapshot.copy(frozenOutputs = JsonObject(r.snapshot.frozenOutputs + ("concentrationFactor" to JsonPrimitive(0.99))))
         val ambiguous = r.snapshot.copy(chemicalLines = JsonArray(listOf(buildJsonObject { put("quantity", 1.0); put("unit", "L") })))
-        fails { SprayPlanningProtocol.validate(r.copy(snapshot = lowCF)) }
+        SprayPlanningProtocol.validate(r.copy(snapshot = lowCF))
+        assertEquals(JsonPrimitive(0.99), lowCF.frozenOutputs["concentrationFactor"])
         fails { SprayPlanningProtocol.validate(r.copy(snapshot = ambiguous)) }
     }
     @Test fun productionSnapshotBuilderRetainsOriginalRecipeAndUnboundHasNoTrip() {

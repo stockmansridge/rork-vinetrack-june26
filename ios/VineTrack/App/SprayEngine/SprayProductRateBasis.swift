@@ -174,9 +174,7 @@ nonisolated enum SprayProductQuantityCalculator {
             return rate * treated
         case .per100Litres:
             guard context.carrierLitres.isFinite, context.carrierLitres > 0 else { return nil }
-            let factor = context.concentrationFactor.isFinite && context.concentrationFactor > 0
-                ? context.concentrationFactor
-                : 1.0
+            let factor = SprayCarrierConversion.effectiveConcentrationFactor(stored: context.concentrationFactor)
             return rate * context.carrierLitres / 100.0 * factor
         case .per100Metres:
             guard let metres = context.rowLengthMetres, metres.isFinite, metres > 0 else { return nil }

@@ -97,7 +97,17 @@ nonisolated enum SprayCarrierConversion {
     static func concentrationFactor(dilute: Double?, actual: Double?) -> Double {
         guard let actual = positive(actual) else { return 1.0 }
         guard let dilute = positive(dilute) else { return 1.0 }
-        return max(1.0, dilute / actual)
+        let ratio = dilute / actual
+        return ratio.isFinite ? max(1.0, ratio) : 1.0
+    }
+
+    /// Calculation-only projection; never changes stored historical factors or quantities.
+    static func effectiveConcentrationFactor(stored: Double?, dilute: Double? = nil, actual: Double? = nil) -> Double {
+        if positive(dilute) != nil, positive(actual) != nil {
+            return concentrationFactor(dilute: dilute, actual: actual)
+        }
+        guard let stored, stored.isFinite, stored >= 1 else { return 1.0 }
+        return stored
     }
 
     private static func positive(_ value: Double?) -> Double? {

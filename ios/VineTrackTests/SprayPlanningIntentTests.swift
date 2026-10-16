@@ -405,15 +405,15 @@ struct SprayPlanningIntentTests {
         }
     }
 
-    @Test func complianceIsPerTankAndRejectsUnknownInvalidOrAmbiguousDiluteEvidence() {
+    @Test func cfIsAdvisoryButAmbiguousRateBasisStillBlocks() {
         let dilute = SprayChemical(name: "Dilute product", ratePer100L: 100)
         let area = SprayChemical(name: "Area product", ratePerHa: 2, rateBasis: .wholeBlockArea)
         let mixed = [SprayTank(concentrationFactor: 1, chemicals: [dilute]), SprayTank(concentrationFactor: 4, chemicals: [area])]
         #expect(SprayRecord(tanks: mixed).operationalPlanningBlocker == nil)
         for factor in [0.0, -1.0, 0.9, Double.infinity, Double.nan] {
-            #expect(SprayRecord(tanks: [SprayTank(concentrationFactor: factor, chemicals: [dilute])]).operationalPlanningBlocker?.contains("Dilute product") == true)
+            #expect(SprayRecord(tanks: [SprayTank(concentrationFactor: factor, chemicals: [dilute])]).operationalPlanningBlocker == nil)
         }
-        #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: nil, hasDiluteRateProducts: true) != nil)
+        #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: nil, hasDiluteRateProducts: true) == nil)
         let ambiguous = SprayChemical(name: "Ambiguous", ratePerHa: 1, ratePer100L: 1)
         #expect(SprayRecord(tanks: [SprayTank(concentrationFactor: 1, chemicals: [ambiguous])]).operationalPlanningBlocker?.contains("Ambiguous") == true)
     }
@@ -440,18 +440,17 @@ struct SprayPlanningIntentTests {
         #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: 1, hasDiluteRateProducts: true) == nil)
     }
 
-    @Test(arguments: [0, 1, 2])
-    func persistedQueuedIntentAndInvalidFactorStayBlockedAcrossReplay(_ scenario: Int) async throws {
-        let invalidFactor = scenario == 1
+    @Test(arguments: [0, 2])
+    func persistedUnsupportedIntentStaysBlockedAcrossReplay(_ scenario: Int) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let persistence = PersistenceStore(directory: directory)
         let store = MigratedDataStore(persistence: persistence)
-        var snapshot = SprayApplicationSnapshot(carrierVolumeBasis: .litresPer100Metres, concentrationFactor: invalidFactor ? 0.9 : 1)
-        if !invalidFactor { snapshot.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank, fullTankSpecification: .targetArea, intendedTankLitres: 1000, targetAreaHa: 2) }
+        var snapshot = SprayApplicationSnapshot(carrierVolumeBasis: .litresPer100Metres, concentrationFactor: 1)
+        snapshot.planningIntent = SprayPlanningIntent(configuration: .overRow, method: .fullTank, fullTankSpecification: .targetArea, intendedTankLitres: 1000, targetAreaHa: 2)
         if scenario == 2 { snapshot = snapshot.clearingPlanning() }
-        let tanks: [SprayTank] = invalidFactor ? [SprayTank(concentrationFactor: 0.9, chemicals: [SprayChemical(ratePer100L: 100)])] : []
+        let tanks: [SprayTank] = []
         let eventTime = Date(timeIntervalSince1970: 1_800_000_000)
         let record = SprayRecord(date: eventTime, startTime: eventTime, tanks: tanks, applicationGeometry: snapshot)
         store.selectedVineyardId = record.vineyardId
@@ -467,7 +466,7 @@ struct SprayPlanningIntentTests {
             try await service.pushLocalSprayRecords(vineyardId: record.vineyardId)
             Issue.record("Blocked planning record unexpectedly replayed")
         } catch let error as SprayPlanningAdmissionError {
-            #expect(invalidFactor ? error.message == SprayPlanningOperationalGate.concentrateMessage : !error.message.isEmpty)
+            #expect(error.message == (scenario == 2 ? "Planning evidence is incomplete. Recalculate this draft before starting." : LegacySpraySetup.fullTankMessage))
         }
         let calls = await repository.writeCalls
         #expect(calls == 0)

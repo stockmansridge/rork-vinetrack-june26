@@ -61,8 +61,7 @@ nonisolated struct SprayPlanningIntent: Codable, Sendable, Hashable {
     func frozenResolutionBlocker(_ resolution: SprayPlanningResolution) -> String? {
         let message = "Spray planning outputs are incomplete or inconsistent. Recalculate before saving or starting."
         guard let configuration, method != nil,
-              [resolution.intendedLitres, resolution.plannedAreaHa, resolution.litresPerHectare].allSatisfy({ $0.isFinite && $0 > 0 }),
-              resolution.concentrationFactor.isFinite, resolution.concentrationFactor >= 1 else { return message }
+              [resolution.intendedLitres, resolution.plannedAreaHa, resolution.litresPerHectare].allSatisfy({ $0.isFinite && $0 > 0 }) else { return message }
         let geometry = [resolution.physicalRowLitresPer100m, resolution.controllerLitresPer100mTravel, resolution.effectiveWorkingWidthMetres]
         if geometry.contains(where: { $0 != nil }) && !geometry.allSatisfy({ $0.map { $0.isFinite && $0 > 0 } ?? false }) { return message }
         func matches(_ a: Double, _ b: Double) -> Bool {
@@ -138,9 +137,8 @@ nonisolated struct SprayPlanningResolution: Codable, Sendable, Hashable {
 /// No mutable capability flag: activation requires a separately reviewed integration.
 nonisolated enum SprayPlanningOperationalGate {
     static let migrationMessage = "Calculation preview only. New spray planning save/start and replay are disabled until the schema and operational workflows are approved and validated."
-    static let concentrateMessage = "The concentration factor must be finite and at least 1.00. Recalculate before saving or starting."
     static let warningTitle = "Concentration / Label Warning"
-    static let warningMessage = "VineTrack has calculated the chemical concentration factor (CF), but concentrate-spraying permission and applicable limits have not been verified against the product label.\n\nA calculated CF does not confirm label approval. Check the relevant product labels and application directions before spraying."
+    static let warningMessage = "VineTrack has calculated the chemical concentration factor (CF), but concentrate-spraying permission and applicable limits have not been verified against the product label.\n\nFor new calculations CF is at least 1.00, calculated from valid recommended and actual volumes when available. Missing or invalid CF uses the applicable 1.00 baseline. This information never prevents Start Spray, Save for Later or Tank Mixing.\n\nA calculated CF does not confirm label approval. Check the relevant product labels and application directions before spraying."
 
     /// Advisory only; never feeds operational readiness or durable write admission.
     static func warningProducts(_ names: [String]) -> [String] {
@@ -153,21 +151,12 @@ nonisolated enum SprayPlanningOperationalGate {
             if !ambiguous.isEmpty {
                 return "Choose an explicit rate basis before saving or starting. Ambiguous rate basis: " + ambiguous.map(\.name).joined(separator: ", ")
             }
-            let dilute = tank.chemicals.filter { $0.rateBasis == .per100Litres || ($0.rateBasis == nil && $0.ratePer100L > 0) }
-            if let message = blocker(hasPlanningIntent: false, concentrationFactor: tank.concentrationFactor,
-                hasDiluteRateProducts: !dilute.isEmpty, chemicalNames: dilute.map(\.name)) { return message }
         }
         return nil
     }
 
     static func blocker(hasPlanningIntent: Bool, concentrationFactor: Double?, hasDiluteRateProducts: Bool, chemicalNames: [String] = []) -> String? {
-        if hasDiluteRateProducts {
-            let factorIsSafe = concentrationFactor.map { $0.isFinite && $0 >= 1 } ?? false
-            if !factorIsSafe {
-                let names = Array(Set(chemicalNames.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
-                return names.isEmpty ? concentrateMessage : concentrateMessage + " Products: " + names.joined(separator: ", ")
-            }
-        }
+        // CF and label uncertainty are advisory, independent of planning-contract admission.
         return hasPlanningIntent ? migrationMessage : nil
     }
 }

@@ -19,7 +19,7 @@ object SprayPlanningSnapshotBuilder {
             intent.fullTankExecutionBlocker(resolution, geometry.grossAreaHa) == null &&
             (binding.trip == null || binding.trip.id == record.tripId && binding.trip.vineyardId == record.vineyardId), SprayPlanningProtocol.Code.INVALID_REQUEST)
         val lines = record.tanks.orEmpty().flatMap { tank ->
-            SprayPlanningProtocol.check(tank.waterVolume.isFinite() && tank.waterVolume > 0 && tank.concentrationFactor.isFinite() && tank.concentrationFactor >= 1, SprayPlanningProtocol.Code.INVALID_REQUEST)
+            SprayPlanningProtocol.check(tank.waterVolume.isFinite() && tank.waterVolume > 0, SprayPlanningProtocol.Code.INVALID_REQUEST)
             tank.chemicals.map { chemical -> buildJsonObject {
                 put("tankId", tank.id); put("tankNumber", tank.tankNumber); put("lineId", chemical.id)
                 put("rateBasis", chemical.rateBasis ?: throw SprayPlanningProtocol.Failure(SprayPlanningProtocol.Code.INVALID_REQUEST))

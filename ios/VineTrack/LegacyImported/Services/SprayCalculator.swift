@@ -14,6 +14,7 @@ enum SprayCalculator {
         fuelCostPerLitre: Double = 0,
         chemicalPrices: [ChemicalSeasonPrice] = []
     ) -> SprayCalculationResult {
+        let factor = SprayCarrierConversion.effectiveConcentrationFactor(stored: concentrationFactor)
         let totalArea = selectedPaddocks.reduce(0) { $0 + $1.areaHectares }
         let totalWaterLitres = totalArea * waterRateLitresPerHectare
 
@@ -50,7 +51,7 @@ enum SprayCalculator {
                     totalAmountRequired = selectedRate * totalArea
                 case .per100Litres:
                     let numberOf100LUnits = totalWaterLitres / 100.0
-                    totalAmountRequired = numberOf100LUnits * selectedRate * concentrationFactor
+                    totalAmountRequired = numberOf100LUnits * selectedRate * factor
                 }
             case .bandedSpray, .spreader:
                 totalAmountRequired = selectedRate * totalArea
@@ -157,7 +158,7 @@ enum SprayCalculator {
             fullTankCount: fullTankCount,
             lastTankLitres: lastTankLitres,
             chemicalResults: chemicalResults,
-            concentrationFactor: concentrationFactor,
+            concentrationFactor: factor,
             costingSummary: costingSummary
         )
     }

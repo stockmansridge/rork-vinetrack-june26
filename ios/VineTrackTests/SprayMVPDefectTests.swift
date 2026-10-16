@@ -6,6 +6,50 @@ import PDFKit
 @MainActor
 @Suite("MVP spray defect regression")
 struct SprayMVPDefectTests {
+    @Test("CF is advisory for Start, Save and Mixing, with a baseline for new calculations")
+    func cfNeverBlocksValidRecipe() throws {
+        for actual in [750.0, 600.0] {
+            let factor = SprayCarrierConversion.concentrationFactor(dilute: 715, actual: actual)
+            #expect(abs(factor - max(1, 715 / actual)) < 1e-12)
+            #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: factor, hasDiluteRateProducts: true) == nil)
+        }
+        let intent = SprayPlanningIntent(configuration: .standardPass, method: .byArea, calibratedLitresPerHectare: 600)
+        for stored in [0.95, Double.nan, Double.infinity] {
+            let resolution = SprayPlanningResolution(intendedLitres: 600, plannedAreaHa: 1, litresPerHectare: 600,
+                physicalRowLitresPer100m: 16.8, controllerLitresPer100mTravel: 16.8, effectiveWorkingWidthMetres: 2.8, concentrationFactor: stored)
+            #expect(intent.frozenResolutionBlocker(resolution) == nil)
+            #expect(LegacySpraySetup.blocker(intent: intent, resolution: resolution) == nil)
+        }
+        var fields = SprayPlanningWireFields(intent: intent, resolution: intent.resolve(selectedAreaHa: 1, physicalRowSpacingMetres: 2.8, diluteLitresPerHectare: 715))
+        fields.resolvedPlanningConcentrationFactor = nil
+        #expect(LegacySpraySetup.canCarry(fields))
+        #expect(fields.resolution()?.concentrationFactor == 1)
+        let chemical = SprayChemical(name: "Valid dilute product", volumePerTank: 750, ratePer100L: 100, unit: .grams)
+        for stored in [0.95, 0, -1, Double.nan, Double.infinity] {
+            let tank = SprayTank(waterVolume: 750, concentrationFactor: stored, chemicals: [chemical])
+            let record = SprayRecord(tanks: [tank])
+            #expect(record.operationalPlanningBlocker == nil)
+            #expect(SprayStartRecipeValidation.blocker(record.tanks) == nil)
+            #expect(SprayPlanningOperationalGate.tankConfirmationBlocker(current: record, captured: record) == nil)
+            let context = SprayQuantityContext(grossAreaHectares: 1, carrierLitres: 750, concentrationFactor: stored)
+            #expect(SprayProductQuantityCalculator.totalQuantity(rate: 100, basis: .per100Litres, context: context) == 750)
+            #expect(record.tanks[0].chemicals[0].volumePerTank == 750)
+            if stored.isFinite { #expect(record.tanks[0].concentrationFactor == stored) }
+        }
+        #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: nil, hasDiluteRateProducts: true) == nil)
+        for stored in [Double?.none, 0.95, .nan, .infinity] {
+            #expect(SprayCarrierConversion.effectiveConcentrationFactor(stored: stored, dilute: 715, actual: 600) == 715.0 / 600)
+            #expect(SprayCarrierConversion.effectiveConcentrationFactor(stored: stored, dilute: 715, actual: 750) == 1)
+            #expect(SprayCarrierConversion.effectiveConcentrationFactor(stored: stored) == 1)
+        }
+        let invalidWater = SprayQuantityContext(grossAreaHectares: 1, carrierLitres: .nan, concentrationFactor: 0.95)
+        #expect(SprayProductQuantityCalculator.totalQuantity(rate: 100, basis: .per100Litres, context: invalidWater) == nil)
+        let legacy = SprayRecord(tanks: [SprayTank(waterVolume: 750, concentrationFactor: 0.95, chemicals: [chemical])])
+        let before = try JSONEncoder().encode(legacy)
+        _ = legacy.operationalPlanningBlocker
+        #expect(try JSONDecoder().decode(SprayRecord.self, from: before) == legacy)
+    }
+
     @Test("Same configured By Area mix reaches receipt v1 and round-trips pass and controller setup")
     func configuredLegacyStart() throws {
         for configuration in SprayPassConfiguration.allCases {
@@ -43,7 +87,7 @@ struct SprayMVPDefectTests {
             #expect(encodedAgain?["notes"] as? String == remote.notes)
             #expect(trip.completedPaths.isEmpty && trip.tankSessions.isEmpty)
             for factor in [0.99, Double.nan, Double.infinity] {
-                #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: factor, hasDiluteRateProducts: true) != nil)
+                #expect(SprayPlanningOperationalGate.blocker(hasPlanningIntent: false, concentrationFactor: factor, hasDiluteRateProducts: true) == nil)
             }
             var invalid = record
             invalid.tanks[0].chemicals[0].ratePer100L = 0

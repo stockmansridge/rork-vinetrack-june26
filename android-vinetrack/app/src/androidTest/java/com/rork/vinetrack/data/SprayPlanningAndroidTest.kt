@@ -131,10 +131,16 @@ class SprayPlanningAndroidTest {
                     temperature = null, windSpeed = null, windDirection = null, humidity = null, sprayReference = null,
                     notes = null, numberOfFansJets = null, averageSpeed = null, equipmentType = null, tractor = null,
                     tractorGear = null, machineId = null, sprayEquipmentId = null, operationType = null, tripId = null,
-                    tanks = listOf(SprayTank(id = "tank", concentrationFactor = 0.9,
-                        chemicals = listOf(SprayChemical("line", name = "Unverified concentrate", ratePer100L = 100.0)))))
-                assertTrue(runCatching { SprayRecordUpdateSync(reopened).enqueue("must-not-enqueue", concentrated, "revision") }.exceptionOrNull() is IllegalStateException)
-                assertEquals(listOf(blocked), PendingWriteRepository(PendingWriteStore(context)).list())
+                    tanks = listOf(SprayTank(id = "tank", waterVolume = 750.0, concentrationFactor = 0.9,
+                        chemicals = listOf(SprayChemical("line", name = "Unverified concentrate", volumePerTank = 750.0, ratePer100L = 100.0)))))
+                val admitted = SprayRecordUpdateSync(reopened).enqueue("legacy-cf-admitted", concentrated, "revision")
+                val retained = PendingWriteRepository(PendingWriteStore(context)).list()
+                assertEquals(2, retained.size)
+                assertEquals(blocked, retained.single { it.id == blocked.id })
+                val admittedPayload = json.decodeFromString(SprayRecordUpdateSync.Payload.serializer(), retained.single { it.id == admitted.id }.payloadJson)
+                assertEquals(concentrated.tanks, admittedPayload.tanks)
+                assertNull(concentrated.operationalBlocker())
+                assertNull(SprayStartRecipeValidation.blocker(concentrated.tanks))
             } finally {
                 names.forEach { base.deleteSharedPreferences(prefix + it) }
             }
@@ -199,12 +205,19 @@ class SprayPlanningAndroidTest {
     }
 
     @Test fun warningSheetIsOptionalAndPreservesPlan() {
-        val intent = SprayPlanningIntent(SprayPassConfiguration.OVER_ROW, SprayPlanningMethod.FULL_TANK,
-            SprayFullTankSpecification.TARGET_AREA, 1500.0, 3.0)
-        val before = intent.resolve(10.0, 2.8, 713.0)
-        compose.setContent { MaterialTheme {
+        val intent = SprayPlanningIntent(SprayPassConfiguration.OVER_ROW, SprayPlanningMethod.BY_AREA, calibratedLitresPerHectare = 600.0)
+        val before = requireNotNull(intent.resolve(1.0, 2.8, 715.0))
+        val tank = SprayTank("tank", waterVolume = 600.0, concentrationFactor = before.concentrationFactor,
+            chemicals = listOf(SprayChemical("product", name = "Synthetic sulphur", volumePerTank = 715.0, ratePer100L = 100.0)))
+        val snapshot = SprayApplicationSnapshot(planningIntent = intent, planningResolution = before)
+        val ready = SprayPlanningOperationalGate.blocker(snapshot, listOf(tank)) == null && SprayStartRecipeValidation.blocker(listOf(tank)) == null
+        compose.setContent { MaterialTheme { Column {
             com.rork.vinetrack.ui.components.SprayConcentrationWarning(listOf("Synthetic sulphur", "Synthetic copper"))
-        } }
+            androidx.compose.material3.Button(onClick = {}, enabled = ready) { androidx.compose.material3.Text("Start Spray") }
+            androidx.compose.material3.Button(onClick = {}, enabled = ready) { androidx.compose.material3.Text("Save for Later") }
+            androidx.compose.material3.Button(onClick = {}, enabled = ready) { androidx.compose.material3.Text("Tank Mixing") }
+        } } }
+        for (action in listOf("Start Spray", "Save for Later", "Tank Mixing")) compose.onNodeWithText(action).assertIsEnabled()
         compose.onNodeWithText("WARNING").performClick()
         compose.onNodeWithText(SprayPlanningOperationalGate.WARNING_TITLE).assertExists()
         compose.onNodeWithText(SprayPlanningOperationalGate.WARNING_MESSAGE).assertExists()
@@ -213,7 +226,8 @@ class SprayPlanningAndroidTest {
         compose.onNodeWithText("Close").performClick()
         compose.onNodeWithText("WARNING").assertExists()
         compose.onNodeWithText(SprayPlanningOperationalGate.WARNING_TITLE).assertDoesNotExist()
-        assertEquals(before, intent.resolve(10.0, 2.8, 713.0))
+        assertEquals(before, intent.resolve(1.0, 2.8, 715.0))
+        for (action in listOf("Start Spray", "Save for Later", "Tank Mixing")) compose.onNodeWithText(action).assertIsEnabled()
     }
 
     @Test fun numericFirstRateSheetKeepsDistinctDirectionsAndDoesNotAutomaticallySelect() {
@@ -258,7 +272,7 @@ class SprayPlanningAndroidTest {
         assertEquals(listOf(tank), input.tanks)
     }
 
-    @Test fun invalidFactorReplayBlocksEvenWithoutNewConfiguration() = runBlocking {
+    @Test fun legacyFactorReplayHasNoCFHoldAndPreservesOriginalEvidence() = runBlocking {
         val tank = SprayTank(id = "tank", concentrationFactor = 0.9, chemicals = listOf(SprayChemical("chemical", ratePer100L = 100.0)))
         val payload = SprayRecordUpdateSync.Payload("original", "2026-10-12", "2026-10-12", tanks = listOf(tank), clientUpdatedAt = "original-revision")
         val json = Json { encodeDefaults = true }
@@ -271,7 +285,9 @@ class SprayPlanningAndroidTest {
         val restored = PendingWriteRepository(disk).list().single()
         assertFalse(published)
         assertEquals(bytes, restored.payloadJson)
-        assertEquals(PendingWriteStatus.BLOCKED, restored.status)
-        assertEquals(SprayPlanningOperationalGate.CONCENTRATE_MESSAGE, restored.lastError)
+        assertNull(SprayPlanningOperationalGate.blocker(null, listOf(tank)))
+        assertEquals(PendingWriteStatus.FAILED, restored.status)
+        assertEquals("Spray repository is required for replay.", restored.lastError)
+        assertEquals(0.9, json.decodeFromString(SprayRecordUpdateSync.Payload.serializer(), restored.payloadJson).tanks.single().concentrationFactor, 0.0)
     }
 }

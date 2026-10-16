@@ -168,6 +168,7 @@ object SprayCalculator {
         concentrationFactor: Double = 1.0,
         operationType: String = "Foliar Spray",
     ): Result {
+        val factor = com.rork.vinetrack.data.spray.SprayCarrierConversion.effectiveConcentrationFactor(concentrationFactor)
         val totalArea = selectedPaddocks.sumOf { it.areaHectares }
         val totalWater = totalArea * waterRateLitresPerHectare
 
@@ -187,7 +188,7 @@ object SprayCalculator {
             val totalAmount = when {
                 foliar && line.basis == RateBasis.PER_100L -> {
                     val units100 = totalWater / 100.0
-                    units100 * line.rate * concentrationFactor
+                    units100 * line.rate * factor
                 }
                 else -> line.rate * totalArea // per-hectare (and all banded/spreader)
             }
@@ -218,7 +219,7 @@ object SprayCalculator {
             tankCapacityLitres = tankCapacity,
             fullTankCount = fullTankCount,
             lastTankLitres = lastTankLitres,
-            concentrationFactor = concentrationFactor,
+            concentrationFactor = factor,
             chemicalResults = chemicalResults,
         )
     }

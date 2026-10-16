@@ -23,7 +23,7 @@ nonisolated enum SprayPlanningSnapshotBuilder {
               let resolution = geometry.planningResolution,
               intent.frozenResolutionBlocker(resolution) == nil,
               intent.fullTankExecutionBlocker(resolution: resolution, selectedGrossAreaHa: geometry.grossAreaHa) == nil,
-              record.tanks.allSatisfy({ $0.waterVolume.isFinite && $0.waterVolume > 0 && $0.concentrationFactor.isFinite && $0.concentrationFactor >= 1 }),
+              record.tanks.allSatisfy({ $0.waterVolume.isFinite && $0.waterVolume > 0 }),
               SprayPlanningOperationalGate.tankComplianceBlocker(record.tanks) == nil,
               binding.trip.map({ $0.id == record.tripId && $0.vineyardId == record.vineyardId }) ?? true else { throw W.Failure.invalidRequest }
         func raw<T: Encodable>(_ value: T) throws -> W.JSON { try JSONDecoder().decode(W.JSON.self, from: JSONEncoder().encode(value)) }
@@ -49,6 +49,6 @@ nonisolated enum SprayPlanningSnapshotBuilder {
     }
     /// Confirmation captures the complete recipe. Existing factual sessions are recovery evidence, never deleted here.
     static func validateTankConfirmation(captured: SprayRecord, current: SprayRecord?) throws {
-        guard captured == current else { throw W.Failure.conflict }
+        guard let current, captured.hasSameRecipeEvidence(as: current) else { throw W.Failure.conflict }
     }
 }

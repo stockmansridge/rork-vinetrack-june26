@@ -116,7 +116,7 @@ object SprayCarrierVolumeCalculator {
     ): SprayCarrierVolume {
         val rate = max(0.0, if (litresPerHectare.isFinite()) litresPerHectare else 0.0)
         val area = max(0.0, if (areaHectares.isFinite()) areaHectares else 0.0)
-        val factor = positive(concentrationFactor) ?: 1.0
+        val factor = SprayCarrierConversion.effectiveConcentrationFactor(concentrationFactor)
         return SprayCarrierVolume(
             basis = SprayCarrierBasis.LITRES_PER_HECTARE,
             totalLitres = rate * area,
@@ -183,7 +183,7 @@ object SprayCarrierVolumeCalculator {
         // Concentrating means applying LESS water than dilute/runoff. A dilute
         // reference below the applied rate is not a concentration, so the factor
         // floors at 1.0 rather than silently reducing product.
-        val factor = max(1.0, (dilute ?: applied) / applied)
+        val factor = SprayCarrierConversion.concentrationFactor(dilute, applied)
         val spacing = positive(rowSpacingMetres)
 
         return SprayCarrierVolume(

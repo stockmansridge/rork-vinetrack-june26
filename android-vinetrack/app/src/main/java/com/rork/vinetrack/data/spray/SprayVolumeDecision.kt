@@ -104,7 +104,14 @@ object SprayCarrierConversion {
     fun concentrationFactor(dilute: Double?, actual: Double?): Double {
         val diluteRate = positive(dilute) ?: return 1.0
         val actualRate = positive(actual) ?: return 1.0
-        return max(1.0, diluteRate / actualRate)
+        val ratio = diluteRate / actualRate
+        return if (ratio.isFinite()) max(1.0, ratio) else 1.0
+    }
+
+    /** Calculation-only projection, never a rewrite of historical factors or quantities. */
+    fun effectiveConcentrationFactor(stored: Double?, dilute: Double? = null, actual: Double? = null): Double {
+        if (positive(dilute) != null && positive(actual) != null) return concentrationFactor(dilute, actual)
+        return stored?.takeIf { it.isFinite() && it >= 1.0 } ?: 1.0
     }
 }
 

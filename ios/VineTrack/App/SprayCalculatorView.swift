@@ -278,7 +278,7 @@ struct SprayCalculatorView: View {
             view._canopy = State(initialValue: .prefilled(type: .vsp, size: .medium, density: .low))
             view._sprayVolumeChoice = State(initialValue: .useCustomSprayerRate)
             view._customSprayerRateText = State(initialValue: "600")
-            view._chemicalLines = State(initialValue: [ChemicalLine(chemicalId: chemicalID, selectedRateId: UUID(), basis: .perHectare, overrideRate: 200)])
+            view._chemicalLines = State(initialValue: [ChemicalLine(chemicalId: chemicalID, selectedRateId: UUID(), basis: .per100Litres, overrideRate: 100)])
             view._openedStep = State(initialValue: .review)
         }
         return view
@@ -2941,6 +2941,8 @@ struct SprayCalculatorView: View {
                     }
 
                     VStack(spacing: 8) {
+                        SprayConcentrationWarningView(products: SprayPlanningOperationalGate.warningProducts(
+                            guidedInputs.products.filter { $0.basis == .per100Litres }.map(\.name)))
                         Button {
                             Task { await confirmAndStartJob() }
                         } label: {

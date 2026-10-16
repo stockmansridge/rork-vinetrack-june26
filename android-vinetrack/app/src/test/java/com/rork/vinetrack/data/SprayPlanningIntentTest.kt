@@ -8,6 +8,37 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SprayPlanningIntentTest {
+    @Test fun cfNeverBlocksValidRecipeOrChangesHistoricalEvidence() {
+        for (actual in listOf(750.0, 600.0)) {
+            val factor = SprayCarrierConversion.concentrationFactor(715.0, actual)
+            assertEquals(maxOf(1.0, 715.0 / actual), factor, 1e-12)
+            assertNull(SprayPlanningOperationalGate.blocker(false, factor, true))
+        }
+        val chemical = SprayChemical("product", name = "Valid dilute product", volumePerTank = 750.0, ratePer100L = 100.0)
+        for (stored in listOf(0.95, 0.0, -1.0, Double.NaN, Double.POSITIVE_INFINITY)) {
+            val tank = SprayTank("tank", waterVolume = 750.0, concentrationFactor = stored, chemicals = listOf(chemical))
+            val record = SprayRecord("record", "vineyard", tanks = listOf(tank))
+            assertNull(SprayPlanningOperationalGate.blocker(null, listOf(tank)))
+            assertNull(SprayStartRecipeValidation.blocker(listOf(tank)))
+            assertNull(SprayPlanningOperationalGate.tankConfirmationBlocker(record, record))
+            val context = SprayQuantityContext(grossAreaHectares = 1.0, carrierLitres = 750.0, concentrationFactor = stored)
+            assertEquals(750.0, SprayProductQuantityCalculator.totalQuantity(100.0, SprayProductRateBasis.PER_100_LITRES, context)!!, 0.0)
+            assertEquals(stored, record.tanks!!.single().concentrationFactor, 0.0)
+            assertEquals(750.0, record.tanks!!.single().chemicals.single().volumePerTank, 0.0)
+        }
+        for (stored in listOf(null, 0.95, Double.NaN, Double.POSITIVE_INFINITY)) {
+            assertEquals(715.0 / 600.0, SprayCarrierConversion.effectiveConcentrationFactor(stored, 715.0, 600.0), 0.0)
+            assertEquals(1.0, SprayCarrierConversion.effectiveConcentrationFactor(stored, 715.0, 750.0), 0.0)
+            assertEquals(1.0, SprayCarrierConversion.effectiveConcentrationFactor(stored), 0.0)
+        }
+        assertNull(SprayPlanningOperationalGate.blocker(false, null, true))
+        assertNull(SprayProductQuantityCalculator.totalQuantity(100.0, SprayProductRateBasis.PER_100_LITRES,
+            SprayQuantityContext(grossAreaHectares = 1.0, carrierLitres = Double.NaN, concentrationFactor = 0.95)))
+        val legacy = SprayRecord("legacy", "vineyard", tanks = listOf(SprayTank("tank", concentrationFactor = 0.95, chemicals = listOf(chemical))))
+        val before = Json.encodeToString(SprayRecord.serializer(), legacy)
+        SprayPlanningOperationalGate.blocker(legacy.applicationGeometry, legacy.tanks.orEmpty())
+        assertEquals(before, Json.encodeToString(SprayRecord.serializer(), legacy))
+    }
     @Test fun fourPlanningCombinationsRetainFrozenOutputsAndAdvisoryCFBehindGate() {
         for (pass in SprayPassConfiguration.entries) for (method in SprayPlanningMethod.entries) {
             val intent = SprayPlanningIntent(configuration = pass, method = method,
@@ -29,7 +60,7 @@ class SprayPlanningIntentTest {
             assertEquals(if (snapshot.planningIntent?.method == SprayPlanningMethod.BY_AREA) null else LegacySpraySetup.FULL_TANK_MESSAGE, SprayPlanningOperationalGate.blocker(snapshot, emptyList()))
             assertNotNull(intent.frozenResolutionBlocker(output.copy(controllerLitresPer100mTravel = 999.0)))
             assertNotNull(intent.frozenResolutionBlocker(output.copy(effectiveWorkingWidthMetres = null)))
-            assertNotNull(intent.frozenResolutionBlocker(output.copy(concentrationFactor = Double.NaN)))
+            assertNull(intent.frozenResolutionBlocker(output.copy(concentrationFactor = Double.NaN)))
         }
     }
 
@@ -324,15 +355,15 @@ class SprayPlanningIntentTest {
         }
     }
 
-    @Test fun complianceIsPerTankAndRejectsMissingInvalidAndAmbiguousDiluteEvidence() {
+    @Test fun cfIsAdvisoryButAmbiguousRateBasisStillBlocks() {
         val dilute = SprayChemical("dilute", name = "Dilute product", ratePer100L = 100.0)
         val area = SprayChemical("area", name = "Area product", ratePerHa = 2.0, rateBasis = SprayProductRateBasis.WHOLE_BLOCK_AREA.raw)
         val mixed = listOf(SprayTank("safe", concentrationFactor = 1.0, chemicals = listOf(dilute)), SprayTank("area", concentrationFactor = 4.0, chemicals = listOf(area)))
         assertNull(SprayPlanningOperationalGate.blocker(null, mixed))
         for (factor in listOf(0.0, -1.0, 0.9, Double.POSITIVE_INFINITY, Double.NaN)) {
-            assertTrue(SprayPlanningOperationalGate.blocker(null, listOf(SprayTank("invalid", concentrationFactor = factor, chemicals = listOf(dilute))))!!.contains("Dilute product"))
+            assertNull(SprayPlanningOperationalGate.blocker(null, listOf(SprayTank("invalid", concentrationFactor = factor, chemicals = listOf(dilute)))))
         }
-        assertNotNull(SprayPlanningOperationalGate.blocker(false, null, true))
+        assertNull(SprayPlanningOperationalGate.blocker(false, null, true))
         val ambiguous = SprayChemical("ambiguous", name = "Ambiguous", ratePerHa = 1.0, ratePer100L = 1.0)
         assertTrue(SprayPlanningOperationalGate.blocker(null, listOf(SprayTank("ambiguous", concentrationFactor = 1.0, chemicals = listOf(ambiguous))))!!.contains("Ambiguous"))
     }

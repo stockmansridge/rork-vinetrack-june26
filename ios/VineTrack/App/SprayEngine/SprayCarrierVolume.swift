@@ -115,7 +115,8 @@ nonisolated enum SprayCarrierVolumeCalculator {
     ) -> SprayCarrierVolume {
         let rate = max(0, litresPerHectare.isFinite ? litresPerHectare : 0)
         let area = max(0, areaHectares.isFinite ? areaHectares : 0)
-        let factor = positive(concentrationFactor) ?? 1.0
+        let factor = SprayCarrierConversion.effectiveConcentrationFactor(stored: concentrationFactor,
+            dilute: diluteLitresPerHectare, actual: rate)
         let spacing = positive(rowSpacingMetres)
         let dilutePerHa = positive(diluteLitresPerHectare)
         return SprayCarrierVolume(

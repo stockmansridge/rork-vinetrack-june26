@@ -68,7 +68,8 @@ nonisolated struct SprayPlanningWireFields: Codable, Sendable, Hashable {
     /// Never substitute legacy geometry, current settings or inputs for absent frozen outputs.
     func resolution() -> SprayPlanningResolution? {
         guard let litres = resolvedPlanningCarrierLitres, let area = plannedApplicationAreaHa,
-              let rate = resolvedPlanningLitresPerHectare, let factor = resolvedPlanningConcentrationFactor else { return nil }
+              let rate = resolvedPlanningLitresPerHectare else { return nil }
+        let factor = resolvedPlanningConcentrationFactor ?? 1.0
         return SprayPlanningResolution(intendedLitres: litres, plannedAreaHa: area, litresPerHectare: rate,
             physicalRowLitresPer100m: resolvedPlanningPhysicalRowLitresPer100m,
             controllerLitresPer100mTravel: controllerLitresPer100mTravel,

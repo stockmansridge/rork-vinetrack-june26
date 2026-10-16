@@ -40,7 +40,7 @@ data class SprayPlanningWireFields(
         val litres = resolvedPlanningCarrierLitres ?: return null
         val area = plannedApplicationAreaHa ?: return null
         val rate = resolvedPlanningLitresPerHectare ?: return null
-        val factor = resolvedPlanningConcentrationFactor ?: return null
+        val factor = resolvedPlanningConcentrationFactor ?: 1.0
         return SprayPlanningResolution(litres, area, rate, resolvedPlanningPhysicalRowLitresPer100m,
             controllerLitresPer100mTravel, effectiveWorkingWidthMetres, factor)
     }
