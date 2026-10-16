@@ -4,6 +4,15 @@ import android.app.Application
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.*
+import androidx.compose.ui.test.*
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.lifecycle.SavedStateHandle
+import com.rork.vinetrack.ui.main.*
+import com.rork.vinetrack.ui.screens.SpraysScreen
+import com.rork.vinetrack.ui.screens.TripsScreen
+import org.junit.Rule
 import androidx.lifecycle.ViewModelStore
 import androidx.test.platform.app.InstrumentationRegistry
 import com.rork.vinetrack.data.auth.SessionStore
@@ -35,6 +44,7 @@ import java.util.concurrent.atomic.AtomicReference
  * Not authenticated backend acceptance, physical GPS, or screen/navigation evidence.
  */
 class SprayStartProductionAndroidTest {
+    @get:Rule val compose = createComposeRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val base = instrumentation.targetContext
     private val prefix = "spray_start_${UUID.randomUUID()}_"
@@ -52,6 +62,8 @@ class SprayStartProductionAndroidTest {
     private var creates = 0
     private var recoveries = 0
     private var failReload = false
+    private var loseActivationResponse = false
+    private var activationRequests = 0
     private var mode = "accepted"
     private var hold: CompletableDeferred<Unit>? = null
 
@@ -63,7 +75,7 @@ class SprayStartProductionAndroidTest {
         root.deleteRecursively()
     }
 
-    private fun setup() {
+    private fun setup(forCalculatorUi: Boolean = false) {
         val wrapped = object : ContextWrapper(base) {
             override fun getApplicationContext(): Context = this
             override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
@@ -77,6 +89,8 @@ class SprayStartProductionAndroidTest {
             val path = request.url.encodedPath
             val jsonHeaders = headersOf(HttpHeaders.ContentType, "application/json")
             when {
+                forCalculatorUi && path.endsWith("/vineyard_members") -> respond("[{\"vineyard_id\":\"$vineyard\",\"user_id\":\"$actor\",\"role\":\"manager\"}]", HttpStatusCode.OK, jsonHeaders)
+                forCalculatorUi && path.endsWith("/vineyards") -> respond("[{\"id\":\"$vineyard\",\"name\":\"Fixture\",\"timezone\":\"Australia/Sydney\"}]", HttpStatusCode.OK, jsonHeaders)
                 path.endsWith("/rpc/save_legacy_spray_pair_v1") || path.endsWith("/rpc/recover_legacy_spray_pair_v1") -> {
                     val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
                     if (path.endsWith("/save_legacy_spray_pair_v1")) {
@@ -105,6 +119,10 @@ class SprayStartProductionAndroidTest {
                 path.endsWith("/trips") && request.method == HttpMethod.Patch -> {
                     val patch = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
                     savedTrip = JsonObject(savedTrip.orEmpty() + patch)
+                    if (patch["is_active"]?.jsonPrimitive?.booleanOrNull == true) {
+                        activationRequests++
+                        if (loseActivationResponse) { loseActivationResponse = false; error("Synthetic lost activation response after commitment") }
+                    }
                     respond(JsonArray(listOfNotNull(savedTrip)).toString(), HttpStatusCode.OK, jsonHeaders)
                 }
                 path.endsWith("/spray_records") -> respond(JsonArray(listOfNotNull(savedRecord)).toString(), HttpStatusCode.OK, jsonHeaders)
@@ -113,6 +131,10 @@ class SprayStartProductionAndroidTest {
         }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
         SupabaseClient.installInstrumentationTransport(client)
         instrumentation.runOnMainSync {
+            if (forCalculatorUi) SessionStore(app).apply {
+                save("synthetic-access", "synthetic-refresh", actor, null)
+                selectedVineyardId = vineyard
+            }
             vm = AppViewModel(app); models.put("start", vm)
             session().save("synthetic-access", "synthetic-refresh", actor, null)
             state().value = AppUiState(selectedVineyardId = vineyard, currentUserId = actor, isOnline = true,
@@ -178,6 +200,207 @@ class SprayStartProductionAndroidTest {
         assertTrue(vm.requiresFirstTankReview(active.trip))
         assertFalse("Do not bypass required Tank 1 Actual confirmation", vm.ui.value.isTracking)
     }
+    private var uiGeneration by mutableStateOf(0)
+    private var showUi by mutableStateOf(true)
+    private var navigationCallbacks = 0
+    private lateinit var work: WorkContextViewModel
+
+    private fun openCalculatorJourney() {
+        setup(forCalculatorUi = true)
+        instrumentation.uiAutomation.grantRuntimePermission(base.packageName, android.Manifest.permission.ACCESS_COARSE_LOCATION)
+        instrumentation.uiAutomation.grantRuntimePermission(base.packageName, android.Manifest.permission.ACCESS_FINE_LOCATION)
+        val equipmentId = UUID.randomUUID().toString()
+        val prefillId = UUID.randomUUID().toString()
+        val sourceId = UUID.randomUUID().toString()
+        val draft = calculatorInput(firstClock).copy(sprayEquipmentId = equipmentId)
+        val recordRepo = SprayRecordRepository(session())
+        val prefill = SupabaseClient.json.decodeFromJsonElement(SprayRecord.serializer(),
+            recordRepo.legacyReceiptInsert(vineyard, draft.copy(tripId = sourceId), prefillId, firstClock, actor))
+            .copy(templateGrowthStageCode = "EL4", programCalculatorInputs = SprayProgramCalculatorInputs(
+                carrierBasis = SprayCarrierBasis.MANUAL_TOTAL_VOLUME.raw))
+        compose.runOnUiThread {
+            state().value = state().value.copy(
+                sprayRecords = listOf(prefill),
+                trips = listOf(Trip(sourceId, vineyard, paddockId = blockId, paddockIds = listOf(blockId), isActive = false)),
+                paddocks = listOf(Paddock(blockId, vineyard, "Calculation fixture", polygonPoints = listOf(
+                    CoordinatePoint(-33.0, 149.0), CoordinatePoint(-33.001, 149.0),
+                    CoordinatePoint(-33.001, 149.001), CoordinatePoint(-33.0, 149.001)))),
+                sprayEquipment = listOf(SprayEquipment(equipmentId, vineyard, "Fixture sprayer", 2000.0)),
+                savedChemicals = listOf(SavedChemical(productId, vineyard, name = "Snapshot fixture", unit = "g", chemicalGroup = "11")),
+            )
+            work = WorkContextViewModel(SavedStateHandle()); work.setTab(MainTab.Program)
+        }
+        val references = state().value
+        compose.setContent {
+            MaterialTheme {
+                val live by vm.ui.collectAsState()
+                // Reference catalog/geometry are synthetic input props; incidental startup [] responses must not erase them.
+                val current = live.copy(savedChemicals = references.savedChemicals, paddocks = references.paddocks,
+                    sprayEquipment = references.sprayEquipment,
+                    sprayRecords = live.sprayRecords + references.sprayRecords.filter { old -> live.sprayRecords.none { it.id == old.id } },
+                    trips = live.trips + references.trips.filter { old -> live.trips.none { it.id == old.id } })
+                val selected by work.selectedTripId.collectAsState()
+                val tab by work.tab.collectAsState()
+                if (showUi) key(uiGeneration) {
+                    CalculatorStartDestination(vm, current, work)
+                    if (tab == MainTab.Trip) CompositionLocalProvider(androidx.compose.ui.platform.LocalInspectionMode provides true) {
+                        // Google's Compose preview branch excludes the emulator's microG map renderer only.
+                        // TripDetail, Actual dialog, callbacks, commit and real LocationTracker remain production code.
+                        TripsScreen(vm, current, selectedTripId = selected,
+                            onSelectedTripIdChange = work::setSelectedTripId)
+                    } else SpraysScreen(vm, current, initialOpenCalculator = true, initialCalculatorPrefillId = prefillId,
+                        onOpenTrip = { navigationCallbacks++; work.openCalculatorTrip(it) })
+                }
+            }
+        }
+        compose.mainClock.autoAdvance = true
+        tick()
+        compose.onNodeWithText("Equipment", substring = false).performScrollTo().performClick()
+        tick()
+        compose.onNode(hasText("Confirm equipment", substring = true) and hasClickAction()).performScrollTo().performClick()
+        tick()
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Create Spray Job & View Tank Mix", substring = true))
+        compose.onNodeWithText("Create Spray Job & View Tank Mix", substring = true).assertIsEnabled().performClick()
+        tick()
+    }
+
+    private fun tick() { compose.mainClock.advanceTimeBy(600); compose.waitForIdle() }
+    private fun pressCalculatorStart(hours: String? = null) {
+        try {
+            compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Start Spray Trip", substring = true))
+        } catch (failure: AssertionError) {
+            throw AssertionError("Calculator Start unavailable; outcome=${vm.calculatorStartOutcome.value}; error=${vm.ui.value.sprayError}; tree=${compose.onRoot().printToString()}", failure)
+        }
+        compose.onNodeWithText("Start Spray Trip", substring = true).performClick(); tick()
+        if (hours != null) {
+            compose.onNodeWithText("Start engine hours (optional)").performTextInput(hours)
+            tick()
+        }
+        // Exercise the production Button's accessibility action, not an IME-obscured screen coordinate.
+        compose.onNode(hasText("Start Trip") and hasClickAction()).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+        tick()
+    }
+    private fun awaitTankDestination(hours: Double?) {
+        compose.waitUntil(20_000) { work.selectedTripId.value != null || vm.calculatorStartOutcome.value?.message != null }
+        assertNotNull("Navigation missing: ${vm.calculatorStartOutcome.value}; error=${vm.ui.value.sprayError}", work.selectedTripId.value)
+        tick()
+        val id = requireNotNull(work.selectedTripId.value)
+        assertEquals(savedTrip!!.getValue("id").jsonPrimitive.content, id)
+        assertEquals(id, vm.ui.value.activeTrip?.id)
+        assertEquals(hours, vm.ui.value.activeTrip?.startEngineHours)
+        compose.onNodeWithText("Confirm Actual Tank Mix").assertExists()
+        assertFalse(vm.ui.value.isTracking); assertEquals(1, creates)
+        assertNull("Destination must acknowledge only after TripDetail is composed", vm.calculatorStartOutcome.value)
+    }
+
+    @Test(timeout = 90_000) fun calculatorButtonBlankHoursReachesTankThenRecording() {
+        openCalculatorJourney(); pressCalculatorStart(); awaitTankDestination(null)
+        assertEquals(1, navigationCallbacks)
+        compose.onNodeWithText("Start recording").performClick(); tick()
+        assertTrue(vm.ui.value.isTracking)
+        assertFalse(vm.requiresFirstTankReview(vm.ui.value.activeTrip!!))
+        assertEquals(1, vm.ui.value.activeTrip!!.tankSessions.size)
+        compose.onNodeWithText("Confirm Actual Tank Mix").assertDoesNotExist()
+    }
+
+    @Test(timeout = 90_000) fun calculatorButtonValidHoursAcceptedReloadFailureStillOpensOriginalTank() {
+        openCalculatorJourney(); failReload = true
+        pressCalculatorStart("123.5"); awaitTankDestination(123.5)
+        assertEquals(1, navigationCallbacks); assertEquals(1, recoveries)
+        val original = storedAttempts().single()
+        assertFrozen(original)
+        assertEquals(123.5, original.startEngineHours!!, 0.0)
+    }
+
+    @Test(timeout = 90_000) fun calculatorButtonLostReceiptRetryPreservesOriginalAndNavigatesOnce() {
+        openCalculatorJourney(); mode = "lost"; pressCalculatorStart("123.5")
+        compose.waitUntil(20_000) { vm.calculatorStartOutcome.value?.message != null }; tick()
+        val original = LegacySpraySaveStore(app).retainedStart(vineyard)
+            ?: error("Expected retained lost receipt, outcome=${vm.calculatorStartOutcome.value}, creates=$creates")
+        assertEquals(0, navigationCallbacks); assertNull(work.selectedTripId.value)
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Inspect retained Start"))
+        compose.onNodeWithText("Inspect retained Start").assertExists()
+        mode = "accepted"; failReload = true
+        pressCalculatorStart("999"); awaitTankDestination(123.5)
+        assertEquals(1, creates); assertEquals(1, recoveries); assertEquals(1, navigationCallbacks); assertFrozen(original)
+    }
+
+    @Test(timeout = 90_000) fun calculatorButtonDelayedResultSurvivesDisposedUiWithoutReactivation() {
+        openCalculatorJourney(); hold = CompletableDeferred()
+        pressCalculatorStart("123.5")
+        compose.waitUntil(20_000) { creates == 1 }
+        compose.runOnUiThread { showUi = false }; tick()
+        hold!!.complete(Unit)
+        compose.waitUntil(20_000) { vm.calculatorStartOutcome.value?.isStarted == true }
+        val originalId = vm.calculatorStartOutcome.value!!.tripId
+        assertEquals(0, navigationCallbacks); assertNull(work.selectedTripId.value)
+        compose.runOnUiThread { uiGeneration++; showUi = true }; tick()
+        awaitTankDestination(123.5)
+        assertEquals(originalId, work.selectedTripId.value); assertEquals(0, navigationCallbacks)
+        val before = vm.ui.value.activeTrip!!
+        compose.runOnUiThread { uiGeneration++ }; tick()
+        assertEquals(originalId, work.selectedTripId.value); assertEquals(1, creates)
+        assertEquals(before.startTime, vm.ui.value.activeTrip!!.startTime)
+        assertEquals(before.startEngineHours, vm.ui.value.activeTrip!!.startEngineHours)
+    }
+
+    @Test(timeout = 90_000) fun calculatorButtonLostActivationRestoresSameTankDestination() {
+        openCalculatorJourney(); loseActivationResponse = true
+        pressCalculatorStart("123.5"); awaitTankDestination(123.5)
+        compose.waitUntil(20_000) { activationRequests == 1 }; tick()
+        val id = requireNotNull(work.selectedTripId.value)
+        val original = storedAttempts().single()
+        compose.runOnUiThread { uiGeneration++ }; tick()
+        compose.onNodeWithText("Confirm Actual Tank Mix").assertExists()
+        assertEquals(id, work.selectedTripId.value); assertEquals(1, creates)
+        assertEquals(1, navigationCallbacks); assertEquals(1, activationRequests)
+        assertEquals(original, storedAttempts().single()); assertFalse(vm.ui.value.isTracking)
+        val pending = AppViewModel::class.java.getDeclaredField("pendingWrites").let { it.isAccessible = true; it.get(vm) as PendingWriteRepository }
+        compose.waitUntil(20_000) { pending.list().none { it.entityType == PendingEntityType.TRIP_START && it.clientId == id && it.status == PendingWriteStatus.IN_PROGRESS } }
+        pending.list().singleOrNull { it.entityType == PendingEntityType.TRIP_START && it.clientId == id }?.let { marker ->
+            compose.runOnUiThread { assertTrue(vm.retryPendingSyncItem(marker.id)) }
+        }
+        compose.waitUntil(20_000) { pending.list().none { it.entityType == PendingEntityType.TRIP_START && it.clientId == id } }
+        assertEquals(1, activationRequests); assertEquals(id, work.selectedTripId.value)
+    }
+
+    @Test(timeout = 90_000) fun calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption() {
+        openCalculatorJourney(); mode = "lost"; pressCalculatorStart()
+        compose.waitUntil(20_000) { vm.calculatorStartOutcome.value?.message != null }; tick()
+        val store = LegacySpraySaveStore(app)
+        val attempt = requireNotNull(store.retainedStart(vineyard)); mode = "accepted"
+        val access = requireNotNull(session().accountAccess())
+        kotlinx.coroutines.runBlocking { assertTrue(store.sendReceipt(attempt, { true }) { rpc, request ->
+            LegacySprayPairReceipt.transport(session(), access, rpc, request)
+        }) }
+        // Synthetic older-version fixture, derived from this real button's exact request + verified receipt.
+        val older = storedAttempts().single().copy(startRequested = false, startEngineHours = null)
+        app.getSharedPreferences(LegacySpraySaveStore.PREFERENCES, Context.MODE_PRIVATE).edit()
+            .putString("attempts", Json { encodeDefaults = true }.encodeToString(kotlinx.serialization.builtins.ListSerializer(LegacySpraySaveStore.Attempt.serializer()), listOf(older))).commit()
+        assertNull("Synthetic older fixture must decode", store.retainedStart(vineyard))
+        assertEquals(listOf(older), store.olderAcceptedMatch(vineyard, older.input, older.trip.paddockIds, older.trip.trackingPattern))
+        pressCalculatorStart(); compose.waitUntil(20_000) { vm.calculatorStartOutcome.value?.message != null }; tick()
+        assertTrue("Expected older inspection: ${vm.calculatorStartOutcome.value}", vm.calculatorStartOutcome.value!!.inspectionTripIds.contains(older.trip.id))
+        compose.onNodeWithText("Inspect retained Start").assertExists()
+        compose.onNodeWithText("Trip: ${older.trip.id}").assertExists()
+        assertNull(work.selectedTripId.value); assertNull(ActiveTripStore(app).load())
+        assertEquals(1, creates); assertEquals(listOf(older), storedAttempts())
+    }
+
+    @Test(timeout = 90_000) fun calculatorButtonBlockedReceiptShowsInspectionWithOriginalIdentity() {
+        openCalculatorJourney(); mode = "unavailable"; pressCalculatorStart()
+        compose.waitUntil(20_000) { vm.calculatorStartOutcome.value?.message != null }; tick()
+        val outcome = vm.calculatorStartOutcome.value!!
+        assertNotNull(outcome.operationId); assertTrue(outcome.inspectionTripIds.isNotEmpty())
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Inspect retained Start"))
+        compose.onNodeWithText("Inspect retained Start").performClick(); tick()
+        compose.onNodeWithText("Operation: ${outcome.operationId}").assertExists()
+        compose.onNodeWithText("Trip: ${outcome.inspectionTripIds.single()}").assertExists()
+        assertNull(work.selectedTripId.value); assertNull(ActiveTripStore(app).load()); assertEquals(1, creates)
+        compose.onNodeWithText("Return to retained setup").performClick(); tick()
+        compose.onNodeWithText("Start Spray Trip", substring = true).assertExists()
+    }
+
     @Test fun blankHoursActivateOriginalAndKeepFirstTankGpsSafetyGate() { setup(); assertActivation(null) }
     @Test fun validHoursActivateOriginalAndPreserveValue() {
         setup(); assertActivation(123.5)

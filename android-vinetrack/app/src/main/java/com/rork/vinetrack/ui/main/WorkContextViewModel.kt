@@ -98,6 +98,12 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
      */
     val selectedTripId: StateFlow<String?> = handle.getStateFlow(KEY_SELECTED_TRIP, null)
 
+    /** Idempotent destination establishment for both immediate and recovered calculator results. */
+    fun openCalculatorTrip(tripId: String) {
+        setSelectedTripId(tripId)
+        openTab(MainTab.Trip)
+    }
+
     /**
      * The same Repairs/Growth launcher opened as an overlay on the live trip
      * HUD. Kept separate from [launcherMode] because it renders OVER the trip

@@ -587,6 +587,34 @@ fun SprayCalculatorScreen(
     var result by remember { mutableStateOf<SprayCalculator.Result?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    val startScreenAlive = remember { java.util.concurrent.atomic.AtomicBoolean(true) }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        startScreenAlive.set(true)
+        onDispose { startScreenAlive.set(false) }
+    }
+    val retainedStartOutcome by vm.calculatorStartOutcome.collectAsStateWithLifecycle()
+    var inspectingStart by remember { mutableStateOf(false) }
+    LaunchedEffect(retainedStartOutcome) {
+        retainedStartOutcome?.takeIf { it.ownerId == state.currentUserId && it.vineyardId == state.selectedVineyardId }?.let {
+            saving = false
+            errorMessage = it.message
+            if (it.inspectionRequired) inspectingStart = true
+        }
+    }
+    if (inspectingStart) {
+        val outcome = retainedStartOutcome
+        androidx.compose.material3.AlertDialog(onDismissRequest = { inspectingStart = false }, title = { Text("Inspect retained Start") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(outcome?.message ?: "The original request is retained. Retry from the unchanged setup.")
+                outcome?.operationId?.let { Text("Operation: $it") }
+                outcome?.inspectionTripIds.orEmpty().forEach { id ->
+                    Text("Trip: $id")
+                    if (state.trips.any { it.id == id }) {
+                        TextButton(onClick = { onJobStarted?.invoke(id); inspectingStart = false }) { Text("Inspect saved trip $id") }
+                    } else Text("Original rows are not loaded. Reconnect and retry this unchanged Start; do not create a replacement.")
+                }
+            } }, confirmButton = { TextButton(onClick = { inspectingStart = false }) { Text("Return to retained setup") } })
+    }
 
     val selectedPaddocks = remember(selectedPaddockIds.toList(), state.paddocks) {
         state.paddocks.filter { selectedPaddockIds.contains(it.id) }
@@ -1284,10 +1312,6 @@ fun SprayCalculatorScreen(
         calculatorOperationalBlocker?.let { errorMessage = it; return }
         val r = runCalculation() ?: return
         if (saving) return
-        if (state.activeTrip?.let { it.isActive && it.endTime.isNullOrBlank() } == true) {
-            errorMessage = "Finish the active trip before starting another spray job."
-            return
-        }
         saving = true
         val firstPaddock = selectedPaddocks.firstOrNull()
         val paddockNames = selectedPaddocks.joinToString(", ") { it.name }
@@ -1299,12 +1323,15 @@ fun SprayCalculatorScreen(
             rowPlan = buildRowPlan(r.totalTanks),
             startEngineHours = startEngineHours,
         ) { outcome ->
+            if (!startScreenAlive.get()) return@startSprayJobNow
             saving = false
             val startedId = outcome.tripId
             if (outcome.isStarted && startedId != null) {
-                showReview = false
-                onSaved()
-                onJobStarted?.invoke(startedId)
+                if (onJobStarted != null) {
+                    onJobStarted.invoke(startedId)
+                    showReview = false
+                    onSaved()
+                } else errorMessage = "Trip $startedId is ready. Open this same trip in Trips to confirm Tank 1; recording has not begun."
             } else {
                 errorMessage = outcome.message
             }
@@ -1347,6 +1374,7 @@ fun SprayCalculatorScreen(
             onStartPathChange = { startCandidateKey = it },
             onDirectionChange = { directionHigherFirst = it },
             errorMessage = calculatorOperationalBlocker ?: errorMessage ?: state.sprayError,
+            onInspectStart = if (retainedStartOutcome?.inspectionTripIds?.isNotEmpty() == true) ({ inspectingStart = true }) else null,
             saving = saving,
             hasActiveTrip = state.activeTrip?.let { it.isActive && it.endTime.isNullOrBlank() } == true,
             operationalBlocker = calculatorOperationalBlocker,
@@ -4179,6 +4207,7 @@ private fun SprayTankMixReview(
     onStartPathChange: (String) -> Unit,
     onDirectionChange: (Boolean) -> Unit,
     errorMessage: String?,
+    onInspectStart: (() -> Unit)? = null,
     saving: Boolean,
     hasActiveTrip: Boolean,
     operationalBlocker: String?,
@@ -4502,6 +4531,9 @@ private fun SprayTankMixReview(
 
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    onInspectStart?.let { inspect ->
+                        OutlinedButton(onClick = inspect, modifier = Modifier.fillMaxWidth()) { Text("Inspect retained Start") }
+                    }
                     SprayConcentrationWarning(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.warningProducts(
                         result.chemicalResults.filter { it.basis == SprayCalculator.RateBasis.PER_100L }.map { it.name }))
                     Button(

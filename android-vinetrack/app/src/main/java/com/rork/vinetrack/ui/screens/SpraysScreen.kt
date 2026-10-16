@@ -198,9 +198,9 @@ fun SpraysScreen(
     var creating by remember { mutableStateOf(false) }
     var creatingTemplate by remember { mutableStateOf(false) }
     var programCreationRevision by remember { mutableStateOf(0) }
-    var calculating by remember { mutableStateOf(false) }
+    var calculating by rememberSaveable { mutableStateOf(false) }
     // Template/record id the Spray Calculator should be pre-filled from.
-    var calculatorPrefillId by remember { mutableStateOf<String?>(null) }
+    var calculatorPrefillId by rememberSaveable { mutableStateOf<String?>(null) }
 
     // When navigated here to start a spray trip (e.g. the Trips chooser),
     // open the Spray Calculator once, then clear the external request.

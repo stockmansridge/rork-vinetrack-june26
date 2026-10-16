@@ -991,6 +991,7 @@ private fun TripDetailView(
     // The trip can disappear after delete — bail out cleanly.
     LaunchedEffect(trip == null) { if (trip == null) onBack() }
     if (trip == null) return
+    LaunchedEffect(trip.id) { vm.acknowledgeCalculatorStartDestination(trip.id) }
 
     // iOS parity: ActiveTripView disables the idle timer while it is on screen
     // (including paused trips), gated by the "Keep screen awake during trips"
@@ -1014,6 +1015,7 @@ private fun TripDetailView(
         Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Ready to start", fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text("Recording has not begun. Review Tank 1 Actual quantities, then press Start.")
+            if (pending == null) Text("Tank 1 review is closed or its linked mix is unavailable. Reopen review below; if unavailable, reconnect and inspect the retained recipe. This trip remains reserved and GPS is off.")
             Button(onClick = { pending = vm.pendingTankStart(trip.id) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Review Tank 1 Mix") }
             OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Back · keep pending start") }
             state.tripError?.let { Text(it, fontSize = 12.sp) }

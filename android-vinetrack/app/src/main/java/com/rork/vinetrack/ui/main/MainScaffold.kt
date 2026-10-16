@@ -142,6 +142,8 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
         reason = ScreenAwakeController.Reason.ActiveTrip,
     )
 
+    CalculatorStartDestination(vm, state, work)
+
     // Keep the restored trip context honest as the trip list loads and changes:
     // a selected trip that was deleted, or a HUD launcher whose trip has ended,
     // is dropped here rather than left holding the screen awake for a workflow
@@ -381,8 +383,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                     work.setProgramCalculatorPrefill(null)
                 },
                 onOpenTrip = { tripId ->
-                    work.setSelectedTripId(tripId)
-                    work.setTab(MainTab.Trip)
+                    work.openCalculatorTrip(tripId)
                 },
             )
             MainSurface.SettingsTab -> SettingsScreen(

@@ -9557,7 +9557,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 return
             }
         }
-        val operation = session.fieldOperation() ?: return
+        val operation = session.fieldOperation() ?: run {
+            _ui.update { it.copy(isTracking = false, tripError = "Restore the original session to begin GPS recording. The confirmed tank and trip are retained.") }; return
+        }
         trackingOperation?.complete()
         trackingOperation = operation
         beginSprayWeatherCapture(trip)
@@ -9566,7 +9568,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             operation.complete()
             trackingOperation = null
             tracker = null
-            _ui.update { it.copy(isTracking = false) }
+            _ui.update { it.copy(isTracking = false, tripError = "Location permission is required. Enable location access, then resume this same trip; confirmed Tank Actuals are retained.") }
             return
         }
         tracker = t
@@ -11793,6 +11795,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (olderAccepted.isNotEmpty()) {
                 val identities = olderAccepted.joinToString(", ") { it.trip.id }
+                _calculatorStartOutcome.value = com.rork.vinetrack.data.SprayStartOutcome(
+                    inspectionTripIds = olderAccepted.map { it.trip.id }, inspectionRequired = true, ownerId = session.userId, vineyardId = vineyardId)
                 _ui.update { it.copy(sprayError = "Accepted saved job(s) $identities from an earlier app flow need inspection in Sprays/Trips. A similar recipe and day do not prove this is the same job; none was resumed or duplicated. To intentionally create a separate job, use Save for Later, then inspect and start that new saved job. This draft and all original evidence are unchanged.") }
                 onResult(false); return
             }
@@ -11864,8 +11868,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 check(accepted) { "Original request rejected; local evidence retained." }
                 // Row reads hydrate UI only AFTER immutable acceptance; they never prove acceptance.
-                val seededTrip = tripRepo.fetchTrip(attempt.trip.id, originalAccess) ?: error("Accepted job reload pending")
-                val created = sprayRepo.fetchAcceptedRow(attempt.recordId, originalAccess)
+                val (seededTrip, created) = try {
+                    val trip = tripRepo.fetchTrip(attempt.trip.id, originalAccess) ?: error("Accepted job reload pending")
+                    trip to sprayRepo.fetchAcceptedRow(attempt.recordId, originalAccess)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (unauthorized: BackendError.Unauthorized) { throw unauthorized }
+                catch (reload: Exception) {
+                    // Only a verified new Start pair can seed its exact original inactive data.
+                    // Save-for-Later/history never reconstructs an old job from a similar recipe.
+                    check(attempt.startRequested && session.isAccountAccessCurrent(originalAccess)) { "Accepted job reload pending" }
+                    val verified = legacySpraySaves.retainedStart(attempt.trip.vineyardId)
+                    check(verified?.recordId == attempt.recordId && verified.verified?.status == "accepted" && verified.rpc == attempt.rpc)
+                    com.rork.vinetrack.data.SupabaseClient.json.decodeFromJsonElement(Trip.serializer(), attempt.rpc.trip) to
+                        com.rork.vinetrack.data.SupabaseClient.json.decodeFromJsonElement(SprayRecord.serializer(), attempt.rpc.record)
+                }
+                check(seededTrip.id == attempt.trip.id && seededTrip.vineyardId == attempt.trip.vineyardId)
                 check(created.id == attempt.recordId && created.tripId == attempt.trip.id && created.vineyardId == attempt.trip.vineyardId)
                 check(_ui.value.selectedVineyardId == attempt.trip.vineyardId)
                 val published = session.withAccountAccess(originalAccess) {
@@ -12011,6 +12028,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private var calculatorStartInFlight: Boolean = false
+    private val _calculatorStartOutcome = kotlinx.coroutines.flow.MutableStateFlow<com.rork.vinetrack.data.SprayStartOutcome?>(null)
+    val calculatorStartOutcome: kotlinx.coroutines.flow.StateFlow<com.rork.vinetrack.data.SprayStartOutcome?> = _calculatorStartOutcome
+
+    /** A destination, not callback invocation, acknowledges presentation. Never activates a trip. */
+    fun acknowledgeCalculatorStartDestination(tripId: String) {
+        val result = _calculatorStartOutcome.value ?: return
+        if (result.isStarted && result.tripId == tripId && result.ownerId == session.userId &&
+            result.vineyardId == _ui.value.selectedVineyardId && _ui.value.activeTrip?.id == tripId) {
+            _calculatorStartOutcome.value = null
+        }
+    }
 
     /** Start through the retained paired-save/occurrence authority, then the existing tank recording gate.
      * An accepted pair awaiting hydration is recovered by its original identities, never rolled back.
@@ -12029,6 +12057,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         calculatorStartInFlight = true
         var delivered = false
+        var operationIdentity: String? = null
         var startStage = "hours_validation"
         val startOwner = session.userId
         val startEpoch = session.retentionGuard.identityEpoch.value
@@ -12039,15 +12068,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             calculatorStartInFlight = false
             val currentScope = startOwner == session.userId && startEpoch == session.retentionGuard.identityEpoch.value && startVineyard == _ui.value.selectedVineyardId
             val active = _ui.value.activeTrip?.takeIf { currentScope && it.isActive && it.endTime == null }
-            val result = if (ok && active != null) com.rork.vinetrack.data.SprayStartOutcome(tripId = active.id)
+            val retainedAttempt = if (currentScope && startVineyard != null) runCatching { legacySpraySaves.retainedStart(startVineyard) }.getOrNull() else null
+            val previous = _calculatorStartOutcome.value
+            val result = if (ok && active != null) com.rork.vinetrack.data.SprayStartOutcome(tripId = active.id,
+                operationId = operationIdentity ?: retainedAttempt?.rpc?.operation ?: previous?.operationId, ownerId = startOwner, vineyardId = startVineyard)
                 else com.rork.vinetrack.data.SprayStartOutcome(message = if (!currentScope) "Account or vineyard changed. The original request is retained; return to its account to recover it."
-                    else _ui.value.sprayError ?: "Start could not be confirmed. Keep this setup and recover the original request before trying another job.")
+                    else _ui.value.sprayError ?: "Start could not be confirmed. Keep this setup and recover the original request before trying another job.",
+                    operationId = retainedAttempt?.rpc?.operation, inspectionTripIds = if (currentScope) (
+                        listOfNotNull(retainedAttempt?.trip?.id) + previous?.inspectionTripIds.orEmpty()).distinct() else emptyList(),
+                    inspectionRequired = previous?.inspectionRequired == true,
+                    ownerId = startOwner, vineyardId = startVineyard)
+            _calculatorStartOutcome.value = result
             android.util.Log.i("SprayStart", "stage=$startStage outcome=${if (result.isStarted) "active_owned" else "blocked_or_pending"} trip=${result.tripId ?: "none"}")
             onResult(result)
         }
         if (startEngineHours != null && (!startEngineHours.isFinite() || startEngineHours < 0)) {
             _ui.update { it.copy(sprayError = "Enter valid non-negative engine hours, or leave the field blank.") }; finish(false); return
         }
+        _calculatorStartOutcome.value = null
         _ui.update { it.copy(sprayError = null) }
         startStage = "recipe_validation"
         com.rork.vinetrack.data.spray.SprayStartRecipeValidation.blocker(input.tanks)?.let { blocker ->
@@ -12100,6 +12138,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }.getOrDefault(true)
         }
         if (earlierQualified != null) {
+            _calculatorStartOutcome.value = com.rork.vinetrack.data.SprayStartOutcome(inspectionTripIds = listOf(earlierQualified.id), inspectionRequired = true,
+                ownerId = startOwner, vineyardId = vineyardId)
             _ui.update { it.copy(sprayError = "Original planned Start ${earlierQualified.id} needs recovery in Trips. Keep its saved route and recipe; no replacement will be created from this calculator.") }
             finish(false); return
         }
@@ -12124,6 +12164,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onReadyTrip = { tripId ->
                     startStage = "saved_activation"
                     val attempt = runCatching { legacySpraySaves.retainedStart(vineyardId) }.getOrNull()
+                    operationIdentity = attempt?.rpc?.operation
                     try {
                         startSprayJob(tripId, if (attempt != null) attempt.startEngineHours else startEngineHours) { ok ->
                             if (ok && attempt != null) runCatching { legacySpraySaves.completeStart(attempt) }
