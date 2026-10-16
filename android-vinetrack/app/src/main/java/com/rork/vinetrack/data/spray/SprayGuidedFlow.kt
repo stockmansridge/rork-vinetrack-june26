@@ -391,6 +391,7 @@ data class SprayGuidedFlow(
                 choice = inputs.sprayVolumeChoice,
                 customRate = inputs.customSprayerRate,
                 customBasis = inputs.customSprayerBasis,
+                explicitDiluteLitresPer100m = inputs.diluteLitresPer100Metres,
             )
         }
 

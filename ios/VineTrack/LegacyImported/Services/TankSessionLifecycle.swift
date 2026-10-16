@@ -71,10 +71,11 @@ nonisolated enum TankSessionLifecycle {
     }
 
     static func end(trip: Trip, at timestamp: Date, currentRow: Double?) -> Trip {
-        guard let activeTankNumber = trip.activeTankNumber else { return trip }
-        guard let sessionIndex = trip.tankSessions.lastIndex(where: {
-            $0.tankNumber == activeTankNumber && $0.endTime == nil
-        }) else { return trip }
+        guard trip.isActive, trip.endTime == nil, let activeTankNumber = trip.activeTankNumber else { return trip }
+        let open = trip.tankSessions.filter { isOpenSpray($0) }
+        guard open.count == 1, let session = open.first, session.tankNumber == activeTankNumber,
+              trip.tankSessions.filter({ $0.id == session.id || $0.tankNumber == activeTankNumber }).count == 1,
+              let sessionIndex = trip.tankSessions.firstIndex(where: { $0.id == session.id }) else { return trip }
 
         var updated = trip
         updated.tankSessions[sessionIndex].endTime = timestamp

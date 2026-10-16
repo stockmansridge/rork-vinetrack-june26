@@ -100,6 +100,12 @@ nonisolated struct SprayCanopySelection: Sendable, Hashable, Codable {
         )
     }
 
+    /// Program values populate the controls but require review for this application.
+    static func programSuggested(size: CanopySize?, density: CanopyDensity?) -> SprayCanopySelection {
+        SprayCanopySelection(type: .vsp, size: size ?? .medium, density: density ?? .low,
+            isSizeAndDensityConfirmed: false)
+    }
+
     /// Choosing the training system. Never implies the size was confirmed.
     mutating func choose(type newType: CanopyType) {
         if type != newType { isSizeAndDensityConfirmed = false }

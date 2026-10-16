@@ -516,16 +516,8 @@ nonisolated struct SprayReportPayloadV1: Codable, Sendable, Hashable {
                 status = "Not recorded"; source = "noProgressEvidence"
             }
             let exact = Set(trip.tankSessions.filter { $0.pathsCovered.contains(rowNumber) }.map(\.tankNumber))
-            let planned = Set(record.tanks.filter { tank in
-                tank.rowApplications.contains { rowNumber >= min($0.startRow, $0.endRow) && rowNumber <= max($0.startRow, $0.endRow) }
-            }.map(\.tankNumber))
-            let legacy = Set(trip.tankSessions.filter { session in
-                guard exact.isEmpty, planned.isEmpty, let start = session.startRow, let end = session.endRow,
-                      let startIndex = trip.rowSequence.firstIndex(of: start), let endIndex = trip.rowSequence.firstIndex(of: end),
-                      let rowIndex = trip.rowSequence.firstIndex(of: rowNumber) else { return false }
-                return rowIndex >= min(startIndex, endIndex) && rowIndex <= max(startIndex, endIndex)
-            }.map(\.tankNumber))
-            let matches = !exact.isEmpty ? exact : (!planned.isEmpty ? planned : legacy)
+            // Planned tank ranges and start/end rows are not recorded row-to-tank evidence.
+            let matches = exact
             let tank: TankReference? = matches.count > 1 ? .multiple : matches.first.map(TankReference.number)
             return Row(rowNumber: rowNumber, blockName: singleBlockName, status: status, source: source, tank: tank)
         }

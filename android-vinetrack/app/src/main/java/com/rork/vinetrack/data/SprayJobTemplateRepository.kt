@@ -97,6 +97,11 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
         /** Historical Program canopy fields were captured by VSP-only controls. */
         @SerialName("vsp_canopy_size") val vspCanopySize: String? = null,
         @SerialName("vsp_canopy_density") val vspCanopyDensity: String? = null,
+        @SerialName("band_width_total_metres") val bandWidthTotalMetres: Double? = null,
+        @SerialName("row_spacing_metres") val rowSpacingMetres: Double? = null,
+        @SerialName("carrier_volume_basis") val carrierVolumeBasis: String? = null,
+        @SerialName("dilute_litres_per_100m") val diluteLitresPer100m: Double? = null,
+        @SerialName("applied_litres_per_100m") val appliedLitresPer100m: Double? = null,
         @SerialName("created_at") val createdAt: String? = null,
         @SerialName("deleted_at") val deletedAt: String? = null,
         @SerialName("sprayer_configuration") val sprayerConfiguration: String? = null,
@@ -364,7 +369,10 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
             createdAt = createdAt,
             templateGrowthStageCode = growthStageCode?.trim()?.takeIf { it.isNotEmpty() },
             templateChemicalLines = chemicalLines,
-            prefillCanopy = prefillCanopy,
+            prefillCanopy = prefillCanopy?.copy(isSizeAndDensityConfirmed = false),
+            programCalculatorInputs = com.rork.vinetrack.data.spray.SprayProgramCalculatorInputs(
+                vspCanopySize, vspCanopyDensity, carrierVolumeBasis, diluteLitresPer100m, appliedLitresPer100m,
+                bandWidthTotalMetres, rowSpacingMetres),
             sprayerConfiguration = sprayerConfiguration,
             sprayPlanningMethod = sprayPlanningMethod,
             fullTankSpecification = fullTankSpecification,
@@ -374,6 +382,9 @@ class SprayJobTemplateRepository(private val session: SessionStore) {
             planningCalibratedLitresPerHectare = planningCalibratedLitresPerHectare,
         )
     }
+
+    /** Production row decoder used for deterministic offline-prefill contract checks. */
+    internal fun decodeTemplate(raw: String): SprayRecord = SupabaseClient.json.decodeFromString<SprayJobRow>(raw).toSprayRecord()
 
     private fun parsePrefilledCanopy(size: String?, density: String?): SprayCanopySelection? {
         val parsedSize = SprayCalculator.CanopySize.entries.firstOrNull {

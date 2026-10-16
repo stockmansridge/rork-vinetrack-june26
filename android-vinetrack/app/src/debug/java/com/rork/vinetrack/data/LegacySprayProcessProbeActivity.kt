@@ -30,7 +30,7 @@ class LegacySprayProcessProbeActivity : ComponentActivity() {
             override fun getSharedPreferences(name: String, mode: Int) = baseContext.getSharedPreferences(prefix + name, mode)
         }
         if (mode == "cleanup") {
-            listOf("vinetrack_session", LegacySpraySaveStore.PREFERENCES, "vinetrack_pending_writes", "vinetrack_active_trip").forEach { deleteSharedPreferences(prefix + it) }
+            listOf("vinetrack_session", LegacySpraySaveStore.PREFERENCES, "vinetrack_pending_writes", "vinetrack_active_trip", "vinetrack_domain_cache", "vinetrack_spray_tank_actuals").forEach { deleteSharedPreferences(prefix + it) }
             return "LEGACY_CLEANED"
         }
         val actor = UUID.nameUUIDFromBytes("actor$id".toByteArray()).toString()
@@ -39,6 +39,42 @@ class LegacySprayProcessProbeActivity : ComponentActivity() {
         val record = UUID.nameUUIDFromBytes("record$id".toByteArray()).toString()
         val session = SessionStore(isolated)
         if (!session.hasSession) session.save("synthetic-access", "synthetic-refresh", actor, null)
+        if (mode == "PROGRAM_TANK_WRITE" || mode == "PROGRAM_TANK_READ") {
+            val cache = DomainCacheStore(isolated)
+            val snapshots = ActiveTripStore(isolated)
+            val actuals = SprayTankActualStore(isolated)
+            if (mode == "PROGRAM_TANK_WRITE") {
+                val raw = """{"id":"$record","vineyard_id":"$vineyard","name":"Isolated Program","is_template":true,"vsp_canopy_size":"Large","vsp_canopy_density":"High","carrier_volume_basis":"l_per_100m","dilute_litres_per_100m":20.02,"applied_litres_per_100m":16.8,"spray_rate_per_ha":600,"water_volume":750}"""
+                val template = SprayJobTemplateRepository(session).decodeTemplate(raw)
+                cache.saveSprayTemplates(vineyard, listOf(template), 1)
+                var value = com.rork.vinetrack.data.model.Trip(trip, vineyard, isActive = true,
+                    startTime = "2026-10-14T00:00:00Z", rowSequence = listOf(1.5, 2.5), totalTanks = 2)
+                for (number in 1..2) {
+                    val started = checkNotNull(TankSessionLifecycle.startResult(value,
+                        "2026-10-14T00:0${number}:00Z", number + 0.5, listOf(1, 2)))
+                    value = TankPathAttribution.recordCompletion(started.trip, number + 0.5)
+                    check(actuals.save(com.rork.vinetrack.data.model.SprayTankActual(
+                        id = UUID.nameUUIDFromBytes("actual$id$number".toByteArray()).toString(),
+                        vineyardId = vineyard, sprayRecordId = record, tripId = trip,
+                        tankSessionId = started.tankSessionId, tankNumber = started.tankNumber,
+                        waterVolumeL = 750.0, chemicals = emptyList(), confirmedAt = started.operationTimestamp, confirmedBy = actor)))
+                    value = TankSessionLifecycle.end(value, "2026-10-14T00:0${number}:30Z", number + 0.5)
+                }
+                check(snapshots.saveDurably(actor, vineyard, value))
+                return "PROGRAM_TANK_RETAINED_${Process.myPid()}"
+            }
+            val template = cache.loadSprayTemplates(vineyard).single()
+            check(template.id == record && template.programCalculatorInputs?.appliedLitresPer100m == 16.8)
+            check(template.prefillCanopy?.isConfirmed == false && template.prefillCanopy?.size == SprayCalculator.CanopySize.LARGE)
+            val value = checkNotNull(snapshots.load()?.trip)
+            check(value.tankSessions.map { it.tankNumber } == listOf(1, 2))
+            check(value.tankSessions.map { it.pathsCovered } == listOf(listOf(1.5), listOf(2.5)))
+            check(actuals.pending(trip).size == 2)
+            value.tankSessions.forEach { tank ->
+                check(actuals.pending(trip).single { it.tankSessionId == tank.id }.tankNumber == tank.tankNumber)
+            }
+            return "PROGRAM_TANK_RECOVERED_${Process.myPid()}"
+        }
         if (mode == "GPS_CLAIMED" || mode == "GPS_RECOVER") {
             val queue = PendingWriteRepository(isolated)
             queue.configureReplayScope { PendingWriteRepository.ReplayScope(actor, session.retentionGuard.identityEpoch.value) }

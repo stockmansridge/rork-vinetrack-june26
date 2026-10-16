@@ -658,6 +658,13 @@ final class TripSyncService {
                     deferredEndIds.insert(tripId)
                     if trip.coverageBasis != .legacy { continue }
                 }
+                if let remote = serverTrips.first(where: { $0.id == tripId })?.toTrip(), trip.isActive {
+                    guard let preserved = TankPathAttribution.mergingRecordedPaths(local: trip, remote: remote) else {
+                        skipped.append((tripId, "Tank session identity conflicts; retained for review."))
+                        continue
+                    }
+                    trip = preserved
+                }
                 payloads.append(BackendTrip.upsert(from: trip, createdBy: createdBy, clientUpdatedAt: ts))
                 pushedIds.append(tripId)
             }

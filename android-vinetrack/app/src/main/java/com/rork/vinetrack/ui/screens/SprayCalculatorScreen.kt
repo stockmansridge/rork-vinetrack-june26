@@ -947,7 +947,7 @@ fun SprayCalculatorScreen(
         sprayName = if (r.isTemplate) base else if (base.isNotBlank()) "$base (Copy)" else ""
         r.operationType?.takeIf { it in sprayOperationTypes }?.let { operationType = it }
         if (!canopySelection.isConfirmed) {
-            r.prefillCanopy?.let { canopySelection = it }
+            (r.programCalculatorInputs?.canopy ?: r.prefillCanopy)?.let { canopySelection = it.copy(isSizeAndDensityConfirmed = false) }
         }
         notes = r.notes.orEmpty()
         fansJets = r.numberOfFansJets.orEmpty()
@@ -1023,6 +1023,33 @@ fun SprayCalculatorScreen(
                 planningTankText = original.tankText
                 planningAreaText = original.areaText
                 planningRateText = original.rateText
+            }
+        }
+        r.programCalculatorInputs?.let { program ->
+            program.bandWidthTotalMetres?.takeIf { it.isFinite() && it > 0 }?.let {
+                bandWidthSeed = RegionalInput.seed(it, fmt::lengthValue)
+                bandWidthText = bandWidthSeed.text
+            }
+            SprayCarrierBasis.entries.firstOrNull { it.raw == program.carrierBasis }?.let { carrierBasisChoice = it }
+            program.diluteLitresPer100m?.takeIf { it.isFinite() && it > 0 }?.let {
+                diluteLitresPer100mText = carrierFormat.rateInput(it, SprayCarrierBasis.LITRES_PER_100_METRES).text
+            }
+            program.appliedLitresPer100m?.takeIf { it.isFinite() && it > 0 }?.let {
+                appliedLitresPer100mText = carrierFormat.rateInput(it, SprayCarrierBasis.LITRES_PER_100_METRES).text
+            }
+            if (carrierBasisChoice == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) {
+                r.tanks?.firstOrNull()?.waterVolume?.takeIf { it.isFinite() && it > 0 }?.let {
+                    manualTotalLitresText = carrierFormat.rateInput(it, SprayCarrierBasis.MANUAL_TOTAL_VOLUME).text
+                }
+            } else {
+                val prefillBasis = if (sprayProfile.allows(carrierBasisChoice)) carrierBasisChoice else sprayProfile.defaultCarrierBasis
+                val rate = if (prefillBasis == SprayCarrierBasis.LITRES_PER_100_METRES)
+                    program.appliedLitresPer100m?.times(passConfiguration?.rowEquivalents ?: 1.0)
+                else r.tanks?.firstOrNull()?.sprayRatePerHa
+                rate?.takeIf { it.isFinite() && it > 0 }?.let {
+                    customSprayerRateText = displayRate(it, prefillBasis)
+                    sprayVolumeChoice = SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE
+                }
             }
         }
         r.applicationGeometry?.let { geometry ->
@@ -1406,6 +1433,12 @@ fun SprayCalculatorScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (prefillRecord?.isTemplate == true) {
+                    Text("Source: Spray Program — review canopy conditions; all values remain editable.", fontSize = 12.sp, color = vine.textSecondary)
+                    prefillRecord.programCalculatorInputs?.rowSpacingMetres?.let { spacing ->
+                        Text("Program row spacing: ${fmt.lengthValue(spacing)} ${fmt.lengthUnitAbbreviation}. Calculation uses the selected blocks' verified geometry.", fontSize = 12.sp, color = vine.textSecondary)
+                    }
+                }
                 var menu by remember { mutableStateOf(false) }
                 ExposedDropdownMenuBox(expanded = menu, onExpandedChange = { menu = it }) {
                     OutlinedTextField(
@@ -1890,6 +1923,13 @@ fun SprayCalculatorScreen(
                                 )
                                 Text(SprayVolumeHelp.RECOMMENDED_VOLUME, fontSize = 12.sp, color = vine.textSecondary)
                             }
+                        }
+                        if (prefillRecord?.programCalculatorInputs?.diluteLitresPer100m != null) {
+                            OutlinedTextField(value = diluteLitresPer100mText,
+                                onValueChange = { diluteLitresPer100mText = it; result = null },
+                                label = { Text("Spray Program dilute reference (${fmt.volumePer100LengthUnit})") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.fillMaxWidth())
                         }
                         if (planningMethod == SprayPlanningMethod.BY_AREA) {
                         Text("Spray at the recommended volume?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)

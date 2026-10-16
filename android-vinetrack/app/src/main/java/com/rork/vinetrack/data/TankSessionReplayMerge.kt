@@ -19,7 +19,16 @@ internal object TankSessionReplayMerge {
     }
 
     fun merge(server: Trip, local: Trip): Result? {
+        if (local.tankSessions.map { it.id }.distinct().size != local.tankSessions.size ||
+            server.tankSessions.map { it.id }.distinct().size != server.tankSessions.size) return null
         val localById = local.tankSessions.associateBy { it.id }
+        if (server.tankSessions.any { remote -> localById[remote.id]?.let {
+                it.tankNumber != remote.tankNumber ||
+                    (it.startEpochMs != remote.startEpochMs && !(remote.fillStartTime != null &&
+                        !TankSessionLifecycle.isOpenSpray(remote) && remote.endTime == null &&
+                        it.fillStartTime == remote.fillStartTime && it.startEpochMs != null &&
+                        (it.startRow != null || it.fillEndEpochMs?.let { end -> it.startEpochMs!! >= end } == true)))
+            } == true }) return null
         val serverIds = server.tankSessions.map { it.id }.toSet()
         val merged = ArrayList<TankSession>(server.tankSessions.size + local.tankSessions.size)
         server.tankSessions.forEach { serverSession ->
@@ -29,7 +38,8 @@ internal object TankSessionReplayMerge {
         local.tankSessions.forEach { localSession ->
             if (localSession.id !in serverIds) merged.add(localSession)
         }
-        if (!merged.map { it.id }.toSet().containsAll(serverIds)) return null
+        if (!merged.map { it.id }.toSet().containsAll(serverIds) ||
+            merged.map { it.tankNumber }.distinct().size != merged.size) return null
 
         val filling = reconcileFilling(server, local, merged)
         return Result(
@@ -45,6 +55,7 @@ internal object TankSessionReplayMerge {
         endRow = local.endRow ?: server.endRow,
         fillStartTime = local.fillStartTime ?: server.fillStartTime,
         fillEndTime = local.fillEndTime ?: server.fillEndTime,
+        pathsCovered = (server.pathsCovered + local.pathsCovered).distinct(),
     )
 
     private fun reconcileActiveTank(server: Trip, local: Trip, merged: List<TankSession>): Int? {

@@ -1165,6 +1165,32 @@ struct SprayCalculatorView: View {
     private func applyPrefillIfNeeded() {
         guard let r = prefillRecord, r.operationType.canPlanSpray, !prefillApplied else { return }
         prefillApplied = true
+        if let program = prefillProgram?.calculatorInputs {
+            if let suggested = program.canopy { canopy = suggested }
+            if let width = SprayCarrierConversion.positive(program.bandWidthTotalMetres) { bandWidthText = String(width) }
+            if let basis = program.carrierBasis.flatMap(SprayCarrierBasis.init(rawValue:)) {
+                carrierBasisChoice = basis
+            }
+            if let dilute = SprayCarrierConversion.positive(program.diluteLitresPer100m) {
+                diluteLitresPer100mText = String(dilute)
+            }
+            if let applied = SprayCarrierConversion.positive(program.appliedLitresPer100m) {
+                appliedLitresPer100mText = String(applied)
+            }
+            if carrierBasisChoice == .manualTotalVolume {
+                if let water = SprayCarrierConversion.positive(r.tanks.first?.waterVolume) {
+                    manualTotalLitresText = String(water)
+                }
+            } else if customSprayerInputBasis == .litresPer100Metres,
+                      let applied = SprayCarrierConversion.positive(program.appliedLitresPer100m) {
+                customSprayerRateText = String(applied * (r.applicationGeometry?.planningIntent?.configuration?.rowEquivalents ?? 1))
+                sprayVolumeChoice = .useCustomSprayerRate
+            } else if customSprayerInputBasis == .litresPerHectare,
+                      let rate = SprayCarrierConversion.positive(r.tanks.first?.sprayRatePerHa) {
+                customSprayerRateText = String(rate)
+                sprayVolumeChoice = .useCustomSprayerRate
+            }
+        }
 
         // Equipment and tractor by IDENTITY first, display name only as the
         // legacy fallback. A renamed spray unit still resolves, and a name that
@@ -1218,7 +1244,7 @@ struct SprayCalculatorView: View {
             planningAreaText = intent.targetAreaHa.map { String(region.areaValue(hectares: $0)) } ?? ""
             if let original = intent.inputProvenance {
                 let recordedBasis: SprayCarrierBasis = ["100m_travel", "100ft_travel"].contains(original.rateAreaUnit) ? .litresPer100Metres : .litresPerHectare
-                if sprayProfile.allows(recordedBasis) { carrierBasisChoice = recordedBasis }
+                if prefillProgram?.calculatorInputs?.carrierBasis == nil, sprayProfile.allows(recordedBasis) { carrierBasisChoice = recordedBasis }
             }
             planningRateText = SprayControllerRateEntry.displayed(intent.calibratedLitresPerHectare, basis: customSprayerInputBasis,
                 configuration: passConfiguration, spacing: resolvedRowSpacingMetres).map {
@@ -1335,6 +1361,14 @@ struct SprayCalculatorView: View {
     private var sprayNameSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Spray Name", icon: "tag")
+            if prefillRecord?.isTemplate == true {
+                Text("Source: Spray Program — review canopy conditions; all values remain editable.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let spacing = prefillProgram?.calculatorInputs?.rowSpacingMetres {
+                    Text("Program row spacing: \(guidedFormat.metres(spacing, decimals: 2)). Calculation uses the selected blocks' verified geometry.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             TextField("e.g. Downy Mildew Spray #3", text: $sprayName)
                 .font(.body)
                 .padding(.horizontal, 12)
@@ -3471,6 +3505,10 @@ struct SprayCalculatorView: View {
             .background(Color(.secondarySystemGroupedBackground))
             .clipShape(.rect(cornerRadius: 10))
 
+            if prefillProgram?.calculatorInputs?.diluteLitresPer100m != nil {
+                TextField("Spray Program dilute reference (\(region.volumePer100LengthUnit))", text: carrierBinding("program-dilute", $diluteLitresPer100mText, forward: region.volumePer100LengthValue, inverse: region.volumePer100LengthToCanonical))
+                    .keyboardType(.decimalPad)
+            }
             if let decision, let recommendation = decision.recommendation {
                 recommendedVolumePanel(recommendation)
                 if planningMethod == .byArea { sprayVolumeChoiceControls(decision) }

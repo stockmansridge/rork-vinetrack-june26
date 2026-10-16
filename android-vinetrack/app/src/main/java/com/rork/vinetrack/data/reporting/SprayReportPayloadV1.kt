@@ -183,16 +183,8 @@ data class SprayReportPayloadV1(
                     else -> "Not recorded" to "noProgressEvidence"
                 }
                 val exact = trip.tankSessions.filter { rowNumber in it.pathsCovered }.map { it.tankNumber }.toSet()
-                val planned = record.tanks.orEmpty().filter { tank -> tank.rowApplications.any { rowNumber in minOf(it.startRow, it.endRow)..maxOf(it.startRow, it.endRow) } }.map { it.tankNumber }.toSet()
-                val legacy = if (exact.isEmpty() && planned.isEmpty()) trip.tankSessions.filter { session ->
-                    val start = session.startRow ?: return@filter false
-                    val end = session.endRow ?: return@filter false
-                    val startIndex = trip.rowSequence.indexOf(start)
-                    val endIndex = trip.rowSequence.indexOf(end)
-                    val rowIndex = trip.rowSequence.indexOf(rowNumber)
-                    startIndex >= 0 && endIndex >= 0 && rowIndex in minOf(startIndex, endIndex)..maxOf(startIndex, endIndex)
-                }.map { it.tankNumber }.toSet() else emptySet()
-                val matches = exact.ifEmpty { planned.ifEmpty { legacy } }
+                // Plan ranges/start-end bounds cannot establish recorded tank attribution.
+                val matches = exact
                 val tank: JsonElement = when (matches.size) {
                     0 -> JsonNull
                     1 -> JsonPrimitive(matches.first())

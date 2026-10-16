@@ -275,16 +275,24 @@ class DomainCacheStore(context: Context) {
 
     /** Cached portal templates, already mapped to read-only [SprayRecord] values. */
     fun loadSprayTemplates(vineyardId: String): List<SprayRecord> =
-        decode(prefs.getString(keySprayTemplates(vineyardId), null), spraySerializer)
+        prefs.getString(keySprayTemplates(vineyardId), null)?.let { raw ->
+            runCatching { SprayProgramTemplateCache.decode(raw) }.getOrDefault(emptyList())
+        }.orEmpty()
 
     fun saveSprayTemplates(vineyardId: String, templates: List<SprayRecord>, syncedAt: Long) {
-        prefs.edit {
-            putString(keySprayTemplates(vineyardId), encode(spraySerializer, templates))
-            putLong(keySprayTemplatesAt(vineyardId), syncedAt)
-        }
+        check(prefs.edit()
+            .putString(keySprayTemplates(vineyardId), SprayProgramTemplateCache.encode(templates))
+            .putLong(keySprayTemplatesAt(vineyardId), syncedAt).commit()) { "Program cache could not be saved on this device." }
     }
 
     fun sprayTemplatesSyncedAt(vineyardId: String): Long? = readTimestamp(keySprayTemplatesAt(vineyardId))
+
+    fun loadSprayTractors(vineyardId: String): List<SprayJobTemplateRepository.SprayTractor> =
+        decode(prefs.getString("spray_tractors_$vineyardId", null), ListSerializer(SprayJobTemplateRepository.SprayTractor.serializer()))
+
+    fun saveSprayTractors(vineyardId: String, tractors: List<SprayJobTemplateRepository.SprayTractor>) {
+        prefs.edit { putString("spray_tractors_$vineyardId", encode(ListSerializer(SprayJobTemplateRepository.SprayTractor.serializer()), tractors)) }
+    }
 
     // MARK: - Vineyard spray-target library (sql/204) + offline add queue
 

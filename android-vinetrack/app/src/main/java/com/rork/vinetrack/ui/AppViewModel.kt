@@ -9648,7 +9648,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             operational = !sprayWork || (trip.activeTankNumber != null && !trip.isFillingTank)) ?: return
         val id = (evidence["occurrenceId"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: return
         applyOccurrenceAction(trip) { journal -> journal.setStatus(id, "done",
-            trip.tankSessions.filter { it.endTime == null && it.startTime != null }.map { it.id }, "automatic", evidence) }
+            listOfNotNull(com.rork.vinetrack.data.TankPathAttribution.activeSession(trip)?.id), "automatic", evidence) }
     }
 
     /** Replan the remaining route without ending or restarting GPS capture. */
@@ -12086,7 +12086,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (applyOccurrenceAction(trip) { journal ->
                 val target = journal.targetId() ?: error("Select an incomplete occurrence before marking this path.")
                 journal.setStatus(target, if (markComplete) "done" else "skipped",
-                    trip.tankSessions.filter { it.endTime == null }.map { it.id })
+                    if (markComplete) listOfNotNull(com.rork.vinetrack.data.TankPathAttribution.activeSession(trip)?.id) else emptyList())
             }) return
         val sequence = trip.rowSequence
         val index = trip.sequenceIndex
@@ -12111,7 +12111,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ) {
             newIndex++
         }
-        persistCoverage(tripId, completed, skipped, newIndex, sequence)
+        persistCoverage(tripId, completed, skipped, newIndex, sequence,
+            completedNow = currentPath.takeIf { markComplete && it !in trip.completedPaths.orEmpty() })
     }
 
     /**
@@ -12141,7 +12142,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun markTripOccurrence(tripId: String, occurrenceId: String, status: String) {
         val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return
         applyOccurrenceAction(trip) { journal -> journal.setStatus(occurrenceId, status,
-            trip.tankSessions.filter { it.endTime == null }.map { it.id }) }
+            if (status == "done") listOfNotNull(com.rork.vinetrack.data.TankPathAttribution.activeSession(trip)?.id) else emptyList()) }
     }
 
     fun occurrenceUndoTarget(tripId: String): Pair<String, TripOccurrenceCoverage.Item>? = runCatching {
@@ -12177,7 +12178,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun reviewTripOccurrence(tripId: String, occurrenceId: String, status: String) {
         val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return
         applyOccurrenceAction(trip) { it.setStatus(occurrenceId, status,
-            trip.tankSessions.filter { session -> session.endTime == null }.map { session -> session.id }, source = "endReview") }
+            emptyList(), source = "endReview") }
     }
 
     private fun endOccurrenceTrip(trip: Trip, notes: String?, hours: Double?, onResult: (Boolean) -> Unit) {
@@ -12330,6 +12331,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         skipped: List<Double>,
         newIndex: Int,
         sequence: List<Double>,
+        completedNow: Double? = null,
     ) {
         if (_ui.value.activeTrip?.id != tripId) return
         // Stage B-2-1: ignore row actions for a trip the operator already ended
@@ -12338,23 +12340,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val current = sequence.getOrNull(newIndex)
         val next = sequence.getOrNull(newIndex + 1)
         val previous = _ui.value.trips
-        // Optimistic local update so the UI reflects the action immediately.
-        _ui.update { st ->
-            st.copy(
-                trips = st.trips.map {
-                    if (it.id == tripId) it.copy(
-                        completedPaths = completed,
-                        skippedPaths = skipped,
-                        sequenceIndex = newIndex,
-                        currentRowNumber = current,
-                        nextRowNumber = next,
-                    ) else it
-                },
-            )
+        val source = previous.firstOrNull { it.id == tripId } ?: return
+        val covered = source.copy(completedPaths = completed, skippedPaths = skipped,
+            sequenceIndex = newIndex, currentRowNumber = current, nextRowNumber = next)
+        val durable = completedNow?.let { com.rork.vinetrack.data.TankPathAttribution.recordCompletion(covered, it) } ?: covered
+        val owner = session.userId ?: return
+        if (!runCatching { activeTripStore.saveDurably(owner, durable.vineyardId, durable) }.getOrDefault(false)) {
+            _ui.update { it.copy(tripError = "Couldn't save row and tank evidence on this device. Please retry.") }
+            return
         }
-        // Durable local snapshot before the network round-trip so row work
-        // survives a process death even if the server write later fails.
-        persistActiveTripSnapshot()
+        _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) durable else it }) }
+        if (durable.tankSessions != source.tankSessions) {
+            tripTankSync.enqueue(durable)
+        }
         // Stage D-1: when known offline, keep the optimistic coverage change
         // (don't roll it back just because there's no network), queue/refresh a
         // coalesced TRIP_ROW marker, and surface a friendly offline message.
@@ -12369,10 +12367,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val updated = tripRepo.updateTripCoverage(tripId, completed, skipped, newIndex, current, next)
-                _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == tripId) updated else it }) }
+                _ui.update { st -> st.copy(trips = st.trips.map {
+                    if (it.id == tripId && it == durable) updated.copy(tankSessions = durable.tankSessions) else it
+                }) }
                 persistActiveTripSnapshot()
             } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(trips = previous) }; onUnauthorized("persistCoverage")
+                onUnauthorized("persistCoverage")
             } catch (e: Exception) {
                 // Server write failed while we believed we were online. Keep the
                 // optimistic coverage and queue a coalesced marker so the row
@@ -12912,13 +12912,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The vineyard's tractors (`public.tractors`) for the Program Step tractor picker. */
     fun fetchSprayTractors(onResult: (List<SprayJobTemplateRepository.SprayTractor>) -> Unit) {
         val vineyardId = _ui.value.selectedVineyardId ?: return onResult(emptyList())
+        val owner = session.userId ?: return onResult(emptyList())
+        val epoch = session.retentionGuard.identityEpoch.value
+        onResult(domainCache.loadSprayTractors(owner, vineyardId))
         viewModelScope.launch {
-            val tractors = try {
-                sprayJobTemplateRepo.listTractors(vineyardId)
-            } catch (e: Exception) {
-                emptyList()
+            try {
+                val tractors = sprayJobTemplateRepo.listTractors(vineyardId)
+                if (session.userId != owner || session.retentionGuard.identityEpoch.value != epoch ||
+                    _ui.value.selectedVineyardId != vineyardId) return@launch
+                domainCache.saveSprayTractors(owner, vineyardId, tractors)
+                onResult(tractors)
+            } catch (_: Exception) {
+                // Retain the owner-scoped cached options when offline.
             }
-            onResult(tractors)
         }
     }
 

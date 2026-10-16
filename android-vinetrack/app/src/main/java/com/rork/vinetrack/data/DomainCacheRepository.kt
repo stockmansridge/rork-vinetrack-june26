@@ -254,6 +254,14 @@ class DomainCacheRepository(context: Context) {
         return store.loadSprayTemplates(vineyardId)
     }
 
+    fun loadSprayTractors(userId: String?, vineyardId: String): List<SprayJobTemplateRepository.SprayTractor> =
+        if (ownerMatches(userId)) store.loadSprayTractors(vineyardId) else emptyList()
+
+    fun saveSprayTractors(userId: String?, vineyardId: String, tractors: List<SprayJobTemplateRepository.SprayTractor>) {
+        ensureOwner(userId)
+        store.saveSprayTractors(vineyardId, tractors)
+    }
+
     // MARK: - Vineyard spray-target library (sql/204) + offline add queue
 
     /** Save the shared target vocabulary from a successful online fetch. */

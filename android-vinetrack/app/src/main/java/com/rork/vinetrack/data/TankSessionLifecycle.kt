@@ -70,11 +70,12 @@ object TankSessionLifecycle {
     }
 
     fun end(trip: Trip, timestamp: String, currentRow: Double?): Trip {
+        if (!trip.isActive || trip.endTime != null) return trip
         val activeTankNumber = trip.activeTankNumber ?: return trip
-        val sessionIndex = trip.tankSessions.indexOfLast {
-            it.tankNumber == activeTankNumber && it.endTime == null
-        }
-        if (sessionIndex < 0) return trip
+        val session = trip.tankSessions.filter(::isOpenSpray).singleOrNull()
+            ?.takeIf { it.tankNumber == activeTankNumber } ?: return trip
+        if (trip.tankSessions.count { it.id == session.id || it.tankNumber == activeTankNumber } != 1) return trip
+        val sessionIndex = trip.tankSessions.indexOfFirst { it.id == session.id }
 
         val sessions = trip.tankSessions.toMutableList()
         sessions[sessionIndex] = sessions[sessionIndex].copy(endTime = timestamp, endRow = currentRow)

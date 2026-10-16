@@ -9,6 +9,7 @@ gradle.projectsEvaluated {
                 include '**/TankSessionLifecycleTest.kt', '**/TripGpsRecoveryTest.kt', '**/SprayCarrierProvenanceTest.kt'
                 include '**/SprayReportPayloadV1Test.kt', '**/LegacySprayPairReceiptTest.kt', '**/LegacySpraySaveRecoveryTest.kt'
                 include '**/SprayCalculationContractTest.kt', '**/SprayCalculationReferenceTest.kt'
+                include '**/SprayProgramTankFollowupTest.kt', '**/StartTankCommitCoordinatorTest.kt', '**/TripTankAuthorityQueueTest.kt', '**/SprayProgramParityTest.kt'
             }
         })
     }

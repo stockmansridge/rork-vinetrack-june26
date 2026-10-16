@@ -210,18 +210,16 @@ nonisolated enum SprayVolumeDecisionResolver {
         rowSpacingMetres: Double?,
         choice: SprayVolumeChoice,
         customRate: Double?,
-        customBasis: SprayCarrierBasis
+        customBasis: SprayCarrierBasis,
+        explicitDiluteLitresPer100m: Double? = nil
     ) -> SprayVolumeDecision {
-        SprayVolumeDecision(
-            recommendation: recommendation(
-                canopy: canopy,
-                settings: settings,
-                rowSpacingMetres: rowSpacingMetres
-            ),
-            choice: choice,
-            customRate: customRate,
-            customBasis: customBasis
-        )
+        let base = recommendation(canopy: canopy, settings: settings, rowSpacingMetres: rowSpacingMetres)
+        let reference = base.map { value in
+            SprayCanopyRecommendation(type: value.type, size: value.size, density: value.density,
+                diluteLitresPer100Metres: SprayCarrierConversion.positive(explicitDiluteLitresPer100m) ?? value.diluteLitresPer100Metres,
+                rowSpacingMetres: value.rowSpacingMetres)
+        }
+        return SprayVolumeDecision(recommendation: reference, choice: choice, customRate: customRate, customBasis: customBasis)
     }
 }
 

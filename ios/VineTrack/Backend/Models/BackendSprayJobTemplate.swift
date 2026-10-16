@@ -37,6 +37,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
     let groundApplicationTarget: String?
     let carrierAreaBasis: String?
     let createdBy: UUID?
+    var calculatorInputs: SprayProgramCalculatorInputs = SprayProgramCalculatorInputs()
     var planningFields: SprayPlanningWireFields = SprayPlanningWireFields(intent: nil)
 
     enum CodingKeys: String, CodingKey {
@@ -86,7 +87,8 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         groundApplicationTarget: String? = nil,
         carrierAreaBasis: String? = nil,
         createdBy: UUID? = nil,
-        planningFields: SprayPlanningWireFields = SprayPlanningWireFields(intent: nil)
+        planningFields: SprayPlanningWireFields = SprayPlanningWireFields(intent: nil),
+        calculatorInputs: SprayProgramCalculatorInputs = SprayProgramCalculatorInputs()
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -109,6 +111,7 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         self.carrierAreaBasis = carrierAreaBasis
         self.createdBy = createdBy
         self.planningFields = planningFields
+        self.calculatorInputs = calculatorInputs
     }
 
     init(from decoder: Decoder) throws {
@@ -134,11 +137,13 @@ nonisolated struct BackendSprayJobTemplate: Codable, Sendable, Identifiable {
         groundApplicationTarget = try? container.decodeIfPresent(String.self, forKey: .groundApplicationTarget)
         carrierAreaBasis = try? container.decodeIfPresent(String.self, forKey: .carrierAreaBasis)
         createdBy = try? container.decodeIfPresent(UUID.self, forKey: .createdBy)
+        calculatorInputs = try SprayProgramCalculatorInputs(from: decoder)
         let decodedPlanning = try SprayPlanningWireFields(from: decoder)
         planningFields = SprayPlanningWireFields(intent: decodedPlanning.intent, isTemplate: true)
     }
 
     func encode(to encoder: Encoder) throws {
+        try calculatorInputs.encode(to: encoder)
         try planningFields.encode(to: encoder, inputsOnly: true)
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)

@@ -1839,6 +1839,7 @@ data class SprayRecord(
     @Transient val templateChemicalLines: kotlinx.serialization.json.JsonArray? = null,
     /** Client-side handoff when a Program Step or repeated job explicitly carries canopy values. */
     @Transient val prefillCanopy: SprayCanopySelection? = null,
+    @Transient val programCalculatorInputs: com.rork.vinetrack.data.spray.SprayProgramCalculatorInputs? = null,
 ) {
     val dateEpochMs: Long? get() = parseIsoToEpochMs(date ?: startTime)
     val isManualEntry: Boolean get() = entrySource == "manual"

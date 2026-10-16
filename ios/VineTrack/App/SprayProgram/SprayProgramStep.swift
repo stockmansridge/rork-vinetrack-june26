@@ -112,6 +112,7 @@ nonisolated struct SprayProgramStep: Identifiable, Sendable, Hashable {
     /// silently narrow what the step says it is for.
     let targetRaw: String?
     let portalChemicalLines: [SprayJobChemicalLine]?
+    let calculatorInputs: SprayProgramCalculatorInputs?
 
     nonisolated var id: UUID { record.id }
 
@@ -120,11 +121,13 @@ nonisolated struct SprayProgramStep: Identifiable, Sendable, Hashable {
         source: SprayProgramStepSource,
         growthStageCode: String? = nil,
         targetRaw: String? = nil,
-        portalChemicalLines: [SprayJobChemicalLine]? = nil
+        portalChemicalLines: [SprayJobChemicalLine]? = nil,
+        calculatorInputs: SprayProgramCalculatorInputs? = nil
     ) {
         self.record = record
         self.source = source
         self.portalChemicalLines = portalChemicalLines
+        self.calculatorInputs = calculatorInputs
         let code = growthStageCode?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.growthStageCode = (code?.isEmpty ?? true) ? nil : code
         let target = targetRaw?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -216,7 +219,8 @@ nonisolated struct SprayProgramStep: Identifiable, Sendable, Hashable {
             targets: SprayTargetVocabulary.builtIns(tags),
             customTargets: SprayTargetVocabulary.customs(tags).map(\.identifier),
             equipmentId: record.sprayEquipmentId,
-            tractorId: record.tractorId
+            tractorId: record.tractorId,
+            calculatorInputs: calculatorInputs
         )
     }
 
@@ -268,19 +272,22 @@ nonisolated struct SprayProgramPrefill: Sendable, Hashable {
     let customTargets: [String]
     let equipmentId: UUID?
     let tractorId: UUID?
+    let calculatorInputs: SprayProgramCalculatorInputs?
 
     init(
         growthStageCode: String? = nil,
         targets: [SprayTarget] = [],
         customTargets: [String] = [],
         equipmentId: UUID? = nil,
-        tractorId: UUID? = nil
+        tractorId: UUID? = nil,
+        calculatorInputs: SprayProgramCalculatorInputs? = nil
     ) {
         self.growthStageCode = growthStageCode
         self.targets = targets
         self.customTargets = customTargets
         self.equipmentId = equipmentId
         self.tractorId = tractorId
+        self.calculatorInputs = calculatorInputs
     }
 
     var isEmpty: Bool {
@@ -387,7 +394,8 @@ nonisolated enum SprayProgramCatalog {
                     source: .portal,
                     growthStageCode: row?.growthStageCode,
                     targetRaw: row?.target,
-                    portalChemicalLines: row?.chemicalLines
+                    portalChemicalLines: row?.chemicalLines,
+                    calculatorInputs: row?.calculatorInputs
                 )
             }
 

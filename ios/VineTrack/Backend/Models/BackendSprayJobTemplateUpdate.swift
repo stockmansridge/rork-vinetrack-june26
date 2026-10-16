@@ -168,7 +168,8 @@ extension BackendSprayJobTemplate {
             groundApplicationTarget: update.groundApplicationTarget,
             carrierAreaBasis: update.carrierAreaBasis,
             createdBy: createdBy,
-            planningFields: update.planningFields ?? planningFields
+            planningFields: update.planningFields ?? planningFields,
+            calculatorInputs: calculatorInputs
         )
     }
 }

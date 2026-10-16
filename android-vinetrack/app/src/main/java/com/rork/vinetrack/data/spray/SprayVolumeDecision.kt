@@ -141,8 +141,11 @@ object SprayVolumeDecisionResolver {
         choice: SprayVolumeChoice,
         customRate: Double?,
         customBasis: SprayCarrierBasis,
+        explicitDiluteLitresPer100m: Double? = null,
     ): SprayVolumeDecision = SprayVolumeDecision(
-        recommendation = recommendation(canopy, isCanopyConfirmed, rates, rowSpacingMetres),
+        recommendation = recommendation(canopy, isCanopyConfirmed, rates, rowSpacingMetres)?.let { base ->
+            base.copy(diluteLitresPer100Metres = SprayCarrierConversion.positive(explicitDiluteLitresPer100m) ?: base.diluteLitresPer100Metres)
+        },
         choice = choice,
         customRate = customRate,
         customBasis = customBasis,

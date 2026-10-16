@@ -110,7 +110,7 @@ nonisolated enum SprayCarrierConversion {
         return stored
     }
 
-    private static func positive(_ value: Double?) -> Double? {
+    static func positive(_ value: Double?) -> Double? {
         guard let value, value.isFinite, value > 0 else { return nil }
         return value
     }

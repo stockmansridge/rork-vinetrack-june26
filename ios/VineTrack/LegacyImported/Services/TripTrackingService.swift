@@ -1269,7 +1269,12 @@ final class TripTrackingService {
             currentRow: operationRow,
             plannedTankNumbers: nil
         ) else { return }
-        store?.updateTrip(result.trip)
+        do {
+            guard let store else { throw SprayTankActualValidationError.localSaveFailed }
+            try store.updateTripOrThrow(result.trip)
+        } catch {
+            errorMessage = "Tank could not be saved on this device. Please retry Start Tank."
+        }
     }
 
     /// End only the session identified by the active tank number.
@@ -1845,6 +1850,7 @@ final class TripTrackingService {
                         let minRequired = max(exitCompletionMinCoverageMeters, minByFraction)
                         if acc >= minRequired {
                             trip.completedPaths.append(target)
+                            TankPathAttribution.recordCompletion(target, in: &trip)
                             lastAutoCompletePath = target
                             lastAutoCompleteAt = Date()
                             diagAutoCompleteLastPath = target
@@ -2119,6 +2125,7 @@ final class TripTrackingService {
         }
 
         if didComplete {
+            TankPathAttribution.recordCompletion(path, in: &trip)
             lastAutoCompletePath = path
             lastAutoCompleteAt = Date()
             diagAutoCompleteLastPath = path
@@ -2253,7 +2260,7 @@ final class TripTrackingService {
     func reviewOccurrence(_ id: String, status: String) {
         _ = performOccurrenceAction { journal, trip in
             try journal.setStatus(id, status: status,
-                tankSessionIds: trip.tankSessions.filter { $0.endTime == nil }.map { $0.id.uuidString.lowercased() }, source: "endReview")
+                tankSessionIds: [], source: "endReview")
         }
     }
 
@@ -2316,7 +2323,7 @@ final class TripTrackingService {
     func markCurrentPlannedPathComplete() {
         if performOccurrenceAction({ journal, trip in
             guard let state = try journal.load(), let id = TripOccurrenceCoverage.read(state.projected)?.targetId else { throw TripOccurrenceCoverage.Failure.invalidAction }
-            try journal.setStatus(id, status: "done", tankSessionIds: trip.tankSessions.filter { $0.endTime == nil }.map { $0.id.uuidString.lowercased() })
+            try journal.setStatus(id, status: "done", tankSessionIds: TankPathAttribution.activeSession(in: trip).map { [$0.id.uuidString.lowercased()] } ?? [])
         }) { return }
         guard var trip = activeTrip, !trip.rowSequence.isEmpty else { return }
         let path = trip.rowSequence.indices.contains(trip.sequenceIndex)
@@ -2325,6 +2332,7 @@ final class TripTrackingService {
         if !trip.completedPaths.contains(path),
            !trip.skippedPaths.contains(path) {
             trip.completedPaths.append(path)
+            TankPathAttribution.recordCompletion(path, in: &trip)
         }
         // Advance to next pending path.
         var next = trip.sequenceIndex + 1
@@ -2346,7 +2354,7 @@ final class TripTrackingService {
     func skipCurrentPlannedPath() {
         if performOccurrenceAction({ journal, trip in
             guard let state = try journal.load(), let id = TripOccurrenceCoverage.read(state.projected)?.targetId else { throw TripOccurrenceCoverage.Failure.invalidAction }
-            try journal.setStatus(id, status: "skipped", tankSessionIds: trip.tankSessions.filter { $0.endTime == nil }.map { $0.id.uuidString.lowercased() })
+            try journal.setStatus(id, status: "skipped", tankSessionIds: [])
         }) { return }
         guard var trip = activeTrip, !trip.rowSequence.isEmpty else { return }
         let path = trip.rowSequence.indices.contains(trip.sequenceIndex)

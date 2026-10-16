@@ -393,7 +393,8 @@ nonisolated struct SprayGuidedFlow: Sendable {
             rowSpacingMetres: geometry.uniformRowSpacingMetres,
             choice: inputs.sprayVolumeChoice,
             customRate: inputs.customSprayerRate,
-            customBasis: inputs.customSprayerBasis
+            customBasis: inputs.customSprayerBasis,
+            explicitDiluteLitresPer100m: inputs.diluteLitresPer100Metres
         )
     }
 
