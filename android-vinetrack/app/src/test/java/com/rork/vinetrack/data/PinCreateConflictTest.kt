@@ -88,8 +88,15 @@ class PinCreateConflictTest {
             val held = queue.list().single()
             assertEquals(original.payloadJson, held.payloadJson)
             assertEquals(original.id, held.id)
-            assertEquals(queue.list(), PendingWriteRepository(disk).list())
             assertEquals(PendingWriteStatus.IN_PROGRESS, held.status)
+            // A recreated process cannot own the previous in-flight request. It must
+            // retain the exact operation for verified retry, not strand it forever.
+            val restarted = PendingWriteRepository(disk).list().single()
+            assertEquals(held.id, restarted.id)
+            assertEquals(held.clientId, restarted.clientId)
+            assertEquals(held.payloadJson, restarted.payloadJson)
+            assertEquals(held.attemptCount, restarted.attemptCount)
+            assertEquals(PendingWriteStatus.FAILED, restarted.status)
         }
     }
 

@@ -207,7 +207,8 @@ class VineyardRepository(private val session: SessionStore) {
         }
         when {
             response.status.isSuccess() -> response.body()
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            response.status.value == 403 -> throw VineyardMembershipDenied()
+            response.status.value == 401 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, "")
         }
     }

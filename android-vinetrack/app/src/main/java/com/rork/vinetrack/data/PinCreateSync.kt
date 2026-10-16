@@ -109,9 +109,20 @@ class PinCreateSync private constructor(
                     continue
                 }
                 val replayScope = pending.currentReplayScope()
+                if (replayScope != null && !input.createdBy.equals(replayScope.userId, true)) {
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                        "This pin belongs to another account. The original pin is retained.")
+                    continue
+                }
                 try {
                     val pin = requireNotNull(createRemote) { "Pin repository is required for replay." }(input)
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.currentReplayScope() != replayScope) continue
+                    if (pin.id != input.id || pin.vineyardId != input.vineyardId || pin.deletedAt != null) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                            "The server returned a different pin. The original pin is retained.")
+                        continue
+                    }
                     if (pending.removeIfCurrent(write)) onSynced(pin)
                 } catch (e: BackendError.Unauthorized) {
                     // Session expired mid-replay — retry after re-auth (bounded by the cap).

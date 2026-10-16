@@ -851,11 +851,11 @@ private fun WeatherCard(onClick: () -> Unit) {
 }
 
 @Composable
-private fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onAddPinAction: () -> Unit) {
+internal fun QuickActionsSection(onRepairs: () -> Unit, onGrowth: () -> Unit, onAddPinAction: () -> Unit, modifier: Modifier = Modifier) {
     var showHelp by remember { mutableStateOf(false) }
 
     Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         // Heading + ⓘ help entry point (iOS parity: `plainSectionHeaderWithInfo`).

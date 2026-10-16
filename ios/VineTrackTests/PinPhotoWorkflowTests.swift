@@ -50,6 +50,41 @@ final class PinPhotoWorkflowTests: XCTestCase {
         XCTAssertFalse(fixture.service.hasPendingPhoto(pinId: fixture.pin.id))
     }
 
+    func testOriginalPinAndPhotoAreHeldForAnotherAccountAndRetryOnce() async throws {
+        let fixture = try makeFixture()
+        let actor = fixture.auth.userId
+        try fixture.service.attachPhoto(pinId: fixture.pin.id, imageData: Data([10, 11, 12]))
+        fixture.auth.userId = UUID()
+        try await fixture.service.pushLocalPins(vineyardId: fixture.vineyardId)
+        XCTAssertTrue(fixture.service.isPendingUpsert(fixture.pin.id))
+        XCTAssertTrue(fixture.service.hasPendingPhoto(pinId: fixture.pin.id))
+        XCTAssertEqual(fixture.pinRepository.upsertCount(), 0)
+        fixture.auth.userId = actor
+        try await fixture.service.pushLocalPins(vineyardId: fixture.vineyardId)
+        try await fixture.service.pushLocalPins(vineyardId: fixture.vineyardId)
+        XCTAssertEqual(fixture.pinRepository.upsertCount(), 1)
+        XCTAssertEqual(fixture.storage.uploadCount(), 1)
+        XCTAssertFalse(fixture.service.isPendingUpsert(fixture.pin.id))
+        XCTAssertFalse(fixture.service.hasPendingPhoto(pinId: fixture.pin.id))
+    }
+
+    func testVineyardAPushDoesNotDrainVineyardBPin() async throws {
+        let fixture = try makeFixture()
+        let b = UUID()
+        fixture.store.selectedVineyardId = b
+        fixture.store.reloadCurrentVineyardData()
+        let pin = VinePin(vineyardId: b, latitude: -34, longitude: 138, heading: nil,
+                          buttonName: "Growth", buttonColor: "green", side: nil, mode: .growth)
+        try fixture.store.addPinDurably(pin)
+        try await fixture.service.pushLocalPins(vineyardId: fixture.vineyardId)
+        XCTAssertFalse(fixture.service.isPendingUpsert(fixture.pin.id))
+        XCTAssertTrue(fixture.service.isPendingUpsert(pin.id))
+        try await fixture.service.pushLocalPins(vineyardId: b)
+        try await fixture.service.pushLocalPins(vineyardId: b)
+        XCTAssertFalse(fixture.service.isPendingUpsert(pin.id))
+        XCTAssertEqual(fixture.pinRepository.upsertCount(), 2)
+    }
+
     func testGrowthPhotoReplacementPreservesUnrelatedPaths() {
         XCTAssertEqual(
             GrowthStageRecordSyncService.replacingOwnedPhoto(
@@ -100,7 +135,7 @@ final class PinPhotoWorkflowTests: XCTestCase {
         auth.isSignedIn = true
         service.configure(store: store, auth: auth)
         store.addPin(pin)
-        return Fixture(vineyardId: vineyardId, pin: pin, store: store, persistence: persistence, service: service, pinRepository: pinRepository, storage: storage, deletionStore: deletionStore)
+        return Fixture(vineyardId: vineyardId, pin: pin, store: store, persistence: persistence, service: service, pinRepository: pinRepository, storage: storage, deletionStore: deletionStore, auth: auth)
     }
 
     private struct Fixture {
@@ -112,6 +147,7 @@ final class PinPhotoWorkflowTests: XCTestCase {
         let pinRepository: PinRepositoryDouble
         let storage: PhotoStorageDouble
         let deletionStore: LinkedPinGrowthDeletionStore
+        let auth: NewBackendAuthService
     }
 }
 

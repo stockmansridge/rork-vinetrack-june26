@@ -27,10 +27,12 @@ class LegacySprayProcessProbeActivity : ComponentActivity() {
         val prefix = "legacy_process_${id}_"
         val isolated = object : ContextWrapper(this) {
             override fun getApplicationContext(): Context = this
+            override fun getFilesDir(): java.io.File = java.io.File(baseContext.filesDir, prefix).also { check(it.exists() || it.mkdirs()) }
             override fun getSharedPreferences(name: String, mode: Int) = baseContext.getSharedPreferences(prefix + name, mode)
         }
         if (mode == "cleanup") {
-            listOf("vinetrack_session", LegacySpraySaveStore.PREFERENCES, "vinetrack_pending_writes", "vinetrack_active_trip", "vinetrack_domain_cache", "vinetrack_spray_tank_actuals").forEach { deleteSharedPreferences(prefix + it) }
+            listOf("vinetrack_session", LegacySpraySaveStore.PREFERENCES, "vinetrack_pending_writes", "vinetrack_active_trip", "vinetrack_domain_cache", "vinetrack_spray_tank_actuals", "vinetrack_pending_photos").forEach { deleteSharedPreferences(prefix + it) }
+            java.io.File(filesDir, prefix).takeIf { it.exists() }?.deleteRecursively()
             return "LEGACY_CLEANED"
         }
         val actor = UUID.nameUUIDFromBytes("actor$id".toByteArray()).toString()
@@ -39,6 +41,50 @@ class LegacySprayProcessProbeActivity : ComponentActivity() {
         val record = UUID.nameUUIDFromBytes("record$id".toByteArray()).toString()
         val session = SessionStore(isolated)
         if (!session.hasSession) session.save("synthetic-access", "synthetic-refresh", actor, null)
+        if (mode == "QUICK_ACTIONS_WRITE" || mode == "QUICK_ACTIONS_READ") {
+            val cache = DomainCacheRepository(isolated)
+            val epoch = session.retentionGuard.identityEpoch.value
+            val vineyards = listOf(vineyard, UUID.nameUUIDFromBytes("other-vineyard$id".toByteArray()).toString())
+            val queue = PendingWriteRepository(isolated)
+            if (mode == "QUICK_ACTIONS_WRITE") {
+                cache.saveVineyards(actor, emptyList())
+                vineyards.forEachIndexed { index, scope ->
+                    cache.saveQuickActions(actor, scope, epoch,
+                        members = listOf(com.rork.vinetrack.data.model.VineyardMember(vineyardId = scope, userId = actor,
+                            role = if (index == 0) "operator" else "supervisor")),
+                        buttons = ButtonConfigRepository.LauncherButtons(repair = listOf(com.rork.vinetrack.data.model.LauncherButton(
+                            id = "button-$scope", vineyardId = scope, name = "Retained-$scope", color = "red"))))
+                    val input = PinRepository.PinInput("pin-$scope", scope, title = "Offline", notes = "Original notes",
+                        latitude = -34.0, longitude = 138.0, createdBy = actor, locationScope = "point")
+                    PinCreateSync(queue).enqueue(input)
+                    PendingPhotoRepository(isolated).enqueue(input.id!!, scope, byteArrayOf(1, 2, 3))
+                }
+                return "QUICK_ACTIONS_RETAINED_${Process.myPid()}"
+            }
+            for (scope in listOf(vineyards[0], vineyards[1], vineyards[0])) {
+                val retained = checkNotNull(cache.loadQuickActions(actor, scope, epoch))
+                check(retained.members!!.single().vineyardId == scope)
+                check(retained.buttons!!.repair.single().name == "Retained-$scope")
+                check(cache.loadQuickActions("other-account", scope, epoch) == null)
+                check(cache.loadQuickActions(actor, scope, epoch + 1) == null)
+            }
+            check(queue.list().size == 2)
+            val photos = PendingPhotoRepository(isolated)
+            vineyards.forEach { scope -> check(photos.latestFile("pin-$scope")!!.readBytes().contentEquals(byteArrayOf(1, 2, 3))) }
+            var calls = 0
+            kotlinx.coroutines.runBlocking {
+                val replay = PinCreateSync(queue, createRemote = { input ->
+                    check(input.createdBy == actor && input.notes == "Original notes" && input.vineyardId in vineyards)
+                    calls++
+                    com.rork.vinetrack.data.model.Pin(input.id!!, input.vineyardId)
+                })
+                replay.replayAll { }
+                replay.replayAll { }
+            }
+            check(calls == 2 && PendingWriteRepository(isolated).list().isEmpty())
+            check(photos.list().size == 2) // Photo bytes remain until their own verified upload.
+            return "QUICK_ACTIONS_RECOVERED_${Process.myPid()}"
+        }
         if (mode == "PROGRAM_TANK_WRITE" || mode == "PROGRAM_TANK_READ") {
             val cache = DomainCacheStore(isolated)
             val snapshots = ActiveTripStore(isolated)

@@ -65,7 +65,8 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         // Retain the frozen payload and make just these header writes retryable.
         _writes.value.filter {
             it.entityType in setOf(com.rork.vinetrack.data.model.PendingEntityType.WORK_TASK,
-                com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS) &&
+                com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS,
+                com.rork.vinetrack.data.model.PendingEntityType.PIN) &&
                 it.status == PendingWriteStatus.IN_PROGRESS
         }.forEach { updateStatus(it.id, PendingWriteStatus.FAILED,
             if (it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS)

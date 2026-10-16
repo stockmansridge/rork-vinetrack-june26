@@ -4553,8 +4553,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingButtonConfig() {
         if (session.accessToken == null || !_ui.value.isOnline) return
+        val owner = session.userId ?: return
+        val epoch = session.retentionGuard.identityEpoch.value
         viewModelScope.launch {
             buttonConfigUpdateSync.replayAll { payload ->
+                if (session.userId != owner || session.retentionGuard.identityEpoch.value != epoch) return@replayAll
+                cacheConfirmedLauncherButtons(owner, epoch, payload.vineyardId, payload.configType, payload.buttons)
                 _ui.update { st ->
                     if (payload.vineyardId != st.selectedVineyardId) return@update st
                     when (payload.configType) {
@@ -6649,6 +6653,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
         _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), tripsListKnowledge = TripsListKnowledge.Unknown, machines = emptyList(), workTasks = emptyList(), members = emptyList(), membershipLoading = true, membershipError = null, operatorCategories = emptyList(), operatorCategoriesLoading = true, operatorCategoriesError = null, vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), grapeVarieties = emptyList(), grapeVarietyReferenceLoading = true, grapeVarietyReferenceError = null, vineyardClones = emptyList(), vineyardRootstocks = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, vineyardMachineLines = emptyList(), vineyardTaskMaterials = emptyList(), tripCostAllocations = emptyList(), growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
+        hydrateQuickActions(id)
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
@@ -7298,6 +7303,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val vineyardId = captureContext?.vineyardId
             ?: _ui.value.selectedVineyardId
             ?: run { onResult(false); return }
+        if (!_ui.value.sessionPhase.isAuthenticated || !session.hasSession ||
+            vineyardId != _ui.value.selectedVineyardId ||
+            _ui.value.currentRole !in setOf("owner", "manager", "supervisor", "operator")) {
+            _ui.update { it.copy(pinError = "Verified vineyard access is required to save a pin. Reconnect to verify access.") }
+            onResult(false)
+            return
+        }
         val attribution = if (captureContext != null) {
             // Automatic capture already ran the established trip-aware resolver at
             // the tap. Consume that immutable answer; never re-resolve after movement.
@@ -7368,12 +7380,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             ?.let { ManualIssueContract.canonicalSegments(it) }
             ?.takeIf { it.isNotEmpty() }
 
-        // Known-offline: queue immediately without attempting the network.
+        // Known-offline: queue durably before reporting success, with the original identity.
         if (!_ui.value.isOnline) {
-            val queued = enqueuePinCreate(input, photoUri = photoUri, segments = canonicalSegments, onPhotoPersisted = onPhotoPersisted)
-            canonicalSegments?.let { customPinSync.enqueueSegments(queued.id, it) }
-            onCreatedPin(queued)
-            onResult(true)
+            try {
+                val queued = enqueuePinCreate(input, photoUri = photoUri, segments = canonicalSegments, onPhotoPersisted = onPhotoPersisted)
+                canonicalSegments?.let { customPinSync.enqueueSegments(queued.id, it) }
+                onCreatedPin(queued)
+                onResult(true)
+            } catch (_: Exception) {
+                _ui.update { it.copy(pinError = "Pin could not be saved on this device. Keep this screen open and retry.") }
+                onResult(false)
+            }
             return
         }
 
@@ -17032,6 +17049,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         })
     }
 
+    private fun hydrateQuickActions(vineyardId: String) {
+        val user = session.userId ?: return
+        if (!_ui.value.sessionPhase.isAuthenticated || _ui.value.selectedVineyardId != vineyardId) return
+        val cached = domainCache.loadQuickActions(user, vineyardId, session.retentionGuard.identityEpoch.value)
+        val buttons = cached?.buttons ?: ButtonConfigRepository.LauncherButtons()
+        val (repair, growth) = PendingWriteOverlay.overlayButtonConfig(
+            buttons.repair, buttons.growth, pendingWrites.list(), vineyardId)
+        _ui.update { state ->
+            if (session.userId != user || state.selectedVineyardId != vineyardId || !state.sessionPhase.isAuthenticated) state
+            else state.copy(members = cached?.members.orEmpty(), membershipLoading = cached?.members == null,
+                repairButtons = repair, growthButtons = growth)
+        }
+    }
+
     private var vineyardDataLoadGeneration: Long = 0L
 
     /** Publish only owner-scoped display snapshots; access and Trip authority stay unchanged. */
@@ -17109,12 +17140,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             resumePreparedLegacySpraySaves(attempts)
         }
         val userId = session.userId ?: return
+        val identityEpoch = session.retentionGuard.identityEpoch.value
         val selectionEpoch = vineyardSelectionEpoch
         val generation = ++vineyardDataLoadGeneration
-        fun isCurrentLoad(): Boolean = session.userId == userId &&
-            _ui.value.sessionPhase.isAuthenticated && _ui.value.selectedVineyardId == vineyardId &&
-            vineyardSelectionEpoch == selectionEpoch && vineyardDataLoadGeneration == generation
+        val loadScope = com.rork.vinetrack.data.QuickActionLoadScope(userId, vineyardId, identityEpoch, selectionEpoch, generation)
+        fun isCurrentLoad(): Boolean = loadScope.isCurrent(
+            com.rork.vinetrack.data.QuickActionLoadScope(session.userId, _ui.value.selectedVineyardId,
+                session.retentionGuard.identityEpoch.value, vineyardSelectionEpoch, vineyardDataLoadGeneration),
+            _ui.value.sessionPhase.isAuthenticated)
         if (!isCurrentLoad()) return
+        hydrateQuickActions(vineyardId)
         // Preserve the first local evidence before hydration/server reads can replace
         // caches and before the successful-load reconnect pipeline drains outboxes.
         val preservation = com.rork.vinetrack.data.RecoverySnapshotStore
@@ -17253,13 +17288,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Both are optional reference lists — soft-fail to the existing list
         // (or empty) so the Trips screen still works if either is unavailable.
         var membershipError: String? = null
+        var verifiedMembers: List<VineyardMember>? = null
         val members = try {
             timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.TEAM_MEMBERSHIP_READ) { repo.listTeamMembers(vineyardId) }.filter { member ->
                 member.vineyardId == null || member.vineyardId.equals(vineyardId, ignoreCase = true)
+            }.map { it.copy(vineyardId = vineyardId) }.also { verified ->
+                verifiedMembers = verified
+                if (isCurrentLoad()) {
+                    _ui.update { it.copy(members = verified, membershipLoading = false, membershipError = null) }
+                    domainCache.saveQuickActions(userId, vineyardId, identityEpoch, members = verified)
+                }
             }
-        } catch (_: Exception) {
-            membershipError = "Couldn't confirm your vineyard role. Check your connection and retry."
-            _ui.value.members
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            membershipError = "Couldn't refresh your vineyard role. Previously verified offline access is retained."
+            if (error is com.rork.vinetrack.data.VineyardMembershipDenied) {
+                if (isCurrentLoad()) {
+                    _ui.update { it.copy(members = emptyList(), membershipLoading = false,
+                        membershipError = "Vineyard access was denied. Local pending work is retained.") }
+                    domainCache.saveQuickActions(userId, vineyardId, identityEpoch, members = emptyList())
+                }
+                emptyList()
+            } else verifiedMembers ?: domainCache.loadQuickActions(userId, vineyardId, identityEpoch)?.members.orEmpty()
         }
         val canReadTripCosts = members.any { member ->
             member.userId == userId && (member.vineyardId == null || member.vineyardId == vineyardId) &&
@@ -17413,12 +17463,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Read-only on Android; soft-fail to the existing config (or empty so the
         // launcher falls back to its built-in defaults).
         val launcherButtons = try {
-            buttonConfigRepo.fetch(vineyardId)
+            buttonConfigRepo.fetch(vineyardId).also { verified ->
+                if (isCurrentLoad()) domainCache.saveQuickActions(userId, vineyardId, identityEpoch, buttons = verified)
+            }
         } catch (e: Exception) {
-            ButtonConfigRepository.LauncherButtons(
-                repair = _ui.value.repairButtons,
-                growth = _ui.value.growthButtons,
-            )
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            domainCache.loadQuickActions(userId, vineyardId, identityEpoch)?.buttons
+                ?: ButtonConfigRepository.LauncherButtons()
         }
         // Grape variety catalog is an optional read-only reference list backing
         // the agronomy Varieties surface; soft-fail to the existing list (or empty).
@@ -17578,13 +17629,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             PendingWriteOverlay.overlayPicking(pickingRecords, pendingSnapshot, vineyardId, ::derivePickingVintage)
         // Launcher button overlay (Android Stage N): restore an offline button
         // layout edit over the fetched/default config.
-        val (overlaidRepairButtons, overlaidGrowthButtons) =
-            PendingWriteOverlay.overlayButtonConfig(
-                launcherButtons.repair,
-                launcherButtons.growth,
-                pendingSnapshot,
-                vineyardId,
-            )
         // App-wide notices ("system messages") are an optional, app-scoped read.
         // Soft-fail to the existing list so a fetch hiccup never blanks the
         // Home banner; dismissals stay device-local.
@@ -17601,6 +17645,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!isCurrentLoad() || (pinEvidence != null &&
                 !domainCache.isFieldHydrationCurrent(userId, vineyardId, pinEvidence))) return
         val latestPending = pendingWrites.list()
+        val (overlaidRepairButtons, overlaidGrowthButtons) = PendingWriteOverlay.overlayButtonConfig(
+            launcherButtons.repair, launcherButtons.growth, latestPending, vineyardId)
         val protectedPins = com.rork.vinetrack.data.PendingPinReadOverlay.reconcile(
             pins, pinEvidence?.pins.orEmpty() + _ui.value.pins, latestPending, vineyardId,
         )
@@ -17753,12 +17799,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * @param mode "Repairs" or "Growth".
      * @param buttons the full button list (8 entries: 4 rows paired Left/Right).
      */
+    private fun cacheConfirmedLauncherButtons(owner: String, epoch: Long, vineyard: String, type: String, buttons: List<LauncherButton>) {
+        val previous = domainCache.loadQuickActions(owner, vineyard, epoch)?.buttons ?: ButtonConfigRepository.LauncherButtons()
+        val updated = if (type == "growth_buttons") previous.copy(growth = buttons.sortedBy { it.index })
+            else previous.copy(repair = buttons.sortedBy { it.index })
+        domainCache.saveQuickActions(owner, vineyard, epoch, buttons = updated)
+    }
+
     fun saveLauncherButtons(mode: String, buttons: List<LauncherButton>, onDone: (Boolean) -> Unit = {}) {
         val vineyardId = _ui.value.selectedVineyardId
         if (vineyardId == null || !_ui.value.canEditLauncherButtons) {
             onDone(false)
             return
         }
+        val owner = session.userId ?: run { onDone(false); return }
+        val epoch = session.retentionGuard.identityEpoch.value
+        fun isCurrentEditor(): Boolean = session.userId == owner &&
+            session.retentionGuard.identityEpoch.value == epoch && _ui.value.selectedVineyardId == vineyardId
         val configType = if (mode == "Growth") "growth_buttons" else "repair_buttons"
         val sorted = buttons.sortedBy { it.index }
         val previousRepair = _ui.value.repairButtons
@@ -17785,6 +17842,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 buttonConfigRepo.upsert(vineyardId, configType, sorted, clientUpdatedAt)
                 // Re-read so the UI reflects exactly what the server stored.
                 val refreshed = buttonConfigRepo.fetch(vineyardId)
+                if (!isCurrentEditor()) { onDone(false); return@launch }
+                domainCache.saveQuickActions(owner, vineyardId, epoch, buttons = refreshed)
                 _ui.update {
                     it.copy(
                         repairButtons = refreshed.repair,
@@ -17794,13 +17853,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 onDone(true)
             } catch (e: BackendError.Unauthorized) {
+                if (!isCurrentEditor()) { onDone(false); return@launch }
                 // Permission rejection — restore the previous layout, surface, don't queue.
                 _ui.update { it.copy(repairButtons = previousRepair, growthButtons = previousGrowth, buttonConfigBusy = false, buttonConfigError = "Only owners and managers can change these buttons.") }
                 onDone(false)
             } catch (e: BackendError.Server) {
+                if (!isCurrentEditor()) { onDone(false); return@launch }
                 _ui.update { it.copy(repairButtons = previousRepair, growthButtons = previousGrowth, buttonConfigBusy = false, buttonConfigError = "Couldn't save buttons. Check your connection and try again.") }
                 onDone(false)
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                if (!isCurrentEditor()) { onDone(false); return@launch }
                 // Transient network failure — keep the optimistic layout and queue a
                 // marker for automatic replay rather than rolling back.
                 buttonConfigUpdateSync.enqueue(vineyardId, configType, sorted, clientUpdatedAt)

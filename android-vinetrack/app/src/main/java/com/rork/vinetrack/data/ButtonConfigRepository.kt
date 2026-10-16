@@ -38,6 +38,7 @@ class ButtonConfigRepository(private val session: SessionStore) {
     )
 
     /** Remote launcher buttons for a vineyard, split by mode. Empty when none configured. */
+    @Serializable
     data class LauncherButtons(
         val repair: List<LauncherButton> = emptyList(),
         val growth: List<LauncherButton> = emptyList(),

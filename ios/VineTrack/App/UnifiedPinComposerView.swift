@@ -22,6 +22,7 @@ struct UnifiedPinComposerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(MigratedDataStore.self) private var store
     @Environment(NewBackendAuthService.self) private var auth
+    @Environment(BackendAccessControl.self) private var accessControl
     @Environment(CustomPinTypeService.self) private var customPinService
     @Environment(PinSyncService.self) private var pinSync
     @Environment(GrowthStageRecordSyncService.self) private var growthStageRecordSync
@@ -1249,6 +1250,12 @@ struct UnifiedPinComposerView: View {
         // prompt's Skip, its 3s timeout, a swipe-dismiss, a cancelled camera
         // — runs AFTER this point and can never re-enter it.
         guard !hasCreatedPin else { return }
+        guard auth.isSignedIn, accessControl.canCreateOperationalRecords,
+              accessControl.loadedUserId == auth.userId,
+              accessControl.loadedVineyardId == store.selectedVineyardId else {
+            validationMessage = "Verified vineyard access is required. Reconnect to verify access before saving."
+            return
+        }
         let marker = markerCoordinate()
         let canonical = ManualIssueContract.canonicalSegments(Array(selectedSegments))
         if let error = UnifiedPinContract.validationError(

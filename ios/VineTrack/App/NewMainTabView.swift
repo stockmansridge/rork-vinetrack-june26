@@ -217,7 +217,7 @@ struct NewMainTabView: View {
             appNoticeService.configure(auth: auth)
             Task { await appNoticeService.refresh() }
         }
-        .task(id: store.selectedVineyardId) {
+        .task(id: "\(auth.userId?.uuidString ?? "signed-out")|\(auth.completedSignOutSequence)|\(store.selectedVineyardId?.uuidString ?? "none")") {
             if let vineyardId = store.selectedVineyardId {
                 VineyardSelectionDiagnostics.stage("view task started", vineyardId: vineyardId)
             }

@@ -51,6 +51,24 @@ class DomainCacheRepository(context: Context) {
     internal fun isFieldHydrationCurrent(userId: String, vineyardId: String, snapshot: FieldCacheHydration): Boolean =
         store.isFieldHydrationCurrent(userId, vineyardId, snapshot)
 
+    internal fun loadQuickActions(userId: String, vineyardId: String, epoch: Long): QuickActionOfflineSnapshot? {
+        if (!ownerMatches(userId)) return null
+        return store.loadQuickActions(vineyardId)?.takeIf { it.matches(userId, vineyardId, epoch) }
+    }
+
+    /** Successful membership reads (including revocation) and config reads (including empty)
+     * are saved independently; a failed network read must never call this method. */
+    internal fun saveQuickActions(userId: String, vineyardId: String, epoch: Long,
+        members: List<com.rork.vinetrack.data.model.VineyardMember>? = null,
+        buttons: ButtonConfigRepository.LauncherButtons? = null) {
+        if (!ownerMatches(userId)) return
+        val previous = loadQuickActions(userId, vineyardId, epoch)
+        val scopedMembers = members?.filter { it.vineyardId == null || it.vineyardId == vineyardId }
+            ?.map { it.copy(vineyardId = vineyardId) }
+        store.saveQuickActions(QuickActionOfflineSnapshot(userId, vineyardId, epoch,
+            scopedMembers ?: previous?.members, buttons ?: previous?.buttons))
+    }
+
     // MARK: - Vineyard list
 
     /**

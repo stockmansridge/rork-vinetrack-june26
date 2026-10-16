@@ -106,6 +106,8 @@ final class PinSyncService {
     private let deletionStore: LinkedPinGrowthDeletionStore
     private let pendingPhotosKey = "vinetrack_pending_pin_photos_v2"
     private let pendingConfirmationsKey = "vinetrack_pending_pin_location_confirmations_v1"
+    private let pendingOwnersKey = "vinetrack_pending_pin_owners_v1"
+    private var pendingOwners: [UUID: UUID]
     private var pendingPhotos: [UUID: PendingPinPhoto]
     private var pendingConfirmations: [UUID: PendingPinLocationConfirmation]
     private var isConfigured: Bool = false
@@ -124,6 +126,7 @@ final class PinSyncService {
         self.photoStorage = photoStorage ?? PinPhotoStorageService()
         self.persistence = persistence
         self.deletionStore = deletionStore ?? .shared
+        self.pendingOwners = persistence.load(key: pendingOwnersKey) ?? [:]
         self.pendingPhotos = persistence.load(key: pendingPhotosKey) ?? [:]
         self.pendingConfirmations = persistence.load(key: pendingConfirmationsKey) ?? [:]
     }
@@ -142,6 +145,7 @@ final class PinSyncService {
         isConfigured = true
         store.onPinCreateWillPersist = { [weak self] id, capturedAt in
             guard let self else { throw CocoaError(.fileWriteUnknown) }
+            try self.retainPendingOwner(id)
             try self.metadata.markDirtyDurably(id, at: capturedAt)
         }
         store.onPinChanged = { [weak self] id in
@@ -166,8 +170,27 @@ final class PinSyncService {
 
     // MARK: - Dirty tracking
 
+    private func retainPendingOwner(_ id: UUID) throws {
+        guard let actor = auth?.userId, auth?.isSignedIn == true else {
+            throw BackendRepositoryError.missingAuthenticatedUser
+        }
+        if let existing = pendingOwners[id], existing != actor,
+           metadata.pendingUpserts[id] != nil || pendingPhotos[id] != nil {
+            throw BackendRepositoryError.missingAuthenticatedUser
+        }
+        var next = pendingOwners
+        next[id] = actor
+        try persistence.saveOrThrow(next, key: pendingOwnersKey)
+        pendingOwners = next
+    }
+
     func markPinDirty(_ id: UUID) {
-        metadata.markDirty(id, at: Date())
+        do {
+            try retainPendingOwner(id)
+            try metadata.markDirtyDurably(id, at: Date())
+        } catch {
+            errorMessage = "Pin changes could not be queued on this device. Keep this installation and retry."
+        }
     }
 
     func markPinDeleted(_ id: UUID) {
@@ -189,6 +212,7 @@ final class PinSyncService {
         guard !payload.isEmpty else {
             throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "The captured photo was empty."])
         }
+        try retainPendingOwner(pinId)
         let revision = UUID()
         let work = PendingPinPhoto(
             pinId: pin.id,
@@ -455,8 +479,12 @@ final class PinSyncService {
             if let pinId = target.pinId { metadata.clearDeleted([pinId]) }
             try deletionStore.remove(target.id)
         }
-        let currentUserId = auth?.userId
-        let currentUserName = auth?.userName
+        guard let auth, auth.isSignedIn, let currentUserId = auth.userId else { return }
+        let signOutSequence = auth.completedSignOutSequence
+        func isCurrentAccount() -> Bool {
+            auth.isSignedIn && auth.userId == currentUserId && auth.completedSignOutSequence == signOutSequence
+        }
+        let currentUserName = auth.userName
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
             let durablePins = try PinRepository(persistence: persistence).loadAllForDurableUpdate()
@@ -465,11 +493,14 @@ final class PinSyncService {
             var pushedIds: [UUID] = []
             var orphans: [UUID] = []
             for (pinId, ts) in dirty {
-                // Reclaim queue entries whose local pin no longer exists — they
-                // can never upload and used to wedge the queue forever. Pins
-                // belonging to another vineyard are still pushed: the payload
-                // carries their own vineyard id.
-                guard var pin = pinsById[pinId] else { orphans.append(pinId); continue }
+                // Drain only this vineyard's authored pending work. Missing local
+                // rows and foreign-account work remain held rather than discarded.
+                guard var pin = pinsById[pinId] else {
+                    // A missing local row is unresolved evidence, not permission to discard it.
+                    continue
+                }
+                guard pin.vineyardId == vineyardId,
+                      (pendingOwners[pin.id] ?? pin.createdByUserId) == currentUserId else { continue }
                 // Manual issues are RPC-owned (sql/169): every write goes
                 // through ManualIssueSyncService so the server enforces the
                 // no-labour contract and permissions. The generic upsert
@@ -479,7 +510,8 @@ final class PinSyncService {
                 // creator if the pin was created without one. Never
                 // overwrite an existing non-nil value — that would lose
                 // attribution to the original creator.
-                if pin.createdByUserId == nil, let uid = currentUserId {
+                if pin.createdByUserId == nil {
+                    let uid = currentUserId
                     pin.createdByUserId = uid
                     if (pin.createdBy ?? "").isEmpty, let name = currentUserName, !name.isEmpty {
                         pin.createdBy = name
@@ -494,7 +526,7 @@ final class PinSyncService {
                 let _createdByText = pin.createdBy ?? "nil"
                 let _createdByUserId = pin.createdByUserId?.uuidString ?? "nil"
                 let _payloadCreatedBy = payload.createdBy?.uuidString ?? "nil"
-                let _authUserId = currentUserId?.uuidString ?? "nil"
+                let _authUserId = currentUserId.uuidString
                 print("[PinSync] push pin id=\(pin.id) createdByText=\(_createdByText) createdByUserId=\(_createdByUserId) payload.created_by=\(_payloadCreatedBy) authUserId=\(_authUserId)")
                 #endif
                 PinSyncDiagnostics.shared.recordPush(pin: pin, payload: payload, authUserId: currentUserId)
@@ -517,8 +549,14 @@ final class PinSyncService {
                     payloads: payloads,
                     queuedAt: dirty,
                     vineyardId: vineyardId
-                ) { try await repository.upsertPins($0) }
-                metadata.clearDirty(result.uploaded)
+                ) { payloads in
+                    guard isCurrentAccount() else { throw BackendRepositoryError.missingAuthenticatedUser }
+                    try await repository.upsertPins(payloads)
+                }
+                guard isCurrentAccount() else { return }
+                // A delayed acknowledgement cannot clear a newer local edit.
+                let acknowledged = result.uploaded.filter { metadata.pendingUpserts[$0] == dirty[$0] }
+                metadata.clearDirty(acknowledged)
                 metadata.markUpsertsFailed(result.failed)
                 PinSyncDiagnostics.shared.recordBatchResult(
                     count: payloads.count,
@@ -548,7 +586,10 @@ final class PinSyncService {
             count: photoCount
         )
         var independentPhotoError: Error?
-        do { try await pushPendingPhotos(vineyardId: vineyardId) }
+        do {
+            guard isCurrentAccount() else { return }
+            try await pushPendingPhotos(vineyardId: vineyardId)
+        }
         catch { independentPhotoError = error }
         VineyardSelectionDiagnostics.intervalStage(
             "pin-photo-upload",
@@ -604,12 +645,22 @@ final class PinSyncService {
     }
 
     private func pushPendingPhotos(vineyardId: UUID) async throws {
+        guard let auth, auth.isSignedIn, let actor = auth.userId else { return }
+        let signOutSequence = auth.completedSignOutSequence
+        func isCurrentAccount() -> Bool {
+            auth.isSignedIn && auth.userId == actor && auth.completedSignOutSequence == signOutSequence
+        }
+        let durablePins = try PinRepository(persistence: persistence).loadAllForDurableUpdate()
+        let ownedIds = Set(durablePins.filter {
+            $0.vineyardId == vineyardId && (pendingOwners[$0.id] ?? $0.createdByUserId) == actor
+        }.map(\.id))
         let candidates = pendingPhotos.values
             .filter { $0.vineyardId == vineyardId }
             .sorted { $0.capturedAt < $1.capturedAt }
         var firstFailure: Error?
         for snapshot in candidates {
-            guard metadata.pendingDeletes[snapshot.pinId] == nil,
+            guard isCurrentAccount(), ownedIds.contains(snapshot.pinId),
+                  metadata.pendingDeletes[snapshot.pinId] == nil,
                   metadata.pendingUpserts[snapshot.pinId] == nil,
                   store?.pins.contains(where: { $0.id == snapshot.pinId }) == true,
                   pendingPhotos[snapshot.pinId]?.revision == snapshot.revision else { continue }
@@ -622,14 +673,14 @@ final class PinSyncService {
                         revision: work.revision,
                         imageData: work.imageData
                     )
-                    guard metadata.pendingDeletes[work.pinId] == nil,
+                    guard isCurrentAccount(), metadata.pendingDeletes[work.pinId] == nil,
                           pendingPhotos[work.pinId]?.revision == work.revision else { continue }
                     work.uploadedPath = path
                     pendingPhotos[work.pinId] = work
                     try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
                 }
 
-                guard let path = work.uploadedPath,
+                guard isCurrentAccount(), let path = work.uploadedPath,
                       metadata.pendingDeletes[work.pinId] == nil,
                       pendingPhotos[work.pinId]?.revision == work.revision else { continue }
                 _ = try await repository.updatePhotoPath(
@@ -637,7 +688,7 @@ final class PinSyncService {
                     vineyardId: work.vineyardId,
                     path: path
                 )
-                guard metadata.pendingDeletes[work.pinId] == nil,
+                guard isCurrentAccount(), metadata.pendingDeletes[work.pinId] == nil,
                       pendingPhotos[work.pinId]?.revision == work.revision else { continue }
                 if var pin = store?.pins.first(where: { $0.id == work.pinId }) {
                     pin.photoPath = path

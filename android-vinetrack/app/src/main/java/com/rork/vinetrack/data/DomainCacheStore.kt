@@ -98,6 +98,18 @@ class DomainCacheStore(context: Context) {
     internal fun isFieldHydrationCurrent(userId: String, vineyardId: String, snapshot: FieldCacheHydration): Boolean =
         snapshot.matches(userId, vineyardId, prefs.all)
 
+    internal fun loadQuickActions(vineyardId: String): QuickActionOfflineSnapshot? =
+        prefs.getString("quick_actions_v1_$vineyardId", null)?.let { raw ->
+            runCatching { json.decodeFromString<QuickActionOfflineSnapshot>(raw) }.getOrNull()
+        }
+
+    internal fun saveQuickActions(snapshot: QuickActionOfflineSnapshot) {
+        check(prefs.edit().putString("quick_actions_v1_${snapshot.vineyardId}",
+            json.encodeToString(QuickActionOfflineSnapshot.serializer(), snapshot)).commit()) {
+            "Verified Quick Actions could not be saved on this device"
+        }
+    }
+
     // MARK: - Vineyard list
 
     fun loadVineyards(): List<Vineyard> = vineyardCodec.decode(prefs.getString(KEY_VINEYARDS, null))
