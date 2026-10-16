@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.test.platform.app.InstrumentationRegistry
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.*
+import com.rork.vinetrack.data.spray.*
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -127,9 +128,41 @@ class SprayStartProductionAndroidTest {
         sprayEquipmentId = null, operationType = "foliar_spray", tripId = null, tanks = listOf(SprayTank("original-tank", tankNumber = 1, waterVolume = 420.0,
             chemicals = listOf(SprayChemical("original-chemical", name = "Fixture", volumePerTank = 1500.0, ratePerHa = 750.0, unit = "g")))))
 
-    private fun start(hours: Double? = null): SprayStartOutcome {
+    private val productId = UUID.randomUUID().toString()
+    private val blockId = UUID.randomUUID().toString()
+    private val firstClock = "2026-10-15T23:59:55Z"
+    private val retryClock = "2026-10-16T00:00:05Z" // Same vineyard day in Sydney, different UTC dates.
+
+    private fun calculatorInput(clock: String): SprayRecordRepository.SprayInput {
+        val chemical = SavedChemical(productId, vineyard, name = "Snapshot fixture", unit = "g", chemicalGroup = "11")
+        val block = Paddock(blockId, vineyard, "Calculation fixture", polygonPoints = listOf(
+            CoordinatePoint(-33.0, 149.0), CoordinatePoint(-33.001, 149.0),
+            CoordinatePoint(-33.001, 149.001), CoordinatePoint(-33.0, 149.001)))
+        val flow = SprayGuidedFlow(SprayGuidedInputs(
+            blocks = listOf(SprayBlockInput(block.id, grossAreaHectares = block.areaHectares)),
+            targets = setOf(SprayTarget.POWDERY_MILDEW), sprayHeadTarget = SprayHeadTarget.FULL_CANOPY,
+            isGrowthStageAssigned = true, isEquipmentSelected = true, isEquipmentConfirmed = true,
+            carrierBasis = SprayCarrierBasis.MANUAL_TOTAL_VOLUME, manualTotalLitres = 420.0, tankCapacityLitres = 2000.0,
+            products = listOf(SprayProductLineInput(productId, chemical.name, "g", SprayProductRateBasis.WHOLE_BLOCK_AREA, 750.0)),
+        ))
+        val plan = flow.plan
+        return SprayCalculatorInputBuilder.build(input().copy(operationType = "Foliar Spray", tanks = emptyList(),
+            applicationGeometry = requireNotNull(flow.snapshot)), clock,
+            listOf(SprayCalculatorInputBuilder.Product(productId,
+                com.rork.vinetrack.data.spray.SprayProductRateBasis.WHOLE_BLOCK_AREA,
+                750.0, "g", true, null, false)), listOf(chemical)) { snapshots ->
+            SprayGuidedTankBuilder.build(plan, plan.carrier.litresPerHectare ?: 0.0, snapshots = snapshots)
+        }.also {
+            assertEquals(clock, it.date); assertEquals(clock, it.startTime)
+            val snapshot = requireNotNull(it.tanks.single().chemicals.single().chemicalSnapshot)
+            assertEquals(clock, snapshot.capturedAt); assertEquals(750.0, snapshot.appliedRate!!, 0.0)
+        }
+    }
+
+    private fun start(hours: Double? = null, draft: SprayRecordRepository.SprayInput = input(),
+        blocks: List<String> = if (draft.applicationGeometry != null) listOf(blockId) else emptyList()): SprayStartOutcome {
         val done = CountDownLatch(1); val outcome = AtomicReference<SprayStartOutcome>()
-        instrumentation.runOnMainSync { vm.startSprayJobNow(input(), null, emptyList(), "Fixture", startEngineHours = hours) { outcome.set(it); done.countDown() } }
+        instrumentation.runOnMainSync { vm.startSprayJobNow(draft, blocks.firstOrNull(), blocks, "Fixture", startEngineHours = hours) { outcome.set(it); done.countDown() } }
         assertTrue("Start callback did not finish", done.await(20, TimeUnit.SECONDS))
         return requireNotNull(outcome.get())
     }
@@ -187,6 +220,179 @@ class SprayStartProductionAndroidTest {
         assertFalse(result.isStarted); assertTrue(result.message!!.contains(originalId))
         assertTrue(result.message!!.contains("earlier app flow"))
         assertEquals(1, creates); assertNull(ActiveTripStore(app).load())
+    }
+
+    private fun storedAttempts(): List<LegacySpraySaveStore.Attempt> = SupabaseClient.json.decodeFromString(
+        app.getSharedPreferences(LegacySpraySaveStore.PREFERENCES, Context.MODE_PRIVATE).getString("attempts", null)!!)
+
+    private fun assertFrozen(original: LegacySpraySaveStore.Attempt) {
+        val after = storedAttempts().single { it.recordId == original.recordId }
+        assertEquals(original.rpc, after.rpc)
+        assertEquals(original.rpc!!.operation, after.rpc!!.operation)
+        assertEquals(original.recordId, after.recordId); assertEquals(original.trip, after.trip)
+        assertEquals(original.input, after.input); assertEquals(original.startEngineHours, after.startEngineHours)
+        assertEquals(original.rpc!!.record, savedRequest!!.getValue("p_record"))
+    }
+
+    @Test fun timestampedCalculatorAcceptedReloadFailureRecoversFrozenOriginal() {
+        failReload = true; setup()
+        assertFalse(start(123.5, calculatorInput(firstClock)).isStarted)
+        val original = requireNotNull(LegacySpraySaveStore(app).retainedStart(vineyard))
+        val recovered = start(999.0, calculatorInput(retryClock))
+        assertTrue(recovered.message, recovered.isStarted); assertEquals(original.trip.id, recovered.tripId)
+        assertEquals(123.5, ActiveTripStore(app).load()!!.trip.startEngineHours!!, 0.0)
+        assertEquals(1, creates); assertEquals(1, recoveries); assertFrozen(original)
+        assertFalse(vm.ui.value.isTracking); assertTrue(vm.requiresFirstTankReview(ActiveTripStore(app).load()!!.trip))
+    }
+
+    @Test fun timestampedCalculatorLostResponseRecoversFrozenOriginal() {
+        mode = "lost"; setup()
+        assertFalse(start(null, calculatorInput(firstClock)).isStarted)
+        val original = requireNotNull(LegacySpraySaveStore(app).retainedStart(vineyard))
+        mode = "accepted"
+        val recovered = start(999.0, calculatorInput(retryClock))
+        assertTrue(recovered.message, recovered.isStarted); assertEquals(original.trip.id, recovered.tripId)
+        assertNull(ActiveTripStore(app).load()!!.trip.startEngineHours)
+        assertEquals(1, creates); assertEquals(1, recoveries); assertFrozen(original)
+    }
+
+    @Test fun timestampedCalculatorOlderAcceptedIsInspectionNotIdentityProof() {
+        setup()
+        instrumentation.runOnMainSync { state().value = state().value.copy(vineyards = listOf(Vineyard(vineyard, "Fixture", timezone = "Australia/Sydney"))) }
+        val done = CountDownLatch(1)
+        instrumentation.runOnMainSync { vm.createSprayJobForLater(calculatorInput(firstClock), blockId, listOf(blockId), "Fixture") {
+            assertTrue(it); done.countDown()
+        } }
+        assertTrue(done.await(20, TimeUnit.SECONDS))
+        val originalId = savedTrip!!.getValue("id").jsonPrimitive.content
+        val frozen = savedRequest
+        val retained = storedAttempts()
+        val outcome = start(null, calculatorInput(retryClock))
+        assertFalse("Ambiguous older acceptance must not create or auto-activate", outcome.isStarted)
+        assertTrue(outcome.message, outcome.message!!.contains(originalId))
+        assertEquals(1, creates); assertEquals(frozen, savedRequest); assertNull(ActiveTripStore(app).load())
+        assertEquals(retained, storedAttempts())
+        assertTrue(outcome.message!!.contains("separate job")); assertTrue(outcome.message!!.contains("Save for Later"))
+    }
+
+    @Test fun timestampedCalculatorChangedEvidenceCannotResumeAcceptedOriginal() {
+        failReload = true; setup()
+        assertFalse(start(12.25, calculatorInput(firstClock)).isStarted)
+        val original = requireNotNull(LegacySpraySaveStore(app).retainedStart(vineyard))
+        val retry = calculatorInput(retryClock)
+        val tank = retry.tanks.single(); val chemical = tank.chemicals.single(); val snapshot = chemical.chemicalSnapshot!!
+        fun withChemical(value: SprayChemical) = retry.copy(tanks = listOf(tank.copy(chemicals = listOf(value))))
+        val changes = listOf(
+            "product identity" to withChemical(chemical.copy(savedChemicalId = UUID.randomUUID().toString())),
+            "product name" to withChemical(chemical.copy(name = "Different")),
+            "rate" to withChemical(chemical.copy(ratePerHa = 751.0)),
+            "quantity" to withChemical(chemical.copy(volumePerTank = chemical.volumePerTank + 1)),
+            "water" to retry.copy(tanks = listOf(tank.copy(waterVolume = tank.waterVolume + 1))),
+            "equipment" to retry.copy(sprayEquipmentId = UUID.randomUUID().toString()),
+            "tractor" to retry.copy(tractorId = UUID.randomUUID().toString()),
+            "snapshot presence" to withChemical(chemical.copy(chemicalSnapshot = null)),
+            "classification" to withChemical(chemical.copy(chemicalSnapshot = snapshot.copy(activityGroupCodes = listOf("3")))),
+            "registration" to withChemical(chemical.copy(chemicalSnapshot = snapshot.copy(registrationIdentityKey = "AU:changed"))),
+            "provenance" to withChemical(chemical.copy(chemicalSnapshot = snapshot.copy(rateEntryMethod = "canonical"))),
+            "snapshot rate" to withChemical(chemical.copy(chemicalSnapshot = snapshot.copy(appliedRate = 751.0))),
+            "non-generated clock" to withChemical(chemical.copy(chemicalSnapshot = snapshot.copy(capturedAt = "2026-01-01T00:00:00Z"))),
+            "foreign parent" to retry.copy(tripId = UUID.randomUUID().toString()),
+        )
+        changes.forEach { (label, changed) ->
+            assertFalse("Changed $label matched", original.matchesStartInput(changed))
+            val outcome = start(999.0, changed)
+            assertFalse("Changed $label resumed", outcome.isStarted)
+            assertTrue(outcome.message, outcome.message!!.contains(original.trip.id))
+            assertFrozen(original)
+        }
+        val differentBlock = start(999.0, retry, listOf(UUID.randomUUID().toString()))
+        assertFalse(differentBlock.isStarted); assertTrue(differentBlock.message!!.contains(original.trip.id))
+        assertEquals(1, creates); assertEquals(1, recoveries); assertNull(ActiveTripStore(app).load())
+        assertFrozen(original)
+    }
+
+    private fun saveCalculator(draft: SprayRecordRepository.SprayInput): String {
+        val done = CountDownLatch(1); val result = AtomicReference<Boolean>()
+        instrumentation.runOnMainSync { vm.createSprayJobForLater(draft, blockId, listOf(blockId), "Fixture") {
+            result.set(it); done.countDown()
+        } }
+        assertTrue(done.await(20, TimeUnit.SECONDS)); assertTrue(vm.ui.value.sprayError, result.get())
+        return savedTrip!!.getValue("id").jsonPrimitive.content
+    }
+
+    @Test fun timestampedCalculatorChangedLostResponseStaysHeldThenUnchangedRecovers() {
+        mode = "lost"; setup()
+        assertFalse(start(12.25, calculatorInput(firstClock)).isStarted)
+        val original = requireNotNull(LegacySpraySaveStore(app).retainedStart(vineyard))
+        mode = "accepted"
+        val draft = calculatorInput(retryClock)
+        assertFalse(start(999.0, draft.copy(sprayEquipmentId = UUID.randomUUID().toString())).isStarted)
+        assertFalse(start(999.0, draft, listOf(UUID.randomUUID().toString())).isStarted)
+        assertEquals(0, recoveries); assertFrozen(original); assertNull(ActiveTripStore(app).load())
+        val recovered = start(999.0, draft)
+        assertTrue(recovered.message, recovered.isStarted); assertEquals(original.trip.id, recovered.tripId)
+        assertEquals(12.25, ActiveTripStore(app).load()!!.trip.startEngineHours!!, 0.0)
+        assertEquals(1, creates); assertEquals(1, recoveries); assertFrozen(original)
+    }
+
+    @Test fun olderAcceptedAmbiguityListsAllAndSeparateSavedJobCanStart() {
+        setup()
+        instrumentation.runOnMainSync { state().value = state().value.copy(vineyards = listOf(Vineyard(vineyard, "Fixture", timezone = "Australia/Sydney"))) }
+        val firstId = saveCalculator(calculatorInput(firstClock))
+        val secondId = saveCalculator(calculatorInput(retryClock))
+        assertNotEquals(firstId, secondId)
+        val originals = storedAttempts()
+        val outcome = start(999.0, calculatorInput("2026-10-16T00:01:05Z"))
+        assertFalse(outcome.isStarted)
+        assertTrue(outcome.message!!.contains(firstId)); assertTrue(outcome.message!!.contains(secondId))
+        assertEquals(2, creates); assertEquals(originals, storedAttempts()); assertNull(ActiveTripStore(app).load())
+        // Explicit Save for Later is not denied by recipe/day ambiguity; the operator chooses its new UUID.
+        val separateId = saveCalculator(calculatorInput("2026-10-16T00:02:05Z"))
+        assertNotEquals(firstId, separateId); assertNotEquals(secondId, separateId)
+        val done = CountDownLatch(1); val started = AtomicReference<Boolean>()
+        instrumentation.runOnMainSync { vm.startSprayJob(separateId, 77.0) { started.set(it); done.countDown() } }
+        assertTrue(done.await(20, TimeUnit.SECONDS)); assertTrue(vm.ui.value.sprayError, started.get())
+        assertEquals(separateId, ActiveTripStore(app).load()!!.trip.id)
+        assertEquals(77.0, ActiveTripStore(app).load()!!.trip.startEngineHours!!, 0.0)
+        assertEquals(originals, storedAttempts().filter { it.trip.id != separateId })
+        assertEquals(3, creates); assertFalse(vm.ui.value.isTracking)
+    }
+
+    @Test fun olderAcceptedUsesParentIdentityAndVineyardDayWithoutRewritingHistory() {
+        setup()
+        saveCalculator(calculatorInput("2026-10-16T12:59:55Z"))
+        val original = storedAttempts().single()
+        val store = LegacySpraySaveStore(app)
+        val sameLocalDay = calculatorInput("2026-10-16T12:59:59Z")
+        assertEquals(listOf(original), store.olderAcceptedMatch(vineyard, sameLocalDay, listOf(blockId), "freeDrive", "Australia/Sydney"))
+        val nextLocalDay = calculatorInput("2026-10-16T13:00:05Z")
+        assertTrue(store.olderAcceptedMatch(vineyard, nextLocalDay, listOf(blockId), "freeDrive", "Australia/Sydney").isEmpty())
+        // Explicit original parent is held for inspection even on another day and with edited equipment.
+        assertEquals(listOf(original), store.olderAcceptedMatch(vineyard,
+            nextLocalDay.copy(tripId = original.trip.id, sprayEquipmentId = UUID.randomUUID().toString()),
+            listOf(blockId), "freeDrive", "Australia/Sydney"))
+        assertTrue(store.olderAcceptedMatch(vineyard, sameLocalDay.copy(tripId = UUID.randomUUID().toString()),
+            emptyList(), "freeDrive", "Australia/Sydney").isEmpty())
+        // Unknown timezone is conservatively ambiguous, never device-zone identity or automatic adoption.
+        assertEquals(listOf(original), store.olderAcceptedMatch(vineyard, nextLocalDay, listOf(blockId), "freeDrive"))
+        assertEquals(listOf(original), storedAttempts())
+    }
+
+    @Test fun olderAcceptedGenuineRecipeChangesAreNotMisidentifiedAsOriginal() {
+        setup(); saveCalculator(calculatorInput(firstClock))
+        val original = storedAttempts().single(); val draft = calculatorInput(retryClock)
+        val tank = draft.tanks.single(); val chemical = tank.chemicals.single()
+        val store = LegacySpraySaveStore(app)
+        val changes = listOf(
+            draft.copy(sprayEquipmentId = UUID.randomUUID().toString()),
+            draft.copy(tanks = listOf(tank.copy(waterVolume = tank.waterVolume + 1))),
+            draft.copy(tanks = listOf(tank.copy(chemicals = listOf(chemical.copy(ratePerHa = 751.0))))),
+            draft.copy(tanks = listOf(tank.copy(chemicals = listOf(chemical.copy(volumePerTank = chemical.volumePerTank + 1))))),
+            draft.copy(tanks = listOf(tank.copy(chemicals = listOf(chemical.copy(savedChemicalId = UUID.randomUUID().toString()))))),
+        )
+        changes.forEach { assertTrue(store.olderAcceptedMatch(vineyard, it, listOf(blockId), "freeDrive", "Australia/Sydney").isEmpty()) }
+        assertTrue(store.olderAcceptedMatch(vineyard, draft, listOf(UUID.randomUUID().toString()), "freeDrive", "Australia/Sydney").isEmpty())
+        assertEquals(listOf(original), storedAttempts()); assertEquals(1, creates)
     }
 
     @Test fun rejectedReceiptDoesNotActivateOrDiscardOriginal() {

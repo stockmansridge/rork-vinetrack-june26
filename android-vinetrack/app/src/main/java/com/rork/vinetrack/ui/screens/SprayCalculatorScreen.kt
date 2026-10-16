@@ -129,7 +129,7 @@ import com.rork.vinetrack.data.chemical.ChemicalCreationRouting
 import com.rork.vinetrack.data.chemical.ChemicalDefaultRateDisplay
 import com.rork.vinetrack.data.chemical.ChemicalReverifyFlow
 import com.rork.vinetrack.data.chemical.ChemicalLabelRateNormalizer
-import com.rork.vinetrack.data.chemical.ChemicalSnapshotCapture
+import com.rork.vinetrack.data.SprayCalculatorInputBuilder
 import com.rork.vinetrack.data.chemical.ChemicalSprayDefaultHandoff
 import com.rork.vinetrack.data.chemical.ChemicalSprayPrefill
 import com.rork.vinetrack.data.chemical.SprayConfirmedRateSeeding
@@ -1182,43 +1182,20 @@ fun SprayCalculatorScreen(
     fun buildInput(): SprayRecordRepository.SprayInput {
         val r = result!!
         val iso = Instant.now().toString()
-        // Chemical Intelligence frozen at save time (sql/194). The store is
-        // read HERE, once, so the historical line keeps today's chemistry
-        // even after the product is re-classified tomorrow.
-        val lineSnapshots = chemLines.mapNotNull { line ->
+        val products = chemLines.map { line ->
             val chem = state.savedChemicals.firstOrNull { it.id == line.chemicalId }
-            val captured = ChemicalSnapshotCapture
-                .captureForNewApplication(
-                    savedChemicalId = line.chemicalId,
-                    productName = null,
-                    library = state.savedChemicals,
-                    // Stamped with the record's own instant, so the
-                    // chemistry and the application share one clock.
-                    capturedAt = iso,
-                )
-                .snapshot
-            if (chem == null) return@mapNotNull captured?.let { line.chemicalId to it }
-            // The applied dose and its provenance are frozen on the line
-            // (sql/222 contract): 2.5 chosen inside a confirmed 2–3 band is
-            // what went in THIS tank, and the Chemical Store keeps its band.
-            val persistedBasis = if (line.basis == SprayCalculator.RateBasis.PER_100L) {
-                SprayProductRateBasis.PER_100_LITRES
-            } else {
-                productAreaBasis[line.uid] ?: SprayProductRateBasis.WHOLE_BLOCK_AREA
-            }
-            SprayConfirmedRateSeeding.snapshotWithProvenance(
-                base = captured,
-                chemical = chem,
-                basis = persistedBasis,
-                appliedRate = effectiveRateDisplay(chem, line),
-                unit = lineRateUnit(chem, line),
+            SprayCalculatorInputBuilder.Product(
+                chemicalId = line.chemicalId,
+                basis = if (line.basis == SprayCalculator.RateBasis.PER_100L) SprayProductRateBasis.PER_100_LITRES
+                    else productAreaBasis[line.uid] ?: SprayProductRateBasis.WHOLE_BLOCK_AREA,
+                appliedRate = if (chem != null) effectiveRateDisplay(chem, line) else 0.0,
+                unit = if (chem != null) lineRateUnit(chem, line) else "",
                 isOverride = chemicalEditorValue(line.overrideText) != null,
-                capturedAt = iso,
-                selectedRate = SprayRegisteredUseRates.rate(chem, line.selectedRateId),
+                selectedRate = chem?.let { SprayRegisteredUseRates.rate(it, line.selectedRateId) },
                 isOperationalPreference = line.operationalSource != null,
-            )?.let { line.chemicalId to it }
-        }.toMap()
-        return SprayRecordRepository.SprayInput(
+            )
+        }
+        val metadata = SprayRecordRepository.SprayInput(
             date = iso,
             startTime = iso,
             temperature = null,
@@ -1240,13 +1217,17 @@ fun SprayCalculatorScreen(
             // Job-originated completion: the record fulfils this spray job.
             sprayJobId = originSprayJobId,
             isTemplate = false,
+            tanks = emptyList(),
+            applicationGeometry = guidedFlow.snapshot,
+        )
+        return SprayCalculatorInputBuilder.build(metadata, iso, products, state.savedChemicals) { lineSnapshots ->
             // A banded job persists the guided plan's own tank quantities —
             // the SAME `tankSplit` / `quantityPerFullTank` / `quantityInLastTank`
             // the preview and review displayed, each line stamped with the
             // basis it was ACTUALLY calculated on. The legacy result never
             // touches a banded save. Whole-block and foliar jobs keep the
             // established builder unchanged.
-            tanks = if (guidedFlow.mode == SprayApplicationMode.BANDED || operationType == "Foliar Spray") {
+            if (guidedFlow.mode == SprayApplicationMode.BANDED || operationType == "Foliar Spray") {
                 SprayGuidedTankBuilder.build(
                     plan = guidedPlan,
                     // The plan's carrier is the one water-rate authority for
@@ -1266,11 +1247,8 @@ fun SprayCalculatorScreen(
                     }.toMap(),
                     snapshots = lineSnapshots,
                 )
-            },
-            // Projection of the SAME plan the Review step displayed. The 17
-            // sql/191 + sql/192 columns are never populated from UI state.
-            applicationGeometry = guidedFlow.snapshot,
-        )
+            }
+        }
     }
 
     fun buildRowPlan(totalTanks: Int): SprayJobRowPlan {

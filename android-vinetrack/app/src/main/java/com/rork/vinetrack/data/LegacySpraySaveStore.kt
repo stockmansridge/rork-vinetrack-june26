@@ -33,11 +33,20 @@ class LegacySpraySaveStore(context: Context) {
 
         /** Calculator previews mint temporary line IDs. Matching never replaces the frozen request IDs. */
         fun matchesStartInput(proposed: SprayRecordRepository.SprayInput): Boolean {
+            if (proposed.tripId != null && proposed.tripId != trip.id) return false
             if (proposed.tanks.size != input.tanks.size) return false
             val tanks = proposed.tanks.zip(input.tanks).map { (candidate, original) ->
                 if (candidate.chemicals.size != original.chemicals.size) return false
                 candidate.copy(id = original.id, chemicals = candidate.chemicals.zip(original.chemicals).map { (chemical, frozen) ->
-                    chemical.copy(id = frozen.id)
+                    val snapshot = chemical.chemicalSnapshot
+                    val originalSnapshot = frozen.chemicalSnapshot
+                    // Only the save-time clock generated with this application is incidental.
+                    // Snapshot presence and every identity/classification/rate/provenance fact still compare exactly.
+                    val comparableSnapshot = if (snapshot != null && originalSnapshot != null &&
+                        snapshot.capturedAt == proposed.startTime && originalSnapshot.capturedAt == input.startTime) {
+                        snapshot.copy(capturedAt = originalSnapshot.capturedAt)
+                    } else snapshot
+                    chemical.copy(id = frozen.id, chemicalSnapshot = comparableSnapshot)
                 })
             }
             return input == proposed.copy(tripId = trip.id, date = input.date, startTime = input.startTime, tanks = tanks)
@@ -167,13 +176,31 @@ class LegacySpraySaveStore(context: Context) {
         starts.singleOrNull()?.also { check(it.identityEpoch == access.identityEpoch) { MESSAGE } }
     } }
 
-    /** Older accepted pairs have no Start discriminator. Hold a matching same-day pair for explicit recovery,
-     * never guess that it was only Save for Later and mint another trip after an app update.
+    /** Identity is evidence for inspection, never permission to activate an older unflagged attempt.
+     * Recipe/day matches are ambiguous candidates, not job identity. Return ALL candidates rather than pick one.
+     * A separate job remains available through explicit Save for Later -> inspect/start the chosen saved UUID.
      */
-    fun olderAcceptedMatch(vineyardId: String, input: SprayRecordRepository.SprayInput, blocks: List<String>, pattern: String): Attempt? = access.admitted { synchronized(this) {
-        read().firstOrNull { it.actorId == access.ownerUserId && it.trip.vineyardId == vineyardId && !it.startRequested &&
-            it.verified?.status == "accepted" && it.input.date == input.date && it.trip.paddockIds == blocks &&
-            it.trip.trackingPattern == pattern && it.matchesStartInput(input) }
+    fun olderAcceptedMatch(
+        vineyardId: String, input: SprayRecordRepository.SprayInput, blocks: List<String>, pattern: String,
+        vineyardTimezone: String? = null,
+    ): List<Attempt> = access.admitted { synchronized(this) {
+        val zone = vineyardTimezone?.let { runCatching { java.time.ZoneId.of(it) }.getOrNull() }
+        fun day(value: String): java.time.LocalDate? =
+            runCatching { java.time.LocalDate.parse(value) }.getOrNull()
+                ?: zone?.let { runCatching { java.time.OffsetDateTime.parse(value).atZoneSameInstant(it).toLocalDate() }.getOrNull() }
+        val proposedDay = day(input.date)
+        read().filter { attempt ->
+            if (attempt.actorId != access.ownerUserId || attempt.trip.vineyardId != vineyardId || attempt.startRequested ||
+                attempt.verified?.status != "accepted") return@filter false
+            // Explicit parent identity survives any clock/day/recipe change; it must be inspected as that original.
+            if (input.tripId != null) return@filter input.tripId == attempt.trip.id
+            val originalDay = day(attempt.input.date)
+            val couldBeSameDay = originalDay == null || proposedDay == null || originalDay == proposedDay
+            couldBeSameDay && attempt.trip.paddockIds == blocks && attempt.trip.trackingPattern == pattern &&
+                attempt.matchesStartInput(input)
+        }.also { candidates ->
+            check(candidates.all { it.identityEpoch == access.identityEpoch }) { MESSAGE }
+        }
     } }
 
     /** Mark only after the original trip has a durable owned active snapshot and activation marker. */

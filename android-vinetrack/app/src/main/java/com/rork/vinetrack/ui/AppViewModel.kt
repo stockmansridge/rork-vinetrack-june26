@@ -11785,9 +11785,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         if (onReadyTrip != null) {
-            val olderAccepted = legacySpraySaves.olderAcceptedMatch(vineyardId, input, paddockIds.distinct(), rowPlan?.trackingPattern ?: "freeDrive")
-            if (olderAccepted != null) {
-                _ui.update { it.copy(sprayError = "A matching original job ${olderAccepted.trip.id} already has an accepted receipt from an earlier app flow. Open that saved job in Sprays/Trips to inspect and start or return to it. No duplicate was created; this draft is unchanged.") }
+            val olderAccepted = try {
+                legacySpraySaves.olderAcceptedMatch(vineyardId, input, paddockIds.distinct(),
+                    rowPlan?.trackingPattern ?: "freeDrive", _ui.value.vineyards.firstOrNull { it.id == vineyardId }?.timezone)
+            } catch (_: Exception) {
+                _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; onResult(false); return
+            }
+            if (olderAccepted.isNotEmpty()) {
+                val identities = olderAccepted.joinToString(", ") { it.trip.id }
+                _ui.update { it.copy(sprayError = "Accepted saved job(s) $identities from an earlier app flow need inspection in Sprays/Trips. A similar recipe and day do not prove this is the same job; none was resumed or duplicated. To intentionally create a separate job, use Save for Later, then inspect and start that new saved job. This draft and all original evidence are unchanged.") }
                 onResult(false); return
             }
         }
