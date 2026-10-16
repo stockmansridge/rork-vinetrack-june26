@@ -12,6 +12,8 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.semantics.selected
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -149,6 +151,7 @@ import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.SprayJobRowPlan
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
+import com.rork.vinetrack.ui.components.SprayVolumeBasisSelector
 import com.rork.vinetrack.ui.components.SprayCanopySelector
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.data.spray.SprayCanopySelection
@@ -1317,15 +1320,15 @@ fun SprayCalculatorScreen(
             paddockName = paddockNames,
             rowPlan = buildRowPlan(r.totalTanks),
             startEngineHours = startEngineHours,
-        ) { ok ->
+        ) { outcome ->
             saving = false
-            if (ok) {
-                val startedId = vm.activeTripIdOrNull()
+            val startedId = outcome.tripId
+            if (outcome.isStarted && startedId != null) {
                 showReview = false
                 onSaved()
-                if (startedId != null) onJobStarted?.invoke(startedId)
+                onJobStarted?.invoke(startedId)
             } else {
-                errorMessage = state.sprayError ?: "Couldn't start the spray job."
+                errorMessage = outcome.message
             }
         }
     }
@@ -1837,27 +1840,25 @@ fun SprayCalculatorScreen(
                         }
                     }
                     Text("Spray volume", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        val bases = listOf(SprayCarrierBasis.LITRES_PER_HECTARE, SprayCarrierBasis.MANUAL_TOTAL_VOLUME)
-                        bases.forEachIndexed { index, basis ->
-                            SegmentedButton(
-                                selected = guidedFlow.effectiveCarrierBasis == basis,
-                                onClick = { changeRateDisplay(basis, passConfiguration) },
-                                shape = SegmentedButtonDefaults.itemShape(index, bases.size),
-                            ) { Text(if (basis == SprayCarrierBasis.LITRES_PER_HECTARE) fmt.volumePerAreaUnit else "Manual total water", fontSize = 12.sp) }
-                        }
-                    }
+                    SprayVolumeBasisSelector(
+                        bases = listOf(SprayCarrierBasis.LITRES_PER_HECTARE, SprayCarrierBasis.MANUAL_TOTAL_VOLUME),
+                        selected = guidedFlow.effectiveCarrierBasis, format = carrierFormat,
+                        onSelect = { changeRateDisplay(it, passConfiguration) },
+                    )
                 }
                 // Only offer a choice when the vineyard profile genuinely allows
                 // one. An NZ/SWNZ vineyard is locked to L/100 m and never sees an
                 // L/ha option or an "allow either" selector, so a compliance
                 // spray cannot be switched onto the wrong basis by accident.
                 if (!guidedFlow.requiresBandWidth && guidedFlow.isCarrierBasisLocked) {
-                    OutlinedButton(onClick = { changeRateDisplay(SprayCarrierBasis.MANUAL_TOTAL_VOLUME, passConfiguration) }) { Text("Manual total water") }
-                    OutlinedButton(onClick = { changeRateDisplay(guidedFlow.profile.defaultCarrierBasis, passConfiguration) }) { Text("Calibrated spray volume") }
+                    SprayVolumeBasisSelector(
+                        bases = listOf(guidedFlow.profile.defaultCarrierBasis, SprayCarrierBasis.MANUAL_TOTAL_VOLUME),
+                        selected = guidedFlow.effectiveCarrierBasis, format = carrierFormat,
+                        onSelect = { changeRateDisplay(it, passConfiguration) },
+                    )
                     Text(
                         "This vineyard records carrier volume in " +
-                            "${carrierFormat.carrierBasisLabel(guidedFlow.effectiveCarrierBasis)}.",
+                            "${carrierFormat.carrierBasisLabel(guidedFlow.profile.defaultCarrierBasis)}.",
                         fontSize = 12.sp,
                         color = vine.textSecondary,
                     )
@@ -1868,20 +1869,12 @@ fun SprayCalculatorScreen(
                         fontWeight = FontWeight.SemiBold,
                         color = vine.textPrimary,
                     )
-                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        val bases = listOf(
-                            SprayCarrierBasis.LITRES_PER_100_METRES,
-                            SprayCarrierBasis.LITRES_PER_HECTARE,
-                            SprayCarrierBasis.MANUAL_TOTAL_VOLUME,
-                        ).filter { planningMethod != SprayPlanningMethod.FULL_TANK || it != SprayCarrierBasis.MANUAL_TOTAL_VOLUME }
-                        bases.forEachIndexed { i, basis ->
-                            SegmentedButton(
-                                selected = guidedFlow.effectiveCarrierBasis == basis,
-                                onClick = { changeRateDisplay(basis, passConfiguration) },
-                                shape = SegmentedButtonDefaults.itemShape(i, bases.size),
-                            ) { Text(carrierFormat.carrierBasisLabel(basis), fontSize = 13.sp) }
-                        }
-                    }
+                    SprayVolumeBasisSelector(
+                        bases = listOf(SprayCarrierBasis.LITRES_PER_100_METRES, SprayCarrierBasis.LITRES_PER_HECTARE,
+                            SprayCarrierBasis.MANUAL_TOTAL_VOLUME).filter { planningMethod != SprayPlanningMethod.FULL_TANK || it != SprayCarrierBasis.MANUAL_TOTAL_VOLUME },
+                        selected = guidedFlow.effectiveCarrierBasis, format = carrierFormat,
+                        onSelect = { changeRateDisplay(it, passConfiguration) },
+                    )
                 }
 
                 if (guidedFlow.requiresCanopyConfirmation) {
@@ -4088,7 +4081,7 @@ private fun EquipmentPathSetupContent(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TrackingSetupContent(
+internal fun TrackingSetupContent(
     trackingPattern: TrackingPattern,
     onPatternChange: (TrackingPattern) -> Unit,
     hasRowGeometry: Boolean,
@@ -4099,27 +4092,34 @@ private fun TrackingSetupContent(
     onDirectionChange: (Boolean) -> Unit,
     orderedSelectedPaddocks: List<Paddock>,
     pathSequence: List<Double>,
+    modifier: Modifier = Modifier,
 ) {
     val vine = LocalVineColors.current
-    var patternMenu by remember { mutableStateOf(false) }
     var pathMenu by remember { mutableStateOf(false) }
-    VineyardCard {
-        Text("Tracking pattern", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-        ExposedDropdownMenuBox(expanded = patternMenu, onExpandedChange = { patternMenu = it }) {
-            OutlinedTextField(
-                value = trackingPattern.title,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Tracking pattern") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(patternMenu) },
-                modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
-            )
-            ExposedDropdownMenu(expanded = patternMenu, onDismissRequest = { patternMenu = false }) {
-                TrackingPattern.entries.forEach { pattern ->
-                    DropdownMenuItem(text = { Text(pattern.title) }, onClick = { onPatternChange(pattern); patternMenu = false })
+    VineyardCard(modifier = modifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            TrackingPattern.entries.forEach { pattern ->
+                val isSelected = trackingPattern == pattern
+                androidx.compose.material3.Surface(
+                    onClick = { onPatternChange(pattern) },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics { selected = isSelected },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else vine.cardBackground,
+                    contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else vine.textPrimary,
+                    border = BorderStroke(if (isSelected) 2.dp else 1.dp, if (isSelected) VineColors.Purple else vine.cardBorder),
+                ) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Icon(patternIcon(pattern), null, Modifier.size(22.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(pattern.title, modifier = Modifier.fillMaxWidth(), style = MaterialTheme.typography.titleSmall)
+                            Text(pattern.subtitle, modifier = Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodySmall)
+                        }
+                        Icon(if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked, null, Modifier.size(22.dp))
+                    }
                 }
             }
         }
+        Spacer(Modifier.height(16.dp))
         if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
             ExposedDropdownMenuBox(expanded = pathMenu, onExpandedChange = { pathMenu = it }) {
                 OutlinedTextField(
@@ -4134,11 +4134,20 @@ private fun TrackingSetupContent(
                     }
                 }
             }
+            Spacer(Modifier.height(12.dp))
             Text("Sequence direction", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                SegmentedButton(selected = !directionHigherFirst, onClick = { onDirectionChange(false) }, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("Higher to lower", fontSize = 12.sp) }
-                SegmentedButton(selected = directionHigherFirst, onClick = { onDirectionChange(true) }, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Lower to higher", fontSize = 12.sp) }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(false, true).forEach { higherFirst ->
+                    val isSelected = directionHigherFirst == higherFirst
+                    OutlinedButton(onClick = { onDirectionChange(higherFirst) },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).semantics { selected = isSelected },
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else vine.cardBackground,
+                            contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else vine.textPrimary,
+                        )) { Text(if (higherFirst) "Lower to higher" else "Higher to lower") }
+                }
             }
+            Spacer(Modifier.height(12.dp))
             Text("Proposed row/path sequence", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
             Text(com.rork.vinetrack.data.TripOccurrencePlanner.preview(com.rork.vinetrack.data.TripOccurrencePlanner.plan(availablePaths, trackingPattern, startPath, directionHigherFirst)), fontSize = 13.sp, color = vine.textPrimary)
         } else {
@@ -4371,7 +4380,7 @@ private fun SprayTankMixReview(
             }
 
 
-            item { SectionHeader("Tracking setup", onLight = true) }
+            item { SectionHeader("Tracking Pattern", onLight = true) }
             item {
                 TrackingSetupContent(
                     trackingPattern = trackingPattern,

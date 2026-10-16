@@ -39,6 +39,14 @@ object LegacySprayPairReceipt {
         }
         return Request(java.util.UUID.randomUUID().toString(), trip, record)
     }
+    /** Status-only transport diagnosis; no response/authentication body is exposed to UI or logs. */
+    class TransportFailure(val status: Int) : IllegalStateException(when (status) {
+        403 -> "The server denied this spray request. Restore authorised vineyard access, then recover the original request."
+        404 -> "The spray receipt service is unavailable on this backend. Keep this draft and original request; ask support to confirm receipt-v1 availability."
+        in 500..599 -> "The spray service could not confirm the outcome. Connect and recover the original request; do not create another job."
+        else -> "The server could not confirm this spray request (HTTP $status). Keep its original IDs and recover it before another Start."
+    })
+
     suspend fun transport(session: SessionStore, access: AuthRetentionGuard.AccountAccess, rpc: String, request: Request): Receipt {
         check(session.isAccountAccessCurrent(access))
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -49,7 +57,7 @@ object LegacySprayPairReceipt {
         }
         check(session.isAccountAccessCurrent(access))
         if (response.status.value == 401) throw BackendError.Unauthorized
-        check(response.status.isSuccess()) { LegacySpraySaveStore.MESSAGE }
+        if (!response.status.isSuccess()) throw TransportFailure(response.status.value)
         return decode(response.bodyAsText())
     }
 }

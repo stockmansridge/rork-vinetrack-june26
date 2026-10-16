@@ -1,0 +1,19 @@
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    app.tasks.named('compileDebugUnitTestKotlin').configure {
+        setSource(app.fileTree('src/test/java') {
+            include '**/SprayStartOutcomeTest.kt', '**/LegacySprayPairReceiptTest.kt'
+            include '**/SprayMVPDefectTest.kt', '**/SprayPlanningIntentTest.kt'
+            include '**/SprayCanopyParityTest.kt', '**/SprayCarrierRegionalFormatTest.kt'
+            include '**/DeviceTripOwnershipTest.kt', '**/ActiveTripStoreTest.kt'
+            include '**/TripGpsRecoveryTest.kt', '**/TripOccurrenceJournalTest.kt'
+            include '**/SprayProgramTankFollowupTest.kt', '**/OfflineQuickActionsTest.kt'
+            include '**/RetentionReviewTest.kt'
+        })
+    }
+    app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        outputs.upToDateWhen { false }
+        filter { excludeTestsMatching 'com.rork.vinetrack.data.RetentionReviewTest' }
+        testLogging { events 'passed', 'failed', 'skipped' }
+    }
+}

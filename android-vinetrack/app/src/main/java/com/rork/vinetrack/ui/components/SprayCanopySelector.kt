@@ -1,6 +1,16 @@
 package com.rork.vinetrack.ui.components
 
 import android.graphics.BitmapFactory
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -90,9 +100,20 @@ fun SprayCanopySelector(
             SprayCalculator.CanopySize.entries.chunked(2).forEach { sizes ->
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     sizes.forEach { size ->
+                        val isSelected = selection.size == size
                         OutlinedButton(onClick = { onSelectionChange(selection.chooseSize(size)) },
-                            modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
-                            Text("${if (selection.size == size) "✓ " else ""}${size.label}", textAlign = TextAlign.Center)
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp).semantics { selected = isSelected },
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else vine.cardBackground,
+                                contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else vine.textPrimary,
+                            ),
+                            border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else vine.cardBorder),
+                        ) {
+                            if (isSelected) {
+                                Icon(Icons.Default.Check, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                            }
+                            Text(size.label, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
                         }
                     }
                 }
@@ -177,7 +198,7 @@ fun SprayCanopySelector(
 
         Button(
             onClick = onConfirm,
-            modifier = Modifier.fillMaxWidth().height(48.dp).padding(top = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp).heightIn(min = 48.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = if (isConfirmed) VineColors.LeafGreen.copy(alpha = 0.16f) else VineColors.Orange.copy(alpha = 0.16f),
                 contentColor = if (isConfirmed) VineColors.DarkGreen else VineColors.Orange,

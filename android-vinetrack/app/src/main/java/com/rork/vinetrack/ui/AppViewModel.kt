@@ -8717,7 +8717,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }.getOrNull() }.toSet()
         check(_ui.value.trips.none { trip ->
             trip.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE &&
-                (occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, trip.vineyardId, trip.id)).load()?.creationConfirmed == false || trip.id in pendingRecipes)
+                (occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, trip.vineyardId, trip.id)).load()?.let { state ->
+                    !state.creationConfirmed || state.pending.any { it.rpc == "activate_trip_occurrences_v1" } ||
+                        state.serverActive == true && _ui.value.deviceActiveTripId != trip.id
+                } == true || trip.id in pendingRecipes)
         }) {
             "An earlier planned creation is pending. Recover that exact trip before accepting another."
         }
@@ -11746,6 +11749,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         paddockName: String?,
         rowPlan: SprayJobRowPlan? = null,
         onReadyTrip: ((String) -> Unit)? = null,
+        startEngineHours: Double? = null,
         onResult: (Boolean) -> Unit,
     ) {
         input.operationalBlocker()?.let { blocker -> _ui.update { it.copy(sprayError = blocker) }; onResult(false); return }
@@ -11754,8 +11758,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             createQualifiedSpray(input, paddockId, paddockIds, paddockName, rowPlan, false, null, onResult)
             return
         }
-        val originalAccess = session.accountAccess() ?: run { onResult(false); return }
-        if (session.accessToken == null) { onResult(false); return }
+        val originalAccess = session.accountAccess() ?: run {
+            _ui.update { it.copy(sprayError = "Sign in again to start this spray. Your calculator setup is unchanged.") }; onResult(false); return
+        }
+        if (session.accessToken == null) {
+            _ui.update { it.copy(sprayError = "Connect and restore your session before starting this spray. Your setup is unchanged.") }; onResult(false); return
+        }
+        val retained = try { legacySpraySaves.retainedStart(vineyardId) } catch (_: Exception) {
+            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; onResult(false); return
+        }
+        if (retained != null) {
+            // Match the recipe, not the fresh wall-clock supplied by the calculator on each press.
+            val sameDraft = retained.matchesStartInput(input) &&
+                retained.trip.paddockIds == paddockIds.distinct() && retained.trip.trackingPattern == (rowPlan?.trackingPattern ?: "freeDrive")
+            if (onReadyTrip == null || !sameDraft) {
+                _ui.update { it.copy(sprayError = "Original Start ${retained.trip.id} needs recovery before another job can be created. Restore its unchanged setup or open that job; no replacement was sent.") }
+                onResult(false); return
+            }
+            if (!_ui.value.isOnline) {
+                _ui.update { it.copy(sprayError = "Connect to recover original Start ${retained.trip.id}. Offline calculator Start is unavailable; your draft and original request are retained.") }
+                onResult(false); return
+            }
+            submitPreparedLegacySpray(retained) { accepted ->
+                if (accepted) onReadyTrip(retained.trip.id) else onResult(false)
+            }
+            return
+        }
+        if (onReadyTrip != null) {
+            val olderAccepted = legacySpraySaves.olderAcceptedMatch(vineyardId, input, paddockIds.distinct(), rowPlan?.trackingPattern ?: "freeDrive")
+            if (olderAccepted != null) {
+                _ui.update { it.copy(sprayError = "A matching original job ${olderAccepted.trip.id} already has an accepted receipt from an earlier app flow. Open that saved job in Sprays/Trips to inspect and start or return to it. No duplicate was created; this draft is unchanged.") }
+                onResult(false); return
+            }
+        }
         val originalTimestamp = sprayRepo.nowIso()
         val originalTripId = java.util.UUID.randomUUID().toString()
         val originalRecordId = sprayRepo.newId()
@@ -11767,6 +11802,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 paddockIds.distinct(), paddockName?.ifBlank { null }, userName, input.startTime, input.tractorId,
                 originalAccess.userId, originalPlan.trackingPattern, originalPlan.rowSequence, originalPlan.totalTanks, originalTimestamp),
             recordId = originalRecordId, input = originalInput,
+            startRequested = onReadyTrip != null, startEngineHours = startEngineHours,
         )
         attempt = try {
             attempt.copy(rpc = com.rork.vinetrack.data.LegacySprayPairReceipt.prepare(
@@ -11798,14 +11834,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun submitPreparedLegacySpray(attempt: com.rork.vinetrack.data.LegacySpraySaveStore.Attempt, onResult: (Boolean) -> Unit) {
-        val originalAccess = session.accountAccess() ?: return
-        if (session.accessToken == null || attempt.rpc == null || attempt.verified != null) { onResult(false); return }
+        val originalAccess = session.accountAccess() ?: run { onResult(false); return }
+        if (session.accessToken == null || attempt.rpc == null || attempt.verified?.status == "rejected") {
+            _ui.update { it.copy(sprayError = attempt.receiptBlocker ?: "Connect and restore your session to recover the original spray request.") }
+            onResult(false); return
+        }
         if (originalAccess.userId != attempt.actorId || attempt.identityEpoch != session.retentionGuard.identityEpoch.value ||
-            _ui.value.selectedVineyardId != attempt.trip.vineyardId || !legacySpraySends.add(attempt.recordId)) return
+            _ui.value.selectedVineyardId != attempt.trip.vineyardId) { onResult(false); return }
+        if (!legacySpraySends.add(attempt.recordId)) {
+            _ui.update { it.copy(sprayError = "Original spray request is already being recovered. Wait for it to finish; do not create a replacement.") }
+            onResult(false); return
+        }
         viewModelScope.launch {
             try {
-                if (!session.withAccountAccess(originalAccess) { _ui.update { it.copy(sprayBusy = true) } }) return@launch
-                val accepted = legacySpraySaves.sendReceipt(attempt,
+                if (!session.withAccountAccess(originalAccess) { _ui.update { it.copy(sprayBusy = true, sprayError = null) } }) {
+                    onResult(false); return@launch
+                }
+                android.util.Log.i("SprayStart", "stage=pair_recovery trip=${attempt.trip.id} record=${attempt.recordId} operation=${attempt.rpc.operation} accepted=${attempt.verified?.status == "accepted"}")
+                val accepted = attempt.verified?.status == "accepted" || legacySpraySaves.sendReceipt(attempt,
                     isAuthorityCurrent = { session.isAccountAccessCurrent(originalAccess) &&
                         _ui.value.selectedVineyardId == attempt.trip.vineyardId }) { rpc, request ->
                     com.rork.vinetrack.data.LegacySprayPairReceipt.transport(session, originalAccess, rpc, request)
@@ -11816,7 +11862,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val created = sprayRepo.fetchAcceptedRow(attempt.recordId, originalAccess)
                 check(created.id == attempt.recordId && created.tripId == attempt.trip.id && created.vineyardId == attempt.trip.vineyardId)
                 check(_ui.value.selectedVineyardId == attempt.trip.vineyardId)
-                session.withAccountAccess(originalAccess) {
+                val published = session.withAccountAccess(originalAccess) {
                     _ui.update {
                         it.copy(
                             sprayBusy = false,
@@ -11827,18 +11873,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     onResult(true)
                 }
+                if (!published) onResult(false)
             } catch (e: BackendError.Unauthorized) {
                 if (session.isAccountAccessCurrent(originalAccess)) {
-                    _ui.update { it.copy(sprayBusy = false, sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
-                    onUnauthorized("createSprayJobForLater"); onResult(false)
+                    _ui.update { it.copy(sprayBusy = false, sprayError = "Your session could not authorise the original request. Connect and restore sign-in, then recover it; the setup and IDs are retained.") }
+                    onUnauthorized("createSprayJobForLater")
                 }
+                onResult(false)
             } catch (e: Exception) {
                 // A timeout can follow a committed insert. Never delete a possibly valid pair or remint IDs.
                 if (session.isAccountAccessCurrent(originalAccess)) {
-                    _ui.update { it.copy(sprayBusy = false, sprayError = runCatching { com.rork.vinetrack.data.LegacySpraySaveStore.status(legacySpraySaves.pending(attempt.trip.vineyardId)) }
-                        .getOrNull() ?: com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
-                    onResult(false)
+                    val accepted = runCatching { legacySpraySaves.retainedStart(attempt.trip.vineyardId)?.verified?.status == "accepted" }.getOrDefault(false)
+                    val message = if (accepted) "Original spray was accepted but reload is pending. Connect and press Start again to recover trip ${attempt.trip.id}; no new job will be created."
+                        else if (e is com.rork.vinetrack.data.LegacySprayPairReceipt.TransportFailure) requireNotNull(e.message)
+                        else runCatching { com.rork.vinetrack.data.LegacySpraySaveStore.status(legacySpraySaves.pending(attempt.trip.vineyardId)) }.getOrNull()
+                            ?: com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE
+                    android.util.Log.w("SprayStart", "stage=pair_or_reload_pending trip=${attempt.trip.id} record=${attempt.recordId} operation=${attempt.rpc.operation} accepted=$accepted http=${(e as? com.rork.vinetrack.data.LegacySprayPairReceipt.TransportFailure)?.status ?: "none"} failure=${e.javaClass.simpleName}")
+                    _ui.update { it.copy(sprayBusy = false, sprayError = message) }
                 }
+                onResult(false)
             } finally {
                 legacySpraySends.remove(attempt.recordId)
             }
@@ -11869,7 +11922,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             onResult(false); return
         }
         if (existing.isActive) {
-            _ui.update { it.copy(sprayError = "This spray job is already active on another device. Choose a different job.") }
+            val retained = runCatching { activeTripStore.load() }.getOrNull()
+            if (retained != null && retained.ownerUserId == session.userId && retained.vineyardId == existing.vineyardId &&
+                retained.trip.id == tripId && retained.trip.isActive && retained.trip.endTime == null && _ui.value.activeTrip?.id == tripId) {
+                // Return to the same durably owned recording; never claim or start a second tracker.
+                _ui.update { it.copy(sprayError = null) }
+                onResult(true); return
+            }
+            _ui.update { it.copy(sprayError = "This spray job is already active but is not this device's owned trip. Return to its original device or reconcile it before starting another.") }
             onResult(false); return
         }
         if (session.accessToken == null) {
@@ -11899,9 +11959,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(sprayError = blocker) }; onResult(false); return
             }
         }
-        val activatedSpray = linkedSpray?.let {
-            SavedTripActivation.activateLinkedSpray(it, tripId, operationalStart)
-        }
+        val activatedSpray = SavedTripActivation.activateLinkedSpray(linkedSpray, tripId, operationalStart)
         val activated = SavedTripActivation.activate(existing, operationalStart, startEngineHours)?.copy(
             operatorCategoryId = _ui.value.members.firstOrNull { it.userId == existing.operatorUserId }?.operatorCategoryId,
         )
@@ -11946,20 +12004,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onResult(true)
     }
 
-    /**
-     * Calculate a spray job and start it immediately as an active trip
-     * (Spray Calculator → Start now). Reuses the same primitives as Save job
-     * for later, but creates an already-active trip and begins GPS capture:
-     *
-     *  1. refuse if another trip is already active (same rule as [startSprayJob]),
-     *  2. create an active spraying trip via [TripRepository.createTrip],
-     *  3. create the linked spray record (so it resolves to In Progress),
-     *  4. seed the row plan via [TripRepository.updateTripRowPlan] (non-fatal),
-     *  5. begin foreground tracking through the normal [beginTracking] path.
-     *
-     * If the trip is created but the record insert fails, the orphan trip is
-     * rolled back. A row-plan seed failure is non-fatal: the started job is
-     * kept and a soft warning is surfaced.
+    private var calculatorStartInFlight: Boolean = false
+
+    /** Start through the retained paired-save/occurrence authority, then the existing tank recording gate.
+     * An accepted pair awaiting hydration is recovered by its original identities, never rolled back.
      */
     fun startSprayJobNow(
         input: SprayRecordRepository.SprayInput,
@@ -11968,30 +12016,129 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         paddockName: String?,
         rowPlan: SprayJobRowPlan? = null,
         startEngineHours: Double? = null,
-        onResult: (Boolean) -> Unit,
+        onResult: (com.rork.vinetrack.data.SprayStartOutcome) -> Unit,
     ) {
+        if (calculatorStartInFlight) {
+            onResult(com.rork.vinetrack.data.SprayStartOutcome(message = "Start is already in progress. Wait for the original request; no replacement was sent.")); return
+        }
+        calculatorStartInFlight = true
+        var delivered = false
+        var startStage = "hours_validation"
+        val startOwner = session.userId
+        val startEpoch = session.retentionGuard.identityEpoch.value
+        val startVineyard = _ui.value.selectedVineyardId
+        val finish: (Boolean) -> Unit = finish@ { ok ->
+            if (delivered) return@finish
+            delivered = true
+            calculatorStartInFlight = false
+            val currentScope = startOwner == session.userId && startEpoch == session.retentionGuard.identityEpoch.value && startVineyard == _ui.value.selectedVineyardId
+            val active = _ui.value.activeTrip?.takeIf { currentScope && it.isActive && it.endTime == null }
+            val result = if (ok && active != null) com.rork.vinetrack.data.SprayStartOutcome(tripId = active.id)
+                else com.rork.vinetrack.data.SprayStartOutcome(message = if (!currentScope) "Account or vineyard changed. The original request is retained; return to its account to recover it."
+                    else _ui.value.sprayError ?: "Start could not be confirmed. Keep this setup and recover the original request before trying another job.")
+            android.util.Log.i("SprayStart", "stage=$startStage outcome=${if (result.isStarted) "active_owned" else "blocked_or_pending"} trip=${result.tripId ?: "none"}")
+            onResult(result)
+        }
+        if (startEngineHours != null && (!startEngineHours.isFinite() || startEngineHours < 0)) {
+            _ui.update { it.copy(sprayError = "Enter valid non-negative engine hours, or leave the field blank.") }; finish(false); return
+        }
+        _ui.update { it.copy(sprayError = null) }
+        startStage = "recipe_validation"
         com.rork.vinetrack.data.spray.SprayStartRecipeValidation.blocker(input.tanks)?.let { blocker ->
-            _ui.update { it.copy(sprayError = blocker) }; onResult(false); return
+            _ui.update { it.copy(sprayError = blocker) }; finish(false); return
         }
-        input.operationalBlocker()?.let { blocker -> _ui.update { it.copy(sprayError = blocker) }; onResult(false); return }
-        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
-        if (!canStartDeviceTrip { message -> _ui.update { it.copy(sprayError = message) } }) {
-            onResult(false); return
+        startStage = "planning_evidence"
+        input.operationalBlocker()?.let { blocker -> _ui.update { it.copy(sprayError = blocker) }; finish(false); return }
+        startStage = "vineyard_scope"
+        val vineyardId = _ui.value.selectedVineyardId ?: run {
+            _ui.update { it.copy(sprayError = "Select the original vineyard before starting this spray.") }; finish(false); return
         }
-        if (rowPlan?.rowSequence?.isNotEmpty() == true) {
-            createQualifiedSpray(input, paddockId, paddockIds, paddockName, rowPlan, true, startEngineHours, onResult)
+        startStage = "authentication"
+        if (session.accountAccess() == null || session.accessToken == null) {
+            _ui.update { it.copy(sprayError = "Restore sign-in with the original account before starting this spray. Your setup and any retained request are unchanged.") }
+            finish(false); return
+        }
+        startStage = "retained_start_recovery"
+        val retained = runCatching { legacySpraySaves.retainedStart(vineyardId) }
+        if (retained.isFailure) {
+            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; finish(false); return
+        }
+        val original = retained.getOrNull()
+        val owned = runCatching { activeTripStore.load() }.getOrNull()
+        if (original != null && owned != null && owned.ownerUserId == startOwner && owned.vineyardId == vineyardId && owned.trip.id == original.trip.id &&
+            owned.trip.isActive && owned.trip.endTime == null) {
+            // A late callback/queue failure may follow a durable local claim. Recover it, do not claim twice.
+            try {
+                tripStartSync.enqueueActivation(owned.trip)
+                legacySpraySaves.completeStart(original)
+                _ui.update { st -> st.copy(deviceActiveTripId = owned.trip.id,
+                    trips = st.trips.filterNot { it.id == owned.trip.id } + owned.trip, sprayError = null) }
+                if (!_ui.value.isTracking) beginTracking(owned.trip)
+                finish(true)
+            } catch (_: Exception) {
+                _ui.update { it.copy(sprayError = "Original active trip ${original.trip.id} is retained. Free storage and recover it from Trips; no second trip was created.") }; finish(false)
+            }
             return
         }
-        // Use the supported immutable paired-save and existing saved-job activation.
-        // No active orphan, ambiguous rollback, reminted retry or second tank authority.
-        createSprayJobForLater(input, paddockId, paddockIds, paddockName, rowPlan,
-            onReadyTrip = { tripId -> startSprayJob(tripId, startEngineHours, onResult) }, onResult = onResult)
+        if (original != null && rowPlan?.rowSequence?.isNotEmpty() == true) {
+            _ui.update { it.copy(sprayError = "Original Start ${original.trip.id} must be recovered with its original tracking setup. Changing the route cannot create a replacement while its outcome is unresolved.") }
+            finish(false); return
+        }
+        val earlierQualified = _ui.value.trips.firstOrNull { trip ->
+            trip.vineyardId == vineyardId && trip.tripFunction in setOf("spraying", "spray") && trip.endTime == null &&
+                trip.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE && runCatching {
+                    occurrenceStore.journal(TripOccurrenceJournal.Scope(requireNotNull(startOwner), vineyardId, trip.id)).load()?.let { journal ->
+                        !journal.creationConfirmed || journal.pending.any { it.rpc == "activate_trip_occurrences_v1" } ||
+                            journal.serverActive == true && _ui.value.deviceActiveTripId != trip.id
+                    } == true
+                }.getOrDefault(true)
+        }
+        if (earlierQualified != null) {
+            _ui.update { it.copy(sprayError = "Original planned Start ${earlierQualified.id} needs recovery in Trips. Keep its saved route and recipe; no replacement will be created from this calculator.") }
+            finish(false); return
+        }
+        startStage = "device_claim"
+        if (!canStartDeviceTrip { message -> _ui.update { it.copy(sprayError = message) } }) {
+            android.util.Log.w("SprayStart", "stage=device_claim_blocked retainedTrip=${owned?.trip?.id ?: "unreadable_or_none"}")
+            finish(false); return
+        }
+        startStage = "online_admission"
+        if (!_ui.value.isOnline) {
+            _ui.update { it.copy(sprayError = "Calculator Start requires an online connection to verify the original linked recipe. Reconnect and retry; your spray setup is unchanged.") }
+            finish(false); return
+        }
+        if (rowPlan?.rowSequence?.isNotEmpty() == true) {
+            startStage = "qualified_create_activate"
+            createQualifiedSpray(input, paddockId, paddockIds, paddockName, rowPlan, true, startEngineHours, finish)
+            return
+        }
+        startStage = "legacy_pair_receipt"
+        try {
+            createSprayJobForLater(input, paddockId, paddockIds, paddockName, rowPlan,
+                onReadyTrip = { tripId ->
+                    startStage = "saved_activation"
+                    val attempt = runCatching { legacySpraySaves.retainedStart(vineyardId) }.getOrNull()
+                    try {
+                        startSprayJob(tripId, if (attempt != null) attempt.startEngineHours else startEngineHours) { ok ->
+                            if (ok && attempt != null) runCatching { legacySpraySaves.completeStart(attempt) }
+                            finish(ok)
+                        }
+                    } catch (_: Exception) {
+                        _ui.update { it.copy(sprayError = "Original activation $tripId is retained. Free storage and press Start again to recover; no replacement was created.") }; finish(false)
+                    }
+                }, startEngineHours = startEngineHours, onResult = finish)
+        } catch (_: Exception) {
+            _ui.update { it.copy(sprayError = "Couldn't retain Start safely. Free storage and recover any original job from Trips; the calculator setup is unchanged.") }; finish(false)
+        }
     }
 
     private fun createQualifiedSpray(input: SprayRecordRepository.SprayInput, paddockId: String?, paddockIds: List<String>,
         paddockName: String?, plan: SprayJobRowPlan, active: Boolean, hours: Double?, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             _ui.update { it.copy(sprayBusy = true, sprayError = null) }
+            var startStage = "qualified_preflight"
+            var originalTripId: String? = null
+            var originalRecordId: String? = null
             try {
                 check(plan.candidates.map { it.label } == plan.rowSequence) { "Reselect the block-qualified route." }
                 // Calculator creation was online-only. Preserve that rule until linked recipe offline replay is accepted.
@@ -12006,10 +12153,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     startEngineHours = hours, trackingPattern = plan.trackingPattern, rowSequence = plan.rowSequence,
                     currentRowNumber = plan.rowSequence.firstOrNull(), nextRowNumber = plan.rowSequence.getOrNull(1), totalTanks = plan.totalTanks)
                 val planned = prepareQualifiedTrip(base, plan.candidates)
+                originalTripId = planned.id
                 // Retain the complete linked recipe and final record ID before either HTTP request.
                 val recordId = sprayRepo.newId()
+                originalRecordId = recordId
                 sprayCreateSync.enqueue(recordId, vineyard, input.copy(tripId = planned.id), now, requiresOccurrenceParent = true)
+                startStage = "qualified_lifecycle"
+                android.util.Log.i("SprayStart", "stage=$startStage trip=${planned.id} record=$recordId operation=${occurrenceJournal(planned).load()?.pending?.firstOrNull()?.id ?: "none"}")
                 val confirmed = tripRepo.confirmPlannedStart(planned, occurrenceJournal(planned))
+                startStage = "qualified_recipe_acknowledgement"
                 var acceptedRecord: SprayRecord? = null
                 sprayCreateSync.replayAll { row ->
                     if (row.id == recordId) acceptedRecord = row
@@ -12020,13 +12172,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st -> st.copy(trips = st.trips.map { if (it.id == confirmed.id) confirmed else it },
                     sprayRecords = st.sprayRecords.filterNot { it.id == record.id } + record, sprayBusy = false) }
                 if (active) {
+                    startStage = "qualified_device_claim"
                     check(claimDeviceTrip(confirmed)) { "Couldn't save this device's trip." }
                     recordTripLabourAtStart(confirmed); beginTracking(confirmed)
                 }
                 onResult(true)
             } catch (e: Exception) {
+                android.util.Log.w("SprayStart", "stage=$startStage trip=${originalTripId ?: "not_prepared"} record=${originalRecordId ?: "not_prepared"} http=${(e as? BackendError.Server)?.code ?: "none"} failure=${e.javaClass.simpleName}")
+                val reason = if (startStage == "qualified_preflight") e.message ?: "Recheck the block-qualified route."
+                    else "Could not confirm $startStage for original trip $originalTripId. Connect and open that original job in Trips for recovery; do not create a replacement."
                 _ui.update { it.copy(sprayBusy = false, tripBusy = false,
-                    sprayError = "Planned spray needs recovery: ${e.message ?: "sync pending"}. Saved identities were retained; no numeric fallback or replacement trip.") }
+                    sprayError = "$reason Saved identities were retained; no numeric fallback or replacement trip.") }
                 onResult(false)
             }
         }
@@ -12035,6 +12191,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun activateQualifiedSpray(saved: Trip, hours: Double?, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             try {
+                // Validate the linked recipe BEFORE journal/remote activation, not after it may have succeeded.
+                val record = _ui.value.sprayRecords.firstOrNull { it.tripId == saved.id && !it.isTemplate && it.endTime == null }
+                    ?: error("Linked spray recipe unavailable. Reload this original job before starting.")
+                com.rork.vinetrack.data.spray.SprayStartRecipeValidation.blocker(record.tanks.orEmpty())?.let { error(it) }
+                com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(record.applicationGeometry, record.tanks.orEmpty())?.let { error(it) }
                 val d = TripOccurrenceCoverage.requireDocument(requireNotNull(saved.occurrenceCoverage))
                 check(d.order.isNotEmpty() && d.items.all { it.blockId in saved.effectivePaddockIds })
                 val owner = session.userId ?: error("Sign in before activation.")
@@ -12062,9 +12223,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val local = saved.withOccurrenceProjection(journal.projected(requireNotNull(journal.load()))).copy(isActive = true,
                     startTime = time, startEngineHours = (start["startEngineHours"] as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull(), clientUpdatedAt = time)
                 val ready = if (_ui.value.isOnline) tripRepo.confirmPlannedStart(local, journal) else local
-                val record = _ui.value.sprayRecords.firstOrNull { it.tripId == saved.id && !it.isTemplate && it.endTime == null }
-                    ?: error("Linked spray recipe unavailable.")
-                com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(record.applicationGeometry, record.tanks.orEmpty())?.let { error(it) }
                 val startedRecord = SavedTripActivation.activateLinkedSpray(record, saved.id, time) ?: error("Linked spray cannot activate.")
                 sprayUpdateSync.enqueue(startedRecord.id, SavedTripActivation.sprayUpdateInput(startedRecord), time)
                 check(claimDeviceTrip(ready)) { "Couldn't durably save activation." }

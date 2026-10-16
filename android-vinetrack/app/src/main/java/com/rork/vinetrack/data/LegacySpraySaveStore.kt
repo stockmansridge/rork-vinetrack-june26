@@ -25,8 +25,23 @@ class LegacySpraySaveStore(context: Context) {
         val candidate: LegacySprayPairReceipt.Receipt? = null,
         val verified: LegacySprayPairReceipt.Receipt? = null,
         val receiptBlocker: String? = null,
+        val startRequested: Boolean = false,
+        val startEngineHours: Double? = null,
+        val startCompleted: Boolean = false,
     ) {
         val isHeld: Boolean get() = rpc == null || verified?.status != "accepted"
+
+        /** Calculator previews mint temporary line IDs. Matching never replaces the frozen request IDs. */
+        fun matchesStartInput(proposed: SprayRecordRepository.SprayInput): Boolean {
+            if (proposed.tanks.size != input.tanks.size) return false
+            val tanks = proposed.tanks.zip(input.tanks).map { (candidate, original) ->
+                if (candidate.chemicals.size != original.chemicals.size) return false
+                candidate.copy(id = original.id, chemicals = candidate.chemicals.zip(original.chemicals).map { (chemical, frozen) ->
+                    chemical.copy(id = frozen.id)
+                })
+            }
+            return input == proposed.copy(tripId = trip.id, date = input.date, startTime = input.startTime, tanks = tanks)
+        }
     }
     private val access = FieldStoreAccess(context)
     private val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
@@ -41,6 +56,8 @@ class LegacySpraySaveStore(context: Context) {
         listOf(item.actorId, item.trip.vineyardId, item.trip.id, item.recordId).forEach { java.util.UUID.fromString(it) }
         check(item.actorId == item.trip.actorId && item.input.tripId == item.trip.id && item.trip.rowSequence.isEmpty() &&
             item.identityEpoch >= 0 && item.input.operationalBlocker() == null)
+        check(item.startEngineHours == null || item.startEngineHours.isFinite() && item.startEngineHours >= 0)
+        check(!item.startCompleted || item.startRequested && item.verified?.status == "accepted")
         item.rpc?.let { request ->
             java.util.UUID.fromString(request.operation)
             check(request.trip.keys.all { it in LegacySprayPairReceipt.tripKeys } && request.record.keys.all { it in LegacySprayPairReceipt.recordKeys })
@@ -63,7 +80,7 @@ class LegacySpraySaveStore(context: Context) {
         val previous = items.firstOrNull { it.recordId == item.recordId || it.trip.id == item.trip.id }
         if (previous != null) check(previous.copy(stage = Stage.PREPARED) == item)
         else {
-            check(items.none { it.actorId == item.actorId && it.trip.vineyardId == item.trip.vineyardId && it.isHeld }) { MESSAGE }
+            check(items.none { it.actorId == item.actorId && it.trip.vineyardId == item.trip.vineyardId && (it.isHeld || it.startRequested && !it.startCompleted) }) { MESSAGE }
             write(items + item)
         }
     } }
@@ -141,6 +158,30 @@ class LegacySpraySaveStore(context: Context) {
         val items = read(); val index = items.indexOfFirst { it.recordId == before.recordId }
         check(index >= 0 && items[index] == before)
         write(items.mapIndexed { i, value -> if (i == index) after else value })
+    } }
+
+    /** Includes accepted pairs whose foreground Start has not finished; acceptance is not activation. */
+    fun retainedStart(vineyardId: String): Attempt? = access.admitted { synchronized(this) {
+        val starts = read().filter { it.actorId == access.ownerUserId && it.trip.vineyardId == vineyardId && it.startRequested && !it.startCompleted }
+        check(starts.size <= 1) { MESSAGE }
+        starts.singleOrNull()?.also { check(it.identityEpoch == access.identityEpoch) { MESSAGE } }
+    } }
+
+    /** Older accepted pairs have no Start discriminator. Hold a matching same-day pair for explicit recovery,
+     * never guess that it was only Save for Later and mint another trip after an app update.
+     */
+    fun olderAcceptedMatch(vineyardId: String, input: SprayRecordRepository.SprayInput, blocks: List<String>, pattern: String): Attempt? = access.admitted { synchronized(this) {
+        read().firstOrNull { it.actorId == access.ownerUserId && it.trip.vineyardId == vineyardId && !it.startRequested &&
+            it.verified?.status == "accepted" && it.input.date == input.date && it.trip.paddockIds == blocks &&
+            it.trip.trackingPattern == pattern && it.matchesStartInput(input) }
+    } }
+
+    /** Mark only after the original trip has a durable owned active snapshot and activation marker. */
+    fun completeStart(item: Attempt) = access.admittedForOwner(item.actorId) { synchronized(this) {
+        val items = read()
+        val current = items.single { it.recordId == item.recordId }
+        check(current.identityEpoch == access.identityEpoch && current.startRequested && current.verified?.status == "accepted")
+        write(items.map { if (it.recordId == item.recordId) current.copy(startCompleted = true) else it })
     } }
 
     /** Uncertain REST outcomes remain contained until immutable acceptance can be verified. */

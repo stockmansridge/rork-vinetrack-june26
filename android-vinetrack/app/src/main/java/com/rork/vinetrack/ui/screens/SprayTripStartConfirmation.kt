@@ -11,7 +11,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -29,8 +29,9 @@ fun SprayTripStartConfirmation(
     onStart: (Double?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var hoursText by remember { mutableStateOf("") }
-    val parsedHours = hoursText.trim().replace(',', '.').toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0 }
+    var hoursText by rememberSaveable { mutableStateOf("") }
+    val parsedHours = com.rork.vinetrack.data.SprayStartEngineHours.parse(hoursText)
+    val validHours = com.rork.vinetrack.data.SprayStartEngineHours.isValid(hoursText)
     AlertDialog(
         modifier = modifier,
         onDismissRequest = onDismiss,
@@ -40,7 +41,9 @@ fun SprayTripStartConfirmation(
                 Text("Machine: ${machineName.ifBlank { "Not selected" }}")
                 OutlinedTextField(
                     value = hoursText,
-                    onValueChange = { hoursText = it.filter { char -> char.isDigit() || char == '.' || char == ',' } },
+                    onValueChange = { hoursText = it },
+                    isError = !validHours,
+                    supportingText = { if (!validHours) Text("Enter non-negative hours, or leave blank.") },
                     label = { Text("Start engine hours (optional)") },
                     placeholder = { Text(latestEngineHours?.let { "Last recorded ${sprayEngineHoursLabel(it)}" } ?: "hrs") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -51,7 +54,7 @@ fun SprayTripStartConfirmation(
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-        confirmButton = { TextButton(onClick = { onStart(parsedHours) }) { Text("Start Trip") } },
+        confirmButton = { TextButton(enabled = validHours, onClick = { onStart(parsedHours) }) { Text("Start Trip") } },
     )
 }
 

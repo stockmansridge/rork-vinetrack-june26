@@ -201,6 +201,77 @@ class LegacySpraySaveAndroidTest {
         LegacySprayPairReceipt.Receipt(1, status, item.rpc!!.operation, item.trip.vineyardId, item.trip.id, item.recordId,
             hash, "2026-10-15T03:00:01+00:00", code)
 
+    @Test fun acceptedStartReloadFailureRetainsOriginalIdsAndBothHoursCasesAcrossRestart() = kotlinx.coroutines.runBlocking {
+        for (hours in listOf<Double?>(null, 123.5)) {
+            val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+            try {
+                val a = rpcFixture(context).copy(startRequested = true, startEngineHours = hours)
+                val store = LegacySpraySaveStore(context); store.prepare(a)
+                assertTrue(store.sendReceipt(a, { true }) { _, _ -> receipt(a) })
+                // Simulate a failed hydration AFTER accepted receipt: no active row was published.
+                val restarted = LegacySpraySaveStore(context)
+                val original = requireNotNull(restarted.retainedStart(a.trip.vineyardId))
+                assertEquals(a.trip.id, original.trip.id); assertEquals(a.recordId, original.recordId)
+                assertEquals(a.rpc, original.rpc); assertEquals(hours, original.startEngineHours)
+                assertEquals("accepted", original.verified?.status)
+                val replacementTrip = UUID.randomUUID().toString()
+                assertTrue(runCatching { restarted.prepare(a.copy(recordId = UUID.randomUUID().toString(),
+                    trip = a.trip.copy(id = replacementTrip), input = a.input.copy(tripId = replacementTrip), rpc = null)) }.isFailure)
+                val activated = requireNotNull(SavedTripActivation.activate(com.rork.vinetrack.data.model.Trip(a.trip.id, a.trip.vineyardId),
+                    "2026-10-16T10:00:00Z", original.startEngineHours))
+                assertEquals(hours, activated.startEngineHours)
+                assertTrue(ActiveTripStore(context).claimIfAvailable(a.actorId, a.trip.vineyardId, activated))
+                val pending = PendingWriteRepository(PendingWriteStore(context))
+                pending.configureReplayScope { PendingWriteRepository.ReplayScope(a.actorId, a.identityEpoch) }
+                TripStartSync(pending).enqueueActivation(activated)
+                restarted.completeStart(original)
+                assertNull(LegacySpraySaveStore(context).retainedStart(a.trip.vineyardId))
+                assertEquals(activated, ActiveTripStore(context).load()?.trip)
+                assertEquals(hours, kotlinx.serialization.json.Json.decodeFromString(TripStartSync.Payload.serializer(), pending.list().single().payloadJson).startEngineHours)
+                assertFalse(ActiveTripStore(context).claimIfAvailable(a.actorId, a.trip.vineyardId, activated.copy(id = UUID.randomUUID().toString())))
+            } finally { context.dispose() }
+        }
+    }
+
+    @Test fun previewIdMatchingDoesNotReauthorFrozenRecipeOrAcceptChangedAmounts() {
+        val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+        try {
+            val base = fixture(context)
+            val tank = com.rork.vinetrack.data.model.SprayTank("original-tank", waterVolume = 420.0,
+                chemicals = listOf(com.rork.vinetrack.data.model.SprayChemical("original-line", name = "Fixture", volumePerTank = 1500.0, ratePerHa = 750.0, unit = "g")))
+            val original = base.copy(input = base.input.copy(tanks = listOf(tank)), startRequested = true)
+            val preview = original.input.copy(date = "2026-10-16", startTime = "2026-10-16T10:00:00Z", tripId = null,
+                tanks = listOf(tank.copy(id = "preview-tank", chemicals = listOf(tank.chemicals.single().copy(id = "preview-line")))))
+            assertTrue(original.matchesStartInput(preview))
+            assertFalse(original.matchesStartInput(preview.copy(tanks = listOf(preview.tanks.single().copy(waterVolume = 421.0)))))
+            assertFalse(original.matchesStartInput(preview.copy(notes = "Changed intent")))
+            assertEquals("original-tank", original.input.tanks.single().id)
+            assertEquals("original-line", original.input.tanks.single().chemicals.single().id)
+        } finally { context.dispose() }
+    }
+
+    @Test fun uncertainOriginalStartAndRejectedStartCannotBeReplacedOrMarkedStarted() = kotlinx.coroutines.runBlocking {
+        for (rejected in listOf(false, true)) {
+            val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
+            try {
+                val a = rpcFixture(context).copy(startRequested = true, startEngineHours = 42.0)
+                val store = LegacySpraySaveStore(context); store.prepare(a)
+                if (rejected) assertFalse(store.sendReceipt(a, { true }) { _, _ -> receipt(a, "rejected", "identity_conflict") })
+                else assertTrue(runCatching { store.sendReceipt(a, { true }) { _, _ -> error("lost response") } }.isFailure)
+                val original = requireNotNull(LegacySpraySaveStore(context).retainedStart(a.trip.vineyardId))
+                assertEquals(a.rpc, original.rpc); assertEquals(42.0, original.startEngineHours!!, 0.0)
+                assertTrue(runCatching { store.completeStart(original) }.isFailure)
+                assertTrue(store.blocks(a.trip.id))
+                if (!rejected) {
+                    assertTrue(store.sendReceipt(original, { true }) { rpc, request ->
+                        assertEquals("recover_legacy_spray_pair_v1", rpc); assertEquals(a.rpc, request); receipt(a)
+                    })
+                    assertEquals(a.trip.id, store.retainedStart(a.trip.vineyardId)?.trip?.id)
+                }
+            } finally { context.dispose() }
+        }
+    }
+
     @Test fun atomicRPCSaveAndIdenticalRecoveryReleaseOnlyAfterBothReceiptsMatch() = kotlinx.coroutines.runBlocking {
         val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
         try {
