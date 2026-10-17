@@ -142,7 +142,7 @@ private fun Paddock.centroid(): LatLng? {
  * it has one, raw drop point otherwise), so the marker agrees with the list
  * distance and the Directions destination. The raw observation is untouched.
  */
-private fun Pin.latLng(): LatLng? {
+internal fun Pin.latLng(): LatLng? {
     val lat = attachedLatitude ?: return null
     val lng = attachedLongitude ?: return null
     if (!isValidMapCoordinate(lat, lng)) return null
@@ -961,7 +961,7 @@ private fun BlockLabelMarker(
  */
 @OptIn(MapsComposeExperimentalApi::class)
 @Composable
-private fun PinMapMarker(
+internal fun PinMapMarker(
     pin: Pin,
     position: LatLng,
     color: Color,

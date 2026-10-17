@@ -1,5 +1,107 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## P0 Android Live Trip presentation — 17 October 2026 — source frozen, handset gate OPEN
+
+The owner reports Start Trip, Tank 1 Actual confirmation and recording working on the latest Samsung test. This checkpoint changes only Android Live Trip presentation and directly required state-to-display wiring. It does not reopen the Trip engine or Play publishing. Supplied Samsung/iOS images were inspected alongside both actual implementations.
+
+### Source-backed cause and correction
+
+The old `ActiveTripHud` layered two rows of large translucent statistics, GPS/ETA and Quick Actions over the satellite map. A separate rounded, scrollable bottom panel stacked transport, path controls and tank controls. Its independent overlay measurements, vertically stacked controls and hidden secondary controls produced the poor hierarchy and wasted map/control space. Missing sequence values were rendered as two dashes without distinguishing Free Drive from planned recovery. **The supplied Samsung screenshot's original saved trip/occurrence state was not independently available; the dashes are not proof of a GPS/path-detection defect.**
+
+The same production HUD now uses:
+- Fixed opaque header: Back, Recording/Paused and offline status, tappable Spray Record/Trip title and existing options. No new navigation or activation route.
+- Equal-width orange/green Repairs/Growth buttons immediately below the header, using the existing launch/return handlers.
+- Equal-width Current / Next / Distance / Duration columns; Speed / GPS / Remaining strip; actual pattern, sequence position and separately labelled Done/Skipped progress. At enlarged font scales facts deliberately reflow to two columns.
+- A genuinely flexible central map, not a full-screen map obscured by information overlays. Existing satellite/hybrid, puck/heading, recorded display trail, follow/recenter, orientation, row-side toggle and selected boundaries remain. Follow zoom is still stable across location ticks; UI-only follow/orientation/zoom/layer preferences are saveable across view restoration. A short map reflows its controls into a 2×2 cluster, rather than clipping the fourth button.
+- Content-sized safe-area dock: explicit current/action path, saved block/pass context, route access, tank status/Mix/End Tank, Undo, exact-target Done, Pause/Resume and distinctly red End Trip. Large text gives transport its own row rather than making Done a tall circular button. Free Drive shows recording status instead of disabled meaningless path actions. Paused tank actions remain disabled; Mix remains inspectable.
+- Existing Skip / I'm on this path / Return to Auto in a bounded secondary path sheet. Pause/Resume, End Trip and return remain fixed outside its scrolling details. Existing occurrence confirmations retain their frozen IDs; existing End Tank and parent End Trip review/confirmations are preserved. An already-running fill exposes Stop Fill even if the optional fill-timer preference is subsequently off; this changes visibility, not fill persistence/logic.
+
+### Authoritative display distinctions
+
+`LiveTripGuidance` is a read-only projection, not a second planner, tracker, journal or recovery authority.
+
+| Case | Display / authority |
+|---|---|
+| Legacy planned sequence | Current/action is the existing saved action cursor, matching the existing Done operation, not the GPS-detected row. Next is a subsequent untreated entry, excluding existing Done/Skipped membership. Legacy numeric/duplicate-label coverage semantics are preserved. |
+| Occurrence planned trip | Resolve current/action, next incomplete work, block, pass, position and counts from the existing document and occurrence IDs. Same-number passes remain independent; a selected pass does not become Done merely because it was selected. |
+| Genuine Free Drive | Explicit Free Drive, no planned next path, no sequence/progress count, no fabricated ETA, no meaningless path buttons. A detected physical row is not adopted as a plan. |
+| Missing planned recovery / unsupported document | Waiting for plan / Recovery required, not an invented Free Drive plan or numeric downgrade. Essential transport controls remain available. |
+| Waiting for qualified GPS | Saved guidance remains visible. Live detection/wrong-path warning uses the existing confident lock plus a fresh accuracy observation; it cannot silently change the action target. |
+| ETA absent | Existing estimator only. Not planned / Waiting for GPS / Need travel data / Paused / Filling tank / recovery context replaces a misleading finite duration. No ETA, traversal or route-planning algorithm was changed. |
+
+Distance, speed, accuracy source and tank water retain base-unit authorities. Tank water is resolved from the exact confirmed Actual/session when available and formatted using the vineyard's `LocalRegionFormatter` (L or configured gallons); planned water is explicitly Planned and missing Actuals explicitly unavailable. No planned amount is relabelled measured remaining water.
+
+### Exact source/test/tool files changed
+
+Production:
+1. `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt` — existing HUD layout, compact variants of existing row/tank controls, secondary controls and map-layer wiring.
+2. `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/LiveTripPresentation.kt` — read-only guidance projection and production information strip.
+3. `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/VineyardMapScreen.kt` — only expose the existing validated pin-location helper and existing pin renderer as internal for reuse; no alternate pin implementation.
+
+Tests:
+4. `android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/LiveTripLayoutAndroidTest.kt`.
+5. `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/LiveTripGuidanceTest.kt`.
+
+Reproducible validation/evidence utilities:
+6. `scripts/run-live-trip-ui-validation.py`.
+7. `scripts/live-trip-ui-tests.init.gradle`.
+8. `scripts/extract-live-trip-ui-evidence.py`.
+9. `scripts/compare-live-trip-ui-evidence.py`.
+
+Existing report and approved plan updated. Visual assets are under `docs/reviews/live-trip-ui-evidence/`: supplied `reference-android.png`, `reference-ios.png`; actual Compose captures `planned-active-tank.webp`, `free-drive.webp`, `paused-trip.webp`, `narrow-large-font-imperial.webp`; labelled `before-after.webp` and `ios-android.webp` comparisons. Intermediate blank/older diagnostic images were removed, not presented as final evidence.
+
+**Protected trees are byte-unchanged against the starting baseline:** iOS, SQL, Supabase/Edge, Android build/version/signing configuration, all Android main/data authorities and `AppViewModel.kt`. No calculator, chemistry, CF, Start receipt/recovery, actual commitment, sync ownership, GPS attribution/traversal, historical record or production-data mutation. Keep-screen-awake remains in the unchanged production TripDetail owner; no new background service or tracking state.
+
+### Final focused validation — latest coherent source, not accumulated attempts
+
+| Surface | Final result | Evidence and limits |
+|---|---|---|
+| Native production Compose | **13 passed / 0 failed / 0 skipped, 31s** | `LiveTripLayoutAndroidTest` 11 + existing `OfflineQuickActionsAndroidTest` 2. Actual HUD, existing VM/actions, namespaced native preferences, synthetic retained account/trip/Actuals and intercepted-only HTTP. No live service fallback. |
+| Host guidance/traversal/journal | **52 passed / 0 failed / 0 errors / 0 skipped** | `LiveTripGuidanceTest` 7 + unchanged `OccurrenceTraversalTrackerTest` 15 + unchanged `TripOccurrenceJournalTest` 30. Final Debug-only validation runner succeeded in 15s, including app and instrumentation APK assembly; XML counts checked individually. Synthetic evaluator/journal evidence, not field traversal. |
+| Debug app/test builds | **PASS** | Actual `assembleDebug` / `assembleDebugAndroidTest`, including focused native execution. Not a compatible Play update artifact. |
+| Final managed `runChecks(android-vinetrack)` | **PASS** | Managed APK compilation/signing validation only; no Play/AAB publish flow or handset distribution. Two non-blocking pre-existing asset-address advisories outside this HUD correction were left alone. |
+| Scoped source whitespace/protection diff | **PASS** | `git diff HEAD --check`; protected source comparisons unchanged. |
+| Visual inspection | **Captured and inspected, with explicit renderer exclusion** | Production HUD fixtures, not a recreated alternate UI. Before/after and iOS comparisons shown to the owner; no claim that their before/after images depict the same original trip or same device. |
+
+Native methods cover:
+- `plannedRowActiveTankCompactAndActualWater`: current 0.5 / next 2.5, confirmed Actual 581.7 L, Tank 1 of 2, visible 48dp transport/map targets, flexible non-overlapping map/dock, existing route/end callbacks and no duplicate session.
+- `freeDriveHasRecordingNotMeaninglessPathButtons`: Tank 1 of 1, Free Drive/Not planned, no Done or sequence progress.
+- `narrowLargeFontImperialAndStaleGps`: 320dp, 1.5× font, feet/gallons, Searching/stale, deliberate facts/actions/map-control reflow. Rendered line bounds checked, with only one physical pixel allowance for intrinsic rounding; no max-lines truncation accepted.
+- `pauseResumePreservesTripTankAndEvidence`: real production commands, one pause and one resume timestamp, retained trip/session/sequence/two synthetic GPS points; paused End Tank disabled and Resume accessible.
+- `doneSkipUndoRemainAccessibleAndUseProductionLegacyActions`: real exact legacy action callbacks and resulting coverage/cursor; secondary-sheet Pause/End Trip visible with >=48dp targets.
+- `endTankRequiresExistingConfirmationAndCancellationKeepsSession`: cancel retains the active tank/session; explicit existing confirmation ends that one session without another Actual or tank.
+- `occurrencePassSelectionIsGuidanceOnlyThenDoneTargetsOnePass`: select pass 2 via the production picker; no coverage on selection, explicit Done confirmation updates B only, A stays Incomplete.
+- `repairsGrowthReturnDoesNotChangeTripOrTank`: actual launch/Back return on both modes, same retained Trip/tank state.
+- `disposedHudReturnsToSameOfflineTripWithoutTouchingQueuedWork`: dispose/return through production Back callback and a small fixture host; original Trip, two synthetic GPS points, device-owned UUID and real pending offline metadata operation remain identical. **Composition disposal is not OS rotation/process death.**
+- `unavailableAndWeakGpsNeverEraseSavedPlannedGuidance`: stale and weak presentation never replace saved action guidance or fabricate completion.
+- `fillingAndSingleTankLargePhone`: 412dp, actual filling state/session, Stop Fill and transport visible, no Done while filling.
+
+Operational Button callbacks use their real accessibility OnClick actions where asynchronous fixture transitions made injected screen-coordinate taps nondeterministic; targets and bounds are separately checked. Quick Actions, route/sheet entry, selection and return also exercise normal injected taps. This is not a physical gloved-operator tap acceptance claim.
+
+Development failures remain explicit: cold local compiles exceeded the 60s shell window; a bounded retained runner completed the coherent build. The first init script registered before Android variant tasks existed and was moved to `projectsEvaluated`. Test compilation caught missing LocalRegionFormatter and an attempted computed `currentRole` constructor input; both fixed in fixtures. Early native selections included 3/8, 9/4 and 11/2 pass/fail results, not final counts. Synthetic session/record IDs were made valid UUIDs; the exact VM session/Actual store was used instead of bypassing its observable authority. Delayed initial empty-install restore legitimately displaced the injected synthetic active trip in wider batches; fixtures now wait for that SignedOut startup boundary before admitting their isolated account and durably saving the owned snapshot. No production auth/ownership safeguard was relaxed. A reported tiny intrinsic text-width overflow is checked against actual rendered line bounds rather than accepting clipping. Visual inspection found and corrected narrow-screen map-control clipping and oversized large-font Done reflow.
+
+The runner only retained diagnostic streams on failure. Explicitly labelled **evidence-transport probes** exported bounded WebP chunks to retrieve real screenshots; those expected probe failures are NOT functional test results or passes. The final test source gates this diagnostic path behind the explicit `captureLiveTripEvidence=true` instrumentation argument; normal tests do not enter it. Failed/truncated initial screenshot exports and the initial blank display screenshot were not accepted. Final functional source passed the separate 13/0/0 selection above. Overlapping runs/probes are never added together.
+
+### Map and lifecycle limits — release gate remains open
+
+- Production uses the real map by default. The test-only `mapPreview` slot replaces only the renderer, explicitly labelled in every capture; statistics, controls, dialogs and handlers are the actual production implementation. These images do not prove satellite tile loading, marker/heading rendering, map SDK touch routing or live overlays.
+- Source now reuses the existing configured pin renderer, validated attached coordinates and saved pin IDs. Respect existing showPins/showRowLines defaults; scope to the same vineyard and trip/selected blocks; deduplicate IDs; bound rendering to 250 relevant saved pins and 1,500 row segments. Existing saved pins are shown, not a new synthetic Growth-pin generator. Full iOS density/visibility parity and actual renderer performance need the physical check; no optional parity claim is inferred from compilation.
+- No original Samsung trip/document, installed signer or installed GPS evidence was accessed. Genuine OS rotation, app background/foreground, process death/reconnect, live tracker instance counts, screen-awake behaviour and real pending server operations are **not proven** by composition recreation or screenshot pixels. The ownership, Start, tracking and persistence implementations are unchanged, but source preservation is not those runtime guarantees.
+- No uninstalls, real app-storage clearing, handset install, Google Play operation, AAB generation or distribution. The managed validation APK is not a proposed replacement for the Play-installed Samsung app. Existing Play track/version/signing preflight remains separate and unresolved.
+
+### Frozen available identity and next physical acceptance
+
+Starting/current exposed managed baseline: **`bac3cb62450abf2d68ec7816042afae3966b2741`**. Final Android source/test binary diff SHA-256 (`git diff HEAD --binary -- android-vinetrack`): **`cdd4710df3e99092cc479f24019c6086c78120adb47f1f6e30e35936549931fd`**. Current Debug APK SHA-256: **`a22b1c8749cc3620da390ec7fdcff47404780d0c04f6687c2944e9d08eb32faf`**, package `com.rork.vinetrack`, unchanged 3.1.7/code12. The final managed end-of-turn commit SHA is not exposed during this turn; the baseline is NOT represented as the redesign commit. No manual commit or push. Read the resulting SHA in the next read-only checkpoint before selecting any future candidate.
+
+**Freeze the application source here. Await owner layout approval and separate approval of an identifiable compatible Play testing candidate; no further unrelated development.** P0 operational release acceptance is still OPEN for:
+1. Samsung normal and enlarged text/system navigation: same compact hierarchy, all dock actions visible, no clipping, useful map and unambiguous End Tank versus End Trip.
+2. Original mapped legacy and occurrence jobs versus genuine Free Drive; waiting/stale/accurate GPS, selected block/pass, detected-versus-planned warning, exact current/next/progress, no fabricated ETA or changed target.
+3. Real hybrid map: boundaries, permitted saved pins/rows, position/heading, original trail, pan/recenter and fixed follow zoom, north/heading-up and row-side controls; performance at actual vineyard density.
+4. Original retained Trip/Tank Actuals/GPS and Sync Status before/after opening, rotating, Home/background return and relaunch. Exactly one recording instance; no replacement IDs, missing evidence or discarded queued work. Foreground/background limitations are unchanged.
+5. Actual End Tank/filling/next-tank review and Actual confirmation, Pause/Resume, Done/Skip/Undo and manual selected pass; existing confirmations/protections still gate commands. Finish no other pass by numeric label.
+6. Offline Repairs/Growth launch/return and original saved pin identities/GPS, followed by authenticated reconnect without duplicate records or queue loss. Preserve all historical evidence; never clear/uninstall to force acceptance.
+
+
 ## Bounded Android calculator Start journey closeout — 16 October 2026 — SOURCE FROZEN
 
 Latest owner instruction authorises only demonstrated production Start wiring gaps. Initial source/index clean at `3cb7040d6d1ec601c52b66878009ce843db66ecf`; managed history changes preserved. The two completed matching corrections and their prior8/8 evidence are reused, not rerun or modified. No calculator/layout redesign, new recovery authority, iOS/SQL/Edge/history/formula/Quick Actions changes, version/signing change, uninstall, real storage clearing, Release build, upload or deployment. No interactive simulator rental.
