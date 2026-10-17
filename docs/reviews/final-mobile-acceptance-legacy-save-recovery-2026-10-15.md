@@ -1,5 +1,62 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Controlled Samsung acceptance / Play candidate preflight — 17 October 2026 — source verified; candidate BLOCKED
+
+Owner provisionally approves the completed layout for controlled Samsung testing, not final visual acceptance or production release. Application source remains frozen. This checkpoint performs source/evidence review only; no build, test rerun, version increment, signing, AAB generation, Play upload, distribution or handset operation.
+
+### Final frozen Android source — equivalence CONFIRMED
+
+- Supplied commit exists locally: **`2ad48e30d6f0cc9b174375f4d6dcbacb9a1baa02`**, authored/committed 17 October 2026 04:53:16 UTC. Owner reports GitHub visibility; no new remote fetch or Git write was needed.
+- Exact baseline-to-commit binary Android diff hash: **`cdd4710df3e99092cc479f24019c6086c78120adb47f1f6e30e35936549931fd`**, identical to the frozen tested patch recorded below. Command: `git diff bac3cb62450abf2d68ec7816042afae3966b2741 2ad48e30d6f0cc9b174375f4d6dcbacb9a1baa02 --binary -- android-vinetrack | sha256sum`.
+- Both supplied commit and current checkout have Android Git tree **`e14325113de07dddc85a2971bdb7d695b0f1af91`**. `git diff 2ad48e30d6f0cc9b174375f4d6dcbacb9a1baa02 --exit-code -- android-vinetrack scripts docs/reviews/live-trip-ui-evidence` succeeds with no differences. Initial current managed HEAD: `c78f4147e530fdad60b1986f780c92c1c2e8a9b1`; initial workspace clean. This newer managed HEAD does not imply newer Android implementation.
+- Commit delta contains exactly the five Android production/test files listed in the previous checkpoint. Protected Android data, AppViewModel and build/version/signing file have no baseline-to-commit changes. SQL/Supabase are unchanged. Do not claim whole-repository identity: managed state/plan files differ, and generated `ios/VineTrack/Config.swift` is present in the supplied commit but absent in this current checkout. No iOS source was edited to reconcile that generated-file difference.
+- The retained **13 native / 52 host passes and final build PASS** attach to this exact Android source via the matching tested patch. They are existing results, not new executions. No reason to repeat broad tests while source is unchanged. No code changes this checkpoint, so no fresh runChecks/build required.
+
+### Final presentation review — evidence level, not a handset PASS
+
+| Criterion | Existing evidence and conclusion | Remaining limit |
+|---|---|---|
+| Saved action versus detected path | `TripsScreen.kt:1972–1991,2248–2264,2279–2285`: saved/document guidance remains CURRENT / ACTION PATH. Fresh confident numeric disagreement >=0.5 while unpaused renders **GPS detects [X] · planned [Y]. Confirm your path below.** `LiveTripGuidanceTest.legacySavedCursorNotGpsDetectionDefinesAction` retains saved target despite different currentRowNumber. | No retained screenshot specifically shows the mismatch banner. This numeric comparison does not itself prove cross-block same-label disagreement detection. Physical acceptance must verify real context and banner fit. |
+| No false GPS confirmation | CURRENT / ACTION PATH comes from saved cursor/occurrence document, not physical row detection. GPS QUALITY is independently labelled; fresh accuracy/confident-lock gates the mismatch. Weak/stale native case retains saved guidance; it does not declare that target GPS-confirmed. | A GPS quality label is a quality indication, not row/pass confirmation. No real GPS accuracy claim. |
+| Mapped versus Free Drive | Inspected `planned-active-tank.webp` and `free-drive.webp`; Free Drive has Not planned and no invented progress/Done. Host/native mode tests already passed. | Actual handset mapped/Free Drive screenshots pending. |
+| End Tank versus End Trip | End tank is a labelled orange tank action with the existing tank confirmation. End Trip is a separate red stop icon with accessibility label and the existing parent review callback. Native tank cancellation/confirmation and trip callback evidence retained. | Main-dock End Trip is icon-only, not visible text; its real-user clarity remains Samsung acceptance, not claimed unconditionally unambiguous. Secondary sheet has explicit End Trip text. |
+| Skip / manual selection / Undo | Path actions menu explicitly exposes Skip/select; existing bounded sheet and picker retained; main Undo and exact Done target remain. Native actual-action, pass-selection and fixed sheet transport tests passed. | Disabled Undo with no eligible action is expected. No new physical touch/gesture acceptance. |
+| Normal / enlarged text | Inspected normal and 320dp/1.5× imperial captures; production native rendered-line checks passed with <=1 physical pixel intrinsic rounding allowance and no max-line truncation. | Representative fixture labels only, not arbitrary long titles/block names or mismatch banners at every system size. |
+| Short map controls | Under 240dp map height, controls reflow to 2×2; inspected enlarged capture and retained >=48dp displayed-target assertions. | Renderer excluded; real map touch routing not proven. |
+| Useful flexible map | Weighted map sits between fixed information and content-sized dock; no expanded nonessential details in main HUD. Normal and enlarged captures retain visible map. | Existing assertion is only >=100 physical pixels, not a universal minimum-dp usability guarantee. Long content, mismatch, Samsung navigation insets, rotation and real vineyard density still require acceptance. |
+
+No demonstrated new acceptance defect was established in this review; no redesign or speculative code/test changes were made. The limitations above must not be turned into unqualified all-screen visual acceptance.
+
+### Google Play preflight — BLOCKED, no exact candidate approved/proposed
+
+The advertised Play connect/preflight/publish workflow files are absent in this session (all three reads return file-not-found), and no typed Android Publisher access tool is exposed. The available CLI help exposes no Google Play read operation. Prior connection/build listing from earlier sessions is historical only, not current Console evidence. No speculative tool invocation, private API bypass, credential extraction or Play mutation was attempted.
+
+| Required candidate fact | Verified status |
+|---|---|
+| Package / source | `com.rork.vinetrack`; frozen Android source commit **`2ad48e30d6f0cc9b174375f4d6dcbacb9a1baa02`** confirmed above. |
+| Existing Samsung testing track / release | **UNKNOWN**. Do not assume internal/closed/open, or infer enrollment from a generic build listing. |
+| Highest previously used versionCode | **UNKNOWN**. Local Gradle code12 is not Play history; no claim that13 is available. Need Console bundle/release history including non-active uploads and relevant form-factor tracks. |
+| Play App Signing certificate / lineage | **UNKNOWN**. Need Play Console App integrity certificate SHA-256 and any signing-key upgrade/lineage details relevant to this Samsung. Historical upload-signer hash is not the Play-delivered app signer. |
+| Managed AAB upload route | Gradle release block documents managed persistent project upload-key injection during AAB export; ordinary local release config uses debug signing. This proves intended configuration only. Actual managed key identity/registration, export job support and source-to-AAB provenance are **NOT VERIFIED**. Do not substitute a local Debug/Release APK. |
+| Proposed versionName | Retain3.1.7 unless separately approved; no metadata edit made. |
+| Proposed new versionCode | **NOT SELECTED** until authoritative previously-used maximum and update eligibility are known. It must exceed that maximum, remain valid, and be rechecked before upload. |
+| Candidate artifact | **NONE**. No AAB generated or selected; no artifact hash or export provenance fabricated. |
+| Distribution | **NOT AUTHORISED YET**. Return exact source, numeric code, track/release, registered upload certificate, Play signing identity and managed build route for owner approval before any Play distribution. No production deployment. |
+
+Unblock with restored supported Play Console access, or owner-supplied Console exports/screenshots of (1) testing tracks/releases/versionCodes/tester eligibility, (2) App bundle explorer uploaded-version history, and (3) App integrity App signing and Upload key certificate SHA-256s/upgrade details. Console exports alone do not prove a future managed exporter can use the registered upload key; that route/provenance still needs supported verification. Do not request private keys or keystores in chat. Do not reserve/bump a guessed code, switch tracks or create a release merely to inspect state.
+
+### Physical acceptance and release review — all PENDING
+
+No physical Samsung control/connection is available here; no installed-device IDs, Sync Status, GPS evidence or real screenshots were obtained. This gate requires owner-operated handset observations (or separately available authorised device access), never simulator substitutes. After separately approved compatible Play delivery, upgrade the existing Play installation in place only; do not uninstall, clear storage, reset queues, change identity or force signatures.
+
+**Before testing**, record device/model/Android version, installed versionCode, test track/account eligibility, original trip UUID, active tank session UUID/number and Actual identity, and full Sync Status (pending/held/warnings). Capture timestamps and original GPS point/evidence indicators. Keep private operational IDs/screenshots in the owner's controlled evidence handoff; do not commit customer records or tokens to this report. Take baseline before update as well as before the journey when possible. This session has no actual baseline values.
+
+Execute all12 owner criteria using a non-chemical test journey: (1) header/strips/map/dock; (2) normal and enlarged text/system navigation; (3) real satellite/trail/puck/boundaries/rows/relevant pins/performance; (4) follow/recenter/pan/heading/zoom/control taps; (5) honest Free Drive; (6) correct mapped action/next/progress and mismatch context; (7) independent same-number occurrence passes where supported; (8) Tank1 Actual/Mix/End Tank/next tank; (9) exact Done/Skip/Undo/Pause/Resume/End Trip protections; (10) offline Repairs/Growth return; (11) background/foreground/rotation/relaunch retaining the one original trip/tracker/GPS/tank/outbox; (12) reconnect with original operations/no duplicates. Confirm any intended recording pause or foreground-only limitation explicitly rather than assuming a background service was added.
+
+**Stop immediately on any safety-critical failure.** Record exact version, timestamp, step, original IDs, visible warning and Sync Status; preserve queued work/GPS and report the hold. No destructive recovery, historical warning cleanup, backend bypass or speculative fix during acceptance. Do not make chemical-use records merely to pass the test. If a prerequisite such as supported occurrence capability is unavailable, mark that case blocked; do not deploy backend changes or convert legacy history.
+
+Release review must include actual Samsung normal/enlarged, mapped, Free Drive and active-tank screenshots, observed map/GPS results, before/after original identities and sync evidence, retained automated results with their fixture limits, and all unresolved failures/gates. Existing authenticated/backend/occurrence/Portal gates remain unchanged. **No production release. Next approval gate is successful physical Samsung acceptance, not the source review in this checkpoint.**
+
 ## P0 Android Live Trip presentation — 17 October 2026 — source frozen, handset gate OPEN
 
 The owner reports Start Trip, Tank 1 Actual confirmation and recording working on the latest Samsung test. This checkpoint changes only Android Live Trip presentation and directly required state-to-display wiring. It does not reopen the Trip engine or Play publishing. Supplied Samsung/iOS images were inspected alongside both actual implementations.
