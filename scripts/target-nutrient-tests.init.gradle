@@ -1,0 +1,11 @@
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    app.tasks.named('compileDebugUnitTestKotlin').configure {
+        setSource(app.fileTree('src/test/java') {
+            include '**/TargetNutrientTest.kt', '**/FertiliserRegionParityTest.kt', '**/RegionFormatterTest.kt'
+        })
+    }
+    app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        testLogging { events 'passed', 'failed', 'skipped' }
+    }
+}

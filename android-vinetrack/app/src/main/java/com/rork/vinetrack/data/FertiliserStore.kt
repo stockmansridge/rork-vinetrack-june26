@@ -37,21 +37,25 @@ class FertiliserStore(context: Context) {
     }
 
     fun addRecord(vineyardId: String, record: FertiliserRecord): List<FertiliserRecord> {
-        val updated = loadRecords(vineyardId) + record
+        val current = loadRecords(vineyardId)
+        if (!record.isSupportedMode || current.any { it.id == record.id && !it.isSupportedMode }) return current
+        val updated = current + record
         saveRecords(vineyardId, updated)
         return updated.sortedByDescending { it.date }
     }
 
     fun markCompleted(vineyardId: String, recordId: String, date: String): List<FertiliserRecord> {
         val updated = loadRecords(vineyardId).map {
-            if (it.id == recordId) it.copy(status = "completed", date = date) else it
+            if (it.id == recordId && it.isSupportedMode) it.copy(status = "completed", date = date) else it
         }
         saveRecords(vineyardId, updated)
         return updated
     }
 
     fun deleteRecord(vineyardId: String, recordId: String): List<FertiliserRecord> {
-        val updated = loadRecords(vineyardId).filterNot { it.id == recordId }
+        val current = loadRecords(vineyardId)
+        if (current.any { it.id == recordId && !it.isSupportedMode }) return current
+        val updated = current.filterNot { it.id == recordId }
         saveRecords(vineyardId, updated)
         return updated
     }

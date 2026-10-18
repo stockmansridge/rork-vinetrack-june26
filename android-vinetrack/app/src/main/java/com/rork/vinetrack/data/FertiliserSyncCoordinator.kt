@@ -39,6 +39,7 @@ class FertiliserSyncCoordinator(
     // MARK: Local-first writes
 
     fun addRecord(vineyardId: String, record: FertiliserRecord): List<FertiliserRecord> {
+        if (!record.isSupportedMode || store.loadRecords(vineyardId).any { it.id == record.id && !it.isSupportedMode }) return store.loadRecords(vineyardId)
         val updated = store.addRecord(vineyardId, record)
         enqueueRecordUpsert(record)
         scope.launch { replayAll() }
@@ -46,6 +47,7 @@ class FertiliserSyncCoordinator(
     }
 
     fun markCompleted(vineyardId: String, recordId: String, date: String = LocalDate.now().toString()): List<FertiliserRecord> {
+        if (store.loadRecords(vineyardId).any { it.id == recordId && !it.isSupportedMode }) return store.loadRecords(vineyardId)
         val updated = store.markCompleted(vineyardId, recordId, date)
         updated.firstOrNull { it.id == recordId }?.let { enqueueRecordUpsert(it) }
         scope.launch { replayAll() }
@@ -53,6 +55,7 @@ class FertiliserSyncCoordinator(
     }
 
     fun deleteRecord(vineyardId: String, recordId: String): List<FertiliserRecord> {
+        if (store.loadRecords(vineyardId).any { it.id == recordId && !it.isSupportedMode }) return store.loadRecords(vineyardId)
         val updated = store.deleteRecord(vineyardId, recordId)
         removeUnresolved(PendingEntityType.FERTILISER_RECORD, PendingOpType.UPDATE, recordId)
         enqueueCoalesced(
@@ -103,9 +106,9 @@ class FertiliserSyncCoordinator(
             val mergedRecords = remoteRecords
                 .filter { it.deletedAt == null && it.id !in pendingRecordIds }
                 .map { row -> row.toModel(allocationsByRecord[row.id].orEmpty().map { it.toModel() }) } +
-                localRecords.filter { it.id in pendingRecordIds }
+                localRecords.filter { it.id in pendingRecordIds || (!it.isSupportedMode && it.id !in remoteRecords.map { row -> row.id }) }
             localRecords
-                .filter { it.id !in remoteRecordIds && it.id !in pendingRecordIds }
+                .filter { it.isSupportedMode && it.id !in remoteRecordIds && it.id !in pendingRecordIds }
                 .forEach { enqueueRecordUpsert(it) }
             store.saveRecords(vineyardId, mergedRecords)
 
@@ -118,6 +121,7 @@ class FertiliserSyncCoordinator(
     // MARK: Outbox plumbing
 
     private fun enqueueRecordUpsert(record: FertiliserRecord) {
+        if (!record.isSupportedMode) return
         enqueueCoalesced(
             entityType = PendingEntityType.FERTILISER_RECORD,
             opType = PendingOpType.UPDATE,
@@ -151,6 +155,10 @@ class FertiliserSyncCoordinator(
                 (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
         }
         for (write in candidates) {
+            if (opType == PendingOpType.UPDATE) {
+                val record = runCatching { json.decodeFromString(FertiliserRecord.serializer(), write.payloadJson) }.getOrNull()
+                if (record != null && !record.isSupportedMode) continue // Retain exact pending evidence; never reinterpret or submit.
+            }
             pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
             try {
                 action(write)

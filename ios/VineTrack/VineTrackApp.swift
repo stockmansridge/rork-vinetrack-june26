@@ -118,7 +118,9 @@ struct VineTrackApp: App {
             Group {
                 if isKeyboardValidationEnabled {
                     #if DEBUG
-                    if CommandLine.arguments.contains("--offline-quick-actions-validation") {
+                    if CommandLine.arguments.contains("--target-nutrient-validation") {
+                        TargetNutrientValidationView()
+                    } else if CommandLine.arguments.contains("--offline-quick-actions-validation") {
                         OfflineQuickActionsValidationView()
                     } else if CommandLine.arguments.contains("--legacy-recovery-case") {
                         LegacySprayRecoveryValidationView()

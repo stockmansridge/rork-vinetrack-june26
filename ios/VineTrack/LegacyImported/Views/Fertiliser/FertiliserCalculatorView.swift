@@ -6,6 +6,8 @@ import SwiftUI
 struct FertiliserCalculatorView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(FertiliserSyncService.self) private var fertiliserSync
+    @Environment(SystemAdminService.self) private var systemAdmin
+    @State private var showsTargetPreview: Bool = false
     private var fertStore: FertiliserStore { .shared }
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
@@ -61,6 +63,15 @@ struct FertiliserCalculatorView: View {
     }
 
     var body: some View {
+        VStack(spacing: 0) {
+            if systemAdmin.isSystemAdmin {
+                Toggle("Target Nutrient (Preview)", isOn: $showsTargetPreview)
+                    .padding(.horizontal).padding(.vertical, 8)
+            }
+            if showsTargetPreview && systemAdmin.isSystemAdmin {
+                TargetNutrientPreviewView(products: products, paddocks: paddocks, formatter: fmt, isSystemAdmin: systemAdmin.isSystemAdmin)
+                    .id(vineyardId)
+            } else {
         ScrollView {
             VStack(spacing: 16) {
                 savedBannerRow
@@ -76,6 +87,8 @@ struct FertiliserCalculatorView: View {
                 Spacer(minLength: 24)
             }
             .padding(.vertical)
+        }
+            }
         }
         .background(VineyardTheme.appBackground)
         .navigationTitle("Fertiliser Calculator")
@@ -316,6 +329,7 @@ struct FertiliserCalculatorView: View {
         case .perVine:
             guard vines > 0 else { return nil }
             total = FertiliserCalculator.totalForPerVine(vineCount: vines, ratePerVine: rate)
+        default: return nil
         }
 
         let packSize: Double?
@@ -483,6 +497,13 @@ struct FertiliserCalculatorView: View {
                 Text(recordDetail(record))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if !record.mode.isSupported, let snapshot = record.unsupportedSnapshot {
+                    DisclosureGroup("Stored nutrient analysis — read-only") {
+                        if let data = try? JSONEncoder().encode(snapshot), let text = String(data: data, encoding: .utf8) {
+                            Text(text).font(.caption2.monospaced()).textSelection(.enabled)
+                        }
+                    }.font(.caption)
+                }
                 if !record.blockNames.isEmpty {
                     Text(record.blockNames.joined(separator: ", "))
                         .font(.caption)
@@ -498,7 +519,7 @@ struct FertiliserCalculatorView: View {
                     .padding(.vertical, 3)
                     .background((record.status == .completed ? VineyardTheme.leafGreen : Color.blue).opacity(0.12), in: .capsule)
                 HStack(spacing: 10) {
-                    if record.status == .planned {
+                    if record.mode.isSupported && record.status == .planned {
                         Button {
                             fertStore.markCompleted(id: record.id, timeZone: fmt.settings.resolvedTimeZone)
                         } label: {
@@ -507,11 +528,13 @@ struct FertiliserCalculatorView: View {
                         }
                         .accessibilityLabel("Mark completed")
                     }
+                    if record.mode.isSupported {
                     Button(role: .destructive) {
                         fertStore.deleteRecord(id: record.id)
                     } label: {
                         Image(systemName: "trash")
                             .font(.caption)
+                    }
                     }
                 }
             }
@@ -520,6 +543,9 @@ struct FertiliserCalculatorView: View {
     }
 
     private func recordDetail(_ record: FertiliserRecord) -> String {
+        if !record.mode.isSupported {
+            return "\(record.mode.rawValue) · Mode not supported by this version — read-only · \(record.rate) \(record.rateUnit) · Total \(record.totalProduct) \(record.unsupportedSnapshot?.productUnit ?? record.form.unit)"
+        }
         var parts: [String] = [record.applicationDateSnapshot.map { fmt.formatDate($0) } ?? fmt.formatDate(record.date)]
         parts.append(record.form == .liquid ? fmt.formatVolume(litres: record.totalProduct) : "\(record.totalProduct.formatted(.number.precision(.fractionLength(0...1)))) kg")
         parts.append(record.mode == .perVine ? "\(record.rate.formatted(.number.precision(.fractionLength(0...1)))) \(record.rateUnit)" : record.form == .liquid ? fmt.formatVolumePerArea(litresPerHectare: record.rate) : fmt.formatSprayRate(perHectare: record.rate, unitLabel: "kg"))
@@ -540,7 +566,7 @@ struct FertiliserCalculatorView: View {
     }
 
     private func save(_ result: CalcResult, status: FertiliserRecordStatus) {
-        guard let vineyardId else { return }
+        guard !showsTargetPreview, mode.isSupported, let vineyardId else { return }
         let selected = paddocks.filter { selectedPaddockIds.contains($0.id) }
         let record = FertiliserRecord(
             vineyardId: vineyardId,

@@ -50,6 +50,9 @@ final class SupabaseFertiliserSyncRepository: FertiliserSyncRepositoryProtocol {
     func upsertRecords(_ items: [BackendFertiliserRecordUpsert]) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard !items.isEmpty else { return }
+        guard items.allSatisfy({ TargetNutrient.canSave(mode: $0.calculationMode) }) else {
+            throw NSError(domain: "FertiliserPreview", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unsupported fertiliser mode is read-only; preview cannot be saved."])
+        }
         try await provider.client.from("fertiliser_records").upsert(items, onConflict: "id").execute()
     }
 
@@ -61,6 +64,10 @@ final class SupabaseFertiliserSyncRepository: FertiliserSyncRepositoryProtocol {
 
     func softDeleteRecord(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let rows: [BackendFertiliserRecord] = try await provider.client.from("fertiliser_records").select().eq("id", value: id.uuidString).execute().value
+        guard rows.count == 1, TargetNutrient.canSave(mode: rows[0].calculationMode ?? "") else {
+            throw NSError(domain: "FertiliserPreview", code: 2, userInfo: [NSLocalizedDescriptionKey: "Fertiliser deletion held: supported record mode could not be verified."])
+        }
         try await provider.client.rpc("soft_delete_fertiliser_record", params: FertiliserIdRequest(id: id)).execute()
     }
 }

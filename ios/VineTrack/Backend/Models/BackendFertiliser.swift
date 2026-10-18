@@ -6,7 +6,7 @@ import Foundation
 
 // MARK: - fertiliser_records
 
-nonisolated struct BackendFertiliserRecord: Codable, Sendable, Identifiable {
+nonisolated struct BackendFertiliserRecord: Codable, Sendable, Identifiable, Hashable {
     let id: UUID
     let vineyardId: UUID
     let productId: UUID?
@@ -34,6 +34,20 @@ nonisolated struct BackendFertiliserRecord: Codable, Sendable, Identifiable {
     let updatedAt: Date?
     let deletedAt: Date?
     let clientUpdatedAt: Date?
+    var nutrientKey: String? = nil
+    var nutrientDisplayName: String? = nil
+    var targetRate: Double? = nil
+    var targetRateUnit: String? = nil
+    var nutrientPercent: Double? = nil
+    var nutrientPercentSource: String? = nil
+    var analysisBasis: String? = nil
+    var concentrationBasis: String? = nil
+    var productDensityKgPerL: Double? = nil
+    var productDensitySource: String? = nil
+    var productDensityReference: String? = nil
+    var productAnalysisSnapshot: SprayReportPayloadV1.JSONValue? = nil
+    var nutrientContractVersion: String? = nil
+    var nutrientDeclaredAs: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -63,6 +77,13 @@ nonisolated struct BackendFertiliserRecord: Codable, Sendable, Identifiable {
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
         case clientUpdatedAt = "client_updated_at"
+        case nutrientKey = "nutrient_key", nutrientDisplayName = "nutrient_display_name"
+        case targetRate = "target_rate", targetRateUnit = "target_rate_unit"
+        case nutrientPercent = "nutrient_percent", nutrientPercentSource = "nutrient_percent_source"
+        case analysisBasis = "analysis_basis", concentrationBasis = "concentration_basis"
+        case productDensityKgPerL = "product_density_kg_per_l", productDensitySource = "product_density_source"
+        case productDensityReference = "product_density_reference", productAnalysisSnapshot = "product_analysis_snapshot"
+        case nutrientContractVersion = "nutrient_contract_version", nutrientDeclaredAs = "nutrient_declared_as"
     }
 }
 
@@ -153,12 +174,12 @@ extension BackendFertiliserRecord {
     }
 
     func toFertiliserRecord(allocations: [FertiliserAllocation], timeZone: TimeZone = .current) -> FertiliserRecord {
-        FertiliserRecord(
+        var record = FertiliserRecord(
             id: id,
             vineyardId: vineyardId,
             date: FertiliserApplicationDate.date(applicationDate, timeZone: timeZone) ?? createdAt ?? Date(),
             status: FertiliserRecordStatus(rawValue: recordStatus ?? "") ?? .planned,
-            mode: FertiliserCalcMode(rawValue: calculationMode ?? "") ?? .perHectare,
+            mode: FertiliserCalcMode(rawValue: calculationMode ?? ""),
             productId: productId,
             productName: productName ?? "",
             form: FertiliserForm(rawValue: form ?? "") ?? .solid,
@@ -177,6 +198,8 @@ extension BackendFertiliserRecord {
             vineCountBasis: vineCountBasis,
             applicationDateSnapshot: applicationDate
         )
+        if !record.mode.isSupported { record.unsupportedSnapshot = self }
+        return record
     }
 }
 

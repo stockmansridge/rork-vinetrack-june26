@@ -37,6 +37,7 @@ final class FertiliserStore {
     }
 
     func addRecord(_ record: FertiliserRecord) {
+        guard record.mode.isSupported, records.first(where: { $0.id == record.id })?.mode.isSupported != false else { return }
         applyRecordUpsert(record)
         persistRecords()
         onRecordChanged?(record.id)
@@ -44,7 +45,7 @@ final class FertiliserStore {
 
     /// Converts a planned task into a completed application record.
     func markCompleted(id: UUID, on date: Date = Date(), timeZone: TimeZone = .current) {
-        guard let index = records.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = records.firstIndex(where: { $0.id == id }), records[index].mode.isSupported else { return }
         records[index].status = .completed
         records[index].date = date
         records[index].applicationDateSnapshot = FertiliserApplicationDate.snapshot(date, timeZone: timeZone)
@@ -53,6 +54,7 @@ final class FertiliserStore {
     }
 
     func deleteRecord(id: UUID) {
+        guard records.first(where: { $0.id == id })?.mode.isSupported == true else { return }
         records.removeAll { $0.id == id }
         persistRecords()
         onRecordDeleted?(id)

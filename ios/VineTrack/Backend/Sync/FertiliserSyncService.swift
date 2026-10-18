@@ -86,7 +86,10 @@ final class FertiliserSyncService {
             try await pullRecords(vineyardId: vineyardId)
             recordMetadata.setLastSync(Date(), for: vineyardId)
             lastSyncDate = Date()
-            syncStatus = .success
+            if fertStore.records.contains(where: { !$0.mode.isSupported && (recordMetadata.pendingUpserts[$0.id] != nil || recordMetadata.pendingDeletes[$0.id] != nil) }) {
+                errorMessage = "Unsupported fertiliser work retained — update required; no changes submitted."
+                syncStatus = .failure(errorMessage ?? "Update required")
+            } else { syncStatus = .success }
         } catch {
             errorMessage = error.localizedDescription
             syncStatus = .failure(error.localizedDescription)
@@ -107,6 +110,7 @@ final class FertiliserSyncService {
                 // Reclaim queue entries with no local record — they can never
                 // upload and used to sit in the queue forever.
                 guard let item = byId[id] else { orphans.append(id); continue }
+                guard item.mode.isSupported else { continue }
                 bundles.append(FertiliserPushBundle(
                     record: BackendFertiliserRecord.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts),
                     allocations: item.allocations.map { BackendFertiliserAllocation.upsert(from: $0, record: item) }
@@ -130,6 +134,7 @@ final class FertiliserSyncService {
             if let error = result.firstRetryableError { throw error }
         }
         for (id, _) in recordMetadata.pendingDeletes {
+            if fertStore.records.first(where: { $0.id == id })?.mode.isSupported == false { continue }
             do {
                 try await repository.softDeleteRecord(id: id)
                 recordMetadata.clearDeleted([id])
@@ -147,7 +152,7 @@ final class FertiliserSyncService {
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
             let local = fertStore.records.filter { $0.vineyardId == vineyardId }
-            let missing = local.filter { !remoteIds.contains($0.id) }
+            let missing = local.filter { $0.mode.isSupported && !remoteIds.contains($0.id) }
             if !missing.isEmpty {
                 let now = Date()
                 let createdBy = auth?.userId
@@ -171,6 +176,7 @@ final class FertiliserSyncService {
         let allocationsByRecord = Dictionary(grouping: allocations, by: { $0.fertiliserRecordId })
 
         for item in remote {
+            if !TargetNutrient.canSave(mode: item.calculationMode ?? ""), recordMetadata.pendingUpserts[item.id] != nil || recordMetadata.pendingDeletes[item.id] != nil { continue }
             if item.deletedAt != nil {
                 fertStore.applyRemoteRecordDelete(item.id)
                 recordMetadata.clearDirty([item.id])

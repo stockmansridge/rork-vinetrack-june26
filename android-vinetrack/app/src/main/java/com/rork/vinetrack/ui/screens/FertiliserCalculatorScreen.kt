@@ -107,6 +107,7 @@ fun FertiliserCalculatorScreen(
         records = vm.refreshFertiliser(id)
     }
     var tab by rememberSaveable { mutableStateOf(0) }
+    var showsTargetPreview by rememberSaveable { mutableStateOf(false) }
 
     val paddocks = remember(state.paddocks) { state.paddocks.sortedBy { it.name.lowercase() } }
 
@@ -123,8 +124,18 @@ fun FertiliserCalculatorScreen(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             FertTabBar(tab) { tab = it }
-            when (tab) {
-                0 -> FertCalculatorTab(
+            if (tab == 0 && state.isSystemAdmin) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Target Nutrient (Preview)", Modifier.weight(1f))
+                    Switch(showsTargetPreview, { showsTargetPreview = it })
+                }
+            }
+            when {
+                tab == 0 && showsTargetPreview && state.isSystemAdmin -> androidx.compose.runtime.key(vineyardId, state.currentUserId) { TargetNutrientPreview(
+                    products = state.savedChemicals.filter { it.deletedAt == null && it.isActive },
+                    paddocks = paddocks.filter { it.vineyardId == vineyardId }, formatter = region, isSystemAdmin = state.isSystemAdmin,
+                ) }
+                tab == 0 -> FertCalculatorTab(
                     paddocks = paddocks,
                     products = state.savedChemicals.filter { it.deletedAt == null && it.isActive },
                     vineyardId = vineyardId,
@@ -760,16 +771,21 @@ private fun FertRecordsTab(
                     }
                     val detail = buildList {
                         add(region.formatDate(record.date))
-                        add(if (record.isLiquid) region.formatVolume(record.totalProduct) else "${fertFmt(record.totalProduct, 1)} kg")
-                        add(if (record.mode == "perVine") "${fertFmt(record.rate, 1)} ${record.rateUnit}" else if (record.isLiquid) region.formatVolumePerArea(record.rate, 1) else region.formatSprayRate(record.rate, "kg", 1))
+                        add(if (!record.isSupportedMode) "${record.totalProduct} ${record.unit}" else if (record.isLiquid) region.formatVolume(record.totalProduct) else "${fertFmt(record.totalProduct, 1)} kg")
+                        add(if (!record.isSupportedMode) "${record.mode} · Mode not supported by this version — read-only · ${record.rate} ${record.rateUnit}" else if (record.mode == "perVine") "${fertFmt(record.rate, 1)} ${record.rateUnit}" else if (record.isLiquid) region.formatVolumePerArea(record.rate, 1) else region.formatSprayRate(record.rate, "kg", 1))
                         if (record.mode == "perVine") add("${record.vineCount} vines · ${FertiliserVineCounts.label(record.vineCountBasis)}")
                         record.totalCost?.let { add(money(it)) }
                     }.joinToString(" · ")
                     Text(detail, fontSize = 12.sp, color = vine.textSecondary)
+                    if (!record.isSupportedMode && record.unsupportedSnapshot != null) {
+                        var showSnapshot by remember(record.id) { mutableStateOf(false) }
+                        androidx.compose.material3.TextButton(onClick = { showSnapshot = !showSnapshot }) { Text("Stored nutrient analysis — read-only") }
+                        if (showSnapshot) Text(record.unsupportedSnapshot.toString(), fontSize = 12.sp, color = vine.textSecondary)
+                    }
                     if (record.blockNames.isNotEmpty()) {
                         Text(record.blockNames.joinToString(", "), fontSize = 12.sp, color = vine.textSecondary)
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    if (record.isSupportedMode) Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         Spacer(Modifier.weight(1f))
                         if (!isCompleted) {
                             IconButton(onClick = { onMarkCompleted(record.id) }, modifier = Modifier.size(28.dp)) {

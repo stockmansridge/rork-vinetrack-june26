@@ -18,6 +18,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 import java.time.Instant
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -46,6 +49,9 @@ class FertiliserSyncRepository(private val session: SessionStore) {
         @SerialName("total_area_ha") val totalAreaHa: Double? = null,
         @SerialName("total_vines") val totalVines: Int? = null,
         @SerialName("vine_count_basis") val vineCountBasis: String? = null,
+        @SerialName("application_rate_unit") val applicationRateUnit: String? = null,
+        @SerialName("product_unit") val productUnit: String? = null,
+        val rawSnapshot: JsonObject? = null,
         @SerialName("application_rate") val applicationRate: Double? = null,
         @SerialName("total_product_required") val totalProductRequired: Double? = null,
         @SerialName("pack_size") val packSize: Double? = null,
@@ -60,7 +66,10 @@ class FertiliserSyncRepository(private val session: SessionStore) {
             vineyardId = vineyardId,
             date = applicationDate?.take(10) ?: createdAt?.take(10) ?: LocalDate.now().toString(),
             status = recordStatus ?: "planned",
-            mode = calculationMode ?: "perHectare",
+            mode = calculationMode ?: "unknown",
+            unsupportedSnapshot = rawSnapshot.takeUnless { com.rork.vinetrack.data.model.TargetNutrient.canSave(calculationMode.orEmpty()) },
+            storedRateUnit = applicationRateUnit,
+            storedProductUnit = productUnit,
             productId = productId,
             productName = productName.orEmpty(),
             form = form ?: "solid",
@@ -138,8 +147,12 @@ class FertiliserSyncRepository(private val session: SessionStore) {
 
     // MARK: Reads
 
-    suspend fun fetchRecords(vineyardId: String): List<RecordRow> =
-        getList("fertiliser_records?vineyard_id=eq.$vineyardId&order=updated_at.asc")
+    suspend fun fetchRecords(vineyardId: String): List<RecordRow> {
+        val decoder = Json { ignoreUnknownKeys = true }
+        return getList<JsonObject>("fertiliser_records?vineyard_id=eq.$vineyardId&order=updated_at.asc").map { raw ->
+            decoder.decodeFromJsonElement<RecordRow>(raw).copy(rawSnapshot = raw)
+        }
+    }
 
     suspend fun fetchAllocations(vineyardId: String): List<AllocationRow> =
         getList("fertiliser_record_allocations?vineyard_id=eq.$vineyardId")
@@ -148,6 +161,7 @@ class FertiliserSyncRepository(private val session: SessionStore) {
 
     /** Upserts the record, then its per-block allocation rows. */
     suspend fun upsertRecord(record: FertiliserRecord) = withContext(Dispatchers.IO) {
+        require(record.isSupportedMode) { "Unsupported fertiliser mode is read-only; preview cannot be saved." }
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val packCount = record.packSize?.takeIf { it > 0 }?.let { record.totalProduct / it }
@@ -211,7 +225,13 @@ class FertiliserSyncRepository(private val session: SessionStore) {
         }
     }
 
-    suspend fun softDeleteRecord(recordId: String) = softDelete("soft_delete_fertiliser_record", recordId)
+    suspend fun softDeleteRecord(recordId: String) {
+        val rows = getList<RecordRow>("fertiliser_records?id=eq.$recordId")
+        require(rows.size == 1 && com.rork.vinetrack.data.model.TargetNutrient.canSave(rows.single().calculationMode.orEmpty())) {
+            "Fertiliser deletion held: supported record mode could not be verified."
+        }
+        softDelete("soft_delete_fertiliser_record", recordId)
+    }
 
     // MARK: Plumbing
 

@@ -120,12 +120,17 @@ data class FertiliserRecord(
     val createdAtMs: Long = 0L,
     /** NULL/absent means legacy; never infer provenance from stored totals. */
     val vineCountBasis: String? = null,
+    /** Original nutrient contract evidence retained for read-only records. */
+    val unsupportedSnapshot: kotlinx.serialization.json.JsonObject? = null,
+    val storedRateUnit: String? = null,
+    val storedProductUnit: String? = null,
 ) {
+    val isSupportedMode: Boolean get() = TargetNutrient.canSave(mode)
     val isLiquid: Boolean get() = form == "liquid"
-    val unit: String get() = if (isLiquid) "L" else "kg"
+    val unit: String get() = if (!isSupportedMode) storedProductUnit ?: "Not recorded" else if (isLiquid) "L" else "kg"
 
     val rateUnit: String
-        get() = if (mode == "perVine") {
+        get() = if (!isSupportedMode) storedRateUnit ?: "Not recorded" else if (mode == "perVine") {
             if (isLiquid) "mL/vine" else "g/vine"
         } else {
             if (isLiquid) "L/ha" else "kg/ha"

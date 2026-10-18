@@ -126,12 +126,17 @@ extension SavedChemical {
 }
 
 /// Calculation mode. Nutrient-target and fertigation modes arrive in phase 2.
-nonisolated enum FertiliserCalcMode: String, Codable, CaseIterable, Identifiable, Sendable {
-    case perHectare
-    case perVine
-
+nonisolated struct FertiliserCalcMode: RawRepresentable, Codable, CaseIterable, Identifiable, Sendable, Hashable {
+    let rawValue: String
+    init(rawValue: String) { self.rawValue = rawValue }
+    static let perHectare = Self(rawValue: "perHectare")
+    static let perVine = Self(rawValue: "perVine")
+    static let allCases: [Self] = [.perHectare, .perVine]
     var id: String { rawValue }
-    var label: String { self == .perHectare ? "Per hectare" : "Per vine" }
+    var isSupported: Bool { Self.allCases.contains(self) }
+    var label: String { self == .perHectare ? "Per hectare" : self == .perVine ? "Per vine" : "\(rawValue) — read-only" }
+    init(from decoder: Decoder) throws { rawValue = try decoder.singleValueContainer().decode(String.self) }
+    func encode(to encoder: Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(rawValue) }
 }
 
 nonisolated enum FertiliserRecordStatus: String, Codable, Sendable {
@@ -212,6 +217,8 @@ nonisolated struct FertiliserRecord: Codable, Identifiable, Sendable, Hashable {
     var createdAt: Date
     /// Missing/NULL means legacy, never inferred from stored totals.
     var vineCountBasis: String?
+    /// Exact supported DTO snapshot for modes this version cannot edit; never submitted.
+    var unsupportedSnapshot: BackendFertiliserRecord? = nil
 
     init(
         id: UUID = UUID(),
@@ -274,6 +281,7 @@ nonisolated struct FertiliserRecord: Codable, Identifiable, Sendable, Hashable {
         switch mode {
         case .perHectare: return "\(form.unit)/ha"
         case .perVine: return "\(form.perVineUnit)/vine"
+        default: return unsupportedSnapshot?.applicationRateUnit ?? "Not recorded"
         }
     }
 }
