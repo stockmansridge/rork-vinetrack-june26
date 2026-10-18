@@ -694,6 +694,8 @@ data class AppUiState(
     val latestAccuracyMetres: Double? = null,
     /** Wall-clock timestamp of the GPS sample backing the live Pins context. */
     val latestMovementObservedAtMs: Long? = null,
+    /** Read-only current fix for row-side presentation; not a persisted route point or action target. */
+    val rowSideMovementSample: LocationTracker.MovementSample? = null,
     /** Selected trip block that currently contains the live GPS fix. */
     val currentTripPaddockId: String? = null,
     /** Live driving path (X.5) the operator is locked onto, if confident geometry exists. */
@@ -9584,6 +9586,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 latestSpeedMetresPerSecond = null,
                 latestAccuracyMetres = null,
                 latestMovementObservedAtMs = null,
+                rowSideMovementSample = null,
                 currentTripPaddockId = null,
                 currentDrivingPathNumber = null,
                 rowLockConfidence = 0.0,
@@ -9646,6 +9649,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 latestSpeedMetresPerSecond = sample.speedMetresPerSecond,
                 latestAccuracyMetres = sample.accuracyMetres,
                 latestMovementObservedAtMs = sample.timestampMs,
+                rowSideMovementSample = sample,
                 currentTripPaddockId = resolution?.paddock?.id,
                 currentDrivingPathNumber = rowLockTracker.drivingPathNumber,
                 rowLockConfidence = rowLockTracker.confidence,
@@ -9747,6 +9751,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 latestSpeedMetresPerSecond = null,
                 latestAccuracyMetres = null,
                 latestMovementObservedAtMs = null,
+                rowSideMovementSample = null,
                 currentTripPaddockId = null,
                 currentDrivingPathNumber = null,
                 rowLockConfidence = 0.0,

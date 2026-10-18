@@ -66,7 +66,10 @@ class LiveTripLayoutAndroidTest {
     private val id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
     private lateinit var vm: AppViewModel
     private var client: HttpClient? = null
+    private lateinit var fixtureApplication: Application
     private val showingHud = mutableStateOf(true)
+    private val mappedRowFixture = mutableStateOf(false)
+    private val streamRowFixture = mutableStateOf(false)
     private var details = 0
     private var ends = 0
     private var route = 0
@@ -87,7 +90,7 @@ class LiveTripLayoutAndroidTest {
         pathPoints = listOf(CoordinatePoint(-33.28, 149.02), CoordinatePoint(-33.2801, 149.0201)),
         activeTankNumber = 1, totalTanks = tanks, tankSessions = listOf(TankSession("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", 1, "2026-10-17T08:00:00Z")))
 
-    private fun open(trip: Trip = fixture(), width: Int = 360, scale: Float = 1f, imperial: Boolean = false, freshGps: Boolean = true) {
+    private fun open(trip: Trip = fixture(), width: Int = 360, scale: Float = 1f, imperial: Boolean = false, freshGps: Boolean = true, lifecycleOwner: androidx.lifecycle.LifecycleOwner? = null) {
         val wrapped = object : ContextWrapper(base) {
             override fun getApplicationContext(): Context = this
             override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
@@ -97,6 +100,7 @@ class LiveTripLayoutAndroidTest {
             override fun getCacheDir(): File = File(root, "cache").apply { mkdirs() }
         }
         val app = object : Application() { init { attachBaseContext(wrapped) }; override fun getApplicationContext(): Context = this }
+        fixtureApplication = app
         client = HttpClient(MockEngine { respond("[]", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json")) }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
         SupabaseClient.installInstrumentationTransport(client)
         instrumentation.runOnMainSync {
@@ -130,18 +134,34 @@ class LiveTripLayoutAndroidTest {
                 latestMovementObservedAtMs = if (freshGps) System.currentTimeMillis() else 0L)
         }
         compose.setContent {
+            LaunchedEffect(streamRowFixture.value) {
+                if (streamRowFixture.value) while (true) {
+                    kotlinx.coroutines.delay(1_000)
+                    val sample = state().value.rowSideMovementSample
+                    if (sample != null) state().value = state().value.copy(rowSideMovementSample = sample.copy(timestampMs = System.currentTimeMillis()))
+                }
+            }
             val current by vm.ui.collectAsState()
             val density = LocalDensity.current
             var launcher by remember { mutableStateOf<String?>(null) }
             val formatter = RegionFormatter((if (imperial) RegionCountry.UnitedStates else RegionCountry.Australia).recommendedPreset)
-            CompositionLocalProvider(LocalDensity provides Density(density.density, scale), LocalRegionFormatter provides formatter) {
+            CompositionLocalProvider(androidx.lifecycle.compose.LocalLifecycleOwner provides (lifecycleOwner ?: androidx.lifecycle.compose.LocalLifecycleOwner.current), androidx.compose.ui.platform.LocalContext provides app, LocalDensity provides Density(density.density, scale), LocalRegionFormatter provides formatter) {
                 AppTheme(darkTheme = false) {
                     Box(Modifier.width(width.dp).fillMaxHeight()) {
                         if (!showingHud.value) Button(onClick = { showingHud.value = true }) { Text("Return to same Live Trip") }
                         else ActiveTripHud(vm, current, current.trips.first(), 109, { showingHud.value = false }, { details++; showingHud.value = false }, { ends++ }, { route++ }, {},
                             launcher, { launches.add(it); launcher = it }, {}, mapPreview = {
                                 Box(Modifier.fillMaxSize().background(Color(0xFF26372D)), contentAlignment = Alignment.Center) {
-                                    Text("Map renderer excluded\nSynthetic layout fixture", color = Color.White)
+                                    if (mappedRowFixture.value) {
+                                        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                                            for (fraction in listOf(0.38f, 0.62f)) drawLine(Color(0xFF7FBC86),
+                                                androidx.compose.ui.geometry.Offset(size.width * fraction, size.height * 0.18f),
+                                                androidx.compose.ui.geometry.Offset(size.width * fraction, size.height * 0.82f), strokeWidth = 5f)
+                                            drawCircle(Color(0xFF3898FA), radius = 7.dp.toPx(), center = center)
+                                        }
+                                        Text("Controlled mapped-row fixture\nSatellite renderer excluded", color = Color.White,
+                                            modifier = Modifier.align(Alignment.BottomStart).padding(8.dp), fontSize = androidx.compose.ui.unit.TextUnit.Unspecified)
+                                    } else Text("Map renderer excluded\nSynthetic layout fixture", color = Color.White)
                                 }
                             })
                     }
@@ -158,7 +178,7 @@ class LiveTripLayoutAndroidTest {
     private fun press(text: String) {
         compose.onNode(hasText(text) and hasClickAction()).performSemanticsAction(SemanticsActions.OnClick) { it() }
     }
-    private fun capture(name: String) {
+    private fun capture(name: String, transportProbe: Boolean = false) {
         val directory = File(base.getExternalFilesDir(null), "live-trip-ui-evidence").apply { mkdirs() }
         val file = File(directory, "$name.png")
         compose.onRoot().captureToImage().asAndroidBitmap().let { bitmap ->
@@ -166,7 +186,7 @@ class LiveTripLayoutAndroidTest {
         }
         val bitmap = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
         val scaled = Bitmap.createScaledBitmap(bitmap, 360, (bitmap.height * 360f / bitmap.width).toInt(), true)
-        val transportOnly = InstrumentationRegistry.getArguments().getString("captureLiveTripEvidence") == "true"
+        val transportOnly = transportProbe || InstrumentationRegistry.getArguments().getString("captureLiveTripEvidence") == "true"
         if (transportOnly) {
             var quality = 80
             var bytes: ByteArray
@@ -333,6 +353,81 @@ class LiveTripLayoutAndroidTest {
         compose.onNodeWithText("Weak").assertIsDisplayed()
         compose.onNodeWithText("Path 0.5").assertIsDisplayed()
         compose.runOnIdle { assertEquals(0, vm.ui.value.trips.single().sequenceIndex); assertTrue(vm.ui.value.trips.single().completedPaths.orEmpty().isEmpty()) }
+    }
+    private fun installRowFixture(bearing: Double = 0.0) {
+        fun point(x: Double, y: Double) = CoordinatePoint(y / 111_320.0, x / 111_320.0)
+        val block = Paddock("dddddddd-dddd-4ddd-8ddd-dddddddddddd", vineyard, "Mapped Slashing Block", rowWidth = 4.0,
+            polygonPoints = listOf(point(-2.0, -10.0), point(6.0, -10.0), point(6.0, 110.0), point(-2.0, 110.0)),
+            rows = listOf(PaddockRow(number = 12, startPoint = point(0.0, 0.0), endPoint = point(0.0, 100.0)),
+                PaddockRow(number = 13, startPoint = point(4.0, 100.0), endPoint = point(4.0, 0.0))))
+        compose.runOnIdle {
+            mappedRowFixture.value = true
+            state().value = state().value.copy(paddocks = listOf(block), rowSideMovementSample = LocationTracker.MovementSample(
+                50.0 / 111_320.0, 2.0 / 111_320.0, bearing, 1.5, 1.0, System.currentTimeMillis()))
+        }
+    }
+    @Test fun freeDrivePhysicalRowsToggleDirectionPreferenceAndReturnPreserveEvidence() {
+        open(fixture(planned = false).copy(tripFunction = "slashing", tripTitle = "Slashing"))
+        compose.runOnIdle { streamRowFixture.value = true }
+        installRowFixture()
+        compose.onNodeWithContentDescription("Left: Row 12").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Right: Row 13").assertIsDisplayed()
+        val before = vm.ui.value.trips.single()
+        capture("free-drive-physical-row-sides")
+        click("Switch to heading-up")
+        compose.onNodeWithContentDescription("Left: Row 12").assertIsDisplayed()
+        click("Toggle row labels")
+        compose.onNodeWithContentDescription("Left: Row 12").assertDoesNotExist()
+        click("Toggle row labels")
+        compose.onNodeWithContentDescription("Left: Row 12").assertIsDisplayed()
+        compose.runOnIdle { AppPreferencesStore(fixtureApplication).save(AppPreferences(rowTrackingEnabled = false)) }
+        compose.onNodeWithText("Row labels disabled in Preferences · Row Tracking").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Left: Row 12").assertDoesNotExist()
+        compose.runOnIdle { AppPreferencesStore(fixtureApplication).save(AppPreferences(rowTrackingEnabled = true)) }
+        installRowFixture(180.0)
+        compose.onNodeWithContentDescription("Left: Row 13").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Right: Row 12").assertIsDisplayed()
+        click("Back")
+        compose.onNodeWithText("Return to same Live Trip").performClick()
+        installRowFixture(180.0)
+        compose.onNodeWithContentDescription("Right: Row 12").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(before, vm.ui.value.trips.single()); assertEquals(id, vm.ui.value.deviceActiveTripId) }
+        noClippedText()
+    }
+    @Test fun rowSidesStaleLowSpeedAndFreshReturnLeaveSavedActionUntouched() {
+        val owner = object : androidx.lifecycle.LifecycleOwner {
+            val registry = androidx.lifecycle.LifecycleRegistry(this)
+            override val lifecycle: androidx.lifecycle.Lifecycle get() = registry
+        }
+        instrumentation.runOnMainSync { owner.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
+        open(lifecycleOwner = owner); installRowFixture()
+        val before = vm.ui.value.trips.single()
+        compose.onNodeWithContentDescription("Left: Row 12").assertIsDisplayed()
+        compose.runOnIdle { state().value = state().value.copy(rowSideMovementSample = state().value.rowSideMovementSample!!.copy(speedMetresPerSecond = 0.0)) }
+        compose.onNodeWithText("Row guidance · waiting for travel direction").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Left: Row 12").assertDoesNotExist()
+        compose.runOnIdle { state().value = state().value.copy(rowSideMovementSample = state().value.rowSideMovementSample!!.copy(timestampMs = 0L)) }
+        compose.onNodeWithText("Row guidance · waiting for a reliable fix").assertIsDisplayed()
+        installRowFixture()
+        compose.onNodeWithContentDescription("Right: Row 13").assertIsDisplayed()
+        compose.onNodeWithText("Done 0.5").assertIsDisplayed()
+        compose.runOnIdle { owner.registry.currentState = androidx.lifecycle.Lifecycle.State.CREATED }
+        compose.onNodeWithContentDescription("Right: Row 13").assertDoesNotExist()
+        compose.runOnIdle { owner.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
+        compose.onNodeWithText("Row guidance · waiting for a reliable fix").assertIsDisplayed()
+        installRowFixture()
+        compose.onNodeWithContentDescription("Left: Row 12").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(before, vm.ui.value.trips.single()); assertEquals(id, vm.ui.value.deviceActiveTripId) }
+    }
+    /** Explicit diagnostic export only; intentional failure is not a functional test result. */
+    @Test fun exportPhysicalRowSideEvidenceOnly() {
+        if (InstrumentationRegistry.getArguments().getString("class")?.endsWith("#exportPhysicalRowSideEvidenceOnly") != true) return
+        open(fixture(planned = false).copy(tripFunction = "slashing", tripTitle = "Slashing"))
+        compose.runOnIdle { streamRowFixture.value = true }
+        installRowFixture()
+        compose.onNodeWithContentDescription("Left: Row 12").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Right: Row 13").assertIsDisplayed()
+        capture("free-drive-physical-row-sides", transportProbe = true)
     }
     @Test fun fillingAndSingleTankLargePhone() {
         open(fixture(tanks = 1).copy(activeTankNumber = null, isFillingTank = true, fillingTankNumber = 1,

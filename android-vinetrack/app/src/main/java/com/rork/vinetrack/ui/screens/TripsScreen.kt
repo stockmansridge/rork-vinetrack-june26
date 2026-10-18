@@ -145,6 +145,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -1891,13 +1892,42 @@ internal fun ActiveTripHud(
     // Zoom held stable across follow updates. Re-captured from the camera only
     // when the operator taps Recenter — GPS ticks never change zoom.
     var followZoom by rememberSaveable(trip.id) { mutableFloatStateOf(18f) }
-    // Floating left/right row labels start hidden (iOS parity) — the map
-    // stays clear by default and the SwapHoriz control brings them back.
+    // Display-only visibility; independent of the saved/planned action target.
     var showRowChips by rememberSaveable(trip.id) { mutableStateOf(true) }
-    // iOS canShowRowSides parity: the side chips are gated on the device-local
-    // "row tracking" preference in addition to the on-map toggle.
     val hudContext = LocalContext.current
-    val rowTrackingEnabled = remember { AppPreferencesStore(hudContext).load().rowTrackingEnabled }
+    var rowTrackingEnabled by remember(hudContext) { mutableStateOf(AppPreferencesStore(hudContext).load().rowTrackingEnabled) }
+    val hudLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    var rowDisplayForeground by remember { mutableStateOf(hudLifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) }
+    var rowDisplayFreshAfterMs by remember(trip.id) { mutableLongStateOf(0L) }
+    var rowDisplayNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    DisposableEffect(hudContext, hudLifecycle) {
+        val preferences = hudContext.getSharedPreferences("vinetrack_app_prefs", Context.MODE_PRIVATE)
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+            rowTrackingEnabled = AppPreferencesStore(hudContext).load().rowTrackingEnabled
+        }
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                rowDisplayForeground = false
+                rowDisplayFreshAfterMs = System.currentTimeMillis()
+            } else if (event == androidx.lifecycle.Lifecycle.Event.ON_START) {
+                rowDisplayForeground = true
+                rowDisplayNowMs = System.currentTimeMillis()
+                rowTrackingEnabled = AppPreferencesStore(hudContext).load().rowTrackingEnabled
+            }
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        hudLifecycle.addObserver(observer)
+        onDispose {
+            preferences.unregisterOnSharedPreferenceChangeListener(listener)
+            hudLifecycle.removeObserver(observer)
+        }
+    }
+    LaunchedEffect(trip.id, rowDisplayForeground) {
+        if (rowDisplayForeground) while (isActive) {
+            rowDisplayNowMs = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
     val mapDefaults = remember { com.rork.vinetrack.data.MapPrefsStore(hudContext).load() }
     val rowLines = remember(blocks, mapDefaults.showRowLines) {
         if (!mapDefaults.showRowLines) emptyList() else blocks.flatMap { it.rows.orEmpty() }
@@ -1973,7 +2003,6 @@ internal fun ActiveTripHud(
     val livePath = state.currentDrivingPathNumber.takeIf { state.rowLockIsConfident && accuracy != null }
     val plannedPath = guidance.current
     val occurrenceDocument = trip.occurrenceDocument
-    val targetItem = occurrenceDocument?.items?.singleOrNull { it.id == occurrenceDocument.targetId }
     val guidancePath = guidance.current
     val estimatedSeconds = vm.estimatedRemainingSeconds(trip)
     val eta = estimatedSeconds?.let { seconds -> if (seconds >= 3600) "${seconds / 3600}h ${(seconds % 3600) / 60}m" else "${if (seconds == 0L) 0 else maxOf(1, seconds / 60)}m" }
@@ -1990,52 +2019,14 @@ internal fun ActiveTripHud(
     val offPlan = livePath != null && plannedPath != null &&
         kotlin.math.abs(livePath - plannedPath) >= 0.5 && !trip.isPaused
 
-    // ---- Left/right row labels (iOS rowIndicatorOverlay parity) ----
-    // Block the tractor is currently inside, falling back to the trip's blocks.
-    val currentBlock = remember(blocks, current) {
-        blocks.firstOrNull { RowAttachment.containsPoint(it, current?.latitude, current?.longitude) }
-            ?: blocks.firstOrNull()
+    val rowSample = state.rowSideMovementSample?.takeIf {
+        rowDisplayForeground && state.isTracking && state.deviceActiveTripId == trip.id && it.timestampMs > rowDisplayFreshAfterMs
     }
-    // Travel bearing latched with hysteresis so the labels don't flicker while
-    // turning at headlands or on GPS jitter (mirrors iOS updateTravelBearing):
-    // only accept samples roughly along the row vector, and flip the lock only
-    // after 3 consecutive opposite samples.
-    var lockedTravelBearing by remember { mutableStateOf<Double?>(null) }
-    var bearingFlipSamples by remember { mutableIntStateOf(0) }
-    LaunchedEffect(bearing, currentBlock?.rowDirection) {
-        val b = bearing ?: return@LaunchedEffect
-        val rowDir = currentBlock?.rowDirection ?: return@LaunchedEffect
-        var diffToRow = b - rowDir
-        while (diffToRow < 0) diffToRow += 360
-        while (diffToRow >= 360) diffToRow -= 360
-        val alongRow = diffToRow < 45 || diffToRow > 315 || (diffToRow > 135 && diffToRow < 225)
-        if (!alongRow) return@LaunchedEffect
-        val locked = lockedTravelBearing
-        if (locked == null) {
-            lockedTravelBearing = b
-            bearingFlipSamples = 0
-            return@LaunchedEffect
-        }
-        var diffToLocked = b - locked
-        while (diffToLocked < 0) diffToLocked += 360
-        while (diffToLocked >= 360) diffToLocked -= 360
-        if (diffToLocked > 135 && diffToLocked < 225) {
-            bearingFlipSamples += 1
-            if (bearingFlipSamples >= 3) {
-                lockedTravelBearing = b
-                bearingFlipSamples = 0
-            }
-        } else {
-            bearingFlipSamples = 0
-        }
+    val physicalSides = remember(trip, state.paddocks, rowSample, rowDisplayNowMs) {
+        LiveRowSideGuidance.resolve(trip, state.paddocks, rowSample, maxOf(rowDisplayNowMs, System.currentTimeMillis()))
     }
-    val physicalSides = occurrenceDocument?.takeIf {
-        state.rowLockIsConfident && state.currentTripPaddockId == targetItem?.blockId && livePath == targetItem?.label
-    }?.let { document ->
-        com.rork.vinetrack.data.OccurrenceTraversalTracker.adjacentLabels(document, document.targetId, cameraPositionState.position.bearing.toDouble())
-    }
-    val leftRowLabel = physicalSides?.first?.let { "Row ${formatPath(it)}" }
-    val rightRowLabel = physicalSides?.second?.let { "Row ${formatPath(it)}" }
+    val leftRowLabel = physicalSides.left?.let { "Row ${formatPath(it)}" }
+    val rightRowLabel = physicalSides.right?.let { "Row ${formatPath(it)}" }
 
     val mapContent: @Composable () -> Unit = {
         if (mapPreview != null) mapPreview() else GoogleMap(
@@ -2218,25 +2209,34 @@ internal fun ActiveTripHud(
             HudCircleButton(
                 Icons.Filled.SwapHoriz,
                 "Toggle row labels",
-                active = showRowChips,
+                active = showRowChips && rowTrackingEnabled,
                 onClick = { showRowChips = !showRowChips },
             )
             HudCircleButton(Icons.Filled.Layers, "Map type", onClick = { hybrid = !hybrid })
         }
 
         // Left/right adjacent-row chips (iOS rowIndicatorOverlay parity).
-        if (showRowChips && rowTrackingEnabled && leftRowLabel != null && rightRowLabel != null && currentBlock != null) {
-            RowSideChip(
+        if (showRowChips && rowTrackingEnabled) {
+            if (leftRowLabel != null) RowSideChip(
                 isLeft = true,
                 label = leftRowLabel,
                 modifier = Modifier.align(Alignment.CenterStart).padding(start = 12.dp),
             )
-            RowSideChip(
+            if (rightRowLabel != null) RowSideChip(
                 isLeft = false,
                 label = rightRowLabel,
                 modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
             )
         }
+        val rowMessage = when {
+            !rowTrackingEnabled -> "Row labels disabled in Preferences · Row Tracking"
+            !showRowChips -> null
+            else -> physicalSides.message
+        }
+        if (rowMessage != null) Text(rowMessage,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp)
+                .background(vine.cardBackground, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
+            color = vine.textSecondary, fontSize = 12.sp)
 
         }
         // Bottom control panel — compact by default so the map stays the
@@ -2396,6 +2396,7 @@ private fun HudActionPill(
 private fun RowSideChip(isLeft: Boolean, label: String, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
+            .semantics { contentDescription = "${if (isLeft) "Left" else "Right"}: $label" }
             .width(78.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(Color.Black.copy(alpha = 0.55f))
