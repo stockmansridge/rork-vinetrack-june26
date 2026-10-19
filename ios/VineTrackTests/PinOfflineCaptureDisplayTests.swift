@@ -108,7 +108,7 @@ final class PinOfflineCaptureDisplayTests: XCTestCase {
         let observations = courses.enumerated().map { index, course in
             PinCaptureObservation(
                 observedAt: capturedAt.addingTimeInterval(Double(index - courses.count)),
-                latitude: -33 + Double(index) * 0.00001,
+                latitude: -33 + Double(index) * 0.00003,
                 longitude: 149,
                 horizontalAccuracyM: 0.4,
                 courseDegrees: course,
