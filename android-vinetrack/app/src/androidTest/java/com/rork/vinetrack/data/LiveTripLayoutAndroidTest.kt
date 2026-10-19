@@ -354,44 +354,72 @@ class LiveTripLayoutAndroidTest {
         compose.onNodeWithText("Path 0.5").assertIsDisplayed()
         compose.runOnIdle { assertEquals(0, vm.ui.value.trips.single().sequenceIndex); assertTrue(vm.ui.value.trips.single().completedPaths.orEmpty().isEmpty()) }
     }
-    private fun installRowFixture(bearing: Double = 0.0) {
+    private fun installRowFixture(bearing: Double = 0.0, spacing: Double = 4.0, accuracy: Double = 1.0) {
         fun point(x: Double, y: Double) = CoordinatePoint(y / 111_320.0, x / 111_320.0)
-        val block = Paddock("dddddddd-dddd-4ddd-8ddd-dddddddddddd", vineyard, "Mapped Slashing Block", rowWidth = 4.0,
+        val block = Paddock("dddddddd-dddd-4ddd-8ddd-dddddddddddd", vineyard, "Mapped Slashing Block", rowWidth = spacing,
             polygonPoints = listOf(point(-2.0, -10.0), point(6.0, -10.0), point(6.0, 110.0), point(-2.0, 110.0)),
             rows = listOf(PaddockRow(number = 12, startPoint = point(0.0, 0.0), endPoint = point(0.0, 100.0)),
-                PaddockRow(number = 13, startPoint = point(4.0, 100.0), endPoint = point(4.0, 0.0))))
+                PaddockRow(number = 13, startPoint = point(spacing, 100.0), endPoint = point(spacing, 0.0))))
         compose.runOnIdle {
             mappedRowFixture.value = true
             state().value = state().value.copy(paddocks = listOf(block), rowSideMovementSample = LocationTracker.MovementSample(
-                50.0 / 111_320.0, 2.0 / 111_320.0, bearing, 1.5, 1.0, System.currentTimeMillis()))
+                50.0 / 111_320.0, (spacing / 2.0) / 111_320.0, bearing, 1.5, accuracy, System.currentTimeMillis()),
+                latestAccuracyMetres = accuracy, latestMovementObservedAtMs = System.currentTimeMillis())
         }
     }
     @Test fun freeDrivePhysicalRowsToggleDirectionPreferenceAndReturnPreserveEvidence() {
         open(fixture(planned = false).copy(tripFunction = "slashing", tripTitle = "Slashing"))
         compose.runOnIdle { streamRowFixture.value = true }
         installRowFixture()
-        compose.onNodeWithContentDescription("Left: Row 12").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Right: Row 13").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Travel left: Row 12").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Travel right: Row 13").assertIsDisplayed()
         val before = vm.ui.value.trips.single()
         capture("free-drive-physical-row-sides")
         click("Switch to heading-up")
-        compose.onNodeWithContentDescription("Left: Row 12").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Travel left: Row 12").assertIsDisplayed()
         click("Toggle row labels")
-        compose.onNodeWithContentDescription("Left: Row 12").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Travel left: Row 12").assertDoesNotExist()
         click("Toggle row labels")
-        compose.onNodeWithContentDescription("Left: Row 12").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Travel left: Row 12").assertIsDisplayed()
         compose.runOnIdle { AppPreferencesStore(fixtureApplication).save(AppPreferences(rowTrackingEnabled = false)) }
         compose.onNodeWithText("Row labels disabled in Preferences · Row Tracking").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Left: Row 12").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Travel left: Row 12").assertDoesNotExist()
         compose.runOnIdle { AppPreferencesStore(fixtureApplication).save(AppPreferences(rowTrackingEnabled = true)) }
         installRowFixture(180.0)
-        compose.onNodeWithContentDescription("Left: Row 13").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Right: Row 12").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Travel left: Row 13").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Travel right: Row 12").assertIsDisplayed()
         click("Back")
         compose.onNodeWithText("Return to same Live Trip").performClick()
         installRowFixture(180.0)
-        compose.onNodeWithContentDescription("Right: Row 12").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Travel right: Row 12").assertIsDisplayed()
         compose.runOnIdle { assertEquals(before, vm.ui.value.trips.single()); assertEquals(id, vm.ui.value.deviceActiveTripId) }
+        noClippedText()
+    }
+    @Test fun narrowRowsGpsGoodStillWaitsAndRecoversWithoutChangingEvidence() {
+        open(fixture(planned = false))
+        compose.runOnIdle { streamRowFixture.value = true }
+        val before = vm.ui.value.trips.single()
+        val pending = AppViewModel::class.java.getDeclaredField("pendingWrites").let { it.isAccessible = true; it.get(vm) as PendingWriteRepository }
+        val syncBefore = pending.writes.value
+        listOf(2.8, 3.0).forEach { spacing ->
+            listOf(1.0, 3.0, 5.0, 8.0, 1.0).forEach { accuracy ->
+                installRowFixture(spacing = spacing, accuracy = accuracy)
+                compose.onNodeWithText("Good").assertIsDisplayed()
+                if (accuracy == 1.0) {
+                    compose.onNodeWithContentDescription("Travel left: Row 12").assertIsDisplayed()
+                    compose.onNodeWithText("Sides follow travel direction, not vehicle facing").assertIsDisplayed()
+                } else {
+                    compose.onNodeWithContentDescription("Travel left: Row 12").assertDoesNotExist()
+                    compose.onNodeWithContentDescription("Travel right: Row 13").assertDoesNotExist()
+                    compose.onNodeWithText("Row guidance waiting · GPS cannot distinguish adjacent rows").assertIsDisplayed()
+                }
+            }
+        }
+        compose.runOnIdle {
+            assertEquals(before, vm.ui.value.trips.single())
+            assertEquals(syncBefore, pending.writes.value)
+            assertEquals(id, vm.ui.value.deviceActiveTripId)
+        }
         noClippedText()
     }
     @Test fun rowSidesStaleLowSpeedAndFreshReturnLeaveSavedActionUntouched() {
@@ -402,21 +430,21 @@ class LiveTripLayoutAndroidTest {
         instrumentation.runOnMainSync { owner.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
         open(lifecycleOwner = owner); installRowFixture()
         val before = vm.ui.value.trips.single()
-        compose.onNodeWithContentDescription("Left: Row 12").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Travel left: Row 12").assertIsDisplayed()
         compose.runOnIdle { state().value = state().value.copy(rowSideMovementSample = state().value.rowSideMovementSample!!.copy(speedMetresPerSecond = 0.0)) }
         compose.onNodeWithText("Row guidance · waiting for travel direction").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Left: Row 12").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Travel left: Row 12").assertDoesNotExist()
         compose.runOnIdle { state().value = state().value.copy(rowSideMovementSample = state().value.rowSideMovementSample!!.copy(timestampMs = 0L)) }
         compose.onNodeWithText("Row guidance · waiting for a reliable fix").assertIsDisplayed()
         installRowFixture()
-        compose.onNodeWithContentDescription("Right: Row 13").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Travel right: Row 13").assertIsDisplayed()
         compose.onNodeWithText("Done 0.5").assertIsDisplayed()
         compose.runOnIdle { owner.registry.currentState = androidx.lifecycle.Lifecycle.State.CREATED }
-        compose.onNodeWithContentDescription("Right: Row 13").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Travel right: Row 13").assertDoesNotExist()
         compose.runOnIdle { owner.registry.currentState = androidx.lifecycle.Lifecycle.State.RESUMED }
         compose.onNodeWithText("Row guidance · waiting for a reliable fix").assertIsDisplayed()
         installRowFixture()
-        compose.onNodeWithContentDescription("Left: Row 12").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Travel left: Row 12").assertIsDisplayed()
         compose.runOnIdle { assertEquals(before, vm.ui.value.trips.single()); assertEquals(id, vm.ui.value.deviceActiveTripId) }
     }
     /** Explicit diagnostic export only; intentional failure is not a functional test result. */
@@ -425,8 +453,8 @@ class LiveTripLayoutAndroidTest {
         open(fixture(planned = false).copy(tripFunction = "slashing", tripTitle = "Slashing"))
         compose.runOnIdle { streamRowFixture.value = true }
         installRowFixture()
-        compose.onNodeWithContentDescription("Left: Row 12").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Right: Row 13").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Travel left: Row 12").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Travel right: Row 13").assertIsDisplayed()
         capture("free-drive-physical-row-sides", transportProbe = true)
     }
     @Test fun fillingAndSingleTankLargePhone() {

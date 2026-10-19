@@ -2396,7 +2396,7 @@ private fun HudActionPill(
 private fun RowSideChip(isLeft: Boolean, label: String, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
-            .semantics { contentDescription = "${if (isLeft) "Left" else "Right"}: $label" }
+            .semantics { contentDescription = "${if (isLeft) "Travel left" else "Travel right"}: $label" }
             .width(78.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(Color.Black.copy(alpha = 0.55f))
@@ -2410,6 +2410,7 @@ private fun RowSideChip(isLeft: Boolean, label: String, modifier: Modifier = Mod
             tint = Color.White,
             modifier = Modifier.size(14.dp),
         )
+        Text(if (isLeft) "Travel left" else "Travel right", color = Color.White, fontSize = 11.sp)
         AnimatedContent(targetState = label, transitionSpec = { fadeIn() togetherWith fadeOut() }, label = "rowSide") { v ->
             Text(v, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
         }

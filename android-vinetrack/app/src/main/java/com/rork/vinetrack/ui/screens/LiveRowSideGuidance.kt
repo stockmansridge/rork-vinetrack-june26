@@ -5,6 +5,7 @@ import com.rork.vinetrack.data.PinAisleGeometry
 import com.rork.vinetrack.data.RowAttachment
 import com.rork.vinetrack.data.TripBlockResolver
 import com.rork.vinetrack.data.model.Paddock
+import com.rork.vinetrack.data.model.PaddockRow
 import com.rork.vinetrack.data.model.Trip
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -12,7 +13,7 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.sin
 
-/** Read-only physical context. Never selects a planned item or publishes coverage. */
+/** Read-only movement-relative context, NOT vehicle/operator facing. Never publishes coverage. */
 internal data class LiveRowSideGuidance(
     val left: Double? = null,
     val right: Double? = null,
@@ -45,7 +46,11 @@ internal data class LiveRowSideGuidance(
                     start.longitude !in -180.0..180.0 || end.longitude !in -180.0..180.0
             } || rows.map { it.number }.distinct().size != rows.size)
                 return waiting("Row guidance · mapped rows unavailable")
-            val heading = PinAisleGeometry.qualifiedCourseHeading(fix.bearingDegrees, fix.speedMetresPerSecond, true)
+            // Course proves movement direction only: backing up and turning around can
+            // produce identical GPS samples. Never assert forward-travel/facing evidence.
+            val heading = fix.speedMetresPerSecond
+                ?.takeIf { it.isFinite() && it >= PinAisleGeometry.MIN_COURSE_SPEED_MPS }
+                ?.let { PinAisleGeometry.validHeading(fix.bearingDegrees) }
                 ?: return waiting("Row guidance · waiting for travel direction")
             fun knownSide(): LiveRowSideGuidance? {
                 val nearest = RowAttachment.nearestRow(block, fix.latitude, fix.longitude) ?: return null
@@ -57,8 +62,15 @@ internal data class LiveRowSideGuidance(
             if (PinAisleGeometry.approximateAisle(block, fix.latitude, fix.longitude) == null)
                 return knownSide() ?: waiting("Row guidance · outside mapped rows")
             val aisle = PinAisleGeometry.aisleContaining(block, fix.latitude, fix.longitude, fix.accuracyMetres)
-                ?: return waiting("Row guidance · waiting for a reliable fix")
+                ?: return waiting(ACCURACY_WAITING)
             val pair = aisle.nearRowNumber to aisle.farRowNumber
+            // Display-only stricter admission. The pin helper permits uncertainty up
+            // to the full aisle width; that cannot distinguish adjacent physical aisles.
+            val accuracy = fix.accuracyMetres?.takeIf { it.isFinite() && it >= 0.0 }
+                ?: return waiting(ACCURACY_WAITING)
+            if (pair.toList().any { number ->
+                !uncertaintyClearsRowAndEnds(rows.single { it.number == number }, fix, accuracy)
+            }) return waiting(ACCURACY_WAITING)
             // A cross-row/headland course cannot establish an along-aisle side.
             if (listOf(pair.first, pair.second).any { number ->
                 val row = rows.single { it.number == number }
@@ -73,7 +85,25 @@ internal data class LiveRowSideGuidance(
                 ?.let { selected -> rows.singleOrNull { it.number == selected.rowNumber }?.calculationRowNumber?.takeIf { it.isFinite() } }
             val left = side("left"); val right = side("right")
             return LiveRowSideGuidance(left, right,
-                if (left == null && right == null) "Row guidance · waiting for reliable sides" else null, block.id)
+                if (left == null && right == null) "Row guidance · waiting for reliable sides" else TRAVEL_REFERENCE, block.id)
+        }
+
+        const val ACCURACY_WAITING = "Row guidance waiting · GPS cannot distinguish adjacent rows"
+        const val TRAVEL_REFERENCE = "Sides follow travel direction, not vehicle facing"
+
+        private fun uncertaintyClearsRowAndEnds(row: PaddockRow, fix: LocationTracker.MovementSample, accuracy: Double): Boolean {
+            val start = row.startPoint ?: return false
+            val end = row.endPoint ?: return false
+            val scale = 111_320.0 * cos(Math.toRadians(fix.latitude))
+            val ax = (start.longitude - fix.longitude) * scale
+            val ay = (start.latitude - fix.latitude) * 111_320.0
+            val dx = (end.longitude - start.longitude) * scale
+            val dy = (end.latitude - start.latitude) * 111_320.0
+            val length = hypot(dx, dy).takeIf { it > 0.0 } ?: return false
+            val along = -(ax * dx + ay * dy) / length
+            val distance = hypot(ax + along * dx / length, ay + along * dy / length)
+            return along > accuracy && length - along > accuracy &&
+                distance > maxOf(accuracy, PinAisleGeometry.MIN_AISLE_OFFSET_M)
         }
 
         // A single explicitly mapped row can establish ONE side, never an invented aisle.
@@ -100,7 +130,7 @@ internal data class LiveRowSideGuidance(
             val rightOffset = x * cos(radians) - y * sin(radians)
             if (abs(rightOffset) <= accuracy) return null
             val label = row.calculationRowNumber.takeIf { it.isFinite() } ?: return null
-            return LiveRowSideGuidance(left = label.takeIf { rightOffset < 0 }, right = label.takeIf { rightOffset > 0 }, blockId = block.id)
+            return LiveRowSideGuidance(left = label.takeIf { rightOffset < 0 }, right = label.takeIf { rightOffset > 0 }, message = TRAVEL_REFERENCE, blockId = block.id)
         }
     }
 }

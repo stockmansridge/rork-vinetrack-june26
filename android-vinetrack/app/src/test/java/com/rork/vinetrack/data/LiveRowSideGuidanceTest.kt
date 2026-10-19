@@ -52,7 +52,7 @@ class LiveRowSideGuidanceTest {
         listOf(null, fix(time = now - 5_001), fix(time = now + 1)).forEach { assertNull(resolve(it).left); assertTrue(resolve(it).message!!.contains("reliable fix")) }
     }
     @Test fun inaccurateAndMissingAccuracyWaitForReliableFix() {
-        listOf(null, 4.0, 15.0, Double.NaN, -1.0).forEach { val r = resolve(fix(accuracy = it)); assertNull(r.left); assertTrue(r.message!!.contains("reliable fix")) }
+        listOf(null, 4.0, 15.0, Double.NaN, -1.0).forEach { val r = resolve(fix(accuracy = it)); assertNull(r.left); assertEquals(LiveRowSideGuidance.ACCURACY_WAITING, r.message) }
     }
     @Test fun headlandsOutsideAndCrossRowTravelNeverInventSides() {
         listOf(fix(y = 105.0), fix(y = 130.0), fix(x = 5.0), fix(bearing = 90.0)).forEach { assertNull(resolve(it).left); assertNull(resolve(it).right) }
@@ -79,6 +79,59 @@ class LiveRowSideGuidanceTest {
         val r = resolve(fix(x = 5.5, accuracy = 0.5)); assertEquals(13.0, r.left!!, 0.0); assertNull(r.right)
         val reverse = resolve(fix(x = 5.5, accuracy = 0.5, bearing = 180.0)); assertNull(reverse.left); assertEquals(13.0, reverse.right!!, 0.0)
         assertNull(resolve(fix(x = 5.5, y = 105.0, accuracy = 0.5)).left)
+    }
+    @Test fun courseCannotDistinguishBackingFromTurnaroundAndNeverClaimsFacing() {
+        val north = resolve(fix(bearing = 0.0))
+        // A southbound forward vehicle and a north-facing vehicle backing south
+        // have exactly the same available MovementSample. No gear/facing is present.
+        val backing = fix(bearing = 180.0)
+        val turnedAround = backing.copy()
+        val south = resolve(backing)
+        assertEquals(south, resolve(turnedAround))
+        assertEquals(north.left, south.right); assertEquals(north.right, south.left)
+        assertEquals(LiveRowSideGuidance.TRAVEL_REFERENCE, south.message)
+        assertNull(resolve(fix(bearing = 90.0)).left)
+        assertNull(resolve(fix(speed = 0.0)).left)
+        assertEquals(north, resolve(fix(bearing = 0.0)))
+    }
+    private fun narrowBlock(spacing: Double): Paddock = block().copy(rowWidth = spacing,
+        rows = (12..15).mapIndexed { index, number -> PaddockRow(number = number,
+            startPoint = point(index * spacing, 0.0), endPoint = point(index * spacing, 100.0)) },
+        polygonPoints = listOf(point(-2.0, -10.0), point(spacing * 3 + 2, -10.0), point(spacing * 3 + 2, 110.0), point(-2.0, 110.0)))
+    @Test fun realisticSpacingAccuracyMatrixNeverTreatsGpsGoodAsRowProof() {
+        listOf(2.8, 2.9, 3.0).forEach { spacing ->
+            listOf(1.0, 3.0, 5.0, 8.0).forEach { accuracy ->
+                val result = resolve(fix(x = spacing * 1.5, accuracy = accuracy), listOf(narrowBlock(spacing)))
+                if (accuracy == 1.0) {
+                    assertEquals(13.0, result.left!!, 0.0); assertEquals(14.0, result.right!!, 0.0)
+                } else {
+                    assertNull(result.left); assertNull(result.right)
+                    assertEquals(LiveRowSideGuidance.ACCURACY_WAITING, result.message)
+                }
+            }
+        }
+    }
+    @Test fun evenOneMetreFixMustClearBothRowsAndTheirEnds() {
+        val b = narrowBlock(2.8)
+        listOf(fix(x = 0.8), fix(x = 2.0), fix(x = 1.4, y = 0.8), fix(x = 1.4, y = 99.2)).forEach {
+            val result = resolve(it, listOf(b)); assertNull(result.left); assertNull(result.right)
+            assertEquals(LiveRowSideGuidance.ACCURACY_WAITING, result.message)
+        }
+    }
+    @Test fun accuracyLossRecoveryAndBlockTransitionNeverChangeOriginalEvidence() {
+        val original = trip.copy(pathPoints = listOf(point(1.4, 40.0), point(1.4, 45.0)))
+        val bytes = SupabaseClient.json.encodeToString(Trip.serializer(), original)
+        val first = narrowBlock(2.8)
+        val next = first.copy(id = "next", rows = first.rows!!.map { row -> row.copy(
+            startPoint = row.startPoint!!.copy(longitude = row.startPoint!!.longitude + 20.0 / 111_320.0),
+            endPoint = row.endPoint!!.copy(longitude = row.endPoint!!.longitude + 20.0 / 111_320.0)) },
+            polygonPoints = first.polygonPoints!!.map { it.copy(longitude = it.longitude + 20.0 / 111_320.0) })
+        listOf(1.0, 3.0, 5.0, 8.0, 1.0).forEach { accuracy ->
+            val result = resolve(fix(x = 1.4, accuracy = accuracy), listOf(first, next), original)
+            assertEquals(accuracy == 1.0, result.left != null)
+        }
+        assertEquals("next", resolve(fix(x = 21.4), listOf(first, next), original).blockId)
+        assertEquals(bytes, SupabaseClient.json.encodeToString(Trip.serializer(), original))
     }
     @Test fun pauseAndReturnUseFreshEvidenceWithoutChangingTrip() {
         assertNull(resolve(source = trip.copy(isPaused = true)).left)
