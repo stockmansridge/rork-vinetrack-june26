@@ -62,6 +62,48 @@ final class PinOfflineCaptureDisplayTests: XCTestCase {
         XCTAssertNil(PinCaptureEvidence.confirmationHeading(for: evidence))
     }
 
+    func testTravelDirectionRequiresMovementNotPhoneOrientation() {
+        let now = Date()
+        let moving = (0...3).map { index in
+            PinCaptureObservation(
+                observedAt: now.addingTimeInterval(Double(index - 3)),
+                latitude: -33.0 + Double(index) * 0.00003,
+                longitude: 149,
+                horizontalAccuracyM: 2,
+                courseDegrees: 0,
+                speedMps: 2
+            )
+        }
+        let course = PinCaptureEvidence.qualifiedTravelDirection(
+            observations: moving,
+            capturedAt: now
+        )
+        XCTAssertNotNil(course)
+        XCTAssertEqual(course?.degrees ?? -1, 0, accuracy: 0.01)
+
+        let stationary = moving.map {
+            PinCaptureObservation(
+                observedAt: $0.observedAt, latitude: -33,
+                longitude: 149, horizontalAccuracyM: 2,
+                courseDegrees: 0, speedMps: 2
+            )
+        }
+        XCTAssertNil(PinCaptureEvidence.qualifiedTravelDirection(
+            observations: stationary, capturedAt: now
+        ))
+        let reversing = moving.enumerated().map { index, sample in
+            PinCaptureObservation(
+                observedAt: sample.observedAt,
+                latitude: sample.latitude, longitude: sample.longitude,
+                horizontalAccuracyM: sample.horizontalAccuracyM,
+                courseDegrees: index == 2 ? 180 : 0, speedMps: sample.speedMps
+            )
+        }
+        XCTAssertNil(PinCaptureEvidence.qualifiedTravelDirection(
+            observations: reversing, capturedAt: now
+        ))
+    }
+
     private func makeEvidence(capturedAt: Date, courses: [Double]) -> PinCaptureEvidence {
         let observations = courses.enumerated().map { index, course in
             PinCaptureObservation(
