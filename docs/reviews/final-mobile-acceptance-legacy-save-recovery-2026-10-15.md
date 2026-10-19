@@ -1,5 +1,15 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Target Nutrient Calculator — CLOSED: implementation complete, device acceptance deferred — 19 October 2026
+
+Owner accepts the completed iOS and Android source implementation and existing automated validation. **Implementation workstream CLOSED. Physical-device acceptance DEFERRED**, not passed, until compatible signed handset builds are available through a separately approved release process. Signing/delivery limitations do not reopen implementation.
+
+Retain the recorded frozen source revision **`f16e59646144d8d9017ba8c84a6362a9ad0415c0`**, iOS subtree `f2521036894697cec9352a2a4e5eb6969621b2b3`, Android subtree `1e0f350ef55b2e90723343bb1becac2c4360481f`, existing patch/artifact hashes, disclosed failures/limits and eleven-case handset checklist in the preparation checkpoint below. Retained nutrient validation: iOS12 target +12 regional +4 UI passes (skipped metric unavailable); Android74 host and7 Compose/persistence/restoration passes, zero failures/errors/skips; both recorded correctness builds PASS. Historical overlapping runs are not added; no new validation is claimed.
+
+Recorded signing limitations remain: iOS validation is simulator-only with no current signed handset IPA; inspected Android3.1.7/code12 APK is debug-signed and not cleared as a compatible in-place replacement. Historical signed builds predate this implementation and are not substitutes. Mobile System Admin-only preview, disabled saving, original records and offline-work protections remain unchanged.
+
+No further investigation, builds, signing changes, tests or development for this workstream. No release, upload, distribution, deployment or handset operation authorised or performed for this closeout. Documentation-only status update; no code changes or validation reruns. Earlier nutrient signing/handset gates are retained as **deferred future release acceptance**, not active work or failed implementation. Separate spray/row-guidance status is unaffected.
+
 ## Final Android row guidance source acceptance — 19 October 2026 — frozen; Play proposal awaits Console facts
 
 ### Accepted source and preserved evidence
