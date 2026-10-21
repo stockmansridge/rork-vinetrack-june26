@@ -74,6 +74,46 @@ final class SprayRepository {
         persistence.load(key: Self.savedChemicalsKey) ?? []
     }
 
+    /// A failed read must not turn a complete reconciliation into permission
+    /// to overwrite the other vineyards' cached chemicals with an empty base.
+    func loadChemicalsForReconciliation() throws -> [SavedChemical] {
+        let outcome: PersistenceStore.LoadOutcome<[SavedChemical]> = persistence.loadOutcome(key: Self.savedChemicalsKey)
+        switch outcome {
+        case .missing: return []
+        case .decoded(let chemicals): return chemicals
+        case .failed(let error): throw error
+        }
+    }
+
+    nonisolated enum ChemicalReconciliationError: LocalizedError {
+        case wrongVineyard
+
+        var errorDescription: String? {
+            "Chemical reconciliation contained a record for a different vineyard."
+        }
+    }
+
+    /// The caller has just read `persisted` on the main actor and must not
+    /// suspend before this commit. Compare full model values before encoding;
+    /// unchanged rows keep their order and need no collection write.
+    @discardableResult
+    func saveChemicalReconciliation(
+        _ chemicals: [SavedChemical],
+        for vineyardId: UUID,
+        persisted: [SavedChemical]
+    ) throws -> Bool {
+        guard chemicals.allSatisfy({ $0.vineyardId == vineyardId }) else {
+            throw ChemicalReconciliationError.wrongVineyard
+        }
+        guard persisted.filter({ $0.vineyardId == vineyardId }) != chemicals else { return false }
+        var all = persisted.filter { $0.vineyardId != vineyardId }
+        all.append(contentsOf: chemicals)
+        // Publication and dirty/delete acknowledgement follow this successful
+        // atomic save. A failed commit remains a failed reconciliation.
+        try persistence.saveOrThrow(all, key: Self.savedChemicalsKey)
+        return true
+    }
+
     func loadChemicals(for vineyardId: UUID) -> [SavedChemical] {
         loadAllChemicals().filter { $0.vineyardId == vineyardId }
     }

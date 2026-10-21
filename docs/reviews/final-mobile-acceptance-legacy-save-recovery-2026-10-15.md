@@ -1,5 +1,43 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## iOS Saved Chemical sync batching — PR #7 integration / focused validation — 21 October 2026
+
+**Status: authentic patch integrated; Debug simulator build PASS; four-suite gate NOT GREEN (63 passed, 2 failed). PR update/readiness not performed.** No merge, release, upload, distribution, physical-device operation or performance acceptance.
+
+### Source provenance and scope
+
+- Upstream: `stockmansridge/rork-vinetrack-june26`, PR `https://github.com/stockmansridge/rork-vinetrack-june26/pull/7`, branch `fix/ios-chemical-sync-batching-20261021`, exact implementation **`bbd2b791bb9d4b8c9c036e56fe66839035eb029e`**. Linked source retained at `linked-repos/vinetrack-sync-review`, clean and at that commit.
+- Managed baseline **`12cfa4fd9ae1fba508562f81752aa1a818dfd096`**. Before integration, all three affected production files were byte-identical to upstream parent **`50aa0f19e7440602765017a3844689c7ff478489`**. No reset/overwrite of newer accepted work. Both pre/post-upload complete reconciliation calls remain intact.
+- Integrated exactly the existing patch, not a recreation: `ManagementSyncServices.swift`, `SprayRepository.swift`, `MigratedDataStore+Spray.swift`, and existing upstream `SavedChemicalBatchReconciliationTests.swift` (440 lines,11 tests). All four integrated files verified byte-identical to upstream HEAD after transfer. Existing synchronized test target and Debug scheme needed no edits.
+- SHA-256 in the above file order: `8ac255ed70536596f178403a95395b4bcb59da056d8a963326dd9643e2b9a88e`, `2d9b6af17d830e119eed1e89a66a6c66ebfafc3ad4741950f7deeeeb660c0037`, `ca54fa3b93957ed77d5812d2de2d9a14f3fa94385e3050ce31a6cc292282dfac`, `2ec7d9840eba40f4edcf8cafd60099d3a964a13979c7326ad8f24b0530010c75`.
+- No Android, Target Nutrient, backend/schema, version, signing or unrelated application edits. No manual Git commit/push; final managed integration SHA is assigned by Rork after save and is not the baseline SHA.
+
+### Actual native validation
+
+One `swiftTest` invocation, app `ios`, exact selectors:
+
+- `VineTrackTests/SavedChemicalBatchReconciliationTests`
+- `VineTrackTests/SavedChemicalReconciliationTests`
+- `VineTrackTests/ChemicalStoreConsolidationTests`
+- `VineTrackTests/PersistencePerformanceTests`
+
+Runner: **65 executed,63 passed,2 failed**. Xcode27.1(27A9275); log shows `Debug-iphonesimulator/VineTrack.app`, `Test Build Succeeded`, build completed in **1m33.2277s**. Test execution duration/skipped metric not exposed. Full runner log `/tmp/rork-swift-test-ios.log` inspected through its final result: `2 of 65 tests failed`. It contains aggregate results and the two failure names, not a passing-case discovery manifest. Do not invent individual passing-test names/counts from the aggregate. Source inventory:11 batch functions,6 reconciliation functions (one parameterized false/true),29 consolidation functions,18 persistence functions =65 expected cases, consistent with observed total; source inventory is not separate per-suite execution evidence.
+
+The two observed assertion failures:
+
+1. **`ChemicalStoreConsolidationTests/seedingIsDeterministic()`**: `first == second` fails. `ChemicalReviewSession.make` hydrates manual active/use/rate drafts whose IDs default to fresh UUIDs; synthesized equality includes those IDs. These are existing pure draft paths, not the sync service/repository path.
+2. **`ChemicalStoreConsolidationTests/hracStaysDistinct()`**: expected code `G`, actual `9`. The existing authoritative table intentionally maps Glyphosate to current numeric HRAC9, with legacy G retained separately. HRAC scheme expectation is not the failing assertion.
+
+Source attribution verified: `ChemicalReviewSession.swift`, `ChemicalManualEntry.swift`, `ChemicalReviewDraft.swift`, `AuthoritativeActivityGroups.swift`, and `ChemicalStoreConsolidationTests.swift` are each identical in the current worktree, pre-integration baseline and upstream parent (full Git blobs respectively `3b83da69c0c5c32219463d728b2edc7de927da61`, `74f5621ce3a93e1dc6fd359a21de210c27c03720`, `7d6d13374847afad020efd2a5d56210d941f8898`, `cf4ba206e77641d318d140c4e7ee4fae32e60441`, `4eeb1aa72d35edacdab371173e1e5e9489569d7a`). This establishes unchanged code/test mismatches, **not an executed baseline failure**. No patch-caused compilation or assertion defect identified; no chemistry changes, assertion weakening, baseline rollback or unchanged rerun performed. Separate approval is required to correct these unrelated mismatches.
+
+Final `runChecks(ios)` **PASS**, simulator build succeeded; device build not verified. Two advisory old asset-address warnings in unrelated TripTypeChoiceSheet/UCRInfoSheet left untouched. Managed build is correctness validation only, not store/device delivery.
+
+### PR and remaining gates
+
+No supported GitHub PR-comment/readiness or branch-write operation is exposed in this session; linked-repo tooling provides source connection/inspection only, and manual commit/push is not permitted. **No PR comment posted, no correction pushed, no ready-for-review transition.** Linked PR branch remains at original verified implementation commit. No patch correction was necessary to push. Four-suite gate is not green, so readiness condition is unmet independently of tooling access. The evidence above is the intended factual PR update, not a claim it was posted.
+
+Physical acceptance remains deferred to separate approval: launch iPhone and immediately scroll Home during Syncing; repeat with unchanged cached data; compare existing performance captures. Automated collection-write/codec assertions do not prove real Home-scroll responsiveness. Prior Target Nutrient workstream remains CLOSED, with historical device acceptance deferred.
+
 ## Target Nutrient Calculator — CLOSED: implementation complete, device acceptance deferred — 19 October 2026
 
 Owner accepts the completed iOS and Android source implementation and existing automated validation. **Implementation workstream CLOSED. Physical-device acceptance DEFERRED**, not passed, until compatible signed handset builds are available through a separately approved release process. Signing/delivery limitations do not reopen implementation.

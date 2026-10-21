@@ -8,6 +8,7 @@ final class ManagementSyncMetadata {
     private let persistence: PersistenceStore
     private let key: String
     private var state: State
+    private var needsPersistenceRetry = false
 
     nonisolated struct State: Codable, Sendable {
         var lastSyncByVineyard: [UUID: Date] = [:]
@@ -41,9 +42,17 @@ final class ManagementSyncMetadata {
     var pendingCreates: Set<UUID> { Set((state.pendingCreates ?? [:]).keys) }
 
     func acknowledgeCreate(_ id: UUID) {
-        guard state.pendingCreates?[id] != nil else { return }
-        state.pendingCreates?.removeValue(forKey: id)
-        save()
+        acknowledgeCreates([id])
+    }
+
+    /// Observing a server row retires CREATE authority even when a newer
+    /// local edit or pending delete prevents applying that row's contents.
+    func acknowledgeCreates(_ ids: [UUID]) {
+        var changed = false
+        for id in ids {
+            if state.pendingCreates?.removeValue(forKey: id) != nil { changed = true }
+        }
+        if changed || needsPersistenceRetry { save() }
     }
 
     func markCreated(_ id: UUID, at date: Date) {
@@ -122,23 +131,27 @@ final class ManagementSyncMetadata {
     }
 
     func clearDirty(_ ids: [UUID]) {
-        guard !ids.isEmpty else { return }
-        for id in ids {
-            state.pendingUpserts.removeValue(forKey: id)
-            state.pendingCreates?.removeValue(forKey: id)
-        }
-        // A row with nothing queued has no unresolved conflict left to review.
-        if var conflicts = state.revisionConflicts, !conflicts.isEmpty {
-            for id in ids { conflicts.removeValue(forKey: id) }
-            state.revisionConflicts = conflicts
-        }
-        save()
+        clearAcknowledged(upserts: ids, deletes: [])
     }
 
     func clearDeleted(_ ids: [UUID]) {
-        guard !ids.isEmpty else { return }
-        for id in ids { state.pendingDeletes.removeValue(forKey: id) }
-        save()
+        clearAcknowledged(upserts: [], deletes: ids)
+    }
+
+    /// Batch a pull's acknowledged removals, retaining the existing metadata
+    /// persistence contract. Clean rows only save to retry an earlier failure.
+    func clearAcknowledged(upserts: [UUID], deletes: [UUID]) {
+        var changed = false
+        for id in upserts {
+            if state.pendingUpserts.removeValue(forKey: id) != nil { changed = true }
+            if state.pendingCreates?.removeValue(forKey: id) != nil { changed = true }
+            // A row with nothing queued has no unresolved conflict to review.
+            if state.revisionConflicts?.removeValue(forKey: id) != nil { changed = true }
+        }
+        for id in deletes {
+            if state.pendingDeletes.removeValue(forKey: id) != nil { changed = true }
+        }
+        if changed || needsPersistenceRetry { save() }
     }
 
     /// Every row this device still has unfinished business with: queued
@@ -163,7 +176,16 @@ final class ManagementSyncMetadata {
         save()
     }
 
-    private func save() { persistence.save(state, key: key) }
+    private func save() {
+        // Keep the existing nonthrowing metadata contract, but do not let a
+        // no-op acknowledgement suppress a retry after a failed disk write.
+        do {
+            try persistence.saveOrThrow(state, key: key)
+            needsPersistenceRetry = false
+        } catch {
+            needsPersistenceRetry = true
+        }
+    }
 }
 
 /// Matches the Postgres 23505 unique-violation raised by
@@ -378,27 +400,44 @@ final class SavedChemicalSyncService {
             throw SavedChemicalDeletionError.archiveFailed
         }
         let remoteIds = Set(remote.map(\.id))
-        let local = store.sprayRepo.loadAllChemicals().filter { $0.vineyardId == vineyardId }
-        for row in local where !remoteIds.contains(row.id) && !metadata.pendingCreates.contains(row.id) {
-            store.applyRemoteSavedChemicalUpsert(ChemicalStorePresentation.archived(row))
+        // Retire observed CREATE authority before applying contents, just as
+        // the per-row path did. Pending edits/deletes remain until committed.
+        metadata.acknowledgeCreates(remote.map(\.id))
+        let persisted = try store.sprayRepo.loadChemicalsForReconciliation()
+        let local = persisted.filter { $0.vineyardId == vineyardId }
+        let pendingCreates = metadata.pendingCreates
+        var pendingUpserts = metadata.pendingUpserts
+        var pendingDeletes = metadata.pendingDeletes
+        var replacements: [SavedChemical] = []
+        var acknowledgedUpserts: [UUID] = []
+        var acknowledgedDeletes: [UUID] = []
+        for row in local where !remoteIds.contains(row.id) && !pendingCreates.contains(row.id) {
+            replacements.append(ChemicalStorePresentation.archived(row))
             // Ambiguous old pending edits are retained, but can never authorize an INSERT.
         }
         for item in remote {
-            metadata.acknowledgeCreate(item.id)
             if item.deletedAt != nil || item.isActive == false {
-                store.applyRemoteSavedChemicalUpsert(item.toSavedChemical())
-                metadata.clearDirty([item.id])
-                metadata.clearDeleted([item.id])
+                replacements.append(item.toSavedChemical())
+                acknowledgedUpserts.append(item.id)
+                acknowledgedDeletes.append(item.id)
+                pendingUpserts.removeValue(forKey: item.id)
+                pendingDeletes.removeValue(forKey: item.id)
                 continue
             }
-            if metadata.pendingDeletes[item.id] != nil { continue }
-            if let pendingAt = metadata.pendingUpserts[item.id] {
+            if pendingDeletes[item.id] != nil { continue }
+            if let pendingAt = pendingUpserts[item.id] {
                 let remoteAt = item.clientUpdatedAt ?? item.updatedAt ?? .distantPast
                 if pendingAt > remoteAt { continue }
             }
-            store.applyRemoteSavedChemicalUpsert(item.toSavedChemical())
-            metadata.clearDirty([item.id])
+            replacements.append(item.toSavedChemical())
+            acknowledgedUpserts.append(item.id)
+            pendingUpserts.removeValue(forKey: item.id)
         }
+        // No suspension between the fresh local/pending reads and this commit.
+        // Other vineyards stay in the persisted snapshot; a changed selection
+        // cannot receive this vineyard's publication.
+        try store.applyRemoteSavedChemicalBatch(replacements, for: vineyardId, persisted: persisted)
+        metadata.clearAcknowledged(upserts: acknowledgedUpserts, deletes: acknowledgedDeletes)
         return remote
     }
 }

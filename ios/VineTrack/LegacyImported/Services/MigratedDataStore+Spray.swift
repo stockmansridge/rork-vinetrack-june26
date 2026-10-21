@@ -142,6 +142,46 @@ extension MigratedDataStore {
         }
     }
 
+    /// Apply a complete pull's accepted replacements in one synchronous pass.
+    /// Untouched local intent keeps its current value and position; a touched
+    /// UUID is represented once even when an older cache contains duplicates.
+    func applyRemoteSavedChemicalBatch(
+        _ chemicals: [SavedChemical],
+        for vineyardId: UUID,
+        persisted: [SavedChemical]
+    ) throws {
+        guard chemicals.allSatisfy({ $0.vineyardId == vineyardId }) else {
+            throw SprayRepository.ChemicalReconciliationError.wrongVineyard
+        }
+        guard !chemicals.isEmpty else { return }
+        let current = selectedVineyardId == vineyardId
+            ? savedChemicals
+            : persisted.filter { $0.vineyardId == vineyardId }
+        var replacements: [UUID: SavedChemical] = [:]
+        var replacementOrder: [UUID] = []
+        for chemical in chemicals {
+            if replacements[chemical.id] == nil { replacementOrder.append(chemical.id) }
+            replacements[chemical.id] = chemical
+        }
+        var applied: Set<UUID> = []
+        var merged: [SavedChemical] = []
+        merged.reserveCapacity(current.count + replacements.count)
+        for chemical in current {
+            if let replacement = replacements[chemical.id] {
+                if applied.insert(chemical.id).inserted { merged.append(replacement) }
+            } else {
+                merged.append(chemical)
+            }
+        }
+        for id in replacementOrder where !applied.contains(id) {
+            if let replacement = replacements[id] { merged.append(replacement) }
+        }
+        try sprayRepo.saveChemicalReconciliation(merged, for: vineyardId, persisted: persisted)
+        if selectedVineyardId == vineyardId, savedChemicals != merged {
+            savedChemicals = merged
+        }
+    }
+
     func applyRemoteSavedChemicalDelete(_ id: UUID) {
         if let vineyardId = selectedVineyardId {
             savedChemicals.removeAll { $0.id == id }

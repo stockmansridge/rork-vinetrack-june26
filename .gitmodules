@@ -2,3 +2,7 @@
 	path = linked-repos/vinetrack-review
 	url = https://github.com/stockmansridge/rork-vinetrack-june26.git
 	branch = fix/inventory-active-and-upcoming-work-20261014
+[submodule "linked-repos/vinetrack-sync-review"]
+	path = linked-repos/vinetrack-sync-review
+	url = https://github.com/stockmansridge/rork-vinetrack-june26.git
+	branch = fix/ios-chemical-sync-batching-20261021
