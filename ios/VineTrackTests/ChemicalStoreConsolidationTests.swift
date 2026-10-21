@@ -45,6 +45,45 @@ struct ChemicalStoreConsolidationTests {
         ChemicalReviewSession.make(chemical: nil, prefill: draft, fallbackCountry: "AU")
     }
 
+    /// Compare complete form contents, ignoring only freshly allocated editor-row
+    /// identities. Stored evidence (including IDs in originalRate/originalUse),
+    /// session metadata, array order and counts are left untouched.
+    private func normalizedEditorRowIDs(_ session: ChemicalReviewSession) -> ChemicalReviewSession {
+        var result = session
+        var nextID = 0
+        func rowID() -> UUID {
+            nextID += 1
+            return UUID(uuidString: String(format: "00000000-0000-0000-0000-%012d", nextID))!
+        }
+        func rate(_ row: ChemicalManualRateDraft) -> ChemicalManualRateDraft {
+            ChemicalManualRateDraft(
+                id: rowID(), label: row.label, basis: row.basis,
+                valueText: row.valueText, minText: row.minText, maxText: row.maxText,
+                unit: row.unit, rawText: row.rawText,
+                conditionIsAmbiguous: row.conditionIsAmbiguous, originalRate: row.originalRate
+            )
+        }
+        result.chemistryDraft.actives = session.chemistryDraft.actives.map { row in
+            ChemicalManualActiveDraft(
+                id: rowID(), name: row.name, concentrationText: row.concentrationText,
+                concentrationUnit: row.concentrationUnit,
+                unresolvedConcentrationUnit: row.unresolvedConcentrationUnit,
+                scheme: row.scheme, groupCode: row.groupCode
+            )
+        }
+        result.chemistryDraft.productRates = session.chemistryDraft.productRates.map { rate($0) }
+        result.chemistryDraft.uses = session.chemistryDraft.uses.map { row in
+            ChemicalManualUseDraft(
+                id: rowID(), crop: row.crop, targetRaw: row.targetRaw,
+                rates: row.rates.map { rate($0) },
+                withholdingPeriodDaysText: row.withholdingPeriodDaysText,
+                reEntryPeriodHoursText: row.reEntryPeriodHoursText,
+                restrictions: row.restrictions, originalUse: row.originalUse
+            )
+        }
+        return result
+    }
+
     // MARK: - Fixtures
 
     /// The reproduction: an AI-tier row carrying the canonical name, the active
@@ -151,20 +190,31 @@ struct ChemicalStoreConsolidationTests {
 
     // MARK: - 4, 5, 6. The draft is stable
 
-    @Test("Seeding is deterministic, so a redraw cannot change the form")
+    @Test("Seeding produces deterministic form contents, apart from fresh editor-row identities")
     func seedingIsDeterministic() throws {
-        let draft = merge(lookup: try decodeStructured(dithaneStructuredJSON), selected: dithaneRow)
+        var draft = merge(lookup: try decodeStructured(dithaneStructuredJSON), selected: dithaneRow)
+        // Exercise product-level rates as well as actives, uses and nested rates.
+        draft.chemicalIntelligence?.registeredUses.append(ChemicalRegisteredUse(
+            crop: "", targetRaw: "",
+            rates: [ChemicalLabelRate(label: "Product rate", basis: .perHectare, value: 2, unit: "kg")]
+        ))
 
-        // The editor seeds once, but SwiftUI may run its initialiser again on
-        // any parent rebuild. Identical input must give an identical session,
-        // or "what is on screen" becomes a function of how often the view was
-        // rebuilt.
-        let first = session(for: draft)
-        let second = session(for: draft)
-        let third = session(for: draft)
+        // A parent rebuild may allocate new editable-row UUIDs. Only those
+        // transient identities are normalized; full session equality still
+        // checks every form value, persisted identity and piece of evidence.
+        let first = normalizedEditorRowIDs(session(for: draft))
+        let second = normalizedEditorRowIDs(session(for: draft))
+        let third = normalizedEditorRowIDs(session(for: draft))
         #expect(first == second)
         #expect(second == third)
         #expect(!first.populatedActives.isEmpty)
+        #expect(first.chemistryDraft.productRates.count == 1)
+        #expect(first.chemistryDraft.uses.count == 1)
+        #expect(first.chemistryDraft.uses.first?.rates.count == 1)
+
+        var edited = session(for: draft)
+        edited.chemistryDraft.actives[0].concentrationText = "640"
+        #expect(first != normalizedEditorRowIDs(edited))
     }
 
     @Test("Operator edits survive repeated redraws of the parent")
@@ -486,7 +536,7 @@ struct ChemicalStoreConsolidationTests {
         let draft = merge(lookup: lookup, selected: ChemicalSearchResult(name: "Knockdown 450"))
         let active = try #require(draft.chemicalIntelligence?.activeIngredients.first)
         #expect(active.activityGroup?.scheme == .hrac)
-        #expect(active.activityGroup?.code == "G")
+        #expect(active.activityGroup?.code == "9")
     }
 
     // MARK: - 21, 22, 23, 24. Master catalogue ranking

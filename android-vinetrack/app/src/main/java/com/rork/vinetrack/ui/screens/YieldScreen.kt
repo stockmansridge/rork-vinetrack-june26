@@ -418,7 +418,7 @@ private fun YieldHubView(
             YieldHubOptionRow(
                 icon = Icons.Filled.Agriculture,
                 gradient = listOf(VineColors.Orange, VineColors.Destructive),
-                title = "Bunch Count Trip",
+                title = "Yield Estimate",
                 subtitle = "Count bunches in the field to update the Yield Estimate",
                 detail = BunchCountTripLogic.completedTrips(state.yieldSessions, state.selectedVineyardId)
                     .size.takeIf { it > 0 }?.let { "$it completed trip${if (it == 1) "" else "s"}" },

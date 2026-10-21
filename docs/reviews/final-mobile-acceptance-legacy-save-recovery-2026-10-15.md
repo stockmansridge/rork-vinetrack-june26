@@ -1,6 +1,33 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
-## iOS Saved Chemical sync batching — PR #7 integration / focused validation — 21 October 2026
+## iOS Saved Chemical test-only closeout — focused native gate GREEN — 21 October 2026
+
+**Status: both authorised test mismatches corrected; two-test selection PASS; original four-suite selection PASS (65 passed, 0 failed); Debug simulator build PASS. Ready for the separately approved iPhone scrolling check, not physical performance acceptance or distribution.**
+
+### Changes and preservation
+
+- Only code file changed: `ios/VineTrackTests/ChemicalStoreConsolidationTests.swift`. Documentation changed: this acceptance report and the existing plan `.rork/plans/android-live-trip-safe-automatic-complet_1791964262830.plan.md`.
+- `seedingIsDeterministic()`: test-local normalization replaces only `ChemicalManualActiveDraft.id`, `ChemicalManualRateDraft.id` (product-level and nested), and `ChemicalManualUseDraft.id` with deterministic traversal-order UUIDs. It maps every array without sorting, filtering or changing counts. Full session equality remains, with the nonempty-actives assertion retained. The fixture includes a product-level rate as well as a use and its nested rate, with count assertions. Changing active concentration from 750 to 640 must still produce inequality.
+- Every other draft field is copied verbatim, including ambiguity flags and unresolved units. `originalRate` and `originalUse` are passed through intact: no IDs or evidence inside them are normalized. The session is copied before only its editable-row arrays are replaced, so seed/accepted evidence, existing persisted rate IDs, master identity, default selections/values and all other session metadata remain in complete equality. Test description/comments now describe deterministic form contents rather than freshly allocated row identities.
+- `hracStaysDistinct()`: expected canonical Glyphosate code changed from `G` to `9`; `.hrac` scheme assertion remains. No classification, production UUID generation or production equality changes.
+- Production app trees (`ios/VineTrack` and `android-vinetrack`) have no diff from the pre-correction HEAD. Newer Yield Estimate headings preserved. No performance patch reimported or reapplied; its four file hashes still match the original integration hashes recorded below. No tests skipped or production behavior loosened; no unrelated expansion.
+
+### Actual validation, in requested order
+
+1. `swiftTest(ios)` selecting only `VineTrackTests/ChemicalStoreConsolidationTests/seedingIsDeterministic()` and `VineTrackTests/ChemicalStoreConsolidationTests/hracStaysDistinct()`: **2 passed, 0 failed, runner duration 109s**.
+2. One subsequent `swiftTest(ios)` selecting exactly `SavedChemicalBatchReconciliationTests`, `SavedChemicalReconciliationTests`, `ChemicalStoreConsolidationTests`, and `PersistencePerformanceTests` under `VineTrackTests`: **65 passed, 0 failed, runner duration 18s**. This is the requested four-suite gate, not a sum with the overlapping two-test run. No further test expansion or reruns.
+3. Final `runChecks(ios)`: **PASS, simulator build succeeded**. Existing scheme TestAction is Debug; successful native test execution includes the Debug test build. Current runner responses do not expose separate build duration, skipped metric or individual passing-test manifest. Device/Release builds not verified. Existing unrelated asset-address advisories left untouched.
+
+The `/tmp/rork-swift-test-ios.log` file was not refreshed by these successful tool calls: it still contains the earlier 63/2 run. It is historical evidence only, not a log for the new passes. New counts/durations above are the actual current `swiftTest` tool results. The original **65 executed / 63 passed / 2 failed** remains below unchanged as history. No pre-patch baseline was executed or claimed.
+
+### Validated source identity and next gate
+
+- Pre-correction managed HEAD: **`ee893f8ac0203644d59d2c7dc671378d12412abf`**, plus the test-only change above. Corrected test file Git blob **`782e3629`** (abbreviated); SHA-256 **`9874fed502bb9e03512a7926e5b8f745adfa33395cb3bcbaffb2514e12c22a91`**. This identifies the tested content, not a final managed commit.
+- Owner reports GitHub main **`3097a0859c303f934cd84aef95965283313d4f22`** contains the exact original four-file batching implementation and that PR #7 now records integration/previous results. No upstream import, PR comment or readiness mutation is required/performed here. Current four patch-file hashes independently still equal the original recorded implementation; no claim that the whole current workspace equals that GitHub commit.
+- Final managed closeout commit is assigned by the normal Rork save workflow after this turn; it is not yet available. Do not present pre-correction HEAD as that final commit. Corrections are saved in the managed workspace; no manual Git commit/push.
+- **Native gate closed; source ready to proceed to the separate iPhone launch/immediate Home-scroll-during-Syncing check**, repeat with unchanged cache and compare existing captures. Physical-device responsiveness remains unexecuted/unaccepted. Device signing/delivery, distribution and performance acceptance require separate approval; nothing uploaded or distributed. Target Nutrient remains closed.
+
+## iOS Saved Chemical sync batching — PR #7 integration / focused validation — 21 October 2026 (historical checkpoint; superseded by closeout above)
 
 **Status: authentic patch integrated; Debug simulator build PASS; four-suite gate NOT GREEN (63 passed, 2 failed). PR update/readiness not performed.** No merge, release, upload, distribution, physical-device operation or performance acceptance.
 
