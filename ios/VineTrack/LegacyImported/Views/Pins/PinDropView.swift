@@ -432,10 +432,16 @@ struct PinDropView: View {
             paddock: paddock
         )
         let capture = freezeCapture(location: location, aisleLock: historyLock)
+        let travel = capture.flatMap {
+            PinCaptureEvidence.qualifiedTravelDirection(
+                observations: $0.observations,
+                capturedAt: $0.capturedAt
+            )
+        }
         let attachment = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading,
-            headingAgeSeconds: headingAge(at: capture?.capturedAt ?? Date()),
+            heading: travel?.degrees,
+            headingAgeSeconds: travel.map { (capture?.capturedAt ?? Date()).timeIntervalSince($0.observedAt) },
             horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: side,
             paddock: paddock,

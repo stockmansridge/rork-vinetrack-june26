@@ -93,36 +93,57 @@ nonisolated struct PinCaptureEvidence: Codable, Sendable, Identifiable {
 
     /// Versioned geometry identity shared with Android and SQL. Only ordered
     /// polygon coordinates and row number/endpoints participate.
-    static func confirmationHeading(for evidence: PinCaptureEvidence) -> Double? {
-        if let heading = evidence.headingDegrees,
-           let observedAt = evidence.headingObservedAt,
-           evidence.capturedAt.timeIntervalSince(observedAt) >= 0,
-           evidence.capturedAt.timeIntervalSince(observedAt) <= 5 {
-            return PinAisleGeometry.validHeading(heading)
-        }
-        let unique = Dictionary(evidence.observations.compactMap { observation -> (String, PinCaptureObservation)? in
-            guard let course = observation.courseDegrees,
-                  let speed = observation.speedMps, speed >= 0.5,
-                  observation.observedAt <= evidence.capturedAt,
-                  evidence.capturedAt.timeIntervalSince(observation.observedAt) <= 5,
-                  (0..<360).contains(course) else { return nil }
-            let key = "\(observation.observedAt.timeIntervalSince1970)|\(observation.latitude)|\(observation.longitude)"
-            return (key, observation)
+    /// Movement direction, never the orientation of the phone. Three fresh,
+    /// independent GPS fixes must agree on course and measured displacement.
+    /// An unqualified sample stays in the raw evidence but cannot choose a row.
+    static func qualifiedTravelDirection(
+        observations: [PinCaptureObservation],
+        capturedAt: Date
+    ) -> (degrees: Double, observedAt: Date)? {
+        let recent = observations.filter { sample in
+            let age = capturedAt.timeIntervalSince(sample.observedAt)
+            guard age >= 0, age <= 15,
+                  let course = sample.courseDegrees, course.isFinite, (0..<360).contains(course),
+                  let speed = sample.speedMps, speed.isFinite, speed >= 1.0,
+                  let accuracy = sample.horizontalAccuracyM, accuracy.isFinite, accuracy >= 0, accuracy <= 5,
+                  sample.latitude.isFinite, sample.longitude.isFinite else { return false }
+            return true
+        }.sorted { $0.observedAt < $1.observedAt }
+        let unique = Dictionary(recent.map {
+            ("\($0.observedAt.timeIntervalSince1970)|\($0.latitude)|\($0.longitude)", $0)
         }, uniquingKeysWith: { first, _ in first }).values.sorted { $0.observedAt < $1.observedAt }
-        guard unique.count >= 3, let first = unique.first, let last = unique.last else { return nil }
-        let sinTotal = unique.compactMap(\.courseDegrees).reduce(0) { $0 + sin($1 * .pi / 180) }
-        let cosTotal = unique.compactMap(\.courseDegrees).reduce(0) { $0 + cos($1 * .pi / 180) }
-        let agreement = hypot(sinTotal, cosTotal) / Double(unique.count)
-        guard agreement >= 0.70 else { return nil }
-        let heading = (atan2(sinTotal, cosTotal) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
+        guard unique.count >= 3, let first = unique.first, let last = unique.last,
+              capturedAt.timeIntervalSince(last.observedAt) <= 5,
+              last.observedAt.timeIntervalSince(first.observedAt) >= 1 else { return nil }
+
+        let directions = unique.compactMap(\.courseDegrees)
+        let eastUnit = directions.reduce(0.0) { $0 + sin($1 * .pi / 180) }
+        let northUnit = directions.reduce(0.0) { $0 + cos($1 * .pi / 180) }
+        let mean = (atan2(eastUnit, northUnit) * 180 / .pi + 360)
+            .truncatingRemainder(dividingBy: 360)
+        guard directions.allSatisfy({
+            abs(($0 - mean + 540).truncatingRemainder(dividingBy: 360) - 180) <= 25
+        }) else { return nil }
+
         let latitudeScale = 111_320.0
         let longitudeScale = latitudeScale * cos(((first.latitude + last.latitude) / 2) * .pi / 180)
         let north = (last.latitude - first.latitude) * latitudeScale
         let east = (last.longitude - first.longitude) * longitudeScale
-        guard hypot(north, east) >= 1 else { return nil }
-        let displacementHeading = (atan2(east, north) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
-        let delta = abs((displacementHeading - heading + 540).truncatingRemainder(dividingBy: 360) - 180)
-        return delta <= 60 ? heading : nil
+        guard hypot(north, east) >= 5 else { return nil }
+        let displacement = (atan2(east, north) * 180 / .pi + 360)
+            .truncatingRemainder(dividingBy: 360)
+        let deviation = abs((displacement - mean + 540).truncatingRemainder(dividingBy: 360) - 180)
+        guard deviation <= 30 else { return nil }
+        return (mean, last.observedAt)
+    }
+
+    /// An aisle confirmation uses the captured direction of movement, not a
+    /// fresh-looking phone compass reading that may face the opposite way.
+    static func confirmationHeading(for evidence: PinCaptureEvidence) -> Double? {
+        qualifiedTravelDirection(
+            observations: evidence.observations,
+            capturedAt: evidence.capturedAt
+        )?.degrees
     }
 
     static func geometryIdentity(for paddock: Paddock?) -> (revision: String?, hash: String?) {

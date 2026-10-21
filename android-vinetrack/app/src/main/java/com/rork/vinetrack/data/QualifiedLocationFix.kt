@@ -123,3 +123,51 @@ object PinLocationFixValidator {
         )
     }
 }
+
+/**
+ * Qualified direction of MOVEMENT for a Left/Right pin, never phone compass
+ * orientation. A stationary fix, a reversing/turning course, or scattered GPS
+ * positions must not choose one of the two adjacent physical vine rows.
+ */
+object PinTravelDirection {
+    data class Course(val degrees: Double, val observedAtEpochMs: Long)
+
+    fun fromObservations(
+        current: QualifiedLocationFix,
+        history: List<QualifiedLocationFix>,
+    ): Course? {
+        val captureNanos = current.fixElapsedRealtimeNanos
+        if (captureNanos <= 0) return null
+        val recent = (history + current)
+            .filter { fix ->
+                val age = captureNanos - fix.fixElapsedRealtimeNanos
+                age >= 0 && age <= 15_000_000_000L &&
+                    fix.accuracyMetres.isFinite() && fix.accuracyMetres in 0.0..5.0 &&
+                    fix.speedMetresPerSecond?.let { it.isFinite() && it >= 1.0 } == true &&
+                    fix.bearingDegrees?.let { it.isFinite() && it >= 0 && it < 360 } == true &&
+                    fix.latitude.isFinite() && fix.longitude.isFinite()
+            }
+            .distinctBy { it.fixElapsedRealtimeNanos }
+            .sortedBy { it.fixElapsedRealtimeNanos }
+        if (recent.size < 3 || recent.last().fixElapsedRealtimeNanos != captureNanos) return null
+        val first = recent.first()
+        val last = recent.last()
+        if (last.fixElapsedRealtimeNanos - first.fixElapsedRealtimeNanos < 1_000_000_000L) return null
+
+        val radians = recent.map { Math.toRadians(it.bearingDegrees!!) }
+        val eastSum = radians.sumOf { kotlin.math.sin(it) }
+        val northSum = radians.sumOf { kotlin.math.cos(it) }
+        val degrees = (Math.toDegrees(kotlin.math.atan2(eastSum, northSum)) + 360.0) % 360.0
+        fun difference(a: Double, b: Double): Double =
+            kotlin.math.abs((a - b + 540.0) % 360.0 - 180.0)
+        if (recent.any { difference(it.bearingDegrees!!, degrees) > 25.0 }) return null
+
+        val northM = (last.latitude - first.latitude) * 111_320.0
+        val eastM = (last.longitude - first.longitude) * 111_320.0 *
+            kotlin.math.cos(Math.toRadians((first.latitude + last.latitude) / 2.0))
+        if (kotlin.math.hypot(northM, eastM) < 5.0) return null
+        val displacement = (Math.toDegrees(kotlin.math.atan2(eastM, northM)) + 360.0) % 360.0
+        if (difference(displacement, degrees) > 30.0) return null
+        return Course(degrees, last.fixTimeEpochMs)
+    }
+}

@@ -9369,14 +9369,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // This flow has no independent forward/reverse signal, so GPS course
         // cannot establish where the operator is facing. Only a fresh compass
         // observation is eligible; otherwise facing remains unknown.
-        val captureHeading = PinAisleGeometry.frozenCaptureHeading(
-            compassHeadingDegrees = headingDegrees,
-            compassObservedAtElapsedRealtimeNanos = headingObservedAtElapsedRealtimeNanos,
-            captureElapsedRealtimeNanos = captureElapsedRealtimeNanos,
-            courseDegrees = fix.bearingDegrees,
-            speedMetresPerSecond = fix.speedMetresPerSecond,
-            hasForwardTravelEvidence = false,
+        val travelCourse = com.rork.vinetrack.data.PinTravelDirection.fromObservations(
+            current = fix,
+            history = observationHistory,
         )
+        // The pin's Left/Right refers to forward travel, never to how the
+        // handset is facing. An unqualified movement remains unresolved.
+        val captureHeading = travelCourse?.degrees
         val standalonePlacement = PinPlacement.resolveAutomatic(
             paddocks = state.paddocks,
             selectedPaddockId = null,
@@ -9431,8 +9430,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             observedAtIso = java.time.Instant.ofEpochMilli(fix.fixTimeEpochMs).toString(),
             capturedAtIso = capturedInstant.toString(),
             captureUserId = session.userId,
-            headingSource = captureHeading?.let { "qualified_device_heading" },
-            headingObservedAtIso = headingObservedAtIso,
+            headingSource = captureHeading?.let { "qualified_gps_travel" },
+            headingObservedAtIso = travelCourse?.let { java.time.Instant.ofEpochMilli(it.observedAtEpochMs).toString() },
             observations = frozenObservations,
             aisleLock = frozenLock,
             resolvedPaddockId = attribution.paddockId,

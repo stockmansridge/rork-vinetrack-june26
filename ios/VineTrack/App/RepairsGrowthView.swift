@@ -584,7 +584,11 @@ struct RepairsGrowthView: View {
             vineyardId: vineyardId,
             tripId: store.currentActiveTripIdProvider?(),
             rawCoordinate: location.coordinate,
-            horizontalAccuracyMetres: location.horizontalAccuracy
+            horizontalAccuracyMetres: location.horizontalAccuracy,
+            observations: locationService.pinCaptureObservations(capturedAt: Date()),
+            headingDegrees: locationService.heading.flatMap { $0.trueHeading >= 0 ? $0.trueHeading : nil },
+            headingSource: locationService.heading == nil ? nil : "device_true_heading",
+            headingObservedAt: locationService.heading?.timestamp
         )
     }
 
@@ -607,10 +611,12 @@ struct RepairsGrowthView: View {
         }
         // Never substitute 0°/North for an absent heading, and never freeze a
         // compass sample that describes an earlier moment.
-        let heading: Double? = locationService.heading?.trueHeading
-        let headingAge: Double? = locationService.heading.map { sample in
-            capture.capturedAt.timeIntervalSince(sample.timestamp)
-        }
+        let travel = PinCaptureEvidence.qualifiedTravelDirection(
+            observations: capture.observations,
+            capturedAt: capture.capturedAt
+        )
+        let heading: Double? = travel?.degrees
+        let headingAge: Double? = travel.map { capture.capturedAt.timeIntervalSince($0.observedAt) }
         let lockedPath: Double? = tracking.isTracking
             ? (tracking.diagLockedPath ?? tracking.currentRowNumber)
             : nil

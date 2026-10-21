@@ -395,10 +395,14 @@ struct QuickPinSheet: View {
             current: location,
             paddock: paddock
         )
+        let travel = PinCaptureEvidence.qualifiedTravelDirection(
+            observations: locationService.pinCaptureObservations(capturedAt: capturedAt),
+            capturedAt: capturedAt
+        )
         let attachment = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: coordinate,
-            heading: locationService.heading?.trueHeading,
-            headingAgeSeconds: headingAge,
+            heading: travel?.degrees,
+            headingAgeSeconds: travel.map { capturedAt.timeIntervalSince($0.observedAt) },
             horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: side,
             paddock: paddock,
