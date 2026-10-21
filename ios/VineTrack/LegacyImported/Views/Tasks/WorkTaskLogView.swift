@@ -42,10 +42,6 @@ struct WorkTaskLogView: View {
         ).isAllowed
     }
 
-    private func rollup(for task: WorkTask) -> WorkTaskCostRollup.Result {
-        task.costRollup(in: store, includeMaterials: materialCostsAllowed)
-    }
-
     private var allTaskTypes: [String] {
         Array(Set(store.workTasks.map { $0.taskType }).union(WorkTaskTypeCatalog.defaults)).sorted()
     }
@@ -54,54 +50,31 @@ struct WorkTaskLogView: View {
         Array(Set(store.workTasks.map { $0.paddockName }).filter { !$0.isEmpty }).sorted()
     }
 
-    private var filtered: [WorkTask] {
+    private func makePresentation() -> WorkTaskLogPresentation {
         let timing = PerformanceCapture.shared.beginComputation()
-        defer { PerformanceCapture.shared.endComputation(timing, label: "Work Tasks filter and sort", records: store.workTasks.count) }
-        var items = store.workTasks.filter { !$0.isArchived }
-        if !taskFilter.isEmpty {
-            items = items.filter { $0.taskType == taskFilter }
-        }
-        if !blockFilter.isEmpty {
-            items = items.filter { $0.paddockName == blockFilter }
-        }
-        if !searchText.isEmpty {
-            items = items.filter {
-                $0.taskType.localizedStandardContains(searchText) ||
-                $0.paddockName.localizedStandardContains(searchText) ||
-                $0.notes.localizedStandardContains(searchText) ||
-                ($0.stageLabel?.localizedStandardContains(searchText) ?? false)
-            }
-        }
-        items = items.filter { $0.matchesStageRange(minimum: minimumStage, maximum: maximumStage) }
-        switch sort {
-        case .portal:
-            items = WorkTaskPlanning.ordered(items, now: Date(), timeZone: store.settings.resolvedTimeZone)
-        case .dateDesc:
-            items.sort { $0.date > $1.date }
-        case .dateAsc:
-            items.sort { $0.date < $1.date }
-        case .task:
-            items.sort { $0.taskType.localizedStandardCompare($1.taskType) == .orderedAscending }
-        case .block:
-            items.sort { $0.paddockName.localizedStandardCompare($1.paddockName) == .orderedAscending }
-        case .costDesc:
-            items.sort { rollup(for: $0).totalCost > rollup(for: $1).totalCost }
-        }
-        return items
+        defer { PerformanceCapture.shared.endComputation(timing, label: "Work Tasks list presentation", records: store.workTasks.count) }
+        return WorkTaskLogPresentation.make(
+            store: store,
+            searchText: searchText,
+            taskFilter: taskFilter,
+            blockFilter: blockFilter,
+            minimumStage: minimumStage,
+            maximumStage: maximumStage,
+            sort: sort,
+            now: Date(),
+            timeZone: store.settings.resolvedTimeZone,
+            canViewFinancials: accessControl?.canViewFinancials ?? false,
+            includeMaterials: materialCostsAllowed
+        )
     }
 
-    private var filteredRollups: [WorkTaskCostRollup.Result] { filtered.map(rollup(for:)) }
-    private var totalCost: Decimal { filteredRollups.reduce(0) { $0 + $1.totalCost } }
-    private var hasIncompleteCost: Bool { filteredRollups.contains { !$0.isComplete } }
-    private var totalHours: Double { filtered.reduce(0) { $0 + $1.displayHours(in: store) } }
-    private var totalPeople: Int { filtered.reduce(0) { $0 + $1.displayPeople(in: store) } }
-
     var body: some View {
+        let presentation = makePresentation()
         ScrollView {
             VStack(spacing: 20) {
-                summaryCard
+                summaryCard(presentation)
                 filterBar
-                listSection
+                listSection(presentation)
             }
             .padding(.horizontal)
             .padding(.bottom, 24)
@@ -145,23 +118,23 @@ struct WorkTaskLogView: View {
         }
     }
 
-    private var summaryCard: some View {
+    private func summaryCard(_ presentation: WorkTaskLogPresentation) -> some View {
         VStack(spacing: 0) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Filtered Totals")
                         .font(.title3.weight(.bold))
-                    Text("\(filtered.count) task\(filtered.count == 1 ? "" : "s")")
+                    Text("\(presentation.rows.count) task\(presentation.rows.count == 1 ? "" : "s")")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if accessControl?.canViewFinancials ?? false {
+                if accessControl?.canViewFinancials ?? false, let costs = presentation.costs {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text("Cost")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text(hasIncompleteCost ? "Incomplete" : MaterialCostDisplay.currency(totalCost, code: fmt.currencyCode))
+                        Text(costs.hasIncompleteCost ? "Incomplete" : MaterialCostDisplay.currency(costs.total, code: fmt.currencyCode))
                             .font(.title2.weight(.bold).monospacedDigit())
                             .foregroundStyle(VineyardTheme.leafGreen)
                     }
@@ -173,8 +146,8 @@ struct WorkTaskLogView: View {
                 GridItem(.flexible()),
                 GridItem(.flexible())
             ], spacing: 16) {
-                metric(value: String(format: "%.1f", totalHours), label: "Hours", icon: "clock.fill", color: .orange)
-                metric(value: "\(totalPeople)", label: "Worker-Entries", icon: "person.2.fill", color: .blue)
+                metric(value: String(format: "%.1f", presentation.totalHours), label: "Hours", icon: "clock.fill", color: .orange)
+                metric(value: "\(presentation.totalPeople)", label: "Worker-Entries", icon: "person.2.fill", color: .blue)
             }
         }
         .padding(16)
@@ -292,9 +265,9 @@ struct WorkTaskLogView: View {
         .foregroundStyle(active ? Color.accentColor : .primary)
     }
 
-    private var listSection: some View {
+    private func listSection(_ presentation: WorkTaskLogPresentation) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            if filtered.isEmpty {
+            if presentation.rows.isEmpty {
                 VStack(spacing: 10) {
                     Image(systemName: "tray")
                         .font(.system(size: 36))
@@ -307,11 +280,11 @@ struct WorkTaskLogView: View {
                 .padding(.vertical, 40)
                 .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 14))
             } else {
-                ForEach(filtered) { task in
+                ForEach(presentation.rows) { row in
                     Button {
-                        selectedTask = task
+                        selectedTask = row.task
                     } label: {
-                        WorkTaskLogRow(task: task, includeMaterials: materialCostsAllowed)
+                        WorkTaskLogRow(row: row)
                     }
                     .buttonStyle(.plain)
                 }
@@ -390,24 +363,13 @@ extension WorkTask {
 }
 
 private struct WorkTaskLogRow: View {
-    let task: WorkTask
-    let includeMaterials: Bool
+    let row: WorkTaskLogPresentation.Row
     @Environment(MigratedDataStore.self) private var store
     @Environment(\.accessControl) private var accessControl
     @Environment(WorkTaskSyncService.self) private var workTaskSync
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
-
-    private var blockDisplay: String { task.blockDisplay(in: store) }
-    private var rollup: WorkTaskCostRollup.Result {
-        task.costRollup(in: store, includeMaterials: includeMaterials)
-    }
-
-    private var displayCostPerPerson: Double {
-        let people = task.displayPeople(in: store)
-        guard people > 0 else { return 0 }
-        return task.displayLabourCost(in: store) / Double(people)
-    }
+    private var task: WorkTask { row.task }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -425,27 +387,27 @@ private struct WorkTaskLogRow: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
 
-                Text(blockDisplay)
+                Text(row.display.blockLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
 
                 WorkTaskAttributionView(task: task)
                 HStack(spacing: 8) {
-                    Label(String(format: "%.1fh", task.displayHours(in: store)), systemImage: "clock")
+                    Label(String(format: "%.1fh", row.display.hours), systemImage: "clock")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                     Text("•")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
-                    Label("\(task.displayPeople(in: store))", systemImage: "person.fill")
+                    Label("\(row.display.people)", systemImage: "person.fill")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    if displayCostPerPerson > 0 && (accessControl?.canViewFinancials ?? false) {
+                    if row.display.costPerPerson > 0 && (accessControl?.canViewFinancials ?? false) {
                         Text("•")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
-                        Text("\(fmt.formatCurrency(displayCostPerPerson))/pp")
+                        Text("\(fmt.formatCurrency(row.display.costPerPerson))/pp")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
@@ -455,7 +417,7 @@ private struct WorkTaskLogRow: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 4) {
-                if accessControl?.canViewFinancials ?? false {
+                if accessControl?.canViewFinancials ?? false, let rollup = row.rollup {
                     Text(rollup.isComplete ? MaterialCostDisplay.currency(rollup.totalCost, code: fmt.currencyCode) : "Incomplete")
                         .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(VineyardTheme.leafGreen)
