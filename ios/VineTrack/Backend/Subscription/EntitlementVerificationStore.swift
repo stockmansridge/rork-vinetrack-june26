@@ -48,6 +48,14 @@ nonisolated struct EntitlementVerificationSnapshot: Codable, Equatable {
 final class EntitlementVerificationStore {
     static let shared = EntitlementVerificationStore()
 
+    enum AccessDetailsUpdate {
+        /// An individual provider has refreshed only part of the access state.
+        case mergeProvided
+        /// The combined gate resolved a definitive online result. Nil fields
+        /// clear the previous source, plan and expiry for the same account.
+        case replace
+    }
+
     private let defaults: UserDefaults
     private let key = "vinetrack.entitlementVerification.v1"
 
@@ -78,8 +86,10 @@ final class EntitlementVerificationStore {
         defaults.removeObject(forKey: key)
     }
 
-    /// Records a fresh verification result. Preserves previously known
-    /// optional fields for the same user when new values aren't supplied.
+    /// Records a fresh verification result. Provider-only updates merge their
+    /// supplied fields; definitive combined results replace all access details.
+    /// Vineyard IDs remain independent: only a successfully fetched matrix may
+    /// replace that list, including replacing it with an empty list.
     @discardableResult
     func recordVerification(
         userId: String?,
@@ -91,21 +101,23 @@ final class EntitlementVerificationStore {
         reasonCode: String? = nil,
         knownExpiresAt: Date? = nil,
         supabaseEnforced: Bool? = nil,
-        accessibleVineyardIds: [String]? = nil
+        accessibleVineyardIds: [String]? = nil,
+        accessDetailsUpdate: AccessDetailsUpdate = .mergeProvided
     ) -> EntitlementVerificationSnapshot {
         let existing = load()
         let sameUser = existing?.userId == userId
+        let retainAccessDetails = sameUser && accessDetailsUpdate == .mergeProvided
         let snapshot = EntitlementVerificationSnapshot(
             userId: userId,
             lastVerifiedAt: Date(),
             wasEntitled: entitled,
             productStatus: productStatus,
-            vineyardAccessActive: vineyardAccessActive ?? (sameUser ? existing?.vineyardAccessActive : nil),
-            accessSource: accessSource ?? (sameUser ? existing?.accessSource : nil),
-            planCode: planCode ?? (sameUser ? existing?.planCode : nil),
-            reasonCode: reasonCode ?? (sameUser ? existing?.reasonCode : nil),
-            knownExpiresAt: knownExpiresAt ?? (sameUser ? existing?.knownExpiresAt : nil),
-            supabaseEnforced: supabaseEnforced ?? (sameUser ? existing?.supabaseEnforced : nil),
+            vineyardAccessActive: vineyardAccessActive ?? (retainAccessDetails ? existing?.vineyardAccessActive : nil),
+            accessSource: accessSource ?? (retainAccessDetails ? existing?.accessSource : nil),
+            planCode: planCode ?? (retainAccessDetails ? existing?.planCode : nil),
+            reasonCode: reasonCode ?? (retainAccessDetails ? existing?.reasonCode : nil),
+            knownExpiresAt: knownExpiresAt ?? (retainAccessDetails ? existing?.knownExpiresAt : nil),
+            supabaseEnforced: supabaseEnforced ?? (retainAccessDetails ? existing?.supabaseEnforced : nil),
             accessibleVineyardIds: accessibleVineyardIds ?? (sameUser ? existing?.accessibleVineyardIds : nil)
         )
         save(snapshot)

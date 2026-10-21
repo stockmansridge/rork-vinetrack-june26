@@ -13,6 +13,19 @@ struct SubscriptionSettingsView: View {
         subscription.customerInfo?.entitlements[SubscriptionService.entitlementIdentifier]
     }
 
+    private var accessPresentation: EntitlementAccessPresentation {
+        EntitlementAccessPresentation(
+            outcome: entitlementGate.outcome,
+            serverAccess: entitlementGate.lastServerAccess,
+            verification: EntitlementVerificationStore.shared.load(for: auth.userId),
+            isOffline: subscription.isOffline,
+            legacyTrialEndsAt: subscription.freeAccessEndsAt,
+            storeExpiresAt: entitlement?.expirationDate,
+            storeWillRenew: entitlement?.willRenew == true,
+            offlineGraceDays: SubscriptionService.offlineGraceDays
+        )
+    }
+
     var body: some View {
         Form {
             statusSection
@@ -41,14 +54,14 @@ struct SubscriptionSettingsView: View {
     private var statusSection: some View {
         Section {
             HStack(spacing: 12) {
-                Image(systemName: subscription.hasAccess ? "checkmark.seal.fill" : "lock.fill")
+                Image(systemName: accessPresentation.icon)
                     .font(.title2)
-                    .foregroundStyle(subscription.hasAccess ? Color.green : Color.orange)
+                    .foregroundStyle(accessStateColor)
                     .frame(width: 36, height: 36)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(statusTitle)
+                    Text(accessPresentation.statusTitle)
                         .font(.headline)
-                    Text(statusSubtitle)
+                    Text(accessPresentation.statusSubtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -59,54 +72,19 @@ struct SubscriptionSettingsView: View {
         }
     }
 
-    private var statusTitle: String {
-        if entitlementGate.outcome == .grantedBySupabase {
-            if entitlementGate.lastServerAccess?.reasonCode == "internal_unlimited" {
-                return "Internal Unlimited access"
-            }
-            return entitlementGate.lastServerAccess?.planName ?? "VineTrack access active"
-        }
-        if subscription.isSubscribed { return "Vineyard Tracker Pro" }
-        if subscription.isInInitialFreeAccessPeriod { return "Free access active" }
-        return "No active subscription"
-    }
-
-    private var statusSubtitle: String {
-        if subscription.isSubscribed {
-            if let expiry = entitlement?.expirationDate {
-                let formatter = DateFormatter()
-                formatter.dateStyle = .medium
-                let prefix = entitlement?.willRenew == true ? "Renews" : "Expires"
-                return "\(prefix) \(formatter.string(from: expiry))"
-            }
-            return "Active"
-        }
-        if subscription.isInInitialFreeAccessPeriod {
-            if let freeAccessEndsAt = subscription.freeAccessEndsAt {
-                return "Paywall hidden until \(freeAccessEndsAt.formatted(date: .abbreviated, time: .omitted))"
-            }
-            return "Paywall hidden during your first 3 months"
-        }
-        switch subscription.status {
-        case .loading: return "Checking subscription…"
-        case .failure(let m): return m
-        default: return "Subscribe to unlock all vineyard features"
-        }
-    }
-
     // MARK: - Access status
 
     private var accessStatusSection: some View {
         Section {
             HStack(spacing: 12) {
-                Image(systemName: accessStateIcon)
+                Image(systemName: accessPresentation.icon)
                     .font(.title3)
                     .foregroundStyle(accessStateColor)
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(accessStateTitle)
+                    Text(accessPresentation.accessTitle)
                         .font(.subheadline.weight(.semibold))
-                    Text(accessStateDetail)
+                    Text(accessPresentation.accessDetail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -117,7 +95,7 @@ struct SubscriptionSettingsView: View {
             if let account = accountIdentifier {
                 LabeledContent("Account", value: account)
             }
-            if showRefreshAccessButton {
+            if accessPresentation.shouldOfferRefresh {
                 Button {
                     Task { await refreshAccess() }
                 } label: {
@@ -136,68 +114,29 @@ struct SubscriptionSettingsView: View {
         }
     }
 
-    private var accessStateTitle: String {
-        switch subscription.accessState {
-        case .subscribed: return "Subscription active"
-        case .freeAccess: return "Free access period"
-        case .offlineGrace: return "Offline grace active"
-        case .needsVerification: return "Needs online verification"
-        case .notVerified: return "Not verified"
-        }
-    }
-
-    private var accessStateDetail: String {
-        switch subscription.accessState {
-        case .subscribed:
-            return "Verified with the App Store."
-        case .freeAccess:
-            if let endsAt = subscription.freeAccessEndsAt {
-                return "Free until \(endsAt.formatted(date: .abbreviated, time: .omitted))."
-            }
-            return "Inside your first 3 months."
-        case .offlineGrace:
-            if let days = subscription.offlineGraceRemainingDays {
-                return "Working offline — \(days) day\(days == 1 ? "" : "s") of grace remaining."
-            }
-            return "Working offline on cached access."
-        case .needsVerification:
-            return "Connect to the internet to refresh your subscription."
-        case .notVerified:
-            return "Subscribe to unlock all vineyard features."
-        }
-    }
-
     private var accessStateFooter: String {
-        "Your last successful subscription check is stored on this device. If you go offline, a verified subscriber keeps full access for \(SubscriptionService.offlineGraceDays) days before a fresh check is needed."
-    }
-
-    private var accessStateIcon: String {
-        switch subscription.accessState {
-        case .subscribed: return "checkmark.seal.fill"
-        case .freeAccess: return "gift.fill"
-        case .offlineGrace: return "wifi.slash"
-        case .needsVerification: return "exclamationmark.arrow.triangle.2.circlepath"
-        case .notVerified: return "lock.fill"
-        }
+        "Your last verified access is stored on this device for offline use for up to \(SubscriptionService.offlineGraceDays) days, capped by any known access expiry. VineTrack refreshes access when you reconnect."
     }
 
     private var accessStateColor: Color {
-        switch subscription.accessState {
-        case .subscribed, .freeAccess: return .green
-        case .offlineGrace, .needsVerification: return .orange
-        case .notVerified: return .red
+        switch accessPresentation.tone {
+        case .positive: return .green
+        case .warning: return .orange
+        case .negative: return .red
+        case .neutral: return .secondary
         }
     }
 
     private var lastVerifiedText: String {
-        guard let date = subscription.lastVerifiedEntitlementAt else { return "Never" }
+        guard let date = accessPresentation.lastVerifiedAt else { return "Never" }
         return date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private var graceRemainingText: String {
-        guard let days = subscription.offlineGraceRemainingDays else {
-            return subscription.offlineGraceAnchorDate == nil ? "—" : "Expired"
-        }
+        guard let end = accessPresentation.offlineGraceEndsAt else { return "—" }
+        let remaining = end.timeIntervalSinceNow
+        guard remaining > 0 else { return "Expired" }
+        let days = Int(ceil(remaining / 86_400))
         return "\(days) day\(days == 1 ? "" : "s")"
     }
 
@@ -206,29 +145,25 @@ struct SubscriptionSettingsView: View {
         return nil
     }
 
-    /// Offer a manual refresh when online and either stale or not currently
-    /// fully verified. Hidden when there's nothing useful a refresh would do.
-    private var showRefreshAccessButton: Bool {
-        if subscription.isOffline { return false }
-        if subscription.accessState == .subscribed && !subscription.isVerificationStale { return false }
-        return true
-    }
-
     private func refreshAccess() async {
         guard !isRefreshingAccess else { return }
         isRefreshingAccess = true
         defer { isRefreshingAccess = false }
         await subscription.refreshCustomerInfo()
         await entitlementGate.refresh(force: true)
-        statusMessage = entitlementGate.hasAccess
-            ? "Access refreshed."
-            : (subscription.lastError ?? "No valid entitlement found.")
+        if entitlementGate.hasAccess {
+            statusMessage = "Access refreshed."
+        } else if entitlementGate.outcome == .denied {
+            statusMessage = "No active access was found for this account."
+        } else {
+            statusMessage = "Access has not been verified yet. Connect to the internet and try again."
+        }
     }
 
     @ViewBuilder
     private var actionsSection: some View {
         Section {
-            if !subscription.hasAccess {
+            if accessPresentation.shouldOfferPlans {
                 Button {
                     showPaywall = true
                 } label: {
@@ -256,10 +191,11 @@ struct SubscriptionSettingsView: View {
             .disabled(subscription.isRestoring)
 
             Button {
-                Task { await subscription.refreshCustomerInfo() }
+                Task { await refreshAccess() }
             } label: {
                 Label("Refresh Status", systemImage: "arrow.triangle.2.circlepath")
             }
+            .disabled(isRefreshingAccess || subscription.isOffline)
 
             if subscription.isSubscribed,
                let url = URL(string: "https://apps.apple.com/account/subscriptions") {
@@ -277,8 +213,9 @@ struct SubscriptionSettingsView: View {
     }
 
     private func detailsSection(_ entitlement: EntitlementInfo) -> some View {
-        Section("Details") {
+        Section("App Store Details") {
             LabeledContent("Plan", value: entitlement.productIdentifier)
+            LabeledContent("Status", value: entitlement.isActive ? "Active" : "Inactive")
             if let purchaseDate = entitlement.latestPurchaseDate {
                 LabeledContent("Purchased", value: purchaseDate.formatted(date: .abbreviated, time: .omitted))
             }
@@ -287,7 +224,7 @@ struct SubscriptionSettingsView: View {
                                value: expiry.formatted(date: .abbreviated, time: .omitted))
             }
             if entitlement.periodType == .trial {
-                LabeledContent("Trial", value: "Active")
+                LabeledContent("Trial", value: entitlement.isActive ? "Active" : "Ended")
             }
         }
     }
@@ -296,7 +233,7 @@ struct SubscriptionSettingsView: View {
 
     private var entitlementDiagnosticsSection: some View {
         Section {
-            LabeledContent("Effective access", value: entitlementGate.hasAccess ? "Granted" : "Denied")
+            LabeledContent("Effective access", value: entitlementGate.hasAccess ? "Granted" : (entitlementGate.outcome == .denied ? "Denied" : "Unverified"))
             LabeledContent("Access state", value: entitlementGate.stateLabel)
             if let source = diagnosticAccessSource {
                 LabeledContent("Access source", value: source)
@@ -400,7 +337,7 @@ struct SubscriptionSettingsView: View {
             }
             .buttonStyle(.plain)
         } footer: {
-            Text("Subscriptions are billed through your Apple ID. A 3-month free trial applies to new subscribers.")
+            Text("App Store purchases are billed through your Apple ID. Access may also be provided by your vineyard.")
         }
     }
 }

@@ -180,6 +180,7 @@ final class EntitlementGate {
     private let matrixRepository: VineyardAccessMatrixRepository
     private var currentUserId: UUID?
     private var isRefreshing: Bool = false
+    private var hasPendingForcedRefresh: Bool = false
 
     private static let mismatchReportKey = "vinetrack.entitlementMismatch.lastReportedAt"
 
@@ -270,6 +271,9 @@ final class EntitlementGate {
     func login(userId: UUID) {
         guard currentUserId != userId else { return }
         currentUserId = userId
+        // A request for the previous account may still be in flight. Queue
+        // exactly one refresh for this account after that request completes.
+        if isRefreshing { hasPendingForcedRefresh = true }
         let snapshot = EntitlementVerificationStore.shared.load(for: userId)
         enforcementEnabled = snapshot?.supabaseEnforced ?? false
         cachedAccessibleVineyardIds = Set(
@@ -281,7 +285,10 @@ final class EntitlementGate {
         hasTrialMismatch = false
         lastServerAccess = nil
         lastServerResult = nil
+        lastRefreshedAt = nil
         isUsingCachedResult = false
+        resolvedWhileOffline = false
+        lastErrorDescription = nil
         storeSyncState = .idle
     }
 
@@ -289,6 +296,7 @@ final class EntitlementGate {
     /// removed so no cached access can leak to another account.
     func logout() {
         currentUserId = nil
+        hasPendingForcedRefresh = false
         phase = .idle
         accessMatrix = nil
         cachedAccessibleVineyardIds = []
@@ -353,7 +361,14 @@ final class EntitlementGate {
     /// Re-resolve the combined access state. Throttled unless `force` so
     /// SwiftUI recomposition can never cause repeated RPC calls.
     func refresh(force: Bool = false) async {
-        guard let userId = currentUserId, !isRefreshing else { return }
+        guard currentUserId != nil else { return }
+        if isRefreshing {
+            // Reconnection or purchase may arrive during an offline request.
+            // Keep one follow-up instead of dropping it or starting parallel
+            // requests; ordinary SwiftUI refreshes remain coalesced away.
+            if force { hasPendingForcedRefresh = true }
+            return
+        }
         if !force,
            let last = lastRefreshedAt,
            Date().timeIntervalSince(last) < Self.minimumRefreshInterval,
@@ -362,12 +377,16 @@ final class EntitlementGate {
         }
         isRefreshing = true
         defer { isRefreshing = false }
-        if case .resolved = phase {
-            // Keep showing the previous resolution during background refreshes.
-        } else {
-            phase = .checking
-        }
-        await performRefresh(userId: userId)
+        repeat {
+            hasPendingForcedRefresh = false
+            guard let userId = currentUserId else { return }
+            if case .resolved = phase {
+                // Keep showing the previous resolution during background refreshes.
+            } else {
+                phase = .checking
+            }
+            await performRefresh(userId: userId)
+        } while hasPendingForcedRefresh
     }
 
     private func performRefresh(userId: UUID) async {
@@ -377,6 +396,7 @@ final class EntitlementGate {
 
         do {
             let row = try await repository.fetchMyAccess()
+            guard currentUserId == userId else { return }
             serverRow = row
             if let row {
                 enforcementEnabled = row.enforcementEnabled ?? false
@@ -388,6 +408,7 @@ final class EntitlementGate {
             }
             lastErrorDescription = nil
         } catch {
+            guard currentUserId == userId else { return }
             serverResult = .unreachable
             lastErrorDescription = error.localizedDescription
             // Keep the cached enforcement flag — a transient network failure
@@ -412,6 +433,7 @@ final class EntitlementGate {
             }
         }
 
+        guard currentUserId == userId else { return }
         let now = Date()
         let cacheInfo: EntitlementDecision.CacheInfo? = snapshot.map {
             EntitlementDecision.CacheInfo(
@@ -464,44 +486,36 @@ final class EntitlementGate {
         userId: UUID,
         now: Date
     ) {
-        guard !subscription.isOffline else { return }
-        switch serverResult {
-        case .granted:
-            EntitlementVerificationStore.shared.recordVerification(
-                userId: userId.uuidString,
-                entitled: true,
-                productStatus: "supabase:\(serverRow?.accessSourceLabel ?? "granted")",
-                accessSource: "supabase",
-                planCode: serverRow?.planCode,
-                reasonCode: serverRow?.reasonCode,
-                knownExpiresAt: serverRow?.knownExpiresAt(now: now),
-                supabaseEnforced: enforcementEnabled,
-                accessibleVineyardIds: accessMatrix.map { $0.accessibleVineyardIds.map(\.uuidString) }
-            )
+        guard !subscription.isOffline, serverResult != .unreachable else { return }
+        let verified: (entitled: Bool, source: String?, productStatus: String?, planCode: String?, expiresAt: Date?)
+        switch outcome {
+        case .grantedBySupabase:
+            verified = (true, "supabase", "supabase:\(serverRow?.accessSourceLabel ?? "granted")",
+                        serverRow?.planCode, serverRow?.knownExpiresAt(now: now))
+        case .grantedByRevenueCat:
+            verified = (true, "revenuecat", nil, nil, nil)
+        case .grantedByLegacyTrial:
+            // Offline access must not outlive the known trial expiry.
+            verified = (true, "legacy_trial", nil, nil, subscription.freeAccessEndsAt)
         case .denied:
-            let fallbackGranted: (entitled: Bool, source: String?, expiresAt: Date?)
-            switch outcome {
-            case .grantedByRevenueCat: fallbackGranted = (true, "revenuecat", nil)
-            case .grantedByLegacyTrial:
-                // Cache from the legacy trial is CAPPED at the trial end so
-                // offline access can never outlive the known trial expiry.
-                fallbackGranted = (true, "legacy_trial", subscription.freeAccessEndsAt)
-            default: fallbackGranted = (false, nil, nil)
-            }
-            EntitlementVerificationStore.shared.recordVerification(
-                userId: userId.uuidString,
-                entitled: fallbackGranted.entitled,
-                productStatus: fallbackGranted.entitled ? nil : "supabase:denied",
-                accessSource: fallbackGranted.source,
-                planCode: nil,
-                reasonCode: serverRow?.reasonCode,
-                knownExpiresAt: fallbackGranted.expiresAt,
-                supabaseEnforced: enforcementEnabled,
-                accessibleVineyardIds: accessMatrix.map { $0.accessibleVineyardIds.map(\.uuidString) }
-            )
-        case .unreachable:
-            break
+            // Persist the effective decision even when the emergency rollout
+            // flag intentionally ignores a positive server grant.
+            verified = (false, nil, "access:denied", nil, nil)
+        case .offlineCachedAccess, .unverified:
+            return
         }
+        EntitlementVerificationStore.shared.recordVerification(
+            userId: userId.uuidString,
+            entitled: verified.entitled,
+            productStatus: verified.productStatus,
+            accessSource: verified.source,
+            planCode: verified.planCode,
+            reasonCode: serverRow?.reasonCode,
+            knownExpiresAt: verified.expiresAt,
+            supabaseEnforced: enforcementEnabled,
+            accessibleVineyardIds: accessMatrix.map { $0.accessibleVineyardIds.map(\.uuidString) },
+            accessDetailsUpdate: .replace
+        )
     }
 
     // MARK: Mismatch diagnostics
