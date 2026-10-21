@@ -1,5 +1,17 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Physical acceptance access checkpoint — 21 October 2026
+
+**BLOCKED before installation; no physical acceptance performed.** Application logic remains frozen. No handset install, uninstall, storage clear, sync reset, server change, store upload or distribution performed.
+
+- Current managed source HEAD inspected: `2ae36bd9c7c64a1ac87aeb884778fa7460e77d9a`; initial working tree clean. Recomputed application/test/script binary diff against `ecb36b0b62c69a5becd532066a87f178c49386b1` remains `eb88ef77f79b213e18937b79bb71d652d3dcc1115f09d56c54bce764d51207d8`, matching the validated integration. This identifies the source inspected before this documentation-only checkpoint, not the subsequent managed documentation save.
+- Fresh `adb devices -l` returned an empty device list. No installed Android package/version/certificate/lineage could be read; in-place update compatibility remains unverified.
+- Existing Android APK re-inspected: package `com.rork.vinetrack`, version3.1.7/code12;77,056,837bytes; modified2026-10-21T05:59:22Z; SHA-256 `6fe20fb13da0be143631acc14fe432def3606d0b518e08c9b930539f0df13324`. Signature v2 verifies; certificate SHA-256 `241548efe6df8100c833d4eaebd2b3cf22dd70ffb638d9faa77bbd03f0077ef3`, DN `CN=Rork Kotlin Play Upload, OU=Rork, O=Rork, L=San Francisco, ST=CA, C=US`. Candidate exists, but is NOT cleared for a data-bearing handset update.
+- Physical iPhone access is not established. Local `xcrun`, `devicectl` and `idevice_id` are unavailable. Reviewed supported publishing workflow still provides no no-upload signed-device IPA export route; `submitBuild` uploads and was not called. No current signed device IPA, provisioning/entitlement identity or installed application identity obtained. The preview cannot substitute for physical GPS acceptance.
+- Existing green iOS60/0, Android66/0 and both build results are retained, not rerun on unchanged code. Only the existing report and plan are updated in this checkpoint; no code changes requiring a new build.
+- All actual handset cases remain NOT EXECUTED: no physical pin UUIDs, provider/tap GPS history, compass/side/aisle/row/snap results or authenticated server request/response evidence collected. No demonstrated API discrepancy identified; server assumptions remain unverified, not accepted.
+- Required handoff: an authorised physical-device access or owner-operated evidence route; Android installed package/version/certificate and any applicable signing lineage; iOS supported no-upload signed export/delivery with installed bundle/team/application identifier and compatible provisioning/entitlements. Verify compatibility and preserve original IDs/GPS/queues/Sync Status before any update. Stop rather than uninstall/reset data. Then execute the retained physical matrix below and report actual evidence.
+
 ## PR #6 mobile pin capture integration — 21 October 2026
 
 **Current-source integration implemented; final iOS focused gate60/0, Android66/0/0/0, and both builds PASS. Physical acceptance NOT EXECUTED; no deployment/upload/distribution/handset operation.** Target Nutrient remains CLOSED. Supabase belongs to ChatGPT; no SQL, Edge Function, Portal or historical pin correction performed.
