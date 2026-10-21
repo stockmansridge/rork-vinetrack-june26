@@ -45,6 +45,9 @@ class PinCaptureEvidenceStore(context: Context) {
         val geometryHash: String? = null,
         val observations: List<Observation> = emptyList(),
         val uploaded: Boolean = false,
+        val compassDegrees: Double? = null,
+        val compassObservedAtIso: String? = null,
+        val unresolvedReason: String? = null,
     )
 
     @Serializable
@@ -73,7 +76,9 @@ class PinCaptureEvidenceStore(context: Context) {
     private val serializer = ListSerializer(Evidence.serializer())
 
     fun save(evidence: Evidence): Boolean = fieldAccess.admitted { synchronized(this) {
-        val existing = load().filterNot { it.pinId == evidence.pinId && it.evidenceRevision == evidence.evidenceRevision }
+        val existing = load()
+        val original = existing.firstOrNull { it.pinId == evidence.pinId && it.evidenceRevision == evidence.evidenceRevision }
+        if (original != null) return@synchronized original.copy(uploaded = false) == evidence.copy(uploaded = false)
         persist(existing + evidence)
     } }
 

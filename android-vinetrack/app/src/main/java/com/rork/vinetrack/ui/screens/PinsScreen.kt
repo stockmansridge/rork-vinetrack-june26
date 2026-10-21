@@ -1990,9 +1990,18 @@ fun PinCategoryLauncherScreen(
                     headingSource = capture.headingSource,
                     headingObservedAtIso = capture.headingObservedAtIso,
                     aisleLock = capture.aisleLock,
-                    geometryRevision = PinCaptureEvidenceStore.geometryIdentity(paddock).first,
-                    geometryHash = PinCaptureEvidenceStore.geometryIdentity(paddock).second,
+                    geometryRevision = capture.geometryRevision,
+                    geometryHash = capture.geometryHash,
                     observations = capture.observations,
+                    compassDegrees = capture.compassDegrees,
+                    compassObservedAtIso = capture.compassObservedAtIso,
+                    unresolvedReason = when {
+                        placement?.snappedToRow == true -> null
+                        capture.headingDegrees == null -> "qualified_gps_travel_unavailable"
+                        side == null -> "explicit_side_unavailable"
+                        paddock == null -> "mapped_block_unavailable"
+                        else -> "verified_aisle_unavailable"
+                    },
                 ),
             )
             if (!evidenceSaved) {

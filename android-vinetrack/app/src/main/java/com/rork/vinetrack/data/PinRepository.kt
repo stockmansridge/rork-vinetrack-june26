@@ -294,7 +294,14 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
             supportedAlongRowDistanceM = evidence.alongRowDistanceMetres,
             aisleLock = evidence.aisleLock,
             observations = evidence.observations.takeLast(16),
-            captureProvenance = mapOf("platform" to "android", "capture" to "save_first"),
+            captureProvenance = buildMap {
+                put("platform", "android")
+                put("capture", "save_first")
+                put("direction_source", evidence.headingSource ?: "unavailable")
+                evidence.compassDegrees?.takeIf { it.isFinite() }?.let { put("compass_degrees", it.toString()) }
+                evidence.compassObservedAtIso?.let { put("compass_observed_at", it) }
+                evidence.unresolvedReason?.let { put("unresolved_reason", it) }
+            },
             geometryRevision = evidence.geometryRevision,
             geometryHash = evidence.geometryHash,
         )

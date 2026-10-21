@@ -32,8 +32,12 @@ data class PinCaptureContext(
     val resolvedPaddockId: String? = null,
     val resolvedRowNumber: Int? = null,
     val resolvedPlacement: PinPlacementResult? = null,
-    /** The single fresh facing used for both row selection and persistence. */
+    /** Qualified GPS travel used for both row selection and persistence. */
     val headingDegrees: Double? = null,
+    val compassDegrees: Double? = null,
+    val compassObservedAtIso: String? = null,
+    val geometryRevision: String? = null,
+    val geometryHash: String? = null,
 )
 
 /** Explicit outcome for a pin-location request; failure never carries coordinates. */
@@ -80,7 +84,39 @@ object PinTapCaptureGate {
         if (contextIsCurrent) (result as? PinLocationResult.Success)?.fix else null
 }
 
-/** Pure iOS-parity qualification rules for cached and newly delivered Android fixes. */
+/** PR #6 movement qualification: compass is deliberately not an input. */
+object PinTravelDirection {
+    data class Course(val degrees: Double, val observedAtEpochMs: Long)
+
+    fun fromObservations(current: QualifiedLocationFix, history: List<QualifiedLocationFix>, capturedAtElapsedNanos: Long = current.fixElapsedRealtimeNanos): Course? {
+        val capture = capturedAtElapsedNanos
+        if (current.fixElapsedRealtimeNanos <= 0 || capture - current.fixElapsedRealtimeNanos !in 0..5_000_000_000L) return null
+        val recent = (history + current).distinctBy { it.fixElapsedRealtimeNanos }.distinctBy { it.fixTimeEpochMs }
+            .sortedBy { it.fixElapsedRealtimeNanos }.takeLast(16).filter { fix ->
+                val age = capture - fix.fixElapsedRealtimeNanos
+                age in 0..15_000_000_000L && fix.accuracyMetres in 0.0..5.0 &&
+                    fix.speedMetresPerSecond?.let { it.isFinite() && it >= 1.0 } == true &&
+                    fix.bearingDegrees?.let { it.isFinite() && it >= 0 && it < 360 } == true &&
+                    fix.latitude in -90.0..90.0 && fix.longitude in -180.0..180.0
+            }
+        if (recent.size < 3 || recent.last().fixElapsedRealtimeNanos != current.fixElapsedRealtimeNanos) return null
+        val first = recent.first()
+        val last = recent.last()
+        if (last.fixElapsedRealtimeNanos - first.fixElapsedRealtimeNanos < 1_000_000_000L) return null
+        val east = recent.sumOf { kotlin.math.sin(Math.toRadians(it.bearingDegrees!!)) }
+        val north = recent.sumOf { kotlin.math.cos(Math.toRadians(it.bearingDegrees!!)) }
+        val mean = (Math.toDegrees(kotlin.math.atan2(east, north)) + 360) % 360
+        fun difference(a: Double, b: Double) = kotlin.math.abs((a - b + 540) % 360 - 180)
+        if (recent.any { difference(it.bearingDegrees!!, mean) > 25 }) return null
+        val northM = (last.latitude - first.latitude) * 111_320
+        val eastM = (last.longitude - first.longitude) * 111_320 * kotlin.math.cos(Math.toRadians((first.latitude + last.latitude) / 2))
+        if (kotlin.math.hypot(northM, eastM) < 5) return null
+        val displacement = (Math.toDegrees(kotlin.math.atan2(eastM, northM)) + 360) % 360
+        if (difference(displacement, mean) > 30) return null
+        return Course(mean, last.fixTimeEpochMs)
+    }
+}
+
 object PinLocationFixValidator {
     const val MAX_AGE_MS: Long = 5_000L
     const val MAX_ACCURACY_METRES: Double = 15.0

@@ -1,5 +1,0 @@
-// Validation-only synthetic substitute for Rork's untracked generated Config.kt.
-gradle.projectsEvaluated {
-    def app = gradle.rootProject.project(':app')
-    app.android.sourceSets.main.java.srcDir('/home/user/rork-app/.rork-tmp/spray-baseline-harness')
-}

@@ -208,7 +208,25 @@ struct PinDropConfirmationSheet: View {
             errorMessage = "Enter valid coordinates or wait for GPS."
             return
         }
-        let heading = locationService.heading?.trueHeading
+        let capturedAt = Date()
+        let capture: PinCaptureContext? = {
+            guard !useManualLocation, let vineyardId = store.selectedVineyardId,
+                  let location = locationService.location else { return nil }
+            return PinCaptureContext(
+                capturedAt: capturedAt, locationObservedAt: location.timestamp,
+                vineyardId: vineyardId, tripId: store.currentActiveTripIdProvider?(),
+                rawCoordinate: location.coordinate, horizontalAccuracyMetres: location.horizontalAccuracy,
+                observations: locationService.pinCaptureObservations(capturedAt: capturedAt),
+                headingDegrees: locationService.heading?.trueHeading,
+                headingSource: locationService.heading == nil ? nil : "device_true_heading",
+                headingObservedAt: locationService.heading?.timestamp,
+                geometryPaddock: store.paddocks.first { $0.id == selectedPaddockId }
+            )
+        }()
+        // This explicit manual-row workflow records a row only, never claims a snap.
+        let heading = capture.flatMap {
+            PinCaptureEvidence.qualifiedTravelDirection(observations: $0.observations, capturedAt: $0.capturedAt)?.degrees
+        }
         let rowNumber = Int(rowText.trimmingCharacters(in: .whitespacesAndNewlines))
         let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalNotes: String? = trimmedNotes.isEmpty ? nil : trimmedNotes
@@ -219,6 +237,7 @@ struct PinDropConfirmationSheet: View {
                 button: btn,
                 coordinate: coord,
                 heading: heading,
+                capture: capture,
                 side: side,
                 paddockId: selectedPaddockId,
                 rowNumber: rowNumber,
@@ -234,6 +253,7 @@ struct PinDropConfirmationSheet: View {
                 stageDescription: stage.description,
                 coordinate: coord,
                 heading: heading,
+                capture: capture,
                 side: side,
                 paddockId: selectedPaddockId,
                 rowNumber: rowNumber,

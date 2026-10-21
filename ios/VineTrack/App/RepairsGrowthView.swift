@@ -578,13 +578,23 @@ struct RepairsGrowthView: View {
     /// uncertainty, the instant, and the vineyard/trip it belongs to.
     private func freezeCapture(location: CLLocation) -> PinCaptureContext? {
         guard let vineyardId = store.selectedVineyardId else { return nil }
+        let capturedAt = Date()
+        let resolved = PinContextResolver.resolve(coordinate: location.coordinate, store: store, tracking: tracking)
+        let paddock = store.paddocks.first { $0.id == resolved.paddockId }
+        let lock = PinAisleObservationLock.resolve(locations: locationService.pinAisleObservationHistory, current: location, paddock: paddock)
         return PinCaptureContext(
-            capturedAt: Date(),
+            capturedAt: capturedAt,
             locationObservedAt: location.timestamp,
             vineyardId: vineyardId,
             tripId: store.currentActiveTripIdProvider?(),
             rawCoordinate: location.coordinate,
-            horizontalAccuracyMetres: location.horizontalAccuracy
+            horizontalAccuracyMetres: location.horizontalAccuracy,
+            observations: locationService.pinCaptureObservations(capturedAt: capturedAt),
+            headingDegrees: locationService.heading.flatMap { $0.trueHeading >= 0 ? $0.trueHeading : nil },
+            headingSource: locationService.heading == nil ? nil : "device_true_heading",
+            headingObservedAt: locationService.heading?.timestamp,
+            aisleLock: lock.map { PinCaptureAisleLock(paddockId: $0.paddockId, aisleNumber: $0.aisleNumber, supportingObservations: $0.supportingObservations, confirmedAt: $0.confirmedAt) },
+            geometryPaddock: paddock
         )
     }
 
@@ -607,10 +617,9 @@ struct RepairsGrowthView: View {
         }
         // Never substitute 0°/North for an absent heading, and never freeze a
         // compass sample that describes an earlier moment.
-        let heading: Double? = locationService.heading?.trueHeading
-        let headingAge: Double? = locationService.heading.map { sample in
-            capture.capturedAt.timeIntervalSince(sample.timestamp)
-        }
+        let travel = PinCaptureEvidence.qualifiedTravelDirection(observations: capture.observations, capturedAt: capture.capturedAt)
+        let heading = travel?.degrees
+        let headingAge = travel.map { capture.capturedAt.timeIntervalSince($0.observedAt) }
         let lockedPath: Double? = tracking.isTracking
             ? (tracking.diagLockedPath ?? tracking.currentRowNumber)
             : nil

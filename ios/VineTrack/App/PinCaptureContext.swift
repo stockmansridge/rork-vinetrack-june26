@@ -34,6 +34,8 @@ nonisolated struct PinCaptureContext: Sendable, Equatable {
     let headingObservedAt: Date?
     /// Observation-backed aisle lock available at the tap.
     let aisleLock: PinCaptureAisleLock?
+    let geometryRevision: String?
+    let geometryHash: String?
 
     init(
         pinId: UUID = UUID(),
@@ -47,7 +49,8 @@ nonisolated struct PinCaptureContext: Sendable, Equatable {
         headingDegrees: Double? = nil,
         headingSource: String? = nil,
         headingObservedAt: Date? = nil,
-        aisleLock: PinCaptureAisleLock? = nil
+        aisleLock: PinCaptureAisleLock? = nil,
+        geometryPaddock: Paddock? = nil
     ) {
         self.pinId = pinId
         self.capturedAt = capturedAt
@@ -61,6 +64,9 @@ nonisolated struct PinCaptureContext: Sendable, Equatable {
         self.headingSource = headingSource
         self.headingObservedAt = headingObservedAt
         self.aisleLock = aisleLock
+        let identity = PinCaptureEvidence.geometryIdentity(for: geometryPaddock)
+        self.geometryRevision = identity.revision
+        self.geometryHash = identity.hash
     }
 
     static func == (lhs: PinCaptureContext, rhs: PinCaptureContext) -> Bool {
@@ -77,6 +83,8 @@ nonisolated struct PinCaptureContext: Sendable, Equatable {
             && lhs.headingSource == rhs.headingSource
             && lhs.headingObservedAt == rhs.headingObservedAt
             && lhs.aisleLock == rhs.aisleLock
+            && lhs.geometryRevision == rhs.geometryRevision
+            && lhs.geometryHash == rhs.geometryHash
     }
 
     /// True when this capture may still be written: same vineyard, same trip.

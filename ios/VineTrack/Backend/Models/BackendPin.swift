@@ -44,6 +44,7 @@ nonisolated struct BackendPin: Codable, Sendable, Identifiable {
     let deletedAt: Date?
     let clientUpdatedAt: Date?
     let syncVersion: Int?
+    var locationConfirmationRevision: Int? = nil
     // Attachment geometry (added in 041; nullable on legacy rows).
     let drivingRowNumber: Double?
     let pinRowNumber: Double?
@@ -95,6 +96,7 @@ nonisolated struct BackendPin: Codable, Sendable, Identifiable {
         case deletedAt = "deleted_at"
         case clientUpdatedAt = "client_updated_at"
         case syncVersion = "sync_version"
+        case locationConfirmationRevision = "location_confirmation_revision"
         case drivingRowNumber = "driving_row_number"
         case pinRowNumber = "pin_row_number"
         case pinSide = "pin_side"
@@ -199,6 +201,29 @@ nonisolated struct BackendPinUpsert: Encodable, Sendable {
     }
 }
 
+/// Existing pins receive descriptive/status edits only. Capture and derived
+/// location are insert-only here; intentional location changes use confirmation RPCs.
+nonisolated struct BackendPinContentPatch: Encodable, Sendable {
+    let pin: BackendPinUpsert
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: BackendPinUpsert.CodingKeys.self)
+        try c.encodeIfPresent(pin.mode, forKey: .mode)
+        try c.encodeIfPresent(pin.buttonName, forKey: .buttonName)
+        try c.encodeIfPresent(pin.buttonColor, forKey: .buttonColor)
+        try c.encodeIfPresent(pin.launcherButtonId, forKey: .launcherButtonId)
+        try c.encodeIfPresent(pin.title, forKey: .title)
+        try c.encodeIfPresent(pin.notes, forKey: .notes)
+        try c.encodeIfPresent(pin.growthStageCode, forKey: .growthStageCode)
+        try c.encode(pin.isCompleted, forKey: .isCompleted)
+        try c.encodeIfPresent(pin.completedBy, forKey: .completedBy)
+        try c.encodeIfPresent(pin.completedByUserId, forKey: .completedByUserId)
+        try c.encodeIfPresent(pin.completedAt, forKey: .completedAt)
+        try c.encodeIfPresent(pin.photoPath, forKey: .photoPath)
+        try c.encode(pin.clientUpdatedAt, forKey: .clientUpdatedAt)
+    }
+}
+
 private extension Optional where Wrapped == String {
     /// The wrapped string trimmed of whitespace, or nil when absent/empty —
     /// lets `??` chains skip empty-string values coming from Android rows.
@@ -210,6 +235,17 @@ private extension Optional where Wrapped == String {
 }
 
 extension BackendPin {
+    func mergingConfirmedLocation(into local: VinePin) -> VinePin? {
+        let revision = locationConfirmationRevision ?? 0
+        let localRevision = local.locationConfirmationRevision ?? 0
+        guard id == local.id, vineyardId == local.vineyardId, revision > 0,
+              revision > localRevision || (revision == localRevision && (syncVersion ?? 0) > (local.syncVersion ?? 0)),
+              let server = toVinePin() else { return nil }
+        var merged = local
+        merged.copyLocation(from: server)
+        return merged
+    }
+
     /// Map a local VinePin into a BackendPin upsert payload.
     /// `photoPath` is the Supabase Storage path; raw photo bytes are uploaded
     /// separately to the `vineyard-pin-photos` bucket before upsert.
@@ -319,6 +355,7 @@ extension BackendPin {
             snappedLongitude: snappedLongitude,
             snappedToRow: snappedToRow ?? false,
             syncVersion: syncVersion,
+            locationConfirmationRevision: locationConfirmationRevision,
             locationScope: locationScope,
             rowSegments: rowSegments?.map { ManualIssueSegment(row: $0.rowNumber, segment: $0.segmentNumber) }
         )

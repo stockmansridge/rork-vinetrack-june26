@@ -972,18 +972,30 @@ final class TripTrackingService {
             return .failed("Could not create pin \u{2014} no vineyard selected.")
         }
         // Everything about this capture is settled here, at the press.
+        let capturedAt = Date()
+        let resolved = PinContextResolver.resolve(coordinate: location.coordinate, store: store, tracking: self)
+        let resolvedPaddock = resolved.paddockId ?? paddockId ?? trip.paddockId
         let capture = PinCaptureContext(
-            capturedAt: Date(),
+            capturedAt: capturedAt,
+            locationObservedAt: location.timestamp,
             vineyardId: captureVineyardId,
             tripId: trip.id,
             rawCoordinate: location.coordinate,
-            horizontalAccuracyMetres: location.horizontalAccuracy
+            horizontalAccuracyMetres: location.horizontalAccuracy,
+            observations: locationService?.pinCaptureObservations(capturedAt: capturedAt) ?? [],
+            headingDegrees: locationService?.heading.flatMap { $0.trueHeading >= 0 ? $0.trueHeading : nil },
+            headingSource: locationService?.heading == nil ? nil : "device_true_heading",
+            headingObservedAt: locationService?.heading?.timestamp,
+            aisleLock: (lockedPath ?? currentRowNumber).flatMap { path in
+                guard let block = lockedPaddockId, let confirmed = lastInCorridorOnLockedAt,
+                      diagLockConfidence >= PinAttachmentResolver.minimumLockConfidence else { return nil }
+                return PinCaptureAisleLock(paddockId: block, aisleNumber: path, supportingObservations: 0, confirmedAt: confirmed)
+            },
+            geometryPaddock: store.paddocks.first { $0.id == resolvedPaddock }
         )
-        let resolved = PinContextResolver.resolve(coordinate: location.coordinate, store: store, tracking: self)
         // During an active trip, physical containment within the selected trip
         // blocks is authoritative. An explicitly supplied/legacy primary block
         // is only a fallback when geometry cannot resolve the fix.
-        let resolvedPaddock = resolved.paddockId ?? paddockId ?? trip.paddockId
         let resolvedRow = rowNumber ?? resolved.rowNumber
 
         // Snap the pin coordinate onto the SELECTED VINE ROW when the live
@@ -998,10 +1010,9 @@ final class TripTrackingService {
         }
         // Never substitute 0°/North for an absent heading, and never freeze a
         // compass sample that describes an earlier moment than this capture.
-        let capturedHeading: Double? = locationService?.heading?.trueHeading
-        let capturedHeadingAge: Double? = locationService?.heading.map { sample in
-            capture.capturedAt.timeIntervalSince(sample.timestamp)
-        }
+        let travel = PinCaptureEvidence.qualifiedTravelDirection(observations: capture.observations, capturedAt: capture.capturedAt)
+        let capturedHeading = travel?.degrees
+        let capturedHeadingAge = travel.map { capture.capturedAt.timeIntervalSince($0.observedAt) }
         // The lock may only speak for this capture when it is confident AND was
         // earned in this block AND was confirmed in the corridor recently.
         let lock: PinAttachmentResolver.LiveLock? = (lockedPath ?? currentRowNumber).map { path in

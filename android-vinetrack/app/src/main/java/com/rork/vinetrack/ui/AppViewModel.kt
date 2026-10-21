@@ -9366,17 +9366,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ): PinCaptureContext? {
         val state = _ui.value
         val vineyardId = state.selectedVineyardId ?: return null
-        // This flow has no independent forward/reverse signal, so GPS course
-        // cannot establish where the operator is facing. Only a fresh compass
-        // observation is eligible; otherwise facing remains unknown.
-        val captureHeading = PinAisleGeometry.frozenCaptureHeading(
-            compassHeadingDegrees = headingDegrees,
-            compassObservedAtElapsedRealtimeNanos = headingObservedAtElapsedRealtimeNanos,
-            captureElapsedRealtimeNanos = captureElapsedRealtimeNanos,
-            courseDegrees = fix.bearingDegrees,
-            speedMetresPerSecond = fix.speedMetresPerSecond,
-            hasForwardTravelEvidence = false,
-        )
+        // Left/Right follows GPS travel. Handset orientation is diagnostic only.
+        val travelCourse = com.rork.vinetrack.data.PinTravelDirection.fromObservations(fix, observationHistory, captureElapsedRealtimeNanos)
+        val captureHeading = travelCourse?.degrees
         val standalonePlacement = PinPlacement.resolveAutomatic(
             paddocks = state.paddocks,
             selectedPaddockId = null,
@@ -9407,8 +9399,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val headingObservedAtIso = headingObservedAtElapsedRealtimeNanos?.takeIf { it <= captureElapsedRealtimeNanos }?.let {
             capturedInstant.minusNanos(captureElapsedRealtimeNanos - it).toString()
         }
-        val frozenObservations = observationHistory
-            .filter { it.fixElapsedRealtimeNanos <= captureElapsedRealtimeNanos }
+        val frozenObservations = (observationHistory + fix)
+            .distinctBy { it.fixElapsedRealtimeNanos }
+            .sortedBy { it.fixElapsedRealtimeNanos }
+            .filter { captureElapsedRealtimeNanos - it.fixElapsedRealtimeNanos in 0..15_000_000_000L }
             .takeLast(PinAisleObservationLock.MAX_OBSERVATIONS)
             .map {
                 com.rork.vinetrack.data.PinCaptureEvidenceStore.Observation(
@@ -9431,8 +9425,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             observedAtIso = java.time.Instant.ofEpochMilli(fix.fixTimeEpochMs).toString(),
             capturedAtIso = capturedInstant.toString(),
             captureUserId = session.userId,
-            headingSource = captureHeading?.let { "qualified_device_heading" },
-            headingObservedAtIso = headingObservedAtIso,
+            headingSource = captureHeading?.let { "qualified_gps_travel" },
+            headingObservedAtIso = travelCourse?.let { java.time.Instant.ofEpochMilli(it.observedAtEpochMs).toString() },
+            compassDegrees = headingDegrees,
+            compassObservedAtIso = headingObservedAtIso,
+            geometryRevision = com.rork.vinetrack.data.PinCaptureEvidenceStore.geometryIdentity(state.paddocks.firstOrNull { it.id == attribution.paddockId }).first,
+            geometryHash = com.rork.vinetrack.data.PinCaptureEvidenceStore.geometryIdentity(state.paddocks.firstOrNull { it.id == attribution.paddockId }).second,
             observations = frozenObservations,
             aisleLock = frozenLock,
             resolvedPaddockId = attribution.paddockId,

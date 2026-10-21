@@ -97,23 +97,29 @@ struct ScoutGrowthStageCoordinator {
             return .failure(.noQualifyingFix(quality))
         }
 
-        let resolved = PinContextResolver.resolve(
-            coordinate: location.coordinate,
-            store: store,
-            tracking: tracking
-        )
-
+        guard let vineyardId = store.selectedVineyardId else { return .failure(.noVineyardSelected) }
+        let capturedAt = Date()
+        let capture = PinCaptureContext(capturedAt: capturedAt, locationObservedAt: location.timestamp,
+            vineyardId: vineyardId, tripId: store.currentActiveTripIdProvider?(), rawCoordinate: location.coordinate,
+            horizontalAccuracyMetres: location.horizontalAccuracy,
+            observations: locationService.pinCaptureObservations(capturedAt: capturedAt),
+            headingDegrees: locationService.heading?.trueHeading,
+            headingSource: locationService.heading == nil ? nil : "device_true_heading",
+            headingObservedAt: locationService.heading?.timestamp,
+            geometryPaddock: store.paddocks.first { $0.id == paddockID })
+        let travel = PinCaptureEvidence.qualifiedTravelDirection(observations: capture.observations, capturedAt: capturedAt)
         // The canonical pin writer. Durable, and it fires the mirror hook.
         guard let pin = store.createGrowthStagePin(
             stageCode: stage.code,
             stageDescription: stage.description,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading,
-            side: .right,
+            heading: travel?.degrees,
+            capture: capture,
+            side: nil,
             // Prefer the block the scout is actually assessing; fall back to
             // geometric resolution only when it agrees there is none.
             paddockId: paddockID,
-            rowNumber: resolved.rowNumber,
+            rowNumber: nil,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
             notes: nil

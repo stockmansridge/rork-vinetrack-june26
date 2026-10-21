@@ -123,17 +123,41 @@ struct RepairsActionView: View {
             showFeedback("Waiting for GPS location.", kind: .warning)
             return
         }
+        guard let vineyardId = store.selectedVineyardId else { return }
+        let capturedAt = Date()
+        let observations = locationService.pinCaptureObservations(capturedAt: capturedAt)
         let resolved = PinContextResolver.resolve(coordinate: location.coordinate, store: store, tracking: tracking)
+        let paddock = store.paddocks.first { $0.id == resolved.paddockId }
+        let lock = PinAisleObservationLock.resolve(locations: locationService.pinAisleObservationHistory, current: location, paddock: paddock)
+        let capture = PinCaptureContext(
+            capturedAt: capturedAt, locationObservedAt: location.timestamp,
+            vineyardId: vineyardId, tripId: store.currentActiveTripIdProvider?(),
+            rawCoordinate: location.coordinate, horizontalAccuracyMetres: location.horizontalAccuracy,
+            observations: observations, headingDegrees: locationService.heading?.trueHeading,
+            headingSource: locationService.heading == nil ? nil : "device_true_heading",
+            headingObservedAt: locationService.heading?.timestamp,
+            aisleLock: lock.map { PinCaptureAisleLock(paddockId: $0.paddockId, aisleNumber: $0.aisleNumber, supportingObservations: $0.supportingObservations, confirmedAt: $0.confirmedAt) },
+            geometryPaddock: paddock
+        )
+        let travel = PinCaptureEvidence.qualifiedTravelDirection(observations: observations, capturedAt: capturedAt)
+        let attachment = PinAttachmentResolver.resolveAutomatic(
+            rawCoordinate: capture.rawCoordinate, heading: travel?.degrees,
+            headingAgeSeconds: travel.map { capturedAt.timeIntervalSince($0.observedAt) },
+            horizontalAccuracyMetres: capture.horizontalAccuracyMetres,
+            operatorSide: side, paddock: paddock, capturedAt: capturedAt, aisleLock: lock
+        )
         let createdPin = store.createPinFromButton(
             button: button,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading,
+            heading: attachment.heading,
+            capture: capture,
             side: side,
             paddockId: resolved.paddockId,
             rowNumber: resolved.rowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
-            notes: nil
+            notes: nil,
+            attachment: attachment
         )
         print(PinContextResolver.diagnostic(coordinate: location.coordinate, side: side, mode: .repairs, resolved: resolved, store: store, tracking: tracking))
         showFeedback("Pin: \(button.name) (\(side == .left ? "L" : "R"))", kind: .success)

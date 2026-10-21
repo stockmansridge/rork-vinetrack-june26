@@ -1396,6 +1396,7 @@ data class Pin(
     @SerialName("updated_at") val updatedAt: String? = null,
     @SerialName("client_updated_at") val clientUpdatedAt: String? = null,
     @SerialName("sync_version") val syncVersion: Long? = null,
+    @SerialName("location_confirmation_revision") val locationConfirmationRevision: Long? = null,
     @SerialName("completed_at") val completedAt: String? = null,
     @SerialName("completed_by") val completedBy: String? = null,
     /**

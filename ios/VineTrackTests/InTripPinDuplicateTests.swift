@@ -14,7 +14,9 @@ final class InTripPinDuplicateTests: XCTestCase {
         let persistence = PersistenceStore(directory: directory)
         let store = MigratedDataStore(persistence: persistence)
         store.selectedVineyardId = vineyardId
-        store.startTrip(Trip(vineyardId: vineyardId, isActive: true))
+        let trip = Trip(vineyardId: vineyardId, isActive: true)
+        store.startTrip(trip)
+        store.claimDeviceTrip(trip.id)
 
         let coordinate = CLLocationCoordinate2D(latitude: -34.0, longitude: 138.0)
         let existing = VinePin(
@@ -42,6 +44,11 @@ final class InTripPinDuplicateTests: XCTestCase {
         setFreshLocation()
         let tracking = TripTrackingService()
         tracking.configure(store: store, locationService: locationService)
+        // Match NewMainTabView's production trip-identity wiring. The frozen
+        // capture guard must not be bypassed just to exercise duplicate checks.
+        store.currentActiveTripIdProvider = { [weak tracking] in tracking?.activeTrip?.id }
+
+        XCTAssertEqual(tracking.activeTrip?.id, trip.id)
 
         let irrigation = ButtonConfig(
             vineyardId: vineyardId,

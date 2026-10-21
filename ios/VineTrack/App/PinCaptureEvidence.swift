@@ -22,7 +22,7 @@ nonisolated struct PinCaptureAisleLock: Codable, Sendable, Equatable {
 
 /// Immutable, durable evidence captured with an automatic pin. Derived server
 /// placement may change; this observation never does.
-nonisolated struct PinCaptureEvidence: Codable, Sendable, Identifiable {
+nonisolated struct PinCaptureEvidence: Codable, Sendable, Identifiable, Equatable {
     let pinId: UUID
     let vineyardId: UUID
     let evidenceRevision: Int
@@ -91,40 +91,50 @@ nonisolated struct PinCaptureEvidence: Codable, Sendable, Identifiable {
 
     func uploadPayload() -> PinCaptureEvidenceUpload { PinCaptureEvidenceUpload(evidence: self) }
 
-    /// Versioned geometry identity shared with Android and SQL. Only ordered
-    /// polygon coordinates and row number/endpoints participate.
-    static func confirmationHeading(for evidence: PinCaptureEvidence) -> Double? {
-        if let heading = evidence.headingDegrees,
-           let observedAt = evidence.headingObservedAt,
-           evidence.capturedAt.timeIntervalSince(observedAt) >= 0,
-           evidence.capturedAt.timeIntervalSince(observedAt) <= 5 {
-            return PinAisleGeometry.validHeading(heading)
+    /// Qualified GPS movement, never phone orientation. PR #6's direction
+    /// contract with timestamp uniqueness and bounded raw evidence.
+    static func qualifiedTravelDirection(
+        observations: [PinCaptureObservation], capturedAt: Date
+    ) -> (degrees: Double, observedAt: Date)? {
+        let bounded = Array(observations.suffix(16))
+        let latestObservedAt = bounded.filter { $0.observedAt <= capturedAt }.map(\.observedAt).max()
+        let recent = bounded.filter { sample in
+            let age = capturedAt.timeIntervalSince(sample.observedAt)
+            guard age >= 0, age <= 15,
+                  let course = sample.courseDegrees, course.isFinite, (0..<360).contains(course),
+                  let speed = sample.speedMps, speed.isFinite, speed >= 1,
+                  let accuracy = sample.horizontalAccuracyM, accuracy.isFinite, (0...5).contains(accuracy),
+                  (-90...90).contains(sample.latitude), (-180...180).contains(sample.longitude)
+            else { return false }
+            return true
         }
-        let unique = Dictionary(evidence.observations.compactMap { observation -> (String, PinCaptureObservation)? in
-            guard let course = observation.courseDegrees,
-                  let speed = observation.speedMps, speed >= 0.5,
-                  observation.observedAt <= evidence.capturedAt,
-                  evidence.capturedAt.timeIntervalSince(observation.observedAt) <= 5,
-                  (0..<360).contains(course) else { return nil }
-            let key = "\(observation.observedAt.timeIntervalSince1970)|\(observation.latitude)|\(observation.longitude)"
-            return (key, observation)
-        }, uniquingKeysWith: { first, _ in first }).values.sorted { $0.observedAt < $1.observedAt }
-        guard unique.count >= 3, let first = unique.first, let last = unique.last else { return nil }
-        let sinTotal = unique.compactMap(\.courseDegrees).reduce(0) { $0 + sin($1 * .pi / 180) }
-        let cosTotal = unique.compactMap(\.courseDegrees).reduce(0) { $0 + cos($1 * .pi / 180) }
-        let agreement = hypot(sinTotal, cosTotal) / Double(unique.count)
-        guard agreement >= 0.70 else { return nil }
-        let heading = (atan2(sinTotal, cosTotal) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
-        let latitudeScale = 111_320.0
-        let longitudeScale = latitudeScale * cos(((first.latitude + last.latitude) / 2) * .pi / 180)
-        let north = (last.latitude - first.latitude) * latitudeScale
-        let east = (last.longitude - first.longitude) * longitudeScale
-        guard hypot(north, east) >= 1 else { return nil }
-        let displacementHeading = (atan2(east, north) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
-        let delta = abs((displacementHeading - heading + 540).truncatingRemainder(dividingBy: 360) - 180)
-        return delta <= 60 ? heading : nil
+        let unique = Dictionary(recent.map { ($0.observedAt, $0) }, uniquingKeysWith: { first, _ in first })
+            .values.sorted { $0.observedAt < $1.observedAt }
+        guard unique.count >= 3, let first = unique.first, let last = unique.last,
+              last.observedAt == latestObservedAt,
+              capturedAt.timeIntervalSince(last.observedAt) <= 5,
+              last.observedAt.timeIntervalSince(first.observedAt) >= 1 else { return nil }
+        let courses = unique.compactMap(\.courseDegrees)
+        let eastUnit = courses.reduce(0.0) { $0 + sin($1 * .pi / 180) }
+        let northUnit = courses.reduce(0.0) { $0 + cos($1 * .pi / 180) }
+        let mean = (atan2(eastUnit, northUnit) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
+        func difference(_ a: Double, _ b: Double) -> Double {
+            abs((a - b + 540).truncatingRemainder(dividingBy: 360) - 180)
+        }
+        guard courses.allSatisfy({ difference($0, mean) <= 25 }) else { return nil }
+        let north = (last.latitude - first.latitude) * 111_320
+        let east = (last.longitude - first.longitude) * 111_320 * cos((first.latitude + last.latitude) / 2 * .pi / 180)
+        guard hypot(north, east) >= 5 else { return nil }
+        let displacement = (atan2(east, north) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
+        guard difference(displacement, mean) <= 30 else { return nil }
+        return (mean, last.observedAt)
     }
 
+    static func confirmationHeading(for evidence: PinCaptureEvidence) -> Double? {
+        qualifiedTravelDirection(observations: evidence.observations, capturedAt: evidence.capturedAt)?.degrees
+    }
+
+    /// Versioned identity of ordered polygon coordinates and row endpoints.
     static func geometryIdentity(for paddock: Paddock?) -> (revision: String?, hash: String?) {
         guard let paddock else { return (nil, nil) }
         func number(_ value: Double) -> String {
@@ -188,22 +198,38 @@ nonisolated enum PinCaptureEvidenceDeliveryError: LocalizedError, Sendable {
 final class PinCaptureEvidenceStore {
     static let shared = PinCaptureEvidenceStore()
     private let persistence: PersistenceStore
-    private let key = "vinetrack_pin_capture_evidence_v2"
-    private let recoveryKey = "vinetrack_pin_capture_evidence_recovery_v2"
+    // Opaque Data keeps JSONEncoder's exact Date representation inside the
+    // shared ISO-8601 persistence layer (which otherwise drops subsecond time).
+    private let key = "vinetrack_pin_capture_evidence_precise_v3"
+    private let recoveryKey = "vinetrack_pin_capture_evidence_recovery_precise_v3"
     private(set) var records: [PinCaptureEvidence]
 
     init(persistence: PersistenceStore = .shared) {
         self.persistence = persistence
-        let primary: [PinCaptureEvidence] = persistence.load(key: key) ?? []
-        let recovery: [PinCaptureEvidence] = Self.loadRecovery(key: recoveryKey)
+        let precise: Data? = persistence.load(key: key)
+        let primary: [PinCaptureEvidence]
+        if let precise {
+            primary = (try? JSONDecoder().decode([PinCaptureEvidence].self, from: precise)) ?? []
+        } else {
+            primary = persistence.load(key: "vinetrack_pin_capture_evidence_v2") ?? []
+        }
+        let recovery = Self.loadRecovery(key: recoveryKey)
+            + Self.loadRecovery(key: "vinetrack_pin_capture_evidence_recovery_v2", legacy: true)
         self.records = Dictionary((primary + recovery).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }).values.sorted { $0.capturedAt < $1.capturedAt }
     }
 
     func save(_ evidence: PinCaptureEvidence) throws {
-        var next = records.filter { $0.id != evidence.id }
+        if var original = records.first(where: { $0.id == evidence.id }) {
+            var candidate = evidence
+            original.isUploaded = false
+            candidate.isUploaded = false
+            guard original == candidate else { throw PinCaptureEvidenceDeliveryError.immutableConflict }
+            return
+        }
+        var next = records
         next.append(evidence)
         do {
-            try persistence.saveOrThrow(next, key: key)
+            try persistence.saveOrThrow(JSONEncoder().encode(next), key: key)
             Self.clearRecovery(key: recoveryKey)
         } catch {
             try Self.saveRecovery(next, key: recoveryKey)
@@ -218,7 +244,7 @@ final class PinCaptureEvidenceStore {
             copy.isUploaded = true
             return copy
         }
-        try persistence.saveOrThrow(next, key: key)
+        try persistence.saveOrThrow(JSONEncoder().encode(next), key: key)
         Self.clearRecovery(key: recoveryKey)
         records = next
     }
@@ -230,14 +256,15 @@ final class PinCaptureEvidenceStore {
     var pending: [PinCaptureEvidence] { records.filter { !$0.isUploaded } }
 
     private nonisolated static func saveRecovery(_ records: [PinCaptureEvidence], key: String) throws {
-        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let encoder = JSONEncoder()
         UserDefaults.standard.set(try encoder.encode(records), forKey: key)
         guard UserDefaults.standard.synchronize() else { throw CocoaError(.fileWriteUnknown) }
     }
 
-    private nonisolated static func loadRecovery(key: String) -> [PinCaptureEvidence] {
+    private nonisolated static func loadRecovery(key: String, legacy: Bool = false) -> [PinCaptureEvidence] {
         guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
-        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        if legacy { decoder.dateDecodingStrategy = .iso8601 }
         return (try? decoder.decode([PinCaptureEvidence].self, from: data)) ?? []
     }
 

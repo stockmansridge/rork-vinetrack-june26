@@ -12,7 +12,7 @@ struct GrowthObservationActionView: View {
 
     @State private var showEditButtons: Bool = false
     @State private var showGrowthPicker: Bool = false
-    @State private var pendingSide: PinSide = .right
+    @State private var pendingStagePlacement: (capture: PinCaptureContext, attachment: PinAttachmentResolver.Attachment, resolved: PinContextResolver.Resolved)?
     @State private var lastGrowthStage: GrowthStage?
     @State private var feedbackMessage: String?
     @State private var feedbackKind: VineyardBadgeKind = .success
@@ -130,8 +130,12 @@ struct GrowthObservationActionView: View {
 
     private var growthStageBar: some View {
         Button {
-            pendingSide = .right
-            showGrowthPicker = true
+            guard let location = locationService.location else {
+                showFeedback("Waiting for GPS location.", kind: .warning)
+                return
+            }
+            pendingStagePlacement = capturePlacement(location: location, side: nil)
+            showGrowthPicker = pendingStagePlacement != nil
         } label: {
             HStack(spacing: 12) {
                 GrapeLeafIcon(size: 22, color: .white)
@@ -217,17 +221,20 @@ struct GrowthObservationActionView: View {
             showFeedback("Waiting for GPS location.", kind: .warning)
             return
         }
-        let resolved = PinContextResolver.resolve(coordinate: location.coordinate, store: store, tracking: tracking)
+        guard let placement = capturePlacement(location: location, side: side) else { return }
+        let resolved = placement.resolved
         let createdPin = store.createPinFromButton(
             button: button,
             coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading,
+            heading: placement.attachment.heading,
+            capture: placement.capture,
             side: side,
             paddockId: resolved.paddockId,
-            rowNumber: resolved.rowNumber,
+            rowNumber: placement.attachment.pinRowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
-            notes: nil
+            notes: nil,
+            attachment: placement.attachment
         )
         print(PinContextResolver.diagnostic(coordinate: location.coordinate, side: side, mode: .growth, resolved: resolved, store: store, tracking: tracking))
         showFeedback("Pin: \(button.name) (\(side == .left ? "L" : "R"))", kind: .success)
@@ -238,30 +245,59 @@ struct GrowthObservationActionView: View {
     }
 
     private func handleGrowthStageSelected(_ stage: GrowthStage) {
-        guard let location = locationService.location else {
-            showFeedback("Waiting for GPS location.", kind: .warning)
-            return
-        }
+        guard canCreate, let placement = pendingStagePlacement else { return }
+        defer { pendingStagePlacement = nil }
         lastGrowthStage = stage
-        let resolved = PinContextResolver.resolve(coordinate: location.coordinate, store: store, tracking: tracking)
+        let resolved = placement.resolved
         let createdPin = store.createGrowthStagePin(
             stageCode: stage.code,
             stageDescription: stage.description,
-            coordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading,
-            side: pendingSide,
+            coordinate: placement.capture.rawCoordinate,
+            heading: placement.attachment.heading,
+            capture: placement.capture,
+            side: nil,
             paddockId: resolved.paddockId,
-            rowNumber: resolved.rowNumber,
+            rowNumber: placement.attachment.pinRowNumber,
             createdBy: auth.userName,
             createdByUserId: auth.userId,
-            notes: nil
+            notes: nil,
+            attachment: placement.attachment
         )
-        print(PinContextResolver.diagnostic(coordinate: location.coordinate, side: pendingSide, mode: .growth, resolved: resolved, store: store, tracking: tracking))
         showFeedback("Growth pin: EL \(stage.code)", kind: .success)
         if store.settings.autoPhotoPrompt, let pin = createdPin {
             pendingPhotoPinId = pin.id
             showAutoPhotoConfirm = true
         }
+    }
+
+    private func capturePlacement(location: CLLocation, side: PinSide?) -> (capture: PinCaptureContext, attachment: PinAttachmentResolver.Attachment, resolved: PinContextResolver.Resolved)? {
+        guard let vineyardId = store.selectedVineyardId else { return nil }
+        let capturedAt = Date()
+        let resolved = PinContextResolver.resolve(coordinate: location.coordinate, store: store, tracking: tracking)
+        let paddock = store.paddocks.first { $0.id == resolved.paddockId }
+        let lock = PinAisleObservationLock.resolve(locations: locationService.pinAisleObservationHistory, current: location, paddock: paddock)
+        let capture = PinCaptureContext(capturedAt: capturedAt, locationObservedAt: location.timestamp,
+            vineyardId: vineyardId, tripId: store.currentActiveTripIdProvider?(), rawCoordinate: location.coordinate,
+            horizontalAccuracyMetres: location.horizontalAccuracy,
+            observations: locationService.pinCaptureObservations(capturedAt: capturedAt),
+            headingDegrees: locationService.heading?.trueHeading,
+            headingSource: locationService.heading == nil ? nil : "device_true_heading",
+            headingObservedAt: locationService.heading?.timestamp,
+            aisleLock: lock.map { PinCaptureAisleLock(paddockId: $0.paddockId, aisleNumber: $0.aisleNumber, supportingObservations: $0.supportingObservations, confirmedAt: $0.confirmedAt) },
+            geometryPaddock: paddock)
+        let travel = PinCaptureEvidence.qualifiedTravelDirection(observations: capture.observations, capturedAt: capturedAt)
+        let attachment: PinAttachmentResolver.Attachment
+        if let side {
+            attachment = PinAttachmentResolver.resolveAutomatic(rawCoordinate: capture.rawCoordinate, heading: travel?.degrees,
+                headingAgeSeconds: travel.map { capturedAt.timeIntervalSince($0.observedAt) },
+                horizontalAccuracyMetres: capture.horizontalAccuracyMetres, operatorSide: side,
+                paddock: paddock, capturedAt: capturedAt, aisleLock: lock)
+        } else {
+            attachment = PinAttachmentResolver.Attachment(drivingRowNumber: nil, pinRowNumber: nil,
+                pinSide: nil, snappedCoordinate: nil, alongRowDistanceM: nil, snappedToRow: false,
+                heading: travel?.degrees)
+        }
+        return (capture, attachment, resolved)
     }
 
     private func showFeedback(_ message: String, kind: VineyardBadgeKind) {

@@ -27,16 +27,19 @@ Implementations (one shared contract, two platforms):
 `driving_row_number` is the aisle the operator occupied at capture
 ("Row 26.5"). Exact decimal path values (32.5) are preserved.
 
-## 2. Left/Right is relative to the operator at capture
+## 2. Automatic Left/Right is relative to qualified GPS travel at capture
 
-The selected side participates in choosing the physical adjacent row, using the
-recorded facing and mapped geometry. **Left never means "the lower row
+The explicit selected side participates in choosing the physical adjacent row,
+using qualified direction of travel and mapped geometry. Handset compass is
+retained only as diagnostic evidence; rotating the phone must not choose the row.
+GPS does not establish vehicle-facing direction or distinguish reverse gear
+from a turnaround. No tractor-facing/reverse-detection claim is supported. **Left never means "the lower row
 number".** The aisle number is the mean of the two adjacent rows' numbers,
 derived from geometry.
 
 ## 3. Both directions must work
 
-Reversing the operator's direction reverses the left/right relationship between
+Reversing direction of travel reverses the left/right relationship between
 the same two physical rows. The aisle stays the same aisle.
 
 ## 4. Automatic drops behave the same inside and outside a trip
@@ -52,8 +55,10 @@ certainty. Being outside a trip never silently disables the feature.
 A map-tapped point, whole-row selection, segment selection or block selection
 does not imply that an operator drove an aisle. Those records keep the existing
 structured location-scope contract: no invented side, heading or driving path.
-A capture with no Left/Right choice at all (Growth Stage observations) keeps the
-established side-free nearest-row contract.
+A capture with no explicit Left/Right choice (including side-free Growth Stage
+observations) remains point-only unless an explicit manual location workflow is
+used. Never invent Right or choose a nearest row to imply automatic snapping.
+Manual row-only confirmation does not set `snapped_to_row` or invent snap coordinates.
 
 ## 6. Freeze one observation
 
@@ -140,11 +145,16 @@ confidence is judged separately, from evidence:
 - **Row ends.** If the nearest point on a row is only its clamped endpoint, the
   fix lies beyond that row and containment is not proven. Two 100 m rows 3 m
   apart with the fix halfway across but 1 m past their ends stays unconfirmed.
-- **Freshness of facing.** A compass sample older than five seconds describes an
-  earlier moment and is discarded rather than frozen into the pin.
-- **Travel course.** A GPS course is accepted as operator facing only with real
-  forward-travel evidence. A stationary or crawling machine's course is not
-  confirmed facing.
+- **Qualified travel only.** At least three distinct actual provider observations
+  from the 15 seconds before the tap, each with speed ≥1 m/s, accuracy 0–5 m,
+  valid coordinates and GPS course. Newest provider observation must qualify and
+  be no older than five seconds; span ≥1 second, displacement ≥5 m. Circular
+  course deviations must be ≤25° and displacement/course disagreement ≤30°.
+  An observed stop, poor latest fix, stale/missing course, contradictory movement
+  or short displacement leaves direction unresolved. Android also checks
+  monotonic freshness and deduplicates both provider clocks.
+- **Compass is diagnostic only.** Actual compass/source/time may be retained,
+  including opposite phone orientation; it cannot satisfy movement qualification.
 - **Live lock scope (iOS).** A trip row lock may supply the aisle only when it is
   confident AND was earned in the block this fix resolved to AND was confirmed
   in the corridor recently. Confidence alone never validates stale or
@@ -163,10 +173,17 @@ queue/replay, server response, app restart and refresh on either platform.
 Queued payloads written before a column existed must not erase valid saved
 attachment metadata, and pending photos/edits are preserved — decoding
 successfully is not enough. Android reconciles a replayed/refreshed pin through
-`PinReplayMerge`: the server wins wherever it states a value, and every
-location field, pending photo and offline note it omits is retained. Saved
-facing/side labels never change because the person viewing the pin turned
-around.
+`PinReplayMerge`: legacy thin responses retain omitted local attachment fields.
+For confirmed placement, `location_confirmation_revision` then `sync_version`
+choose complete location authority, including intentional null/false values.
+A row-only server correction must clear an old snap rather than OR it back on.
+Pending CREATE display overlays preserve offline content but cannot hide a newer
+server confirmation; refreshed cache retains confirmation metadata. Cross-vineyard
+identity cannot borrow placement. iOS creates ignore ID conflicts, then PATCHes
+only content fields; stale create replay never writes confirmed location keys.
+Normal delta sync merges confirmed location independently of newer offline notes.
+Saved direction/side labels never change because the viewer turned around;
+legacy “facing” wording must not be interpreted as proven vehicle facing.
 
 ## 12. Keep every newer pin improvement
 
@@ -182,8 +199,8 @@ Keep these visible in the release checklist for any pin-related change:
 
 - [ ] **Attached row** — "On Row X" matches the row physically holding the issue
 - [ ] **Driving path** — "Row X.5" matches the aisle actually driven
-- [ ] **Side** — Left/Right matches the operator's own view at capture
-- [ ] **Facing** — the displayed direction matches the recorded heading
+- [ ] **Side** — explicit Left/Right matches qualified movement-relative side at capture
+- [ ] **Direction** — displayed saved direction matches qualified GPS travel, not phone compass or an inferred reverse gear
 
 Verify opposite-side drops at approximately the same along-row position, then
 repeat facing the opposite direction. Record pin IDs and screenshots
@@ -194,10 +211,17 @@ verification and physical handset acceptance separately.
 
 Capture evidence is immutable and separate from derived placement. It carries
 one stable pin ID, capture and GPS observation times, raw coordinates/accuracy,
-available qualified heading and its source/time, pressed side, trip context,
+qualified GPS travel and its source/time, diagnostic compass where available,
+explicit pressed side (or nil), trip context,
 resolver-supported placement, geometry identity where available, and at most 16
 pre-tap observations from the preceding 20 seconds. Freshness is judged against
-the capture instant, never upload time. Later movement cannot enter this bundle.
+the capture instant, never upload time. Direction qualification uses the narrower
+15-second window above. Later movement cannot enter this bundle. Freeze geometry
+identity with the capture, not after a delayed picker/photo save. Same pin/revision
+retry accepts identical evidence only (upload acknowledgement is separate).
+iOS precise evidence storage preserves subsecond timestamps through restart and
+reads legacy evidence without fabricating lost precision; shared persistence and
+historical pin coordinates are unchanged.
 
 The pin and evidence retry independently by exact ID. Evidence arriving after
 the pin still enqueues enrichment. Failed evidence delivery never removes the
@@ -207,6 +231,11 @@ creator, type, notes or photos; it refuses deleted records and does not overwrit
 mobile/user-confirmed placement. Normal pin delta sync returns accepted results.
 
 ## 14. Worker rollout and reversal
+
+The following is the separately owned server rollout contract, NOT permission
+for a mobile integration to apply SQL, deploy a worker, enable a schedule or
+correct historical pins. ChatGPT owns Supabase; this mobile checkpoint makes no
+server changes.
 
 Ordered release: (1) apply `sql/231_pin_location_enrichment.sql`; (2) deploy
 `pin-location-enrichment-worker` with `PIN_ENRICHMENT_WORKER_SECRET`, leaving the

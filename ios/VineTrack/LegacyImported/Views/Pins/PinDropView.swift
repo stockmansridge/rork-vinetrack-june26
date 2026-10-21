@@ -432,10 +432,13 @@ struct PinDropView: View {
             paddock: paddock
         )
         let capture = freezeCapture(location: location, aisleLock: historyLock)
+        let travel = capture.flatMap {
+            PinCaptureEvidence.qualifiedTravelDirection(observations: $0.observations, capturedAt: $0.capturedAt)
+        }
         let attachment = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: location.coordinate,
-            heading: locationService.heading?.trueHeading,
-            headingAgeSeconds: headingAge(at: capture?.capturedAt ?? Date()),
+            heading: travel?.degrees,
+            headingAgeSeconds: travel.map { (capture?.capturedAt ?? Date()).timeIntervalSince($0.observedAt) },
             horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: side,
             paddock: paddock,
@@ -586,6 +589,8 @@ struct PinDropView: View {
     private func freezeCapture(location: CLLocation, aisleLock: PinAisleObservationLock.Lock? = nil) -> PinCaptureContext? {
         let capturedAt = Date()
         let headingSample = locationService.heading
+        let resolved = PinContextResolver.resolve(coordinate: location.coordinate, store: store, tracking: nil)
+        let paddock = store.paddocks.first { $0.id == (selectedPaddockId ?? resolved.paddockId) }
         return store.selectedVineyardId.map { vineyardId in
             PinCaptureContext(
                 capturedAt: capturedAt,
@@ -605,7 +610,8 @@ struct PinDropView: View {
                         supportingObservations: $0.supportingObservations,
                         confirmedAt: $0.confirmedAt
                     )
-                }
+                },
+                geometryPaddock: paddock
             )
         }
     }

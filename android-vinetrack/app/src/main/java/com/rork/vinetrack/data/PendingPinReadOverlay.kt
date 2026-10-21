@@ -25,6 +25,7 @@ internal object PendingPinReadOverlay {
         fun scoped(pin: Pin): Boolean = pin.vineyardId.equals(vineyardId, true)
         val rows = baseline.filter(::scoped).associateByTo(linkedMapOf()) { it.id }
         val local = existing.filter(::scoped).associateBy { it.id }
+        rows.replaceAll { id, server -> PinReplayMerge.preservingConfirmedLocation(server, local[id]) }
         val evidence = LinkedHashMap(rows)
         val owners = (baseline + existing).groupBy { it.id }.mapValues { (_, pins) ->
             pins.map { it.vineyardId.lowercase() }.toSet()
@@ -91,8 +92,8 @@ internal object PendingPinReadOverlay {
                         PendingOpType.CREATE -> {
                             val created = json.decodeFromString(Pin.serializer(), write.payloadJson)
                             check(created.id == id && scoped(created))
-                            // Capture payload wins over a server row; current local enrichment (photo/segments) is retained.
-                            rows[id] = local[id] ?: created
+                            // Retain offline content, never regress a server-confirmed location.
+                            rows[id] = PinReplayMerge.preservingConfirmedLocation(local[id] ?: created, rows[id])
                         }
                         PendingOpType.UPDATE -> {
                             val toggle = json.decodeFromString(PinCompletionSync.Payload.serializer(), write.payloadJson)
@@ -127,7 +128,7 @@ internal object PendingPinReadOverlay {
                                     pinRowNumber = p.pinRowNumber, alongRowDistanceM = p.alongRowDistanceM,
                                     snappedToRow = p.snappedToRow, createdAt = p.clientUpdatedAt,
                                     updatedAt = p.clientUpdatedAt, clientUpdatedAt = p.clientUpdatedAt).toMapPin()
-                                pin?.let { rows[id] = local[id] ?: it }
+                                pin?.let { rows[id] = PinReplayMerge.preservingConfirmedLocation(local[id] ?: it, rows[id]) }
                             }
                             CustomPinSync.QueuedOp.KIND_SEGMENTS -> {
                                 check(op.pinId == id)
@@ -151,7 +152,7 @@ internal object PendingPinReadOverlay {
                                     alongRowDistanceM = p.alongRowDistanceM, snappedToRow = p.snappedToRow,
                                     assignedUserId = p.assignedUserId, dueDate = p.dueDate, createdAt = p.clientUpdatedAt,
                                     updatedAt = p.clientUpdatedAt, clientUpdatedAt = p.clientUpdatedAt).toMapPin()
-                                pin?.let { rows[id] = local[id] ?: it }
+                                pin?.let { rows[id] = PinReplayMerge.preservingConfirmedLocation(local[id] ?: it, rows[id]) }
                             }
                             ManualIssueSync.QueuedOp.KIND_UPDATE -> {
                                 val p = requireNotNull(op.updateParams)
@@ -181,7 +182,10 @@ internal object PendingPinReadOverlay {
             if (!applied) {
                 unresolved += write.id
                 // Undecodable intent protects just its known local record, not unrelated rows.
-                local[id]?.let { rows[id] = it; evidence[id] = it }
+                local[id]?.let {
+                    rows[id] = PinReplayMerge.preservingConfirmedLocation(it, rows[id])
+                    evidence[id] = PinReplayMerge.preservingConfirmedLocation(it, evidence[id])
+                }
             }
         }
         // Retry status timestamps cannot resurrect an unresolved deletion, even

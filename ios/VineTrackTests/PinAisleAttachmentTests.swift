@@ -121,6 +121,32 @@ struct PinAisleAttachmentTests {
         )
     }
 
+    @Test func qualifiedTravelReversesLeftRightForStandaloneAndLiveTrip() {
+        let now = Date()
+        let block = eastwardBlock()
+        let coordinate = CLLocationCoordinate2D(latitude: -33, longitude: aisle32_5Longitude)
+        for (course, sign, expectedLeft, expectedRight) in [(0.0, 1.0, 32, 33), (180.0, -1.0, 33, 32)] {
+            let samples = (0..<3).map { index in
+                PinCaptureObservation(observedAt: now.addingTimeInterval(Double(index - 2)),
+                    latitude: -33 + sign * Double(index - 2) * 0.00003, longitude: aisle32_5Longitude,
+                    horizontalAccuracyM: 0.4, courseDegrees: course, speedMps: 2)
+            }
+            let travel = PinCaptureEvidence.qualifiedTravelDirection(observations: samples, capturedAt: now)
+            #expect(travel != nil)
+            for (side, expected) in [(PinSide.left, expectedLeft), (.right, expectedRight)] {
+                let standalone = automatic(block, longitude: aisle32_5Longitude, side: side, heading: travel?.degrees)
+                let live = PinAttachmentResolver.resolveLive(rawCoordinate: coordinate, heading: travel?.degrees,
+                    operatorSide: side, drivingPath: 32.5, paddock: block, confident: true)
+                #expect(standalone.pinRowNumber == expected)
+                #expect(live.pinRowNumber == expected)
+                #expect(live.snappedToRow && standalone.snappedToRow)
+                let physicalLongitude = 149 + Double(expected - 32) * rowSpacing
+                #expect(abs((live.snappedCoordinate?.longitude ?? 0) - physicalLongitude) < 1e-9)
+                #expect(abs((standalone.snappedCoordinate?.longitude ?? 0) - physicalLongitude) < 1e-9)
+            }
+        }
+    }
+
     // MARK: - Fixture matrix
 
     @Test func facingNorthAttachesLeftToRow32AndRightToRow33() {
@@ -808,7 +834,7 @@ struct PinAisleAttachmentTests {
         #expect(PinAttachmentFormatter.attachmentLine(pin) == "Row 26")
         #expect(
             PinAttachmentFormatter.drivingPathLine(pin)
-                == "Row 26.5 — Right hand side facing North"
+                == "Row 26\(Locale.current.decimalSeparator ?? ".")5 — Right hand side facing North"
         )
         #expect(PinAttachmentFormatter.fullCompassName(degrees: 346) == "North")
     }

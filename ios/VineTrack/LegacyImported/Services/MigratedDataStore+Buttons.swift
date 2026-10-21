@@ -175,6 +175,7 @@ extension MigratedDataStore {
             createdBy: createdBy,
             createdByUserId: createdByUserId,
             isCompleted: false,
+            tripId: capture?.tripId,
             growthStageCode: growthStageCode,
             notes: notes,
             drivingRowNumber: attachment?.drivingRowNumber,
@@ -239,6 +240,7 @@ extension MigratedDataStore {
             createdBy: createdBy,
             createdByUserId: createdByUserId,
             isCompleted: false,
+            tripId: capture?.tripId,
             growthStageCode: stageCode,
             notes: notes ?? stageDescription,
             drivingRowNumber: attachment?.drivingRowNumber,
@@ -269,7 +271,7 @@ extension MigratedDataStore {
     ) {
         guard let capture else { return }
         let paddock = pin.paddockId.flatMap { id in paddocks.first(where: { $0.id == id }) }
-        let geometry = PinCaptureEvidence.geometryIdentity(for: paddock)
+        let travel = PinCaptureEvidence.qualifiedTravelDirection(observations: capture.observations, capturedAt: capture.capturedAt)
         let evidence = PinCaptureEvidence(
             pinId: pin.id,
             vineyardId: capture.vineyardId,
@@ -280,9 +282,9 @@ extension MigratedDataStore {
             rawLatitude: capture.rawCoordinate.latitude,
             rawLongitude: capture.rawCoordinate.longitude,
             horizontalAccuracyM: capture.horizontalAccuracyMetres.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil },
-            headingDegrees: capture.headingDegrees,
-            headingSource: capture.headingSource,
-            headingObservedAt: capture.headingObservedAt,
+            headingDegrees: travel?.degrees,
+            headingSource: travel == nil ? nil : "qualified_gps_travel",
+            headingObservedAt: travel?.observedAt,
             pressedSide: pin.side?.rawValue,
             tripId: capture.tripId,
             captureUserId: pin.createdByUserId,
@@ -297,9 +299,28 @@ extension MigratedDataStore {
             supportedAlongRowDistanceM: attachment?.alongRowDistanceM,
             aisleLock: capture.aisleLock,
             observations: capture.observations,
-            captureProvenance: ["platform": "ios", "capture": "save_first", "sensor_history": "pre_tap"],
-            geometryRevision: geometry.revision,
-            geometryHash: geometry.hash,
+            captureProvenance: {
+                var result = ["platform": "ios", "capture": "save_first", "sensor_history": "pre_tap",
+                              "direction_source": travel == nil ? "unavailable" : "qualified_gps_travel"]
+                if let compass = capture.headingDegrees, compass.isFinite, compass >= 0 {
+                    result["compass_degrees"] = String(compass)
+                    result["compass_source"] = capture.headingSource
+                    result["compass_observed_at"] = capture.headingObservedAt.map { ISO8601DateFormatter().string(from: $0) }
+                }
+                if let travel {
+                    result["travel_degrees"] = String(travel.degrees)
+                    result["travel_observed_at"] = ISO8601DateFormatter().string(from: travel.observedAt)
+                }
+                if attachment?.snappedToRow != true {
+                    result["unresolved_reason"] = pin.locationScope == "row" || pin.rowNumber != nil && pin.side == nil
+                        ? "manual_row_only" : travel == nil ? "qualified_gps_travel_unavailable"
+                        : pin.side == nil ? "explicit_side_unavailable"
+                        : paddock == nil ? "mapped_block_unavailable" : "verified_aisle_unavailable"
+                }
+                return result
+            }(),
+            geometryRevision: capture.geometryRevision,
+            geometryHash: capture.geometryHash,
             isUploaded: false
         )
         do {

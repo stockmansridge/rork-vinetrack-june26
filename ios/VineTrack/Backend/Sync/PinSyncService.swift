@@ -897,18 +897,32 @@ final class PinSyncService {
                 continue
             }
 
+            let existing = existingById[backendPin.id]
+            // Confirmation is independent of descriptive last-write-wins edits.
+            // Merge newer server location even while local notes/status remain queued.
             if let pendingDirtyAt = metadata.pendingUpserts[backendPin.id] {
                 let remoteAt = backendPin.clientUpdatedAt ?? backendPin.updatedAt ?? .distantPast
-                if pendingDirtyAt > remoteAt { continue }
+                if pendingDirtyAt > remoteAt {
+                    if let existing, let merged = backendPin.mergingConfirmedLocation(into: existing) {
+                        upserts.append(merged)
+                    }
+                    continue
+                }
             }
 
-            let existing = existingById[backendPin.id]
             guard var mapped = backendPin.toVinePin(
                 preservingPhoto: existing?.photoData,
                 preservingCreatedByText: existing?.createdBy,
                 nameColorMap: nameColorMap
             ) else { continue }
 
+            if let existing,
+               (existing.locationConfirmationRevision ?? 0) > (mapped.locationConfirmationRevision ?? 0)
+                || ((existing.locationConfirmationRevision ?? 0) > 0
+                    && existing.locationConfirmationRevision == mapped.locationConfirmationRevision
+                    && (existing.syncVersion ?? 0) > (mapped.syncVersion ?? 0)) {
+                mapped.copyLocation(from: existing)
+            }
             if let remotePath = mapped.photoPath {
                 let pathChanged = existing?.photoPath != remotePath
                 if let downloaded = downloadedPhotos[backendPin.id], downloaded.path == remotePath {

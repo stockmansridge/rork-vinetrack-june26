@@ -53,11 +53,7 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
     }
 
     func upsertPin(_ pin: BackendPinUpsert) async throws {
-        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client
-            .from("pins")
-            .upsert(pin, onConflict: "id")
-            .execute()
+        try await upsertPins([pin])
     }
 
     func upsertPins(_ pins: [BackendPinUpsert]) async throws {
@@ -65,8 +61,18 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
         guard !pins.isEmpty else { return }
         try await provider.client
             .from("pins")
-            .upsert(pins, onConflict: "id")
+            .upsert(pins, onConflict: "id", ignoreDuplicates: true)
             .execute()
+        // ON CONFLICT DO NOTHING prevents an old create/retry racing with a
+        // location confirmation. Subsequent edits cannot carry any location keys.
+        for pin in pins {
+            try await provider.client.from("pins")
+                .update(BackendPinContentPatch(pin: pin))
+                .eq("id", value: pin.id.uuidString)
+                .eq("vineyard_id", value: pin.vineyardId.uuidString)
+                .is("deleted_at", value: nil)
+                .execute()
+        }
     }
 
     func upsertPinCaptureEvidence(_ evidence: PinCaptureEvidenceUpload) async throws {

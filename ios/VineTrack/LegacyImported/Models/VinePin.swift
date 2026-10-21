@@ -23,7 +23,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
     /// the tractor was on (e.g. 14 for path 14.5). Kept for backward
     /// compatibility — new code should prefer `drivingRowNumber` and
     /// `pinRowNumber` when present.
-    let rowNumber: Int?
+    var rowNumber: Int?
     let timestamp: Date
     var createdBy: String?
     var createdByUserId: UUID?
@@ -66,6 +66,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
     /// Last server revision observed for this exact pin. Optional only until the
     /// first server round-trip; confirmation requires a concrete revision.
     var syncVersion: Int?
+    var locationConfirmationRevision: Int?
 
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -113,6 +114,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         snappedLongitude: Double? = nil,
         snappedToRow: Bool = false,
         syncVersion: Int? = nil,
+        locationConfirmationRevision: Int? = nil,
         locationScope: String? = nil,
         rowSegments: [ManualIssueSegment]? = nil
     ) {
@@ -148,6 +150,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         self.snappedLongitude = snappedLongitude
         self.snappedToRow = snappedToRow
         self.syncVersion = syncVersion
+        self.locationConfirmationRevision = locationConfirmationRevision
         self.locationScope = locationScope
         self.rowSegments = rowSegments
     }
@@ -161,7 +164,7 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         case isCompleted, completedBy, completedByUserId, completedAt
         case photoData, photoPath, tripId, growthStageCode, notes
         case drivingRowNumber, pinRowNumber, pinSide, alongRowDistanceM
-        case snappedLatitude, snappedLongitude, snappedToRow, syncVersion, locationScope
+        case snappedLatitude, snappedLongitude, snappedToRow, syncVersion, locationConfirmationRevision, locationScope
         case rowSegments
     }
 
@@ -199,12 +202,30 @@ nonisolated struct VinePin: Codable, Identifiable, Sendable, Hashable {
         snappedLongitude = try c.decodeIfPresent(Double.self, forKey: .snappedLongitude)
         snappedToRow = try c.decodeIfPresent(Bool.self, forKey: .snappedToRow) ?? false
         syncVersion = try c.decodeIfPresent(Int.self, forKey: .syncVersion)
+        locationConfirmationRevision = try c.decodeIfPresent(Int.self, forKey: .locationConfirmationRevision)
         locationScope = try c.decodeIfPresent(String.self, forKey: .locationScope)
         rowSegments = try c.decodeIfPresent([ManualIssueSegment].self, forKey: .rowSegments)
     }
 }
 
 extension VinePin {
+    /// Copy only authoritative location; leave content, original GPS and capture identity intact.
+    mutating func copyLocation(from source: VinePin) {
+        paddockId = source.paddockId
+        rowNumber = source.rowNumber
+        drivingRowNumber = source.drivingRowNumber
+        pinRowNumber = source.pinRowNumber
+        pinSide = source.pinSide
+        alongRowDistanceM = source.alongRowDistanceM
+        snappedLatitude = source.snappedLatitude
+        snappedLongitude = source.snappedLongitude
+        snappedToRow = source.snappedToRow
+        locationScope = source.locationScope
+        rowSegments = source.rowSegments
+        locationConfirmationRevision = source.locationConfirmationRevision
+        syncVersion = max(syncVersion ?? 0, source.syncVersion ?? 0)
+    }
+
     /// A copy of this pin with a different TYPE identity (launcher
     /// name/colour/mode). Everything else — id, coordinates, row attachment
     /// and side, notes, photo, completion state and audit fields — is
@@ -244,6 +265,7 @@ extension VinePin {
             snappedLongitude: snappedLongitude,
             snappedToRow: snappedToRow,
             syncVersion: syncVersion,
+            locationConfirmationRevision: locationConfirmationRevision,
             locationScope: locationScope,
             rowSegments: rowSegments
         )

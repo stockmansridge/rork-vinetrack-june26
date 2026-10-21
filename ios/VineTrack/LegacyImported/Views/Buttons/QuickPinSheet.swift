@@ -387,9 +387,9 @@ struct QuickPinSheet: View {
         let paddockId = selectedPaddockId ?? resolved.paddockId
         let paddock = paddockId.flatMap { id in store.paddocks.first(where: { $0.id == id }) }
         let capturedAt = Date()
-        let headingAge: Double? = locationService.heading.map { sample in
-            capturedAt.timeIntervalSince(sample.timestamp)
-        }
+        let travel = PinCaptureEvidence.qualifiedTravelDirection(
+            observations: locationService.pinCaptureObservations(capturedAt: capturedAt), capturedAt: capturedAt
+        )
         let historyLock = PinAisleObservationLock.resolve(
             locations: locationService.pinAisleObservationHistory,
             current: location,
@@ -397,8 +397,8 @@ struct QuickPinSheet: View {
         )
         let attachment = PinAttachmentResolver.resolveAutomatic(
             rawCoordinate: coordinate,
-            heading: locationService.heading?.trueHeading,
-            headingAgeSeconds: headingAge,
+            heading: travel?.degrees,
+            headingAgeSeconds: travel.map { capturedAt.timeIntervalSince($0.observedAt) },
             horizontalAccuracyMetres: location.horizontalAccuracy,
             operatorSide: side,
             paddock: paddock,
@@ -426,7 +426,8 @@ struct QuickPinSheet: View {
                         supportingObservations: $0.supportingObservations,
                         confirmedAt: $0.confirmedAt
                     )
-                }
+                },
+                geometryPaddock: paddock
             )
         }
         return (paddockId, attachment, resolved.rowNumber, capture)
