@@ -80,6 +80,12 @@ nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
     /// Provider-supplied billing-issue grace end — access holds until then.
     let gracePeriodEnd: Date?
 
+    /// Effective expiry of the entitlement selected by the server. An explicit
+    /// null means that this grant has no scheduled expiry, even if historical
+    /// trial or billing dates are also present in the response.
+    let expiresAt: Date?
+    private let hasResolvedExpiry: Bool
+
     // MARK: - Derived convenience
 
     /// Effective "Supabase grants access" flag, tolerant of either key.
@@ -103,11 +109,12 @@ nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
         return "none"
     }
 
-    /// Earliest KNOWN future expiry of the granted entitlement, used to cap
-    /// the offline cache so cached access never outlives a known expiry.
-    /// Returns nil when no future-dated expiry applies (e.g. an Internal
-    /// Unlimited grant with no expiry).
+    /// Effective known expiry, used to cap the offline cache. Keep an explicit
+    /// past expiry: discarding it would turn an expired grant into an uncapped
+    /// cache. Older servers without `expires_at` retain the legacy fallback.
     func knownExpiresAt(now: Date) -> Date? {
+        if hasResolvedExpiry { return expiresAt }
+
         // A billing-issue grace end EXTENDS an elapsed period, so when a grace
         // window is active the later of (period end, grace end) is the real cap.
         var candidates: [Date] = [manualGrantExpiresAt, trialEnd].compactMap { $0 }
@@ -229,5 +236,8 @@ nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
         purchasePlatform   = string("purchase_platform")
         cancelAtPeriodEnd  = bool("cancel_at_period_end")
         gracePeriodEnd     = date("grace_period_end")
+        expiresAt          = date("expires_at")
+        hasResolvedExpiry  = expiresAt != nil
+            || (try? c.decodeNil(forKey: AnyKey("expires_at"))) == true
     }
 }

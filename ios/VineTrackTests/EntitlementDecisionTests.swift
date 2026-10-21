@@ -310,8 +310,8 @@ struct EntitlementDecisionTests {
         #expect(row.grantsSupabaseAccess == false)
         #expect(row.reasonCode == "expired")
         #expect(row.requiresSoloCheck)
-        // A past expiry never produces a future cache cap.
-        #expect(row.knownExpiresAt(now: now) == nil)
+        // Retain the known past cap: it must never become an indefinite cache.
+        #expect(row.knownExpiresAt(now: now) == Date(timeIntervalSince1970: 1_700_000_000))
     }
 
     // MARK: Snapshot model compatibility

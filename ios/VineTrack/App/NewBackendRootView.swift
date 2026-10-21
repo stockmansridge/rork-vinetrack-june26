@@ -299,9 +299,14 @@ struct NewBackendRootView: View {
             systemAdmin.clearOnSignOut()
             vineyardInsights.clearOnSignOut()
         }
-        .onChange(of: network.isOnline) { _, online in
-            guard online, auth.isSignedIn, systemAdmin.isSystemAdmin else { return }
-            Task { await vineyardInsights.retryPendingWork() }
+        .onChange(of: network.isOnline) { wasOnline, online in
+            guard !wasOnline, online, auth.isSignedIn else { return }
+            // A recent offline attempt must not suppress the first online
+            // verification. The gate coalesces this with any in-flight work.
+            Task { await entitlementGate.refresh(force: true) }
+            if systemAdmin.isSystemAdmin {
+                Task { await vineyardInsights.retryPendingWork() }
+            }
         }
         .onChange(of: scenePhase) { _, newPhase in
             PerformanceCapture.shared.setForeground(newPhase == .active)
