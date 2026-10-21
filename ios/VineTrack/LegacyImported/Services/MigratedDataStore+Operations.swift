@@ -1,5 +1,35 @@
 import Foundation
 
+nonisolated enum OperationsRemoteMutation<Row: Identifiable & Sendable>: Sendable where Row.ID == UUID {
+    case upsert(Row)
+    case delete(UUID)
+}
+
+/// Preserve the per-row helpers' order: update the first matching local row,
+/// delete every matching row, and append a later reinsert at the end. Keeping
+/// slots avoids rescanning the whole collection for every incoming record.
+private nonisolated func applyingOperationsMutations<Row: Identifiable & Sendable>(
+    _ mutations: [OperationsRemoteMutation<Row>], to current: [Row]
+) -> [Row] where Row.ID == UUID {
+    var slots = current.map(Optional.some)
+    var positions: [UUID: [Int]] = [:]
+    for (index, row) in current.enumerated() { positions[row.id, default: []].append(index) }
+    for mutation in mutations {
+        switch mutation {
+        case .upsert(let row):
+            if let index = positions[row.id]?.first {
+                slots[index] = row
+            } else {
+                positions[row.id] = [slots.count]
+                slots.append(row)
+            }
+        case .delete(let id):
+            for index in positions.removeValue(forKey: id) ?? [] { slots[index] = nil }
+        }
+    }
+    return slots.compactMap { $0 }
+}
+
 /// Phase 15G: applyRemote helpers for work tasks, maintenance logs, yield
 /// estimation sessions, damage records, and historical yield records.
 /// Mirrors the pattern used by pin/paddock/spray applyRemote methods —
@@ -8,6 +38,16 @@ import Foundation
 extension MigratedDataStore {
 
     // MARK: - Work Tasks
+
+    func applyRemoteWorkTaskBatch(
+        _ mutations: [OperationsRemoteMutation<WorkTask>], for vineyardId: UUID, persisted: [WorkTask]
+    ) throws {
+        guard !mutations.isEmpty else { return }
+        let current = selectedVineyardId == vineyardId ? workTasks : persisted.filter { $0.vineyardId == vineyardId }
+        let merged = applyingOperationsMutations(mutations, to: current)
+        try workTaskRepo.saveReconciliation(merged, for: vineyardId, persisted: persisted)
+        if selectedVineyardId == vineyardId, workTasks != merged { workTasks = merged }
+    }
 
     func applyRemoteWorkTaskUpsert(_ task: WorkTask) {
         if selectedVineyardId == task.vineyardId {
@@ -41,6 +81,16 @@ extension MigratedDataStore {
     }
 
     // MARK: - Work Task Labour Lines
+
+    func applyRemoteWorkTaskLabourLineBatch(
+        _ mutations: [OperationsRemoteMutation<WorkTaskLabourLine>], for vineyardId: UUID, persisted: [WorkTaskLabourLine]
+    ) throws {
+        guard !mutations.isEmpty else { return }
+        let current = selectedVineyardId == vineyardId ? workTaskLabourLines : persisted.filter { $0.vineyardId == vineyardId }
+        let merged = applyingOperationsMutations(mutations, to: current)
+        try workTaskLabourLineRepo.saveReconciliation(merged, for: vineyardId, persisted: persisted)
+        if selectedVineyardId == vineyardId, workTaskLabourLines != merged { workTaskLabourLines = merged }
+    }
 
     func applyRemoteWorkTaskLabourLineUpsert(_ line: WorkTaskLabourLine) {
         if selectedVineyardId == line.vineyardId {

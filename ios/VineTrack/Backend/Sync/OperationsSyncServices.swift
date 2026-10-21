@@ -8,6 +8,7 @@ final class OperationsSyncMetadata {
     private let persistence: PersistenceStore
     private let key: String
     private var state: State
+    private var needsPersistenceRetry = false
 
     nonisolated struct State: Codable, Sendable {
         var lastSyncByVineyard: [UUID: Date] = [:]
@@ -160,6 +161,24 @@ final class OperationsSyncMetadata {
         for id in ids { state.pendingDeletes.removeValue(forKey: id); state.failedDeletes.remove(id) }; save()
     }
 
+    /// Used by WorkTask and labour pulls after their collection commit. Keep
+    /// every existing clearDirty/clearDeleted side effect, with one write only
+    /// when a marker changed or an earlier metadata write still needs retrying.
+    func clearAcknowledged(upserts: [UUID], deletes: [UUID]) {
+        var changed = false
+        for id in upserts {
+            if state.pendingUpserts.removeValue(forKey: id) != nil { changed = true }
+            if state.failedUpserts.remove(id) != nil { changed = true }
+            if state.workTaskCompletionModes?.removeValue(forKey: id) != nil { changed = true }
+            if state.revisionConflicts?.removeValue(forKey: id) != nil { changed = true }
+        }
+        for id in deletes {
+            if state.pendingDeletes.removeValue(forKey: id) != nil { changed = true }
+            if state.failedDeletes.remove(id) != nil { changed = true }
+        }
+        if changed || needsPersistenceRetry { save() }
+    }
+
     /// Reset all per-vineyard last-sync timestamps so the next sync is treated
     /// as an initial sync. Used by one-time recovery migrations for rows that
     /// pre-date sync wiring and were never pushed.
@@ -169,7 +188,16 @@ final class OperationsSyncMetadata {
         save()
     }
 
-    private func save() { persistence.save(state, key: key) }
+    private func save() {
+        // Preserve the nonthrowing API and its in-memory state, while retaining
+        // failed-save evidence so an unchanged pull cannot suppress its retry.
+        do {
+            try persistence.saveOrThrow(state, key: key)
+            needsPersistenceRetry = false
+        } catch {
+            needsPersistenceRetry = true
+        }
+    }
 }
 
 func isOperationsMissingRowError(_ error: Error) -> Bool {
@@ -393,11 +421,17 @@ final class WorkTaskSyncService {
 
     func pull(vineyardId: UUID) async throws {
         guard let store else { return }
+        let owner = auth?.userId
         let lastSync = metadata.lastSync(for: vineyardId)
         // A device-clock cursor can permanently miss portal rows committed while
         // a pull is in flight. Reconcile the full vineyard slice on every sweep,
         // as the Work Task labour and machine line services already do.
         let remote = try await repository.fetch(vineyardId: vineyardId, since: nil)
+        try Task.checkCancellation()
+        guard self.store === store, auth?.userId == owner else { throw CancellationError() }
+        guard remote.allSatisfy({ $0.vineyardId == vineyardId }) else {
+            throw WorkTaskRepository.ReconciliationError.wrongVineyard
+        }
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
             let local = store.workTasks.filter { $0.vineyardId == vineyardId }
@@ -417,20 +451,42 @@ final class WorkTaskSyncService {
                     #endif
                 }
             }
+            try Task.checkCancellation()
+            guard self.store === store, auth?.userId == owner else { throw CancellationError() }
             if remote.isEmpty { return }
         }
+        let reconciliation = PerformanceCapture.shared.begin("work task pull reconciliation")
+        defer { PerformanceCapture.shared.end(reconciliation) }
+        let persisted = try store.workTaskRepo.loadForReconciliation()
+        var pendingUpserts = metadata.pendingUpserts
+        var completionModes = Dictionary(uniqueKeysWithValues: Set(remote.map(\.id)).compactMap { id in
+            metadata.completionMode(for: id).map { (id, $0) }
+        })
+        var mutations: [OperationsRemoteMutation<WorkTask>] = []
+        var acknowledgedUpserts: [UUID] = []
+        var acknowledgedDeletes: [UUID] = []
         for item in remote {
             if item.deletedAt != nil {
-                store.applyRemoteWorkTaskDelete(item.id)
-                metadata.clearDirty([item.id]); metadata.clearDeleted([item.id]); continue
+                mutations.append(.delete(item.id))
+                acknowledgedUpserts.append(item.id)
+                acknowledgedDeletes.append(item.id)
+                pendingUpserts.removeValue(forKey: item.id)
+                completionModes.removeValue(forKey: item.id)
+                continue
             }
-            if let pendingAt = metadata.pendingUpserts[item.id] {
+            if let pendingAt = pendingUpserts[item.id] {
                 let remoteAt = item.clientUpdatedAt ?? item.updatedAt ?? .distantPast
-                if metadata.completionMode(for: item.id) != nil || pendingAt >= remoteAt { continue }
+                if completionModes[item.id] != nil || pendingAt >= remoteAt { continue }
             }
-            store.applyRemoteWorkTaskUpsert(item.toWorkTask())
-            metadata.clearDirty([item.id])
+            mutations.append(.upsert(item.toWorkTask()))
+            acknowledgedUpserts.append(item.id)
+            pendingUpserts.removeValue(forKey: item.id)
+            completionModes.removeValue(forKey: item.id)
         }
+        // Fresh model and marker reads through commit/acknowledgement remain
+        // synchronous. An in-flight edit is considered after the final await.
+        try store.applyRemoteWorkTaskBatch(mutations, for: vineyardId, persisted: persisted)
+        metadata.clearAcknowledged(upserts: acknowledgedUpserts, deletes: acknowledgedDeletes)
     }
 }
 
@@ -485,9 +541,9 @@ final class WorkTaskLabourLineSyncService {
         }
     }
 
-    init(repository: (any WorkTaskLabourLineSyncRepositoryProtocol)? = nil) {
+    init(repository: (any WorkTaskLabourLineSyncRepositoryProtocol)? = nil, metadata: OperationsSyncMetadata? = nil) {
         self.repository = repository ?? SupabaseWorkTaskLabourLineSyncRepository()
-        self.metadata = OperationsSyncMetadata(key: "vinetrack_work_task_labour_line_sync_metadata")
+        self.metadata = metadata ?? OperationsSyncMetadata(key: "vinetrack_work_task_labour_line_sync_metadata")
     }
 
     func configure(store: MigratedDataStore, auth: NewBackendAuthService) {
@@ -590,8 +646,9 @@ final class WorkTaskLabourLineSyncService {
         if let firstDeleteError { throw firstDeleteError }
     }
 
-    private func pull(vineyardId: UUID) async throws {
+    func pull(vineyardId: UUID) async throws {
         guard let store else { return }
+        let owner = auth?.userId
         let lastSync = metadata.lastSync(for: vineyardId)
         // Always pull the FULL vineyard slice. An incremental cursor of
         // `updated_at >= lastSync` compares the server's updated_at against the
@@ -602,6 +659,11 @@ final class WorkTaskLabourLineSyncService {
         // created by the portal, per-vineyard volume is small, and upserts are
         // idempotent, so a full fetch is safe and self-healing.
         let remote = try await repository.fetch(vineyardId: vineyardId, since: nil)
+        try Task.checkCancellation()
+        guard self.store === store, auth?.userId == owner else { throw CancellationError() }
+        guard remote.allSatisfy({ $0.vineyardId == vineyardId }) else {
+            throw WorkTaskLabourLineRepository.ReconciliationError.wrongVineyard
+        }
         #if DEBUG
         let remoteTaskIds = Set(remote.map { $0.workTaskId })
         let hours = remote.filter { $0.deletedAt == nil }.reduce(0.0) { $0 + (($1.totalHours) ?? 0) }
@@ -628,20 +690,35 @@ final class WorkTaskLabourLineSyncService {
                     #endif
                 }
             }
+            try Task.checkCancellation()
+            guard self.store === store, auth?.userId == owner else { throw CancellationError() }
             if remote.isEmpty { return }
         }
+        let reconciliation = PerformanceCapture.shared.begin("work task labour pull reconciliation")
+        defer { PerformanceCapture.shared.end(reconciliation) }
+        let persisted = try store.workTaskLabourLineRepo.loadForReconciliation()
+        var pendingUpserts = metadata.pendingUpserts
+        var mutations: [OperationsRemoteMutation<WorkTaskLabourLine>] = []
+        var acknowledgedUpserts: [UUID] = []
+        var acknowledgedDeletes: [UUID] = []
         for item in remote {
             if item.deletedAt != nil {
-                store.applyRemoteWorkTaskLabourLineDelete(item.id)
-                metadata.clearDirty([item.id]); metadata.clearDeleted([item.id]); continue
+                mutations.append(.delete(item.id))
+                acknowledgedUpserts.append(item.id)
+                acknowledgedDeletes.append(item.id)
+                pendingUpserts.removeValue(forKey: item.id)
+                continue
             }
-            if let pendingAt = metadata.pendingUpserts[item.id] {
+            if let pendingAt = pendingUpserts[item.id] {
                 let remoteAt = item.clientUpdatedAt ?? item.updatedAt ?? .distantPast
                 if pendingAt > remoteAt { continue }
             }
-            store.applyRemoteWorkTaskLabourLineUpsert(item.toWorkTaskLabourLine())
-            metadata.clearDirty([item.id])
+            mutations.append(.upsert(item.toWorkTaskLabourLine()))
+            acknowledgedUpserts.append(item.id)
+            pendingUpserts.removeValue(forKey: item.id)
         }
+        try store.applyRemoteWorkTaskLabourLineBatch(mutations, for: vineyardId, persisted: persisted)
+        metadata.clearAcknowledged(upserts: acknowledgedUpserts, deletes: acknowledgedDeletes)
     }
 }
 

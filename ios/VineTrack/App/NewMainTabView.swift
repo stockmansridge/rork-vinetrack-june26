@@ -832,7 +832,6 @@ private struct NewHomeTabView: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
-    @Environment(TripTrackingService.self) private var tripTracking
     @Environment(OperationalToolLayoutStore.self) private var toolLayout
     @Environment(SystemAdminService.self) private var systemAdmin
 
@@ -842,7 +841,6 @@ private struct NewHomeTabView: View {
     @State private var showSpraySetup: Bool = false
     @State private var showSetupWizard: Bool = false
     @State private var showQuickActionsHelp: Bool = false
-    @AppStorage("setupWizardEnabled") private var setupWizardEnabled: Bool = true
     #if DEBUG
     @State private var showBackendDiagnostic: Bool = false
     @State private var showStoreDiagnostic: Bool = false
@@ -854,26 +852,16 @@ private struct NewHomeTabView: View {
             ScrollView {
                 VStack(spacing: 20) {
                     titleHeader
-                    if shouldShowSetupWizard {
-                        setupWizardCard
-                    }
-                    if tripTracking.activeTrip != nil {
-                        Button {
-                            selectedTab = 2
-                        } label: {
-                            ActiveTripCard()
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal)
-                    }
+                    HomeSetupWizardSection(showSetupWizard: $showSetupWizard)
+                    HomeActiveTripSection(selectedTab: $selectedTab)
                     todaySection
                     if accessControl.canCreateOperationalRecords {
                         quickActionsSection
                     }
-                    vineyardOverviewSection
+                    HomeVineyardOverviewSection()
                     operationsSection
                     managementSection
-                    summarySection
+                    HomeVintageSummarySection()
                     #if DEBUG
                     debugSection
                     #endif
@@ -933,70 +921,6 @@ private struct NewHomeTabView: View {
             }
             #endif
         }
-    }
-
-    // MARK: Setup Wizard
-
-    private var shouldShowSetupWizard: Bool {
-        guard setupWizardEnabled else { return false }
-        guard accessControl.canChangeSettings else { return false }
-        let hasBlock = !store.paddocks.isEmpty
-        let hasTractor = !store.currentTractors.isEmpty
-        let hasRig = !store.sprayEquipment.isEmpty
-        return !(hasBlock && hasTractor && hasRig)
-    }
-
-    private var setupWizardCard: some View {
-        Button {
-            showSetupWizard = true
-        } label: {
-            HStack(spacing: 14) {
-                ZStack {
-                    Circle()
-                        .fill(Color.white.opacity(0.22))
-                        .frame(width: 48, height: 48)
-                    Image(systemName: "sparkles")
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.white)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Setup Wizard")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                    Text(setupWizardSubtitle)
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.85))
-                        .lineLimit(2)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.85))
-            }
-            .padding(14)
-            .background(
-                LinearGradient(
-                    colors: [VineyardTheme.leafGreen, VineyardTheme.darkGreen],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                in: .rect(cornerRadius: 14)
-            )
-            .shadow(color: VineyardTheme.leafGreen.opacity(0.25), radius: 4, y: 2)
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal)
-    }
-
-    private var setupWizardSubtitle: String {
-        var remaining: [String] = []
-        if store.paddocks.isEmpty { remaining.append("block") }
-        if store.currentTractors.isEmpty { remaining.append("tractor") }
-        if store.sprayEquipment.isEmpty { remaining.append("spray rig") }
-        if remaining.isEmpty {
-            return "All set — tap to review"
-        }
-        return "Add a " + remaining.joined(separator: ", ") + " to get started"
     }
 
     // MARK: Header
@@ -1104,35 +1028,7 @@ private struct NewHomeTabView: View {
     }
 
     private func plainSectionHeader(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.subheadline.weight(.semibold))
-            .tracking(0.5)
-            .foregroundStyle(.white.opacity(0.95))
-            .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal)
-    }
-
-    private func formattedNumber(_ value: Int) -> String {
-        if value >= 1000 {
-            return String(format: "%.1fk", Double(value) / 1000.0)
-        }
-        return "\(value)"
-    }
-
-    /// Region-aware area value (hectares → configured unit) for the compact
-    /// overview tile. Keeps the AU "%.0f / %.1f" rounding behaviour.
-    private func formattedHectares(_ hectares: Double) -> String {
-        let value = fmt.areaValue(hectares: hectares)
-        if value >= 100 {
-            return String(format: "%.0f", value)
-        }
-        return String(format: "%.1f", value)
-    }
-
-    /// Full-word label for the configured area unit (e.g. "Hectares" / "Acres").
-    private var areaUnitLabel: String {
-        fmt.settings.area == .hectares ? "Hectares" : "Acres"
+        HomeSectionHeader(title: title)
     }
 
     // MARK: Today
@@ -1144,102 +1040,6 @@ private struct NewHomeTabView: View {
             HomeRainSummaryCard()
             HomeAlertsCard()
         }
-    }
-
-    // MARK: Vineyard Overview
-
-    private var totalHectares: Double {
-        store.paddocks.reduce(0.0) { $0 + $1.areaHectares }
-    }
-
-    private var fmt: RegionFormatter { store.settings.regionFormatter }
-
-    private var totalVines: Int {
-        store.paddocks.reduce(0) { $0 + $1.summaryVineCount }
-    }
-
-    private var vineyardOverviewSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            plainSectionHeader("Vineyard Overview")
-            NavigationLink {
-                VineyardDetailsView()
-            } label: {
-                VineyardCard {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(spacing: 14) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(VineyardTheme.leafGreen.opacity(0.15))
-                                    .frame(width: 48, height: 48)
-                                if let data = store.selectedVineyard?.logoData, let uiImage = UIImage(data: data) {
-                                    Image(uiImage: uiImage)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                        .frame(width: 48, height: 48)
-                                        .clipShape(.rect(cornerRadius: 12))
-                                } else {
-                                    GrapeLeafIcon(size: 24, color: VineyardTheme.leafGreen)
-                                }
-                            }
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(store.selectedVineyard?.name ?? "No vineyard selected")
-                                    .font(.headline)
-                                    .foregroundStyle(.primary)
-                                Text("View map & summary")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                        }
-                        Divider()
-                        HStack(spacing: 0) {
-                            overviewStat(icon: "square.grid.2x2.fill", iconColor: VineyardTheme.leafGreen, value: "\(store.paddocks.count)", label: fmt.blockTermPluralCapitalised)
-                            Divider().frame(height: 44)
-                            overviewStat(icon: "square.dashed", iconColor: .orange, value: formattedHectares(totalHectares), label: areaUnitLabel)
-                            Divider().frame(height: 44)
-                            overviewStatCustom(value: formattedNumber(totalVines), label: "Vines") {
-                                GrapeLeafIcon(size: 14, color: VineyardTheme.darkGreen)
-                            }
-                        }
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal)
-        }
-    }
-
-    private func overviewStatCustom<Icon: View>(value: String, label: String, @ViewBuilder icon: () -> Icon) -> some View {
-        VStack(spacing: 4) {
-            icon()
-            Text(value)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.primary)
-                .monospacedDigit()
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func overviewStat(icon: String, iconColor: Color, value: String, label: String) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(iconColor)
-            Text(value)
-                .font(.title3.weight(.bold))
-                .foregroundStyle(.primary)
-                .monospacedDigit()
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
     }
 
     // MARK: Quick Actions
@@ -1529,65 +1329,6 @@ private struct NewHomeTabView: View {
         }
     }
 
-    // MARK: Summary
-
-    private var summarySection: some View {
-        let vintage = store.settings.currentSeasonVintage
-        let window = store.settings.seasonWindow(for: vintage)
-        let vintagePins = store.pins.filter { window.contains($0.timestamp) }
-        let vintageTrips = store.trips.filter { window.contains($0.startTime) }
-        let vintageSprayRecords = store.sprayRecords.filter { window.contains($0.date) }
-        let currentBlockIds = Set(store.paddocks.map(\.id))
-        let workedBlockIds = Set(vintagePins.compactMap(\.paddockId))
-            .union(vintageTrips.flatMap { $0.paddockIds.isEmpty ? [$0.paddockId].compactMap { $0 } : $0.paddockIds })
-            .union(vintageSprayRecords.flatMap { record in
-                record.applicationGeometry?.blocks?.compactMap { UUID(uuidString: $0.blockId) } ?? []
-            })
-            .intersection(currentBlockIds)
-
-        return VStack(alignment: .leading, spacing: 10) {
-            plainSectionHeader("Vintage \(String(vintage))")
-
-            VineyardCard {
-                VStack(spacing: 10) {
-                    NavigationLink {
-                        PinsView(initialViewMode: .summary)
-                    } label: {
-                        HStack(spacing: 12) {
-                            summaryRow("Pins", value: vintagePins.count, icon: "mappin.circle.fill", tint: .red)
-                            Image(systemName: "chevron.right")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    Divider()
-                    summaryRow("Trips", value: vintageTrips.count, icon: "map.fill", tint: .blue)
-                    Divider()
-                    summaryRow("Spray records", value: vintageSprayRecords.count, icon: "sprinkler.and.droplets.fill", tint: .purple)
-                    Divider()
-                    summaryRow("\(fmt.blockTermPluralCapitalised) worked", value: workedBlockIds.count, icon: "square.grid.2x2.fill", tint: VineyardTheme.leafGreen)
-                }
-            }
-            .padding(.horizontal)
-        }
-    }
-
-    private func summaryRow(_ label: String, value: Int, icon: String, tint: Color) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .foregroundStyle(tint)
-                .frame(width: 22)
-            Text(label)
-                .foregroundStyle(VineyardTheme.textPrimary)
-            Spacer()
-            Text("\(value)")
-                .font(.body.monospacedDigit().weight(.semibold))
-                .foregroundStyle(.secondary)
-        }
-    }
-
     private func hubRow(title: String, subtitle: String, icon: String, tint: Color) -> some View {
         HStack(spacing: 12) {
             ZStack {
@@ -1640,4 +1381,311 @@ private struct NewHomeTabView: View {
         }
     }
     #endif
+}
+
+// MARK: - Home section observation boundaries
+
+// Each section reads its own data so record sync does not rebuild the whole Home tab.
+private struct HomeSectionHeader: View {
+    let title: String
+
+    var body: some View {
+        Text(title.uppercased())
+            .font(.subheadline.weight(.semibold))
+            .tracking(0.5)
+            .foregroundStyle(.white.opacity(0.95))
+            .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+    }
+}
+
+private struct HomeSetupWizardSection: View {
+    @Environment(MigratedDataStore.self) private var store
+    @Environment(BackendAccessControl.self) private var accessControl
+    @Binding var showSetupWizard: Bool
+    @AppStorage("setupWizardEnabled") private var setupWizardEnabled: Bool = true
+
+    var body: some View {
+        if shouldShowSetupWizard {
+            setupWizardCard
+        }
+    }
+
+    private var shouldShowSetupWizard: Bool {
+        guard setupWizardEnabled else { return false }
+        guard accessControl.canChangeSettings else { return false }
+        let hasBlock = !store.paddocks.isEmpty
+        let hasTractor = !store.currentTractors.isEmpty
+        let hasRig = !store.sprayEquipment.isEmpty
+        return !(hasBlock && hasTractor && hasRig)
+    }
+
+    private var setupWizardCard: some View {
+        Button {
+            showSetupWizard = true
+        } label: {
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.22))
+                        .frame(width: 48, height: 48)
+                    Image(systemName: "sparkles")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.white)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Setup Wizard")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Text(setupWizardSubtitle)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .lineLimit(2)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+            .padding(14)
+            .background(
+                LinearGradient(
+                    colors: [VineyardTheme.leafGreen, VineyardTheme.darkGreen],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: .rect(cornerRadius: 14)
+            )
+            .shadow(color: VineyardTheme.leafGreen.opacity(0.25), radius: 4, y: 2)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal)
+    }
+
+    private var setupWizardSubtitle: String {
+        var remaining: [String] = []
+        if store.paddocks.isEmpty { remaining.append("block") }
+        if store.currentTractors.isEmpty { remaining.append("tractor") }
+        if store.sprayEquipment.isEmpty { remaining.append("spray rig") }
+        if remaining.isEmpty {
+            return "All set — tap to review"
+        }
+        return "Add a " + remaining.joined(separator: ", ") + " to get started"
+    }
+}
+
+private struct HomeActiveTripSection: View {
+    @Environment(TripTrackingService.self) private var tripTracking
+    @Binding var selectedTab: Int
+
+    var body: some View {
+        if tripTracking.activeTrip != nil {
+            Button {
+                selectedTab = 2
+            } label: {
+                ActiveTripCard()
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal)
+        }
+    }
+}
+
+private struct HomeVineyardOverviewSection: View {
+    @Environment(MigratedDataStore.self) private var store
+
+    private func formattedNumber(_ value: Int) -> String {
+        if value >= 1000 {
+            return String(format: "%.1fk", Double(value) / 1000.0)
+        }
+        return "\(value)"
+    }
+
+    /// Region-aware area value (hectares → configured unit) for the compact
+    /// overview tile. Keeps the AU "%.0f / %.1f" rounding behaviour.
+    private func formattedHectares(_ hectares: Double) -> String {
+        let value = fmt.areaValue(hectares: hectares)
+        if value >= 100 {
+            return String(format: "%.0f", value)
+        }
+        return String(format: "%.1f", value)
+    }
+
+    /// Full-word label for the configured area unit (e.g. "Hectares" / "Acres").
+    private var areaUnitLabel: String {
+        fmt.settings.area == .hectares ? "Hectares" : "Acres"
+    }
+
+    private var totalHectares: Double {
+        store.paddocks.reduce(0.0) { $0 + $1.areaHectares }
+    }
+
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
+    private var totalVines: Int {
+        store.paddocks.reduce(0) { $0 + $1.summaryVineCount }
+    }
+
+    var body: some View {
+        let preparationStartedAt = PerformanceCapture.shared.beginComputation()
+        let hectares = totalHectares
+        let vines = totalVines
+        PerformanceCapture.shared.endComputation(
+            preparationStartedAt,
+            label: "Home vineyard overview",
+            records: store.paddocks.count
+        )
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HomeSectionHeader(title: "Vineyard Overview")
+            NavigationLink {
+                VineyardDetailsView()
+            } label: {
+                VineyardCard {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(spacing: 14) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(VineyardTheme.leafGreen.opacity(0.15))
+                                    .frame(width: 48, height: 48)
+                                if let data = store.selectedVineyard?.logoData, let uiImage = UIImage(data: data) {
+                                    Image(uiImage: uiImage)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: 48, height: 48)
+                                        .clipShape(.rect(cornerRadius: 12))
+                                } else {
+                                    GrapeLeafIcon(size: 24, color: VineyardTheme.leafGreen)
+                                }
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(store.selectedVineyard?.name ?? "No vineyard selected")
+                                    .font(.headline)
+                                    .foregroundStyle(.primary)
+                                Text("View map & summary")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        Divider()
+                        HStack(spacing: 0) {
+                            overviewStat(icon: "square.grid.2x2.fill", iconColor: VineyardTheme.leafGreen, value: "\(store.paddocks.count)", label: fmt.blockTermPluralCapitalised)
+                            Divider().frame(height: 44)
+                            overviewStat(icon: "square.dashed", iconColor: .orange, value: formattedHectares(hectares), label: areaUnitLabel)
+                            Divider().frame(height: 44)
+                            overviewStatCustom(value: formattedNumber(vines), label: "Vines") {
+                                GrapeLeafIcon(size: 14, color: VineyardTheme.darkGreen)
+                            }
+                        }
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal)
+        }
+    }
+
+    private func overviewStatCustom<Icon: View>(value: String, label: String, @ViewBuilder icon: () -> Icon) -> some View {
+        VStack(spacing: 4) {
+            icon()
+            Text(value)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(.primary)
+                .monospacedDigit()
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func overviewStat(icon: String, iconColor: Color, value: String, label: String) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(iconColor)
+            Text(value)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(.primary)
+                .monospacedDigit()
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+private struct HomeVintageSummarySection: View {
+    @Environment(MigratedDataStore.self) private var store
+
+    private var fmt: RegionFormatter { store.settings.regionFormatter }
+
+    var body: some View {
+        let preparationStartedAt = PerformanceCapture.shared.beginComputation()
+        let vintage = store.settings.currentSeasonVintage
+        let window = store.settings.seasonWindow(for: vintage)
+        let vintagePins = store.pins.filter { window.contains($0.timestamp) }
+        let vintageTrips = store.trips.filter { window.contains($0.startTime) }
+        let vintageSprayRecords = store.sprayRecords.filter { window.contains($0.date) }
+        let currentBlockIds = Set(store.paddocks.map(\.id))
+        let workedBlockIds = Set(vintagePins.compactMap(\.paddockId))
+            .union(vintageTrips.flatMap { $0.paddockIds.isEmpty ? [$0.paddockId].compactMap { $0 } : $0.paddockIds })
+            .union(vintageSprayRecords.flatMap { record in
+                record.applicationGeometry?.blocks?.compactMap { UUID(uuidString: $0.blockId) } ?? []
+            })
+            .intersection(currentBlockIds)
+        PerformanceCapture.shared.endComputation(
+            preparationStartedAt,
+            label: "Home vintage summary",
+            records: store.pins.count + store.trips.count + store.sprayRecords.count + store.paddocks.count
+        )
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HomeSectionHeader(title: "Vintage \(String(vintage))")
+
+            VineyardCard {
+                VStack(spacing: 10) {
+                    NavigationLink {
+                        PinsView(initialViewMode: .summary)
+                    } label: {
+                        HStack(spacing: 12) {
+                            summaryRow("Pins", value: vintagePins.count, icon: "mappin.circle.fill", tint: .red)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Divider()
+                    summaryRow("Trips", value: vintageTrips.count, icon: "map.fill", tint: .blue)
+                    Divider()
+                    summaryRow("Spray records", value: vintageSprayRecords.count, icon: "sprinkler.and.droplets.fill", tint: .purple)
+                    Divider()
+                    summaryRow("\(fmt.blockTermPluralCapitalised) worked", value: workedBlockIds.count, icon: "square.grid.2x2.fill", tint: VineyardTheme.leafGreen)
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    private func summaryRow(_ label: String, value: Int, icon: String, tint: Color) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .foregroundStyle(tint)
+                .frame(width: 22)
+            Text(label)
+                .foregroundStyle(VineyardTheme.textPrimary)
+            Spacer()
+            Text("\(value)")
+                .font(.body.monospacedDigit().weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+    }
 }
