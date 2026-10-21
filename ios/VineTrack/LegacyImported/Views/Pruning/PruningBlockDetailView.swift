@@ -30,25 +30,24 @@ struct PruningBlockDetailView: View {
 
     private var setup: PruningBlockSetup? { pruningStore.setup(for: paddock.id) }
     private var entries: [PruningEntry] { pruningStore.entries(for: paddock.id) }
-    private var metrics: PruningBlockMetrics {
-        PruningCalculator.metrics(paddock: paddock, setup: setup, entries: entries)
-    }
 
-    /// The block's ACTUAL rows (configured paddock rows in stored order, or
-    /// clearly-labelled fallback rows generated from the manual row count).
-    private var rows: [PruningRowRef] { metrics.rows }
-
-    /// The editing entry's quarters canonicalised onto the block's rows.
-    private var editingSegments: Set<PruningSegment> {
-        guard let editingEntry else { return [] }
-        return PruningCalculator.completedSegments(entries: [editingEntry], rows: rows)
+    /// Live rows for action handlers and sheet preparation. Display helpers
+    /// use the current presentation's rows instead of recalculating metrics.
+    private var rows: [PruningRowRef] {
+        PruningCalculator.rowRefs(paddock: paddock, setup: setup)
     }
 
     /// Quarters locked in the grid. While editing, the entry's own quarters
     /// become toggleable; quarters completed by OTHER entries stay locked —
     /// the server refuses to steal them anyway.
     private var lockedSegments: Set<PruningSegment> {
-        editingEntry == nil ? metrics.completed : metrics.completed.subtracting(editingSegments)
+        let currentRows = rows
+        let completed = PruningCalculator.completedSegments(entries: entries, rows: currentRows)
+        return PruningBlockPresentation.lockedSegments(
+            completed: completed,
+            editingEntry: editingEntry,
+            rows: currentRows
+        )
     }
 
     /// Vineyard regional formatter — drives the short completion date shown
@@ -79,18 +78,24 @@ struct PruningBlockDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
+        let presentation = PruningBlockPresentation.prepare(
+            paddock: paddock,
+            setup: setup,
+            entries: entries,
+            editingEntry: editingEntry
+        )
+        return ScrollView {
             VStack(spacing: 16) {
-                if metrics.rowCount == 0 {
+                if presentation.metrics.rowCount == 0 {
                     setupPromptCard
                 } else {
                     if editingEntry != nil {
                         editBanner
                     }
-                    progressCard
-                    ratesCard
-                    rowGridCard
-                    historyCard
+                    progressCard(presentation)
+                    ratesCard(presentation)
+                    rowGridCard(presentation)
+                    historyCard(entries: presentation.entries)
                 }
                 Spacer(minLength: 90)
             }
@@ -116,7 +121,7 @@ struct PruningBlockDetailView: View {
         }
         .safeAreaInset(edge: .bottom) {
             if !selectedSegments.isEmpty || editingEntry != nil {
-                selectionBar
+                selectionBar(rows: presentation.metrics.rows)
             }
         }
         .sheet(isPresented: $showEntrySheet) {
@@ -243,8 +248,10 @@ struct PruningBlockDetailView: View {
 
     // MARK: Progress
 
-    private var progressCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func progressCard(_ presentation: PruningBlockPresentation) -> some View {
+        let metrics = presentation.metrics
+        let setup = presentation.setup
+        return VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Progress")
                     .font(.headline)
@@ -338,7 +345,10 @@ struct PruningBlockDetailView: View {
 
     // MARK: Rates
 
-    private var ratesCard: some View {
+    private func ratesCard(_ presentation: PruningBlockPresentation) -> some View {
+        let entries = presentation.entries
+        let metrics = presentation.metrics
+        let rows = metrics.rows
         let today = PruningCalculator.rowEquivalentsPerDay(entries: entries, lastDays: 1)
         let last3 = PruningCalculator.rowEquivalentsPerDay(entries: entries, lastDays: 3)
         let last7 = PruningCalculator.rowEquivalentsPerDay(entries: entries, lastDays: 7)
@@ -422,8 +432,10 @@ struct PruningBlockDetailView: View {
 
     // MARK: Row grid
 
-    private var rowGridCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func rowGridCard(_ presentation: PruningBlockPresentation) -> some View {
+        let metrics = presentation.metrics
+        let rows = metrics.rows
+        return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Rows")
                     .font(.headline)
@@ -436,7 +448,7 @@ struct PruningBlockDetailView: View {
                 }
             }
 
-            rangeSelector
+            rangeSelector(rows: rows)
 
             HStack(spacing: 14) {
                 gridLegend(color: VineyardTheme.leafGreen, text: "Pruned")
@@ -459,9 +471,8 @@ struct PruningBlockDetailView: View {
             }
 
             VStack(spacing: 6) {
-                let completionDates = PruningCalculator.segmentCompletionDates(entries: entries, rows: rows)
                 ForEach(rows) { row in
-                    rowLine(row, completionDates: completionDates)
+                    rowLine(row, presentation: presentation)
                 }
             }
         }
@@ -475,21 +486,21 @@ struct PruningBlockDetailView: View {
     /// The pickers are `.fixedSize()` so the menu labels can never be
     /// compressed into wrapped digits on narrow screens; when one line is
     /// too tight, the whole control wraps to two lines instead.
-    private var rangeSelector: some View {
+    private func rangeSelector(rows: [PruningRowRef]) -> some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
-                rangePickers
+                rangePickers(rows: rows)
                 Spacer(minLength: 8)
                 selectRangeButton
             }
             VStack(alignment: .leading, spacing: 8) {
-                rangePickers
+                rangePickers(rows: rows)
                 selectRangeButton
             }
         }
     }
 
-    private var rangePickers: some View {
+    private func rangePickers(rows: [PruningRowRef]) -> some View {
         HStack(spacing: 8) {
             Text("Rows")
                 .font(.caption)
@@ -537,8 +548,9 @@ struct PruningBlockDetailView: View {
         }
     }
 
-    private func rowLine(_ row: PruningRowRef, completionDates: [PruningSegment: Date]) -> some View {
-        HStack(spacing: 8) {
+    private func rowLine(_ row: PruningRowRef, presentation: PruningBlockPresentation) -> some View {
+        let isFullySelectedOrDone = rowFullySelectedOrDone(row, lockedSegments: presentation.lockedSegments)
+        return HStack(spacing: 8) {
             Text(row.label)
                 .font(.caption.weight(.semibold))
                 .monospacedDigit()
@@ -548,16 +560,21 @@ struct PruningBlockDetailView: View {
             HStack(spacing: 3) {
                 ForEach(1...4, id: \.self) { quarter in
                     let segment = row.segment(quarter: quarter)
-                    quarterCell(segment: segment, completionDate: completionDates[segment])
+                    quarterCell(
+                        segment: segment,
+                        completionDate: presentation.completionDates[segment],
+                        lockedSegments: presentation.lockedSegments,
+                        skippedSegments: presentation.metrics.skipped
+                    )
                 }
             }
 
             Button {
                 toggleWholeRow(row)
             } label: {
-                Image(systemName: rowFullySelectedOrDone(row) ? "checkmark.circle.fill" : "circle.dashed")
+                Image(systemName: isFullySelectedOrDone ? "checkmark.circle.fill" : "circle.dashed")
                     .font(.subheadline)
-                    .foregroundStyle(rowFullySelectedOrDone(row) ? VineyardTheme.leafGreen : Color.secondary)
+                    .foregroundStyle(isFullySelectedOrDone ? VineyardTheme.leafGreen : Color.secondary)
             }
             .accessibilityLabel("Select all of row \(row.label)")
             .frame(width: 30)
@@ -569,12 +586,17 @@ struct PruningBlockDetailView: View {
     /// under the tick — per quarter, exactly like the portal's pruning
     /// tracker — because quarters of one row are routinely finished on
     /// different days.
-    private func quarterCell(segment: PruningSegment, completionDate: Date?) -> some View {
+    private func quarterCell(
+        segment: PruningSegment,
+        completionDate: Date?,
+        lockedSegments: Set<PruningSegment>,
+        skippedSegments: Set<PruningSegment>
+    ) -> some View {
         let isDone = lockedSegments.contains(segment)
         // A skipped quarter is COMPLETE and locked exactly like a pruned one —
         // it just reads as out of rotation rather than as work done, so the two
         // are never confused at a glance.
-        let isSkipped = isDone && metrics.skipped.contains(segment)
+        let isSkipped = isDone && skippedSegments.contains(segment)
         let isSelected = selectedSegments.contains(segment)
         return Button {
             guard !isDone else { return }
@@ -625,7 +647,7 @@ struct PruningBlockDetailView: View {
     /// are complete but they are not work, and the grid should say so.
     private var skippedTint: Color { Color(.systemGray) }
 
-    private func rowFullySelectedOrDone(_ row: PruningRowRef) -> Bool {
+    private func rowFullySelectedOrDone(_ row: PruningRowRef, lockedSegments: Set<PruningSegment>) -> Bool {
         (1...4).allSatisfy { quarter in
             let segment = row.segment(quarter: quarter)
             return lockedSegments.contains(segment) || selectedSegments.contains(segment)
@@ -660,8 +682,9 @@ struct PruningBlockDetailView: View {
 
     // MARK: Selection bar
 
-    private var selectionBar: some View {
-        Group {
+    private func selectionBar(rows: [PruningRowRef]) -> some View {
+        let vines = PruningCalculator.vines(for: selectedSegments, rows: rows)
+        return Group {
             if editingEntry == nil {
                 // Two equally visible actions: recording pruning and taking
                 // rows out of rotation are different decisions, so skipping is
@@ -671,13 +694,13 @@ struct PruningBlockDetailView: View {
                 // never truncated.
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 10) {
-                        selectionSummary
+                        selectionSummary(vines: vines)
                         Spacer(minLength: 8)
                         recordPruningButton
                         markSkippedButton
                     }
                     VStack(alignment: .leading, spacing: 10) {
-                        selectionSummary
+                        selectionSummary(vines: vines)
                         HStack(spacing: 10) {
                             recordPruningButton.frame(maxWidth: .infinity)
                             markSkippedButton.frame(maxWidth: .infinity)
@@ -689,7 +712,7 @@ struct PruningBlockDetailView: View {
                 // fixed — converting between pruned and skipped stays
                 // impossible, here and in the form.
                 HStack(spacing: 12) {
-                    selectionSummary
+                    selectionSummary(vines: vines)
                     Spacer(minLength: 8)
                     saveChangesButton
                 }
@@ -700,9 +723,8 @@ struct PruningBlockDetailView: View {
         .background(.thinMaterial)
     }
 
-    private var selectionSummary: some View {
+    private func selectionSummary(vines: Int) -> some View {
         let rowEq = Double(selectedSegments.count) / 4.0
-        let vines = PruningCalculator.vines(for: selectedSegments, rows: rows)
         return VStack(alignment: .leading, spacing: 1) {
             Text("\(rowEq.formatted(.number.precision(.fractionLength(0...2)))) row equivalents")
                 .font(.subheadline.weight(.semibold))
@@ -760,7 +782,7 @@ struct PruningBlockDetailView: View {
 
     // MARK: History
 
-    private var historyCard: some View {
+    private func historyCard(entries: [PruningEntry]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Completed Days")
                 .font(.headline)
