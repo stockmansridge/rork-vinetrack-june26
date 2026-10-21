@@ -150,7 +150,8 @@ struct GrowthStageRecordsListView: View {
     // MARK: - Summary
 
     private var summaryList: some View {
-        List {
+        let presentation = summaryPresentation
+        return List {
             Section {
                 HStack {
                     Label(feed.selectedVintage.map(VintageYearText.label) ?? "Vintage —", systemImage: "calendar")
@@ -177,13 +178,23 @@ struct GrowthStageRecordsListView: View {
                 if feed.blocks.isEmpty {
                     Text("No blocks in this vineyard yet.").foregroundStyle(.secondary)
                 }
-                ForEach(sortedSummaryBlocks, id: \.id) { block in
-                    let stage = currentEL(for: block.id)
+                ForEach(presentation.rows, id: \.block.id) { row in
+                    let block = row.block
+                    let stage = row.currentEL
                     NavigationLink {
+                        // The destination may be built after the row was drawn.
+                        // Resolve its stage and instant cutoff from the live feed.
+                        let detail = GrowthStageSummaryPresentation.detail(
+                            for: block.id,
+                            observations: feed.vintageObservations,
+                            records: vineyardRecords,
+                            now: Date(),
+                            timeZone: timeZone
+                        )
                         GrowthStageBlockDetailView(
                             blockName: block.name ?? "Block",
-                            currentEl: currentEL(for: block.id),
-                            records: vineyardRecords.filter { $0.paddockId?.uuidString.lowercased() == block.id.lowercased() && $0.observedAt <= Date() },
+                            currentEl: detail.currentEL,
+                            records: detail.records,
                             formatter: fmt
                         )
                     } label: {
@@ -224,25 +235,15 @@ struct GrowthStageRecordsListView: View {
         }
     }
 
-    private var sortedSummaryBlocks: [ELRipeness.BlockInput] {
+    private var summaryPresentation: GrowthStageSummaryPresentation {
         let timing = PerformanceCapture.shared.beginComputation()
         defer { PerformanceCapture.shared.endComputation(timing, label: "Growth summary block ordering", records: feed.vintageObservations.count) }
-        return feed.blocks.sorted { left, right in
-            let leftEL = currentEL(for: left.id) ?? -1
-            let rightEL = currentEL(for: right.id) ?? -1
-            return leftEL == rightEL ? (left.name ?? "") < (right.name ?? "") : leftEL > rightEL
-        }
-    }
-
-    private func currentEL(for blockId: String) -> Double? {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        let today = formatter.string(from: Date())
-        return feed.vintageObservations
-            .filter { $0.paddockId?.lowercased() == blockId.lowercased() && ELRipeness.isInfluencing($0, atDateISO: today) }
-            .map(\.el).max()
+        return GrowthStageSummaryPresentation(
+            blocks: feed.blocks,
+            observations: feed.vintageObservations,
+            now: Date(),
+            timeZone: timeZone
+        )
     }
 
     /// A load problem worth telling the operator about, phrased for the
@@ -492,5 +493,93 @@ struct GrowthStageRecordsListView: View {
     private func paddockName(for id: UUID?) -> String? {
         guard let id else { return nil }
         return store.paddocks.first(where: { $0.id == id })?.name
+    }
+}
+
+/// Temporary values for one Summary evaluation. The feed remains the source
+/// of truth; no result survives into a later view update or navigation action.
+struct GrowthStageSummaryPresentation {
+    struct Row {
+        let block: ELRipeness.BlockInput
+        let currentEL: Double?
+    }
+
+    struct Detail {
+        let currentEL: Double?
+        let records: [GrowthStageRecord]
+    }
+
+    let rows: [Row]
+
+    init(
+        blocks: [ELRipeness.BlockInput],
+        observations: [ELRipeness.Observation],
+        now: Date,
+        timeZone: TimeZone
+    ) {
+        guard !blocks.isEmpty else {
+            rows = []
+            return
+        }
+        let stages = Self.currentStages(
+            for: Set(blocks.map { $0.id.lowercased() }),
+            observations: observations,
+            today: Self.localDay(now, timeZone: timeZone)
+        )
+        // Keep blocks as an array: duplicate IDs and equal sort keys retain
+        // the same multiplicity and input order as the existing screen.
+        rows = blocks.map { Row(block: $0, currentEL: stages[$0.id.lowercased()]) }
+            .sorted { left, right in
+                let leftEL = left.currentEL ?? -1
+                let rightEL = right.currentEL ?? -1
+                return leftEL == rightEL
+                    ? (left.block.name ?? "") < (right.block.name ?? "")
+                    : leftEL > rightEL
+            }
+    }
+
+    static func detail(
+        for blockID: String,
+        observations: [ELRipeness.Observation],
+        records: [GrowthStageRecord],
+        now: Date,
+        timeZone: TimeZone
+    ) -> Detail {
+        let key = blockID.lowercased()
+        let stage = currentStages(
+            for: [key],
+            observations: observations,
+            today: localDay(now, timeZone: timeZone)
+        )[key]
+        // Detail membership is an instant cutoff, unlike the E-L influence
+        // policy's vineyard-local day. Keep the source record order intact.
+        let visibleRecords = records.filter {
+            $0.paddockId?.uuidString.lowercased() == key && $0.observedAt <= now
+        }
+        return Detail(currentEL: stage, records: visibleRecords)
+    }
+
+    private static func currentStages(
+        for blockIDs: Set<String>,
+        observations: [ELRipeness.Observation],
+        today: String
+    ) -> [String: Double] {
+        var values: [String: [Double]] = [:]
+        for observation in observations {
+            guard let key = observation.paddockId?.lowercased(),
+                  blockIDs.contains(key),
+                  ELRipeness.isInfluencing(observation, atDateISO: today) else { continue }
+            values[key, default: []].append(observation.el)
+        }
+        // Use the same max operation over the same ordered values as before.
+        return values.compactMapValues { $0.max() }
+    }
+
+    private static func localDay(_ now: Date, timeZone: TimeZone) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: now)
     }
 }
