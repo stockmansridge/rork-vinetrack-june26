@@ -14,3 +14,7 @@
 	path = linked-repos/vinetrack-home-sync-review
 	url = https://github.com/stockmansridge/rork-vinetrack-june26.git
 	branch = fix/ios-sync-scroll-followup-20261021
+[submodule "linked-repos/vinetrack-presentation-review"]
+	path = linked-repos/vinetrack-presentation-review
+	url = https://github.com/stockmansridge/rork-vinetrack-june26.git
+	branch = perf/ios-presentation-20261021
