@@ -1,5 +1,55 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## PR #9 iOS work-task batching / Home observation integration — 21 October 2026
+
+**Integrated on current source; requested five-suite native gate:72 passed,0 failures,157s. Final iOS simulator build PASS. Home interaction smoke checks and physical-iPhone scrolling acceptance remain NOT EXECUTED.** No merge/readiness transition, upload, distribution, SQL/Portal change or physical-device operation. Target Nutrient remains CLOSED.
+
+### Provenance, inventory and source identity
+
+- Authentic PR #9 implementation `3bb6b1fb4f3c68cb4f1239ad31aad6ad666446f6`, parent `8775e50187484fe285a19e0fe53bf0ba4150a871`, branch `fix/ios-sync-scroll-followup-20261021`. PR head ref verified; isolated supported linked checkout retained at `linked-repos/vinetrack-home-sync-review`; previous linked repositories remain intact.
+- Managed pre-integration HEAD `57ade223df83b368a0732885c3bbd75eada23403`. All six touched production files matched upstream parent blob identities exactly before editing. All seven resulting production/test files match implementation commit blob identities exactly afterward. No blind tree replacement, rollback or unrelated adaptation.
+- Exact source inventory: `ios/VineTrack/App/NewMainTabView.swift`; `ios/VineTrack/Backend/Sync/OperationsSyncServices.swift`; `ios/VineTrack/LegacyImported/Models/WorkTask.swift`; `ios/VineTrack/LegacyImported/Repositories/WorkTaskRepository.swift`; `ios/VineTrack/LegacyImported/Repositories/WorkTaskLabourLineRepository.swift`; `ios/VineTrack/LegacyImported/Services/MigratedDataStore+Operations.swift`; new `ios/VineTrackTests/WorkTaskBatchReconciliationTests.swift` (599 lines,15 tests). Source delta:7 files,1107 insertions/280 deletions. Additional changes only existing acceptance report/plan and linked-reference connection; managed history preserved.
+- Validated application/test/script binary diff SHA-256 versus managed baseline: **`c864cb23274ab34a3575dc7af637a1ec6e5ac4be06098c4693640e6fa84f93e6`**. This includes the added test file. Final managed integration commit is assigned by the save after this turn; latest actual HEAD read during validation remains the pre-integration SHA above. **Final saved SHA is pending a post-save read, not claimed to be baseline or upstream SHA.**
+- Protected chemical hashes unchanged: ManagementSyncServices `8ac255ed70536596f178403a95395b4bcb59da056d8a963326dd9643e2b9a88e`; SprayRepository `2d9b6af17d830e119eed1e89a66a6c66ebfafc3ad4741950f7deeeeb660c0037`; MigratedDataStore+Spray `ca54fa3b93957ed77d5812d2de2d9a14f3fa94385e3050ce31a6cc292282dfac`; SavedChemicalBatchReconciliationTests `2ec7d9840eba40f4edcf8cafd60099d3a964a13979c7326ad8f24b0530010c75`. Earlier saved-chemical65/65 remains historical, not a new PR #9 test run.
+- Android, scripts, SQL/Supabase and iOS project metadata delta empty. Preserve3.1.8/build139/code12, newer pin evidence/reconciliation, Yield headings, original records/queues and all existing linked/history state. Scoped whitespace check PASS.
+
+### Integrated contract
+
+- Task headers and labour retain full-vineyard pulls and existing first-sync seed behavior. Validate cancellation, store/owner identity and vineyard response before reconciliation; recheck owner/cancellation after seed await.
+- Read persisted collection once, retain corrupt evidence, apply mutations in original sequential order, preserve unrelated vineyard slices and local-only rows. Save changed full-value slice once before observable publication and marker acknowledgement. Unchanged collections avoid disk save and observable assignment; matching visible data still repairs stale/missing disk.
+- Retain task timestamp ties/local completion authority, labour timestamp tie acceptance, edits made during fetch, duplicate/tombstone/reinsert order and historical costing/planning/version/completion fields. Batch acknowledgement preserves clearDirty/clearDeleted side effects and retries failed metadata persistence on the next unchanged pull.
+- Extract setup, active-trip, overview and vintage summary into child observation boundaries. Retain section order, spacing, parent sheet binding, regional formatting and navigation destinations; retain existing performance-capture system and add scoped overview/summary/reconciliation measurements. No physical performance improvement claimed from source structure alone.
+
+### Actual native validation
+
+One `swiftTest(appPath:ios)` call selected only:
+
+1. `VineTrackTests/WorkTaskBatchReconciliationTests`
+2. `VineTrackTests/WorkTaskHeaderFullPullTests`
+3. `VineTrackTests/WorkTaskCompletionTests`
+4. `VineTrackTests/WorkTaskLabourCostingTests`
+5. `VineTrackTests/PersistencePerformanceTests`
+
+Runner result: **72 passed in157s**, no reported failures. No failed attempt, unchanged retry, corrective production/test edit or broader suite executed in this checkpoint. Runner exposes aggregate count only: no per-suite passing manifest, skipped metric or separate build timing available. Requested Debug simulator test build/execution succeeded. Subsequent `runChecks(ios)` **PASS — simulator build succeeded; device build not verified**. Two existing asset-address advisories in unrelated TripTypeChoiceSheet/UCRInfoSheet remain unchanged.
+
+### Home smoke matrix — source reviewed, runtime evidence pending
+
+No Home UI assertions/screenshots were executed in this checkpoint. Existing UI tests/launch fixtures target calculators, spray, offline actions and legacy recovery, not Home; an authenticated Home session was not established. No auth bypass, new fixture expansion, data reset, trip creation or unrequested suite was used to manufacture smoke evidence. These are **source checks only**, not a UI PASS:
+
+- Order/spacing: retained header → conditional setup → conditional active trip → Today → permitted Quick Actions → overview → operations → management → vintage; outer spacing20 and existing inner padding/spacing preserved. Empty child conditional sections still require visual spacing confirmation in real rendering.
+- Setup sheet: child binding sets parent showSetupWizard; unchanged parent presents SetupWizardView. Permission/enabled/incomplete-setup conditions retained. Opening/dismissing NOT EXECUTED.
+- Vineyard details: overview NavigationLink still opens VineyardDetailsView. Tap/back NOT EXECUTED.
+- Pins summary: vintage NavigationLink still opens PinsView(initialViewMode:.summary). Tap/back NOT EXECUTED.
+- Active-trip navigation: conditional child still selects tab2 for an existing active trip. No active-trip availability established and no trip started. NOT EXECUTED.
+- Vineyard switching: unchanged header menu uses store.selectVineyard with same-ID guard. New batch regression covers stale response publication after selection changes; that is not a UI switch verification. Multi-membership tap/switch NOT EXECUTED.
+
+### Remaining acceptance / PR status
+
+- Native build/unit gate is green. **Keep draft/readiness unchanged here**; no remote PR readiness operation performed and full requested Home smoke remains open. Owner may record actual72/0 result; do not imply this is physical-performance acceptance.
+- Execute Home visual/interactions above through an authorised preview/owner session, without changing original data or manufacturing an active trip. Record actual screenshots/results and any unavailable active-trip/multi-vineyard case.
+- Final performance gate is owner-observed responsive immediate Home scrolling **while Syncing on a physical iPhone**, repeat with unchanged cache and compare existing performance captures. Simulator compilation/unit measurements do not establish this. No physical iPhone/device-signed candidate access established; NOT EXECUTED/NOT ACCEPTED.
+- Read actual final managed integration commit after save and append that exact SHA with source-equivalence verification. No merge, store upload, release, SQL/Portal work or Target Nutrient reopening authorised by this integration.
+
 ## Owner-upload testing-build handoff — 21 October 2026
 
 **PARTIAL / BLOCKED: no upload-ready IPA or AAB produced. Nothing uploaded or released.** Do not treat the APK below, simulator app or an old managed AAB as the requested final artifacts.

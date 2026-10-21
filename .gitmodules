@@ -10,3 +10,7 @@
 	path = linked-repos/vinetrack-pin-review
 	url = https://github.com/stockmansridge/rork-vinetrack-june26.git
 	branch = fix/pin-capture-travel-direction-ios-android
+[submodule "linked-repos/vinetrack-home-sync-review"]
+	path = linked-repos/vinetrack-home-sync-review
+	url = https://github.com/stockmansridge/rork-vinetrack-june26.git
+	branch = fix/ios-sync-scroll-followup-20261021

@@ -35,7 +35,7 @@ nonisolated struct WorkTaskResource: Codable, Identifiable, Sendable, Hashable {
     }
 }
 
-nonisolated struct WorkTask: Codable, Identifiable, Sendable {
+nonisolated struct WorkTask: Codable, Identifiable, Sendable, Equatable {
     var id: UUID
     var vineyardId: UUID
     var date: Date
