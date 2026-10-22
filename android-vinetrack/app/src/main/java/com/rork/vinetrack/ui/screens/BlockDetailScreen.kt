@@ -420,6 +420,7 @@ private fun ActivitySection(block: Paddock, state: AppUiState) {
 
 @Composable
 private fun GeometrySection(block: Paddock) {
+    val vine = LocalVineColors.current
     val fmt = LocalRegionFormatter.current
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionHeader("Geometry & Row Setup", onLight = true)
@@ -448,6 +449,11 @@ private fun GeometrySection(block: Paddock) {
                 DetailRow("Row direction", "%.0f°".format(it))
             }
         }
+        Text(
+            "Contour or curved rows? Use the VineTrack web portal to map them. Mobile row setup supports straight rows only.",
+            color = vine.textSecondary,
+            fontSize = 12.sp,
+        )
     }
 }
 

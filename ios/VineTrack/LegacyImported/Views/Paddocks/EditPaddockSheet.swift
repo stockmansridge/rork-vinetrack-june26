@@ -649,6 +649,9 @@ struct EditPaddockSheet: View {
 
     private var rowConfigSection: some View {
         Section {
+            Text("Contour or curved rows? Use the VineTrack web portal to map them. This mobile editor configures straight rows only.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Direction")
