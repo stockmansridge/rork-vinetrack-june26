@@ -78,6 +78,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Spa
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -354,6 +355,7 @@ private fun SprayListView(
     var filter by remember { mutableStateOf(SprayFilter.ALL) }
     var addMenu by remember { mutableStateOf(false) }
     var showChemicalSearch by remember { mutableStateOf(false) }
+    var showProgramHelp by remember { mutableStateOf(false) }
     var showChemicalInventory by remember { mutableStateOf(false) }
     var recordChemicalPurchase by remember { mutableStateOf(false) }
     val canAddChemical = state.currentRole == "owner" || state.currentRole == "manager"
@@ -499,6 +501,10 @@ private fun SprayListView(
             TextButton(onClick = { showProgramData = false; importPicker.launch(arrayOf("*/*")) }) { Text("Import CSV") }
         } }, confirmButton = { TextButton(onClick = { showProgramData = false }) { Text("Cancel") } })
 
+    if (showProgramHelp) {
+        SprayProgramHelpSheet(onDismiss = { showProgramHelp = false })
+    }
+
     if (showChemicalSearch && canAddChemical) {
         CatalogueSearchSheet(vm, state, onDismiss = { showChemicalSearch = false })
     }
@@ -517,6 +523,9 @@ private fun SprayListView(
                 title = { Text("Spray Program") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 actions = {
+                    IconButton(onClick = { showProgramHelp = true }) {
+                        Icon(Icons.Outlined.Info, contentDescription = "How the Spray Program Works", tint = vine.textSecondary)
+                    }
                     // Add (+) first, then the sort/menu — mirroring the iOS Spray
                     // Program toolbar where both actions sit at the top trailing.
                     Box {

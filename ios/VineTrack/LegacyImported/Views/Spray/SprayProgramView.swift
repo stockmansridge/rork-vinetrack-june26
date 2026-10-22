@@ -91,6 +91,7 @@ struct SprayProgramView: View {
     @State private var tab: SprayProgramTab = .program
     @State private var spraysStatus: SpraysStatusTab = .all
     @State private var searchText: String = ""
+    @State private var showProgramHelp = false
 
     // Selection
     @State private var selectedRecord: SprayRecord?
@@ -334,6 +335,9 @@ struct SprayProgramView: View {
             } message: {
                 Text("This cannot be undone.")
             }
+            .sheet(isPresented: $showProgramHelp) {
+                SprayProgramHelpSheet()
+            }
             .sheet(item: $selectedRecord) { record in
                 NavigationStack {
                     SprayRecordDetailView(record: record)
@@ -483,6 +487,13 @@ struct SprayProgramView: View {
             HStack(spacing: 12) {
                 createMenu
                 optionsMenu
+                Button {
+                    showProgramHelp = true
+                } label: {
+                    Image(systemName: "info.circle")
+                }
+                .accessibilityLabel("How the Spray Program Works")
+                .accessibilityIdentifier("sprayProgramHelp")
             }
         }
     }
