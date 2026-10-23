@@ -1,5 +1,72 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Android unchanged baseline comparison and costing gate — 23 October 2026
+
+This checkpoint supersedes the earlier statement that no rebuilt-baseline experiment was attempted. It does not supersede accepted costing or establish a handset startup result. No application, test fixture, assertion, Gradle runner/configuration, iOS, SQL, server, version, dependency or signing changes were made.
+
+### A. Five-test baseline matrix
+
+**Baseline comparison BLOCKED; current five-test selection RED.** No FAIL/FAIL or PASS/FAIL attribution can be made for any row because the baseline never reached test execution.
+
+- Accepted costing commit: `a6f2d4fbb10f4154427b62145c9a872495bf754c`.
+- Exact immediate pre-costing parent selected: `83d6b0f819a8e6f22f610f98d5f1dcd540b4f8cf`. Android tree `bad9b1081a40e6671e9616157686065a5a390491`, identical to accepted sync `019735ad043815c4082a3ee1ad496de0192abb74` and earlier pre-costing `c0e461ec986e7ee105ad39be6e1e4284fd115d12`.
+- Current tested HEAD: `c3b4c590d9dca929562e3d3f995885583e76405f`; Android tree `bb27280d389d866f562d3cccc41284c36bbc1583`. Android diff against accepted costing commit is empty.
+- Baseline exported using `git archive` into `/tmp/vinetrack-costing-baseline-bv2d8p6m/baseline`; all **1,152 tracked baseline Android files** verified against their Git blob identities, **zero mismatches**. No checkout/reset or baseline modification.
+- Baseline command exited1 after77.395s at `:app:compileDebugKotlin`: `AppConfig.kt:5:27 Unresolved reference 'Config'`, also at116:29 and148:25, with downstream trim/not diagnostics. Managed `app/src/main/java/**/Config.kt` is ignored by `android-vinetrack/.gitignore:49` and absent from the Git archive. No substitute/copy/stub/config/source edit was added to force compilation. **Zero tests executed**, not five test failures or a passing zero-test run. This clean exported tree lacks required managed configuration; its runtime behaviour is untested.
+- The initial orchestration correctly stopped at its five-test-discovery assertion. Host orchestration was then changed only to resume the two current stages, preserving the original failure/log and recording `baseline_comparable=false`. The failed baseline was not retried or repaired.
+- Current exact selection: **5 executed /0 passed /5 failed /0 errors /0 skipped**, exit1,13.036s. Each row below is **baseline NOT EXECUTED → current FAIL**, all in `com.rork.vinetrack.data.WorkTaskCompletionTest`:
+  1. `Sydney Work Date selection round trips the UTC picker calendar day` — expected2026-10-05, actual2026-10-04; assertion line46.
+  2. `new local midnight Work Date resolves through vineyard timezone` — expected2026-10-04, actual2026-10-05; assertion line72.
+  3. `customer A B C keeps work date and separate audit` — expected2026-09-30, actual2026-09-29; assertion line97.
+  4. `offline update survives restart overlay full refresh and replay with original audit` — expected `completedBy=original-user`, `completedAt=2026-10-05T01:20:30Z`; restored both NULL at line136. `finalizedBy` and `finalizedAt` remain present. This assertion stops the test before its later replay assertions.
+  5. `duplicate pending create patches folded completion before acknowledgement` — `java.util.NoSuchElementException: List is empty.` at line248 (`server.updates.single()`); later assertions not reached.
+
+The completion test is byte-identical between baseline/current (SHA-256 `72b9bc31bff6c32cd606b8ab2a307b466bc3e0ae6e0b8ac092c13e06a000aae5`). Identical completion/sync source remains source evidence only, NOT a proven failing-before experiment. No costing-induced regression or pre-costing failure was established by this blocked comparison; no completion/sync repair is authorised or performed here.
+
+**Same runner/environment:** all stages use unchanged current `costing-tests.init.gradle` (SHA-256 `3390d7ef0df0fed301f0fc4af854d078222c549291c672e035c2c781f19f5e76`), Temurin17.0.13+11, Gradle8.14.3, `JAVA_HOME=/usr/lib/jvm/jdk-17.0.13+11`, `ANDROID_HOME=/opt/android-sdk`, `GRADLE_USER_HOME=/home/user/.gradle`; LANG/LC_ALL/TZ unset. No forced timezone or fixture edits. Baseline/current production configuration availability differs as described above; no claim of fully equivalent executable environments.
+
+Command prefix in each app directory:
+
+```sh
+./gradlew :app:testDebugUnitTest \
+  --init-script /home/user/rork-app/android-vinetrack/costing-tests.init.gradle \
+  --console=plain '-Dorg.gradle.jvmargs=-Xmx4096m -XX:+UseParallelGC'
+```
+
+For the five-test stages append `--tests 'com.rork.vinetrack.data.WorkTaskCompletionTest.<exact method above>'` once per method. The unchanged init forces actual Test task execution and disables its result cache. Current XML timestamps are new, not reused earlier results; normal production compilation may use Gradle cache.
+
+### B. Costing gate
+
+Fresh current-only gate: **12 suites /205 executed /205 passed /0 failures /0 errors /0 skipped**, exit0,12.630s. All20 `MobileCostingParityTest` cases discovered and PASS. This is a green costing partition, NOT a green full completion suite or rerun of all224 earlier cases. The other14 completion tests were not rerun in this checkpoint.
+
+Exact discovered suite inventory, under `com.rork.vinetrack.data` except the noted material subpackage; each selected using `--tests '*.<ClassName>'`:
+
+- EffectiveLabourCostTest20; MobileCostingParityTest20; PieceRateCostingTest19.
+- PruningActivityLabourLineTest19; PruningActivityWorkTaskLinkTest15; PruningWorkTaskCostingCreateTest17; PruningWorkTaskRepairTest9.
+- WorkTaskCostRollupTest6; WorkTaskLabourCostingTest24; WorkTaskMachineCostingTest18; WorkerTypeIntegrityTest10.
+- `material.WorkTaskMaterialCostsTest`28.
+
+Trip allocation coverage is within parity/rollup/worker-type cases, including GPS marker/slices once, saved allocation decoding, distinct parents and deleted/missing-parent exclusion. There is no separately discovered Android TripCosting-named suite; none is claimed.
+
+Accepted owner-supplied fixture assertions remain green: Stockmans labour **$18,937.00**, fuel **$20.79**, total **$18,957.79**, physical **6.14908359375ha**, **$3,083.03/ha**; Shoot thinning **$810.63/ha**, Removing Guards **$2,622.53/ha**, Mulching **$15.74/ha**, **$96.79 complete**; legacy **10h ×14 ×$36 = $5,040** only without canonical lines. Supplied approximately **37.27ha Treated** remains a separate figure, not the physical denominator: the repeat-operation test checks the separation, not an exact37.27 fixture assertion. No production rows were queried.
+
+### C. Startup evidence
+
+Still **UNVERIFIED**, separate from these host unit results. Fresh `adb devices -l` remains empty. No real FATAL EXCEPTION/full causes/application fatal frames, retained-data cold launch, owner failing-binary identity or physical-device acceptance obtained. Prior separate simulator sign-in observation is not a cold-start PASS. Strict evidence decoding and observer-before-restore remain source hazards only. No startup code edits, storage clear, uninstall, queue reset, Retry All, record replay or server mutation occurred.
+
+### D. Binary provenance
+
+Existing APK remains unchanged: SHA-256 `e2235b6ff4dc50514f60ee6b1330f7b16cb87518301b798fb8b06c771beca788`; previously verified signing certificate SHA-256 `241548efe6df8100c833d4eaebd2b3cf22dd70ffb638d9faa77bbd03f0077ef3`. Existing output metadata reports release APK, `com.rork.vinetrack`,3.1.8/code12; it contains no commit/snapshot/sourceHash binding. No APK/AAB was assembled to manufacture provenance.
+
+Metadata-only managed reads now also list run `a82da67f-ee7e-4116-b6d6-6777c4142d67`, snapshot `r2can6m70l01s7flg26hx`, source label `src_bad9b1081a40e6671`, Kotlin/android-vinetrack/com.rork.vinetrack. Status returns `completed` and APK key `kotlin-builds/t1ycqwwwkgzt982ur27ya/art_758f9ba453c02491f/app.apk` only. The source label resembles the pre-costing Android tree prefix, but the returned fields do not bind the existing local APK checksum or owner's installed failing binary to a Git commit. No current-costing artifact provenance, downloadable AAB, version/signature mapping or installed compatibility is established. No build generation, provider upload or publication was invoked. Earlier managed run5d3cdb28 remains historical and unmapped.
+
+### E. Changes and retained evidence
+
+- Added host-only `scripts/run-costing-baseline-comparison.py`; updated this existing report and existing approved plan. Python syntax validation PASS. Script records actual discovery, rejects stale XML, retains baseline failure and resumes current stages without altering baseline/application behaviour.
+- Raw evidence: `/tmp/vinetrack-costing-baseline-bv2d8p6m/metadata.json`, original `runner.log`, resumed `runner-current.log`, each stage's `gradle.log`/`result.json` and copied fresh TEST XML, plus `finished.json`. Baseline has no test XML. These are temporary host evidence, not handset logs or delivered artifacts; durable counts/assertion boundaries are recorded above.
+- Android production/tests/configuration/runner tree remains identical to accepted costing commit. No app-source changes in this pass. Existing unrelated committed iOS Config.swift difference between accepted costing and current HEAD is preserved, not reverted and not represented as cross-platform tree equality. Managed history/fingerprint changes already present at entry were not edited or reverted by the agent.
+- Whitespace check PASS. No app checks/build rerun because no app code changed and APK rebuilding was outside this diagnostic scope; earlier normal app build PASS remains historical. The fresh205-test costing gate is successful; the current five-test gate fails and baseline compilation is blocked as explicitly reported.
+
 ## Urgent Android startup regression — fatal-first checkpoint, 23 October 2026
 
 Owner requires the first real fatal stack/root cause to be reported before broad changes. No production/test/build configuration edits, new binary builds, owner-handset operations, storage clears, uninstalls, queue resets or server operations were performed in this checkpoint. The requested evidence-reader correction, restore/route replay gate and release acceptance test remain unimplemented pending the fatal-first boundary; no repair or launch PASS is claimed.
