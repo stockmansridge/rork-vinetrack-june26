@@ -153,6 +153,15 @@ final class EntitlementGate {
     /// Vineyards confirmed accessible at the last ONLINE verification —
     /// hydrated from the persisted snapshot on cold start (per user).
     private(set) var cachedAccessibleVineyardIds: Set<UUID> = []
+    private(set) var cachedOperationalAccessByVineyard: [String: VineyardOperationalAccess] = [:]
+
+    /// Prepared capability state, not yet an entry grant or mutation guard.
+    /// A live vineyard row always wins over cached/account-level billing state.
+    func verifiedOperationalAccess(for vineyardId: UUID) -> VineyardOperationalAccess? {
+        guard currentUserId != nil else { return nil }
+        if let accessMatrix { return accessMatrix.entry(for: vineyardId)?.operationalAccess }
+        return cachedOperationalAccessByVineyard[vineyardId.uuidString]
+    }
     /// Whether the shared-entitlement rollout flag covers this user (server
     /// value; cold-starts from the last persisted snapshot).
     private(set) var enforcementEnabled: Bool = false
@@ -279,6 +288,8 @@ final class EntitlementGate {
         cachedAccessibleVineyardIds = Set(
             (snapshot?.accessibleVineyardIds ?? []).compactMap(UUID.init(uuidString:))
         )
+        cachedOperationalAccessByVineyard = snapshot?.userId.flatMap(UUID.init(uuidString:)) == userId
+            ? snapshot?.operationalAccessByVineyard ?? [:] : [:]
         accessMatrix = nil
         phase = .idle
         hasServerMismatch = false
@@ -300,6 +311,7 @@ final class EntitlementGate {
         phase = .idle
         accessMatrix = nil
         cachedAccessibleVineyardIds = []
+        cachedOperationalAccessByVineyard = [:]
         enforcementEnabled = false
         lastServerAccess = nil
         lastServerResult = nil
@@ -427,6 +439,10 @@ final class EntitlementGate {
                 guard currentUserId == userId else { return }
                 accessMatrix = matrix
                 cachedAccessibleVineyardIds = Set(matrix.accessibleVineyardIds)
+                cachedOperationalAccessByVineyard = matrix.operationalAccessByVineyard
+                EntitlementVerificationStore.shared.recordOperationalAccess(
+                    userId: userId, capabilities: matrix.operationalAccessByVineyard
+                )
             } catch {
                 // Matrix RPC missing (older backend) or transient failure —
                 // routing falls back to the account-level decision only.

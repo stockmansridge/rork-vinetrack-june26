@@ -2,6 +2,7 @@ package com.rork.vinetrack.data.subscription
 
 import android.content.Context
 import androidx.core.content.edit
+import com.rork.vinetrack.data.VineyardOperationalAccess
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -41,7 +42,21 @@ data class EntitlementVerificationSnapshot(
      * fresh server matrix.
      */
     @SerialName("accessible_vineyard_ids") val accessibleVineyardIds: List<String>? = null,
-)
+    /** Independent of account grace; never used as an app-entry grant here. */
+    @SerialName("operational_access_by_vineyard") val operationalAccessByVineyard: Map<String, VineyardOperationalAccess>? = null,
+) {
+    fun operationalAccessFor(vineyardId: String, currentUserId: String?): VineyardOperationalAccess? {
+        // New scoped capabilities never inherit an unowned legacy snapshot.
+        if (currentUserId == null || userId == null || !userId.equals(currentUserId, ignoreCase = true)) return null
+        return operationalAccessByVineyard?.get(vineyardId.lowercase(java.util.Locale.ROOT))
+    }
+
+    /** A provider-only refresh must retain the same owner's verified matrix,
+     * but never transfer it to another (or anonymous) account. */
+    fun retainingOperationalAccess(previous: EntitlementVerificationSnapshot?): EntitlementVerificationSnapshot =
+        if (operationalAccessByVineyard != null || userId == null || previous?.userId != userId) this
+        else copy(operationalAccessByVineyard = previous.operationalAccessByVineyard)
+}
 
 /**
  * Local persistence for the entitlement grace window, mirroring iOS
@@ -98,9 +113,18 @@ class EntitlementVerificationStore(context: Context) {
             // Preserve the same user's known-accessible vineyards unless a
             // fresh matrix replaces them.
             accessibleVineyardIds = accessibleVineyardIds ?: previous?.accessibleVineyardIds,
-        )
+        ).retainingOperationalAccess(previous)
         save(snapshot)
         return snapshot
+    }
+
+    /** The matrix can resolve while account billing has no grant. Preserve
+     * existing grace timestamps/results instead of renewing a writable lease. */
+    fun recordOperationalAccess(userId: String?, capabilities: Map<String, VineyardOperationalAccess>) {
+        if (userId == null) return
+        val existing = load()?.takeIf { it.userId == userId }
+            ?: EntitlementVerificationSnapshot(userId, System.currentTimeMillis(), false)
+        save(existing.copy(operationalAccessByVineyard = capabilities))
     }
 
     /** Removes the persisted snapshot (account switch isolation). */

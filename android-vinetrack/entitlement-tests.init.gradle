@@ -1,0 +1,18 @@
+// Focused entitlement contract + existing startup/offline/Trip regressions.
+// No production configuration, dependencies, versions, or distribution changes.
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    app.tasks.named('compileDebugUnitTestKotlin').configure {
+        setSource(app.fileTree('src/test/java') {
+            include '**/ReadOnlyEntitlementContractTest.kt', '**/VineTrackAccessRowCompatTest.kt'
+            include '**/RetainedStartupTest.kt', '**/SyncRecoveryStorageTest.kt'
+            include '**/SyncCrashIsolationTest.kt', '**/ActiveTripStoreTest.kt'
+            include '**/OfflineQuickActionsTest.kt', '**/TripEndGateTest.kt'
+        })
+    }
+    app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        testLogging { events 'passed', 'failed', 'skipped' }
+    }
+}

@@ -5745,8 +5745,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // reachable. Best-effort — failure keeps the previous matrix and
             // never blocks the account-level resolution.
             val matrix = runCatching { vineTrackAccessRepo.fetchAccessMatrix() }.getOrNull()
-            if (matrix != null) {
+            if (matrix != null && session.userId == userId) {
                 _ui.update { it.copy(accessMatrix = matrix) }
+                // Matrix capability verification is independent of account
+                // billing. Do not renew grace or erase it on provider refresh.
+                entitlementStore.recordOperationalAccess(userId, matrix.operationalAccessByVineyard)
             }
             if (access != null && access.grantsAppAccess) {
                 // Cache is CAPPED at the earliest known expiry (e.g. the

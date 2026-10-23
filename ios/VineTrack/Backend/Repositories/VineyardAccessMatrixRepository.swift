@@ -3,12 +3,41 @@ import Supabase
 
 // MARK: - Models
 
+/// Verified entitlement capabilities for ONE vineyard, separate from role
+/// permissions and account-level billing. No trial-date inference or network IO.
+/// Routing is deliberately unchanged until all operational write seams are guarded.
+nonisolated struct VineyardOperationalAccess: Codable, Sendable, Equatable {
+    let canEnter: Bool
+    private let writeAllowed: Bool
+    private let restrictionReason: String?
+
+    var canWrite: Bool { canEnter && writeAllowed }
+    var readOnlyReason: String? { canEnter && !canWrite ? restrictionReason : nil }
+    var isTrialExpiredReadOnly: Bool { readOnlyReason == "trial_expired" }
+
+    init(legacyCanEnter: Bool, canEnterVineyard: Bool? = nil, canWrite: Bool? = nil, readOnlyReason: String? = nil) {
+        canEnter = canEnterVineyard ?? legacyCanEnter
+        writeAllowed = canWrite ?? true
+        restrictionReason = readOnlyReason
+    }
+}
+
 /// One vineyard row from `get_my_vineyard_access_matrix()` (sql/156).
 nonisolated struct VineyardAccessEntry: Decodable, Sendable, Equatable {
     let vineyardId: UUID
     let vineyardName: String?
     let membershipRole: String?
     let hasVineyardAccess: Bool
+    let canEnterVineyard: Bool?
+    let canWrite: Bool?
+    let readOnlyReason: String?
+
+    var operationalAccess: VineyardOperationalAccess {
+        VineyardOperationalAccess(
+            legacyCanEnter: hasVineyardAccess, canEnterVineyard: canEnterVineyard,
+            canWrite: canWrite, readOnlyReason: readOnlyReason
+        )
+    }
     let vineyardAccessReason: String?
     let vineyardAccessSource: String?
     let planCode: String?
@@ -28,6 +57,9 @@ nonisolated struct VineyardAccessEntry: Decodable, Sendable, Equatable {
         case vineyardName = "vineyard_name"
         case membershipRole = "membership_role"
         case hasVineyardAccess = "has_vineyard_access"
+        case canEnterVineyard = "can_enter_vineyard"
+        case canWrite = "can_write"
+        case readOnlyReason = "read_only_reason"
         case vineyardAccessReason = "vineyard_access_reason"
         case vineyardAccessSource = "vineyard_access_source"
         case planCode = "plan_code"
@@ -47,6 +79,9 @@ nonisolated struct VineyardAccessEntry: Decodable, Sendable, Equatable {
         vineyardName = try? c.decodeIfPresent(String.self, forKey: .vineyardName)
         membershipRole = try? c.decodeIfPresent(String.self, forKey: .membershipRole)
         hasVineyardAccess = (try? c.decodeIfPresent(Bool.self, forKey: .hasVineyardAccess)) ?? false
+        canEnterVineyard = try? c.decodeIfPresent(Bool.self, forKey: .canEnterVineyard)
+        canWrite = try? c.decodeIfPresent(Bool.self, forKey: .canWrite)
+        readOnlyReason = try? c.decodeIfPresent(String.self, forKey: .readOnlyReason)
         vineyardAccessReason = try? c.decodeIfPresent(String.self, forKey: .vineyardAccessReason)
         vineyardAccessSource = try? c.decodeIfPresent(String.self, forKey: .vineyardAccessSource)
         planCode = try? c.decodeIfPresent(String.self, forKey: .planCode)
@@ -109,6 +144,12 @@ nonisolated struct VineyardAccessMatrix: Decodable, Sendable, Equatable {
 
     func entry(for vineyardId: UUID) -> VineyardAccessEntry? {
         vineyards.first { $0.vineyardId == vineyardId }
+    }
+
+    /// Includes explicit denials. Only a freshly verified full matrix replaces
+    /// this map; provider-only updates must not erase a known restriction.
+    var operationalAccessByVineyard: [String: VineyardOperationalAccess] {
+        vineyards.reduce(into: [:]) { $0[$1.vineyardId.uuidString] = $1.operationalAccess }
     }
 
     var accessibleVineyardIds: [UUID] {

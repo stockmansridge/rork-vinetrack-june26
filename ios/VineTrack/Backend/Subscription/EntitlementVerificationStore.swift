@@ -40,6 +40,16 @@ nonisolated struct EntitlementVerificationSnapshot: Codable, Equatable {
     /// the cached access of another — the whole list is replaced only by a
     /// fresh server matrix.
     var accessibleVineyardIds: [String]?
+    /// Verified effective-vineyard capabilities, including denials. Independent
+    /// of account offline grace; never interpreted as an app-entry grant here.
+    var operationalAccessByVineyard: [String: VineyardOperationalAccess]?
+
+    func operationalAccess(for vineyardId: UUID, userId: UUID) -> VineyardOperationalAccess? {
+        // Unlike legacy account grace, these scoped capabilities require an
+        // exact authenticated owner. Never inherit an unscoped legacy snapshot.
+        guard self.userId.flatMap(UUID.init(uuidString:)) == userId else { return nil }
+        return operationalAccessByVineyard?[vineyardId.uuidString]
+    }
 }
 
 /// Local persistence for the entitlement grace window. Single-snapshot,
@@ -82,6 +92,22 @@ final class EntitlementVerificationStore {
         defaults.set(data, forKey: key)
     }
 
+    /// A matrix is verified independently of account billing. Preserve the
+    /// existing account grace timestamp/result; do not renew a writable lease.
+    func recordOperationalAccess(userId: UUID, capabilities: [String: VineyardOperationalAccess]) {
+        let existing = load()
+        var snapshot: EntitlementVerificationSnapshot
+        if let existing, existing.userId.flatMap(UUID.init(uuidString:)) == userId {
+            snapshot = existing
+        } else {
+            snapshot = EntitlementVerificationSnapshot(
+                userId: userId.uuidString, lastVerifiedAt: Date(), wasEntitled: false
+            )
+        }
+        snapshot.operationalAccessByVineyard = capabilities
+        save(snapshot)
+    }
+
     func clear() {
         defaults.removeObject(forKey: key)
     }
@@ -102,6 +128,7 @@ final class EntitlementVerificationStore {
         knownExpiresAt: Date? = nil,
         supabaseEnforced: Bool? = nil,
         accessibleVineyardIds: [String]? = nil,
+        operationalAccessByVineyard: [String: VineyardOperationalAccess]? = nil,
         accessDetailsUpdate: AccessDetailsUpdate = .mergeProvided
     ) -> EntitlementVerificationSnapshot {
         let existing = load()
@@ -118,7 +145,8 @@ final class EntitlementVerificationStore {
             reasonCode: reasonCode ?? (retainAccessDetails ? existing?.reasonCode : nil),
             knownExpiresAt: knownExpiresAt ?? (retainAccessDetails ? existing?.knownExpiresAt : nil),
             supabaseEnforced: supabaseEnforced ?? (retainAccessDetails ? existing?.supabaseEnforced : nil),
-            accessibleVineyardIds: accessibleVineyardIds ?? (sameUser ? existing?.accessibleVineyardIds : nil)
+            accessibleVineyardIds: accessibleVineyardIds ?? (sameUser ? existing?.accessibleVineyardIds : nil),
+            operationalAccessByVineyard: operationalAccessByVineyard ?? (sameUser && userId != nil ? existing?.operationalAccessByVineyard : nil)
         )
         save(snapshot)
         return snapshot

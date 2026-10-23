@@ -1,5 +1,55 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Expired-trial read-only access — contract/cache checkpoint, 23 October 2026
+
+**PARTIAL IMPLEMENTATION — NOT READ-ONLY ACCEPTANCE OR RELEASE CLEARANCE.** This checkpoint implements additive decoding, scoped capability preparation and existing-cache persistence only. It does not complete the requested end-to-end native read-only feature. Existing entry routes, write paths and sync behaviour are not changed to admit/restrict expired trials. In particular, receiving `can_write=false` is not yet sufficient to stop a mutation. Do not roll out this checkpoint as read-only enforcement.
+
+Latest scope supersedes every earlier store-delivery authorisation: no store exports/uploads, version/build-number changes, SQL/schema/server changes, owner-device operations, reset or deletion of retained data. Normal validation builds and synthetic namespaced tests only.
+
+### iOS — implemented architecture and exact files
+
+- `ios/VineTrack/Backend/Models/BackendVineTrackAccess.swift`: tolerant optional decoding for `can_enter_vineyard`, `can_write`, `read_only_reason`; account billing fields never override a vineyard row.
+- `ios/VineTrack/Backend/Repositories/VineyardAccessMatrixRepository.swift`: decode those fields on each effective-vineyard row; prepare `VineyardOperationalAccess` with separate `canEnter`, `canWrite`, `readOnlyReason`. Missing/null write field preserves writable capability for an otherwise admitted vineyard. Entry denial implies no write and is not displayed as trial expiry. No inference from historical dates/status/source labels. Existing `hasVineyardAccess` and routing helpers intentionally remain unchanged.
+- `ios/VineTrack/Backend/Subscription/EntitlementVerificationStore.swift`: optional per-vineyard capability map in the existing snapshot, preserving old snapshot decoding. Matrix verification preserves existing account grace time/result/expiry. Provider-only refreshes retain the same owner's matrix; fresh matrices replace it, including empty/denied results. Lookup requires the exact authenticated UUID owner, not a nil-owner legacy snapshot.
+- `ios/VineTrack/Backend/Subscription/EntitlementGate.swift`: capture verified matrix capabilities, restore the exact owner's map on login, clear in-memory state on the existing logout lifecycle, and expose a prepared live-row-first capability lookup. No per-action entitlement requests; no new entry outcome or write admission is enabled.
+- `ios/VineTrackTests/ReadOnlyEntitlementContractTests.swift`: contract/cache tests, including backward compatibility, independent funding, explicit denial, non-inference, serialization, owner isolation, unchanged grace and provider/matrix replacement. Names explicitly identify this as preparation, not Save/Create/Delete/Start or replay acceptance.
+
+**Guard/server-error/offline/active-operation status:** no operational mutation guard, `VT_READ_ONLY` classifier, queue-hold integration, banner or purchase prompt has been implemented. The prepared cache is not an independent app-entry/write grant and must still be combined with existing auth/role/offline-write rules in the remaining integration. Cached read-only historical entry is not enabled. Trip/Spray/GPS/evidence and cleanup/completion behaviour remain unchanged, not newly verified under an entitlement transition.
+
+**iOS validation actually executed:** `swiftTest` selection `VineTrackTests/ReadOnlyEntitlementContractTests`, `EntitlementDecisionTests`, `EntitlementAccessRegressionTests`, `StorePurchaseSyncTests`, `SyncQueueRegressionTests`, `OfflineQuickActionsTests`, `ActiveTripRouteRecoveryTests`, `DeviceTripOwnershipTests`: **122 passed in146s**, no reported failures. Success is aggregate-only; no per-suite discovery/skipped metric was returned. Final `runChecks(ios)` **PASS**, simulator build only; not device/App Store validation. Two unrelated existing asset-address advisories left unchanged. No separate iOS startup suite or UI journey was executed.
+
+### Android — implemented architecture and exact files
+
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/VineTrackAccessRepository.kt`: optional additive account and effective-vineyard fields; prepare normalized per-vineyard operational capability map with the same missing-write compatibility and denial/non-inference rules as iOS. Existing route/access flags remain unchanged.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/subscription/SubscriptionState.kt`: optional capability map in the existing snapshot; exact-owner scoped lookup, account-isolated provider merge and independent matrix verification preserving grace time/result/expiry. No parallel persistence system.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt`: persist freshly verified matrix capabilities only while the captured user remains current. No mutation/replay/startup/business-logic changes; existing final observer-start initializer is preserved.
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/ReadOnlyEntitlementContractTest.kt`:16 pure contract/serialization/merge cases, not operational action coverage. Seven existing grant labels are checked within one test, not counted as seven executed cases.
+- `android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/ReadOnlyEntitlementCacheTest.kt`:3 real-preference persistence cases in unique synthetic namespaces: recreation/grace preservation, provider retention/fresh replacement, cross-account/unowned legacy isolation. No owner preference/file is read or cleared; the tests do not invoke the existing fixture reset hook.
+- `android-vinetrack/entitlement-tests.init.gradle`: narrow host-test compilation/selection without production configuration changes.
+- `scripts/run-read-only-entitlement-contract.py`: reproducible host-only focused-first/regression-second runner; outputs outside the project.
+
+**Guard/server-error/offline/active-operation status:** identical integration gaps to iOS. Android's existing `FieldStoreAccess` admission also protects reads/cache/evidence; adding a blanket entitlement check there would incorrectly prevent permitted reads and preservation. A network-only check would miss local/queued writes. Neither shortcut was used. No `VT_READ_ONLY` classification or automatic-retry suppression has been delivered. Offline historical admission and active-operation entitlement-transition behaviour remain unverified; this checkpoint leaves them unchanged.
+
+**Android validation actually executed:**
+
+- Focused host gate: **27 executed/27 passed/0 failures/errors/skips** = new contract16 plus existing `VineTrackAccessRowCompatTest`11.
+- Widened existing host gate: **55 executed/55 passed/0 failures/errors/skips** across `RetainedStartupTest`, `SyncRecoveryStorageTest`, `SyncCrashIsolationTest`, `ActiveTripStoreTest`, `OfflineQuickActionsTest`, `TripEndGateTest`. This includes the existing33 startup/recovery cases. No old-constructor runtime reproduction or handset acceptance is implied.
+- `androidTest`, only `com.rork.vinetrack.data.ReadOnlyEntitlementCacheTest`: **3 passed/0 failed/0 skipped,7s**, isolated instrumentation. No owner installation or data is used.
+- Final `runChecks(android-vinetrack)` **PASS**. Normal validation build, not Play bundle delivery. Two unrelated existing asset-address advisories left unchanged.
+- Host logs, exact selectors, fresh XML and results: `/tmp/vinetrack-read-only-contract-_tvh5q9c/`. Both host stages exited0. The five previously known Android completion failures were not selected, changed, reclassified or declared fixed. Protected costing was not changed or rerun in this checkpoint.
+
+### Outstanding native work and backend dependencies
+
+The requested20-case operational acceptance gate has **not** been completed on either platform. Contract tests establish DTO/capability/cache rules only. Outstanding native work: exhaustive operational local/server/queue admission; selected-vineyard read-only entry/browsing; Save/Create/Delete/Start/complete/reopen rejection; common banner/purchase prompt; `VT_READ_ONLY` response classification and held-original replay semantics without retry-budget consumption; telemetry/session/purchase/support/invitation/System Admin exceptions; offline/active Trip/Spray/GPS transition preservation and integration tests. No screenshot, release or full-enforcement claim is made.
+
+The independent backend delivery must supply authenticated effective-vineyard `can_enter_vineyard=true`, `can_write=false`, `read_only_reason="trial_expired"` only for legitimate expired-trial access, retain true denial for revoked/foreign/disabled callers, preserve entitled funding/admin variants, and enforce writes at the database with `VT_READ_ONLY` code/message/hint. `record_my_client_activity` must remain allowed. Native work is still outstanding independently of those backend dependencies; deploying the backend alone does not complete this checkpoint.
+
+### Source identity and preservation
+
+Actual starting/current HEAD observed: `43ad2e542f8c30f66344826559a91b81e242f575`. This is the **base**, not a final managed-save commit. No commit/push was performed. Twelve changed application/test/runner files listed above have ordered SHA-256 manifest `877fa6e8c8e62f7778545b6a602e1f4dba44f7e89ebc766da2f27a9539ba1f4d` (UTF-8 lines: file-content SHA256, two spaces, project-relative path, newline; paths sorted). Final managed-save SHA is not available before turn save. Existing plan/report additionally updated; pre-existing managed history/fingerprint changes preserved.
+
+`git diff HEAD --check` PASS. No changes to Xcode/Gradle version/signing/pricing/dependency settings, SQL/Supabase/Portal, calculators, operational stores, queue/evidence/GPS implementation or Trip/Spray business logic. iOS3.1.8/build139 and Android3.1.8/code12 remain unchanged. No data-clearing, account logout or live record mutation was performed. Native guards/UI/queue integration remain the next implementation checkpoint, not owner field acceptance or store delivery.
+
 ## Proven stale-build constructor fatal / fresh-source delivery — 23 October 2026 (current checkpoint)
 
 ### Proven fatal and source match

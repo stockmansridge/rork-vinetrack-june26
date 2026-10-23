@@ -13,6 +13,11 @@ import Foundation
 nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
     /// Whether Supabase grants the caller direct (Team/Enterprise/legacy) access.
     let hasAccess: Bool?
+    // Additive read-only contract. These account-level fields are NOT a
+    // substitute for the selected vineyard's effective funding decision.
+    let canEnterVineyard: Bool?
+    let canWrite: Bool?
+    let readOnlyReason: String?
     /// True when Supabase found no backend entitlement and the client should
     /// fall back to verifying RevenueCat Solo access.
     let soloCheckRequired: Bool?
@@ -191,6 +196,9 @@ nonisolated struct BackendVineTrackAccess: Decodable, Sendable, Hashable {
         }
 
         hasAccess          = bool("has_access", "has_supabase_access")
+        canEnterVineyard   = bool("can_enter_vineyard")
+        canWrite           = bool("can_write")
+        readOnlyReason     = string("read_only_reason")
         soloCheckRequired  = bool("solo_check_required")
         reason             = string("reason", "access_source")
 

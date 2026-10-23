@@ -24,6 +24,10 @@ import kotlinx.serialization.Serializable
 data class VineTrackAccessRow(
     @SerialName("has_supabase_access") val hasSupabaseAccess: Boolean? = null,
     @SerialName("has_access") val hasAccess: Boolean? = null,
+    // Account-level contract only; selected-vineyard funding remains authoritative.
+    @SerialName("can_enter_vineyard") val canEnterVineyard: Boolean? = null,
+    @SerialName("can_write") val canWrite: Boolean? = null,
+    @SerialName("read_only_reason") val readOnlyReason: String? = null,
     /** 'enterprise' | 'internal' | 'team' | 'legacy' | 'solo' | 'none'. */
     @SerialName("access_source") val accessSource: String? = null,
     @SerialName("solo_check_required") val soloCheckRequired: Boolean? = null,
@@ -132,6 +136,19 @@ data class VineTrackAccessRow(
     }
 }
 
+/** Verified entitlement state for ONE vineyard, separate from role permissions.
+ * This preparation does not change routing or enforce writes yet. */
+@Serializable
+data class VineyardOperationalAccess(
+    val canEnter: Boolean,
+    private val writeAllowed: Boolean,
+    private val restrictionReason: String? = null,
+) {
+    val canWrite: Boolean get() = canEnter && writeAllowed
+    val readOnlyReason: String? get() = restrictionReason.takeIf { canEnter && !canWrite }
+    val isTrialExpiredReadOnly: Boolean get() = readOnlyReason == "trial_expired"
+}
+
 /**
  * One vineyard row from `get_my_vineyard_access_matrix()` (sql/156).
  * Server-authoritative per-vineyard decision — the client never re-derives
@@ -143,6 +160,9 @@ data class VineyardAccessEntry(
     @SerialName("vineyard_name") val vineyardName: String? = null,
     @SerialName("membership_role") val membershipRole: String? = null,
     @SerialName("has_vineyard_access") val hasVineyardAccess: Boolean = false,
+    @SerialName("can_enter_vineyard") val canEnterVineyard: Boolean? = null,
+    @SerialName("can_write") val canWrite: Boolean? = null,
+    @SerialName("read_only_reason") val readOnlyReason: String? = null,
     @SerialName("vineyard_access_reason") val vineyardAccessReason: String? = null,
     @SerialName("vineyard_access_source") val vineyardAccessSource: String? = null,
     @SerialName("plan_code") val planCode: String? = null,
@@ -157,7 +177,13 @@ data class VineyardAccessEntry(
      * OR owner of the funding entitlement). Null on a pre-158 backend.
      */
     @SerialName("is_billing_authority") val isBillingAuthority: Boolean? = null,
-)
+) {
+    val operationalAccess: VineyardOperationalAccess get() = VineyardOperationalAccess(
+        canEnter = canEnterVineyard ?: hasVineyardAccess,
+        writeAllowed = canWrite ?: true,
+        restrictionReason = readOnlyReason,
+    )
+}
 
 /** Account summary from `get_my_vineyard_access_matrix()` (sql/156). */
 @Serializable
@@ -182,6 +208,10 @@ data class VineyardAccessMatrix(
 ) {
     fun entryFor(vineyardId: String): VineyardAccessEntry? =
         vineyards.firstOrNull { it.vineyardId.equals(vineyardId, ignoreCase = true) }
+
+    /** Full verified map, including explicit denials; not an app-entry grant. */
+    val operationalAccessByVineyard: Map<String, VineyardOperationalAccess>
+        get() = vineyards.associate { it.vineyardId.lowercase(java.util.Locale.ROOT) to it.operationalAccess }
 
     val accessibleVineyardIds: List<String>
         get() = vineyards.filter { it.hasVineyardAccess }.map { it.vineyardId }
