@@ -1,6 +1,46 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
-## Android Internal Testing delivery — 23 October 2026 (current checkpoint)
+## Proven stale-build constructor fatal / fresh-source delivery — 23 October 2026 (current checkpoint)
+
+### Proven fatal and source match
+
+Owner supplies the actual retained-handset Internal Testing failure, package `com.rork.vinetrack`, versionName `3.1.8`, installed versionCode `1792728910`:
+
+`java.lang.NullPointerException: Attempt to invoke interface method 'java.lang.Object kotlin.Lazy.getValue()' on a null object reference`
+
+Frames supplied: `getReplayRunner:3103` → `launchReplayStage:3114` → `replayPendingPinCreates:3239` → `observeConnectivity:4804` → `observeConnectivity:4785` → `AppViewModel.<init>:2700`.
+
+Read-only `git show e4d148096ebb0dc07f40eb9ef063b9e8bed3faee:android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt` confirms the exact mapped lines: early init2687, observer call2700, lazy declaration3103, delegate access3114, launch4785 and first-online replay4804. This establishes the reported constructor-order fatal in that installed build, superseding earlier unknown-root-cause statements. No raw full Logcat attachment or installed AAB bytes were independently retrieved here; the supplied frames and identity are owner evidence. Strict evidence parsing is not the reported fatal.
+
+### Source provenance before validation
+
+- Actual `git rev-parse HEAD`: `b42c384adce6c6cb35d973781f20847ff64a171a`. Requested `d5a478a1f9c0247875fec7b4ee1e4762a4b6426e` is unavailable (`not our ref`); do not claim HEAD equals it.
+- At entry, complete Android diff against `cd1bff576f346c0d56872d136e9b1a92bb543398` was empty. Tracked Android tree both `f191bf322f182ea5558de181dfe71f82facafdd0`; production `app/src/main` tree both `8dab6e8b83169291bd54a253436b4d9cd568006b`. After test additions, production diff against that repaired commit remains empty.
+- `AppViewModel.kt`: `startAfterConstruction()` at2694; `observeConnectivity()` inside that method at2707, not an early initializer. The sole class init is `init { startAfterConstruction() }` at18037, immediately before the class closing brace, after all property/delegate initializers. `replayRunner by lazy` at3111. Connectivity at4825 is informational only; admission gates replay separately. `StartupReplayAdmission.kt` exists and is unchanged.
+- AppViewModel SHA-256: `125026f343894f1d584f8d597da898f2bdae7a9bd0d928a36fca2ec5e788d187`.
+- Entry dirty state was three managed history files only. Final changes are three test-only files, new host orchestration script, existing report/plan and managed history. No production/startup/costing/completion/version/signing/dependency edit. Report final managed-save SHA only after Rork assigns it.
+
+### Regression and validation actually executed
+
+1. Added `RetainedStartupTest.observerStartupIsLastAndConnectivityCannotDirectlyReachReplayDelegate`: checks the final initializer, sole init, delegate ordering, no direct replay from transport observer and admission authority. Reads the actual historical source file for the negative control, not a fabricated legacy implementation. Old-file selection:1 executed/1 expected assertion failure/0 errors/skips,20.030s. Same guard in current gate passes. **This is a source guard, not execution of the old Application constructor.**
+2. Current host startup/recovery:4 suites/33 executed/33 passed/0 failures/errors/skips,11.343s. Includes unchanged recovery suites plus the added guard.
+3. `RetainedStartupConstructionTest`:3 passed/0 failed/0 skipped,7s, isolated emulator. Retains two previous cases and adds real Main.immediate construction with retained synthetic accessToken/userId and no refresh token. Test-only Application returns a null connectivity manager so the real observer's optimistic-online path runs without live network access. Confirms constructor returns, replay lazy delegate exists but is not initialized, admission is null, and online/SignedOut/Login resolves while the synthetic owner remains. **Does not independently timestamp the connectivity emission before constructor return or run the old constructor; the complete requested old-versus-new runtime reproduction remains open.** No owner-device installation/state is used.
+4. Host runner initially used a too-broad costing selector:224 executed/219 passed/5 known completion failures/0 errors/skips. Preserved as `protected-costing`; no assertion/source correction or unrelated repair. Corrected only the runner's selection to the12 exact accepted costing classes and resumed costing without rerunning successful startup tests. Final costing205/205,0 failures/errors/skips,11.337s; parity20/20. Completion test SHA-256 remains `72b9bc31bff6c32cd606b8ab2a307b466bc3e0ae6e0b8ac092c13e06a000aae5`; costing runner remains `3390d7ef0df0fed301f0fc4af854d078222c549291c672e035c2c781f19f5e76`.
+5. `./gradlew clean` succeeded before host execution. Gradle subsequently used eligible compile caches; this is **not** proof of an uncached clean AAB build. Final `runChecks({appPath:"android-vinetrack"})` PASS; two pre-existing nonblocking asset-address advisories untouched. Normal build check is not a Play AAB export or provenance certificate. Scoped whitespace check PASS; production source diff empty.
+
+Runner: `scripts/run-startup-provenance-regressions.py`; logs/XML/results `/tmp/vinetrack-fatal-regression-suttofg_/`, initial console `/tmp/vinetrack-fatal-regression-runner.log`, exact costing resume `/tmp/vinetrack-fatal-costing-exact.log`. Genuine old-file guard failure and accidental broader completion failures are preserved. No fatal-free handset claim.
+
+### Fresh managed AAB delivery and remaining blocker
+
+Connection and existing package access succeed. A new-to-this-conversation listing is visible: completed run `b10db229-698d-406a-8565-b547b31cab30`, snapshot `osok3p723wih24aeuyknb`, source label `src_f191bf322f182ea55`. The label matches the prefix of the repaired tracked Android tree, unlike the earlier costing-source listing. **It is still an already completed build, not the fresh clean build requested now.** Status exposes only `completed` and an APK storage key, not snapshot contents or inspectable AAB bytes/manifest/certificate. Do not treat a matching label alone as proof of its snapshot contents or reuse it. Listing after the normal build check is unchanged; the check exposes no new managed snapshot/source binding.
+
+The supported generation operation requires snapshotId/sourceHash inputs; no supported operation exposed here creates or inspects a fresh current snapshot. Therefore no guessed identity, reuse of `osok…`/older snapshot, local debug-signing bundle substitution, `generatePlayAab` call, publish validation or upload was made. **Fresh AAB delivery remains blocked_missing_typed_operation.** It requires the managed publishing route to create a fresh snapshot and verify repaired AppViewModel bytes, then build without stale artifact reuse and expose AAB creation timestamp, SHA-256, manifest version/code and registered upload-signing identity before Internal Testing delivery.
+
+Required replacement: `com.rork.vinetrack`, versionName `3.1.8`, valid unused managed versionCode **greater than1792728910**. No code was allocated or guessed. Source code12 remains unchanged and is explicitly NOT a valid replacement code;12/13 must not be used. No candidate AAB path, creation timestamp, checksum or actual candidate versionCode is available to report, and no submission ID exists from this pass.
+
+**No Production release or other track mutation. No owner data/cache/queues/evidence/server records changed.** Decisive acceptance remains a normal in-place Play update of the owner's retained installation and successful launch with retained records. If that proven repaired build fails, capture fresh `adb logcat -b crash -d -v threadtime`, full FATAL EXCEPTION/Caused by/app frames and installed version/code, then compare to this fatal before another repair. Do not claim fixed before that acceptance.
+
+## Android Internal Testing delivery — 23 October 2026 (preceding checkpoint)
 
 Latest owner approval permits Google Play Internal Testing only, superseding earlier no-upload restrictions. Application logic, costing, completion logic and tests remain frozen at repaired commit `cd1bff576f346c0d56872d136e9b1a92bb543398`. Only a verified unused versionCode metadata change is permitted; none has been made. Readiness: **blocked_missing_typed_operation** (also missing current-source bundle/signing evidence).
 

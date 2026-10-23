@@ -36,6 +36,32 @@ class RetainedStartupConstructionTest {
         }
     }
 
+    @Test fun immediateOnlineOnMainWithRetainedReplayScopeConstructsWithoutInitializingReplay() {
+        app.immediateOnlineWithoutNetworkManager = true
+        val session = SessionStore(app)
+        session.accessToken = "synthetic-not-a-live-token"
+        session.userId = "synthetic-owner"
+        // No refresh token: restoration resolves locally, without a live auth request.
+        lateinit var vm: AppViewModel
+        instrumentation.runOnMainSync {
+            assertFalse(Dispatchers.Main.immediate.isDispatchNeeded(kotlin.coroutines.EmptyCoroutineContext))
+            vm = AppViewModel(app)
+            val delegate = AppViewModel::class.java.getDeclaredField("replayRunner\$delegate").apply { isAccessible = true }
+                .get(vm) as Lazy<*>
+            assertFalse("online transport before admission must not even initialize replay", delegate.isInitialized())
+            val admission = AppViewModel::class.java.getDeclaredMethod("automaticReplayIdentity").apply { isAccessible = true }
+            assertNull(admission.invoke(vm))
+        }
+        try {
+            runBlocking { withTimeout(15_000) { vm.ui.first { it.route == AppRoute.Login && it.isOnline } } }
+            assertEquals(SessionPhase.SignedOut, vm.ui.value.sessionPhase)
+            assertEquals("synthetic-owner", session.userId)
+        } finally {
+            instrumentation.runOnMainSync { vm.viewModelScope.cancel() }
+            app.immediateOnlineWithoutNetworkManager = false
+        }
+    }
+
     @Test fun retainedMalformedEvidenceCannotEscapeViewModelConstructionOrBeReplaced() {
         val session = SessionStore(app)
         // Incomplete persisted credentials: restore MUST resolve SignedOut without an auth request.

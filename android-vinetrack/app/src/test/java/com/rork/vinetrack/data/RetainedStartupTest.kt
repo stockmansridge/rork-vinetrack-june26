@@ -13,6 +13,22 @@ import java.nio.file.Files
 /** Host boundary tests, NOT release-APK/Application/handset cold-launch certification. */
 class RetainedStartupTest {
     private val json = Json { encodeDefaults = true }
+
+    /** Source-order guard supplements, but does not replace, real Main-thread construction tests. */
+    @Test fun observerStartupIsLastAndConnectivityCannotDirectlyReachReplayDelegate() {
+        val source = System.getenv("VINETRACK_STARTUP_SOURCE")?.let(::File)
+            ?: File("src/main/java/com/rork/vinetrack/ui/AppViewModel.kt")
+        val text = source.readText()
+        val finalInit = "init { startAfterConstruction() }"
+        assertTrue("observer startup must be the final class initializer", text.contains("$finalInit\n}"))
+        assertEquals("only one construction init", 1, Regex("(?m)^    init \\{").findAll(text).count())
+        assertTrue(text.indexOf(finalInit) > text.indexOf("private val replayRunner by lazy"))
+        val connectivity = text.substringAfter("private fun observeConnectivity() {").substringBefore("private fun restore() {")
+        assertFalse("transport observer must not directly replay", connectivity.contains("replayPending"))
+        assertFalse(connectivity.contains("launchReplayStage("))
+        assertFalse(connectivity.contains("replayAllPendingWrites("))
+        assertTrue(text.contains("StartupReplayAdmission.identity("))
+    }
     private fun identity(authenticated: Boolean = true, online: Boolean = true, main: Boolean = true,
                          user: String? = "owner", vineyard: String? = "vineyard", readable: Boolean = true) =
         StartupReplayAdmission.identity(authenticated, online, main, user, vineyard, setOf("vineyard"), 1, readable)
