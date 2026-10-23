@@ -7367,6 +7367,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 _ui.update { it.copy(pins = listOf(created) + it.pins) }
+                // Evidence was durably frozen before create. Kick its upload as a
+                // separate bounded replay stage after the parent pin exists, but
+                // never await it here: Quick Action success must stay independent
+                // of evidence/network/server-enrichment latency.
+                if (captureContext != null) replayPendingPinEvidence()
                 onCreatedPin(created)
                 onResult(true)
             } catch (e: BackendError.Unauthorized) {
