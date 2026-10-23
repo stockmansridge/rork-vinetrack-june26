@@ -103,6 +103,8 @@ fun SyncStatusScreen(
     val vine = LocalVineColors.current
     val online = state.isOnline
     val outboxReadIssue by vm.pendingSyncReadIssue.collectAsState()
+    val pinEvidenceReadIssue by vm.pinEvidenceReadIssue.collectAsState()
+    val evidenceHeld = outboxReadIssue != null || pinEvidenceReadIssue != null
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
@@ -210,7 +212,7 @@ fun SyncStatusScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     val count = state.pendingSyncCount
                     Text(
-                        if (outboxReadIssue != null) "Saved sync evidence needs attention" else "$count queued changes waiting to sync",
+                        if (evidenceHeld) "Saved sync evidence needs attention" else "$count queued changes waiting to sync",
                         fontWeight = FontWeight.SemiBold,
                         color = vine.textPrimary,
                         fontSize = 16.sp,
@@ -219,7 +221,10 @@ fun SyncStatusScreen(
                         Text("The outbox couldn't be read. Original storage is retained and outbox changes are paused. Check available storage and retry sync; do not clear app data.",
                             fontSize = 13.sp, color = VineColors.Warning)
                     }
-                    if (outboxReadIssue == null && count == 0 && state.tankActualSyncNotice == null && state.pendingPhotoCount == 0) {
+                    if (pinEvidenceReadIssue != null) {
+                        Text(pinEvidenceReadIssue.orEmpty(), fontSize = 13.sp, color = VineColors.Warning)
+                    }
+                    if (!evidenceHeld && count == 0 && state.tankActualSyncNotice == null && state.pendingPhotoCount == 0) {
                         Text(
                             "No pending items.",
                             fontSize = 13.sp,
@@ -237,7 +242,7 @@ fun SyncStatusScreen(
                     if ((state.canRetrySync || outboxReadIssue != null) && online) {
                         Button(
                             onClick = vm::retryPendingSync,
-                            enabled = !state.isRetryingSync,
+                            enabled = !state.isRetryingSync && !evidenceHeld,
                             colors = ButtonDefaults.buttonColors(containerColor = VineColors.Success),
                             modifier = Modifier.padding(top = 4.dp),
                         ) {

@@ -1,6 +1,59 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
-## Android unchanged baseline comparison and costing gate — 23 October 2026
+## Android retained-data startup hardening — 23 October 2026 (current checkpoint)
+
+This checkpoint supersedes earlier fatal-first/source-freeze language only for the owner's newly authorised narrow Android startup repair and deterministic regressions. **Owner-confirmed immediate retained-handset crash; actual cause UNKNOWN; Android 3.1.8 NOT release-cleared.** Cancel Android's cache-clearing prompt. Earlier source/build/sign-in observations are not successful retained-data cold-launch acceptance.
+
+### A. Actual fatal stack, if obtained
+
+No actual handset fatal stack obtained. `adb devices -l` is empty; the earlier runtime-log read returned no logs. No FATAL EXCEPTION, complete cause chain, app frames, installed version/checksum or live handset process was captured. No log buffers, cache or owner data were cleared.
+
+### B. Proven root cause
+
+**The owner's crash root cause remains unproven.** Source inspection showed connectivity's first online event could request automatic replay/refresh before restore completed. It also showed the startup initializer preceded `replayRunner`'s lazy-delegate initialization. These are concrete ordering/admission hazards, not a captured fatal or a deterministic reproduction of the owner's process death. Strict pin evidence failures were already exception-isolated inside bounded replay; do not relabel them as the handset fatal. No manufactured legacy implementation/failing-before result is used.
+
+### C. Startup changes
+
+- `AppViewModel.kt`: final textual initializer starts observers only after all fields/lazy delegates exist. Construction-time Start Tank journal mutation is deferred to authorised vineyard loading; existing journal recovery is not deleted/reset.
+- Connectivity observer updates transport/session information only. A distinct admitted-identity edge requests one bounded automatic replay cycle after restored-online authentication, unlocked matching account, Main route, selected membership vineyard and readable evidence. Duplicate post-load fan-out is removed. SignedOut/Restoring/loading/biometric/restricted/paywall/offline states cannot admit replay.
+- `StartupReplayAdmission.kt` holds the shared host-testable admission predicate. All replay stages, including Phase 5/Trip and occurrence stages, pass through `launchReplayStage`; scope and admitted identity are checked both before queueing and before work/claim recovery. Existing bounded runner and coordinators remain unchanged.
+- Remote snapshot/canopy refresh and foreground refresh use admission guards. Restore/membership/access-resolution requests remain phase B/C work, not automatic domain replay.
+- `PinCaptureEvidenceStore.kt`: typed held read preserves strict unknown-field/conflict rejection, updates an issue flow and never persists the held empty items. Save/acknowledgement refuse unreadable source; pending replay reports the held issue. Reads do not use AtomicFile's destructive recovery/open path. Fresh signed-out Login is not mistaken for a pin-storage failure; account-bound evidence is re-read during admitted vineyard resolution.
+- `SyncStatusScreen.kt`: displays pin evidence recovery warning and suppresses 'No pending items' while held; retry is disabled while evidence is held. `PendingWriteStore.kt` only extracts its existing strict decoder for direct host coverage; no format, defaults or recovery outcome change.
+
+### D. Retained-data safety
+
+No owner-device install/update, uninstall/reinstall, cache/storage clearing, sign-out, Retry All, queue reset or server-data change was performed. No original evidence files/preferences are deleted by the new read boundary. Malformed/unknown/conflicting pin copies remain held as original bytes; no permissive decoder or empty-authoritative overwrite is added. Pending-write payloads, UUIDs, attempts, trip ownership and GPS identities retain existing contracts. Synthetic host temporary files and namespaced instrumentation fixtures are not the owner's retained installation.
+
+Accepted costing `a6f2d4fbb10f4154427b62145c9a872495bf754c`, all costing fixtures/assertions and the costing runner are protected. The five completion failures remain untouched and pre-costing attribution remains unproven. No iOS, SQL/Supabase/server, version/code, signing, dependency or production Gradle configuration changes are in this checkpoint.
+
+### E. Tests
+
+**Final frozen-source host startup/recovery gate PASS: 4 suites /32 executed /32 passed /0 failures /0 errors /0 skipped, Gradle 3m37s.** `RetainedStartupTest`11, `SyncRecoveryStorageTest`15, `SyncCrashIsolationTest`5, `ActiveTripStoreTest`1. New host scenarios cover immediate-online-before-restore, authorised-route gating, malformed pending writes, malformed/newer/conflicting pin evidence, offline retained identity, bounded online-after-restore edge, pending/pin/Trip restart identities, signed-out admission and storage-read/cancellation handling. Existing suites/assertions unchanged. First host run also passed32 in4m34s; because final fresh-sign-in/pending-read guard edits overlapped that compilation, it was not used as frozen-source certification. The final rerun above follows those concrete edits, not an unchanged retry.
+
+**Instrumentation PASS: `com.rork.vinetrack.data.auth.RetainedStartupConstructionTest`, 2 passed /0 failed /0 skipped, 9s.** Real Main-thread ViewModel construction resolves SignedOut→Login for (1) fresh fixture and (2) incomplete retained synthetic credentials plus malformed pending writes/unknown pin input/torn backup. Original synthetic preference/file bytes remain equal; issue flows are held. Uses the pre-existing `CleanExitFixtureApplication` namespacing; no owner installation or live credentials. This is debug instrumentation/state observation, not release-APK cold launch, Activity screenshot acceptance or a retained-owner in-place update. The host fresh/offline/admission scenarios do not by themselves prove full Application/UI startup; these two construction cases provide a separate, narrower actual ViewModel boundary check.
+
+**Protected costing PASS: 12 suites /205 executed /205 passed /0 failures /0 errors /0 skipped, Gradle24s; parity20/20.** Same12-suite inventory and accepted costing assertions as the earlier checkpoint. No five-completion or other14-completion test execution/repair in this pass; their historical failures/unknown attribution are unchanged. Costing runner SHA-256 remains `3390d7ef0df0fed301f0fc4af854d078222c549291c672e035c2c781f19f5e76`; completion test remains `72b9bc31bff6c32cd606b8ab2a307b466bc3e0ae6e0b8ac092c13e06a000aae5`.
+
+Host command prefix: `./gradlew :app:testDebugUnitTest --init-script <absolute app path>/startup-tests.init.gradle --console=plain '-Dorg.gradle.jvmargs=-Xmx4096m -XX:+UseParallelGC'`. Costing uses unchanged `costing-tests.init.gradle` with the12 exact class selectors listed in the historical costing inventory. No competing Gradle runs. Logs: `/tmp/vinetrack-startup-tests.log` (initial), `/tmp/vinetrack-startup-final.log` (final), `/tmp/vinetrack-startup-costing.log`; copied XML in `/tmp/vinetrack-startup-initial-xml`, `/tmp/vinetrack-startup-final-xml`, `/tmp/vinetrack-startup-costing-xml`. Counts above verified from fresh XML before subsequent tasks overwrite test outputs. Environment remains Temurin17/Gradle8.14.3 and existing SDK/config; no timezone override or dependency changes.
+
+### F. Build
+
+**Normal `runChecks({appPath:"android-vinetrack"})` PASS.** Existing two asset-address advisories are nonblocking and untouched as unrelated. Fresh local release APK: `android-vinetrack/app/build/outputs/apk/release/app-release.apk`,77,105,989 bytes, SHA-256 `cf9716d68e3e3247e62a348d52e5b3bb71144ce68abd1ec0b022dab2ac15e9c2`. Manifest: `com.rork.vinetrack`,3.1.8/code12,min24,target36. `apksigner verify --print-certs` PASS; observed certificate SHA-256 `241548efe6df8100c833d4eaebd2b3cf22dd70ffb638d9faa77bbd03f0077ef3` (CN Rork Kotlin Play Upload), same observed certificate as the historical local APK. Initial inspection tried nonexistent build-tools36.0.0, then used installed35.0.0; no artifact mutation/rebuild was needed for that read-only tooling-path correction.
+
+This is the freshly built validated-worktree APK for internal evaluation only, **not a release-cleared or verified update-compatible owner candidate**, not a Play AAB, and not proof of the owner's installed signing identity/lineage or an unused next Play code. Do not install it over owner data until compatibility is established. No signing substitution/version bump was made.
+
+Metadata-only `listPublishablePlayBuilds` after the successful build returned latest run `6b4346d6-9cd6-449c-90cd-ab2e00a6a022`, snapshot `9iat969ix81rnubopq3d9`, source label `src_bb27280d389d866f5`—the known pre-startup costing tree, not this repaired working tree. No authoritative current managed snapshot/sourceHash pair was exposed, so no guessed/old-source `generatePlayAab` call was made. **Source-bound managed AAB/update-compatible candidate delivery remains BLOCKED.** No upload, publish-validation upload, internal-track commit, distribution or Production action occurred.
+
+Exact source/test/host-runner inventory is8 files: the5 production files described in C, `RetainedStartupTest.kt`, `RetainedStartupConstructionTest.kt`, and `startup-tests.init.gradle`. Ordered lines `SHA256 + two spaces + project-relative path + newline`, paths sorted, produce source-manifest SHA-256 `f0a8ca17c467a0f9382a65a3a6c6cd3bdb535e3f204fff03b31d32ea5f96fb4d`. This plus starting HEAD identifies the validated patch; no final managed-save SHA or remote snapshot binding is invented. Existing report/plan are updated separately; managed history is preserved. Final `git diff HEAD --check` PASS; protected iOS/scripts/SQL/Supabase/dependency/build/version/signing/costing-runner/completion-test path diff empty. Final8-file manifest recomputed after all tests/builds and matched; no app-source edits after frozen-source validation.
+
+### G. Remaining acceptance
+
+Required: supported source-bound internal-test candidate identity/signature verification, owner-controlled compatible in-place update over retained data, cold launch to stable UI with live process and retained records. **NOT PASSED.** No clearing/reset may be used to obtain success. If it closes, capture crash-buffer Logcat including complete causes/application frames before another attempt, plus installed version/code and process identity. Host tests, debug construction and a build PASS cannot close this item.
+
+Starting managed HEAD `fe08140749c3eb5f4a62a88e4afac42072c71172` is a baseline, not the final repaired managed-save SHA.
+
+## Android unchanged baseline comparison and costing gate — 23 October 2026 (historical checkpoint)
 
 This checkpoint supersedes the earlier statement that no rebuilt-baseline experiment was attempted. It does not supersede accepted costing or establish a handset startup result. No application, test fixture, assertion, Gradle runner/configuration, iOS, SQL, server, version, dependency or signing changes were made.
 

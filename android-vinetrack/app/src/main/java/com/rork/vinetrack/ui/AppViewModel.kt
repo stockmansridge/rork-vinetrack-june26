@@ -1371,7 +1371,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val onboardingStore = OnboardingStore(app)
     private val repo = VineyardRepository(session)
     private val pinRepo = PinRepository(session)
-    private val pinEvidenceStore = com.rork.vinetrack.data.PinCaptureEvidenceStore(app)
+    // Only read account-bound evidence when a retained identity exists. Fresh Login
+    // is not a storage failure; a newly admitted sign-in re-reads during phase C.
+    private val pinEvidenceStore = com.rork.vinetrack.data.PinCaptureEvidenceStore(app).also {
+        if (session.userId != null && session.accessToken != null) it.loadForRecovery()
+    }
+    val pinEvidenceReadIssue get() = pinEvidenceStore.readIssue
     private val pinPhotoRepo = PinPhotoRepository(session)
     private val vineyardLogoRepo = VineyardLogoRepository(session)
     private val vineyardLogoCache = VineyardLogoCache(app)
@@ -1379,11 +1384,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val canopyReferenceImageFiles = canopyReferenceImages.localFiles
 
     fun refreshCanopyReferenceImagesOncePerSession() {
+        if (automaticReplayIdentity() == null) return
         viewModelScope.launch { canopyReferenceImages.refreshOncePerSession() }
     }
 
     private fun refreshCanopyReferenceImages() {
-        if (!session.hasSession) return
+        if (automaticReplayIdentity() == null) return
         viewModelScope.launch { canopyReferenceImages.refresh() }
     }
     private val tripRepo = TripRepository(session)
@@ -2684,7 +2690,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun submitAccountDeletionRequest(reason: String? = null): AccountDeletionRequestResult =
         accountDeletionRepo.submitRequest(reason)
 
-    init {
+    // Called only by the final initializer, after every delegate and coordinator exists.
+    private fun startAfterConstruction() {
         pendingWrites.configureReplayScope {
             session.userId?.takeIf { session.accessToken != null }?.let {
                 PendingWriteRepository.ReplayScope(it, performanceAuthorizationEpoch)
@@ -2696,8 +2703,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         sprayTankActualStore.configureAccountAccess(session::accountAccess)
-        startTankCommitCoordinator.recover()
+        // Journal recovery can write local evidence; defer it to authorised vineyard loading.
         observeConnectivity()
+        observeAutomaticReplayAdmission()
         observePendingWrites()
         observePendingPhotos()
         observeSprayTankActuals()
@@ -3110,12 +3118,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun launchReplayStage(key: String, action: suspend () -> Unit): kotlinx.coroutines.Deferred<Boolean>? {
+        val admission = automaticReplayIdentity() ?: return null
         val scope = pendingWrites.currentReplayScope() ?: return null
         return replayRunner.request(key) {
-            if (pendingWrites.currentReplayScope() == scope && session.accessToken != null && _ui.value.isOnline) {
+            if (pendingWrites.currentReplayScope() == scope && automaticReplayIdentity() == admission) {
                 try {
                     withContext(Dispatchers.IO) { pendingWrites.recoverRetainedClaims() }
-                    if (pendingWrites.currentReplayScope() == scope) action()
+                    if (pendingWrites.currentReplayScope() == scope && automaticReplayIdentity() == admission) action()
                 } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled
                 } catch (failure: Exception) {
                     if (pendingWrites.currentReplayScope() == scope) _ui.update { it.copy(pinError =
@@ -4747,7 +4756,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun retryPendingSync() {
         if (_ui.value.isRetryingSync) return
-        if (!_ui.value.isOnline || session.accessToken == null || pendingWrites.currentReplayScope() == null) return
+        if (automaticReplayIdentity() == null || pendingWrites.currentReplayScope() == null) return
         _ui.update { it.copy(isRetryingSync = true) }
         replayAllPendingWrites()
         // The shared runner clears this only when all requested stages actually finish.
@@ -4781,6 +4790,38 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * remote-snapshot refresh follows so data edited elsewhere (portal/iOS)
      * appears without an app restart.
      */
+    private fun automaticReplayIdentity(): com.rork.vinetrack.data.StartupReplayAdmission.Identity? {
+        val state = _ui.value
+        return com.rork.vinetrack.data.StartupReplayAdmission.identity(
+            authenticatedOnline = state.sessionPhase == SessionPhase.AuthenticatedOnline && session.accessToken != null && !session.retentionGuard.isLocked,
+            online = state.isOnline,
+            mainRoute = state.route == AppRoute.Main,
+            userId = session.userId?.takeIf { it == state.currentUserId },
+            vineyardId = state.selectedVineyardId,
+            memberIds = state.vineyards.mapTo(mutableSetOf()) { it.id },
+            accountEpoch = performanceAuthorizationEpoch,
+            evidenceReadable = pendingWrites.readIssue.value == null && pinEvidenceStore.readIssue.value == null,
+        )
+    }
+
+    private fun observeAutomaticReplayAdmission() {
+        viewModelScope.launch {
+            combine(_ui, pendingWrites.readIssue, pinEvidenceStore.readIssue, session.retentionGuard.state) { _, _, _, _ ->
+                automaticReplayIdentity()
+            }.distinctUntilChanged().collect { admission ->
+                if (admission != null) {
+                    replayAllPendingWrites()
+                    launchReplayStage("startup-refresh") {
+                        retryPendingVineyardInsights()
+                        optimalRipenessWeatherCoordinator.refreshIfNeeded(isOnline = true)
+                        refreshCanopyReferenceImages()
+                        refreshRemoteSnapshots()
+                    }
+                }
+            }
+        }
+    }
+
     private fun observeConnectivity() {
         viewModelScope.launch {
             connectivity.observe().collect { online ->
@@ -4794,66 +4835,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         sessionPhase = SessionDecisions.onConnectivityChange(st.sessionPhase, online),
                     )
                 }
-                // Reconnected (or first known status is online): flush any queued
-                // pin creates, then queued completion toggles. No-op when the
-                // outbox is empty or no session yet.
-                if (online) {
-                    retryPendingVineyardInsights()
-                    optimalRipenessWeatherCoordinator.refreshIfNeeded(isOnline = true)
-                    refreshCanopyReferenceImages()
-                    replayPendingPinCreates()
-                    replayPendingCustomPins()
-                    replayPendingPinCompletions()
-                    replayPendingPinEdits()
-                    replayPendingPinDeletes()
-                    replayPendingPaddockEdits()
-                    // TRIP_START first: the server row must exist before any
-                    // dependent same-trip marker can write to it.
-                    replayPendingTripStart()
-                    replayPendingTripMetadata()
-                    replayPendingTripSeeding()
-                    replayPendingTripGps()
-                    replayPendingTripRow()
-                    replayPendingTripTank()
-                    replayPendingTripEnd()
-                    replayPendingTripDeletes()
-                    replayPendingFuelCreates()
-                    replayPendingFuelUpdates()
-                    replayPendingFuelDeletes()
-                    replayPendingSprayCreates()
-                    replayPendingSprayUpdates()
-                    replayPendingSprayDeletes()
-                    replayPendingSavedChemicalCreates()
-                    replayPendingWorkTaskCreates()
-                    replayPendingWorkTaskUpdates()
-                    replayPendingWorkTaskLabour()
-                    replayPendingWorkTaskMachine()
-                    replayPendingWorkTaskPaddocks()
-                    replayPendingVineyardMaterials()
-                    replayPendingWorkTaskMaterials()
-                    replayPendingWorkTaskDeletes()
-                    replayPendingMaintenanceCreates()
-                    replayPendingMaintenanceUpdates()
-                    replayPendingMaintenanceDeletes()
-                    replayPendingYieldCreates()
-                    replayPendingYieldUpdates()
-                    replayPendingYieldDeletes()
-                    replayPendingPickingCreates()
-                    replayPendingPickingUpdates()
-                    replayPendingPickingDeletes()
-                    replayPendingPruningYieldSettings()
-                    replayPendingGrowthCreates()
-                    replayPendingGrowthUpdates()
-                    replayPendingGrowthDeletes()
-                    replayPendingDamageCreates()
-                    replayPendingDamageUpdates()
-                    replayPendingDamageDeletes()
-                    replayPendingButtonConfig()
-                    replayPendingYieldSessions()
-                    // Freshness parity (audit #1/#9/#11): after the replay
-                    // pipeline, re-pull snapshots changed on other devices.
-                    refreshRemoteSnapshots()
-                }
+                // Informational only. The shared admission observer waits for
+                // restored authentication AND an authorised Main vineyard route.
             }
         }
     }
@@ -5174,7 +5157,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun onAppForegrounded() {
         val route = _ui.value.route
-        if (route == AppRoute.Restoring || route == AppRoute.Login) return
+        if (route != AppRoute.Main || !_ui.value.sessionPhase.isAuthenticated) return
         if (!session.hasSession) return
         val now = android.os.SystemClock.elapsedRealtime()
         if (now - lastForegroundCheckMs < FOREGROUND_CHECK_DEBOUNCE_MS) return
@@ -5190,6 +5173,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 handleUnauthorized("onAppForegrounded")
                 if (!_ui.value.sessionPhase.isAuthenticated) return@launch
             }
+            if (automaticReplayIdentity() == null) return@launch
             // Re-resolve System Admin status on foreground (parity with iOS,
             // which refreshes SystemAdminService on every root-view activation).
             // Cheap RPC; keeps admin-gated surfaces (e.g. Irrigation Records)
@@ -5225,12 +5209,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * break the field workflow.
      */
     private fun refreshRemoteSnapshots(force: Boolean = false) {
-        if (session.accessToken == null || !_ui.value.isOnline) return
-        val vineyardId = _ui.value.selectedVineyardId ?: return
+        val admission = automaticReplayIdentity() ?: return
+        val vineyardId = admission.vineyardId
         val now = android.os.SystemClock.elapsedRealtime()
         if (!force && now - lastRemoteSnapshotRefreshMs < REMOTE_SNAPSHOT_MIN_INTERVAL_MS) return
         lastRemoteSnapshotRefreshMs = now
         viewModelScope.launch {
+            if (automaticReplayIdentity() != admission) return@launch
             // Picking records (sql/180): pull, cache write-through, then the
             // pending overlay so a queued local edit is never visually
             // reverted by the pull (audit #2).
@@ -5345,6 +5330,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * its queue is empty, so this is cheap to call on app resume.
      */
     private fun replayAllPendingWrites() {
+        if (automaticReplayIdentity() == null) return
         replayPendingPinEvidence()
         if (session.accessToken != null && _ui.value.isOnline) {
             launchReplayStage("fertigation") {
@@ -6270,6 +6256,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun loadVineyards() {
+        // Read-only recovery boundary after auth admission, before publishing Main.
+        pinEvidenceStore.loadForRecovery()
         val epoch = vineyardSelectionEpoch
         hydrateSelectedVineyardLogoBeforeNetwork()
         try {
@@ -6368,60 +6356,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             refreshSelectedVineyardLogo()
             refreshGrowthStageImages()
             refreshCacheStatus()
-            // A session is now established and we're online enough to have
-            // loaded — flush any pin creates queued during a previous offline
-            // session, then any retained pin photos whose pin now exists
-            // (Stage 7C). Pin-create + pin-photo only; no other write replays.
-            if (_ui.value.isOnline) {
-                replayPendingPinCreates()
-                replayPendingCustomPins()
-                replayPendingPinCompletions()
-                replayPendingPinEdits()
-                replayPendingPinDeletes()
-                // TRIP_START first: the server row must exist before any
-                // dependent same-trip marker can write to it.
-                replayPendingTripStart()
-                replayPendingTripMetadata()
-                replayPendingTripSeeding()
-                replayPendingTripGps()
-                replayPendingTripRow()
-                replayPendingTripTank()
-                replayPendingTripEnd()
-                replayPendingTripDeletes()
-                replayPendingFuelCreates()
-                replayPendingFuelUpdates()
-                replayPendingFuelDeletes()
-                replayPendingSprayCreates()
-                replayPendingSprayUpdates()
-                replayPendingSprayDeletes()
-                replayPendingSavedChemicalCreates()
-                replayPendingWorkTaskCreates()
-                replayPendingWorkTaskUpdates()
-                replayPendingWorkTaskLabour()
-                replayPendingWorkTaskMachine()
-                replayPendingWorkTaskPaddocks()
-                replayPendingVineyardMaterials()
-                replayPendingWorkTaskMaterials()
-                replayPendingWorkTaskDeletes()
-                replayPendingMaintenanceCreates()
-                replayPendingMaintenanceUpdates()
-                replayPendingMaintenanceDeletes()
-                replayPendingYieldCreates()
-                replayPendingYieldUpdates()
-                replayPendingYieldDeletes()
-                replayPendingPickingCreates()
-                replayPendingPickingUpdates()
-                replayPendingPickingDeletes()
-                replayPendingPruningYieldSettings()
-                replayPendingGrowthCreates()
-                replayPendingGrowthUpdates()
-                replayPendingGrowthDeletes()
-                replayPendingDamageCreates()
-                replayPendingDamageUpdates()
-                replayPendingDamageDeletes()
-                replayPendingButtonConfig()
-                replayPendingYieldSessions()
-            }
+            // Automatic replay is requested once by the shared admission edge,
+            // not a second independent post-load fan-out.
         } catch (e: BackendError.Unauthorized) {
             // Ask the server whether this is genuinely a dead session. Only a
             // definitive rejection signs the user out; an RLS denial, a
@@ -17964,7 +17900,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 },
             )
         }
-        startTankCommitCoordinator.recover()
+        if (pendingWrites.readIssue.value == null && pinEvidenceStore.readIssue.value == null) {
+            startTankCommitCoordinator.recover()
+        }
         com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("vineyard.load.published")
         reconcileMissingBudburstFromGrowthRecords()
         prepareOptimalRipenessWeather(vineyardId)
@@ -18093,6 +18031,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    // Kotlin executes property initializers in textual order. Keep this LAST so
+    // Main.immediate observers cannot reach a not-yet-initialized lazy delegate.
+    init { startAfterConstruction() }
 }
 
 /**

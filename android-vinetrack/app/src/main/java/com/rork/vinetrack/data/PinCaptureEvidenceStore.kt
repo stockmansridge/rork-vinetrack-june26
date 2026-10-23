@@ -75,20 +75,36 @@ class PinCaptureEvidenceStore(context: Context) {
     private val json = Json { ignoreUnknownKeys = false; encodeDefaults = true; explicitNulls = false }
     private val serializer = ListSerializer(Evidence.serializer())
 
+    private val _readIssue = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    val readIssue: kotlinx.coroutines.flow.StateFlow<String?> = _readIssue
+
+    /** A held result is not an authoritative empty store and must never be persisted. */
+    fun loadForRecovery(): LocalEvidenceRead<Evidence> = readForRecovery { load() }.also {
+        _readIssue.value = it.issue
+    }
+
     fun save(evidence: Evidence): Boolean = fieldAccess.admitted { synchronized(evidenceLock) {
-        val existing = load()
+        val read = loadForRecovery()
+        if (read.issue != null) return@synchronized false
+        val existing = read.items
         val original = existing.firstOrNull { it.pinId == evidence.pinId && it.evidenceRevision == evidence.evidenceRevision }
         if (original != null) return@synchronized (original.copy(uploaded = false) == evidence.copy(uploaded = false) && persist(existing))
         persist(existing + evidence)
     } }
 
     fun markUploaded(pinId: String, evidenceRevision: Int): Boolean = fieldAccess.admitted { synchronized(evidenceLock) {
-        persist(load().map {
+        val read = loadForRecovery()
+        if (read.issue != null) return@synchronized false
+        persist(read.items.map {
             if (it.pinId == pinId && it.evidenceRevision == evidenceRevision) it.copy(uploaded = true) else it
         })
     } }
 
-    fun pending(): List<Evidence> = load().filterNot { it.uploaded }
+    fun pending(): List<Evidence> {
+        val read = loadForRecovery()
+        check(read.issue == null) { read.issue.orEmpty() }
+        return read.items.filterNot { it.uploaded }
+    }
 
     fun load(): List<Evidence> = fieldAccess.admitted { synchronized(evidenceLock) {
         val base = recoveryFile.baseFile
@@ -137,6 +153,14 @@ class PinCaptureEvidenceStore(context: Context) {
          * Uploaded is acknowledgement metadata, not an immutable observation conflict.
          * A torn or conflicting source holds this evidence store, never replaces it.
          */
+        internal fun readForRecovery(read: () -> List<Evidence>): LocalEvidenceRead<Evidence> = try {
+            LocalEvidenceRead(read())
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            LocalEvidenceRead(emptyList(), "Saved pin capture evidence needs recovery review. Original sources were retained; automatic sync is paused. Do not clear app data.")
+        }
+
         internal fun readRetainedEvidence(primary: String?, files: List<File>): List<Evidence> {
             // A newer unknown evidence field cannot be safely re-encoded by
             // this build. Hold its original sources rather than discard fields.
