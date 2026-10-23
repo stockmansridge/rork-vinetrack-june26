@@ -1,5 +1,31 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Urgent Android startup regression — fatal-first checkpoint, 23 October 2026
+
+Owner requires the first real fatal stack/root cause to be reported before broad changes. No production/test/build configuration edits, new binary builds, owner-handset operations, storage clears, uninstalls, queue resets or server operations were performed in this checkpoint. The requested evidence-reader correction, restore/route replay gate and release acceptance test remain unimplemented pending the fatal-first boundary; no repair or launch PASS is claimed.
+
+### Runtime evidence and access
+
+- `adb devices -l` returns no connected devices. The local SDK has no emulator/system image and `/dev/kvm` is absent. No local device path is available for installing/updating fixture APKs, collecting Logcat, seeding private retained files or checking process survival.
+- One `simulatorUse` attempt used a separate disposable Android simulator (billed by the platform), not the owner's handset or open preview. It observed the VineTrack sign-in screen. It returned **could not test**, zero actions: the harness cannot force-stop/relaunch MainActivity, inspect process survival or obtain crash logs; exact artifact/device identity and initial persisted state were unavailable. This proves only the observed sign-in UI, not clean-install/cold-start/release acceptance. No sign-in, record mutation or storage manipulation occurred.
+- Runtime CLI retry with valid limit100 returned historical August logs, not an October launch fatal; errors-only lookup returned `No runtime logs found for this project.` No FATAL EXCEPTION, Caused by chain or application fatal frames were captured. The initial limit150 request was rejected by the CLI's limit100 validation; not a runtime result.
+- Clean cold launch, retained-v3.1.7 upgrade fixture, actual release-APK launch, process survival, Sync Status held-evidence display and same-signing two-binary bisect are **NOT EXECUTED/UNVERIFIED**. Host/debug tests and prior builds are not substituted for these gates. No testReleaseUnitTest invocation or release certification claim.
+
+### Source and local artifact identity
+
+- Requested bad commit `019735ad043815c4082a3ee1ad496de0192abb74` exists and its parent is exactly `b4f4d24babfa3929418742854e7ed1af0c7477cb`. Accepted Android subtree: `bad9b1081a40e6671e9616157686065a5a390491`.
+- Current managed HEAD: `4bc5b7a2989f5d2ef3b7aa2c3cae16ed60a6e834`; current Android subtree: `bb27280d389d866f562d3cccc41284c36bbc1583`. Contrary to the supplied no-later-production-change premise, the accepted later costing checkpoint changed eight Android production paths: CostReportBuilder.kt, PruningActivityTaskLink.kt, model/CostingReadAuthority.kt, model/Models.kt, model/PieceRateCosting.kt, model/WorkTaskCostRollup.kt, ui/screens/CostReportsScreen.kt and ui/screens/WorkTasksScreen.kt. Preserve them; do not roll back current source or call it byte-identical to019735ad. Startup/evidence code examined here remains the accepted implementation.
+- Existing local `android-vinetrack/app/build/outputs/apk/release/app-release.apk`: SHA-256 `e2235b6ff4dc50514f60ee6b1330f7b16cb87518301b798fb8b06c771beca788`; aapt reports package `com.rork.vinetrack`, versionName `3.1.8`, versionCode12, launchable `com.rork.vinetrack.MainActivity`. apksigner verification succeeds; certificate SHA-256 `241548efe6df8100c833d4eaebd2b3cf22dd70ffb638d9faa77bbd03f0077ef3` (CN=Rork Kotlin Play Upload).
+- This is a local artifact inspection, NOT proof it is the owner's failing installed APK or proof of its originating Git tree. No authoritative managed snapshot/sourceHash-to-artifact mapping was obtained. Prior run5d3cdb28-4ecf-4885-8fd2-ff5c6344e1a2 / snapshotw90k30g3ec68z9ovelnt6 / src_bc2b045cb71b33f7b remains an unmapped historical reference, not accepted-tree provenance. Version/code/certificate alone cannot establish source identity or in-place installed-signature compatibility.
+
+### Confirmed source hazards, not the captured handset root cause
+
+- PinCaptureEvidenceStore.kt:75 changed ignoreUnknownKeys from true to false in the requested commit. load():93–102 directly calls readRetainedEvidence():140–154; strict decode/file reads and conflicting-copy check can throw. No loadForRecovery-style readable/held result exists. Preserve strict unknown-field detection and all source bytes when a narrow repair is undertaken; never translate unreadability to an authoritative empty store.
+- AppViewModel init:2699 calls StartTank recover synchronously, then starts connectivity/pending observers before restore():2723. observeConnectivity():4800 starts replay fan-out on any online emission; launchReplayStage():3113 checks token/account scope/online, but not restore completion or a stable initial route. These are source-order facts, not an executed fatal stack.
+- The pin-owner helper at3163 already wraps load in runCatching but substitutes an empty list; pending evidence is also read at3275. This needs typed held-state handling, not blanket lifecycle exception swallowing. The complete PendingWrite/ActiveTrip/RecoverySnapshot/StartTank runtime boundary is not yet proven safe.
+
+**Next required evidence:** the affected APK/build download plus its Rork build identity, and a real Android crash-buffer/Logcat capture covering one cold launch with complete exception/causes/app frames; alternatively an ADB-capable disposable device/emulator supporting retained fixture updates. Do not request raw auth tokens or private owner data. Owner device must retain its installation/storage. Stop at this evidence blocker rather than fabricate the stack or apply broad startup changes.
+
 ## Mobile costing correctness / Portal parity — 23 October 2026
 
 **Costing-only correction checkpoint; not a release or handset acceptance.** This approval supersedes the earlier application-source freeze only for the costing/area readers on both platforms. Historical sections below retain their original identities and results; their old Android tree, 116-test gate and artifact identities do NOT describe the changed costing source.
