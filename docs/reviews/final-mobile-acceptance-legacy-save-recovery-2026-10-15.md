@@ -1,6 +1,42 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
-## Android retained-data startup hardening — 23 October 2026 (current checkpoint)
+## Android Internal Testing delivery — 23 October 2026 (current checkpoint)
+
+Latest owner approval permits Google Play Internal Testing only, superseding earlier no-upload restrictions. Application logic, costing, completion logic and tests remain frozen at repaired commit `cd1bff576f346c0d56872d136e9b1a92bb543398`. Only a verified unused versionCode metadata change is permitted; none has been made. Readiness: **blocked_missing_typed_operation** (also missing current-source bundle/signing evidence).
+
+### A. Highest existing Play version code found
+
+**UNKNOWN.** `setupGooglePlay` returned connected; `ensurePlayAppRecord` returned status `ok`, package `com.rork.vinetrack`, created `false`. These prove connection/package access only. The available typed operations do not expose a complete inventory of all previously uploaded bundle codes including inactive/draft/testing bundles. The managed-build listing is not that inventory. No publish-validation upload was used to probe code availability.
+
+### B. Candidate version code selected
+
+**None.** Code13 has not been confirmed unused. Source remains versionName `3.1.8`, versionCode `12`, package `com.rork.vinetrack`. No speculative increment or signing substitution.
+
+### C. Exact source SHA
+
+Accepted repaired commit: `cd1bff576f346c0d56872d136e9b1a92bb543398`. Actual inspected HEAD: `ba3501ea505a67175af82422b9b517cdadfd74af`. `git diff cd1bff576f346c0d56872d136e9b1a92bb543398 --stat -- android-vinetrack` returned empty: current tracked Android source equals the accepted repaired source, not just the earlier costing tree. Only pre-existing managed history was dirty before this report/plan update. No app source, tests or version metadata changed in this delivery pass.
+
+### D. AAB identity/hash/signing information
+
+**No verified current-source AAB is available.** Latest `listPublishablePlayBuilds` still returns run `6b4346d6-9cd6-449c-90cd-ab2e00a6a022`, snapshot `9iat969ix81rnubopq3d9`, source `src_bb27280d389d866f5`, the pre-startup costing tree. The returned listing provides no AAB path, checksum, manifest version or certificate. No authoritative current snapshot/sourceHash binding is exposed, so no guessed generation or old-source reuse was attempted. There is no candidate AAB path/hash/upload-certificate proof to report before upload.
+
+The historical evaluation APK and its observed certificate below are **not** an owner update artifact or proof of the Play-registered upload identity. Need non-secret Play Console App Bundle Explorer evidence covering all uploads and App integrity's registered upload certificate (plus app-signing/installed compatibility evidence where applicable). Need the supported managed build route to expose a current-source binding and inspectable bundle identity/checksum/signature. Do not request credentials or use a third-party Play CLI.
+
+### E. Internal Testing upload status
+
+**NOT UPLOADED; blocked before candidate selection.** No `generatePlayAab`, `publishInternalBuild` validation/commit, or track mutation was performed in this pass. No submission ID exists for this repair. Do not call publishing to discover missing code/signing/source facts.
+
+### F. Confirmation no Production release occurred
+
+No Production release, promotion, rollout, Closed/Open testing action or listing change was performed. Internal Testing approval does not authorise any of those actions.
+
+### G. Retained-handset acceptance remains pending
+
+**PENDING, not release-cleared.** Owner must perform a normal compatible in-place Play update over the retained installation after the verified Internal Testing build is available. Do not install the local evaluation APK, uninstall/reinstall, clear cache/storage, sign out, reset queues, use Retry All or change server data. Cancel Android's cache prompt. Verify stable screen/live process, retained account/vineyard and pending evidence, repeated relaunch and offline/reconnect stability where practical. If it terminates again, collect `adb logcat -b crash -d -v threadtime` with full FATAL EXCEPTION, Caused by chain and app frames, plus installed versionName/versionCode, before another repair.
+
+Validation in this delivery pass: read-only source equivalence and unchanged metadata checked; no app code changes or redundant build/test execution. Previous frozen-source host32/32, instrumentation2/2, costing205/205 and normal Android build PASS remain the source-level gates, not handset acceptance.
+
+## Android retained-data startup hardening — 23 October 2026 (repaired-source checkpoint)
 
 This checkpoint supersedes earlier fatal-first/source-freeze language only for the owner's newly authorised narrow Android startup repair and deterministic regressions. **Owner-confirmed immediate retained-handset crash; actual cause UNKNOWN; Android 3.1.8 NOT release-cleared.** Cancel Android's cache-clearing prompt. Earlier source/build/sign-in observations are not successful retained-data cold-launch acceptance.
 
