@@ -51,7 +51,10 @@ class RetainedStartupTest {
         val successPath = text.substringAfter("_ui.update { it.copy(pins = listOf(created) + it.pins) }")
             .substringBefore("} catch (e: BackendError.Unauthorized)")
         assertTrue(successPath.contains("if (captureContext != null) replayPendingPinEvidence()"))
-        assertTrue(successPath.indexOf("replayPendingPinEvidence()") < successPath.indexOf("onCreatedPin(created)"))
+        assertTrue("operator success must happen before evidence scheduling",
+            successPath.indexOf("onCreatedPin(created)") < successPath.indexOf("replayPendingPinEvidence()"))
+        assertTrue("save result must happen before evidence scheduling",
+            successPath.indexOf("onResult(true)") < successPath.indexOf("replayPendingPinEvidence()"))
         assertFalse("hot pin-save path must never await evidence upload", successPath.contains("awaitReplayStage"))
         assertFalse("hot pin-save path must never await evidence upload", successPath.contains(".await()"))
 
