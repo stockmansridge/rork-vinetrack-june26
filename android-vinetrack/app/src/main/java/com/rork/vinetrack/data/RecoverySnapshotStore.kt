@@ -182,6 +182,29 @@ class RecoverySnapshotStore internal constructor(
         return if (snapshot == null) SaveResult.ExistingUnreadable(retained) else SaveResult.Persisted(snapshot)
     }
 
+    @Serializable
+    internal data class TombstoneReceipt(val ownerUserId: String, val original: PendingWrite, val server: PinDeleteSync.DeleteState)
+
+    /** Separate immutable receipt: never edits the first vineyard snapshot or
+     * substitutes remote ownership into the original queue payload. */
+    internal fun preserveTombstone(receipt: TombstoneReceipt): Boolean = synchronized(processUnprovenWrites) {
+        val encoded = json.encodeToString(TombstoneReceipt.serializer(), receipt)
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(encoded.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val storeKey = "delete_receipt_$digest"
+        if (unprovenWrites.containsKey(storeKey)) {
+            if (!rewriteUnprovenRaw(storeKey, encoded)) return@synchronized false
+            unprovenWrites.remove(storeKey)
+            return@synchronized true
+        }
+        readRaw(storeKey)?.let { return@synchronized it == encoded }
+        // Mark before commit: exceptions may also publish unproven preference memory.
+        unprovenWrites[storeKey] = encoded
+        if (!writeRawIfAbsent(storeKey, encoded)) return@synchronized false
+        unprovenWrites.remove(storeKey)
+        true
+    }
+
     companion object {
         private const val PREFS = "vinetrack_recovery_snapshots_v2"
 
@@ -199,6 +222,8 @@ class RecoverySnapshotStore internal constructor(
             PendingEntityType.TRIP_SEEDING,
             PendingEntityType.TRIP_GPS,
             PendingEntityType.TRIP_ROW,
+            PendingEntityType.TRIP_ROW_PLAN,
+            PendingEntityType.TRIP_LABOUR,
             PendingEntityType.TRIP_TANK,
             PendingEntityType.TRIP_END,
         )
@@ -250,15 +275,22 @@ class RecoverySnapshotStore internal constructor(
             tripOwners: Map<String, String>,
             pinOwners: Map<String, String> = emptyMap(),
             fallbackVineyardId: String? = null,
+            includeOtherPayloadOwners: Boolean = false,
         ): ReplayScope {
             val vineyardIds = mutableSetOf<String>()
             val unresolvedWriteIds = mutableSetOf<String>()
             fallbackVineyardId?.let(vineyardIds::add)
             pendingWrites.forEach { write ->
-                val isPinWrite = write.entityType == PendingEntityType.PIN
-                if (!isPinWrite && write.entityType !in tripEvidenceTypes) return@forEach
-                val owner = payloadVineyardId(write.payloadJson)
-                    ?: if (isPinWrite) pinOwners[pinIdOf(write)] else tripOwners[write.clientId]
+                val isPinWrite = write.entityType == PendingEntityType.PIN || write.entityType == PendingEntityType.PIN_EDIT
+                if (!isPinWrite && write.entityType !in tripEvidenceTypes && !includeOtherPayloadOwners) return@forEach
+                val cached = when {
+                    isPinWrite -> pinOwners[pinIdOf(write)]
+                    write.entityType in tripEvidenceTypes -> tripOwners[write.clientId]
+                    else -> null
+                }
+                val owners = listOfNotNull(payloadVineyardId(write.payloadJson), cached).distinct()
+                // A blank map entry is an explicit conflict between local sources.
+                val owner = owners.singleOrNull()?.takeIf { it.isNotBlank() }
                 if (owner == null) unresolvedWriteIds += write.id else vineyardIds += owner
             }
             return ReplayScope(vineyardIds, unresolvedWriteIds)
@@ -311,7 +343,8 @@ class RecoverySnapshotStore internal constructor(
             val tripRead = cache.loadTripsForRecovery(vineyardId)
             val pendingRead = PendingWriteStore(context).loadForRecovery()
             val activeTrip = ActiveTripStore(context).load()?.takeIf { it.vineyardId == vineyardId }?.trip
-            val captureEvidence = PinCaptureEvidenceStore(context).load().filter { it.vineyardId == vineyardId }
+            val captureRead = runCatching { PinCaptureEvidenceStore(context).load() }
+            val captureEvidence = captureRead.getOrDefault(emptyList()).filter { it.vineyardId == vineyardId }
             val knownTripIds = tripRead.items.mapTo(mutableSetOf()) { it.id }.apply { activeTrip?.id?.let(::add) }
             val knownPinIds = pinRead.items.mapTo(mutableSetOf()) { it.id }
                 .apply { captureEvidence.forEach { add(it.pinId) } }
@@ -321,6 +354,8 @@ class RecoverySnapshotStore internal constructor(
             pinRead.issue?.let { excluded += ExcludedEvidence("cached_pins", null, it) }
             tripRead.issue?.let { excluded += ExcludedEvidence("cached_trips", null, it) }
             pendingRead.issue?.let { excluded += ExcludedEvidence("pending_writes", null, it) }
+            if (captureRead.isFailure) excluded += ExcludedEvidence("pin_capture_evidence", null,
+                "Capture evidence is unreadable or temporarily inaccessible. Original storage was not replaced or cleared.")
             return Snapshot(
                 vineyardId = vineyardId,
                 appVersion = BuildConfig.VERSION_NAME,
@@ -334,7 +369,7 @@ class RecoverySnapshotStore internal constructor(
                 activeTrip = activeTrip,
                 sourceStatuses = listOf(
                     SourceStatus("pending_writes", if (pendingRead.issue == null) "read" else "unreadable", pendingWrites.size),
-                    SourceStatus("pin_capture_evidence", "read", captureEvidence.size),
+                    SourceStatus("pin_capture_evidence", if (captureRead.isFailure) "unreadable" else "read", captureEvidence.size),
                     SourceStatus("cached_pins", if (pinRead.issue == null) "read" else "unreadable", pinRead.items.size),
                     SourceStatus("cached_trips", if (tripRead.issue == null) "read" else "unreadable", tripRead.items.size),
                     SourceStatus("active_trip", "read", if (activeTrip == null) 0 else 1),

@@ -77,6 +77,29 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
         return session.withAccountAccess(access, action)
     }
 
+    override suspend fun readDeleteState(id: String): PinDeleteSync.DeleteState? = withContext(Dispatchers.IO) {
+        requireConfig()
+        // Reject malformed retained identifiers rather than broadening a query.
+        runCatching { UUID.fromString(id) }.getOrElse { return@withContext null }
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl("pins")) {
+            attributes.put(SupabaseClient.accountRequestScope, access)
+            url {
+                parameters.append("select", "id,vineyard_id,deleted_at")
+                parameters.append("id", "eq.$id")
+            }
+            authHeaders(token)
+        }
+        if (!session.isAccountAccessCurrent(access)) throw BackendError.Unauthorized
+        when {
+            response.status.isSuccess() -> response.body<List<PinDeleteSync.DeleteState>>().singleOrNull()
+                ?.takeIf { it.id == id }
+            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+            else -> throw BackendError.Server(response.status.value, "Pin delete verification unavailable")
+        }
+    }
+
     /** Mutable fields the Android pin editor exposes. */
     @Serializable
     data class PinInput(

@@ -40,6 +40,33 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     data class ReplayScope(val userId: String, val sessionEpoch: Long)
     private var scopeProvider: (() -> ReplayScope?)? = null
     private val claimedScopes = mutableMapOf<PendingWrite, ReplayScope>()
+    private data class RetainedOutcome(val expected: PendingWrite, val retryOutcome: PendingWrite)
+    private val retainedClaims = mutableMapOf<String, RetainedOutcome>()
+
+    private inline fun <T> storageResult(fallback: T, action: () -> T): T = try {
+        action()
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        throw cancelled
+    } catch (_: Exception) { fallback }
+
+    /** Only terminal claims whose durable acknowledgement/outcome failed may
+     * retry in this process. Never reclaims a suspended transport operation. */
+    fun recoverRetainedClaims(): Unit = storageResult(Unit) { admitted { synchronized(this) {
+        if (_readIssue.value != null) {
+            val restored = readStore()
+            _readIssue.value = restored.issue
+            if (restored.issue != null) return@synchronized
+            _writes.value = restored.items
+            _pendingCount.value = countUnresolved(restored.items)
+            recoverInterruptedStartupClaims()
+        }
+        retainedClaims.values.toList().forEach { outcome ->
+            if (!isCurrent(outcome.expected)) return@forEach
+            // Preserve a computed block/failure and its attempts verbatim. A
+            // failed permission/conflict block must never become an automatic retry.
+            mutateIfCurrent(outcome.expected) { outcome.retryOutcome }
+        }
+    } } }
 
     /** Bind production claims to the signed-in account incarnation, allowing same-account token refresh. */
     @Synchronized
@@ -49,7 +76,16 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     @Synchronized
     fun currentReplayScope(): ReplayScope? = scopeProvider?.invoke()
 
-    private val _writes = MutableStateFlow(store.load())
+    private fun readStore(): LocalEvidenceRead<PendingWrite> = try {
+        if (store is PendingWriteStore) store.loadForRecovery() else LocalEvidenceRead(store.load())
+    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled
+    } catch (_: Exception) {
+        LocalEvidenceRead(emptyList(), "Saved sync evidence couldn't be read. Original storage was retained; check storage and retry. Do not clear app data.")
+    }
+    private val initialRead = readStore()
+    private val _readIssue = MutableStateFlow(initialRead.issue)
+    val readIssue: StateFlow<String?> = _readIssue.asStateFlow()
+    private val _writes = MutableStateFlow(initialRead.items)
     /** Live view of every persisted pending write. */
     val writes: StateFlow<List<PendingWrite>> = _writes.asStateFlow()
 
@@ -60,18 +96,26 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
      */
     val pendingCount: StateFlow<Int> = _pendingCount.asStateFlow()
 
-    init {
-        // A terminated process cannot still own an in-flight Work Task upload.
-        // Retain the frozen payload and make just these header writes retryable.
-        _writes.value.filter {
-            it.entityType in setOf(com.rork.vinetrack.data.model.PendingEntityType.WORK_TASK,
-                com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS,
-                com.rork.vinetrack.data.model.PendingEntityType.PIN) &&
-                it.status == PendingWriteStatus.IN_PROGRESS
-        }.forEach { updateStatus(it.id, PendingWriteStatus.FAILED,
-            if (it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS)
-                "Trip GPS sync was interrupted. Retry to verify retained evidence against the server."
-            else "Work task sync was interrupted. Ready to retry.") }
+    init { recoverInterruptedStartupClaims() }
+
+    private fun recoverInterruptedStartupClaims() {
+        // No upload survives process death. One durable commit retains every
+        // identity, original payload, timestamp baseline and attempt count.
+        if (_writes.value.any { it.status == PendingWriteStatus.IN_PROGRESS }) {
+            val interrupted = _writes.value.filter { it.status == PendingWriteStatus.IN_PROGRESS }.associate { write ->
+                write.id to RetainedOutcome(write, write.copy(
+                    status = PendingWriteStatus.FAILED, updatedAt = System.currentTimeMillis(),
+                    lastError = when (write.entityType) {
+                        com.rork.vinetrack.data.model.PendingEntityType.PIN -> "Pin sync was interrupted. Ready to retry the original saved change."
+                        com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS -> "Trip GPS sync was interrupted. Retry to verify retained evidence against the server."
+                        com.rork.vinetrack.data.model.PendingEntityType.WORK_TASK -> "Work task sync was interrupted. Ready to retry."
+                        else -> "Saved change sync was interrupted. Ready to retry the original saved change."
+                    },
+                ))
+            }
+            retainedClaims.putAll(interrupted)
+            if (update { rows -> rows.map { interrupted[it.id]?.retryOutcome ?: it } }) retainedClaims.clear()
+        }
     }
 
     /** Current pending count without collecting the flow. */
@@ -307,7 +351,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
 
     /** Claim exactly the preserved candidate; replacements and duplicate replay cannot claim it. */
     fun claimReplay(expected: PendingWrite, permittedWrites: Map<String, PendingWrite>? = null): PendingWrite? =
-        admitted { claimReplayLocked(expected, permittedWrites) }
+        storageResult(null) { admitted { claimReplayLocked(expected, permittedWrites) } }
 
     @Synchronized
     private fun claimReplayLocked(expected: PendingWrite, permittedWrites: Map<String, PendingWrite>? = null): PendingWrite? {
@@ -342,17 +386,27 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         }
     }
 
+    /** A blocked tombstone acknowledgement consumes only the exact preserved,
+     * account-bound version; retains original payload/identity and all photos. */
+    internal fun acknowledgePreservedIfCurrent(expected: PendingWrite, versions: Map<String, PendingWrite>, message: String): Boolean =
+        storageResult(false) { admitted { synchronized(this) {
+            if (versions[expected.id] != expected ||
+                (versions is FrozenVersions && versions.scope != scopeProvider?.invoke())) return@synchronized false
+            mutateIfCurrent(expected) { it.copy(status = PendingWriteStatus.SYNCED, lastError = message,
+                updatedAt = System.currentTimeMillis()) }
+        } } }
+
     /** Durable compare-and-remove under the same lock as every queue write. */
-    fun removeIfCurrent(expected: PendingWrite): Boolean = admitted { mutateIfCurrent(expected) { null } }
+    fun removeIfCurrent(expected: PendingWrite): Boolean = storageResult(false) { admitted { mutateIfCurrent(expected) { null } } }
 
     /** Durable compare-and-status: a stale response cannot fail or block newer intent. */
     fun updateStatusIfCurrent(expected: PendingWrite, status: String, lastError: String? = null): Boolean =
-        admitted { mutateIfCurrent(expected) { it.copy(status = status, lastError = lastError,
-            updatedAt = System.currentTimeMillis()) } }
+        storageResult(false) { admitted { mutateIfCurrent(expected) { it.copy(status = status, lastError = lastError,
+            updatedAt = System.currentTimeMillis()) } } }
 
     /** One durable mutation for the attempt and outcome; no intermediate persistence window. */
     fun retryIfCurrent(expected: PendingWrite, error: String, maxAttempts: Int = 8): Boolean =
-        admitted { retryIfCurrentLocked(expected, error, maxAttempts) }
+        storageResult(false) { admitted { retryIfCurrentLocked(expected, error, maxAttempts) } }
 
     private fun retryIfCurrentLocked(expected: PendingWrite, error: String, maxAttempts: Int): Boolean =
         mutateIfCurrent(expected) {
@@ -365,15 +419,26 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     @Synchronized
     private fun mutateIfCurrent(expected: PendingWrite, transform: (PendingWrite) -> PendingWrite?): Boolean {
         if (!isCurrent(expected)) return false
-        val committed = update { rows -> rows.mapNotNull { if (it == expected) transform(it) else it } }
-        if (committed) claimedScopes.remove(expected)
+        val desired = transform(expected)
+        val committed = update { rows -> rows.mapNotNull { if (it == expected) desired else it } }
+        if (committed) {
+            claimedScopes.remove(expected)
+            retainedClaims.remove(expected.id)
+        } else if (expected.status == PendingWriteStatus.IN_PROGRESS) {
+            val outcome = desired?.takeIf { it.status in setOf(PendingWriteStatus.BLOCKED, PendingWriteStatus.FAILED) }
+                ?: expected.copy(status = PendingWriteStatus.FAILED, updatedAt = System.currentTimeMillis(),
+                    lastError = "Local acknowledgement couldn't be saved. Original change retained; retry verifies the server.")
+            retainedClaims[expected.id] = RetainedOutcome(expected, outcome)
+        }
         return committed
     }
 
-    private fun update(transform: (List<PendingWrite>) -> List<PendingWrite>): Boolean = admitted { updateLocked(transform) }
+    private fun update(transform: (List<PendingWrite>) -> List<PendingWrite>): Boolean =
+        storageResult(false) { admitted { updateLocked(transform) } }
 
     @Synchronized
     private fun updateLocked(transform: (List<PendingWrite>) -> List<PendingWrite>): Boolean {
+        if (_readIssue.value != null) return false // Never replace unreadable evidence with an empty view.
         val next = transform(_writes.value)
         if (!store.save(next)) return false
         _writes.value = next

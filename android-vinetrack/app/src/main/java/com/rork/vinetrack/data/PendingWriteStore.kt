@@ -24,13 +24,14 @@ class PendingWriteStore(context: Context) : PendingWriteStoring {
         context.applicationContext.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE),
     )
 
-    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val json = Json { ignoreUnknownKeys = false; encodeDefaults = true }
     private val serializer = ListSerializer(PendingWrite.serializer())
 
-    /** Read all persisted pending writes (empty list on first run or parse error). */
+    /** Never present unreadable or newer-format original evidence as an empty outbox. */
     override fun load(): List<PendingWrite> {
-        val raw = prefs.getString(KEY_WRITES, null) ?: return emptyList()
-        return runCatching { json.decodeFromString(serializer, raw) }.getOrDefault(emptyList())
+        val result = loadForRecovery()
+        check(result.issue == null) { "Saved sync evidence is unreadable. Original storage was retained." }
+        return result.items
     }
 
     /** Recovery read that reports malformed persisted bytes instead of hiding them as empty. */

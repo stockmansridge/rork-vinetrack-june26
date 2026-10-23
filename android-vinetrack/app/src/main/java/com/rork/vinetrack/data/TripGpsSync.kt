@@ -116,6 +116,18 @@ class TripGpsSync private constructor(
      * Read-only reconciliation of a completed trip can acknowledge only exact evidence
      * inclusion; missing, foreign, diverging or unreadable evidence remains reviewable. */
     suspend fun replayAll(permittedWrites: Map<String, PendingWrite>? = null, onSynced: (Trip) -> Unit) {
+        val caller = kotlinx.coroutines.currentCoroutineContext()
+        val scope = pending.currentReplayScope()
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            replayRetained(permittedWrites) { trip ->
+                kotlinx.coroutines.withContext(caller) {
+                    if (pending.currentReplayScope() == scope) onSynced(trip)
+                }
+            }
+        }
+    }
+
+    private suspend fun replayRetained(permittedWrites: Map<String, PendingWrite>?, onSynced: suspend (Trip) -> Unit) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {

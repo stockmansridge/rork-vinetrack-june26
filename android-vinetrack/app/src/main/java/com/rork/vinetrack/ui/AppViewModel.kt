@@ -1546,9 +1546,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replayAllPendingWrites()
         vineyardInsights.sync(vineyardId)
         check(canUseVintageReport(account, vineyardId))
-        pruningSyncCoordinator.replayAll()
+        awaitReplayStage("pruning") { pruningSyncCoordinator.replayAll() }
         check(canUseVintageReport(account, vineyardId))
-        fertiliserSyncCoordinator.replayAll()
+        awaitReplayStage("fertiliser") { fertiliserSyncCoordinator.replayAll() }
         check(canUseVintageReport(account, vineyardId))
         irrigationRepository.flushPending(vineyardId)
         kotlinx.coroutines.withTimeoutOrNull(10_000) {
@@ -1877,6 +1877,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * count stays 0 in production.
      */
     private val pendingWrites = PendingWriteRepository(app)
+    val pendingSyncReadIssue get() = pendingWrites.readIssue
     private val savedChemicalCreateSync = SavedChemicalCreateSync(
         savedChemicalRepo, pendingWrites, SavedChemicalLocalStore(app), { session.userId },
     )
@@ -3067,7 +3068,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Remaining errors are transient-style (network / server). When the
             // row is genuinely blocked, retries have stopped — say so.
             state == PendingSyncDisplayState.NeedsAttention ->
-                "Automatic retries stopped after repeated failures."
+                "Automatic sync is paused. The original saved change is retained and needs review."
             raw.contains("timeout") || raw.contains("timed out") || raw.contains("network") ||
                 raw.contains("connection") || raw.contains("unable to resolve") ||
                 raw.contains("unreachable") || raw.contains("host") ->
@@ -3096,13 +3097,50 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * rewriting evidence or guessing ownership. Historical BLOCKED rows remain
      * unchanged. Storage and ownership failures have distinct operator messages.
      */
+    // Fixed stage keys bound pending runtime requests. A trigger never spawns
+    // another fan-out of replay coroutines, and storage failures cannot escape
+    // a stage into the ViewModel's root scope. Durable queues remain untouched.
+    private val replayRunner by lazy {
+        com.rork.vinetrack.data.BoundedReplayRunner(viewModelScope,
+            onFailure = { stage, failure ->
+                Log.w("SyncRecovery", "stage=$stage outcome=retained exception=${failure.javaClass.simpleName} version=${com.rork.vinetrack.BuildConfig.VERSION_NAME} build=${com.rork.vinetrack.BuildConfig.VERSION_CODE}")
+            },
+            onIdle = { _ui.update { it.copy(isRetryingSync = false) } },
+        )
+    }
+
+    private fun launchReplayStage(key: String, action: suspend () -> Unit): kotlinx.coroutines.Deferred<Boolean>? {
+        val scope = pendingWrites.currentReplayScope() ?: return null
+        return replayRunner.request(key) {
+            if (pendingWrites.currentReplayScope() == scope && session.accessToken != null && _ui.value.isOnline) {
+                try {
+                    withContext(Dispatchers.IO) { pendingWrites.recoverRetainedClaims() }
+                    if (pendingWrites.currentReplayScope() == scope) action()
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled
+                } catch (failure: Exception) {
+                    if (pendingWrites.currentReplayScope() == scope) _ui.update { it.copy(pinError =
+                        "Some local work couldn't be read or saved. It was retained; check storage and retry. Do not clear app data.") }
+                    throw failure
+                }
+            }
+        }
+    }
+
+    /** For interactive push-then-fetch callers only; never await this from inside a replay stage. */
+    private suspend fun awaitReplayStage(key: String, action: suspend () -> Unit) {
+        launchReplayStage(key, action)?.await()
+    }
+
     private fun preserveAffectedRecoveryEvidence(
         fallbackVineyardId: String? = _ui.value.selectedVineyardId,
+        selective: Boolean = false,
         writes: List<com.rork.vinetrack.data.model.PendingWrite> = pendingWrites.list().filter {
             it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
         },
         additionalVineyardIds: Set<String> = emptySet(),
+        verifiedPinOwners: Map<String, String> = emptyMap(),
     ): com.rork.vinetrack.data.RecoveryPreservation.Result {
+        val capturedScope = pendingWrites.currentReplayScope()
         val knownVineyardIds = buildSet {
             addAll(_ui.value.vineyards.map { it.id })
             fallbackVineyardId?.let(::add)
@@ -3110,18 +3148,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val tripOwners = mutableMapOf<String, String>()
         val pinOwners = mutableMapOf<String, String>()
-        _ui.value.trips.forEach { tripOwners[it.id] = it.vineyardId }
-        _ui.value.pins.forEach { pinOwners[it.id] = it.vineyardId }
+        fun addOwner(owners: MutableMap<String, String>, id: String, vineyard: String) {
+            val previous = owners[id]
+            owners[id] = if (previous == null || previous == vineyard) vineyard else ""
+        }
+        _ui.value.trips.forEach { addOwner(tripOwners, it.id, it.vineyardId) }
+        _ui.value.pins.forEach { addOwner(pinOwners, it.id, it.vineyardId) }
+        verifiedPinOwners.forEach { (id, vineyard) -> addOwner(pinOwners, id, vineyard) }
         val cache = com.rork.vinetrack.data.DomainCacheStore(getApplication())
         knownVineyardIds.forEach { vineyardId ->
-            cache.loadTripsForRecovery(vineyardId).items.forEach { trip -> tripOwners[trip.id] = vineyardId }
-            cache.loadPinsForRecovery(vineyardId).items.forEach { pin -> pinOwners[pin.id] = pin.vineyardId }
+            cache.loadTripsForRecovery(vineyardId).items.forEach { trip -> addOwner(tripOwners, trip.id, vineyardId) }
+            cache.loadPinsForRecovery(vineyardId).items.forEach { pin -> addOwner(pinOwners, pin.id, pin.vineyardId) }
         }
-        com.rork.vinetrack.data.PinCaptureEvidenceStore(getApplication()).load().forEach { evidence ->
-            pinOwners.putIfAbsent(evidence.pinId, evidence.vineyardId)
+        runCatching { pinEvidenceStore.load() }.getOrDefault(emptyList()).forEach { evidence ->
+            addOwner(pinOwners, evidence.pinId, evidence.vineyardId)
         }
-        activeTripStore.load()?.let { tripOwners[it.trip.id] = it.vineyardId }
-        val result = com.rork.vinetrack.data.RecoveryPreservation.preserveBeforeReplay(
+        activeTripStore.load()?.let { addOwner(tripOwners, it.trip.id, it.vineyardId) }
+        val result = if (selective) com.rork.vinetrack.data.RecoveryPreservation.preserveSelective(
+            pendingWrites = writes,
+            tripOwners = tripOwners,
+            pinOwners = pinOwners,
+            fallbackVineyardId = fallbackVineyardId,
+            additionalVineyardIds = additionalVineyardIds,
+            preserve = { vineyardId ->
+                com.rork.vinetrack.data.RecoverySnapshotStore.captureBeforeMutation(getApplication(), vineyardId).isPreserved
+            },
+        ) else com.rork.vinetrack.data.RecoveryPreservation.preserveBeforeReplay(
             pendingWrites = writes,
             tripOwners = tripOwners,
             pinOwners = pinOwners,
@@ -3136,7 +3188,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // rows. Stop the affected pass without changing any original row.
             quarantine = { writeIds -> writeIds.isEmpty() },
         )
-        result.message?.let { message ->
+        result.message?.takeIf { pendingWrites.currentReplayScope() == capturedScope }?.let { message ->
             _ui.update { it.copy(pinError = message, tripError = message) }
         }
         return result
@@ -3147,27 +3199,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * durably preserve every owning vineyard before any coordinator mutates it.
      * Work queued after this snapshot waits for the next trigger.
      */
-    private fun prepareFrozenReplayWrites(): Map<String, com.rork.vinetrack.data.model.PendingWrite>? {
+    private suspend fun prepareFrozenReplayWrites(): Map<String, com.rork.vinetrack.data.model.PendingWrite>? {
+        val scope = pendingWrites.currentReplayScope() ?: return null
         val writes = pendingWrites.list().filter { it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved }
-        if (!preserveAffectedRecoveryEvidence(writes = writes).didRun) return null
-        return pendingWrites.freezeReplayVersions(writes)
+        val result = withContext(Dispatchers.IO) { preserveAffectedRecoveryEvidence(writes = writes, selective = true) }
+        if (!result.didRun || pendingWrites.currentReplayScope() != scope) return null
+        return pendingWrites.freezeReplayVersions(writes.filter { it.id in result.permittedWriteIds })
     }
 
-    private fun prepareAffectedPinReplay(): com.rork.vinetrack.data.AffectedPinReplayOrchestration.Permit? {
+    private suspend fun prepareAffectedPinReplay(): com.rork.vinetrack.data.AffectedPinReplayOrchestration.Permit? {
+        val scope = pendingWrites.currentReplayScope() ?: return null
         val writes = pendingWrites.list().filter {
             it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved
         }
         val photos = pendingPhotos.list()
-        val permit = com.rork.vinetrack.data.AffectedPinReplayOrchestration.prepare(
+        val permit = withContext(Dispatchers.IO) { com.rork.vinetrack.data.AffectedPinReplayOrchestration.prepare(
             writes = writes,
             photos = photos,
             preserve = { frozenWrites, photoVineyardIds ->
                 preserveAffectedRecoveryEvidence(
                     writes = frozenWrites,
+                    selective = true,
                     additionalVineyardIds = photoVineyardIds,
                 )
             },
-        ) ?: return null
+        ) } ?: return null
+        if (pendingWrites.currentReplayScope() != scope) return null
         return permit.copy(writeVersions = pendingWrites.freezeReplayVersions(permit.writeVersions.values))
     }
 
@@ -3179,8 +3236,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPinCreates() {
         if (session.accessToken == null) return
-        val permit = prepareAffectedPinReplay() ?: return
-        viewModelScope.launch {
+        launchReplayStage("pin-create") {
+            val permit = prepareAffectedPinReplay() ?: return@launchReplayStage
             pinCreateSync.replayAll(permit.writeIds, permit.writeVersions) { pin ->
                 if (pendingWrites.list().any { it.clientId == pin.id &&
                     it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved }) return@replayAll
@@ -3212,12 +3269,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Evidence is its own durable outbox and may arrive before or after its pin. */
     private fun replayPendingPinEvidence() {
         if (session.accessToken == null) return
-        val pending = pinEvidenceStore.pending()
-        if (pending.isEmpty()) return
-        viewModelScope.launch {
-            com.rork.vinetrack.data.replayPinCaptureEvidence(
-                pending, pinRepo::uploadCaptureEvidence, pinEvidenceStore::markUploaded,
-            )
+        launchReplayStage("pin-evidence") {
+            val scope = pendingWrites.currentReplayScope() ?: return@launchReplayStage
+            withContext(Dispatchers.IO) {
+                val pending = pinEvidenceStore.pending()
+                com.rork.vinetrack.data.replayPinCaptureEvidence(
+                    pending, pinRepo::uploadCaptureEvidence, pinEvidenceStore::markUploaded,
+                    isAuthorityCurrent = { evidence -> pendingWrites.currentReplayScope() == scope && evidence.captureUserId == scope.userId },
+                )
+            }
         }
     }
 
@@ -3229,8 +3289,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingCustomPins() {
         if (session.accessToken == null) return
-        val permit = prepareAffectedPinReplay() ?: return
-        viewModelScope.launch {
+        launchReplayStage("custom-pin") {
+            val permit = prepareAffectedPinReplay() ?: return@launchReplayStage
             customPinSync.replayAll(
                 permittedWriteIds = permit.writeIds,
                 permittedWrites = permit.writeVersions,
@@ -3248,8 +3308,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPinCompletions() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        val permit = prepareAffectedPinReplay() ?: return
-        viewModelScope.launch {
+        launchReplayStage("pin-completion") {
+            val permit = prepareAffectedPinReplay() ?: return@launchReplayStage
             pinCompletionSync.replayAll(permit.writeIds, permit.writeVersions) { pin ->
                 _ui.update { st -> if (st.selectedVineyardId != pin.vineyardId) st else
                     st.copy(pins = st.pins.map { if (it.id == pin.id) it.copy(isCompleted = pin.isCompleted) else it }) }
@@ -3266,8 +3326,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPinEdits() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        val permit = prepareAffectedPinReplay() ?: return
-        viewModelScope.launch {
+        launchReplayStage("pin-edit") {
+            val permit = prepareAffectedPinReplay() ?: return@launchReplayStage
             pinEditSync.replayAll(permit.writeIds, permit.writeVersions) { pin ->
                 _ui.update { st -> if (st.selectedVineyardId != pin.vineyardId) st else
                     st.copy(pins = st.pins.map { if (it.id == pin.id) it.copy(title = pin.title,
@@ -3287,8 +3347,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPinDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        val permit = prepareAffectedPinReplay() ?: return
-        viewModelScope.launch {
+        launchReplayStage("pin-delete") {
+            val scope = pendingWrites.currentReplayScope() ?: return@launchReplayStage
+            val access = session.accountAccess() ?: return@launchReplayStage
+            pinDeleteSync.reconcileTombstones { original, state ->
+                val preserved = withContext(Dispatchers.IO) {
+                    if (pendingWrites.currentReplayScope() != scope) return@withContext false
+                    val result = preserveAffectedRecoveryEvidence(writes = listOf(original), selective = true,
+                        verifiedPinOwners = mapOf(state.id to state.vineyardId))
+                    if (original.id !in result.permittedWriteIds) return@withContext false
+                    var saved = false
+                    session.withAccountAccess(access) {
+                        saved = com.rork.vinetrack.data.RecoverySnapshotStore(getApplication()).preserveTombstone(
+                            com.rork.vinetrack.data.RecoverySnapshotStore.TombstoneReceipt(scope.userId, original, state))
+                    } && saved
+                }
+                if (!preserved || pendingWrites.currentReplayScope() != scope) null
+                else pendingWrites.freezeReplayVersions(listOf(original))
+            }
+            val permit = prepareAffectedPinReplay() ?: return@launchReplayStage
             pinDeleteSync.replayAll(
                 permittedWriteIds = permit.writeIds,
                 permittedWrites = permit.writeVersions,
@@ -3310,8 +3387,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripMetadata() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        val versions = prepareFrozenReplayWrites() ?: return
-        viewModelScope.launch {
+        launchReplayStage("trip-metadata") {
+            val versions = prepareFrozenReplayWrites() ?: return@launchReplayStage
             tripMetadataSync.replayAll(versions) { trip ->
                 _ui.update { st -> st.copy(trips = st.trips.map { local ->
                     if (local.id == trip.id) com.rork.vinetrack.data.TripReplayPublication.metadata(trip, local) else local }) }
@@ -3329,8 +3406,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripSeeding() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        val versions = prepareFrozenReplayWrites() ?: return
-        viewModelScope.launch {
+        launchReplayStage("trip-seeding") {
+            val versions = prepareFrozenReplayWrites() ?: return@launchReplayStage
             tripSeedingSync.replayAll(versions) { trip ->
                 _ui.update { st -> st.copy(trips = st.trips.map { local ->
                     if (local.id == trip.id) com.rork.vinetrack.data.TripReplayPublication.seeding(trip, local) else local }) }
@@ -3341,59 +3418,77 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Runs Phase 5 parent and dependent writes in one awaited, per-process pipeline. */
     private fun replayPhase5Writes() {
+        if (session.accessToken == null || !_ui.value.isOnline) return
+        launchReplayStage("phase5") {
+        val stageScope = pendingWrites.currentReplayScope() ?: return@launchReplayStage
+        val stageJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
         val legacyScope = _ui.value.selectedVineyardId
+        fun phase5Current(): Boolean {
+            stageJob?.ensureActive()
+            return pendingWrites.currentReplayScope() == stageScope && _ui.value.selectedVineyardId == legacyScope
+        }
         if (legacyScope != null && session.accessToken != null) {
-            val pending = runCatching { legacySpraySaves.pending(legacyScope) }
+            val pending = withContext(Dispatchers.IO) { runCatching { legacySpraySaves.pending(legacyScope) } }
+            if (!phase5Current()) return@launchReplayStage
             if (pending.isFailure) {
-                _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; return
+                _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; return@launchReplayStage
             }
             val retained = pending.getOrDefault(emptyList())
             if (retained.isNotEmpty()) {
                 _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.status(retained, session.retentionGuard.identityEpoch.value)) }
-                resumePreparedLegacySpraySaves(retained)
+                replayPreparedLegacySpraySaves(retained)
+                if (!phase5Current()) return@launchReplayStage
                 // No legacy attempt enters a generic outbox. If another writer queued one,
                 // refuse the dependent pipeline rather than touching the held identities.
                 val ids = retained.flatMap { listOf(it.trip.id, it.recordId) }
-                if (pendingWrites.list().any { write -> ids.any { write.payloadJson.contains(it) } }) return
+                if (pendingWrites.list().any { write -> ids.any { write.payloadJson.contains(it) } }) return@launchReplayStage
             }
         }
-        if (session.accessToken == null || !_ui.value.isOnline) return
-        val versions = prepareFrozenReplayWrites() ?: return
-        val tankAccountAccess = session.accountAccess() ?: return
-        val tankVineyardId = _ui.value.selectedVineyardId
-        if (!phase5ReplayRunning.compareAndSet(false, true)) return
-        viewModelScope.launch {
+            val versions = prepareFrozenReplayWrites() ?: return@launchReplayStage
+            if (!phase5Current()) return@launchReplayStage
+            val tankAccountAccess = session.accountAccess() ?: return@launchReplayStage
+            val tankVineyardId = _ui.value.selectedVineyardId
+            if (!phase5ReplayRunning.compareAndSet(false, true)) return@launchReplayStage
             try {
                 // Manual saves/deletes replay with their original operation IDs before
                 // generic trip/spray queues can touch related rows.
                 manualSprayCoordinator.replay { owningVineyardId ->
                     val state = _ui.value
-                    if (state.selectedVineyardId == owningVineyardId) state.currentRole else null
+                    if (phase5Current() && state.selectedVineyardId == owningVineyardId) state.currentRole else null
                 }
+                if (!phase5Current()) return@launchReplayStage
                 tripStartSync.replayAll(versions) { trip ->
+                    if (!phase5Current()) return@replayAll
                     _ui.update { st -> st.copy(trips = st.trips.map { existing ->
                         if (existing.id == trip.id) TripStartReconciliation.reconcile(server = trip, local = existing, pendingWrites = pendingWrites.list()) else existing
                     }) }
                     persistActiveTripSnapshot()
                 }
+                if (!phase5Current()) return@launchReplayStage
                 tripLabourSync.replay()
+                if (!phase5Current()) return@launchReplayStage
                 tripRowPlanSync.replayAll(versions) { _ ->
                     // The durable local trip is authoritative for live GPS and
                     // coverage; a replay response must not rewind its row pointer.
                 }
                 // A spray record may depend on a queued spray job; both parents
                 // must exist before tank-session state is attempted.
+                if (!phase5Current()) return@launchReplayStage
                 sprayJobCreateSync.replayAll()
+                if (!phase5Current()) return@launchReplayStage
                 sprayCreateSync.replayAll { record ->
+                    if (!phase5Current()) return@replayAll
                     _ui.update { st ->
                         if (st.sprayRecords.any { it.id == record.id }) {
                             st.copy(sprayRecords = st.sprayRecords.map { if (it.id == record.id) record else it })
                         } else st.copy(sprayRecords = listOf(record) + st.sprayRecords)
                     }
                 }
+                if (!phase5Current()) return@launchReplayStage
                 tripTankSync.replayAll(versions, tankAccountAccess, { action ->
                     session.withAccountAccess(tankAccountAccess, action)
                 }) { trip ->
+                    if (!phase5Current()) return@replayAll
                     _ui.update { st -> st.copy(trips = st.trips.map { existing ->
                         if (existing.id == trip.id && (existing.tankSessions != trip.tankSessions ||
                             existing.activeTankNumber != trip.activeTankNumber || existing.isFillingTank != trip.isFillingTank)) {
@@ -3404,6 +3499,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }) }
                     persistActiveTripSnapshot()
                 }
+                if (!phase5Current()) return@launchReplayStage
                 com.rork.vinetrack.data.ScopedTankActualSync(
                     sprayTankActualStore, session::withAccountAccess,
                     { actual, access -> sprayTankActualRepo.upsert(actual, access) },
@@ -3416,7 +3512,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                     (write.clientId == actual.sprayRecordId && write.entityType == com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD && write.opType == com.rork.vinetrack.data.model.PendingOpType.CREATE))
                         }
                 }, { vineyardId -> _ui.value.selectedVineyardId == vineyardId })
+                if (!phase5Current()) return@launchReplayStage
                 tripEndSync.replayAll(versions) { trip ->
+                    if (!phase5Current()) return@replayAll
                     _ui.update { st -> st.copy(
                         trips = st.trips.map { if (it.id == trip.id)
                             trip.copy(manualCorrectionEvents = (trip.manualCorrectionEvents.orEmpty() + it.manualCorrectionEvents.orEmpty()).distinct()) else it },
@@ -3425,6 +3523,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     ) }
                     runCatching { activeTripStore.load()?.takeIf { it.trip.id == trip.id }?.let { activeTripStore.clear() } }
                 }
+                if (!phase5Current()) return@launchReplayStage
                 tripLabourSync.replay()
             } finally {
                 phase5ReplayRunning.set(false)
@@ -3458,8 +3557,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripGps() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        val versions = prepareFrozenReplayWrites() ?: return
-        viewModelScope.launch {
+        launchReplayStage("trip-gps") {
+            val versions = prepareFrozenReplayWrites() ?: return@launchReplayStage
             tripGpsSync.replayAll(versions) { trip ->
                 _ui.update { st ->
                     st.copy(
@@ -3489,8 +3588,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripRow() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        val versions = prepareFrozenReplayWrites() ?: return
-        viewModelScope.launch {
+        launchReplayStage("trip-row") {
+            val versions = prepareFrozenReplayWrites() ?: return@launchReplayStage
             tripRowSync.replayAll(versions) { trip ->
                 _ui.update { st ->
                     st.copy(
@@ -3550,8 +3649,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingTripDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        val versions = prepareFrozenReplayWrites() ?: return
-        viewModelScope.launch {
+        launchReplayStage("trip-delete") {
+            val versions = prepareFrozenReplayWrites() ?: return@launchReplayStage
             tripDeleteSync.replayAll(versions) { tripId ->
                 _ui.update { st -> st.copy(trips = st.trips.filterNot { it.id == tripId }) }
             }
@@ -3567,7 +3666,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingFuelCreates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("fuel-create") {
             fuelCreateSync.replayAll { log ->
                 _ui.update { st ->
                     if (st.fuelLogs.any { it.id == log.id }) {
@@ -3589,7 +3688,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingFuelUpdates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("fuel-update") {
             fuelUpdateSync.replayAll { log ->
                 _ui.update { st ->
                     if (st.fuelLogs.any { it.id == log.id }) {
@@ -3610,8 +3709,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPinPhotos() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        val permit = prepareAffectedPinReplay() ?: return
-        viewModelScope.launch { syncPendingPinPhotos(permit.replayPhotoIds) }
+        launchReplayStage("pin-photos") {
+            val permit = prepareAffectedPinReplay() ?: return@launchReplayStage
+            syncPendingPinPhotos(permit.replayPhotoIds)
+        }
     }
 
     /**
@@ -3651,11 +3752,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Push queued job creates, then pull the plan's live linked jobs. */
     fun refreshPlanSprayJobs(planId: String) {
         val vineyardId = _ui.value.selectedVineyardId ?: return
+        val scope = pendingWrites.currentReplayScope()
         viewModelScope.launch {
             if (session.accessToken != null && _ui.value.isOnline) {
-                sprayJobCreateSync.replayAll()
+                awaitReplayStage("spray-job-create") { sprayJobCreateSync.replayAll() }
             }
+            if (pendingWrites.currentReplayScope() != scope || _ui.value.selectedVineyardId != vineyardId) return@launch
             val fetched = runCatching { sprayJobPlanRepo.fetchJobsForPlan(vineyardId, planId) }.getOrNull()
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (pendingWrites.currentReplayScope() != scope || _ui.value.selectedVineyardId != vineyardId) return@launch
             _planSprayJobs.update { current ->
                 val base = fetched
                     ?: current[planId].orEmpty().filterNot { row -> isPendingSprayJob(row.id) }
@@ -3696,7 +3801,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         sprayJobCreateSync.enqueue(insert, paddockIds)
         if (session.accessToken != null && _ui.value.isOnline) {
-            viewModelScope.launch { sprayJobCreateSync.replayAll() }
+            launchReplayStage("spray-job-create") { sprayJobCreateSync.replayAll() }
         }
         return optimistic
     }
@@ -3713,7 +3818,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingSprayUpdates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("spray-update") {
             sprayUpdateSync.replayAll { record ->
                 _ui.update { st ->
                     if (st.sprayRecords.any { it.id == record.id }) {
@@ -3736,7 +3841,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingFuelDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("fuel-delete") {
             fuelDeleteSync.replayAll { fuelLogId ->
                 _ui.update { st -> st.copy(fuelLogs = st.fuelLogs.filterNot { it.id == fuelLogId }) }
             }
@@ -3755,7 +3860,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingSprayDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("spray-delete") {
             sprayDeleteSync.replayAll { sprayRecordId ->
                 _ui.update { st -> st.copy(sprayRecords = st.sprayRecords.filterNot { it.id == sprayRecordId }) }
             }
@@ -3773,7 +3878,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingSavedChemicalCreates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("chemical-create") {
             savedChemicalCreateSync.replayAll { saved ->
                 if (_ui.value.selectedVineyardId == saved.vineyardId) {
                     _ui.update { state -> state.copy(savedChemicals =
@@ -3787,7 +3892,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun replayPendingWorkTaskCreates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("task-create") {
             workTaskCreateSync.replayAll { task ->
                 _ui.update { st ->
                     if (st.workTasks.any { it.id == task.id }) {
@@ -3813,7 +3918,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingWorkTaskUpdates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("task-update") {
             workTaskUpdateSync.replayAll { task ->
                 _ui.update { st ->
                     st.copy(workTasks = st.workTasks.map { if (it.id == task.id) task else it })
@@ -3836,7 +3941,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingWorkTaskLabour() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("task-labour") {
             workTaskLabourSync.replayAll(
                 onUpserted = { line ->
                     _ui.update { st ->
@@ -3870,7 +3975,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingWorkTaskMachine() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("task-machine") {
             workTaskMachineSync.replayAll(
                 onUpserted = { line ->
                     _ui.update { st ->
@@ -3903,7 +4008,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingWorkTaskPaddocks() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("task-paddock") {
             workTaskPaddockSync.replayAll(
                 onCreated = { row ->
                     _ui.update { st ->
@@ -3934,7 +4039,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingWorkTaskMaterials() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("task-material") {
             workTaskMaterialSync.replayAll(
                 onUpserted = { line ->
                     persistTaskMaterialLocally(line)
@@ -3963,7 +4068,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingVineyardMaterials() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("vineyard-material") {
             vineyardMaterialSync.replayAll(
                 onUpserted = { material ->
                     persistVineyardMaterialLocally(material)
@@ -3995,7 +4100,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingWorkTaskDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("task-delete") {
             workTaskDeleteSync.replayAll { workTaskId ->
                 _ui.update { st -> st.copy(workTasks = st.workTasks.filterNot { it.id == workTaskId }) }
             }
@@ -4013,7 +4118,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingMaintenanceCreates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("maintenance-create") {
             maintenanceCreateSync.replayAll { log ->
                 _ui.update { st ->
                     if (st.maintenanceLogs.any { it.id == log.id }) {
@@ -4037,7 +4142,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingMaintenanceUpdates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("maintenance-update") {
             maintenanceUpdateSync.replayAll { log ->
                 _ui.update { st ->
                     st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it.id == log.id) log else it })
@@ -4058,7 +4163,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingMaintenanceDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("maintenance-delete") {
             maintenanceDeleteSync.replayAll { logId ->
                 _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.filterNot { it.id == logId }) }
             }
@@ -4074,7 +4179,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingYieldCreates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("yield-create") {
             yieldCreateSync.replayAll { record ->
                 _ui.update { st ->
                     if (st.yieldRecords.any { it.id == record.id }) {
@@ -4097,7 +4202,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingYieldUpdates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("yield-update") {
             yieldUpdateSync.replayAll { record ->
                 _ui.update { st ->
                     st.copy(yieldRecords = st.yieldRecords.map { if (it.id == record.id) record else it })
@@ -4117,7 +4222,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingYieldDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("yield-delete") {
             yieldDeleteSync.replayAll { recordId ->
                 _ui.update { st -> st.copy(yieldRecords = st.yieldRecords.filterNot { it.id == recordId }) }
             }
@@ -4131,7 +4236,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPickingCreates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("picking-create") {
             pickingCreateSync.replayAll { record ->
                 _ui.update { st ->
                     if (st.pickingRecords.any { it.id == record.id }) {
@@ -4167,7 +4272,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPickingUpdates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("picking-update") {
             pickingUpdateSync.replayAll(
                 onSynced = { record ->
                     _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.map { if (it.id == record.id) record else it }) }
@@ -4187,7 +4292,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPickingDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("picking-delete") {
             pickingDeleteSync.replayAll { recordId ->
                 _ui.update { st -> st.copy(pickingRecords = st.pickingRecords.filterNot { it.id == recordId }) }
                 persistPickingCache()
@@ -4203,7 +4308,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPaddockEdits() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("paddock-edit") {
             paddockEditSync.replayAll(
                 onSynced = { saved ->
                     _ui.update { st ->
@@ -4230,7 +4335,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingPruningYieldSettings() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("pruning-yield-settings") {
             pruningYieldSettingsSync.replayAll { saved -> reconcilePruningYieldSettings(saved) }
         }
     }
@@ -4422,7 +4527,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingGrowthCreates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("growth-create") {
             growthCreateSync.replayAll { record ->
                 _ui.update { st ->
                     if (st.growthRecords.any { it.id == record.id }) {
@@ -4446,7 +4551,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingGrowthUpdates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("growth-update") {
             growthUpdateSync.replayAll { record ->
                 _ui.update { st ->
                     st.copy(growthRecords = st.growthRecords.map { if (it.id == record.id) record else it })
@@ -4466,7 +4571,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingGrowthDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("growth-delete") {
             growthDeleteSync.replayAll(
                 onDeleted = { recordId ->
                     _ui.update { st ->
@@ -4496,7 +4601,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingDamageCreates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("damage-create") {
             damageCreateSync.replayAll { record ->
                 _ui.update { st ->
                     if (st.damageRecords.any { it.id == record.id }) {
@@ -4519,7 +4624,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingDamageUpdates() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("damage-update") {
             damageUpdateSync.replayAll { record ->
                 _ui.update { st ->
                     st.copy(damageRecords = st.damageRecords.map { if (it.id == record.id) record else it })
@@ -4538,7 +4643,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingDamageDeletes() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("damage-delete") {
             damageDeleteSync.replayAll { recordId ->
                 _ui.update { st ->
                     st.copy(damageRecords = st.damageRecords.filterNot { it.id == recordId })
@@ -4557,7 +4662,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (session.accessToken == null || !_ui.value.isOnline) return
         val owner = session.userId ?: return
         val epoch = session.retentionGuard.identityEpoch.value
-        viewModelScope.launch {
+        launchReplayStage("button-config") {
             buttonConfigUpdateSync.replayAll { payload ->
                 if (session.userId != owner || session.retentionGuard.identityEpoch.value != epoch) return@replayAll
                 cacheConfirmedLauncherButtons(owner, epoch, payload.vineyardId, payload.configType, payload.buttons)
@@ -4582,7 +4687,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingYieldSessions() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch {
+        launchReplayStage("yield-session") {
             yieldSessionSaveSync.replayAll { saved ->
                 _ui.update { st ->
                     if (saved.vineyardId != st.selectedVineyardId) return@update st
@@ -4642,75 +4747,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun retryPendingSync() {
         if (_ui.value.isRetryingSync) return
-        if (!_ui.value.isOnline || session.accessToken == null) return
-        if (!preserveAffectedRecoveryEvidence().didRun) return
-        val hasPendingEvidence = pinEvidenceStore.pending().isNotEmpty()
-        val reset = pendingWrites.resetFailedForRetry()
-        if (reset == 0 && !hasPendingEvidence && chemicalLabelPhotos.list().none {
-                it.ownerId == session.userId && it.status == ChemicalLabelAttachment.FAILED
-            }) return
+        if (!_ui.value.isOnline || session.accessToken == null || pendingWrites.currentReplayScope() == null) return
         _ui.update { it.copy(isRetryingSync = true) }
-        // Same safe order as reconnect/post-load. Evidence is independent and
-        // deliberately allowed to arrive before its pin row.
-        replayPendingPinEvidence()
-        replayPendingPinCreates()
-        replayPendingCustomPins()
-        replayPendingPinCompletions()
-        replayPendingPinEdits()
-        replayPendingPinDeletes()
-        replayPendingPaddockEdits()
-        replayPendingTripStart()
-        replayPendingTripMetadata()
-        replayPendingTripSeeding()
-        replayPendingTripGps()
-        replayPendingTripRow()
-        _ui.value.trips.filter { it.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE }.forEach(::replayOccurrenceActions)
-        replayPendingTripTank()
-        replayPendingSprayCreates()
-        replayPendingTankActuals()
-        replayPendingTripEnd()
-        replayPendingTripDeletes()
-        replayPendingFuelCreates()
-        replayPendingFuelUpdates()
-        replayPendingFuelDeletes()
-        replayPendingSprayUpdates()
-        replayPendingSprayDeletes()
-        replayPendingSavedChemicalCreates()
-        replayPendingWorkTaskCreates()
-        replayPendingWorkTaskUpdates()
-        replayPendingWorkTaskLabour()
-        replayPendingWorkTaskMachine()
-        replayPendingWorkTaskPaddocks()
-        replayPendingVineyardMaterials()
-        replayPendingWorkTaskMaterials()
-        replayPendingWorkTaskDeletes()
-        replayPendingMaintenanceCreates()
-        replayPendingMaintenanceUpdates()
-        replayPendingMaintenanceDeletes()
-        replayPendingYieldCreates()
-        replayPendingYieldUpdates()
-        replayPendingYieldDeletes()
-        replayPendingPickingCreates()
-        replayPendingPickingUpdates()
-        replayPendingPickingDeletes()
-        replayPendingPruningYieldSettings()
-        replayPendingGrowthCreates()
-        replayPendingGrowthUpdates()
-        replayPendingGrowthDeletes()
-        replayPendingDamageCreates()
-        replayPendingDamageUpdates()
-        replayPendingDamageDeletes()
-        replayPendingButtonConfig()
-        replayPendingYieldSessions()
-        replayPendingPinPhotos()
-        // Clear the transient hint on the next loop tick; resolution is shown
-        // reactively through the pending list, not this flag.
-        viewModelScope.launch { _ui.update { it.copy(isRetryingSync = false) } }
+        replayAllPendingWrites()
+        // The shared runner clears this only when all requested stages actually finish.
     }
 
     /**
      * Explicit per-item retry of a single retry-eligible row (Tier-A Stage
-     * F-2b). Resets only the named FAILED row back to PENDING, then re-runs the
+     * F-2b). Leaves the original FAILED row intact, then re-runs the
      * SAME full ordered replay pipeline used by [retryPendingSync] — it never
      * calls a single coordinator in isolation, so every dependency gate and
      * attempt cap stays in force (an offline start → work → end chain remains
@@ -4724,65 +4769,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun retryPendingSyncItem(id: String): Boolean {
         if (_ui.value.isRetryingSync) return false
-        if (!_ui.value.isOnline || session.accessToken == null) return false
-        if (!preserveAffectedRecoveryEvidence().didRun) return false
-        val reset = pendingWrites.resetFailedRowForRetry(id)
-        if (!reset) return false
-        _ui.update { it.copy(isRetryingSync = true) }
-        // Identical safe order to "Retry all" / reconnect / post-load. Resetting
-        // one row then replaying the whole pipeline keeps dependants correctly
-        // ordered (a single coordinator in isolation could bypass a gate).
-        replayPendingPinCreates()
-        replayPendingCustomPins()
-        replayPendingPinCompletions()
-        replayPendingPinEdits()
-        replayPendingPinDeletes()
-        replayPendingPaddockEdits()
-        replayPendingTripStart()
-        replayPendingTripMetadata()
-        replayPendingTripSeeding()
-        replayPendingTripGps()
-        replayPendingTripRow()
-        _ui.value.trips.filter { it.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE }.forEach(::replayOccurrenceActions)
-        replayPendingTripTank()
-        replayPendingSprayCreates()
-        replayPendingTankActuals()
-        replayPendingTripEnd()
-        replayPendingTripDeletes()
-        replayPendingFuelCreates()
-        replayPendingFuelUpdates()
-        replayPendingFuelDeletes()
-        replayPendingSprayUpdates()
-        replayPendingSprayDeletes()
-        replayPendingSavedChemicalCreates()
-        replayPendingWorkTaskCreates()
-        replayPendingWorkTaskUpdates()
-        replayPendingWorkTaskLabour()
-        replayPendingWorkTaskMachine()
-        replayPendingWorkTaskPaddocks()
-        replayPendingVineyardMaterials()
-        replayPendingWorkTaskMaterials()
-        replayPendingWorkTaskDeletes()
-        replayPendingMaintenanceCreates()
-        replayPendingMaintenanceUpdates()
-        replayPendingMaintenanceDeletes()
-        replayPendingYieldCreates()
-        replayPendingYieldUpdates()
-        replayPendingYieldDeletes()
-        replayPendingPickingCreates()
-        replayPendingPickingUpdates()
-        replayPendingPickingDeletes()
-        replayPendingPruningYieldSettings()
-        replayPendingGrowthCreates()
-        replayPendingGrowthUpdates()
-        replayPendingGrowthDeletes()
-        replayPendingDamageCreates()
-        replayPendingDamageUpdates()
-        replayPendingDamageDeletes()
-        replayPendingButtonConfig()
-        replayPendingYieldSessions()
-        replayPendingPinPhotos()
-        viewModelScope.launch { _ui.update { it.copy(isRetryingSync = false) } }
+        if (!_ui.value.isOnline || session.accessToken == null || pendingWrites.currentReplayScope() == null) return false
+        if (pendingWrites.list().none { it.id == id && it.status == com.rork.vinetrack.data.model.PendingWriteStatus.FAILED }) return false
+        retryPendingSync()
         return true
     }
 
@@ -5356,12 +5345,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * its queue is empty, so this is cheap to call on app resume.
      */
     private fun replayAllPendingWrites() {
+        replayPendingPinEvidence()
         if (session.accessToken != null && _ui.value.isOnline) {
-            viewModelScope.launch {
-                _ui.value.selectedVineyardId?.let { vineyard ->
-                    runCatching { irrigationRepository.flushFertigation(vineyard) }
-                        .onFailure { android.util.Log.w("FertigationSync", "Linked write retained; open Record Irrigation to retry.") }
-                }
+            launchReplayStage("fertigation") {
+                _ui.value.selectedVineyardId?.let { vineyard -> irrigationRepository.flushFertigation(vineyard) }
             }
         }
         replayPendingPinCreates()
@@ -5420,12 +5407,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun replayPendingPruningWrites() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch { pruningSyncCoordinator.replayAll() }
+        launchReplayStage("pruning") { pruningSyncCoordinator.replayAll() }
     }
 
     private fun replayPendingFertiliserWrites() {
         if (session.accessToken == null || !_ui.value.isOnline) return
-        viewModelScope.launch { fertiliserSyncCoordinator.replayAll() }
+        launchReplayStage("fertiliser") { fertiliserSyncCoordinator.replayAll() }
     }
 
     // MARK: - Pruning Tracker (System Admin, offline-first)
@@ -7037,6 +7024,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val epoch = vineyardSelectionEpoch
         val accountEpoch = performanceAuthorizationEpoch
         viewModelScope.launch {
+            awaitReplayStage("manual-issue") {
             val permit = if (session.accessToken != null) prepareAffectedPinReplay() else null
             if (permit != null) {
                 manualIssueSync.replayAll(
@@ -7045,6 +7033,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     permittedWrites = permit.writeVersions,
                 )
             }
+            }
+            if (session.userId != owner || vineyardSelectionEpoch != epoch || performanceAuthorizationEpoch != accountEpoch) return@launch
             runCatching {
                 manualIssueRepo.list(
                     vineyardId = vineyardId,
@@ -11840,13 +11830,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val legacySpraySends = mutableSetOf<String>()
 
     private fun resumePreparedLegacySpraySaves(items: List<com.rork.vinetrack.data.LegacySpraySaveStore.Attempt>) {
+        launchReplayStage("legacy-spray") { replayPreparedLegacySpraySaves(items) }
+    }
+
+    private suspend fun replayPreparedLegacySpraySaves(items: List<com.rork.vinetrack.data.LegacySpraySaveStore.Attempt>) {
         if (!_ui.value.isOnline) return
         items.filter { it.stage == com.rork.vinetrack.data.LegacySpraySaveStore.Stage.PREPARED && it.rpc != null && it.verified == null &&
             it.actorId == session.userId && it.identityEpoch == session.retentionGuard.identityEpoch.value }
-            .forEach { submitPreparedLegacySpray(it) {} }
+            .forEach { submitPreparedLegacySprayAwaited(it) {} }
     }
 
     private fun submitPreparedLegacySpray(attempt: com.rork.vinetrack.data.LegacySpraySaveStore.Attempt, onResult: (Boolean) -> Unit) {
+        // Explicit user action keeps its own callback; automatic recovery awaits
+        // the same contained operation in the bounded stage instead of spawning it.
+        viewModelScope.launch { submitPreparedLegacySprayAwaited(attempt, onResult) }
+    }
+
+    private suspend fun submitPreparedLegacySprayAwaited(attempt: com.rork.vinetrack.data.LegacySpraySaveStore.Attempt, onResult: (Boolean) -> Unit) {
         val originalAccess = session.accountAccess() ?: run { onResult(false); return }
         if (session.accessToken == null || attempt.rpc == null || attempt.verified?.status == "rejected") {
             _ui.update { it.copy(sprayError = attempt.receiptBlocker ?: "Connect and restore your session to recover the original spray request.") }
@@ -11858,10 +11858,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(sprayError = "Original spray request is already being recovered. Wait for it to finish; do not create a replacement.") }
             onResult(false); return
         }
-        viewModelScope.launch {
             try {
                 if (!session.withAccountAccess(originalAccess) { _ui.update { it.copy(sprayBusy = true, sprayError = null) } }) {
-                    onResult(false); return@launch
+                    onResult(false); return
                 }
                 android.util.Log.i("SprayStart", "stage=pair_recovery trip=${attempt.trip.id} record=${attempt.recordId} operation=${attempt.rpc.operation} accepted=${attempt.verified?.status == "accepted"}")
                 val accepted = attempt.verified?.status == "accepted" || legacySpraySaves.sendReceipt(attempt,
@@ -11900,6 +11899,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     onResult(true)
                 }
                 if (!published) onResult(false)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                if (session.isAccountAccessCurrent(originalAccess)) _ui.update { it.copy(sprayBusy = false) }
+                throw cancelled
             } catch (e: BackendError.Unauthorized) {
                 if (session.isAccountAccessCurrent(originalAccess)) {
                     _ui.update { it.copy(sprayBusy = false, sprayError = "Your session could not authorise the original request. Connect and restore sign-in, then recover it; the setup and IDs are retained.") }
@@ -11921,7 +11923,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 legacySpraySends.remove(attempt.recordId)
             }
-        }
     }
 
     /**
@@ -12484,11 +12485,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun replayOccurrenceActions(trip: Trip) {
+        if (trip.coverageBasis != TripOccurrenceCoverage.Basis.OCCURRENCE) return
+        launchReplayStage("occurrence") {
+            val scope = pendingWrites.currentReplayScope() ?: return@launchReplayStage
+            for (candidate in _ui.value.trips.filter { it.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE }) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (pendingWrites.currentReplayScope() != scope) return@launchReplayStage
+                replayOccurrenceTrip(candidate)
+            }
+        }
+    }
+
+    private suspend fun replayOccurrenceTrip(trip: Trip) {
         if (!_ui.value.isOnline || session.accessToken == null || !replayingOccurrenceTrips.add(trip.id)) return
         val owner = session.userId
         val access = session.retentionGuard.captureAccount(owner)
         if (access == null) { replayingOccurrenceTrips.remove(trip.id); return }
-        viewModelScope.launch {
+        kotlinx.coroutines.coroutineScope launch@{
             try {
                 val journal = occurrenceJournal(trip)
                 val initial = journal.load() ?: error("Occurrence journal missing.")
@@ -12539,13 +12552,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     } else persistActiveTripSnapshot()
                 }
             } catch (e: TripRepository.OccurrenceRejected) {
-                if (session.userId == owner) {
+                if (session.isAccountAccessCurrent(access)) {
                     runCatching { occurrenceJournal(trip).hold(e.code) }
                     _ui.update { it.copy(tripError = "Occurrence sync needs review (${e.code}). Saved actions are retained.") }
                 }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (_: Exception) {
-                if (session.userId == owner) _ui.update { it.copy(tripError = "Occurrence sync is pending. Saved actions are retained.") }
+                if (session.isAccountAccessCurrent(access)) _ui.update { it.copy(tripError = "Occurrence sync is pending. Saved actions are retained.") }
             } finally { replayingOccurrenceTrips.remove(trip.id) }
         }
     }
@@ -13435,7 +13448,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val saved = savedChemicalCreateSync.savePreference(chemical, rate?.copy(updatedAt = java.time.Instant.now().toString(), updatedBy = session.userId))
             _ui.update { st -> st.copy(savedChemicals = st.savedChemicals.map { if (it.id == saved.id) saved else it }) }
             onResult(true)
-            viewModelScope.launch { savedChemicalCreateSync.replayAll { row ->
+            launchReplayStage("chemical-preference") { savedChemicalCreateSync.replayAll { row ->
                 _ui.update { st -> if (st.selectedVineyardId == row.vineyardId) st.copy(savedChemicals = st.savedChemicals.map { if (it.id == row.id) row else it }) else st }
             } }
         } catch (_: Exception) { onResult(false) }

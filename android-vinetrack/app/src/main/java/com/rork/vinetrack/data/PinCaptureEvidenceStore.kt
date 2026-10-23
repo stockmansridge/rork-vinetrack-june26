@@ -72,17 +72,17 @@ class PinCaptureEvidenceStore(context: Context) {
     private val fieldAccess = com.rork.vinetrack.data.auth.FieldStoreAccess(context)
     private val preferences = fieldAccess.preferences(appContext.getSharedPreferences("vinetrack_pin_capture_evidence", Context.MODE_PRIVATE))
     private val recoveryFile = AtomicFile(File(appContext.filesDir, "pin_capture_evidence_recovery_v2.json"))
-    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; explicitNulls = false }
+    private val json = Json { ignoreUnknownKeys = false; encodeDefaults = true; explicitNulls = false }
     private val serializer = ListSerializer(Evidence.serializer())
 
-    fun save(evidence: Evidence): Boolean = fieldAccess.admitted { synchronized(this) {
+    fun save(evidence: Evidence): Boolean = fieldAccess.admitted { synchronized(evidenceLock) {
         val existing = load()
         val original = existing.firstOrNull { it.pinId == evidence.pinId && it.evidenceRevision == evidence.evidenceRevision }
-        if (original != null) return@synchronized original.copy(uploaded = false) == evidence.copy(uploaded = false)
+        if (original != null) return@synchronized (original.copy(uploaded = false) == evidence.copy(uploaded = false) && persist(existing))
         persist(existing + evidence)
     } }
 
-    fun markUploaded(pinId: String, evidenceRevision: Int): Boolean = fieldAccess.admitted { synchronized(this) {
+    fun markUploaded(pinId: String, evidenceRevision: Int): Boolean = fieldAccess.admitted { synchronized(evidenceLock) {
         persist(load().map {
             if (it.pinId == pinId && it.evidenceRevision == evidenceRevision) it.copy(uploaded = true) else it
         })
@@ -90,28 +90,29 @@ class PinCaptureEvidenceStore(context: Context) {
 
     fun pending(): List<Evidence> = load().filterNot { it.uploaded }
 
-    private fun decodeEvidence(raw: String): List<Evidence> = runCatching {
-        json.decodeFromString(serializer, raw)
-    }.getOrElse { error("Saved capture evidence couldn't be read. Keep this installation and contact support.") }
-
-    fun load(): List<Evidence> = fieldAccess.admitted {
-        val primary = preferences.getString(KEY, null)?.let(::decodeEvidence).orEmpty()
+    fun load(): List<Evidence> = fieldAccess.admitted { synchronized(evidenceLock) {
         val base = recoveryFile.baseFile
-        check(!File(base.path + ".new").exists()) { "An interrupted capture needs recovery review." }
-        val recovery = listOf(base, File(base.path + ".bak")).flatMap { file ->
-            if (!file.exists()) emptyList() else decodeEvidence(file.readText())
-        }
-        val groups = (primary + recovery).groupBy { "${it.pinId}#${it.evidenceRevision}" }
-        check(groups.values.all { it.distinct().size == 1 }) { "Conflicting capture evidence needs recovery review." }
-        groups.values.map { it.first() }
-    }
+        val raw = preferences.getString(KEY, null)
+        // A failed commit can publish acknowledgement flags in preference memory.
+        // Keep observations, but do not trust those flags until a durable commit.
+        val primary = if (raw != null && raw == unprovenPrimaryRaw) {
+            json.encodeToString(serializer, json.decodeFromString(serializer, raw).map { it.copy(uploaded = false) })
+        } else raw
+        readRetainedEvidence(primary, listOf(base, File(base.path + ".bak"), File(base.path + ".new")))
+    } }
 
     private fun persist(records: List<Evidence>): Boolean = fieldAccess.admitted {
         val encoded = json.encodeToString(serializer, records)
-        if (preferences.edit().putString(KEY, encoded).commit()) {
+        unprovenPrimaryRaw = encoded
+        if (runCatching { preferences.edit().putString(KEY, encoded).commit() }.getOrDefault(false)) {
+            unprovenPrimaryRaw = null
             runCatching { recoveryFile.delete() }
             return@admitted true
         }
+        // Never truncate the sole surviving recovery evidence after a failed
+        // primary commit. A later successful primary commit can consolidate it.
+        val base = recoveryFile.baseFile
+        if (listOf(base, File(base.path + ".bak"), File(base.path + ".new")).any { it.exists() }) return@admitted false
         runCatching {
             val stream = recoveryFile.startWrite()
             try {
@@ -121,12 +122,36 @@ class PinCaptureEvidenceStore(context: Context) {
                 recoveryFile.failWrite(stream)
                 throw error
             }
+            unprovenPrimaryRaw = null
             true
         }.getOrDefault(false)
     }
 
     companion object {
         private const val KEY = "pin_capture_evidence_json"
+        private val evidenceLock = Any()
+        private var unprovenPrimaryRaw: String? = null
+
+        /** Side-effect-free AtomicFile recovery read: retain base, backup and
+         * interrupted-new bytes until their combined evidence is durably saved.
+         * Uploaded is acknowledgement metadata, not an immutable observation conflict.
+         * A torn or conflicting source holds this evidence store, never replaces it.
+         */
+        internal fun readRetainedEvidence(primary: String?, files: List<File>): List<Evidence> {
+            // A newer unknown evidence field cannot be safely re-encoded by
+            // this build. Hold its original sources rather than discard fields.
+            val codec = Json { ignoreUnknownKeys = false; encodeDefaults = true; explicitNulls = false }
+            fun decode(raw: String) = codec.decodeFromString(ListSerializer(Evidence.serializer()), raw)
+            val candidates = primary?.let(::decode).orEmpty() + files.flatMap { file ->
+                if (file.exists()) decode(file.readText()) else emptyList()
+            }
+            return candidates.groupBy { it.pinId to it.evidenceRevision }.values.map { versions ->
+                check(versions.map { it.copy(uploaded = false) }.distinct().size == 1) {
+                    "Conflicting capture evidence needs recovery review. Original sources were retained."
+                }
+                versions.first().copy(uploaded = versions.any { it.uploaded })
+            }
+        }
 
         /** Canonical geometry identity shared byte-for-byte with iOS and SQL. */
         fun geometryIdentity(paddock: Paddock?): Pair<String?, String?> {

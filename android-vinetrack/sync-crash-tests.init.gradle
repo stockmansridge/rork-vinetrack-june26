@@ -1,0 +1,24 @@
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    if (gradle.startParameter.projectProperties.containsKey('syncCrashBaseline')) {
+        // Reuse the pre-repair production classes without excluding the task:
+        // Kotlin friend-path providers require it to reach a completed state.
+        app.tasks.named('compileDebugKotlin').configure { onlyIf { false } }
+    }
+    app.tasks.named('compileDebugUnitTestKotlin').configure {
+        setSource(app.fileTree('src/test/java') {
+            include '**/SyncCrashIsolationTest.kt'
+            if (!gradle.startParameter.projectProperties.containsKey('syncCrashBaseline')) {
+                include '**/TripGpsRecoveryTest.kt', '**/ReplayVersionIntegrityTest.kt'
+                include '**/RecoverySnapshotStoreTest.kt', '**/RecoveryPermitSafetyTest.kt', '**/PinCaptureEvidenceContractTest.kt'
+                include '**/ActiveTripStoreTest.kt', '**/PinCreateConflictTest.kt', '**/RetentionReviewTest.kt'
+                include '**/BoundedReplayRunnerTest.kt', '**/SelectiveRecoveryReplayTest.kt', '**/SyncRecoveryStorageTest.kt'
+            }
+        })
+    }
+    app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        testLogging { events 'passed', 'failed', 'skipped'; showStandardStreams = true }
+    }
+}

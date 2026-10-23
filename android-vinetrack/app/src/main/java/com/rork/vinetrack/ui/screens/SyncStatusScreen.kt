@@ -52,6 +52,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -101,6 +102,7 @@ fun SyncStatusScreen(
 ) {
     val vine = LocalVineColors.current
     val online = state.isOnline
+    val outboxReadIssue by vm.pendingSyncReadIssue.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
@@ -208,12 +210,16 @@ fun SyncStatusScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     val count = state.pendingSyncCount
                     Text(
-                        "$count queued changes waiting to sync",
+                        if (outboxReadIssue != null) "Saved sync evidence needs attention" else "$count queued changes waiting to sync",
                         fontWeight = FontWeight.SemiBold,
                         color = vine.textPrimary,
                         fontSize = 16.sp,
                     )
-                    if (count == 0 && state.tankActualSyncNotice == null && state.pendingPhotoCount == 0) {
+                    if (outboxReadIssue != null) {
+                        Text("The outbox couldn't be read. Original storage is retained and outbox changes are paused. Check available storage and retry sync; do not clear app data.",
+                            fontSize = 13.sp, color = VineColors.Warning)
+                    }
+                    if (outboxReadIssue == null && count == 0 && state.tankActualSyncNotice == null && state.pendingPhotoCount == 0) {
                         Text(
                             "No pending items.",
                             fontSize = 13.sp,
@@ -228,7 +234,7 @@ fun SyncStatusScreen(
                     // Tier-A Stage F-2 — explicit, safe "Retry all". Only shown
                     // when retryable items exist and a connection is available;
                     // it re-runs the normal ordered sync, never a direct write.
-                    if (state.canRetrySync && online) {
+                    if ((state.canRetrySync || outboxReadIssue != null) && online) {
                         Button(
                             onClick = vm::retryPendingSync,
                             enabled = !state.isRetryingSync,

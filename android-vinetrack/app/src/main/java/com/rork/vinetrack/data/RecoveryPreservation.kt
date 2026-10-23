@@ -37,9 +37,10 @@ internal object AffectedPinReplayOrchestration {
             writeIds = result.permittedWriteIds,
             writeVersions = writes.filter { it.id in result.permittedWriteIds }.associateBy { it.id },
             replayPhotoIds = photos.filter {
-                it.status == PendingPhotoStatus.PENDING || it.status == PendingPhotoStatus.FAILED
+                it.vineyardId !in result.failedVineyardIds &&
+                    (it.status == PendingPhotoStatus.PENDING || it.status == PendingPhotoStatus.FAILED)
             }.mapTo(mutableSetOf()) { it.id },
-            retainedPhotoPermits = photos.mapTo(mutableSetOf()) {
+            retainedPhotoPermits = photos.filter { it.vineyardId !in result.failedVineyardIds }.mapTo(mutableSetOf()) {
                 PinDeleteSync.RetainedPhotoPermit(it.id, it.revision)
             },
         )
@@ -71,6 +72,44 @@ internal object RecoveryPreservation {
         /** Vineyards whose durable preservation failed. Never diagnostic-exported. */
         val failedVineyardIds: Set<String> = emptySet(),
     )
+
+    /** Selective, non-mutating admission for callers that enforce exact version permits.
+     * Unknown rows remain byte-for-byte unchanged. One failed vineyard holds only
+     * its own writes/photos; dependencies remain visible to every coordinator.
+     */
+    fun preserveSelective(
+        pendingWrites: List<PendingWrite>,
+        tripOwners: Map<String, String>,
+        pinOwners: Map<String, String>,
+        fallbackVineyardId: String?,
+        additionalVineyardIds: Set<String> = emptySet(),
+        preserve: (String) -> Boolean,
+    ): Result {
+        val scopes = pendingWrites.associate { write -> write.id to RecoverySnapshotStore.resolveReplayScope(
+            listOf(write), tripOwners, pinOwners, null, includeOtherPayloadOwners = true,
+        ) }
+        val vineyards = scopes.values.flatMapTo(mutableSetOf()) { it.vineyardIds }
+            .apply { addAll(additionalVineyardIds); fallbackVineyardId?.let(::add) }
+        val failed = vineyards.filterTo(mutableSetOf()) { vineyard ->
+            try { !preserve(vineyard) } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) { true }
+        }
+        val unknown = scopes.values.flatMapTo(mutableSetOf()) { it.unresolvedWriteIds }
+        val held = scopes.filter { (id, scope) -> id in unknown || scope.vineyardIds.any { it in failed } }.keys
+        return Result(
+            didRun = true,
+            message = when {
+                failed.isNotEmpty() -> "Some recovery evidence couldn't be saved. Affected changes were retained; independent preserved work can still sync. Check device storage and retry."
+                unknown.isNotEmpty() -> "Some changes need ownership review and were retained unchanged. Independent preserved work can still sync."
+                else -> null
+            },
+            quarantinedWriteIds = held,
+            permittedWriteIds = pendingWrites.mapTo(mutableSetOf()) { it.id } - held,
+            unresolvedWriteIds = unknown,
+            failedVineyardIds = failed,
+        )
+    }
 
     /**
      * Resolve ownership for every queued pin/trip write, preserve the first

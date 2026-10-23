@@ -35,6 +35,18 @@ class ActiveTripStore internal constructor(
     )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private var decodedRaw: String? = null
+    private var decodedSnapshot: Snapshot? = null
+
+    /** Cache decoding only, never the storage read or ownership decision. */
+    @Synchronized
+    private fun decode(raw: String): Snapshot? {
+        if (decodedRaw != raw) {
+            decodedSnapshot = runCatching { json.decodeFromString(Snapshot.serializer(), raw) }.getOrNull()
+            decodedRaw = raw
+        }
+        return decodedSnapshot
+    }
 
     /**
      * A persisted active-trip snapshot, scoped to the user + vineyard it belongs
@@ -53,8 +65,7 @@ class ActiveTripStore internal constructor(
         val read = runCatching { storage.read() }
         if (read.isFailure) return true
         val raw = read.getOrNull() ?: return false
-        val snapshot = runCatching { json.decodeFromString(Snapshot.serializer(), raw) }.getOrNull()
-            ?: return true
+        val snapshot = decode(raw) ?: return true
         return snapshot.trip.isActive
     }
 
@@ -92,12 +103,12 @@ class ActiveTripStore internal constructor(
     /** Read the persisted snapshot, or null when none is stored / it can't decode. */
     fun load(): Snapshot? {
         val raw = storage.read() ?: return null
-        return runCatching { json.decodeFromString(Snapshot.serializer(), raw) }.getOrNull()
+        return decode(raw)
     }
 
     private fun canReplace(ownerUserId: String): Boolean = runCatching {
         val raw = storage.read() ?: return@runCatching true
-        val existing = json.decodeFromString(Snapshot.serializer(), raw)
+        val existing = decode(raw) ?: return@runCatching false
         existing.ownerUserId == ownerUserId && existing.ownerUserId.isNotBlank() &&
             existing.vineyardId == existing.trip.vineyardId
     }.getOrDefault(false)

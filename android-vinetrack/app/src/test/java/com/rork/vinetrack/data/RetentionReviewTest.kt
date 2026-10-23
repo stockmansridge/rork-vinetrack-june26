@@ -110,7 +110,7 @@ class RetentionReviewTest {
         } finally { root.deleteRecursively() }
     }
 
-    @Test(timeout = 10000) fun auditedClaimsRemainStrandedExceptWorkTaskHeadersAndReadVerifiedGpsRecovery() {
+    @Test(timeout = 10000) fun interruptedClaimsRecoverAllTypesWithoutChangingOriginalEvidenceOrAttempts() {
         val root = directory()
         try {
             val types = listOf(PendingEntityType.PIN, PendingEntityType.PIN_EDIT,
@@ -124,10 +124,11 @@ class RetentionReviewTest {
             val claims = types.map { type -> requireNotNull(queue.claimReplay(queue.enqueue(type,
                 PendingOpType.UPDATE, """{"vineyard_id":"vineyard-A","authored":"$type"}""", type))) }
             val restarted = PendingWriteRepository(ReviewWriteDisk(File(root, "writes")))
-            for (claim in claims.filter { it.entityType !in setOf(PendingEntityType.WORK_TASK, PendingEntityType.TRIP_GPS) }) {
-                assertEquals(claim, restarted.list().single { it.id == claim.id })
-                assertNull(restarted.claimReplay(claim))
-                assertFalse(restarted.resetFailedRowForRetry(claim.id))
+            for (claim in claims) {
+                val recovered = restarted.list().single { it.id == claim.id }
+                assertEquals(PendingWriteStatus.FAILED, recovered.status)
+                assertEquals(claim.copy(status = recovered.status, lastError = recovered.lastError, updatedAt = recovered.updatedAt), recovered)
+                assertNull("A stale in-flight version is never retry authority", restarted.claimReplay(claim))
             }
             assertEquals(PendingWriteStatus.FAILED, restarted.list().single { it.entityType == PendingEntityType.WORK_TASK }.status)
             val gps = restarted.list().single { it.entityType == PendingEntityType.TRIP_GPS }
@@ -135,15 +136,16 @@ class RetentionReviewTest {
             val originalGps = claims.single { it.id == gps.id }
             assertEquals(originalGps.payloadJson, gps.payloadJson)
             assertEquals(originalGps.attemptCount, gps.attemptCount)
-            assertEquals(2, restarted.resetFailedForRetry())
-            assertEquals(13, restarted.list().count { it.status == PendingWriteStatus.IN_PROGRESS })
+            assertEquals(types.size, restarted.resetFailedForRetry())
+            assertEquals(0, restarted.list().count { it.status == PendingWriteStatus.IN_PROGRESS })
+            assertEquals(types.size, restarted.list().count { it.status == PendingWriteStatus.PENDING })
         } finally { root.deleteRecursively() }
     }
 
-    @Test(timeout = 60000) fun abruptProcessDeathBeforeRequestStrandsRealRoutePayload() = processCase("before-request")
-    @Test(timeout = 60000) fun abruptProcessDeathWhileRequestSuspendsStrandsRealRoutePayload() = processCase("suspended")
-    @Test(timeout = 60000) fun abruptProcessDeathAfterServerAcceptanceStrandsRealRoutePayload() = processCase("server-accepted")
-    @Test(timeout = 60000) fun failedAcknowledgementPersistenceThenProcessDeathStrandsRoutePayload() = processCase("ack-save-failed")
+    @Test(timeout = 60000) fun abruptProcessDeathBeforeRequestRecoversExactRoutePayload() = processCase("before-request")
+    @Test(timeout = 60000) fun abruptProcessDeathWhileRequestSuspendsRecoversExactRoutePayload() = processCase("suspended")
+    @Test(timeout = 60000) fun abruptProcessDeathAfterServerAcceptanceVerifiesWithoutDuplicateMutation() = processCase("server-accepted")
+    @Test(timeout = 60000) fun failedAcknowledgementPersistenceThenProcessDeathVerifiesWithoutDuplicateMutation() = processCase("ack-save-failed")
 
     private fun processCase(point: String) = runBlocking {
         val root = directory()
@@ -157,24 +159,38 @@ class RetentionReviewTest {
                 child.destroyForcibly(); fail("Bounded child termination timed out")
             }
             assertEquals(File(root, "child.log").readText(), 73, child.exitValue())
-            val queue = PendingWriteRepository(ReviewWriteDisk(File(root, "writes")))
+            val disk = ReviewWriteDisk(File(root, "writes"))
+            val interrupted = disk.load().single()
+            assertEquals(PendingWriteStatus.IN_PROGRESS, interrupted.status)
+            val queue = PendingWriteRepository(disk)
             val claim = queue.list().single()
-            assertEquals(PendingWriteStatus.IN_PROGRESS, claim.status)
+            assertEquals(PendingWriteStatus.FAILED, claim.status)
+            assertEquals(interrupted.copy(status = claim.status, updatedAt = claim.updatedAt, lastError = claim.lastError), claim)
             val payload = Json.decodeFromString(TripRowPlanSync.Payload.serializer(), claim.payloadJson)
             assertEquals(listOf(2.5, 1.5), payload.target.sequence)
             assertEquals("trip", payload.tripId)
             assertEquals(0, claim.attemptCount)
-            assertEquals(0, queue.resetFailedForRetry())
+            val accepted = point in listOf("server-accepted", "ack-save-failed")
+            assertEquals(accepted, File(root, "server-accepted").exists())
             var probes = 0
-            TripRowPlanSync(queue, { probes++; reviewTrip() }) { _, _ -> error("Stranded row unexpectedly sent") }
-                .replayAll { error("Stranded row unexpectedly published") }
-            assertEquals(0, probes)
-            assertEquals(claim, queue.list().single())
-            assertEquals(point in listOf("server-accepted", "ack-save-failed"), File(root, "server-accepted").exists())
+            var mutations = 0
+            var publications = 0
+            val targetTrip = reviewTrip().copy(rowSequence = payload.target.sequence)
+            TripRowPlanSync(queue, { probes++; if (accepted) targetTrip else reviewTrip() }) { tripId, plan ->
+                mutations++
+                assertEquals(payload.tripId, tripId)
+                assertEquals(payload.target, plan)
+                targetTrip
+            }.replayAll { result -> assertEquals(targetTrip, result); publications++ }
+            assertEquals(1, probes)
+            assertEquals(if (accepted) 0 else 1, mutations)
+            assertEquals(1, publications)
+            assertTrue(queue.list().isEmpty())
+            assertTrue(disk.load().isEmpty())
         } finally { root.deleteRecursively() }
     }
 
-    @Test(timeout = 10000) fun accountChangeDuringRequestRetainsClaimButRestartCannotRetry() = runBlocking {
+    @Test(timeout = 10000) fun accountChangeDuringRequestRetainsOriginalAndRestartRecoversWithoutStaleAuthority() = runBlocking {
         val root = directory()
         try {
             val queue = PendingWriteRepository(ReviewWriteDisk(File(root, "writes")))
@@ -185,15 +201,23 @@ class RetentionReviewTest {
             var callbacks = 0
             val sync = TripRowPlanSync(queue, { reviewTrip() }) { _, _ -> started.complete(Unit); reply.await() }
             sync.enqueue(reviewTrip(), reviewTrip().copy(rowSequence = listOf(2.5, 1.5)))
+            val frozenA = queue.freezeReplayVersions(queue.list())
             val replay = async { sync.replayAll { callbacks++ } }
             started.await()
+            val suspended = queue.list().single()
             scope = PendingWriteRepository.ReplayScope("account-B", 2)
             reply.complete(reviewTrip().copy(rowSequence = listOf(2.5, 1.5)))
             replay.await()
             assertEquals(0, callbacks)
+            assertEquals(listOf(suspended), queue.list())
             val restarted = PendingWriteRepository(ReviewWriteDisk(File(root, "writes")))
-            assertEquals(PendingWriteStatus.IN_PROGRESS, restarted.list().single().status)
-            assertEquals(0, restarted.resetFailedForRetry())
+            restarted.configureReplayScope { scope }
+            val recovered = restarted.list().single()
+            assertEquals(PendingWriteStatus.FAILED, recovered.status)
+            assertEquals(suspended.copy(status = recovered.status, updatedAt = recovered.updatedAt, lastError = recovered.lastError), recovered)
+            assertNull("Old account permit cannot authorise recovered version", restarted.claimReplay(recovered, frozenA))
+            assertEquals(listOf(recovered), restarted.list())
+            // Restart status is not ownership evidence; production preservation/account admission is still required.
         } finally { root.deleteRecursively() }
     }
 

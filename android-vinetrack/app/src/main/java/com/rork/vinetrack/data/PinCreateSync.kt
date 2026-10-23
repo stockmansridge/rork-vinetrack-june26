@@ -103,7 +103,7 @@ class PinCreateSync private constructor(
                 val input = runCatching {
                     json.decodeFromString(PinRepository.PinInput.serializer(), write.payloadJson)
                 }.getOrNull()
-                if (input == null) {
+                if (input == null || input.id.isNullOrBlank() || input.id != write.clientId || input.vineyardId.isBlank()) {
                     // Unreplayable payload — block it so it can't loop.
                     pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved pin.")
                     continue
@@ -142,7 +142,7 @@ class PinCreateSync private constructor(
                     throw e
                 } catch (e: Exception) {
                     // Still offline / transient network failure — leave for next time.
-                    retryOrBlock(write, e.message ?: "No connection.")
+                    retryOrBlock(write, "Pin sync couldn't complete. Original change retained; retry when connected and device storage is available.")
                 }
             }
         } finally {

@@ -46,6 +46,8 @@ import kotlinx.serialization.json.Json
  */
 fun interface PinDeleteGateway {
     suspend fun softDeletePin(id: String)
+    /** Exact-ID read under current account/RLS, including tombstones. No absence-as-success. */
+    suspend fun readDeleteState(id: String): PinDeleteSync.DeleteState? = null
 }
 
 class PinDeleteSync(
@@ -61,6 +63,48 @@ class PinDeleteSync(
     /** Soft-delete-only replay payload. Just the target pin id — nothing else. */
     @Serializable
     data class Payload(val pinId: String)
+
+    @Serializable
+    data class DeleteState(
+        val id: String,
+        @kotlinx.serialization.SerialName("vineyard_id") val vineyardId: String,
+        @kotlinx.serialization.SerialName("deleted_at") val deletedAt: String? = null,
+    )
+
+    /** Read-only reconciliation for held deletes. The original row is retained as
+     * acknowledged only after exact identity, account, dependencies and durable
+     * preservation agree. No delete transport, unblocking or photo cleanup here. */
+    suspend fun reconcileTombstones(
+        preserve: suspend (PendingWrite, DeleteState) -> Map<String, PendingWrite>?,
+    ) {
+        if (!replayLock.tryLock()) return
+        try {
+            val scope = pending.currentReplayScope()
+            val candidates = pending.list().filter { it.entityType == PendingEntityType.PIN &&
+                it.opType == PendingOpType.DELETE && it.status == PendingWriteStatus.BLOCKED }
+            for (write in candidates) {
+                val payload = runCatching { json.decodeFromString(Payload.serializer(), write.payloadJson) }.getOrNull()
+                    ?: continue
+                if (payload.pinId.isBlank() || payload.pinId != write.clientId || hasUnresolvedDependencies(payload.pinId)) continue
+                try {
+                    val state = pinRepo.readDeleteState(payload.pinId) ?: continue
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.currentReplayScope() != scope || !pending.isCurrent(write) ||
+                        state.id != payload.pinId || state.vineyardId.isBlank() ||
+                        state.deletedAt?.let { runCatching { java.time.Instant.parse(it) }.isSuccess } != true) continue
+                    val versions = preserve(write, state) ?: continue
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.currentReplayScope() != scope || hasUnresolvedDependencies(payload.pinId)) continue
+                    pending.acknowledgePreservedIfCurrent(write, versions,
+                        "Verified server tombstone. Original delete retained; no server record or photo was changed.")
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // Read/preservation failure does not mutate the held row or block independent deletes.
+                }
+            }
+        } finally { replayLock.unlock() }
+    }
 
     /** Exact retained-photo revision covered by this replay pass's durable snapshot. */
     data class RetainedPhotoPermit(val id: String, val revision: String)
@@ -124,7 +168,7 @@ class PinDeleteSync(
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
-                if (payload == null) {
+                if (payload == null || payload.pinId.isBlank() || payload.pinId != write.clientId) {
                     pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved pin delete.")
                     continue
                 }
