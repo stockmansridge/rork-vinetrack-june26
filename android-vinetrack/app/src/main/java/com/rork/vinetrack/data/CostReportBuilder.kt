@@ -11,10 +11,9 @@ import com.rork.vinetrack.data.model.VineyardMachine
 
 /**
  * Pure, read-only Cost Reports aggregator mirroring the iOS `CostReportsView`
- * data model. Where iOS reads pre-computed `tripCostAllocations` synced from the
- * backend, Android has no allocation table, so this rebuilds equivalent rows on
- * the fly from completed trips using the existing [TripCostEstimator] (the same
- * pure costing used on Trip detail and exports).
+ * data model. Saved allocations are authoritative when present. The older
+ * explicitly estimated path is retained only for Trips without saved allocations;
+ * it never overwrites a saved financial slice.
  *
  * One [CostAllocationRow] is produced per (trip × variety): a trip's cost and
  * treated area are split across its block's variety allocations by percentage,
@@ -67,6 +66,7 @@ object CostReportBuilder {
         seasonZone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
     ): List<CostAllocationRow> {
         val rows = mutableListOf<CostAllocationRow>()
+        val authoritative = com.rork.vinetrack.data.model.CostingReadAuthority.allocations(savedAllocations, trips).groupBy { it.tripId }
 
         for (trip in trips) {
             if (trip.deletedAt != null) continue
@@ -79,6 +79,28 @@ object CostReportBuilder {
             // the trip date + the vineyard's shared season-start setting, NOT
             // the calendar year. July 2026 work under a 1 July start → Vintage 2027.
             val season = VintageResolver.vintageYearForEpochMs(start, seasonStartMonth, seasonStartDay, seasonZone)
+
+            val stored = authoritative[trip.id].orEmpty()
+            if (stored.isNotEmpty()) {
+                rows += stored.map { allocation ->
+                    CostAllocationRow(
+                        tripId = trip.id, seasonYear = allocation.seasonYear ?: season,
+                        paddockId = allocation.paddockId,
+                        paddockName = allocation.paddockName ?: "Unassigned block",
+                        variety = allocation.variety?.takeIf { it.isNotBlank() } ?: UNASSIGNED_VARIETY,
+                        varietyFraction = allocation.varietyPercentage ?: 1.0,
+                        tripFunction = allocation.tripFunction ?: trip.tripFunction,
+                        areaHa = allocation.allocationAreaHa ?: 0.0,
+                        labourCost = allocation.labourCost?.toDouble() ?: 0.0,
+                        fuelCost = allocation.fuelCostRaw?.toDoubleOrNull() ?: 0.0,
+                        chemicalCost = allocation.chemicalCostRaw?.toDoubleOrNull() ?: 0.0,
+                        totalCost = allocation.totalCost?.toDouble() ?: 0.0,
+                        tripDateEpochMs = start,
+                        warnings = if (allocation.totalCost == null || allocation.costingStatus in listOf("partial", "unavailable")) listOf("Saved Trip costing incomplete") else emptyList(),
+                    )
+                }
+                continue
+            }
 
             val sprayRecord = sprayRecords.firstOrNull { it.tripId == trip.id && it.deletedAt == null }
             val est = TripCostEstimator.estimate(
@@ -121,7 +143,7 @@ object CostReportBuilder {
                         chemicalCost = chemical,
                         totalCost = total,
                         tripDateEpochMs = start,
-                        warnings = est.warnings,
+                        warnings = est.warnings + "Estimated Trip cost: no saved allocation",
                     )
                 )
             } else {
@@ -150,7 +172,7 @@ object CostReportBuilder {
                             chemicalCost = chemical * frac,
                             totalCost = total * frac,
                             tripDateEpochMs = start,
-                            warnings = est.warnings,
+                            warnings = est.warnings + "Estimated Trip cost: no saved allocation",
                         )
                     )
                 }

@@ -1,0 +1,22 @@
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    def focusedOnly = gradle.startParameter.projectProperties.containsKey('costingFocusedOnly')
+    app.tasks.named('compileDebugUnitTestKotlin').configure {
+        setSource(app.fileTree('src/test/java') {
+            include '**/MobileCostingParityTest.kt'
+            if (!focusedOnly) {
+                include '**/WorkTaskCostRollupTest.kt', '**/WorkTaskLabourCostingTest.kt'
+                include '**/WorkTaskMachineCostingTest.kt', '**/PieceRateCostingTest.kt'
+                include '**/EffectiveLabourCostTest.kt', '**/PruningWorkTaskCostingCreateTest.kt'
+                include '**/WorkTaskCompletionTest.kt', '**/WorkTaskMaterialCostsTest.kt'
+                include '**/WorkerTypeIntegrityTest.kt', '**/PruningActivityWorkTaskLinkTest.kt'
+                include '**/PruningActivityLabourLineTest.kt', '**/PruningWorkTaskRepairTest.kt'
+            }
+        })
+    }
+    app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        testLogging { events 'passed', 'failed', 'skipped' }
+    }
+}

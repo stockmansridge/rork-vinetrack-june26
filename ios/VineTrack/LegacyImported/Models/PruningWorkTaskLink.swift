@@ -164,13 +164,12 @@ nonisolated enum PruningWorkTaskLink {
     /// total, else its own rated labour lines. Never the SQL 190 read-through,
     /// so summing tasks can never count the same legacy rows twice.
     static func canonicalCost(_ task: WorkTask, lines: [WorkTaskLabourLine]) -> Double? {
-        if task.isPieceRate { return task.pieceRateCost }
-        return WorkTaskLabourCosting.totalCost(lines)
+        PieceRateCosting.effectiveLabourCost(task: task, labourLines: lines)
     }
 
     /// The task's own labour-line person-hours; nil when it owns no hours.
     static func canonicalHours(_ task: WorkTask, lines: [WorkTaskLabourLine]) -> Double? {
-        let hours = WorkTaskLabourCosting.totalPersonHours(lines)
+        let hours = PieceRateCosting.resolve(task: task, labourLines: lines).hours
         return hours > 0 ? hours : nil
     }
 

@@ -1018,8 +1018,8 @@ private fun WorkTaskDetailView(
     }
     val materialTotal = costRollup.materialCost
     val overallTotal = costRollup.totalCost
-    val areaHa = remember(state.paddocks, task.paddockId) {
-        task.paddockId?.let { pid -> state.paddocks.firstOrNull { it.id == pid }?.areaHectares }?.takeIf { it > 0 }
+    val areaHa = remember(state.paddocks, state.workTaskPaddocks, task) {
+        com.rork.vinetrack.data.model.CostingReadAuthority.taskArea(task, state.workTaskPaddocks, state.paddocks)
     }
     val taskWorkDate = remember(task.date) { task.date ?: Instant.now().toString() }
 

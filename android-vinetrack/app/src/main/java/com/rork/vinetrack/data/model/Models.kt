@@ -225,6 +225,7 @@ data class Paddock(
     val id: String,
     @SerialName("vineyard_id") val vineyardId: String,
     val name: String,
+    @SerialName("area_ha") val savedAreaHa: Double? = null,
     @SerialName("row_direction") val rowDirection: Double? = null,
     @SerialName("row_width") val rowWidth: Double? = null,
     @SerialName("row_offset") val rowOffset: Double? = null,
@@ -1108,6 +1109,15 @@ fun machineTypeLabel(raw: String?): String = when (raw) {
  * default list. Android writes only the columns it edits, leaving the
  * iOS-managed `resources` JSONB and Phase-16 costing fields untouched.
  */
+/** Historical inline crew snapshot. Read only; metadata write DTOs remain unchanged. */
+@Serializable
+data class WorkTaskResource(
+    val id: String? = null,
+    val workerTypeName: String? = null,
+    val hourlyRate: Double? = null,
+    val count: Int = 1,
+)
+
 @Serializable
 data class WorkTask(
     val id: String,
@@ -1117,6 +1127,8 @@ data class WorkTask(
     val date: String? = null,
     @SerialName("task_type") val taskType: String? = null,
     @SerialName("duration_hours") val durationHours: Double = 0.0,
+    val resources: List<WorkTaskResource>? = null,
+    @SerialName("area_ha") val areaHa: Double? = null,
     val notes: String? = null,
     val status: String? = null,
     @SerialName("is_archived") val isArchived: Boolean = false,
@@ -1177,6 +1189,13 @@ data class WorkTask(
      */
     val pieceRateCost: Double?
         get() = if (!isPieceRate) null else PieceRateCosting.cost(pieceVineCount, pieceRatePerVine)
+
+    val legacyLabourCost: Double?
+        get() {
+            val rated = resources.orEmpty().filter { it.hourlyRate?.isFinite() == true }
+            if (rated.isEmpty() || !durationHours.isFinite()) return null
+            return rated.sumOf { it.hourlyRate!! * it.count * durationHours }
+        }
 
     /** Completion state — mirrors the iOS `isFinalized` convention. */
     val isComplete: Boolean get() = isFinalized

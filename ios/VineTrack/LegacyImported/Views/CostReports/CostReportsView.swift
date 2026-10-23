@@ -29,7 +29,8 @@ struct CostReportsView: View {
 
     private var allRows: [TripCostAllocation] {
         guard let vid = vineyardId else { return [] }
-        let saved = store.tripCostAllocations.filter { $0.vineyardId == vid }
+        let saved = CostingReadAuthority.allocations(store.tripCostAllocations, trips: store.trips)
+            .filter { $0.vineyardId == vid }
         let groups = Dictionary(grouping: saved.filter { $0.allocationBasis != .labourSnapshot }, by: \.tripId)
         var costs: [UUID: TripCostService.ChemicalBreakdown] = [:]
         for (tripId, rows) in groups {
@@ -42,19 +43,21 @@ struct CostReportsView: View {
                 chemicalPrices: chemicalPrices[season])
             costs[tripId] = result.chemical
         }
-        // Reporting-only chemical overlay; saved labour/fuel and historical records
-        // are never rewritten when a later purchase changes the seasonal average.
+        // An estimate may explain an unresolved row, never replace ANY saved
+        // total or saved chemical charge with today's seasonal/catalogue prices.
         return saved.map { original in
-            guard original.allocationBasis != .labourSnapshot, let cost = costs[original.tripId],
+            guard original.totalCost == nil, original.chemicalCost == nil,
+                  original.allocationBasis != .labourSnapshot, let cost = costs[original.tripId],
                   let siblings = groups[original.tripId] else { return original }
             var row = original
             let totalArea = siblings.reduce(0.0) { $0 + ($1.allocationAreaHa ?? 0) }
             let share = totalArea > 0 ? (row.allocationAreaHa ?? 0) / totalArea : 1 / Double(siblings.count)
             row.chemicalCost = cost.cost * share
-            row.totalCost = (original.totalCost ?? 0) - (original.chemicalCost ?? 0) + (row.chemicalCost ?? 0)
-            row.costPerHa = (row.allocationAreaHa ?? 0) > 0 ? (row.totalCost ?? 0) / (row.allocationAreaHa ?? 1) : nil
-            row.costPerTonne = (row.yieldTonnes ?? 0) > 0 ? (row.totalCost ?? 0) / (row.yieldTonnes ?? 1) : nil
-            if let warning = cost.warning { row.warnings.append(warning); row.costingStatus = .partial }
+            row.totalCost = original.totalCost.map { $0 - (original.chemicalCost ?? 0) + (row.chemicalCost ?? 0) }
+            row.costPerHa = nil
+            row.costPerTonne = nil
+            row.costingStatus = .partial
+            if let warning = cost.warning { row.warnings.append(warning) }
             return row
         }
     }
@@ -184,11 +187,15 @@ struct CostReportsView: View {
         let totalCost = rows.reduce(0.0) { $0 + ($1.totalCost ?? 0) }
         let totalArea = rows.reduce(0.0) { $0 + ($1.allocationAreaHa ?? 0) }
         let totalYield = rows.reduce(0.0) { $0 + ($1.yieldTonnes ?? 0) }
-        let costPerHa: Double? = totalArea > 0 && totalCost > 0 ? totalCost / totalArea : nil
-        let costPerTonne: Double? = totalYield > 0 && totalCost > 0 ? totalCost / totalYield : nil
+        let physical = CostingReadAuthority.physicalArea(store.paddocks.filter {
+            $0.vineyardId == vineyardId && (selectedPaddockId == nil || $0.id == selectedPaddockId)
+        })
+        let complete = rows.allSatisfy { $0.totalCost != nil && $0.costingStatus != .partial && $0.costingStatus != .unavailable }
+        let costPerHa = complete ? physical.map { totalCost / $0 } : nil
+        let costPerTonne: Double? = complete && totalYield > 0 && totalCost > 0 ? totalCost / totalYield : nil
 
         Section {
-            summaryRow("Total estimated cost", value: fmt.formatCurrency(totalCost))
+            summaryRow("Trip allocation cost", value: fmt.formatCurrency(totalCost))
             HStack {
                 Text("Treated area")
                 Button {
@@ -215,7 +222,7 @@ struct CostReportsView: View {
         } header: {
             Text("Vintage summary")
         } footer: {
-            Text("Treated area is the accumulated mapped block area from the jobs/trips included in this report. If the same block is treated multiple times, its area contributes once per job.")
+            Text("This report covers Trip allocations only, not the full Work Task total. Cost per area uses physical vineyard area once (the selected block when filtered); treated area accumulates once per operation. Missing physical area or incomplete costs leave the ratio unavailable.")
         }
     }
 
@@ -255,7 +262,7 @@ struct CostReportsView: View {
                     NavigationLink {
                         CostBreakdownDetailView(rows: triple.2, title: "\(triple.0.paddockName) · \(triple.0.variety)")
                     } label: {
-                        breakdownRow(key: triple.0, agg: triple.1, tripCount: triple.2.count)
+                        breakdownRow(key: triple.0, agg: triple.1, tripCount: CostingReadAuthority.distinctTrips(triple.2), complete: triple.2.allSatisfy { $0.totalCost != nil && $0.costingStatus != .partial && $0.costingStatus != .unavailable })
                     }
                 }
             }
@@ -321,7 +328,7 @@ struct CostReportsView: View {
     }
 
     @ViewBuilder
-    private func breakdownRow(key: BlockVarietyKey, agg: BlockVarietyAggregate, tripCount: Int) -> some View {
+    private func breakdownRow(key: BlockVarietyKey, agg: BlockVarietyAggregate, tripCount: Int, complete: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text("Vintage \(String(key.seasonYear)) · \(key.paddockName)")
@@ -353,8 +360,9 @@ struct CostReportsView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             HStack(spacing: 10) {
-                if agg.area > 0 {
-                    Text("\(fmt.formatCurrency(fmt.perAreaValue(perHectare: agg.total / agg.area)))/\(fmt.areaUnitAbbreviation)")
+                if complete, let block = store.paddocks.first(where: { $0.id == key.paddockId }),
+                   let physical = CostingReadAuthority.physicalArea(block) {
+                    Text("\(fmt.formatCurrency(fmt.perAreaValue(perHectare: agg.total / physical)))/\(fmt.areaUnitAbbreviation)")
                 }
                 if agg.yieldT > 0 {
                     Text("\(fmt.formatCurrency(agg.total / agg.yieldT))/t")
@@ -674,7 +682,7 @@ struct TreatedAreaInfoSheet: View {
                         .foregroundStyle(.secondary)
                 }
                 Section("Why this matters") {
-                    Label("Cost per unit of area = total estimated cost ÷ treated area.", systemImage: "divide.circle")
+                    Label("Cost per unit of area = Trip allocation cost ÷ physical vineyard area (or the selected block).", systemImage: "divide.circle")
                         .font(.footnote)
                     Label("Treated area is not the same as the vineyard's total area — it reflects work done.", systemImage: "square.grid.2x2")
                         .font(.footnote)

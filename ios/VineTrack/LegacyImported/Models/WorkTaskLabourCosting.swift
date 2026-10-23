@@ -56,12 +56,14 @@ nonisolated enum WorkTaskLabourCosting {
 
     /// Person-hours of one stored line, preferring the DB-generated value.
     static func personHours(_ line: WorkTaskLabourLine) -> Double {
-        personHours(workerCount: line.workerCount, hoursPerWorker: line.hoursPerWorker)
+        if let stored = line.savedTotalHours, stored.isFinite, stored >= 0 { return stored }
+        return personHours(workerCount: line.workerCount, hoursPerWorker: line.hoursPerWorker)
     }
 
     /// Cost of one stored line. Nil when no rate exists — an absent rate is
     /// "not specified", never `$0.00`.
     static func lineCost(_ line: WorkTaskLabourLine) -> Double? {
+        if let stored = line.savedTotalCost, stored.isFinite { return stored }
         guard let rate = line.hourlyRate, rate.isFinite else { return nil }
         return personHours(line) * max(rate, 0)
     }

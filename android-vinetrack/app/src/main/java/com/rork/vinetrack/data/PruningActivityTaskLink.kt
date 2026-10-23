@@ -191,15 +191,12 @@ object PruningActivityTaskLink {
      * so summing tasks can never count the same legacy rows twice.
      */
     fun canonicalCost(task: WorkTask, lines: List<WorkTaskLabourLine>): Double? {
-        val live = lines.filter { it.deletedAt == null }
-        if (task.isPieceRate) return PieceRateCosting.resolve(task, live).cost
-        return WorkTaskLabourCosting.totalCost(live)
+        return PieceRateCosting.effectiveLabourCost(task, lines)
     }
 
     /** The task's own labour-line person-hours; null when it owns none. */
     fun canonicalHours(task: WorkTask, lines: List<WorkTaskLabourLine>): Double? =
-        WorkTaskLabourCosting.totalPersonHours(lines.filter { it.deletedAt == null })
-            .takeIf { it > 0 }
+        PieceRateCosting.resolve(task, lines).hours.takeIf { it > 0 }
 
     /** Σ across the linked tasks — THE derived activity totals (sql/200). */
     fun aggregate(

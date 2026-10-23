@@ -1,5 +1,125 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Mobile costing correctness / Portal parity — 23 October 2026
+
+**Costing-only correction checkpoint; not a release or handset acceptance.** This approval supersedes the earlier application-source freeze only for the costing/area readers on both platforms. Historical sections below retain their original identities and results; their old Android tree, 116-test gate and artifact identities do NOT describe the changed costing source.
+
+### A. Root causes
+
+- **iOS:** remote generated labour totals were discarded during mapping and recalculated from line inputs; some task-aware labour/pruning readers bypassed historical inline resources. Fuel-only manual machinery was incorrectly incomplete unless both fuel and machine-charge totals existed. The editor independently summed allocations and refreshed retained area snapshots; reports used cumulative treated hectares as a denominator, counted slice rows as Trips, and could overlay current estimated chemical prices onto saved totals. Rollup Double addition exposed `50 + 20.79 = 70.78999999999999` before Decimal conversion. Existing piece-rate tests also exposed binary half-cent rounding and locale-dependent output in explicitly Australian currency labels.
+- **Android:** the Work Task reader omitted historical resources and parent hectares, and effective labour filtering could discard a saved line total with no hourly rate. Task detail used the primary block rather than full linked area. Fuel-only completeness was incorrectly rejected; saved allocation/report metadata and parent/marker boundaries were not consistently applied. The existing report re-estimated Trips even when saved allocations existed and divided by repeated treated area. The half-cent regression was separately reproduced at `9.995 -> 9.99` before its Decimal correction.
+- **Separate Android regression findings:** five existing completion tests fail in the broader selection. Source inspection confirms date-only parsing takes the first ten timestamp characters without applying the supplied zone. Final XML shows three calendar-day assertion failures, loss of completedBy/completedAt in a restart-overlay comparison, and an empty updates list where the old duplicate-create test expects a PATCH (accepted conflict-preserving replay no longer performs that PATCH). These are observed boundaries, not a fully diagnosed completion repair. The completion/replay files and tests are unchanged from the starting baseline. They were NOT executed against a rebuilt baseline in this pass, so unchanged source is not labelled a failing-before experiment for these five cases. No completion/sync rewrite or weakened assertion was made to obtain a green gate.
+
+### B. Exact file inventory and validated source identity
+
+Starting managed HEAD: `c0e461ec986e7ee105ad39be6e1e4284fd115d12`. Final managed save SHA is assigned after the turn; do not substitute the starting HEAD for it. The 23 changed application/test/runner paths, sorted and hashed as `path + NUL + lowercase SHA-256(file bytes) + NUL`, have manifest SHA-256 **`030e4b3c740a149d64b6d0297128e10943f4da094a3d7a48291783fbc4f2f506`**. This includes the five new files and does not depend on Git's staging state.
+
+Android production:
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/CostReportBuilder.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PruningActivityTaskLink.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/CostingReadAuthority.kt` (new)
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/Models.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/PieceRateCosting.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/WorkTaskCostRollup.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CostReportsScreen.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt`
+
+Android validation:
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/MobileCostingParityTest.kt` (new)
+- `android-vinetrack/costing-tests.init.gradle` (new)
+
+iOS production:
+- `ios/VineTrack/Backend/Models/BackendOperations.swift`
+- `ios/VineTrack/Backend/Models/BackendPaddock.swift`
+- `ios/VineTrack/LegacyImported/Models/CostingReadAuthority.swift` (new)
+- `ios/VineTrack/LegacyImported/Models/Paddock.swift`
+- `ios/VineTrack/LegacyImported/Models/PieceRateCosting.swift`
+- `ios/VineTrack/LegacyImported/Models/PruningWorkTaskLink.swift`
+- `ios/VineTrack/LegacyImported/Models/TripCostAllocation.swift`
+- `ios/VineTrack/LegacyImported/Models/WorkTaskCostRollup.swift`
+- `ios/VineTrack/LegacyImported/Models/WorkTaskLabourCosting.swift`
+- `ios/VineTrack/LegacyImported/Models/WorkTaskLabourLine.swift`
+- `ios/VineTrack/LegacyImported/Views/CostReports/CostReportsView.swift`
+- `ios/VineTrack/LegacyImported/Views/Tasks/AddEditWorkTaskView.swift`
+
+iOS validation:
+- `ios/VineTrackTests/MobileCostingParityTests.swift` (new)
+
+Existing acceptance records updated:
+- `.rork/plans/android-live-trip-safe-automatic-complet_1791964262830.plan.md`
+- `docs/reviews/final-mobile-acceptance-legacy-save-recovery-2026-10-15.md`
+
+Managed history changes already present at entry were left to Rork: `.rork/history/main/00mvhzhznt000_w90k30g3ec68z9ovelnt6_assistant.json`, `.rork/history/main/00mvjc67kc000_pr7rz4q2pbrcrxawq8ym5_assistant.json`, `.rork/history/main/00mvkak1vy001_2kf14qm9r9jttryan5cji_assistant.json`. No agent edits, deletion, exclusion or reset of history or linked repositories.
+
+### C. Final costing authority
+
+**Work Task total = effective labour + saved manual machine charge/fuel + saved linked GPS allocations + frozen materials, each once.** Material visibility continues to use the existing explicit gate.
+
+1. Piece-rate task: saved vine quantity × agreed saved rate, rounded using decimal half-away-from-zero cents; hourly/inline labour never added.
+2. Other task: canonical saved labour lines; saved generated hours/cost win, including a cost without a rate. If no saved total exists, use that line's stored inputs, never today's catalogue rate. A live unrated canonical line blocks the inline-resource fallback.
+3. Only with no live canonical lines: historical inline resources × saved duration. Task maps, represented pruning helpers and the active single-activity labour reader route through that task-aware resolution. Activity-owned and represented task labour are not summed together; existing activity ownership rules remain otherwise unchanged.
+4. Manual machine charge and fuel are independent saved components. Missing machine charge is optional only without a configured hourly charge; missing fuel cost is optional only without positive fuel quantity. A configured unresolved component or a line without either saved amount remains incomplete.
+5. Linked allocation IDs are deduplicated, scoped through a live same-vineyard parent, and the saved Trip labour marker is reconciled into slices rather than added twice. No allocation evidence is rewritten. Missing/partial/unavailable saved totals keep completeness false.
+6. Frozen material costing and write DTOs are unchanged; current material library prices do not reprice task lines. iOS saved labour totals survive local encode/decode and unchanged assignments; actual count/hour/rate edits invalidate only the corresponding local derived snapshot.
+
+Existing Cost Reports stay **Trip allocation** reports, not the full Portal/Work Task total. Both display that scope. Android prefers saved allocations; its pre-existing estimator fallback remains only for Trips with no saved live allocation and is explicitly labelled `Estimated Trip cost: no saved allocation`. Such estimated/warned rows do not produce an authoritative area/tonne ratio. iOS estimates may explain unresolved rows, but cannot replace a saved total or saved chemical charge; NULL saved totals remain NULL/incomplete. No new reports, tabs, charts or previously absent Cost/ha UI were added.
+
+### D. Area authority
+
+- Positive finite saved parent task hectares first; otherwise the complete set of saved linked-block hectares; otherwise the physical area of ALL linked blocks, optional saved physical hectares first and existing mapped polygon area second. A legacy task with no links may use its sole primary block. An incomplete linked set never falls back to only its primary block or a partial sum.
+- Physical vineyard area is the unique live block total once, regardless of repeat operations. A selected block uses that block's physical area. Cumulative Treated Area remains a separate operation-based metric; it is not the season Cost/ha denominator.
+- Missing/invalid physical hectares or incomplete costs suppress the ratio. The iOS editor does not produce a second task-wide block ratio where saved parent and link area sums disagree; it preserves both evidence values rather than inventing replacement hectares.
+- Geometry uses the existing identical equirectangular/shoelace formula on both platforms, also documented in the existing read-only `sql/095_admin_hectares_under_management.sql` helper. No SQL was changed or executed. Existing schema has no required stored paddock-area column: optional `area_ha` decoding is tolerant of its absence; normal mapped blocks fall back to their existing geometry.
+- No geometry fallback is written back as historical task/link area. Retained link hectares, including NULL, are not refreshed on editor save; the saved parent area is not silently backfilled. Explicit new block selection still uses the existing planning workflow, not a historical data repair.
+
+### E. Stockmans Ridge Vintage 2027 reconciliation — owner-supplied fixture
+
+These are source/unit fixtures, NOT a production query or a reconstructed set of 28 task rows.
+
+- Supplied population: **28 Work Tasks**, **543.50 labour hours**, labour **$18,937.00**, machine/fuel **$20.79**, total **$18,957.79**.
+- Physical vineyard hectares **6.14908359375**, giving approximately **$3,083.03/ha**. Supplied cumulative Treated Area approximately **37.27ha** is distinct and never substituted as the denominator.
+- Function reconciliation: Pruning **$10,678** + Shoot thinning **$4,585** + Removing Guards **$3,465** + Wire Lifting **$133** + Mulching **$96.79** = **$18,957.79**. The fixture asserts function labour including Mulching labour76 sums to18,937, then adds saved fuel20.79 once.
+- Shoot thinning: **5.656098046875ha -> $810.63/ha**, not primary Pinot1.804291796875ha/~$2,541.16/ha.
+- Removing Guards: **1.32124375ha -> $2,622.53/ha**, not primary Sauvignon Blanc0.414428125ha/~$8,360.92/ha.
+- Mulching: **6.14908359375ha -> $15.74/ha**, not primary Cabernet Franc0.491110546875ha/~$197.08/ha. Saved2h machinery,13.6L/$20.79 fuel, NULL hourly machine rate/NULL machine total, plus$76 labour yields **$96.79 and complete**.
+- Shiraz physical area **1.075619921875ha**: supplied28/29August$700 with NULL parent/link area resolves at read time to approximately **$650.79/ha**; supplied30August saved same area/$315 gives **$292.85/ha**. No NULL hectare evidence is backfilled.
+
+### F. Legacy compatibility
+
+- Equivalent suites assert **10h ×14 people ×$36 = $5,040**, and140person-hours, only when canonical lines are absent; canonical unrated lines do not unlock legacy substitution. Piece-rate snapshots exclude both canonical hourly and inline costs. Decode/local round-trip and saved-hour/saved-cost precedence are covered.
+- Owner estimate of30 active legacy-only tasks/$44,218 remains **unverified production population**, not an executed database reconciliation. No legacy migration, historical rate replacement, task rewrite or catalogue lookup was performed.
+- All new persistence/read fields are optional/defaulted. Work Task, Paddock, labour and allocation remote write contracts remain unchanged. No schema/RLS/permissions/authentication change, operational Trip/Spray/sync architecture change, pin/Program change, Target Nutrient work, dependency/signing/version edit or data reset.
+
+### G. Deleted Trips
+
+- Supplied retained allocations for `1423c592-a4ee-4b9e-ab58-30edc7101b8d` (**$0.43**) and `a373b464-4b5f-4e45-82d1-7d8e6213aad4` (**$0.39**) remain immutable fixture inputs; neither contributes to active totals or Trip counts without a live same-vineyard parent. Allocation tombstones are also excluded. Trip count is distinct parent IDs, not allocation row count.
+- Android covers explicit deleted and missing parents. iOS has no local Trip.deletedAt property: existing sync consumes tombstones/removes local Trips, so missing-parent exclusion is used. Existing tombstone/sync storage behaviour is deliberately unchanged; the pure reader does not delete inputs. This is not a claim that the existing sync retains tombstoned rows locally or that the two production rows were queried/repaired.
+
+### H. Native regression and build evidence
+
+**Failure history retained, not replaced by a final green costing label:**
+
+- Minimal pre-fix fuel-only regression: iOS **0 passed /1 failed** (`mulchingFuelOnlyIsComplete()`), correct96.79 but false completeness; Android **1 executed /0 passed /1 failed** for its twin. An initial foreground Android command timed out before tests; the subsequent background run obtained the genuine assertion failure.
+- iOS first complete new-suite compile attempt: **0 executed**, missing material unit, ambiguous test expression and helper isolation diagnostic corrected. Next **19 passed /1 failed** at exact70.79 versus70.78999999999999; correction converts each saved component to Decimal before summing. Next focused new suite **20 passed**,51s. Android focused new suite **20 passed /0 failed /0 errors /0 skipped**, build4m38s.
+- Android first broader9-suite run: **171 executed /166 passed /5 failed /0 errors /0 skipped**,28s. All152 non-completion tests passed; completion14/19. After final-review reader corrections and adding existing Trip/pruning suites: **224 executed /219 passed /5 failed /0 errors /0 skipped**,3m45s, same completion failures. These runs precede the final decimal rounding correction; they are not reused as final-source validation.
+- iOS broader15-selector run: **213 executed /208 passed /5 failed**. Four failures were locale-dependent Australian currency text; one was existing `9.995` half-cent rounding. Corrected the costing helper (no test expectation changes): explicit Australian format plus Decimal arithmetic. Narrow rerun of those five cases plus the equivalent piece-rate parity case: **6 passed**,71s. Final same15-selector selection: **213 passed /0 reported failures**,27s. Successful runner reports aggregate counts only, not per-suite discovery/skips.
+- Final iOS selection: `VineTrackTests/` MobileCostingParityTests, WorkTaskLabourCostingTests, WorkTaskMachineCostingTests, WorkTaskMaterialCostsTests, PieceRateCostingTests, EffectiveLabourCostTests, PruningWorkTaskCostingCreateTests, WorkTaskCompletionTests, PruningWorkTaskRepairTests, PruningActivityLabourLineTests, PruningActivityWorkTaskLinkTests, PruningActivityReportTests; `VineTrackTripTests/` WorkerTypeDecodingTests, TripLabourCostContractTests, WorkTaskLabourCostingTests. Final new parity suite remains20 cases within this selection.
+- Android half-cent failing-before: focused `MobileCostingParityTest.pieceRateExcludesHourlyAndLegacy` **1 executed /0 passed /1 failed**, expected10.0 versus9.99 at9.995. Corrected both money rounding and vine-quantity multiplication using decimal HALF_UP, with equivalent positive/negative half-cent and3×0.335 assertions.
+- **Final Android source run: 13 suites,224 executed /219 passed /5 failed /0 errors /0 skipped; Gradle3m43s, exit1.** New MobileCostingParityTest is **20/20**, including final decimal assertions; all205 non-completion cases pass. Completion remains14/19. Final XML suite counts (all zero failures except completion): EffectiveLabourCostTest20; MobileCostingParityTest20; PieceRateCostingTest19; PruningActivityLabourLineTest19; PruningActivityWorkTaskLinkTest15; PruningWorkTaskCostingCreateTest17; PruningWorkTaskRepairTest9; WorkTaskCompletionTest19 (5 failed); WorkTaskCostRollupTest6; WorkTaskLabourCostingTest24; WorkTaskMachineCostingTest18; WorkerTypeIntegrityTest10; material.WorkTaskMaterialCostsTest28. All are under com.rork.vinetrack.data. Evidence: /tmp/vinetrack-costing-final-v2.log and final TEST-*.xml in android-vinetrack/app/build/test-results/testDebugUnitTest/; this is source/unit evidence, not a handset log. Final completion day assertions are expected2026-10-05/actual2026-10-04, expected2026-09-30/actual2026-09-29, and expected2026-10-04/actual2026-10-05; restart comparison loses completedBy/completedAt; duplicate replay observes an empty updates list. Earlier failure details are historical, not substituted for this run.
+- Final Android `runChecks`: **PASS, build succeeded** after the final test process exited. Two unrelated existing asset-address advisories remain unchanged. A passing build does not turn the five-failure broader unit gate green or establish handset launch.
+- Final iOS `runChecks`: **PASS, simulator build**. Device build is unverified. Two pre-existing asset-address advisories were left unchanged as unrelated; they do not block checks. No release/export/upload or physical launch was performed.
+
+Five Android completion failures retained explicitly: `Sydney Work Date selection round trips the UTC picker calendar day`; `new local midnight Work Date resolves through vineyard timezone`; `customer A B C keeps work date and separate audit`; `offline update survives restart overlay full refresh and replay with original audit`; `duplicate pending create patches folded completion before acknowledgement`. Do not label the broader Android regression gate green.
+
+Validation commands: iOS managed `swiftTest` with the selectors above; Android `./gradlew :app:testDebugUnitTest --init-script costing-tests.init.gradle --console=plain '-Dorg.gradle.jvmargs=-Xmx4096m -XX:+UseParallelGC'`. `-PcostingFocusedOnly` narrows compilation to the20 new cases; `--tests` narrowed the actual failing-before test. Both use existing native test infrastructure; no dependencies or test targets were added. Android logs/results are local temporary build evidence, not runtime handset logs.
+
+### I. Preservation and remaining acceptance
+
+- Source checks: scoped `git diff HEAD --check` PASS; no changes to SQL/Supabase, app project/Gradle/version/signing/dependency configuration or linked-reference state. Versions remain **3.1.8, iOS139, Android12**. Existing chemical calculators, pin evidence, Programs, sync concurrency/storage, help/presentation changes and Target Nutrient source are preserved apart from the expressly scoped existing costing report reader changes listed above.
+- Unit/source acceptance is not production-data reconciliation, mobile screen acceptance or device performance. Reopen representative existing records on iPhone and Android; compare full task totals, saved/legacy labour, multi-block/NULL hectares, fuel-only completeness, frozen materials, marker/slices, distinct Trips, deleted-parent exclusions and Trip-report scope. Confirm unchanged evidence after reopening/sync; do not save to manufacture a match.
+- The earlier owner report that Android will not open remains **unresolved**. No connected handset or runtime logs were available, no actual crash/ANR was captured or diagnosed, and no simulator operation/handset reset/install was used for this costing work. Passing compilation/unit tests do not establish launch or responsiveness. Obtain the affected device's sanitised fatal/ANR evidence and compatible owner-controlled in-place delivery separately.
+- No App Store/TestFlight/Play release, signed delivery candidate, backend deployment, production query, upload, distribution, migration, reinstall, storage clear or queue reset was performed or claimed. Preserve the historical candidate/signing blockers and physical acceptance checklist below.
+
 ## Android controlled-testing handoff — 23 October 2026
 
 **Accepted source VERIFIED; owner-upload candidate NOT READY (`blocked_missing_typed_operation` / signing evidence unavailable).** The latest approval permits Android build-only test-candidate preparation, not agent upload, distribution or general release. Application logic, versions, dependencies and signing configuration remain frozen. No backend, SQL/Supabase, Portal or iOS changes; Target Nutrient remains CLOSED.

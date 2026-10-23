@@ -9,9 +9,12 @@ nonisolated struct WorkTaskLabourLine: Codable, Identifiable, Sendable, Hashable
     var workDate: Date
     var operatorCategoryId: UUID?
     var workerType: String
-    var workerCount: Int
-    var hoursPerWorker: Double
-    var hourlyRate: Double?
+    var workerCount: Int { didSet { if workerCount != oldValue { savedTotalHours = nil; savedTotalCost = nil } } }
+    var hoursPerWorker: Double { didSet { if hoursPerWorker != oldValue { savedTotalHours = nil; savedTotalCost = nil } } }
+    var hourlyRate: Double? { didSet { if hourlyRate != oldValue { savedTotalCost = nil } } }
+    /// Read-only historical server totals; never sent in labour write payloads.
+    var savedTotalHours: Double?
+    var savedTotalCost: Double?
     var notes: String
 
     init(
@@ -24,7 +27,9 @@ nonisolated struct WorkTaskLabourLine: Codable, Identifiable, Sendable, Hashable
         workerCount: Int = 1,
         hoursPerWorker: Double = 0,
         hourlyRate: Double? = nil,
-        notes: String = ""
+        notes: String = "",
+        savedTotalHours: Double? = nil,
+        savedTotalCost: Double? = nil
     ) {
         self.id = id
         self.workTaskId = workTaskId
@@ -36,20 +41,22 @@ nonisolated struct WorkTaskLabourLine: Codable, Identifiable, Sendable, Hashable
         self.hoursPerWorker = hoursPerWorker
         self.hourlyRate = hourlyRate
         self.notes = notes
+        self.savedTotalHours = savedTotalHours
+        self.savedTotalCost = savedTotalCost
     }
 
     var totalHours: Double {
-        Double(workerCount) * hoursPerWorker
+        savedTotalHours.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil } ?? (Double(workerCount) * hoursPerWorker)
     }
 
     var totalCost: Double {
-        totalHours * (hourlyRate ?? 0)
+        savedTotalCost.flatMap { $0.isFinite ? $0 : nil } ?? (totalHours * (hourlyRate ?? 0))
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
         case id, workTaskId, vineyardId, workDate
         case operatorCategoryId, workerType, workerCount
-        case hoursPerWorker, hourlyRate, notes
+        case hoursPerWorker, hourlyRate, notes, savedTotalHours, savedTotalCost
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -64,5 +71,7 @@ nonisolated struct WorkTaskLabourLine: Codable, Identifiable, Sendable, Hashable
         hoursPerWorker = try c.decodeIfPresent(Double.self, forKey: .hoursPerWorker) ?? 0
         hourlyRate = try c.decodeIfPresent(Double.self, forKey: .hourlyRate)
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        savedTotalHours = try c.decodeIfPresent(Double.self, forKey: .savedTotalHours)
+        savedTotalCost = try c.decodeIfPresent(Double.self, forKey: .savedTotalCost)
     }
 }

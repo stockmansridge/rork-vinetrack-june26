@@ -113,27 +113,42 @@ struct AddEditWorkTaskView: View {
 
     /// Block area (ha) only when known/positive; nil otherwise.
     private func areaFor(_ p: Paddock) -> Double? {
-        let a = p.areaHectares
-        return a > 0 ? a : nil
+        if let task = currentTask,
+           let saved = store.workTaskPaddocks.first(where: { $0.workTaskId == task.id && $0.paddockId == p.id }),
+           let area = CostingReadAuthority.positive(saved.areaHa) { return area }
+        return CostingReadAuthority.physicalArea(p)
     }
 
-    /// Sum of known selected block areas.
+    private var selectionMatchesSavedBlocks: Bool {
+        guard let task = currentTask else { return false }
+        let links = store.workTaskPaddocks.filter { $0.workTaskId == task.id }
+        let ids = links.isEmpty ? Set(task.paddockId.map { [$0] } ?? []) : Set(links.map(\.paddockId))
+        return ids == selectedBlockIds
+    }
+
+    /// Saved parent, then complete saved links, then ALL physical blocks. Never a partial sum.
     private var totalSelectedArea: Double {
-        selectedBlocksOrdered.compactMap { areaFor($0) }.reduce(0, +)
+        if let task = currentTask, selectionMatchesSavedBlocks {
+            return CostingReadAuthority.taskArea(task: task, links: store.workTaskPaddocks, paddocks: store.paddocks) ?? 0
+        }
+        guard selectedBlocksOrdered.count == selectedBlockIds.count else { return 0 }
+        return CostingReadAuthority.physicalArea(selectedBlocksOrdered) ?? 0
     }
 
-    private var hasMissingArea: Bool {
-        selectedBlocksOrdered.contains { areaFor($0) == nil }
-    }
+    private var hasMissingArea: Bool { totalSelectedArea <= 0 }
 
     /// Per-block hours/cost allocation proportional to block area.
     private var blockAllocations: [BlockAllocation] {
-        let total = totalSelectedArea
+        let known = selectedBlocksOrdered.compactMap { areaFor($0) }
+        let total = known.count == selectedBlockIds.count ? known.reduce(0, +) : 0
+        // Keep saved link evidence, but do not imply a second task-wide rate
+        // when its sum disagrees with the authoritative saved parent hectares.
+        let areaAgrees = totalSelectedArea > 0 && abs(total - totalSelectedArea) < 0.000001
         return selectedBlocksOrdered.map { p in
             let area = areaFor(p)
             let share = (total > 0 && area != nil) ? (area! / total) : 0
             let cost = NSDecimalNumber(decimal: combinedCostRollup.totalCost).doubleValue * share
-            let cph: Double? = (area ?? 0) > 0 ? cost / area! : nil
+            let cph: Double? = areaAgrees && combinedCostRollup.isComplete && (area ?? 0) > 0 ? cost / area! : nil
             return BlockAllocation(
                 id: p.id,
                 name: p.name,
@@ -268,12 +283,7 @@ struct AddEditWorkTaskView: View {
     /// Estimated cost of linked GPS trips, summed from already-synced
     /// `trip_cost_allocations`. Available client-side, so no deferral needed.
     private var linkedTripCost: Double {
-        guard let id = currentTaskID else { return 0 }
-        let linkedTripIds = Set(store.trips.filter { $0.workTaskId == id }.map { $0.id })
-        guard !linkedTripIds.isEmpty else { return 0 }
-        return store.tripCostAllocations
-            .filter { linkedTripIds.contains($0.tripId) }
-            .reduce(0.0) { $0 + ($1.totalCost ?? 0) }
+        NSDecimalNumber(decimal: combinedCostRollup.linkedTripCost).doubleValue
     }
 
     /// Combined total across labour, machine charge + fuel, and linked GPS trip
@@ -281,21 +291,13 @@ struct AddEditWorkTaskView: View {
     /// they exist, the legacy resource costing otherwise — so a task can never
     /// have its labour counted twice.
     private var combinedCostRollup: WorkTaskCostRollup.Result {
-        let materialCosts = currentTaskID.map { store.materialTotal(forWorkTask: $0) } ?? 0
-        let labourComplete = isPieceRateTask ? pieceRateCost != nil : labourLines.allSatisfy {
-            WorkTaskLabourCosting.lineCost($0) != nil
-        }
-        let linkedTripIDs = Set(linkedTrips.map(\.id))
-        let linkedAllocations = store.tripCostAllocations.filter { linkedTripIDs.contains($0.tripId) }
-        return WorkTaskCostRollup.combine(
-            labourCost: WorkTaskCostRollup.decimal(displayLabourCost),
-            manualMachineCost: WorkTaskCostRollup.decimal(manualMachineCharge + manualMachineFuel),
-            linkedTripCost: WorkTaskCostRollup.decimal(linkedTripCost),
-            materialCost: materialCostsAllowed ? materialCosts : 0,
-            isComplete: labourComplete
-                && machineLines.allSatisfy { $0.totalMachineCost != nil && $0.fuelCost != nil }
-                && linkedTripIDs.isSubset(of: Set(linkedAllocations.map(\.tripId)))
-                && linkedAllocations.allSatisfy { $0.totalCost != nil }
+        var draftTask = currentTask ?? WorkTask(id: creationID)
+        draftTask.resources = resources
+        draftTask.durationHours = durationHours
+        return WorkTaskCostRollup.resolve(
+            task: draftTask, labourLines: labourLines, machineLines: machineLines,
+            trips: store.trips, tripCostAllocations: store.tripCostAllocations,
+            materials: store.workTaskMaterials, includeMaterials: materialCostsAllowed
         )
     }
 
@@ -1234,7 +1236,7 @@ struct AddEditWorkTaskView: View {
         do {
             try PersistenceStore.shared.saveOrThrow(draft, key: draft.persistenceKey)
             let blocks = selectedBlocksOrdered
-            let intent = try WorkTaskWriteContract.planning(draft: draft, id: currentTaskID ?? creationID, zone: tz, now: Date(), paddockID: blocks.first?.id, paddockName: blocks.map(\.name).joined(separator: ", "), area: totalSelectedArea)
+            let intent = try WorkTaskWriteContract.planning(draft: draft, id: currentTaskID ?? creationID, zone: tz, now: Date(), paddockID: blocks.first?.id, paddockName: blocks.map(\.name).joined(separator: ", "), area: currentTask.map { $0.areaHa ?? 0 } ?? totalSelectedArea)
             submitOnline(intent, reconcileBlocks: true)
         } catch { draftMessage = "Planning not sent. Draft retained; verify original baseline and supported schedule." }
     }
@@ -1314,8 +1316,8 @@ struct AddEditWorkTaskView: View {
     }
 
     /// Reconciles work_task_paddocks join rows against the selected block set:
-    /// inserts newly selected blocks, refreshes area snapshots for still-selected
-    /// blocks, and removes (soft-deletes via sync) blocks that were deselected.
+    /// inserts newly selected blocks and removes deselected blocks. Retained
+    /// area snapshots (including NULL) are never refreshed from current geometry.
     private func reconcileBlockLinks(for taskId: UUID) {
         guard let vineyardId = store.selectedVineyardId else { return }
         let existing = store.workTaskPaddocks.filter { $0.workTaskId == taskId }
@@ -1329,12 +1331,8 @@ struct AddEditWorkTaskView: View {
         // Insert or update selected links with an area snapshot.
         for pid in selectedBlockIds {
             let area = store.paddocks.first(where: { $0.id == pid }).flatMap { areaFor($0) }
-            if var row = existingByPaddock[pid] {
-                if row.areaHa != area {
-                    row.areaHa = area
-                    store.updateWorkTaskPaddock(row)
-                }
-            } else {
+            // Never backfill/reprice a retained historical area, including NULL.
+            if existingByPaddock[pid] == nil {
                 store.addWorkTaskPaddock(WorkTaskPaddock(
                     workTaskId: taskId,
                     vineyardId: vineyardId,

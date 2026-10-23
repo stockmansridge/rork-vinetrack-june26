@@ -183,8 +183,11 @@ fun CostReportsScreen(
             CostReportBuilder.seasonBlockYieldTonnes(state.yieldRecords, season, pid)
         }
     }
-    val costPerHa = if (totalArea > 0 && totalCost > 0) totalCost / totalArea else null
-    val costPerTonne = if (totalYield > 0 && totalCost > 0) totalCost / totalYield else null
+    val physicalArea = com.rork.vinetrack.data.model.CostingReadAuthority.physicalArea(
+        state.paddocks.filter { it.vineyardId == state.selectedVineyardId && (selectedBlock == null || it.id == selectedBlock) },
+    )
+    val costPerHa = if (filtered.all { it.warnings.isEmpty() }) physicalArea?.let { totalCost / it } else null
+    val costPerTonne = if (filtered.all { it.warnings.isEmpty() } && totalYield > 0 && totalCost > 0) totalCost / totalYield else null
 
     Scaffold(
         modifier = modifier,
@@ -284,7 +287,7 @@ fun CostReportsScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             SectionHeader("Vintage Summary", onLight = true)
                             VineyardCard {
-                                SummaryRow("Total estimated cost", fmt.formatCurrency(totalCost), emphasise = true)
+                                SummaryRow("Trip allocation cost", fmt.formatCurrency(totalCost), emphasise = true)
                                 DividerC(vine.cardBorder)
                                 SummaryRow("Treated area", fmt.formatAreaCompact(totalArea))
                                 DividerC(vine.cardBorder)
@@ -303,7 +306,7 @@ fun CostReportsScreen(
                                 }
                             }
                             Text(
-                                "Treated area is the mapped block area from the trips in this report; a block treated multiple times contributes per trip. Yield is the recorded or estimated season yield, counted once per block.",
+                                "This report covers Trip allocations only, not the full Work Task total. Cost per area uses physical vineyard area once (the selected block when filtered); treated area accumulates per operation. Missing area or incomplete costs leave the ratio unavailable. Yield is counted once per block.",
                                 color = vine.textSecondary, fontSize = 11.sp,
                             )
                         }
@@ -352,6 +355,7 @@ fun CostReportsScreen(
                             BreakdownCard(
                                 group = group,
                                 fmt = fmt,
+                                physicalArea = group.paddockId?.let { id -> state.paddocks.firstOrNull { it.id == id } }?.let { com.rork.vinetrack.data.model.CostingReadAuthority.physicalArea(it) },
                                 yieldTonnes = if (!groupByFunction) {
                                     CostReportBuilder.seasonBlockYieldTonnes(state.yieldRecords, group.seasonYear, group.paddockId) * group.varietyFraction
                                 } else 0.0,
@@ -399,7 +403,7 @@ private fun aggregate(rows: List<CostAllocationRow>, groupByFunction: Boolean): 
 }
 
 @Composable
-private fun BreakdownCard(group: CostGroup, fmt: RegionFormatter, yieldTonnes: Double, onClick: () -> Unit) {
+private fun BreakdownCard(group: CostGroup, fmt: RegionFormatter, physicalArea: Double?, yieldTonnes: Double, onClick: () -> Unit) {
     val vine = LocalVineColors.current
     val tripCount = group.rows.map { it.tripId }.distinct().size
     val isUnassigned = group.variety == CostReportBuilder.UNASSIGNED_VARIETY
@@ -424,8 +428,8 @@ private fun BreakdownCard(group: CostGroup, fmt: RegionFormatter, yieldTonnes: D
                     Text(meta.joinToString(" · "), color = vine.textSecondary, fontSize = 12.sp, maxLines = 2)
                 }
                 val perUnit = buildList {
-                    if (group.area > 0) add("${fmt.formatCurrency(fmt.perAreaValue(group.total / group.area))}/${fmt.areaUnitAbbreviation}")
-                    if (yieldTonnes > 0) add("${fmt.formatCurrency(group.total / yieldTonnes)}/t")
+                    if (physicalArea != null && group.rows.all { it.warnings.isEmpty() }) add("${fmt.formatCurrency(fmt.perAreaValue(group.total / physicalArea))}/${fmt.areaUnitAbbreviation}")
+                    if (yieldTonnes > 0 && group.rows.all { it.warnings.isEmpty() }) add("${fmt.formatCurrency(group.total / yieldTonnes)}/t")
                 }
                 if (perUnit.isNotEmpty()) {
                     Text(perUnit.joinToString(" · "), color = vine.textSecondary.copy(alpha = 0.8f), fontSize = 11.sp)

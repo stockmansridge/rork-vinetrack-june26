@@ -509,7 +509,9 @@ extension BackendWorkTaskLabourLine {
             workerCount: workerCount ?? 1,
             hoursPerWorker: hoursPerWorker ?? 0,
             hourlyRate: hourlyRate,
-            notes: notes ?? ""
+            notes: notes ?? "",
+            savedTotalHours: totalHours,
+            savedTotalCost: totalCost
         )
     }
 }

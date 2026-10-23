@@ -30,6 +30,19 @@ data class TripCostAllocation(
     val labourHoursRaw: String? = null,
     @SerialName("worker_type_name_snapshot") val workerTypeNameSnapshot: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
+    @SerialName("season_year") val seasonYear: Int? = null,
+    @SerialName("paddock_id") val paddockId: String? = null,
+    @SerialName("paddock_name") val paddockName: String? = null,
+    val variety: String? = null,
+    @SerialName("variety_percentage") val varietyPercentage: Double? = null,
+    @SerialName("allocation_area_ha") val allocationAreaHa: Double? = null,
+    @SerialName("trip_function") val tripFunction: String? = null,
+    @SerialName("fuel_cost")
+    @Serializable(with = NullableMaterialNumericStringSerializer::class)
+    val fuelCostRaw: String? = null,
+    @SerialName("chemical_cost")
+    @Serializable(with = NullableMaterialNumericStringSerializer::class)
+    val chemicalCostRaw: String? = null,
 ) {
     val totalCost: BigDecimal? get() = totalCostRaw?.toBigDecimalOrNull()
     val labourCost: BigDecimal? get() = labourCostRaw?.toBigDecimalOrNull()
@@ -67,27 +80,21 @@ object WorkTaskCostRollup {
         val labourComplete = if (task.isPieceRate) {
             effectiveLabour != null
         } else {
-            scopedLabour.all { it.hourlyRate != null || it.totalCost != null }
+            scopedLabour.all { com.rork.vinetrack.data.WorkTaskLabourCosting.lineCost(it) != null } &&
+                (scopedLabour.isNotEmpty() || task.resources.orEmpty().all { it.hourlyRate?.isFinite() == true })
         }
         val labour = effectiveLabour?.let(BigDecimal::valueOf) ?: BigDecimal.ZERO
 
         val machine = machineLines
             .filter { it.workTaskId == task.id && it.deletedAt == null }
             .sumOf { BigDecimal.valueOf(it.resolvedCost) }
-        val linkedTripIds = trips.filter { it.workTaskId == task.id }.mapTo(mutableSetOf()) { it.id }
-        val linkedAllocations = tripCostAllocations.filter { it.deletedAt == null && it.tripId in linkedTripIds }
-        val linked = linkedAllocations.groupBy { it.tripId }.values.fold(BigDecimal.ZERO) { accumulated, rows ->
-            val marker = rows.firstOrNull { it.allocationBasis == "labour_snapshot" }
-            val slices = rows.filter { it.allocationBasis != "labour_snapshot" }
-            val sliceTotal = slices.mapNotNull { it.totalCost }.fold(BigDecimal.ZERO, BigDecimal::add)
-            val sliceLabour = slices.mapNotNull { it.labourCost }.fold(BigDecimal.ZERO, BigDecimal::add)
-            accumulated + if (marker == null) sliceTotal else
-                (marker.totalCost ?: BigDecimal.ZERO) + sliceTotal - sliceLabour
-        }
+        val linkedTripIds = trips.filter { it.workTaskId == task.id && it.deletedAt == null }.mapTo(mutableSetOf()) { it.id }
+        val linkedAllocations = CostingReadAuthority.allocations(tripCostAllocations, trips).filter { it.tripId in linkedTripIds }
+        val linked = linkedAllocations.mapNotNull { it.totalCost }.fold(BigDecimal.ZERO, BigDecimal::add)
         val material = if (includeMaterials) WorkTaskMaterialCosting.total(materials, task.id) else BigDecimal.ZERO
         val allocatedTripIds = linkedAllocations.mapTo(mutableSetOf()) { it.tripId }
-        val linkedTripsComplete = linkedTripIds.all { it in allocatedTripIds } && linkedAllocations.all { it.totalCost != null }
-        val machineComplete = machineLines.filter { it.workTaskId == task.id && it.deletedAt == null }.all { it.totalMachineCost != null && it.fuelCost != null }
+        val linkedTripsComplete = linkedTripIds.all { it in allocatedTripIds } && linkedAllocations.all { it.totalCost != null && it.costingStatus !in listOf("partial", "unavailable") }
+        val machineComplete = machineLines.filter { it.workTaskId == task.id && it.deletedAt == null }.all { CostingReadAuthority.machineComplete(it) }
         val complete = labourComplete && linkedTripsComplete && machineComplete
 
         return WorkTaskCostRollupResult(
@@ -109,7 +116,8 @@ object WorkTaskCostRollup {
         materials: List<WorkTaskMaterial>,
         includeMaterials: Boolean,
     ): WorkTaskCostRollupResult {
-        val results = tasks.map { resolve(it, labourLines, machineLines, trips, tripCostAllocations, materials, includeMaterials) }
+        val results = tasks.filter { it.deletedAt == null }.distinctBy { it.id }
+            .map { resolve(it, labourLines, machineLines, trips, tripCostAllocations, materials, includeMaterials) }
         return WorkTaskCostRollupResult(
             labourCost = results.sumOf { it.labourCost }.money(),
             manualMachineCost = results.sumOf { it.manualMachineCost }.money(),

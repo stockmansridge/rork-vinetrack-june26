@@ -68,6 +68,7 @@ nonisolated struct TripCostAllocation: Codable, Identifiable, Sendable, Hashable
     var warnings: [String]
     var calculatedAt: Date
     var sourceTripUpdatedAt: Date?
+    var deletedAt: Date? = nil
 
     init(
         id: UUID = UUID(),
@@ -140,7 +141,7 @@ nonisolated struct TripCostAllocation: Codable, Identifiable, Sendable, Hashable
         case labourCost, workerUserId, workerTypeId, workerTypeNameSnapshot, hourlyRateSnapshot, labourHours, rateCapturedAt
         case fuelCost, chemicalCost, inputCost, totalCost
         case costPerHa, yieldTonnes, costPerTonne
-        case allocationBasis, costingStatus, warnings, calculatedAt, sourceTripUpdatedAt
+        case allocationBasis, costingStatus, warnings, calculatedAt, sourceTripUpdatedAt, deletedAt
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -175,5 +176,6 @@ nonisolated struct TripCostAllocation: Codable, Identifiable, Sendable, Hashable
         warnings = try c.decodeIfPresent([String].self, forKey: .warnings) ?? []
         calculatedAt = try c.decodeIfPresent(Date.self, forKey: .calculatedAt) ?? Date()
         sourceTripUpdatedAt = try c.decodeIfPresent(Date.self, forKey: .sourceTripUpdatedAt)
+        deletedAt = try c.decodeIfPresent(Date.self, forKey: .deletedAt)
     }
 }

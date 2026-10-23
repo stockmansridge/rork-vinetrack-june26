@@ -4,6 +4,7 @@ nonisolated struct BackendPaddock: Codable, Sendable, Identifiable {
     let id: UUID
     let vineyardId: UUID
     let name: String
+    var areaHa: Double? = nil
     let rowDirection: Double?
     let rowWidth: Double?
     let rowOffset: Double?
@@ -33,6 +34,7 @@ nonisolated struct BackendPaddock: Codable, Sendable, Identifiable {
     let syncVersion: Int?
 
     enum CodingKeys: String, CodingKey {
+        case areaHa = "area_ha"
         case id
         case vineyardId = "vineyard_id"
         case name
@@ -187,6 +189,7 @@ extension BackendPaddock {
             calculationModeOverride: calculationModeOverride.flatMap { GDDCalculationMode(rawValue: $0) },
             resetModeOverride: resetModeOverride.flatMap { GDDResetMode(rawValue: $0) }
         )
+        paddock.savedAreaHa = areaHa
         paddock.vineSpacingIsKnown = vineSpacing != nil
         return paddock
     }

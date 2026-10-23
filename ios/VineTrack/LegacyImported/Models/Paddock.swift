@@ -6,6 +6,8 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
     var vineyardId: UUID
     var name: String
+    /// Optional remote physical hectares, used only by costing readers.
+    var savedAreaHa: Double? = nil
     var polygonPoints: [CoordinatePoint]
     var rows: [PaddockRow]
     var rowDirection: Double
@@ -92,6 +94,7 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
         case id, vineyardId, name, polygonPoints, rows, rowDirection, rowOffset, vineSpacingIsKnown, vineSpacing, vineCountOverride, rowLengthOverride, rowLengthOverrides, flowPerEmitter, emitterSpacing, intermediatePostSpacing, varietyAllocations, budburstDate, floweringDate, veraisonDate, harvestDate, plantingYear, calculationModeOverride, resetModeOverride
         // Persisted under its historical key so stored JSON is unchanged.
         case rowWidthRaw = "rowWidth"
+        case savedAreaHa
     }
 
     init(from decoder: Decoder) throws {
@@ -99,6 +102,7 @@ nonisolated struct Paddock: Codable, Identifiable, Sendable, Hashable {
         id = try container.decode(UUID.self, forKey: .id)
         vineyardId = try container.decode(UUID.self, forKey: .vineyardId)
         name = try container.decode(String.self, forKey: .name)
+        savedAreaHa = try container.decodeIfPresent(Double.self, forKey: .savedAreaHa)
         polygonPoints = try container.decode([CoordinatePoint].self, forKey: .polygonPoints)
         rows = try container.decode([PaddockRow].self, forKey: .rows)
         rowDirection = try container.decode(Double.self, forKey: .rowDirection)

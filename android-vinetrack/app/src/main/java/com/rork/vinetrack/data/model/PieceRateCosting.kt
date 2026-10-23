@@ -5,7 +5,6 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.math.BigDecimal
 import java.math.RoundingMode
-import kotlin.math.roundToLong
 
 /**
  * How a Work Task's labour cost is calculated (sql/188).
@@ -97,12 +96,7 @@ object PieceRateCosting {
      */
     fun roundedToCents(value: Double): Double {
         if (!value.isFinite()) return 0.0
-        val scaled = value * 100
-        // Kotlin's roundToLong is half-UP, which disagrees with Swift's
-        // half-away-from-zero on negatives. Mirroring the sign keeps both
-        // platforms (and the database) on the identical cent.
-        val cents = if (scaled < 0) -((-scaled).roundToLong()) else scaled.roundToLong()
-        return cents / 100.0
+        return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).toDouble()
     }
 
     /**
@@ -112,7 +106,9 @@ object PieceRateCosting {
      */
     fun cost(vineCount: Int?, ratePerVine: Double?): Double? {
         if (vineCount == null || ratePerVine == null || !ratePerVine.isFinite()) return null
-        return roundedToCents(vineCount.coerceAtLeast(0).toDouble() * ratePerVine.coerceAtLeast(0.0))
+        return BigDecimal.valueOf(vineCount.coerceAtLeast(0).toLong())
+            .multiply(BigDecimal.valueOf(ratePerVine.coerceAtLeast(0.0)))
+            .setScale(2, RoundingMode.HALF_UP).toDouble()
     }
 
     /**
@@ -201,10 +197,10 @@ object PieceRateCosting {
         val hours = live.sumOf { it.resolvedHours }
         return when (method) {
             WorkTaskCostingMethod.HOURLY -> {
-                val costed = live.filter { it.hourlyRate != null }
+                val savedCost = WorkTaskLabourCosting.totalCost(live)
                 ResolvedCost(
                     method = WorkTaskCostingMethod.HOURLY,
-                    cost = if (costed.isEmpty()) null else costed.sumOf { it.resolvedCost },
+                    cost = savedCost,
                     hours = hours,
                 )
             }
@@ -219,12 +215,13 @@ object PieceRateCosting {
     }
 
     /** Convenience: resolves straight from a stored task. */
-    fun resolve(task: WorkTask, labourLines: List<WorkTaskLabourLine>): ResolvedCost = resolve(
-        method = task.resolvedCostingMethod,
-        labourLines = labourLines.filter { it.workTaskId == task.id },
-        pieceVineCount = task.pieceVineCount,
-        pieceRatePerVine = task.pieceRatePerVine,
-    )
+    fun resolve(task: WorkTask, labourLines: List<WorkTaskLabourLine>): ResolvedCost {
+        val lines = labourLines.filter { it.workTaskId == task.id && it.deletedAt == null }
+        val result = resolve(task.resolvedCostingMethod, lines, task.pieceVineCount, task.pieceRatePerVine)
+        return if (!task.isPieceRate && lines.isEmpty() && !task.resources.isNullOrEmpty()) {
+            result.copy(cost = task.legacyLabourCost, hours = task.resources.sumOf { it.count } * task.durationHours)
+        } else result
+    }
 
     // ---------------------------------------------------------------------
     // THE canonical Work Task labour cost
@@ -272,7 +269,7 @@ object PieceRateCosting {
         val linesByTask = labourLines.filter { it.deletedAt == null }.groupBy { it.workTaskId }
         val costs = mutableMapOf<String, Double>()
         for (task in tasks) {
-            resolve(task.resolvedCostingMethod, linesByTask[task.id].orEmpty(), task.pieceVineCount, task.pieceRatePerVine)
+            resolve(task, linesByTask[task.id].orEmpty())
                 .cost
                 ?.let { costs[task.id] = it }
         }
@@ -331,8 +328,19 @@ object PieceRateCosting {
         legacyRate: Double?,
         includeCost: Boolean = true,
     ): WorkTaskLabourCosting.ResolvedLabour {
-        if (task == null || !task.isPieceRate) {
+        if (task == null) {
             return WorkTaskLabourCosting.resolveLabour(lines, legacyHours, legacyRate, includeCost)
+        }
+        if (!task.isPieceRate) {
+            val canonical = lines.filter { it.workTaskId == task.id && it.deletedAt == null }
+            if (canonical.isNotEmpty() || task.resources.isNullOrEmpty()) {
+                return WorkTaskLabourCosting.resolveLabour(canonical, legacyHours, legacyRate, includeCost)
+            }
+            val resolved = resolve(task, emptyList())
+            return WorkTaskLabourCosting.ResolvedLabour(
+                source = WorkTaskLabourCosting.LabourSource.WORK_TASK_LINES,
+                hours = resolved.hours, cost = if (includeCost) resolved.cost else null, isLegacy = true,
+            )
         }
         val resolved = resolve(task, lines)
         return WorkTaskLabourCosting.ResolvedLabour(

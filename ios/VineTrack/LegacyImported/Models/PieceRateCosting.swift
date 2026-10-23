@@ -115,7 +115,10 @@ nonisolated enum PieceRateCosting {
     /// platform ever reports a cent that another does not.
     static func roundedToCents(_ value: Double) -> Double {
         guard value.isFinite else { return 0 }
-        return (value * 100).rounded() / 100
+        guard var decimal = Decimal(string: String(value), locale: Locale(identifier: "en_US_POSIX")) else { return 0 }
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &decimal, 2, .plain)
+        return NSDecimalNumber(decimal: rounded).doubleValue
     }
 
     /// `vineCount × ratePerVine`, rounded to cents.
@@ -123,7 +126,11 @@ nonisolated enum PieceRateCosting {
     /// specified", never `$0.00`.
     static func cost(vineCount: Int?, ratePerVine: Double?) -> Double? {
         guard let vineCount, let ratePerVine, ratePerVine.isFinite else { return nil }
-        return roundedToCents(Double(max(vineCount, 0)) * max(ratePerVine, 0))
+        guard let rate = Decimal(string: String(max(ratePerVine, 0)), locale: Locale(identifier: "en_US_POSIX")) else { return nil }
+        var amount = Decimal(max(vineCount, 0)) * rate
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &amount, 2, .plain)
+        return NSDecimalNumber(decimal: rounded).doubleValue
     }
 
     /// Cost per hectare for a piece-rate job. Nil when no positive area is
@@ -232,12 +239,18 @@ nonisolated enum PieceRateCosting {
 
     /// Convenience: resolves straight from a stored task.
     static func resolve(task: WorkTask, labourLines: [WorkTaskLabourLine]) -> ResolvedCost {
-        resolve(
+        let lines = WorkTaskLabourCosting.lines(labourLines, for: task.id)
+        var result = resolve(
             method: task.costingMethod,
-            labourLines: WorkTaskLabourCosting.lines(labourLines, for: task.id),
+            labourLines: lines,
             pieceVineCount: task.pieceVineCount,
             pieceRatePerVine: task.pieceRatePerVine
         )
+        if !task.isPieceRate, lines.isEmpty, !task.resources.isEmpty {
+            result.cost = task.totalCost
+            result.hours = Double(task.totalPeople) * task.durationHours
+        }
+        return result
     }
 
     // MARK: - THE canonical Work Task labour cost
@@ -345,13 +358,21 @@ nonisolated enum PieceRateCosting {
         legacyRate: Double?,
         includeCost: Bool = true
     ) -> WorkTaskLabourCosting.ResolvedLabour {
-        guard let task, task.isPieceRate else {
+        guard let task else {
             return WorkTaskLabourCosting.resolveLabour(
                 lines: lines,
                 legacyHours: legacyHours,
                 legacyRate: legacyRate,
                 includeCost: includeCost
             )
+        }
+        if !task.isPieceRate {
+            let canonical = WorkTaskLabourCosting.lines(lines, for: task.id)
+            if !canonical.isEmpty || task.resources.isEmpty {
+                return WorkTaskLabourCosting.resolveLabour(lines: canonical, legacyHours: legacyHours, legacyRate: legacyRate, includeCost: includeCost)
+            }
+            let resolved = resolve(task: task, labourLines: [])
+            return WorkTaskLabourCosting.ResolvedLabour(source: .workTaskLines, hours: resolved.hours, cost: includeCost ? resolved.cost : nil, isLegacy: true)
         }
         let resolved = resolve(task: task, labourLines: lines)
         let hours = resolved.hours > 0 ? resolved.hours : legacyHours.flatMap { $0 > 0 ? $0 : nil }
@@ -433,16 +454,16 @@ nonisolated enum PieceRateCosting {
 
     /// `$1.27` — the agreed rate, always 2 decimals.
     static func rateLabel(_ value: Double) -> String {
-        "$" + value.formatted(.number.precision(.fractionLength(2)))
+        "$" + value.formatted(.number.locale(Locale(identifier: "en_AU")).precision(.fractionLength(2)))
     }
 
     /// `$2,842.26` — a money total, grouped and always 2 decimals.
     static func currencyLabel(_ value: Double) -> String {
-        "$" + value.formatted(.number.precision(.fractionLength(2)).grouping(.automatic))
+        "$" + value.formatted(.number.locale(Locale(identifier: "en_AU")).precision(.fractionLength(2)).grouping(.automatic))
     }
 
     /// `2,238` — a vine quantity, grouped.
     static func vineCountLabel(_ value: Int) -> String {
-        value.formatted(.number.grouping(.automatic))
+        value.formatted(.number.locale(Locale(identifier: "en_AU")).grouping(.automatic))
     }
 }

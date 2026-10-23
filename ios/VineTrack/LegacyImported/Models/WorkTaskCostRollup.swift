@@ -28,46 +28,44 @@ nonisolated enum WorkTaskCostRollup {
         includeMaterials: Bool
     ) -> Result {
         let taskLabourLines = labourLines.filter { $0.workTaskId == task.id }
-        let labour: Double?
+        let labour = PieceRateCosting.effectiveLabourCost(task: task, labourLines: taskLabourLines)
         let labourIsComplete: Bool
         if task.isPieceRate {
-            labour = task.pieceRateCost
             labourIsComplete = labour != nil
         } else if taskLabourLines.isEmpty {
-            labour = task.totalCost
             labourIsComplete = true
         } else {
-            labour = WorkTaskLabourCosting.totalCost(taskLabourLines)
             labourIsComplete = taskLabourLines.allSatisfy { WorkTaskLabourCosting.lineCost($0) != nil }
         }
 
         let taskMachineLines = machineLines.filter { $0.workTaskId == task.id }
         // Preserve the established iOS contract: saved machine charge and saved
         // fuel are distinct values and both participate in the task total.
-        let manualMachine = taskMachineLines.reduce(0.0) {
-            $0 + ($1.totalMachineCost ?? 0) + ($1.fuelCost ?? 0)
+        let manualMachine = taskMachineLines.reduce(Decimal(0)) {
+            $0 + decimal($1.totalMachineCost ?? 0) + decimal($1.fuelCost ?? 0)
         }
 
         let linkedTripIDs = Set(trips.filter { $0.workTaskId == task.id }.map(\.id))
-        let linkedAllocations = tripCostAllocations.filter { linkedTripIDs.contains($0.tripId) }
-        let linkedTrip = linkedAllocations.reduce(0.0) { $0 + ($1.totalCost ?? 0) }
+        let linkedAllocations = CostingReadAuthority.allocations(tripCostAllocations, trips: trips)
+            .filter { linkedTripIDs.contains($0.tripId) }
+        let linkedTrip = linkedAllocations.reduce(Decimal(0)) { $0 + decimal($1.totalCost ?? 0) }
         let allocatedTripIDs = Set(linkedAllocations.map(\.tripId))
         let tripIsComplete = linkedTripIDs.isSubset(of: allocatedTripIDs)
-            && linkedAllocations.allSatisfy { $0.totalCost != nil }
+            && linkedAllocations.allSatisfy { $0.totalCost != nil && $0.costingStatus != .partial && $0.costingStatus != .unavailable }
 
         let material = includeMaterials
             ? WorkTaskMaterialCosting.total(materials, for: task.id)
             : 0
-        let labourDecimal = decimal(labour ?? 0)
-        let machineDecimal = decimal(manualMachine)
-        let tripDecimal = decimal(linkedTrip)
+        let labourDecimal = !task.isPieceRate && !taskLabourLines.isEmpty
+            ? taskLabourLines.reduce(Decimal(0)) { $0 + decimal(WorkTaskLabourCosting.lineCost($1) ?? 0) }
+            : decimal(labour ?? 0)
 
         return combine(
             labourCost: labourDecimal,
-            manualMachineCost: machineDecimal,
-            linkedTripCost: tripDecimal,
+            manualMachineCost: manualMachine,
+            linkedTripCost: linkedTrip,
             materialCost: material,
-            isComplete: labourIsComplete && tripIsComplete && taskMachineLines.allSatisfy { $0.totalMachineCost != nil && $0.fuelCost != nil }
+            isComplete: labourIsComplete && tripIsComplete && taskMachineLines.allSatisfy { CostingReadAuthority.machineComplete($0) }
         )
     }
 
