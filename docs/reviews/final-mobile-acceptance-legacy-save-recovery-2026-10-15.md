@@ -1,5 +1,94 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Expired-trial read-only access — continuation audit, 23 October 2026
+
+**AUDIT-ONLY CHECKPOINT; FEATURE INCOMPLETE. Expired-trial entry remains closed.** No native enforcement, queue hold, UI or server-error integration was delivered in this continuation. Findings below identify required admission points, not guarded paths. The earlier contract/cache tests remain historical, not operational acceptance. Server delivery is not the only outstanding work.
+
+### A. Exact files changed in this continuation
+
+- `.rork/plans/android-live-trip-safe-automatic-complet_1791964262830.plan.md`: retain incomplete enforcement/acceptance items; add exact current notice/prompt copy, 23-case scope, explicit server-contract gate and this audit status.
+- `docs/reviews/final-mobile-acceptance-legacy-save-recovery-2026-10-15.md`: this continuation inventory and A–J status; correct outstanding acceptance count to23.
+- No application/test/runner/configuration source edits. Pre-existing managed `.rork/.skills-mount-fingerprint` modification preserved. No managed history edits, manual commit or push.
+
+### B. Guard design and verified gaps
+
+Required, **not implemented**: one cheap owner/vineyard-scoped `canWrite(vineyardId)` over the current verified/cached `VineyardOperationalAccess`, combined with existing auth/role rules. No network request per action; no personal trial/status/date inference; no account billing override of vineyard funding. Unknown older-server write state retains legacy behaviour. Do not open historical entry until all authored-command and outbound-transport admission points are covered.
+
+**iOS confirmed command seam:** `ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift`, before in-memory publication, local persistence or callbacks. `addPinDurably` calls `onPinCreateWillPersist` before saving/publishing. `saveSprayForLater` calls `prepareLegacySpraySave` then `reconcileLegacySpraySaves`; preparation writes a recovery attempt, so a check after preparation or only before server transport is too late. `reconcileLegacySpraySaves` also hydrates retained original work: a blanket write restriction on reconciliation would incorrectly block preservation. `vineyards`, `pins`, `paddocks`, `trips` remain mutable arrays; caller/direct-mutation coverage is not established.
+
+Additional command surfaces are the store's Management/Spray/SavedInputs/Yield/Buttons/GrowthStage/TripCostAllocations extensions and independent Fertiliser, Pruning, Resistance and Insights stores. `Backend/Sync/WorkTaskWriteCoordinator.submit` already accepts `canWrite`, but persists a durable intent before sending and checks the callback again before acknowledgement. Wiring an entitlement callback without distinguishing accepted receipts from new writes could strand successful-send acknowledgement. Existing callback semantics are not new expiry enforcement.
+
+**Android confirmed replay seams:** `ui/AppViewModel.kt` `launchReplayStage` and `automaticReplayIdentity` protect startup/auth/account scope, but contain no write-entitlement check. Preserve the accepted final constructor initializer; no startup repair is needed. `data/PendingWriteRepository.kt` offers an exact-version pre-claim seam, but is not a universal command seam: some local mutations occur before enqueue, and independent queues/direct calls do not claim through it. `FieldStoreAccess` protects reads/cache/evidence too; blanket entitlement blocking there is inappropriate.
+
+### C. Queue inventory and hold status
+
+**No queue below has been given an expired-trial durable hold in this continuation. Inventory is substantial but NOT complete.** Existing conflict/storage/ownership holds must not be relabelled as trial holds. Required held reason: `READ_ONLY_TRIAL_EXPIRED` (or equivalent), preserving original IDs, timestamps, payloads, receipts and attempts. Resume only after verified write restoration; do not recreate/coalesce/replace retained work to represent a hold.
+
+**iOS discovered families** (paths relative to `ios/VineTrack/`):
+
+- `Backend/Sync/OperationsSyncServices.swift`: shared `OperationsSyncMetadata` dirty/delete sets for Work Tasks, labour, machine lines, paddock joins, piece-rate rows, maintenance, yield sessions, damage and historical yield. `WorkTaskMaterialSyncServices.swift` uses the metadata for vineyard and task materials.
+- `Backend/Sync/ManagementSyncServices.swift`: `ManagementSyncMetadata` created/dirty/deleted sets for saved chemicals, spray presets/equipment, tractors/machines, fuel purchases/logs, operator categories, task types, equipment and saved inputs. Force-repush, worker-type delete replay and duplicate resolution also need review.
+- Dedicated metadata: `PinSyncService.swift`, `TripSyncService.swift`, `SprayRecordSyncService.swift`, `PaddockSyncService.swift`, `GrowthStageRecordSyncService.swift`, `ButtonConfigSyncService.swift`, `GrowthStageImageSyncService.swift`.
+- Other pending services located: `FertiliserSyncService.swift`, `PruningSyncService.swift`, `PickingRecordSyncService.swift`, `PruningYieldSettingsSyncService.swift`, `TripCostAllocationSyncService.swift`. Full admission/replay internals are not verified.
+- Independent durable attempts/journals: `TripOccurrenceJournal.swift`, `TripLabourSnapshotJournal.swift`, `App/SprayEngine/SprayPlanningAttemptJournal.swift`, `LegacySpraySaveRecovery` used by `MigratedDataStore`, `ManualSprayEntryStore.swift`, `WorkTaskWriteCoordinator.swift`.
+- Independent outboxes: `FertigationLinkedOutbox.swift`, `ManualIssueSyncService.swift`, `CustomPinTypeService.swift`, `SprayTargetLibraryService.swift`, `SprayTankActualStore.swift`, `App/Resistance/ResistancePlanRepository.swift` and its store.
+- Ancillary evidence queues: Pin pending owners/photos/confirmations, pending pin notes in `LegacyImported/Repositories/PinRepository.swift`, growth photos, `PendingLinkedPinGrowthDeletion.swift`, Insights visits/notes/custom types/photos plus separate object/file cleanup and obligation repair in `App/Insights/VineyardInsightsStore.swift`.
+- `FertigationLinkedOutbox.flush` has two sequential writes with retained irrigation acknowledgement before fertigation. It needs admission before each new send, not a whole-loop-only check; already accepted receipt preservation must remain allowed. Current generic catch records an error/permanent phase; it has no trial classification.
+- Resistance `sync` first calls `adoptLocalOnlyPlans` and then pushes its own pending IDs. `save`, delete, restore and conflict choices mutate their own storage. Blocking only push would not prevent authored changes or automatic new obligations.
+
+**Android discovered families** (paths relative to `android-vinetrack/app/src/main/java/com/rork/vinetrack/`):
+
+- Shared `data/PendingWriteStore.kt` / `PendingWriteRepository.kt`: Pin create/completion/edit/delete; manual issues/custom types/pins/segments; Trip start/metadata/seeding/GPS/rows/row plan/tank/end/delete/labour; fuel; spray jobs/records; saved chemicals; Work Tasks/labour/machines/paddock joins/materials; vineyard materials; maintenance; yield/picking; paddock edits; pruning-yield settings; growth/damage/buttons; yield sessions; pruning/fertiliser coordinators. This is a coordinator-family inventory, not a proven exhaustive entity/operation/caller list.
+- Shared claim mechanics verified: `claimReplay` preserves attempts but changes status/timestamp to IN_PROGRESS; `retryIfCurrent` increments attempts (default max8), returning FAILED/BLOCKED; `removeIfCurrent`/status operations require exact versions. Therefore holds must be admitted before claim and must bypass generic retry handling. Runtime account-incarnation scope is not durable per-operation provenance. ID-only remove/status/attempt APIs, retry reset, prune and queue replacement/coalescing callers still require closure.
+- Separate `PendingPhotoRepository.kt`: attachment/file revisions, runtime-scoped claims, attempts and compare-current upload/completion. `PinCaptureEvidenceStore.kt`: owned retained evidence and revision acknowledgement. Full uploader budgets/transport coverage not verified.
+- `LegacySpraySaveStore.kt`: actor/vineyard-scoped paired attempts and receipt recovery independent of normal pending rows. `ManualSprayOperationStore`: independent replay; full mechanics unverified. `SprayTankActualStore.kt`: owned pending tank actuals and exact-current acknowledgement.
+- `TripOccurrenceNativeStore`: independent scope-keyed journals. Trip labour has additional direct replay callers. Pruning resource retry/generation/link state is not proven covered by generic outbox admission.
+- `IrrigationRepository.kt`: separate pending sessions and `flushPending`; `FertigationLinkedOutbox.kt`: owner/vineyard-scoped two-phase queue, `enqueue`, `enqueueExisting`, `retry`, `flush`. No generic PendingWrite claim is used by the linked outbox.
+- `data/resistance/ResistancePlanRepository.kt`: own local pending IDs/conflicts; save/delete/restore/conflict commands mutate before `sync`. `sync` adopts local-only plans and directly upserts.
+- `data/insights/VineyardInsightsStore.kt` and sync repository: visits/notes/custom types/photos/object cleanup. `VintageReportViewModel.kt`: independent durable report commands, submit/recover/abandon/activate and acknowledgement.
+- `ChemicalLabelPhotoRepository.kt` / `ChemicalLabelPhotoSync.kt`: separate attachment queue/replay. Parent CREATE dependency checks do not constitute expiry admission.
+- Paired-growth capture journal, spray-target outbox and other Insights/resource internals remain follow-up gaps; no completeness claim.
+
+### D. Server-error path
+
+Native-source search found **no `VT_READ_ONLY` or `READ_ONLY_TRIAL_EXPIRED` handler** on either platform. Generic network/auth/retry handling must not be used as expiry classification. Required integration: recognize the structured server rejection; retain original input/queued evidence; apply an owner/vineyard-scoped durable hold without incrementing retries or acknowledging success; refresh access; show the shared purchase prompt only for the appropriate confirmed trial restriction. No forced logout, global account restriction, retry loop or payload replacement. A server rejection is not proof of a successful write, and does not itself authorize read-only entry.
+
+### E. iOS tests
+
+No tests written or run in this audit-only continuation. Historical accepted eight-suite122-pass and simulator-build result below remain unchanged. No operational Create/Update/Delete/complete/reopen/Quick Action/GPS, held-queue restart/resume, VT_READ_ONLY or UI acceptance has passed in this continuation.
+
+### F. Android tests
+
+No tests written or run in this audit-only continuation. Historical contract27/27, existing regressions55/55, isolated preference3/3 and normal build result below remain unchanged. Those are not expiry enforcement or the23-case operational gate. No owner handset or isolated emulator was operated here.
+
+### G. Offline/restart and validation status
+
+Prepared capability serialization/cache preservation remains accepted; actual offline historical admission, durable original-queue holds, restart survival, write restoration and active GPS/Trip/Spray transitions remain **UNVERIFIED**. No application code changed, so no redundant app build/test run was requested for this documentation-only continuation. Scoped whitespace/source-preservation checks are recorded at closeout; they are not runtime checks.
+
+### H. Uncovered paths and unsafe shortcuts
+
+Confirmed bypass families requiring integration include independent irrigation/fertigation and resistance queues; Insights/vintage; chemical attachments/catalogue RPCs; direct weather/rainfall/settings updates; repository-level configuration/equipment/import writes; public mutable iOS store arrays; Quick Actions and active Trip/GPS callbacks. End-to-end caller coverage remains incomplete for chemical purchases, imports, row configuration, Insights cleanup/recovery, pruning resources and direct backend repositories.
+
+Examples found outside the shared queues:
+
+- iOS `App/ChemicalIntelligence/CatalogueRepository.swift`, `ChemicalInventoryActionsView.swift`, `ChemicalSearchV2View.swift`; `App/Reporting/SprayReportRepository.swift` metadata-correction RPC; `App/Insights/VineyardInsightsSyncRepository.swift` / `VintageReportModel.swift`; `App/IrrigationSetupView.swift`; `RecentRainfallContractService.swift`, `WeatherCurrentService.swift`; `Backend/Sync/GrapeAllocationService.swift`, `VineyardTripFunctionService.swift`. Shared command endpoints include reads too: a blanket RPC prohibition would break browsing.
+- Android `ui/screens/IrrigationRecordsScreen.kt` directly invokes system/valve/session methods and independent outbox flushing. `ResistancePlannerScreen.kt` uses its repository's local saves and sync. Weather setup/data screens directly invoke weather integration, station/credential save and backfill repositories. These screen-to-repository paths cannot be covered by only adding a guard to `AppViewModel.replayAllPendingWrites`.
+- Android direct mutation surfaces located in `SavedChemicalRepository.kt`, `chemical/CatalogueRepository.kt`, `VineyardRepository.kt`, `RegionSettingsRepository.kt`, `PaddockRepository.kt`, `EquipmentItemRepository.kt`, `VineyardMachineRepository.kt`, `SprayEquipmentRepository.kt`; not all are confirmed UI bypasses because some callers may use central coordinators. Do not equate transport method discovery with a fully traced bypass.
+
+No native implementation blocker is established: the remaining task is unfinished engineering/audit work, not solely missing server access. Keep entry closed rather than enabling a UI-only or transport-only restriction.
+
+### I. Exact source identity
+
+Observed HEAD: `f4908f430b04b498baec43d296342e8501c3c575`. User-accepted foundation: `60cacb0300d608495293b69fd3f3860281eb4577`. Accepted SHA is locally available but `git merge-base --is-ancestor` returned1: content equivalence, **not ancestry**, is the claim.
+
+`git diff --name-status 60cacb0300d608495293b69fd3f3860281eb4577 HEAD -- ios android-vinetrack scripts` returned only deletion of `ios/VineTrack/Config.swift`, the14-line build-generated empty public-config placeholder. It was already absent from tracked HEAD; this continuation did not delete/restore/edit it or inspect injected values. All other tracked application/test/runner content matches the accepted foundation. Android tree IDs for both commits: `f6ec339c2c7509c8c55b6453513bee6646f94c75`. Starting worktree had only the managed fingerprint dirty; no app edits followed. Current HEAD is not a final managed-save SHA for these report/plan edits; that SHA is assigned after turn save.
+
+### J. Server dependency and rollout gate
+
+Live contract, as established by the owner, still has `can_enter_vineyard = has_vineyard_access` and no `can_write`/`read_only_reason`; no live server query/change was made in this continuation. Only explicit verified effective-vineyard `can_enter_vineyard=true`, `can_write=false`, `read_only_reason="trial_expired"` can eventually admit expired-trial historical access. Missing/null write retains legacy behaviour; reason/trial/status/dates alone must not create a restriction. Preserve paid/legacy/admin funding and genuine foreign/revoked/disabled denial.
+
+Separate backend delivery must enforce operational writes with structured `VT_READ_ONLY` while leaving `record_my_client_activity` telemetry available. Final release acceptance additionally requires an authenticated expired-trial read, denied write with unchanged database row, original held queue, correct prompt, purchase/verified-write restoration, and paid/legacy regression checks. Native guards, holds, UI and23-case operational acceptance remain outstanding independently. **No rollout, export/upload, version change, SQL/server change, reset, logout, queue deletion, draft deletion, retained-payload rewrite or owner-data operation performed.**
+
 ## Expired-trial read-only access — contract/cache checkpoint, 23 October 2026
 
 **PARTIAL IMPLEMENTATION — NOT READ-ONLY ACCEPTANCE OR RELEASE CLEARANCE.** This checkpoint implements additive decoding, scoped capability preparation and existing-cache persistence only. It does not complete the requested end-to-end native read-only feature. Existing entry routes, write paths and sync behaviour are not changed to admit/restrict expired trials. In particular, receiving `can_write=false` is not yet sufficient to stop a mutation. Do not roll out this checkpoint as read-only enforcement.
@@ -40,7 +129,7 @@ Latest scope supersedes every earlier store-delivery authorisation: no store exp
 
 ### Outstanding native work and backend dependencies
 
-The requested20-case operational acceptance gate has **not** been completed on either platform. Contract tests establish DTO/capability/cache rules only. Outstanding native work: exhaustive operational local/server/queue admission; selected-vineyard read-only entry/browsing; Save/Create/Delete/Start/complete/reopen rejection; common banner/purchase prompt; `VT_READ_ONLY` response classification and held-original replay semantics without retry-budget consumption; telemetry/session/purchase/support/invitation/System Admin exceptions; offline/active Trip/Spray/GPS transition preservation and integration tests. No screenshot, release or full-enforcement claim is made.
+The latest requested23-case operational acceptance gate has **not** been completed on either platform (superseding the earlier20-case count). Contract tests establish DTO/capability/cache rules only. Outstanding native work: exhaustive operational local/server/queue admission; selected-vineyard read-only entry/browsing; Save/Create/Delete/Start/complete/reopen rejection; common banner/purchase prompt; `VT_READ_ONLY` response classification and held-original replay semantics without retry-budget consumption; telemetry/session/purchase/support/invitation/System Admin exceptions; offline/active Trip/Spray/GPS transition preservation and integration tests. No screenshot, release or full-enforcement claim is made.
 
 The independent backend delivery must supply authenticated effective-vineyard `can_enter_vineyard=true`, `can_write=false`, `read_only_reason="trial_expired"` only for legitimate expired-trial access, retain true denial for revoked/foreign/disabled callers, preserve entitled funding/admin variants, and enforce writes at the database with `VT_READ_ONLY` code/message/hint. `record_my_client_activity` must remain allowed. Native work is still outstanding independently of those backend dependencies; deploying the backend alone does not complete this checkpoint.
 
