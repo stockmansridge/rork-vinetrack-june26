@@ -44,6 +44,23 @@ class RetainedStartupTest {
         PinCaptureEvidenceStore.readRetainedEvidence(raw, files)
     }
 
+    @Test fun capturedOnlinePinKicksEvidenceReplayWithoutAwaitingIt() {
+        val source = System.getenv("VINETRACK_STARTUP_SOURCE")?.let(::File)
+            ?: File("src/main/java/com/rork/vinetrack/ui/AppViewModel.kt")
+        val text = source.readText()
+        val successPath = text.substringAfter("_ui.update { it.copy(pins = listOf(created) + it.pins) }")
+            .substringBefore("} catch (e: BackendError.Unauthorized)")
+        assertTrue(successPath.contains("if (captureContext != null) replayPendingPinEvidence()"))
+        assertTrue(successPath.indexOf("replayPendingPinEvidence()") < successPath.indexOf("onCreatedPin(created)"))
+        assertFalse("hot pin-save path must never await evidence upload", successPath.contains("awaitReplayStage"))
+        assertFalse("hot pin-save path must never await evidence upload", successPath.contains(".await()"))
+
+        val replay = text.substringAfter("private fun replayPendingPinEvidence()")
+            .substringBefore("private fun replayPendingCustomPins()")
+        assertTrue("evidence sync must remain a separate bounded background stage",
+            replay.contains("launchReplayStage(\"pin-evidence\")"))
+    }
+
     @Test fun immediateOnlineWithPersistedIdentityBeforeRestoreNeverAdmitsReplay() {
         assertNull(identity(authenticated = false, main = false))
         assertNull(identity(authenticated = false)) // token + cached vineyard are not restored authority
