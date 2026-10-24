@@ -1,6 +1,83 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
-## Expired-trial read-only access — enforcement continuation, 24 October 2026
+## Expired-trial read-only access — active command continuation, 24 October 2026
+
+**PARTIAL IMPLEMENTATION; HISTORICAL ENTRY REMAINS CLOSED.** Both current normal builds pass. Android host checks pass; the current iOS test run executed no tests. The previous248/199/55 source checkpoint below is historical. Neither checkpoint is full operational or backend acceptance.
+
+### A. Changed files
+
+Nine application/test/runner files relative to observed starting HEAD `da4335f3fffbb7ca15e2b7ffc49005c57e0d4245`; existing plan/report updated separately:
+
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripWriteAdmission.kt` — current-account and actual owning-vineyard admission, exact-one-row resolution and structured rejection classification.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripRepository.kt` — authenticated Trip ownership reads for ID-only PATCH/delete/occurrence mutation; guarded create/imported create/planned initiation; preserve structured403 response bodies. Read-only occurrence recovery stays available.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SupabaseClient.kt` — opt-in request vineyard attribute rechecked with originating-account admission before execution, after refresh and before retry. Other reads/telemetry are not globally blocked.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt` — active Trip local command, route, occurrence and tank-persistence admission; known-held occurrence replay returns without conflict/retry rewriting; Restricted start/pause does not trigger generic offline fallback.
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/TripWriteAdmissionTest.kt` — ten helper/boundary fixtures for ownership, missing/ambiguous scope, suspended expiry/account change, structured versus ordinary rejection, stale response, successful acknowledgement and original-work resumption.
+- `android-vinetrack/entitlement-tests.init.gradle`, `scripts/run-read-only-entitlement-contract.py` — include that existing-target host test; no dependency/build-target changes.
+- `ios/VineTrack/LegacyImported/Services/TripTrackingService.swift` — admission before active controls, saved activation, route/corrections, occurrence actions, tank/fill commands and GPS mutation; held tank preview/restart does not reconcile. Active occurrence reads load without initializing a missing journal; service journal uses the store's authority.
+- `ios/VineTrackTests/DeviceTripOwnershipTests.swift` — two new isolated service fixtures for held commands/disk/ownership/runtime preservation and durable-hold restart, stale tank pointer, other-vineyard non-release and explicit original-vineyard resumption. Compiled, NOT executed in this run. The fixtures use legacy active Trips; they are not all-occurrence-path or completed-history UI acceptance.
+
+### B. Central admission and scope
+
+The accepted durable owner/vineyard ledger is unchanged. Android ID-only Trip operations resolve an authenticated exact-one-row owning vineyard, then recheck the captured account and capability before sending. Occurrence creation derives scope from the original `p_trip.vineyard_id`; other mutating RPCs resolve `p_trip_id`; recovery remains a read. The per-request vineyard attribute extends existing HTTP refresh/retry account fencing for these guarded Trip writes only. This is not universal native transport coverage. Missing/ambiguous scope blocks without guessing the selection or creating replacement work. No personal trial-date inference or historical-entry change.
+
+### C. Retention and queues
+
+Known-held Android occurrence replay avoids business-conflict holds and retry/fallback recreation. Existing original-work and acknowledgement preservation stays intact. iOS live controls are guarded before runtime state or store/journal changes, and GPS fixes return silently while held. Tank preview/restart avoids stale-pointer reconciliation. Independent planning journals, replay/upload paths and attachments remain an open inventory; this checkpoint does not close their retention or replay acceptance.
+
+### D. Rejection/account behavior
+
+Android exact structured `VT_READ_ONLY` establishes a scoped hold only while the captured account is still current; ordinary403 does not imply entitlement expiry. A genuine in-flight success returns normally rather than being discarded if expiry arrives during transport. Helper tests exercise those boundaries, not the real SDK HTTP refresh interceptor or authenticated server. iOS uniform transport-level structured rejection/account-refresh fencing remains incomplete. No automatic billing prompt or background prompt stacking was introduced.
+
+### E. iOS validation — INCOMPLETE
+
+Requested the same13-suite selection as below, with the expanded `DeviceTripOwnershipTests` (two new methods). Test sources compiled, including `DeviceTripOwnershipTests.swift`, but the runner could not establish the test-bundle connection and reported a likely hosted-app startup crash without a crash log. **0 tests executed /0 passed /0 assertion failures; NOT PASS.** Full returned log: `/tmp/rork-swift-test-ios.log`; it contains no compiler error or actionable fatal stack. Runtime log query returned no logs. No startup workaround, reset, forced logout or unchanged automatic retry was performed. The cause is unverified and is not evidence of either a proven app regression or an infrastructure-only fault.
+
+Separate current `runChecks(ios)` **PASS**, simulator build only; device Release unverified. The old248-test PASS below does not certify the current service changes.
+
+### F. Android validation — PASS, bounded host scope
+
+Unchanged Android source through `/tmp/vinetrack-read-only-contract-5mxvipi6/` execution:
+
+- Focused11-suite selection: **209 executed /209 passed /0 failures /0 errors /0 skipped**,226.840s, exit0. Includes ten `TripWriteAdmissionTest` methods; prior ten suites retained.
+- Separate six-suite existing-regression selection: **55 executed /55 passed /0 failures /0 errors /0 skipped**,13.093s, exit0. `RetainedStartupTest`, `SyncRecoveryStorageTest`, `SyncCrashIsolationTest`, `ActiveTripStoreTest`, `OfflineQuickActionsTest`, `TripEndGateTest`.
+- Current normal `runChecks(android-vinetrack)` **PASS**. No code/dependency/version/signing or startup architecture changes after these checks. Old asset-address advisories remain nonblocking and untouched.
+
+Results are in `contract/result.json`, `existing-regressions/result.json` and `finished.json` under that directory. This is host helper/domain regression evidence, not Android emulator/handset or all-active-command integration acceptance.
+
+### G. Restart/offline and isolation
+
+The new Android helper fixture recreates authority and an in-memory PendingWrite adapter with the retained original; missing/implicit writable, fresh read-only, writable B and another account do not release held A; fresh explicit same-account A permits original replay once. It is not a real disk-backed process-restart or history-screen fixture. Prior file-backed authority/journal/photo tests remain in the209 selection. The new iOS on-disk service restart and byte-equality fixtures compiled but did not execute. Full native restart, attachment/receipt/attempt equality and account/vineyard isolation permutations remain unaccepted.
+
+### H. Remaining native and physical gaps
+
+Continue active Trip/Spray callers before independent queues/evidence, then all ID-only ownership and real completed historical Trip/Spray exposed-mutation zero-write regressions. Remaining review includes Android tank previews/reconciliation before persistence admission, GPS/evidence replacement, labour/attachments and direct-write fallback callers; iOS occurrence replay rejection/account fencing, direct Trip transport refresh and activation/publication after suspended acknowledgements. Preserve genuine receipts while doing that work. The full23-case matrix is still open.
+
+Physical-device checks are **UNVERIFIED**: retained-data iPhone/Android cold launch and offline restart; expiry during active GPS/Spray/Tank work; full evidence/receipt preservation; same-account/vineyard resume; all completed-history edit/cancel/delete paths; notice/purchase/restore flow; paid/manual/legacy behavior. No handset or owner-data mutation, reset/uninstall, release/export/upload, deployment or version change occurred.
+
+### I. Source identity and frozen manifests
+
+Observed starting HEAD: `da4335f3fffbb7ca15e2b7ffc49005c57e0d4245`. This is the base, not a final managed save revision. Current9-file manifest SHA-256: **`8e2eaa6c39bd7acd8826fc0be67cdf58a3c1f781f2c5a03f3964a7ac829b99e6`**, saved as `/tmp/vinetrack-read-only-contract-5mxvipi6/active-source-manifest.sha256`. Cumulative29-file continuation manifest (prior22 plus these9, two overlapping runner files): **`344ad343d76fbef3302b1e4cd5dca7df36e6f6ba4ebdac99daa0e4faed457ccb`**, saved as `continuation-source-manifest.sha256` there. Sorted UTF-8 `SHA256(bytes)`, two spaces, project-relative path and newline; SHA-256 over those complete lines. Plan/report and managed history are outside these source manifests. All previous22 files except the two intentionally extended runner files retain their exact prior hashes.
+
+```text
+39187134eb5968b6bcb7b0f3013ff6ed4b10a97a893997452382bc11d7e730b1  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SupabaseClient.kt
+436d168b07cdb89461af7867d442e0bea642d604b54a595d995ae78fdc9387a2  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripRepository.kt
+0f8479ea42fd9fe8951b44219411fcd2cc9f9ec5daef819c3c9fc84669267d9d  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripWriteAdmission.kt
+7fe013b8b5fb8b4ee8f159f7d052c262fafb1dfb3c8902d8f7a7af93ffbde7fe  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt
+1833b08a4b0db902813a2837301e75e851834972c5d5e27fc39e2d551a452a9f  android-vinetrack/app/src/test/java/com/rork/vinetrack/data/TripWriteAdmissionTest.kt
+8f0de3480b2308180aa37e28f9f4ebd003d30ff5beb4e6ff70990a8b716ead78  android-vinetrack/entitlement-tests.init.gradle
+4c150e2f9ba5f27332f7066a901509fc5476278a397e224d654e97cd24ff343f  ios/VineTrack/LegacyImported/Services/TripTrackingService.swift
+2061c8189fac0e2300a362b4f9064fe456b68b6d2d0cea2e138c157b7854a61d  ios/VineTrackTests/DeviceTripOwnershipTests.swift
+9fd17020582e27190268f41065df3eb3caad4b517681bb0828976f1c510bec7f  scripts/run-read-only-entitlement-contract.py
+```
+
+`git diff HEAD --check` PASS at source freeze. Source was not changed after the current tests/builds. Tests/builds certify only their specific bounded scope and source; the iOS execution failure remains unresolved.
+
+### J. Backend, entry and UX gates
+
+No isolated authenticated non-owner backend scope/contract was supplied. Permitted reads, actual denied writes with unchanged rows, held originals, purchase/write restoration and paid/manual/legacy behavior remain unverified. Native completeness is independently unfinished; backend absence is not the only blocker. Historical entry remains disabled until all native23-case and isolated backend gates pass. Only then enable explicit `can_enter_vineyard=true`, `can_write=false`, `read_only_reason="trial_expired"` entry and the persistent notice/deliberate purchase UX. Latest copy: **“Your trial has ended. VineTrack is currently read-only. Purchase a subscription to make changes.”** Primary “View plans / Purchase”; secondary “Cancel / Keep viewing”, via existing billing. Existing entry routes are unchanged and no persistent banner/purchase sheet is claimed complete.
+
+## Expired-trial read-only access — historical enforcement continuation, 24 October 2026
 
 **PARTIAL IMPLEMENTATION; ENTRY REMAINS CLOSED.** This checkpoint extends the accepted enforcement below; it is not the full 23-case native gate or authenticated backend acceptance. No new planning cycle, account/device operation, distribution or server change occurred.
 

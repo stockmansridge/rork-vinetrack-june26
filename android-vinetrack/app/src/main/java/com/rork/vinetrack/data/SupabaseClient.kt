@@ -82,6 +82,9 @@ object SupabaseClient {
 
     val accountRequestScope = io.ktor.util.AttributeKey<com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess>("VineTrackAccountRequest")
 
+    /** Opt-in vineyard admission repeated after every suspended refresh and before a retry. */
+    val operationalWriteVineyard = io.ktor.util.AttributeKey<String>("VineTrackOperationalWriteVineyard")
+
     @Volatile internal var performanceCapture: AdminPerformanceCapture? = null
 
     private fun readDataset(path: String): ReadTrafficLedger.Dataset = when (path.substringAfter("/rest/v1/").substringBefore('/')) {
@@ -125,6 +128,7 @@ object SupabaseClient {
                         (accountAccess != null && refresher?.isAccountAccessCurrent(accountAccess) != true)) {
                         throw BackendError.Unauthorized
                     }
+                    request.attributes.getOrNull(operationalWriteVineyard)?.let { OperationalWrites.requireWrite(it) }
                 }
                 requireOriginalAccount()
                 val bearer = request.headers[HttpHeaders.Authorization]

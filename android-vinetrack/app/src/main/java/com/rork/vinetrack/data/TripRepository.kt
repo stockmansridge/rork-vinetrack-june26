@@ -240,6 +240,22 @@ class TripRepository(private val session: SessionStore) {
 
     private fun nowIso(): String = Instant.now().toString()
 
+    private fun writeAdmission(access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess) =
+        TripWriteAdmission(isAccountCurrent = { session.isAccountAccessCurrent(access) }, resolve = { id ->
+            // Validate before interpolation; never resolve an opaque ID by selected vineyard.
+            UUID.fromString(id)
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.get(SupabaseClient.restUrl("trips?id=eq.$id&select=vineyard_id")) {
+                authHeaders(token)
+                attributes.put(SupabaseClient.accountRequestScope, access)
+            }
+            if (!session.isAccountAccessCurrent(access)) throw BackendError.Unauthorized
+            if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+            response.body<List<JsonObject>>().map {
+                (it["vineyard_id"] as? JsonPrimitive)?.takeIf { value -> value.isString }?.content.orEmpty()
+            }
+        })
+
     /**
      * Create a new active trip row. When [id] is supplied (Tier-A Stage B-3-1)
      * it is used as the server row id verbatim, so an offline-started trip and
@@ -279,6 +295,9 @@ class TripRepository(private val session: SessionStore) {
     ): Trip = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        val admission = writeAdmission(access)
+        admission.requireVineyard(vineyardId)
         val now = nowIso()
         val body = TripInsert(
             id = id ?: UUID.randomUUID().toString(),
@@ -324,17 +343,23 @@ class TripRepository(private val session: SessionStore) {
             return@withContext stored
         }
         check(occurrenceJournal == null) { "Occurrence journal must never use numeric trip creation." }
-        val response = SupabaseClient.http.post(SupabaseClient.restUrl("trips")) {
-            authHeaders(token)
-            headers { append("Prefer", "return=representation") }
-            contentType(ContentType.Application.Json)
-            setBody(body)
+        admission.send(vineyardId) {
+            val response = SupabaseClient.http.post(SupabaseClient.restUrl("trips")) {
+                authHeaders(token)
+                attributes.put(SupabaseClient.accountRequestScope, access)
+                attributes.put(SupabaseClient.operationalWriteVineyard, vineyardId)
+                headers { append("Prefer", "return=representation") }
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            firstRow(response)
         }
-        firstRow(response)
     }
 
     /** Retain the ordinary creation payload before publishing any prospective planned trip. */
     fun preparePlannedCreation(trip: Trip, journal: TripOccurrenceJournal) {
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        writeAdmission(access).requireVineyard(trip.vineyardId)
         val body = TripInsert(id = trip.id, vineyardId = trip.vineyardId, paddockId = trip.paddockId,
             paddockName = trip.paddockName, paddockIds = trip.paddockIds,
             startTime = requireNotNull(trip.startTime), isActive = false, personName = trip.personName,
@@ -412,6 +437,10 @@ class TripRepository(private val session: SessionStore) {
         capturedActor: String? = null,
     ): Trip = withContext(Dispatchers.IO) {
         requireConfig()
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        if (capturedActor != null && capturedActor != access.userId) throw BackendError.Unauthorized
+        val admission = writeAdmission(access)
+        admission.requireVineyard(vineyardId)
         val token = capturedToken ?: session.accessToken ?: throw BackendError.Unauthorized
         val now = originalTimestamp ?: nowIso()
         val body = ImportedTripInsert(
@@ -437,14 +466,17 @@ class TripRepository(private val session: SessionStore) {
             createdBy = capturedActor ?: session.userId,
             clientUpdatedAt = now,
         )
+        admission.send(vineyardId) {
         val response = SupabaseClient.http.post(SupabaseClient.restUrl("trips")) {
             authHeaders(token)
+            attributes.put(SupabaseClient.accountRequestScope, access)
+            attributes.put(SupabaseClient.operationalWriteVineyard, vineyardId)
             headers { append("Prefer", "return=representation") }
             contentType(ContentType.Application.Json)
             setBody(body)
         }
         if (capturedToken != null) {
-            if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, "Legacy Trip creation was not confirmed")
+            if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
             val raw = SupabaseClient.json.parseToJsonElement(response.bodyAsText()) as? kotlinx.serialization.json.JsonArray
                 ?: error(LegacySpraySaveStore.MESSAGE)
             val actual = raw.singleOrNull() as? kotlinx.serialization.json.JsonObject ?: error(LegacySpraySaveStore.MESSAGE)
@@ -452,6 +484,7 @@ class TripRepository(private val session: SessionStore) {
             LegacySpraySaveStore.requireEcho(expected, actual)
             SupabaseClient.json.decodeFromJsonElement(Trip.serializer(), actual)
         } else firstRow(response)
+        }
     }
 
     suspend fun updateMetadata(
@@ -796,16 +829,19 @@ class TripRepository(private val session: SessionStore) {
 
     suspend fun softDeleteTrip(id: String) = withContext(Dispatchers.IO) {
         requireConfig()
-        val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_trip")) {
-            authHeaders(token)
-            contentType(ContentType.Application.Json)
-            setBody(SoftDeleteArgs(id))
-        }
-        when {
-            response.status.isSuccess() -> Unit
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
-            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        val admission = writeAdmission(access)
+        val vineyard = admission.owningVineyard(id)
+        admission.send(vineyard) {
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_trip")) {
+                authHeaders(token)
+                attributes.put(SupabaseClient.accountRequestScope, access)
+                attributes.put(SupabaseClient.operationalWriteVineyard, vineyard)
+                contentType(ContentType.Application.Json)
+                setBody(SoftDeleteArgs(id))
+            }
+            if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
         }
     }
 
@@ -816,19 +852,26 @@ class TripRepository(private val session: SessionStore) {
         accountAccess: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null,
         expectedGpsTrip: Trip? = null,
     ): Trip {
+        val access = accountAccess ?: session.accountAccess() ?: throw BackendError.Unauthorized
+        val admission = writeAdmission(access)
+        val vineyard = admission.owningVineyard(id)
+        check(expectedGpsTrip == null || expectedGpsTrip.vineyardId == vineyard) { "GPS Trip ownership changed. Original evidence is retained." }
         val filter = if (expectedGpsTrip != null) {
             val stamp = requireNotNull(expectedGpsTrip.updatedAt) { "Server GPS revision unavailable. Retained evidence needs review." }
             "&is_active=eq.true&end_time=is.null&deleted_at=is.null&vineyard_id=eq.${expectedGpsTrip.vineyardId}" +
                 "&updated_at=eq.${java.net.URLEncoder.encode(stamp, "UTF-8")}"
         } else ""
-        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("trips?id=eq.$id$filter")) {
-            authHeaders(token)
-            accountAccess?.let { attributes.put(SupabaseClient.accountRequestScope, it) }
-            headers { append("Prefer", "return=representation") }
-            contentType(ContentType.Application.Json)
-            setBody(patch)
+        return admission.send(vineyard) {
+            val response = SupabaseClient.http.patch(SupabaseClient.restUrl("trips?id=eq.$id&vineyard_id=eq.$vineyard$filter")) {
+                authHeaders(token)
+                attributes.put(SupabaseClient.accountRequestScope, access)
+                attributes.put(SupabaseClient.operationalWriteVineyard, vineyard)
+                headers { append("Prefer", "return=representation") }
+                contentType(ContentType.Application.Json)
+                setBody(patch)
+            }
+            firstRow(response)
         }
-        return firstRow(response)
     }
 
     /** Exact persisted request; uncertain retries must reuse it unchanged. */
@@ -837,21 +880,40 @@ class TripRepository(private val session: SessionStore) {
         if (accountAccess != null && !session.isAccountAccessCurrent(accountAccess)) throw BackendError.Unauthorized
         require(rpc in setOf("apply_trip_occurrence_action_v1", "create_trip_with_occurrences_v1", "activate_trip_occurrences_v1", "finalize_trip_occurrences_v1", "get_trip_occurrence_recovery_v1"))
         requireConfig()
+        val access = accountAccess ?: session.accountAccess() ?: throw BackendError.Unauthorized
+        val admission = writeAdmission(access)
+        val readOnlyRecovery = rpc == "get_trip_occurrence_recovery_v1"
+        val vineyard = if (readOnlyRecovery) null else if (rpc == "create_trip_with_occurrences_v1") {
+            ((params["p_trip"] as? JsonObject)?.get("vineyard_id") as? JsonPrimitive)
+                ?.takeIf { it.isString }?.content ?: error("Occurrence creation vineyard is unresolved.")
+        } else {
+            val id = (params["p_trip_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                ?: error("Occurrence Trip identity is unresolved.")
+            admission.owningVineyard(id)
+        }
+        suspend fun request(): JsonObject {
+        admission.requireCurrent()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.post(SupabaseClient.restUrl("rpc/$rpc")) {
-            accountAccess?.let { attributes.put(SupabaseClient.accountRequestScope, it) }
+            attributes.put(SupabaseClient.accountRequestScope, access)
+            vineyard?.let { attributes.put(SupabaseClient.operationalWriteVineyard, it) }
             authHeaders(token)
             contentType(ContentType.Application.Json)
             setBody(params)
         }
         if (!response.status.isSuccess()) {
             val body = response.bodyAsText()
+            admission.requireCurrent()
+            val structuredCode = runCatching { (SupabaseClient.json.parseToJsonElement(body) as? JsonObject)?.get("code") as? JsonPrimitive }.getOrNull()?.content
+            if (structuredCode == "VT_READ_ONLY") throw BackendError.Server(response.status.value, body)
             val code = Regex("OCCURRENCE_[A-Z_]+").find(body)?.value
             if (code != null) throw OccurrenceRejected(code)
             if (response.status.value == 401) throw BackendError.Unauthorized
             throw BackendError.Server(response.status.value, "Occurrence sync is unavailable. Saved work is retained.")
         }
-        response.body<JsonObject>()
+        return response.body<JsonObject>()
+        }
+        if (vineyard == null) request() else admission.send(vineyard) { request() }
     }
 
     suspend fun fetchOccurrenceRecovery(tripId: String, operationIds: List<String>,
@@ -866,7 +928,8 @@ class TripRepository(private val session: SessionStore) {
     private suspend fun firstRow(response: io.ktor.client.statement.HttpResponse): Trip = when {
         response.status.isSuccess() -> response.body<List<Trip>>().firstOrNull()
             ?: throw BackendError.Server(response.status.value, "Empty response")
-        response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
+        response.status.value == 401 -> throw BackendError.Unauthorized
+        // Preserve the structured body so VT_READ_ONLY is not mistaken for auth failure.
         else -> throw BackendError.Server(response.status.value, response.bodyAsText())
     }
 

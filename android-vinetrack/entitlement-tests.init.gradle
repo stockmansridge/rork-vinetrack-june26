@@ -5,7 +5,7 @@ gradle.projectsEvaluated {
     app.tasks.named('compileDebugUnitTestKotlin').configure {
         setSource(app.fileTree('src/test/java') {
             include '**/ReadOnlyEntitlementContractTest.kt', '**/VineTrackAccessRowCompatTest.kt'
-            include '**/VineyardWriteAuthorityTest.kt'
+            include '**/VineyardWriteAuthorityTest.kt', '**/TripWriteAdmissionTest.kt'
             include '**/FertigationDomainTest.kt', '**/TripOccurrenceJournalTest.kt', '**/StartTankCommitCoordinatorTest.kt'
             include '**/PinPhotoWorkflowTest.kt', '**/FertigationMobileWorkflowTest.kt'
             include '**/ResistancePlanRepositoryTest.kt', '**/ResistancePlanRevisionSyncTest.kt'

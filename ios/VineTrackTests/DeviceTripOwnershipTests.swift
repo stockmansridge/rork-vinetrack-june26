@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import CoreLocation
 @testable import VineTrack
 
 @MainActor
@@ -190,6 +191,126 @@ final class DeviceTripOwnershipTests: XCTestCase {
         XCTAssertTrue(store.trips.first { $0.id == remote.id }?.pinIds.isEmpty == true)
         store.deletePin(pin.id)
         XCTAssertFalse(store.pins.contains { $0.id == pin.id })
+    }
+
+    func testExpiredActiveCommandsPreserveTripDiskOwnershipAndRuntime() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "active-trip-held-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let user = UUID(), vineyard = UUID()
+        let gate = VineyardWriteAuthority(defaults: defaults)
+        gate.bind(userId: user)
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        store.operationalWriteAuthority = gate
+        store.currentUserIdProvider = { user }
+        store.selectedVineyardId = vineyard
+        var trip = Trip(vineyardId: vineyard, isActive: true)
+        trip.rowSequence = [0.5, 1.5, 2.5]
+        trip.sequenceIndex = 1
+        trip.currentRowNumber = 1.5
+        trip.completedPaths = [0.5]
+        trip.tankSessions = [TankSession(tankNumber: 1, startTime: Date(timeIntervalSince1970: 1_700_000_000))]
+        trip.activeTankNumber = 1
+        store.startTrip(trip)
+        store.claimDeviceTrip(trip.id)
+        let tracking = TripTrackingService()
+        tracking.configure(store: store, locationService: LocationService())
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let original = try encoder.encode(store.trips)
+        let diskSnapshot: () throws -> [String: Data] = {
+            let urls = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: [.isRegularFileKey])?.allObjects as? [URL] ?? []
+            return try Dictionary(uniqueKeysWithValues: urls.filter { try $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true }.map { ($0.path, try Data(contentsOf: $0)) })
+        }
+        let disk = try diskSnapshot()
+        let corrections = tracking.diagManualCorrectionEvents
+        let distance = tracking.currentDistance
+        gate.hold(vineyardId: vineyard.uuidString, reason: VineyardWriteAuthority.holdReason)
+        tracking.pauseTrip()
+        tracking.resumeTrip()
+        XCTAssertEqual(tracking.endTrip(), .persistenceFailed("Your trial has ended. VineTrack is currently read-only. Purchase a subscription to make changes."))
+        XCTAssertThrowsError(try tracking.changeActiveRoute(pattern: .freeDrive, startPath: 2.5, higherFirst: true))
+        tracking.startTankWithoutRecordedMix(expectedTripId: trip.id)
+        tracking.endTank()
+        tracking.startFillTimer()
+        tracking.stopFillTimer()
+        tracking.resetFillTimer()
+        tracking.snapPlannedSequenceToCurrentLivePath()
+        tracking.markCurrentPlannedPathComplete()
+        tracking.skipCurrentPlannedPath()
+        tracking.confirmCurrentLockedPath(2.5)
+        tracking.recordManualCorrection("must not be recorded")
+        tracking.advanceToNextPlannedPath()
+        tracking.goBackOnePlannedPath()
+        tracking.acceptAutoRealign()
+        XCTAssertFalse(tracking.addPaddocksToActiveTrip([UUID()]))
+        tracking.finalizePendingRowsForReview()
+        tracking.selectOccurrence(UUID().uuidString)
+        tracking.reorderOccurrences([])
+        tracking.reviewOccurrence(UUID().uuidString, status: "done")
+        tracking.processLocation(CLLocation(latitude: -33, longitude: 149), force: true)
+        tracking.resumeIfNeeded()
+        XCTAssertEqual(try encoder.encode(store.trips), original)
+        XCTAssertEqual(try diskSnapshot(), disk)
+        XCTAssertEqual(store.deviceActiveTripId, trip.id)
+        XCTAssertEqual(tracking.activeTrip?.id, trip.id)
+        XCTAssertEqual(tracking.diagManualCorrectionEvents, corrections)
+        XCTAssertEqual(tracking.currentDistance, distance)
+        XCTAssertFalse(tracking.isTracking)
+        XCTAssertFalse(tracking.isPaused)
+    }
+
+    func testRestartHeldTankPreviewDoesNotRepairAndOtherVineyardCannotRelease() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let suite = "restart-trip-held-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let user = UUID(), vineyard = UUID(), paidVineyard = UUID()
+        let gate = VineyardWriteAuthority(defaults: defaults)
+        gate.bind(userId: user)
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        store.operationalWriteAuthority = gate
+        store.currentUserIdProvider = { user }
+        store.selectedVineyardId = vineyard
+        var trip = Trip(vineyardId: vineyard, isActive: true)
+        trip.rowSequence = [0.5, 1.5]
+        trip.currentRowNumber = 0.5
+        var endedTank = TankSession(tankNumber: 1, startTime: Date(timeIntervalSince1970: 1_700_000_000))
+        endedTank.endTime = Date(timeIntervalSince1970: 1_700_000_060)
+        trip.tankSessions = [endedTank]
+        trip.activeTankNumber = 1 // Recovery would ordinarily reconcile this stale pointer.
+        store.startTrip(trip)
+        store.claimDeviceTrip(trip.id)
+        gate.hold(vineyardId: vineyard.uuidString, reason: VineyardWriteAuthority.holdReason)
+        let resumedGate = VineyardWriteAuthority(defaults: defaults)
+        resumedGate.bind(userId: user)
+        let resumed = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        resumed.operationalWriteAuthority = resumedGate
+        resumed.currentUserIdProvider = { user }
+        resumed.selectedVineyardId = vineyard
+        resumed.reloadCurrentVineyardData()
+        let tracking = TripTrackingService()
+        tracking.configure(store: resumed, locationService: LocationService())
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let original = try encoder.encode(resumed.trips)
+        tracking.resumeIfNeeded()
+        _ = tracking.pendingTankStart()
+        resumedGate.verified(vineyardId: paidVineyard.uuidString, access: .init(legacyCanEnter: true, canWrite: true), explicitlyWritable: true)
+        tracking.markCurrentPlannedPathComplete()
+        XCTAssertEqual(try encoder.encode(resumed.trips), original)
+        XCTAssertEqual(resumed.trips.first?.activeTankNumber, 1)
+        XCTAssertEqual(resumed.deviceActiveTripId, trip.id)
+        XCTAssertFalse(tracking.isTracking)
+        resumedGate.verified(vineyardId: vineyard.uuidString, access: .init(legacyCanEnter: true, canWrite: true), explicitlyWritable: true)
+        tracking.markCurrentPlannedPathComplete()
+        XCTAssertTrue(resumed.trips.first?.completedPaths.contains(0.5) == true)
+        XCTAssertEqual(resumed.trips.first?.id, trip.id)
     }
 
     func testLiveMapExistingPinFilterPreservesCurrentTripPins() {

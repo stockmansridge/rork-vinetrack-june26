@@ -8462,6 +8462,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun claimDeviceTrip(trip: Trip): Boolean {
+        if (!admitTripChange(trip)) return false
         val owner = session.userId ?: return false
         val saved = runCatching { activeTripStore.claimIfAvailable(owner, trip.vineyardId, trip) }.getOrDefault(false)
         if (saved) _ui.update { it.copy(deviceActiveTripId = trip.id) }
@@ -8469,6 +8470,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun recordTripLabourAtStart(trip: Trip) {
+        if (!admitTripChange(trip)) return
         val typeId = trip.operatorCategoryId ?: _ui.value.members.firstOrNull { it.userId == trip.operatorUserId }?.operatorCategoryId
         val type = _ui.value.operatorCategories.firstOrNull { it.id == typeId && it.vineyardId == trip.vineyardId }
         tripLabourSync.record(com.rork.vinetrack.data.TripLabourSnapshotSync.Snapshot(
@@ -8477,6 +8479,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             hourlyRate = type?.costPerHour?.takeIf { it.isFinite() && it in 0.0..10_000.0 },
             capturedAt = requireNotNull(trip.startTime),
         ))
+    }
+
+    /** Deliberate commands resolve their existing row, never borrow selection for an ID. */
+    private fun admitTripChange(trip: Trip?): Boolean = trip != null &&
+        _ui.value.selectedVineyardId == trip.vineyardId && admitTripVineyard(trip.vineyardId)
+
+    private fun admitTripVineyard(vineyardId: String): Boolean {
+        if (session.userId == null || _ui.value.selectedVineyardId != vineyardId) return false
+        if (com.rork.vinetrack.data.OperationalWrites.admit(vineyardId)) return true
+        _ui.update { it.copy(tripError = "Your trial has ended. VineTrack is currently read-only. Purchase a subscription to make changes.") }
+        return false
     }
 
     fun startTrip(
@@ -8499,6 +8512,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         onResult: (Boolean) -> Unit,
     ) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        if (!admitTripVineyard(vineyardId)) { onResult(false); return }
         if (!canStartDeviceTrip { message -> _ui.update { it.copy(tripError = message) } }) {
             onResult(false); return
         }
@@ -8602,7 +8616,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(tripBusy = false) }
                 onUnauthorized("startTrip"); onResult(false)
             } catch (e: Exception) {
-                if (com.rork.vinetrack.data.SprayOperationalFailure.canStartOffline(tripFunction, e)) {
+                if (e is com.rork.vinetrack.data.VineyardWriteAuthority.Restricted) {
+                    _ui.update { it.copy(tripBusy = false) }
+                    admitTripVineyard(vineyardId)
+                    onResult(false)
+                } else if (com.rork.vinetrack.data.SprayOperationalFailure.canStartOffline(tripFunction, e)) {
                     recordTripLabourAtStart(provisional)
                     startTripLocally(provisional)
                     onResult(_ui.value.activeTrip?.id == provisional.id)
@@ -8644,6 +8662,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun prepareQualifiedTrip(base: Trip, candidates: List<com.rork.vinetrack.data.TripOccurrencePlanner.Candidate>): Trip {
+        check(admitTripChange(base)) { "Trip changes are held. Original work is retained." }
         val owner = session.userId ?: error("Sign in before accepting planned work.")
         check(candidates.map { it.label } == base.rowSequence && candidates.all { it.blockId in base.effectivePaddockIds } &&
             base.effectivePaddockIds.all { block -> candidates.any { it.blockId == block } }) {
@@ -8680,6 +8699,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun startTripLocally(provisional: Trip) {
+        if (!admitTripChange(provisional)) return
         if (!claimDeviceTrip(provisional)) {
             _ui.update { it.copy(tripBusy = false, tripError = "Couldn't save this device's trip. Please free up storage and retry.") }
             return
@@ -8701,6 +8721,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val state = _ui.value
         val trip = state.activeTrip?.takeIf { it.id == tripId && it.isPaused && it.trackingPattern == "freeDrive" }
             ?: return false
+        if (!admitTripChange(trip)) return false
         val additional = blockIds.distinct().filter { id ->
             id !in trip.effectivePaddockIds && state.paddocks.any { it.id == id && it.vineyardId == trip.vineyardId }
         }
@@ -8732,6 +8753,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         paddockIds: List<String> = emptyList(),
         onResult: (Boolean) -> Unit,
     ) {
+        if (!admitTripChange(_ui.value.trips.firstOrNull { it.id == tripId })) { onResult(false); return }
         if (_ui.value.trips.any { it.id == tripId && it.isActive } && _ui.value.activeTrip?.id != tripId) {
             _ui.update { it.copy(tripError = "This active trip belongs to another device.") }
             onResult(false); return
@@ -8806,6 +8828,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * (`Trip.activeDuration` parity).
      */
     fun setTripPaused(tripId: String, paused: Boolean) {
+        if (!admitTripChange(_ui.value.trips.firstOrNull { it.id == tripId })) return
         if (_ui.value.activeTrip?.id != tripId) return
         occurrenceTraversal.reset(System.currentTimeMillis())
         val nowIso = java.time.Instant.now().toString()
@@ -8847,6 +8870,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     pauseTimestamps = trip.pauseTimestamps.orEmpty(),
                     resumeTimestamps = trip.resumeTimestamps.orEmpty(),
                 )
+            } catch (_: com.rork.vinetrack.data.VineyardWriteAuthority.Restricted) {
+                // Existing snapshot/evidence retained; no replacement marker while held.
             } catch (_: Exception) {
                 // Autosave-style write; a lost pause PATCH is recovered by the
                 // next progress save or the queued metadata edit on reconnect.
@@ -8874,6 +8899,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(tripError = "This trip is no longer active.") }
             onResult(false); return
         }
+        if (!admitTripChange(trip)) { onResult(false); return }
         if (trip.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY) {
             endOccurrenceTrip(trip, notes, endEngineHours, onResult)
             return
@@ -9133,6 +9159,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *    signs out.
      */
     fun deleteTrip(tripId: String, onResult: (Boolean) -> Unit) {
+        if (!admitTripChange(_ui.value.trips.firstOrNull { it.id == tripId })) { onResult(false); return }
         if (_ui.value.trips.any { it.id == tripId && it.isActive } && _ui.value.activeTrip?.id != tripId) {
             _ui.update { it.copy(tripError = "This active trip belongs to another device.") }
             onResult(false); return
@@ -9472,6 +9499,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun beginTracking(trip: Trip) {
+        if (!admitTripChange(trip)) return
         // The existing tank commit is the final recording boundary, including recovered starts.
         if (requiresFirstTankReview(trip)) {
             _ui.update { it.copy(isTracking = false, tripError = "Review Tank 1 Actuals, then Start. Recording has not begun.") }
@@ -9626,6 +9654,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             onResult(false)
             return
         }
+        if (!admitTripChange(before)) { onResult(false); return }
         if (before.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY) {
             _ui.update { it.copy(tripError = "Reorder exact occurrence IDs. Numeric route replacement cannot preserve repeated passes.") }
             onResult(false); return
@@ -12415,6 +12444,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun applyOccurrenceAction(trip: Trip, action: (TripOccurrenceJournal) -> Unit): Boolean {
+        if (!admitTripChange(trip)) return false
         if (trip.coverageBasis == TripOccurrenceCoverage.Basis.LEGACY) return false
         try {
             check(_ui.value.activeTrip?.id == trip.id && trip.id !in _ui.value.locallyEndedTripIds)
@@ -12476,6 +12506,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         _ui.update { it.copy(tripError = state.heldReason) }; return@launch
                     }
                     val operation = state.pending.firstOrNull() ?: return@launch
+                    // Recovery/real receipts remain readable; a hold never rewrites the journal.
+                    if (!com.rork.vinetrack.data.OperationalWrites.canWrite(trip.vineyardId)) return@launch
                     val dependencies = pendingWrites.list().any { write ->
                         write.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved && write.clientId == trip.id &&
                         (write.entityType in setOf(com.rork.vinetrack.data.model.PendingEntityType.TRIP_START,
@@ -12500,6 +12532,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         if (activeTripStore.load()?.trip?.id == trip.id) activeTripStore.clear()
                     } else persistActiveTripSnapshot()
                 }
+            } catch (_: com.rork.vinetrack.data.VineyardWriteAuthority.Restricted) {
+                // Retained silently; no business-conflict journal hold or retry fan-out.
             } catch (e: TripRepository.OccurrenceRejected) {
                 if (session.isAccountAccessCurrent(access)) {
                     runCatching { occurrenceJournal(trip).hold(e.code) }
@@ -12528,6 +12562,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val next = sequence.getOrNull(newIndex + 1)
         val previous = _ui.value.trips
         val source = previous.firstOrNull { it.id == tripId } ?: return
+        if (!admitTripChange(source)) return
         val covered = source.copy(completedPaths = completed, skippedPaths = skipped,
             sequenceIndex = newIndex, currentRowNumber = current, nextRowNumber = next)
         val durable = completedNow?.let { com.rork.vinetrack.data.TankPathAttribution.recordCompletion(covered, it) } ?: covered
@@ -12632,6 +12667,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ): Boolean {
         if (_ui.value.activeTrip?.id != pending.sourceTrip.id) return false
         val trip = _ui.value.trips.firstOrNull { it.id == pending.sourceTrip.id && it.isActive } ?: return false
+        if (!admitTripChange(trip)) return false
         val selectedVineyardId = _ui.value.selectedVineyardId
         val currentRecord = TankMixPresentation.linkedRecord(trip.id, _ui.value.sprayRecords)
         val currentTank = currentRecord?.tanks.orEmpty().firstOrNull { it.tankNumber == pending.result.tankNumber }
@@ -12849,8 +12885,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // accrue after a local end.
         if (tripId in _ui.value.locallyEndedTripIds || _ui.value.activeTrip?.id != tripId) return
         val current = _ui.value.trips.firstOrNull { it.id == tripId } ?: return
+        if (!admitTripChange(current)) return
         val ownerId = session.userId ?: return
-        val vineyardId = _ui.value.selectedVineyardId ?: return
+        val vineyardId = current.vineyardId
         val durable = current.copy(
             tankSessions = sessions, activeTankNumber = activeTankNumber,
             isFillingTank = isFillingTank, fillingTankNumber = fillingTankNumber,
@@ -13641,6 +13678,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         details: com.rork.vinetrack.data.model.SeedingDetails?,
         onResult: (Boolean) -> Unit,
     ) {
+        if (!admitTripChange(_ui.value.trips.firstOrNull { it.id == tripId })) { onResult(false); return }
         if (_ui.value.trips.any { it.id == tripId && it.isActive } && _ui.value.activeTrip?.id != tripId) {
             _ui.update { it.copy(tripError = "This active trip belongs to another device.") }
             onResult(false); return
