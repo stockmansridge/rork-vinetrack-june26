@@ -127,6 +127,47 @@ final class LinkedPinGrowthDeletionWorkflowTests: XCTestCase {
         XCTAssertEqual(growthCount, 1)
     }
 
+    func testHeldLocalOnlyGrowthDeleteAndIndependentReplayPreserveOriginalRecordPhotoAndMetadata() async throws {
+        let disk = temporaryPersistence(), vineyard = UUID(), owner = UUID()
+        // Persistence uses ISO-8601 whole seconds; keep the original fixture at
+        // that precision so equality detects hold-time changes, not decoding.
+        let timestamp = Date(timeIntervalSince1970: 1_790_000_000)
+        let record = GrowthStageRecord(vineyardId: vineyard, stageCode: "EL4", observedAt: timestamp,
+            createdBy: owner, createdAt: timestamp, updatedAt: timestamp)
+        try disk.saveOrThrow([record], key: "vinetrack_growth_stage_records")
+        let metadata = GrowthStageRecordSyncMetadata(persistence: disk)
+        let originalDate = Date(timeIntervalSince1970: 1_790_000_000)
+        metadata.markDirty(record.id, at: originalDate)
+        let store = MigratedDataStore(persistence: disk)
+        let gate = VineyardWriteAuthority(defaults: UserDefaults(suiteName: "growth-hold-" + UUID().uuidString)!)
+        gate.bind(userId: owner)
+        store.operationalWriteAuthority = gate
+        let auth = NewBackendAuthService()
+        auth.userId = owner
+        auth.isSignedIn = true
+        let growth = DeletionGrowthRepository(), photos = DeletionPhotoStorage()
+        let service = GrowthStageRecordSyncService(repository: growth, photoStorage: photos, metadata: metadata,
+            persistence: disk, deletionStore: LinkedPinGrowthDeletionStore(persistence: disk))
+        service.configure(store: store, auth: auth)
+        let bytes = Data([51, 52, 53])
+        try service.attachPhoto(recordId: record.id, imageData: bytes)
+        let revision = service.attachmentRevision(recordId: record.id)
+        gate.hold(vineyardId: vineyard.uuidString, reason: "VT_READ_ONLY")
+        XCTAssertThrowsError(try service.deleteRecord(id: record.id)) { error in
+            XCTAssertTrue(error is VineyardWriteAuthority.Restricted)
+        }
+        XCTAssertThrowsError(try service.attachPhoto(recordId: record.id, imageData: Data([99])))
+        try await service.pushQueuedGrowthRecords(vineyardId: vineyard)
+        try await service.pushPendingPhotos(vineyardId: vineyard)
+        XCTAssertEqual(service.records, [record])
+        XCTAssertEqual(service.localPhotoData(recordId: record.id), bytes)
+        XCTAssertEqual(service.attachmentRevision(recordId: record.id), revision)
+        XCTAssertEqual(metadata.pendingUpserts, [record.id: originalDate])
+        XCTAssertFalse(metadata.isUnknownOutcome(record.id))
+        XCTAssertEqual(growth.writeCount, 0)
+        XCTAssertEqual(photos.uploadCount, 0)
+    }
+
     private func temporaryPersistence() -> PersistenceStore {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -170,11 +211,12 @@ private nonisolated struct DeletionFixtureError: LocalizedError, CustomStringCon
 
 @MainActor private final class DeletionGrowthRepository: GrowthStageRecordSyncRepositoryProtocol {
     private var deletes = 0
+    private(set) var writeCount = 0
     private let failure: (any Error)?
     init(failure: (any Error)? = nil) { self.failure = failure }
     func fetchGrowthStageRecords(vineyardId: UUID, since: Date?) async throws -> [BackendGrowthStageRecord] { [] }
-    func upsertGrowthStageRecord(_ record: BackendGrowthStageRecordUpsert) async throws {}
-    func upsertGrowthStageRecords(_ records: [BackendGrowthStageRecordUpsert]) async throws {}
+    func upsertGrowthStageRecord(_ record: BackendGrowthStageRecordUpsert) async throws { writeCount += 1 }
+    func upsertGrowthStageRecords(_ records: [BackendGrowthStageRecordUpsert]) async throws { writeCount += 1 }
     func updatePhotoPaths(recordId: UUID, vineyardId: UUID, photoPaths: [String]) async throws -> AttachmentReferenceConfirmation {
         AttachmentReferenceConfirmation(recordId: recordId, vineyardId: vineyardId, photoPath: nil, photoPaths: photoPaths)
     }
@@ -186,8 +228,9 @@ private nonisolated struct DeletionFixtureError: LocalizedError, CustomStringCon
 }
 
 @MainActor private final class DeletionPhotoStorage: PinPhotoStorageProtocol {
-    func uploadPhoto(vineyardId: UUID, pinId: UUID, revision: UUID, imageData: Data) async throws -> String { "pin.jpg" }
-    func uploadGrowthPhoto(vineyardId: UUID, recordId: UUID, revision: UUID, imageData: Data) async throws -> String { "growth.jpg" }
+    private(set) var uploadCount = 0
+    func uploadPhoto(vineyardId: UUID, pinId: UUID, revision: UUID, imageData: Data) async throws -> String { uploadCount += 1; return "pin.jpg" }
+    func uploadGrowthPhoto(vineyardId: UUID, recordId: UUID, revision: UUID, imageData: Data) async throws -> String { uploadCount += 1; return "growth.jpg" }
     func downloadPhoto(path: String, vineyardId: UUID, pinId: UUID) async throws -> Data { Data() }
     func downloadGrowthPhoto(path: String, vineyardId: UUID, recordId: UUID) async throws -> Data { Data() }
 }

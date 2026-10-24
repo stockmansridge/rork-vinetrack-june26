@@ -29,25 +29,33 @@ final class SupabaseGrowthStageRecordSyncRepository: GrowthStageRecordSyncReposi
     }
 
     func upsertGrowthStageRecord(_ record: BackendGrowthStageRecordUpsert) async throws {
-        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client
-            .from("growth_stage_records")
-            .upsert(record, onConflict: "id")
-            .execute()
+        try await upsertGrowthStageRecords([record])
     }
 
     func upsertGrowthStageRecords(_ records: [BackendGrowthStageRecordUpsert]) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard !records.isEmpty else { return }
-        try await provider.client
-            .from("growth_stage_records")
-            .upsert(records, onConflict: "id")
-            .execute()
+        let admission = try VineyardMutationAdmission(provider: provider)
+        guard Set(records.map(\.vineyardId)).count == 1, let vineyard = records.first?.vineyardId else {
+            throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
+        }
+        try admission.requireWrite(vineyardId: vineyard)
+        for record in records {
+            _ = try await admission.resolve(id: record.id, expectedVineyardId: vineyard, allowMissingForCreate: true) {
+                try await provider.client.from("growth_stage_records").select("id,vineyard_id")
+                    .eq("id", value: record.id.uuidString).execute().value
+            }
+        }
+        try await admission.send(vineyardId: vineyard) {
+            try await provider.client.from("growth_stage_records").upsert(records, onConflict: "id").execute()
+        }
     }
 
     func updatePhotoPaths(recordId: UUID, vineyardId: UUID, photoPaths: [String]) async throws -> AttachmentReferenceConfirmation {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let updated: [BackendGrowthStageRecord] = try await provider.client
+        let admission = try VineyardMutationAdmission(provider: provider)
+        let vineyard = try await owningVineyard(recordId: recordId, expected: vineyardId, admission: admission)
+        let updated: [BackendGrowthStageRecord] = try await admission.send(vineyardId: vineyard) { try await provider.client
             .from("growth_stage_records")
             .update(GrowthPhotoPathsPatch(photoPaths: photoPaths, clientUpdatedAt: Date()))
             .eq("id", value: recordId.uuidString)
@@ -55,7 +63,7 @@ final class SupabaseGrowthStageRecordSyncRepository: GrowthStageRecordSyncReposi
             .is("deleted_at", value: nil)
             .select()
             .execute()
-            .value
+            .value }
         if let row = updated.first {
             guard updated.count == 1,
                   row.id == recordId,
@@ -83,9 +91,20 @@ final class SupabaseGrowthStageRecordSyncRepository: GrowthStageRecordSyncReposi
 
     func softDeleteGrowthStageRecord(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client
-            .rpc("soft_delete_growth_stage_record", params: SoftDeleteGrowthStageRecordRequest(id: id))
-            .execute()
+        let admission = try VineyardMutationAdmission(provider: provider)
+        let vineyard = try await owningVineyard(recordId: id, admission: admission)
+        try await admission.send(vineyardId: vineyard) {
+            try await provider.client
+                .rpc("soft_delete_growth_stage_record", params: SoftDeleteGrowthStageRecordRequest(id: id)).execute()
+        }
+    }
+
+    private func owningVineyard(recordId: UUID, expected: UUID? = nil,
+                               admission: VineyardMutationAdmission) async throws -> UUID {
+        try await admission.resolve(id: recordId, expectedVineyardId: expected) {
+            try await provider.client.from("growth_stage_records").select("id,vineyard_id")
+                .eq("id", value: recordId.uuidString).execute().value
+        }
     }
 }
 

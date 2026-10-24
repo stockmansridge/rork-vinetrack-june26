@@ -51,7 +51,8 @@ final class PinPhotoStorageService: PinPhotoStorageProtocol, @unchecked Sendable
         }
         let path = PinPhotoStorage.path(vineyardId: vineyardId, pinId: pinId, revision: revision)
         let payload = PinPhotoStorage.compress(imageData) ?? imageData
-        _ = try await provider.client.storage
+        let admission = try VineyardMutationAdmission(provider: provider)
+        _ = try await admission.send(vineyardId: vineyardId) { try await provider.client.storage
             .from(PinPhotoStorage.bucket)
             .upload(
                 path,
@@ -61,7 +62,7 @@ final class PinPhotoStorageService: PinPhotoStorageProtocol, @unchecked Sendable
                     contentType: "image/jpeg",
                     upsert: true
                 )
-            )
+            ) }
         SharedImageCache.shared.saveImageData(
             payload,
             for: .pinPhoto(vineyardId: vineyardId, pinId: pinId),
@@ -77,11 +78,12 @@ final class PinPhotoStorageService: PinPhotoStorageProtocol, @unchecked Sendable
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         let path = PinPhotoStorage.growthPath(vineyardId: vineyardId, recordId: recordId, revision: revision)
         let payload = PinPhotoStorage.compress(imageData) ?? imageData
-        _ = try await provider.client.storage.from(PinPhotoStorage.bucket).upload(
+        let admission = try VineyardMutationAdmission(provider: provider)
+        _ = try await admission.send(vineyardId: vineyardId) { try await provider.client.storage.from(PinPhotoStorage.bucket).upload(
             path,
             data: payload,
             options: FileOptions(cacheControl: "3600", contentType: "image/jpeg", upsert: true)
-        )
+        ) }
         SharedImageCache.shared.saveImageData(
             payload,
             for: .growthRecordPhoto(vineyardId: vineyardId, recordId: recordId),
@@ -124,9 +126,17 @@ final class PinPhotoStorageService: PinPhotoStorageProtocol, @unchecked Sendable
         guard provider.isConfigured else {
             throw BackendRepositoryError.missingSupabaseConfiguration
         }
-        _ = try await provider.client.storage
-            .from(PinPhotoStorage.bucket)
-            .remove(paths: [path])
+        // The canonical object path owns its vineyard; an optional caller hint
+        // must never authorise a different (held) object's deletion.
+        guard let first = path.split(separator: "/").first,
+              let ownerVineyard = UUID(uuidString: String(first)),
+              vineyardId == nil || vineyardId == ownerVineyard else {
+            throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
+        }
+        let admission = try VineyardMutationAdmission(provider: provider)
+        _ = try await admission.send(vineyardId: ownerVineyard) {
+            try await provider.client.storage.from(PinPhotoStorage.bucket).remove(paths: [path])
+        }
         if let vineyardId, let pinId {
             SharedImageCache.shared.removeCachedImage(
                 for: .pinPhoto(vineyardId: vineyardId, pinId: pinId)

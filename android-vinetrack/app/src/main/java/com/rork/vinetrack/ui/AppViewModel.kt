@@ -12612,6 +12612,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun reconciledTankTripForStart(tripId: String): Trip? {
         val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return null
+        // Preview is read-only while held or outside its authenticated scope.
+        // Do not repair disk, enqueue TRIP_TANK or advance reconciliation markers.
+        if (session.userId == null || _ui.value.selectedVineyardId != trip.vineyardId ||
+            !com.rork.vinetrack.data.OperationalWrites.canWrite(trip.vineyardId)) return trip
         val repaired = TankSessionLifecycle.reconciled(trip)
         if (repaired == trip) return trip
         val owner = session.userId ?: return null
@@ -12635,6 +12639,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }.getOrDefault(emptyMap())
     fun saveTankMixDraft(tripId: String, tankId: String, text: Map<String,String>): Boolean = runCatching {
         val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return@runCatching false
+        if (!admitTripChange(trip)) return@runCatching false
         tankMixDrafts.save(session.userId ?: return@runCatching false,trip.vineyardId,trip.id,tankId,text)
     }.getOrDefault(false)
 
@@ -12762,6 +12767,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Explicit legacy fallback; no zero actual quantities are fabricated. */
     fun startTankWithoutRecordedMix(tripId: String) {
         if (_ui.value.activeTrip?.id != tripId) return
+        if (!admitTripChange(_ui.value.activeTrip)) return
         val trip = reconciledTankTripForStart(tripId) ?: return
         val record = TankMixPresentation.linkedRecord(trip.id, _ui.value.sprayRecords)
         com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(record?.applicationGeometry, record?.tanks.orEmpty())?.let { blocker ->
@@ -12788,6 +12794,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
+        if (!admitTripChange(trip)) return
         val updated = TankSessionLifecycle.end(
             trip = trip,
             timestamp = java.time.Instant.now().toString(),
@@ -12817,6 +12824,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
+        if (!admitTripChange(trip)) return
         if (trip.isFillingTank) return
         val now = java.time.Instant.now().toString()
         val sessions = trip.tankSessions.toMutableList()
@@ -12858,6 +12866,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(tripError = "No active trip to update.") }
             return
         }
+        if (!admitTripChange(trip)) return
         val now = java.time.Instant.now().toString()
         val sessions = trip.tankSessions.toMutableList()
         val fillIndex = sessions.indexOfLast { it.fillStartTime != null && it.fillEndTime == null }

@@ -59,28 +59,47 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
     func upsertPins(_ pins: [BackendPinUpsert]) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard !pins.isEmpty else { return }
-        try await provider.client
-            .from("pins")
-            .upsert(pins, onConflict: "id", ignoreDuplicates: true)
-            .execute()
+        let admission = try VineyardMutationAdmission(provider: provider)
+        // Direct callers must not send a mixed-scope batch whose rejection
+        // cannot be attributed to one vineyard. Shared replay already isolates it.
+        guard Set(pins.map(\.vineyardId)).count == 1, let vineyard = pins.first?.vineyardId else {
+            throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
+        }
+        try admission.requireWrite(vineyardId: vineyard)
+        for pin in pins {
+            _ = try await admission.resolve(id: pin.id, expectedVineyardId: vineyard, allowMissingForCreate: true) {
+                try await provider.client.from("pins").select("id,vineyard_id")
+                    .eq("id", value: pin.id.uuidString).execute().value
+            }
+        }
+        try await admission.send(vineyardId: vineyard) {
+            try await provider.client.from("pins")
+                .upsert(pins, onConflict: "id", ignoreDuplicates: true).execute()
+        }
         // ON CONFLICT DO NOTHING prevents an old create/retry racing with a
         // location confirmation. Subsequent edits cannot carry any location keys.
         for pin in pins {
-            try await provider.client.from("pins")
-                .update(BackendPinContentPatch(pin: pin))
-                .eq("id", value: pin.id.uuidString)
-                .eq("vineyard_id", value: pin.vineyardId.uuidString)
-                .is("deleted_at", value: nil)
-                .execute()
+            try await admission.send(vineyardId: pin.vineyardId) {
+                try await provider.client.from("pins")
+                    .update(BackendPinContentPatch(pin: pin))
+                    .eq("id", value: pin.id.uuidString)
+                    .eq("vineyard_id", value: pin.vineyardId.uuidString)
+                    .is("deleted_at", value: nil).execute()
+            }
         }
     }
 
     func upsertPinCaptureEvidence(_ evidence: PinCaptureEvidenceUpload) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let outcome: String = try await provider.client
-            .rpc("insert_pin_capture_evidence", params: PinEvidenceInsertRequest(payload: evidence))
-            .execute()
-            .value
+        let admission = try VineyardMutationAdmission(provider: provider)
+        guard evidence.captureUserId == provider.client.auth.currentUser?.id else {
+            throw BackendRepositoryError.missingAuthenticatedUser
+        }
+        let outcome: String = try await admission.send(vineyardId: evidence.vineyardId) {
+            try await provider.client
+                .rpc("insert_pin_capture_evidence", params: PinEvidenceInsertRequest(payload: evidence))
+                .execute().value
+        }
         guard outcome == "inserted" || outcome == "identical" else {
             throw PinCaptureEvidenceDeliveryError.immutableConflict
         }
@@ -88,15 +107,20 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
 
     func confirmSavedPinLocation(_ operation: PendingPinLocationConfirmation) async throws -> String {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        return try await provider.client
-            .rpc("confirm_saved_pin_location_v2", params: PinLocationConfirmationRequest(operation: operation))
-            .execute()
-            .value
+        let admission = try VineyardMutationAdmission(provider: provider)
+        let vineyard = try await owningVineyard(pinId: operation.pinId, expected: operation.vineyardId, admission: admission)
+        return try await admission.send(vineyardId: vineyard) {
+            try await provider.client
+                .rpc("confirm_saved_pin_location_v2", params: PinLocationConfirmationRequest(operation: operation))
+                .execute().value
+        }
     }
 
     func updatePhotoPath(pinId: UUID, vineyardId: UUID, path: String?) async throws -> AttachmentReferenceConfirmation {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let updated: [BackendPin] = try await provider.client
+        let admission = try VineyardMutationAdmission(provider: provider)
+        let vineyard = try await owningVineyard(pinId: pinId, expected: vineyardId, admission: admission)
+        let updated: [BackendPin] = try await admission.send(vineyardId: vineyard) { try await provider.client
             .from("pins")
             .update(PinPhotoPathPatch(photoPath: path, clientUpdatedAt: Date()))
             .eq("id", value: pinId.uuidString)
@@ -104,7 +128,7 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
             .is("deleted_at", value: nil)
             .select()
             .execute()
-            .value
+            .value }
         if let row = updated.first {
             guard updated.count == 1,
                   row.id == pinId,
@@ -132,9 +156,20 @@ final class SupabasePinSyncRepository: PinSyncRepositoryProtocol {
 
     func softDeletePin(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client
-            .rpc("soft_delete_pin", params: SoftDeletePinRequest(pinId: id))
-            .execute()
+        let admission = try VineyardMutationAdmission(provider: provider)
+        let vineyard = try await owningVineyard(pinId: id, admission: admission)
+        try await admission.send(vineyardId: vineyard) {
+            try await provider.client
+                .rpc("soft_delete_pin", params: SoftDeletePinRequest(pinId: id)).execute()
+        }
+    }
+
+    private func owningVineyard(pinId: UUID, expected: UUID? = nil,
+                               admission: VineyardMutationAdmission) async throws -> UUID {
+        try await admission.resolve(id: pinId, expectedVineyardId: expected) {
+            try await provider.client.from("pins").select("id,vineyard_id")
+                .eq("id", value: pinId.uuidString).execute().value
+        }
     }
 }
 

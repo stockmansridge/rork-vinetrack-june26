@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import Supabase
 
 /// Local-first sync service for VinePin records.
 /// Tracks dirty/deleted pins locally and pushes/pulls them against Supabase
@@ -99,6 +100,13 @@ final class PinSyncService {
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
+    private var writeAuthority: VineyardWriteAuthority { store?.operationalWriteAuthority ?? .shared }
+
+    /// A typed hold is retention, not a failed upload or retry-budget event.
+    private func retainForWriteHold(_ error: Error, vineyardId: UUID) -> Bool {
+        if error is VineyardWriteAuthority.Restricted { return true }
+        return writeAuthority.handleServerCode((error as? PostgrestError)?.code, vineyardId: vineyardId.uuidString)
+    }
     private let repository: any PinSyncRepositoryProtocol
     private let metadata: PinSyncMetadata
     private let photoStorage: any PinPhotoStorageProtocol
@@ -194,6 +202,11 @@ final class PinSyncService {
     }
 
     func markPinDeleted(_ id: UUID) {
+        do { try retainPendingOwner(id) }
+        catch {
+            errorMessage = "Pin deletion ownership could not be retained on this device. Keep this installation and retry."
+            return
+        }
         pendingPhotos.removeValue(forKey: id)
         try? persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
         metadata.markDeleted(id, at: Date())
@@ -208,6 +221,7 @@ final class PinSyncService {
         guard var pin = store?.pins.first(where: { $0.id == pinId }) else {
             throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "The pin is no longer available."])
         }
+        try writeAuthority.requireWrite(vineyardId: pin.vineyardId.uuidString)
         let payload = PinPhotoStorage.compress(imageData) ?? imageData
         guard !payload.isEmpty else {
             throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "The captured photo was empty."])
@@ -242,6 +256,8 @@ final class PinSyncService {
     /// Durably queues an optional confirmation before applying its exact
     /// placement locally. The stable operation id makes response-loss retries safe.
     func queueSavedPinConfirmation(_ operation: PendingPinLocationConfirmation) throws {
+        try writeAuthority.requireWrite(vineyardId: operation.vineyardId.uuidString)
+        try retainPendingOwner(operation.pinId)
         guard pendingConfirmations.values.first(where: { $0.pinId == operation.pinId }) == nil else { return }
         var next = pendingConfirmations
         next[operation.id] = operation
@@ -409,13 +425,23 @@ final class PinSyncService {
     // MARK: - Push
 
     private func pushCaptureEvidence() async throws {
+        guard let auth, auth.isSignedIn, let actor = auth.userId else { return }
+        let sequence = auth.completedSignOutSequence
+        func isCurrentAccount() -> Bool {
+            auth.isSignedIn && auth.userId == actor && auth.completedSignOutSequence == sequence
+        }
         var uploaded: Set<String> = []
         var firstError: Error?
         for evidence in PinCaptureEvidenceStore.shared.pending {
+            guard isCurrentAccount(), evidence.captureUserId == actor,
+                  writeAuthority.canWrite(vineyardId: evidence.vineyardId.uuidString) else { continue }
             do {
                 try await repository.upsertPinCaptureEvidence(evidence.uploadPayload())
+                guard isCurrentAccount() else { continue }
                 uploaded.insert(evidence.id)
             } catch {
+                guard isCurrentAccount() else { continue }
+                if retainForWriteHold(error, vineyardId: evidence.vineyardId) { continue }
                 if firstError == nil { firstError = error }
             }
         }
@@ -424,11 +450,23 @@ final class PinSyncService {
     }
 
     private func pushPendingConfirmations() async throws {
+        guard let auth, auth.isSignedIn, let actor = auth.userId else { return }
+        let sequence = auth.completedSignOutSequence
+        func isCurrentAccount() -> Bool {
+            auth.isSignedIn && auth.userId == actor && auth.completedSignOutSequence == sequence
+        }
+        let pins = try PinRepository(persistence: persistence).loadAllForDurableUpdate()
         var next = pendingConfirmations
         var firstError: Error?
         for (id, operation) in pendingConfirmations where operation.deliveryStatus == .pending {
+            let originalOwner = pendingOwners[operation.pinId] ?? pins.first(where: {
+                $0.id == operation.pinId && $0.vineyardId == operation.vineyardId
+            })?.createdByUserId
+            guard isCurrentAccount(), originalOwner == actor,
+                  writeAuthority.canWrite(vineyardId: operation.vineyardId.uuidString) else { continue }
             do {
                 let outcome = try await repository.confirmSavedPinLocation(operation)
+                guard isCurrentAccount() else { continue }
                 if outcome == "confirmed" {
                     next.removeValue(forKey: id)
                 } else if outcome.hasPrefix("conflict_") {
@@ -446,6 +484,8 @@ final class PinSyncService {
                 try persistence.saveOrThrow(next, key: pendingConfirmationsKey)
                 pendingConfirmations = next
             } catch {
+                guard isCurrentAccount() else { continue }
+                if retainForWriteHold(error, vineyardId: operation.vineyardId) { continue }
                 if firstError == nil { firstError = error }
             }
         }
@@ -466,7 +506,7 @@ final class PinSyncService {
     }
 
     func pushLocalPins(vineyardId: UUID) async throws {
-        guard let store else { return }
+        guard let store, writeAuthority.canWrite(vineyardId: vineyardId.uuidString) else { return }
         let pinPushCount = metadata.pendingUpserts.count
         let pinPushStartedAt = Date()
         VineyardSelectionDiagnostics.intervalStage(
@@ -548,7 +588,8 @@ final class PinSyncService {
                     ids: pushedIds,
                     payloads: payloads,
                     queuedAt: dirty,
-                    vineyardId: vineyardId
+                    vineyardId: vineyardId,
+                    authority: writeAuthority
                 ) { payloads in
                     guard isCurrentAccount() else { throw BackendRepositoryError.missingAuthenticatedUser }
                     try await repository.upsertPins(payloads)
@@ -609,11 +650,18 @@ final class PinSyncService {
         )
         var deleteFailures: [String] = []
         for (pinId, _) in deletes {
+            guard isCurrentAccount(), pendingOwners[pinId] == currentUserId,
+                  writeAuthority.canWrite(vineyardId: vineyardId.uuidString) else { continue }
             if deletionStore.pinIds.contains(pinId) { continue }
             do {
                 try await repository.softDeletePin(id: pinId)
+                guard isCurrentAccount() else { continue }
                 metadata.clearDeleted([pinId])
             } catch {
+                guard isCurrentAccount() else { continue }
+                // ID-only repository admission resolved the actual remote scope.
+                // Never assign a raw delete rejection to the selected sync slice.
+                if error is VineyardWriteAuthority.Restricted { continue }
                 if Self.isMissingRowError(error) {
                     // Remote row already gone — treat as already deleted.
                     metadata.clearDeleted([pinId])
@@ -659,7 +707,8 @@ final class PinSyncService {
             .sorted { $0.capturedAt < $1.capturedAt }
         var firstFailure: Error?
         for snapshot in candidates {
-            guard isCurrentAccount(), ownedIds.contains(snapshot.pinId),
+            guard isCurrentAccount(), writeAuthority.canWrite(vineyardId: snapshot.vineyardId.uuidString),
+                  ownedIds.contains(snapshot.pinId),
                   metadata.pendingDeletes[snapshot.pinId] == nil,
                   metadata.pendingUpserts[snapshot.pinId] == nil,
                   store?.pins.contains(where: { $0.id == snapshot.pinId }) == true,
@@ -680,7 +729,10 @@ final class PinSyncService {
                     try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
                 }
 
-                guard isCurrentAccount(), let path = work.uploadedPath,
+                // Preserve an actual successful object receipt even if expiry arrived
+                // in flight, but independently admit the subsequent metadata send.
+                guard isCurrentAccount(), writeAuthority.canWrite(vineyardId: work.vineyardId.uuidString),
+                      let path = work.uploadedPath,
                       metadata.pendingDeletes[work.pinId] == nil,
                       pendingPhotos[work.pinId]?.revision == work.revision else { continue }
                 _ = try await repository.updatePhotoPath(
@@ -710,6 +762,8 @@ final class PinSyncService {
                 pendingPhotos.removeValue(forKey: snapshot.pinId)
                 try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
             } catch {
+                guard isCurrentAccount() else { continue }
+                if retainForWriteHold(error, vineyardId: snapshot.vineyardId) { continue }
                 if firstFailure == nil { firstFailure = error }
             }
         }
@@ -751,7 +805,11 @@ final class PinSyncService {
         // If remote is empty AND we have local pins AND we have never synced before,
         // push them all up so the cloud picks them up.
         if remote.isEmpty, lastSync == nil {
-            var localForVineyard = store.pins.filter { $0.vineyardId == vineyardId }
+            guard auth?.isSignedIn == true, let actor = auth?.userId,
+                  writeAuthority.canWrite(vineyardId: vineyardId.uuidString) else { return }
+            var localForVineyard = store.pins.filter {
+                $0.vineyardId == vineyardId && (pendingOwners[$0.id] ?? $0.createdByUserId) == actor
+            }
             if !localForVineyard.isEmpty {
                 let currentUserId = auth?.userId
                 let currentUserName = auth?.userName
@@ -765,9 +823,8 @@ final class PinSyncService {
                         store.applyRemotePinUpsert(localForVineyard[i])
                     }
                 }
-                let now = Date()
                 let payloads = localForVineyard.map {
-                    BackendPin.upsert(from: $0, clientUpdatedAt: now)
+                    BackendPin.upsert(from: $0, clientUpdatedAt: metadata.pendingUpserts[$0.id] ?? $0.timestamp)
                 }
                 try await repository.upsertPins(payloads)
             }

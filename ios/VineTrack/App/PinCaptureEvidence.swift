@@ -153,6 +153,8 @@ nonisolated struct PinCaptureEvidence: Codable, Sendable, Identifiable, Equatabl
 /// Server payload deliberately excludes local upload state.
 nonisolated struct PinCaptureEvidenceUpload: Encodable, Sendable {
     private let evidence: PinCaptureEvidence
+    var vineyardId: UUID { evidence.vineyardId }
+    var captureUserId: UUID? { evidence.captureUserId }
     init(evidence: PinCaptureEvidence) { self.evidence = evidence }
 
     func encode(to encoder: Encoder) throws {

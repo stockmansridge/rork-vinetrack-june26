@@ -228,6 +228,9 @@ final class DeviceTripOwnershipTests: XCTestCase {
         let disk = try diskSnapshot()
         let corrections = tracking.diagManualCorrectionEvents
         let distance = tracking.currentDistance
+        let wasTracking = tracking.isTracking
+        let wasPaused = tracking.isPaused
+        XCTAssertTrue(wasTracking) // configure resumes the writable active Trip before expiry.
         gate.hold(vineyardId: vineyard.uuidString, reason: VineyardWriteAuthority.holdReason)
         tracking.pauseTrip()
         tracking.resumeTrip()
@@ -259,8 +262,8 @@ final class DeviceTripOwnershipTests: XCTestCase {
         XCTAssertEqual(tracking.activeTrip?.id, trip.id)
         XCTAssertEqual(tracking.diagManualCorrectionEvents, corrections)
         XCTAssertEqual(tracking.currentDistance, distance)
-        XCTAssertFalse(tracking.isTracking)
-        XCTAssertFalse(tracking.isPaused)
+        XCTAssertEqual(tracking.isTracking, wasTracking)
+        XCTAssertEqual(tracking.isPaused, wasPaused)
     }
 
     func testRestartHeldTankPreviewDoesNotRepairAndOtherVineyardCannotRelease() throws {

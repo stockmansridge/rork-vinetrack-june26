@@ -107,6 +107,56 @@ final class PinPhotoWorkflowTests: XCTestCase {
         XCTAssertFalse(cache.isCacheCurrent(for: key, remotePath: "same.jpg", remoteUpdatedAt: nil, attachmentRevision: UUID()))
     }
 
+    func testIndependentPhotoHoldSurvivesRelaunchAndWritableBDoesNotReleaseA() async throws {
+        let fixture = try makeFixture()
+        try await fixture.service.pushLocalPins(vineyardId: fixture.vineyardId)
+        try fixture.service.attachPhoto(pinId: fixture.pin.id, imageData: Data([31, 32, 33]))
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let original = try encoder.encode(fixture.persistence.load(key: "vinetrack_pending_pin_photos_v2") as [UUID: PendingPinPhoto]?)
+        fixture.store.operationalWriteAuthority.hold(vineyardId: fixture.vineyardId.uuidString, reason: VineyardWriteAuthority.holdReason)
+        try await fixture.service.pushLocalPins(vineyardId: fixture.vineyardId)
+        XCTAssertEqual(fixture.storage.uploadCount(), 0)
+        XCTAssertNil(fixture.pinRepository.lastPhotoPath())
+        let relaunched = PinSyncService(repository: fixture.pinRepository, photoStorage: fixture.storage,
+            persistence: fixture.persistence, deletionStore: fixture.deletionStore)
+        relaunched.configure(store: fixture.store, auth: fixture.auth)
+        fixture.store.operationalWriteAuthority.verified(vineyardId: UUID().uuidString,
+            access: VineyardOperationalAccess(legacyCanEnter: true, canWrite: true), explicitlyWritable: true)
+        try await relaunched.pushLocalPins(vineyardId: fixture.vineyardId)
+        let retained = try encoder.encode(fixture.persistence.load(key: "vinetrack_pending_pin_photos_v2") as [UUID: PendingPinPhoto]?)
+        XCTAssertEqual(original, retained)
+        XCTAssertEqual(fixture.storage.uploadCount(), 0)
+        fixture.store.operationalWriteAuthority.verified(vineyardId: fixture.vineyardId.uuidString,
+            access: VineyardOperationalAccess(legacyCanEnter: true, canWrite: true), explicitlyWritable: true)
+        try await relaunched.pushLocalPins(vineyardId: fixture.vineyardId)
+        try await relaunched.pushLocalPins(vineyardId: fixture.vineyardId)
+        XCTAssertEqual(fixture.storage.uploadCount(), 1)
+        XCTAssertFalse(relaunched.hasPendingPhoto(pinId: fixture.pin.id))
+    }
+
+    func testExpiryAfterSuccessfulUploadKeepsReceiptAndStopsIndependentReferenceSend() async throws {
+        let fixture = try makeFixture()
+        try await fixture.service.pushLocalPins(vineyardId: fixture.vineyardId)
+        try fixture.service.attachPhoto(pinId: fixture.pin.id, imageData: Data([41, 42, 43]))
+        fixture.storage.onUpload = {
+            fixture.store.operationalWriteAuthority.hold(vineyardId: fixture.vineyardId.uuidString, reason: "VT_READ_ONLY")
+        }
+        try await fixture.service.pushLocalPins(vineyardId: fixture.vineyardId)
+        XCTAssertEqual(fixture.storage.uploadCount(), 1)
+        XCTAssertNil(fixture.pinRepository.lastPhotoPath())
+        XCTAssertTrue(fixture.service.hasPendingPhoto(pinId: fixture.pin.id))
+        let pending: [UUID: PendingPinPhoto] = fixture.persistence.load(key: "vinetrack_pending_pin_photos_v2") ?? [:]
+        XCTAssertEqual(pending[fixture.pin.id]?.uploadedPath, fixture.storage.lastPath())
+        fixture.storage.onUpload = nil
+        fixture.store.operationalWriteAuthority.verified(vineyardId: fixture.vineyardId.uuidString,
+            access: VineyardOperationalAccess(legacyCanEnter: true, canWrite: true), explicitlyWritable: true)
+        try await fixture.service.pushLocalPins(vineyardId: fixture.vineyardId)
+        XCTAssertEqual(fixture.storage.uploadCount(), 1)
+        XCTAssertEqual(fixture.pinRepository.lastPhotoPath(), fixture.storage.lastPath())
+        XCTAssertFalse(fixture.service.hasPendingPhoto(pinId: fixture.pin.id))
+    }
+
     private func makeFixture(
         storageFailure: Bool = false,
         photoReferenceFailures: Int = 0
@@ -133,6 +183,9 @@ final class PinPhotoWorkflowTests: XCTestCase {
         let auth = NewBackendAuthService()
         auth.userId = UUID()
         auth.isSignedIn = true
+        let authority = VineyardWriteAuthority(defaults: UserDefaults(suiteName: "pin-hold-test-" + UUID().uuidString)!)
+        authority.bind(userId: auth.userId)
+        store.operationalWriteAuthority = authority
         service.configure(store: store, auth: auth)
         store.addPin(pin)
         return Fixture(vineyardId: vineyardId, pin: pin, store: store, persistence: persistence, service: service, pinRepository: pinRepository, storage: storage, deletionStore: deletionStore, auth: auth)
@@ -182,6 +235,7 @@ final class PinPhotoWorkflowTests: XCTestCase {
 @MainActor private final class PhotoStorageDouble: PinPhotoStorageProtocol {
     private let shouldFail: Bool
     private var uploads: Int = 0
+    var onUpload: (() -> Void)?
     private var path: String?
 
     init(shouldFail: Bool) { self.shouldFail = shouldFail }
@@ -190,6 +244,7 @@ final class PinPhotoWorkflowTests: XCTestCase {
         if shouldFail { throw URLError(.notConnectedToInternet) }
         let value = PinPhotoStorage.path(vineyardId: vineyardId, pinId: pinId, revision: revision)
         path = value
+        onUpload?()
         return value
     }
     func uploadGrowthPhoto(vineyardId: UUID, recordId: UUID, revision: UUID, imageData: Data) async throws -> String {

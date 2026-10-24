@@ -1,6 +1,86 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
-## Expired-trial read-only access — active command continuation, 24 October 2026
+## Expired-trial read-only access — independent attachment and tank admission checkpoint, 24 October 2026
+
+**PARTIAL IMPLEMENTATION; HISTORICAL ENTRY REMAINS CLOSED.** Final iOS selection282 PASS; Android focused209 PASS, regressions55 PASS and one actual ViewModel instrumentation regression PASS. Both normal builds PASS, separately from tests. These are bounded source checks, not the full23-case gate, authenticated backend acceptance or physical-device readiness.
+
+### A. Changed files
+
+Thirteen application/test files relative to observed base `cdb0ac52461945846f6bec8ed6f3ec9b70ad929c`; exact paths/hashes are in I. Existing report/approved plan updated separately. No dependency, project-target, startup architecture, costing, version/build-number or server changes.
+
+- iOS `VineyardMutationAdmission.swift`: new per-operation originating-account and actual-vineyard boundary shared by independent Pin/Growth database/storage sends. A restored SDK session cannot bypass the durable ledger before account binding.
+- `SupabasePinSyncRepository.swift`, `SupabaseGrowthStageRecordSyncRepository.swift`: authenticated exact-one-row ID ownership for photo-reference/confirmation/delete; expected-vineyard validation for existing upsert IDs; explicit authenticated absent-row allowance only for create. Reject mixed-vineyard direct batches rather than misattribute a rejection. Every independent mutation is readmitted.
+- `PinPhotoStorageService.swift`: guard Pin/Growth uploads and object deletion. Deletion scope comes from the canonical path, not optional selected-vineyard hints; downloads remain available.
+- `PinSyncService.swift`: held independent photos/evidence/confirmations retain originals, successful uploads retain their receipt before separately admitting photo-path PATCH; capture owner/account/sequence fences; delete replay retains unknown/foreign owner work; initial empty-remote fallback does not reattribute foreign work or regenerate queued timestamps. New attachment/confirmation creation is admitted before queue/cache changes. New delete queue callbacks capture the current author in the existing owner sidecar.
+- `PinCaptureEvidence.swift`: read-only owner/vineyard accessors on the existing immutable upload wrapper; encoding and payload unchanged.
+- `GrowthStageRecordSyncService.swift`: admit local-only delete/photo/mirroring, known-held replay, independent attachment reference sends and linked-delete fallback; do not turn a known hold into deletion-permission rollback. Restore newly established unknown-outcome claim metadata on typed hold without replacing original queued dates. This is not complete Growth account-incarnation acceptance.
+- Android `AppViewModel.kt`: held tank preview returns original without repairing disk, changing reconciliation markers or enqueueing; admit legacy Start Tank, tank drafts and End/Start Fill/Stop Fill controls before changes.
+- Tests: `DeviceTripOwnershipTests.swift`, `PinPhotoWorkflowTests.swift`, `LinkedPinGrowthDeletionWorkflowTests.swift`, new `VineyardMutationAdmissionTests.swift`, Android `RetainedStartupConstructionTest.kt`.
+
+### B. Admission and authoritative ownership
+
+The accepted separate durable owner/vineyard authority is unchanged. The new iOS boundary requires an authenticated SDK account matching the bound ledger and captures that binding across suspensions. ID mutations read authenticated `id,vineyard_id` without `limit(1)` and reject missing/duplicate/mismatched rows; writable selection B never authorizes held actual A. Create can accept an absent row only with an explicit original vineyard and current write admission. Existing-ID upserts cannot silently move another vineyard's record. Scope ambiguity is a local unresolved restriction, not a newly inferred trial-expiry hold. No personal trial-date inference or capability-entry change.
+
+### C. Originals, independent queues and receipts
+
+Known-held Pin photos/evidence/confirmations are skipped without rewriting originals, consuming retry budgets or producing ordinary upload failures. A real successful object upload remains durably referenced by its original pending revision when expiry arrives in flight; the subsequent reference send stops, and fresh explicit same-owner/same-vineyard permission later uses that receipt rather than uploading again. Read/evidence hydration remains ungated. Existing operational payload formats, IDs, attachment revisions, evidence timestamps and receipts were not recreated. Pin/Growth direct mutations and storage deletion are guarded, but this checkpoint is not exhaustive attachment/remove/cleanup/manual-retry acceptance across both apps.
+
+### D. Structured responses and account isolation
+
+Exact structured `VT_READ_ONLY` establishes a hold only while the originating account binding is current; ordinary permission/network/auth failures do not imply expiry. A stale structured response cannot hold a subsequent account. Genuine successful sends are returned normally even when expiry arrives in flight. Helper fixtures cover these boundaries, but are not actual SDK refresh/retry HTTP interception or full session-incarnation acceptance. Pin service also captures sign-out sequence. Growth service account/author isolation and remaining independent journals still need completion.
+
+### E. iOS tests and separate build
+
+- Explicit unchanged13-suite rerun after the earlier zero-test hosted-app connection failure: **249 passed /1 failed**. The failure incorrectly demanded tracking be stopped even though `configure` had already resumed the writable active Trip before expiry. Fixture-only correction captures and compares original tracking/paused state and asserts pre-hold tracking was active; original disk/Trip/ownership/correction/distance assertions remain. No startup/production workaround. Corrected same13-suite selection: **250 passed in31s**.
+- Two genuine failing-before Pin regressions: **0 passed /2 failed**; expired independent photo still uploaded, and expiry during successful upload still allowed subsequent photo-reference send. Production fixes above address both.
+- First narrow after-fix selection: **15 passed /1 failed** because the fixture compared unsorted JSONEncoder output. Canonical sorted-key comparison preserves all payload equality coverage.
+- Expanded18-suite selection: **279 passed /1 failed** because the new Growth fixture used subsecond source dates while existing disk decoding retains whole seconds. Fixed fixture precision, not persistence behavior or assertion coverage. Next selection **280 passed in72s**.
+- Final frozen-source18-suite selection, after adding unbound-ledger and explicit-create-scope regressions: **282 passed in120s**, no reported failures. Same prior13 suites plus `PinPhotoWorkflowTests`, `VineyardMutationAdmissionTests`, `LinkedPinGrowthDeletionWorkflowTests`, `MobileRequestSyncSafeguardTests`, `GrowthStageVarietyParityTests`. Aggregate runner result is not a per-method/skipped XML manifest. Latest runner log `/tmp/rork-swift-test-ios.log` is overwritten by later runs.
+- Separate final **`runChecks(ios)` PASS**, simulator build only; device Release unverified. Earlier hosted-app failure remains historical with cause unproven, not a current zero-execution blocker.
+
+### F. Android tests and separate build
+
+- Actual production ViewModel instrumentation: `com.rork.vinetrack.data.auth.RetainedStartupConstructionTest#expiredTankPreviewAndCommandsKeepOriginalDiskDraftAndReconciliationMarker` — **1 passed /0 failed /0 skipped,7s**. Uses the existing disposable namespaced fixture Application. Verifies original stale tank pointer, disk snapshot/saved time, draft contents and reconciliation marker remain unchanged after held preview/start/fill/end/draft actions and writable B verification. Not a network interception assertion, full Start/Spray journey or physical retained-install test; no failing-before Android execution claimed.
+- Current11-suite focused host selection: **209/209,0 failures/errors/skips,29.077s,exit0**. Separate existing six-suite regressions: **55/55,0 failures/errors/skips,13.067s,exit0**. Artifacts `/tmp/vinetrack-read-only-contract-f7ekb68r/{contract,existing-regressions}/result.json`, suite XML and `finished.json`. Same bounded selection as prior checkpoint; not a replacement23-case matrix.
+- Separate final **`runChecks(android-vinetrack)` PASS**. Test/build evidence is separate. No startup/costing/sync-architecture or version change. Existing asset-address advisories remain nonblocking and untouched.
+
+### G. Restart/offline and expired zero-write scope
+
+Pin regression reconstructs the service from isolated disk persistence with the original attachment held; canonical serialized attachment equality, revision, bytes, original upload receipt and no extra upload are asserted. Writable B does not release A; explicit fresh writable A resumes original once. Existing13-suite hold/restart/occurrence/fertigation assertions remain green. Android instrumentation verifies synchronous held tank commands against the actual ViewModel and disk, offline UI scope. This does **not** prove process death, retained-owner handset restart, all account/vineyard permutations, GPS hardware behavior, all completed-history exposed mutations or full expired zero-HTTP-write acceptance.
+
+### H. Remaining native work and the existing23-case gate
+
+Native enforcement remains independently incomplete: Android direct Pin storage upload/delete and other independent attachment/evidence/retry transports; Growth author/account-incarnation queues; scouting/Insights, maintenance attachments, resistance/fertigation direct/retry inventory; Spray activation/completion and occurrence publication after suspended acknowledgements; generic scope/replay fallbacks; historical Trip/Spray all-exposed-mutation zero-write regressions; full restart/isolation matrix and SDK refresh/retry fencing. Preserve genuine server acknowledgements during this work. Neither helper counts nor this checkpoint close those paths.
+
+The authoritative enumerated23-case matrix was **not found** in recursive searches of `docs/`, `.rork/plans/`, `scripts/`, `tests/`, existing iOS test targets and Android unit/instrumentation tests. Existing plan line23 and this report's older contract section reference the count and categories, not the actual case list. The separate ten-case offline Quick Actions matrix is unrelated. Need the original23 numbered cases; no substitute checklist was invented or marked passed. Full physical-device behavior remains UNVERIFIED.
+
+### I. Exact source checkpoint
+
+Base HEAD **`cdb0ac52461945846f6bec8ed6f3ec9b70ad929c`** plus the following13-file delta is the tested source identity; not a new final managed-save SHA. Sorted UTF-8 `SHA256(file bytes) + two spaces + project-relative path + newline`, then hash all lines: **`09aec26f573cf9f434824679cd00cee60f1eb038fbe9f78b8df4c4e98211d6a0`**. Retained at `/tmp/vinetrack-read-only-contract-f7ekb68r/source-manifest.sha256`; complete lines embedded below so evidence is not dependent on ephemeral storage. Prior9/22/29-file manifests below remain historical and are not represented as current. Plan/report/managed history excluded. Application/test source unchanged after final respective checks; `git diff HEAD --check` PASS.
+
+```text
+bb5386f29770f2ab2b6c44e6e0b44eefbfa080cae3187e35e4cf0157a658b1cf  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/RetainedStartupConstructionTest.kt
+d98a42506693a463a04a24e4054ac3c6a935dd94b347f70e5324c52463885876  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt
+8b90b3482b41b659ea474a1e511e44539f96fcbdb1502ef98e5b8e50043ba877  ios/VineTrack/App/PinCaptureEvidence.swift
+b3d4919b6c1809490aede126ad7f3248f14bf60469f735a31fc8103342ba7864  ios/VineTrack/Backend/Repositories/SupabaseGrowthStageRecordSyncRepository.swift
+91659de59a6666080816c6739585baf3b72908c58aafe4f5cfa201af4f44e433  ios/VineTrack/Backend/Repositories/SupabasePinSyncRepository.swift
+f991f438f8f395dbe13208667eda59584fce823e3a2d53f666bf820076b6e7df  ios/VineTrack/Backend/Storage/PinPhotoStorageService.swift
+88229d0495c381557b900b7892ec9ceb18fa7b3c7595c9b81f5c9d0979b92457  ios/VineTrack/Backend/Subscription/VineyardMutationAdmission.swift
+c0489e8a9497e11c5007b3aec199f930c3c1ab3e7579bbbc5aaf21f9c31e755c  ios/VineTrack/Backend/Sync/GrowthStageRecordSyncService.swift
+1d4770793eb67a4d50c1367e0927c36011e6302196327fd04cb9972a1836fc83  ios/VineTrack/Backend/Sync/PinSyncService.swift
+c7b5e74d15885bc4c9d84d7597fa6857a40f646d72942afc03771dfa01e9b924  ios/VineTrackTests/DeviceTripOwnershipTests.swift
+73bc1245b1ef5ff7a6c0103dd5b83fe7d19a1f8734f1d30185698179be09d6fc  ios/VineTrackTests/LinkedPinGrowthDeletionWorkflowTests.swift
+2ff954de2486df19e47f262ff102bf031f4bf3fe178b28b03fab2ea1d4b42ada  ios/VineTrackTests/PinPhotoWorkflowTests.swift
+e261d3d7d1b38e421e4c5e3c90f4583c7a2a0e2bd42cd37560affb4849c53aab  ios/VineTrackTests/VineyardMutationAdmissionTests.swift
+```
+
+### J. Backend, intended entry and readiness
+
+Backend discovery reported production only, Supabase ref `tbafuqwruefgkbyxrxyb`, native Supabase Auth/RLS, no preview/automatic rollback. **No authenticated acceptance, live data read/write, migration, deployment or owner-data operation performed.** Need an explicitly authorised isolated non-owner account/vineyard fixture scope and delivered server contract before verifying permitted reads, denied writes/unchanged rows, no duplicates, retained originals/exact-once resumption and receipt lineage, paid/manual/legacy access and `record_my_client_activity`. Credentials must use the secure configuration flow, not this report or chat.
+
+Historical entry remains closed, not toggled for tests. Persistent notice/purchase UX remains unenabled until native completeness, original23-case matrix and isolated backend acceptance pass. Then and only then use explicit `can_enter_vineyard=true`, `can_write=false`, `read_only_reason="trial_expired"` and latest copy: **“Your trial has ended. VineTrack is currently read-only. Purchase a subscription to make changes.”** Primary **“View plans / Purchase”**, secondary **“Cancel / Keep viewing”**, through existing billing. No rollout/readiness declaration, release/upload, device reset/uninstall/cache clear/forced logout or owner queue deletion.
+
+## Expired-trial read-only access — historical active command continuation, 24 October 2026
 
 **PARTIAL IMPLEMENTATION; HISTORICAL ENTRY REMAINS CLOSED.** Both current normal builds pass. Android host checks pass; the current iOS test run executed no tests. The previous248/199/55 source checkpoint below is historical. Neither checkpoint is full operational or backend acceptance.
 

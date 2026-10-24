@@ -32,6 +32,7 @@ final class GrowthStageRecordSyncService {
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
+    private var writeAuthority: VineyardWriteAuthority { store?.operationalWriteAuthority ?? .shared }
     private let repository: any GrowthStageRecordSyncRepositoryProtocol
     private let pinRepository: any PinSyncRepositoryProtocol
     private let photoStorage: any PinPhotoStorageProtocol
@@ -152,6 +153,7 @@ final class GrowthStageRecordSyncService {
     /// `true` if the pin was a valid growth-stage pin and was mirrored.
     @discardableResult
     private func mirrorPinWithoutSync(_ pin: VinePin, snapshotVariety: Bool = true) -> Bool {
+        guard writeAuthority.canWrite(vineyardId: pin.vineyardId.uuidString) else { return false }
         guard pin.mode == .growth, let code = pin.growthStageCode, !code.isEmpty else {
             #if DEBUG
             print("[GrowthStageRecord] mirrorPinWithoutSync SKIPPED — not a growth-stage pin")
@@ -254,6 +256,7 @@ final class GrowthStageRecordSyncService {
         guard let record = records.first(where: { $0.id == recordId }) else {
             throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "The growth observation is no longer available."])
         }
+        try writeAuthority.requireWrite(vineyardId: record.vineyardId.uuidString)
         let payload = PinPhotoStorage.compress(imageData) ?? imageData
         guard !payload.isEmpty else {
             throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "The captured photo was empty."])
@@ -289,6 +292,7 @@ final class GrowthStageRecordSyncService {
     /// a linked pin and observation atomically when this queue replays.
     func deleteRecord(id: UUID) throws {
         guard let record = records.first(where: { $0.id == id }) else { return }
+        try writeAuthority.requireWrite(vineyardId: record.vineyardId.uuidString)
         if record.pinId == nil,
            metadata.pendingUpserts[id] != nil,
            !metadata.isUnknownOutcome(id) {
@@ -321,6 +325,7 @@ final class GrowthStageRecordSyncService {
 
     private func softDeleteByPin(_ pin: VinePin) -> Bool {
         guard let record = records.first(where: { $0.pinId == pin.id }) else { return true }
+        guard writeAuthority.admit(vineyardId: record.vineyardId.uuidString) else { return false }
         let target = PendingLinkedPinGrowthDeletion(
             id: record.id,
             vineyardId: record.vineyardId,
@@ -387,6 +392,7 @@ final class GrowthStageRecordSyncService {
     }
 
     func pushQueuedGrowthRecords(vineyardId: UUID) async throws {
+        guard writeAuthority.canWrite(vineyardId: vineyardId.uuidString) else { return }
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
@@ -410,16 +416,32 @@ final class GrowthStageRecordSyncService {
                 ))
                 pushedIds.append(recordId)
             }
+            // The acknowledgement read can suspend across expiry. Do not claim
+            // an unknown-outcome upload, clear orphans or rewrite metadata then.
+            guard writeAuthority.canWrite(vineyardId: vineyardId.uuidString) else { return }
             metadata.clearDirty(orphans)
             SyncIssueCenter.shared.clearIssues(orphans)
-            metadata.markUnknownOutcome(pushedIds)
             let result = await SyncQueuePush.run(
                 entity: "Growth Stages",
                 ids: pushedIds,
                 payloads: payloads,
                 queuedAt: dirty,
-                vineyardId: vineyardId
-            ) { try await repository.upsertGrowthStageRecords($0) }
+                vineyardId: vineyardId,
+                authority: writeAuthority
+            ) { payloads in
+                try writeAuthority.requireWrite(vineyardId: vineyardId.uuidString)
+                let originalUnknown = metadata.unknownOutcomeUpserts
+                let sendingIds = payloads.map(\.id)
+                metadata.markUnknownOutcome(sendingIds)
+                do {
+                    try await repository.upsertGrowthStageRecords(payloads)
+                } catch {
+                    if error is VineyardWriteAuthority.Restricted {
+                        metadata.restoreUnknownOutcomeAfterHold(sendingIds, original: originalUnknown)
+                    }
+                    throw error
+                }
+            }
             metadata.clearDirty(result.uploaded)
             metadata.clearUnknownOutcome(result.uploaded)
             SyncIssueCenter.shared.notePending(entity: "Growth Stages", count: metadata.pendingUpserts.count)
@@ -438,6 +460,7 @@ final class GrowthStageRecordSyncService {
         let targets = deletionStore.targets.values.filter { $0.vineyardId == vineyardId }
         var firstDeletionError: Error?
         for target in targets {
+            guard writeAuthority.canWrite(vineyardId: target.vineyardId.uuidString) else { continue }
             do {
                 try await deletePersistedTarget(target)
                 if target.pinId != nil {
@@ -450,6 +473,7 @@ final class GrowthStageRecordSyncService {
                     metadata.clearUnknownOutcome([growthId])
                 }
             } catch {
+                if error is VineyardWriteAuthority.Restricted { continue }
                 if Self.isPermissionError(error) {
                     if let growth = target.growthSnapshot, !records.contains(where: { $0.id == growth.id }) {
                         records.append(growth)
@@ -472,11 +496,13 @@ final class GrowthStageRecordSyncService {
     }
 
     func deletePersistedTarget(_ target: PendingLinkedPinGrowthDeletion) async throws {
+        try writeAuthority.requireWrite(vineyardId: target.vineyardId.uuidString)
         if let pinId = target.pinId, let growthId = target.growthRecordId {
             do {
                 try await pinRepository.softDeletePin(id: pinId)
                 return
             } catch where Self.isMissingRowError(error) {
+                try writeAuthority.requireWrite(vineyardId: target.vineyardId.uuidString)
                 try await repository.softDeleteGrowthStageRecord(id: growthId)
                 return
             }
@@ -517,7 +543,8 @@ final class GrowthStageRecordSyncService {
             .sorted { $0.capturedAt < $1.capturedAt }
         var firstFailure: Error?
         for snapshot in candidates {
-            guard metadata.pendingDeletes[snapshot.recordId] == nil,
+            guard writeAuthority.canWrite(vineyardId: snapshot.vineyardId.uuidString),
+                  metadata.pendingDeletes[snapshot.recordId] == nil,
                   metadata.pendingUpserts[snapshot.recordId] == nil,
                   records.contains(where: { $0.id == snapshot.recordId }),
                   pendingPhotos[snapshot.recordId]?.revision == snapshot.revision else { continue }
@@ -547,7 +574,8 @@ final class GrowthStageRecordSyncService {
                     try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
                 }
 
-                guard let path = work.uploadedPath,
+                guard writeAuthority.canWrite(vineyardId: work.vineyardId.uuidString),
+                      let path = work.uploadedPath,
                       metadata.pendingDeletes[work.recordId] == nil,
                       pendingPhotos[work.recordId]?.revision == work.revision,
                       let current = records.first(where: { $0.id == work.recordId }) else { continue }
@@ -566,6 +594,7 @@ final class GrowthStageRecordSyncService {
                     guard metadata.pendingDeletes[work.recordId] == nil,
                           pendingPhotos[work.recordId]?.revision == work.revision else { continue }
                 }
+                guard writeAuthority.canWrite(vineyardId: work.vineyardId.uuidString) else { continue }
                 _ = try await repository.updatePhotoPaths(
                     recordId: work.recordId,
                     vineyardId: work.vineyardId,
@@ -602,6 +631,7 @@ final class GrowthStageRecordSyncService {
                 pendingPhotos.removeValue(forKey: snapshot.recordId)
                 try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
             } catch {
+                if error is VineyardWriteAuthority.Restricted { continue }
                 if firstFailure == nil { firstFailure = error }
             }
         }
@@ -626,6 +656,7 @@ final class GrowthStageRecordSyncService {
 
         // Initial sync: push everything local if remote is empty.
         if remote.isEmpty, lastSync == nil {
+            guard writeAuthority.canWrite(vineyardId: vineyardId.uuidString) else { return }
             let local = records.filter { $0.vineyardId == vineyardId }
             if !local.isEmpty {
                 let now = Date()
@@ -698,6 +729,14 @@ final class GrowthStageRecordSyncMetadata {
     var pendingUpserts: [UUID: Date] { state.pendingUpserts }
     var pendingDeletes: [UUID: Date] { state.pendingDeletes }
     func isUnknownOutcome(_ id: UUID) -> Bool { state.unknownOutcomeUpserts?.contains(id) == true }
+    var unknownOutcomeUpserts: Set<UUID>? { state.unknownOutcomeUpserts }
+
+    func restoreUnknownOutcomeAfterHold(_ ids: [UUID], original: Set<UUID>?) {
+        var retained = state.unknownOutcomeUpserts ?? []
+        retained.subtract(ids.filter { original?.contains($0) != true })
+        state.unknownOutcomeUpserts = retained.isEmpty && original == nil ? nil : retained
+        save()
+    }
 
     func lastSync(for vineyardId: UUID) -> Date? {
         state.lastSyncByVineyard[vineyardId]
