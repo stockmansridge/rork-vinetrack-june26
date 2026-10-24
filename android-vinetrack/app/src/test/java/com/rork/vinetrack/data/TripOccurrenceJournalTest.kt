@@ -26,6 +26,42 @@ class TripOccurrenceJournalTest {
     private fun status(j: TripOccurrenceJournal, id: String) = TripOccurrenceCoverage.requireDocument(j.projected(j.load()!!)).status(id)
     private fun ack(op: TripOccurrenceJournal.Operation) = buildJsonObject { put("tripId", scope.tripId); put("operationId", op.id); put("coverage", op.after) }
 
+    @Test fun entitlementHoldPreservesJournalBytesButAllowsRealReceiptAndOriginalResume() {
+        var ledger = emptyMap<String, String>()
+        val authority = VineyardWriteAuthority({ scope.ownerId }, { ledger }, { ledger = it })
+        OperationalWrites.authority = authority
+        try {
+            val memory = Memory(); val j = journal(memory)
+            val original = j.setStatus(a, "done")
+            val bytes = memory.value
+            authority.verified(scope.vineyardId, VineyardOperationalAccess(true, false, "trial_expired"), false)
+            val reopened = TripOccurrenceJournal(memory, scope)
+            assertTrue(runCatching { reopened.setStatus(b, "skipped") }.exceptionOrNull() is VineyardWriteAuthority.Restricted)
+            assertTrue(runCatching { reopened.finalize(buildJsonObject {}) }.exceptionOrNull() is VineyardWriteAuthority.Restricted)
+            assertEquals(bytes, memory.value)
+            assertEquals(listOf(original), reopened.load()!!.pending)
+            reopened.acknowledge(ack(original))
+            assertTrue(reopened.load()!!.pending.isEmpty())
+            assertEquals("done", status(reopened, a))
+            authority.verified(scope.vineyardId, VineyardOperationalAccess(true, true), true)
+            val resumed = reopened.setStatus(b, "skipped")
+            assertEquals(listOf(resumed), reopened.load()!!.pending)
+            assertEquals("done", status(reopened, a))
+        } finally { OperationalWrites.authority = null }
+    }
+
+    @Test fun heldCreationLeavesNoJournalDocument() {
+        var ledger = emptyMap<String, String>()
+        val authority = VineyardWriteAuthority({ scope.ownerId }, { ledger }, { ledger = it })
+        OperationalWrites.authority = authority
+        try {
+            authority.handleServerCode("VT_READ_ONLY", scope.vineyardId)
+            val memory = Memory(); val j = TripOccurrenceJournal(memory, scope)
+            assertTrue(runCatching { j.prepareCreation(buildJsonObject { put("id", scope.tripId); put("vineyard_id", scope.vineyardId) }, fixture()) }.exceptionOrNull() is VineyardWriteAuthority.Restricted)
+            assertNull(memory.value); assertNull(j.load())
+        } finally { OperationalWrites.authority = null }
+    }
+
     @Test fun blockQualifiedPlannerKeepsFourSameLabelPassesAndSubset() {
         val blocks = listOf("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", "99999999-9999-4999-8999-999999999999").mapIndexed { index, id ->
             com.rork.vinetrack.data.model.Paddock(id = id, vineyardId = scope.vineyardId, name = "Block $index", rows = listOf(

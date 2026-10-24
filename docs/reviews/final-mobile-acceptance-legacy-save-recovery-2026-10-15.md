@@ -1,6 +1,83 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
-## Expired-trial read-only access — enforcement implementation checkpoint, 23 October 2026
+## Expired-trial read-only access — enforcement continuation, 24 October 2026
+
+**PARTIAL IMPLEMENTATION; ENTRY REMAINS CLOSED.** This checkpoint extends the accepted enforcement below; it is not the full 23-case native gate or authenticated backend acceptance. No new planning cycle, account/device operation, distribution or server change occurred.
+
+### A. Exact changed application/test/runner files in this continuation
+
+22 files relative to observed starting HEAD `0d82f9fbf4342ed62e0daa25003f8daab5f32786` (existing plan/report updated separately):
+
+- `ios/VineTrack/Backend/Repositories/SupabaseIrrigationRepository.swift` — authenticated exact-one-row owning-vineyard lookup for system/valve/session IDs; scoped mutation wrapper and structured rejection handling.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/IrrigationRepository.kt` — equivalent ID lookup, account/token recheck and actual-scope admission; always encode the existing clock-default pending-session timestamp.
+- `ios/VineTrack/Backend/Repositories/SupabaseFertigationRepository.swift` — injectable authority; pre/post-role admission; reversal requires explicit vineyard and authenticated membership read; account-change cancellation before send/error classification.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/FertigationRepository.kt` — matching scoped reversal/role checks; preserve structured response through HTTP mapping and classify only after originating-account check.
+- `ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift` — read-only account binding for suspended-call fencing.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/VineyardWriteAuthority.kt` — matching account binding accessor.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PendingWriteRepository.kt` — retain pre-claim metadata through GPS evidence replacement; restore original status/error/update time while held; manual retry excludes held rows; stale account/version rejected before holding current account.
+- `ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift` — injectable authority; pre-persistence creation/lifecycle/action admission.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripOccurrenceJournal.kt` — matching pre-persistence creation/lifecycle/action admission.
+- `ios/VineTrack/LegacyImported/Services/StartTankCommitCoordinator.swift` — admission before new journal and before recovery publication/marker/cleanup.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/StartTankCommitCoordinator.kt` — matching admission; held recovery returns without rewriting the frozen journal.
+- `ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift` — owning-vineyard lookup for ID-only Trip changes; admission for upsert and occurrence sends; structured occurrence RPC/PATCH rejection.
+- `ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift` — resolve existing Trip/Pin/Spray ownership before scoped changes/deletes; verify on-disk Pin identity before retaining a notes draft.
+- `ios/VineTrackTests/FertigationDomainTests.swift` — preserve canonical RPC/null assertions with verified reverse fixture; missing/mismatched scope, membership-read account switch, expiry during role check, held reads and stale-response regression coverage.
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/FertigationDomainTest.kt` — equivalent canonical fixture and focused regressions.
+- `ios/VineTrackTests/TripOccurrenceJournalTests.swift` — held creation leaves no document; held action/finalization keeps exact file bytes; real receipt remains acknowledgeable and original state resumes after verification.
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/TripOccurrenceJournalTest.kt` — equivalent exact serialized-journal retention, receipt and resume tests.
+- `ios/VineTrackTests/StartTankCommitCoordinatorTests.swift` — interrupted actual remains retained; held recovery publishes no Trip/marker and preserves journal; verified recovery resumes original tank.
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/StartTankCommitCoordinatorTest.kt` — equivalent journal/actual/marker-count/resume checks.
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/VineyardWriteAuthorityTest.kt` — exact original failed timestamp/error/attempts across hold/recreation/resume; stale account response cannot hold another account.
+- `android-vinetrack/entitlement-tests.init.gradle` — include existing Fertigation domain, occurrence journal and Start Tank suites in focused host compilation; no target/dependency change.
+- `scripts/run-read-only-entitlement-contract.py` — extend focused selectors with those suites; retain separate existing-regression stage.
+
+### B. Authority and scope
+
+The accepted separate durable owner/vineyard ledger is preserved. No personal trial-date inference or newer-server-field default change. ID-only irrigation/Trip operations now resolve actual ownership via authenticated reads, not selected vineyard. Fertigation reverse requires an explicit scope verified by the existing scoped list RPC; absent/unresolved/mismatched scope blocks without manufacturing an operation. That read may omit a raw vineyard field, but an explicit mismatched field is rejected. The role/membership suspension checks retain account identity; this is not a universal session-incarnation fence across every native transport. Auth/roles remain required independently.
+
+### C. Queue and journal preservation
+
+Both occurrence journals gate authored creation/lifecycle/actions before saving, while leaving valid successful-send acknowledgements and authoritative evidence recovery available. Start Tank initiation and recovery are held without discarding frozen journal/actual evidence or publishing completion. Android PendingWrite holds restore the original claimed row's status, prior error and update timestamp without consuming attempts; legitimately retained GPS evidence remains in its payload. Runtime claim metadata is not a new persisted queue format. Known-held failed rows are not manual-retry eligible. Exact GPS replacement/failed-commit/restart permutations and all independent queues are not exhaustively accepted.
+
+An Android test exposed a real linked-envelope timestamp defect: serialization could omit `createdAtEpochMs` when its value equalled the freshly evaluated clock default, causing reload to generate a different timestamp. The existing field is now always encoded; the original whole-session equality assertion is unchanged. Already-missing historical timestamps cannot be reconstructed and no owner payload was rewritten.
+
+### D. Server errors and account changes
+
+Scoped irrigation/occurrence/fertigation boundaries recognize exact structured `VT_READ_ONLY`, not ordinary auth/network status. Fertigation error classification runs after the originating-account check, including ID-only reverse. Android stale PendingWrite responses return before establishing a current-account hold. Tests cover stale fertigation write rejection on both platforms and PendingWrite replay scope on Android; this does not certify account fencing of all direct transports. Generic rejection does not infer trial expiry. No background prompt or automatic purchase route was added.
+
+### E. iOS validation
+
+Final13-suite managed selection: the prior ten suites (`VineyardWriteAuthorityTests`, `ReadOnlyEntitlementContractTests`, `SpraySaveForLaterTests`, `EntitlementDecisionTests`, `EntitlementAccessRegressionTests`, `DeviceTripOwnershipTests`, `OfflineQuickActionsTests`, `ResistancePlanRepositoryTests`, `ResistancePlanRevisionSyncTests`, `FertigationMobileWorkflowTests`) plus `FertigationDomainTests`, `TripOccurrenceJournalTests`, `StartTankCommitCoordinatorTests`.
+
+**248 passed in70s**, no reported failures; aggregate runner result, not a per-method discovery/skipped manifest. Earlier expanded selection passed247 in222s before the final stale-response regression. First normal build failed at three new `guard let` bindings on nonoptional Pin vineyard UUIDs; corrected those bindings, preserving actual-row scope checks. Final normal `runChecks(ios)` **PASS**, simulator build only; device Release is unverified. These tests do not exercise real authenticated ownership lookup against the server.
+
+### F. Android validation
+
+**Final frozen-source focused host selection PASS:10 suites/199 executed/199 passed/0 failures/0 errors/0 skipped,200.533s. Separate existing regressions PASS:55 executed/55 passed/0 failures/0 errors/0 skipped,13.314s.** Both stages exited0; results and suite XML manifests are retained at `/tmp/vinetrack-read-only-contract-yiyk5pdy/`. Final normal `runChecks(android-vinetrack)` **PASS**. These source/host results are not handset, authenticated transport or full operational acceptance.
+
+Initial artifacts `/tmp/vinetrack-read-only-contract-7dq85oow/`:198 tests/197 passed/1 failed/0 errors/skips, exposing the retained irrigation timestamp mismatch. Intermediate `/tmp/vinetrack-read-only-contract-c_k32cfn/`:199 tests/198 passed/1 failed/0 errors/skips at the newly added stale-response cancellation assertion; production compilation overlapped the final correction, so this is not a frozen-source result. Both failures are retained; neither is a feature PASS. No completion/costing repair or version change.
+
+### G. Offline/restart scope
+
+Synthetic tests recreate held occurrence journals and retained PendingWrite repositories, compare original serialized journal bytes/rows, allow genuine receipts and resume after explicit verification. Both Start Tank tests retain already-durable actual evidence and original journal identity while held. This is not a retained-owner install/restart, offline historical-screen journey, handset GPS expiry transition, attachment acceptance or production-data check.
+
+### H. Remaining native work
+
+Overarching enforcement remains incomplete. In particular Android active Trip start/labour/device claims, metadata/add-block/end/route local-first commands and direct Trip transports still need pre-change/per-send admission. Existing journal guards alone do not settle caller handling, GPS evidence retention or occurrence replay error classification. Other gaps include independent planning/manual/labour/evidence journals; attachment/remove/cleanup/retry families; metadata deletes/orphan cleanup/multi-send closures; settings/Insights/chemical/growth/vintage paths; generic missing/multiple-scope queue payloads; malformed Swift hold-ledger recovery; full registry initialization and session-incarnation proof. New ID-only network lookup behavior is compiled but not separately transport-fixture/live accepted. No exhaustive inventory claim.
+
+The persistent scoped notice and deliberate-mutation existing-billing prompt, silent safe-held status, all23 operational cases and opening/editing/cancelling without persistence are still unfinished. Native engineering remains independently outstanding; backend absence is not the sole blocker. Historical entry routes were not changed or enabled for testing.
+
+### I. Source identity and preservation
+
+Observed HEAD remains `0d82f9fbf4342ed62e0daa25003f8daab5f32786`. Current22-file application/test/runner manifest SHA-256 **`8a02d2f76ade157cab9e15af57a95b30139c6b13dbe99792d716d4145b1b1da4`**, using sorted project-relative paths and UTF-8 `SHA256(file bytes) + two spaces + path + newline` lines, then SHA-256 of all lines. Plan/report are outside that source manifest. Final managed-save SHA is not yet assigned; staging performed by the platform is not a new commit identity. Requested baseline/foundation content is preserved without reset; the earlier27-file manifest remains historical.
+
+No app target/build/dependency/signing/version, SQL/Supabase/Portal, costing or Android startup/AppViewModel change in this continuation. Managed fingerprint/history pre-existing changes were not edited. No live row mutation, owner account operation, reset/uninstall/cache clear/logout, queue/draft deletion, store export or upload. Normal native build artifacts are not store delivery.
+
+### J. Backend dependency and rollout
+
+No authenticated isolated backend acceptance ran and no server/schema edit was made. Still require the delivered explicit vineyard contract and an authorised isolated non-owner scope for permitted reads, denied write with unchanged row, original held queue, prompt, purchase and fresh explicit-write restoration, plus paid/manual/legacy regressions and available `record_my_client_activity`. Enable expired-trial history only after all native and backend gates pass and only for explicit `can_enter_vineyard=true`, `can_write=false`, `read_only_reason="trial_expired"`. **Feature incomplete; entry CLOSED; no rollout authorisation.**
+
+## Expired-trial read-only access — historical enforcement implementation checkpoint, 23 October 2026
 
 **PARTIAL IMPLEMENTATION, NOT FEATURE ACCEPTANCE.** This supersedes the audit-only status below: native command admission, durable owner/vineyard holds and several independent replay/error paths are now implemented and tested. Coverage is not exhaustive. Expired-trial historical entry remains CLOSED, with existing routes unchanged. Neither the 23-case operational gate nor authenticated live acceptance is complete. Unfinished native engineering is separate from the server dependency.
 

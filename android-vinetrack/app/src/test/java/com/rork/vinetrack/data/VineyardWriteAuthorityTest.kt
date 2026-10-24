@@ -128,6 +128,42 @@ class VineyardWriteAuthorityTest {
         assertEquals(original.createdAt, resumed.createdAt)
         assertEquals(original.attemptCount, resumed.attemptCount)
     }
+    @Test fun failedOriginalRestoresExactTimestampsErrorAndAttemptsAcrossHoldAndRestart() {
+        val gate = authority(); OperationalWrites.authority = gate
+        val seed = com.rork.vinetrack.data.model.PendingWrite(id = "original", clientId = "trip", entityType = "trip_gps", opType = "update",
+            payloadJson = "{\"vineyardId\":\"A\",\"evidence\":\"original\"}", createdAt = 10L, updatedAt = 20L,
+            status = PendingWriteStatus.FAILED, attemptCount = 3, lastError = "previous transport failure")
+        val store = InMemoryPendingWriteStore(listOf(seed)); val queue = PendingWriteRepository(store)
+        val claim = requireNotNull(queue.claimReplay(seed))
+        assertTrue(queue.retryIfCurrent(claim, "{\"code\":\"VT_READ_ONLY\"}", 4))
+        assertEquals(listOf(seed), queue.list())
+        assertEquals(0, queue.retryEligibleCount())
+        assertEquals(0, queue.resetFailedForRetry())
+        assertFalse(queue.resetFailedRowForRetry(seed.id))
+        val restarted = PendingWriteRepository(store)
+        assertEquals(listOf(seed), restarted.list())
+        assertNull(restarted.claimReplay(seed))
+        gate.verified("A", paid, true)
+        val resumed = requireNotNull(restarted.claimReplay(seed))
+        assertEquals(seed.payloadJson, resumed.payloadJson)
+        assertEquals(seed.id, resumed.id)
+        assertEquals(seed.attemptCount, resumed.attemptCount)
+        assertEquals(seed.createdAt, resumed.createdAt)
+    }
+
+    @Test fun staleAccountResponseCannotHoldAnotherAccount() {
+        val gate = authority(); OperationalWrites.authority = gate
+        val queue = PendingWriteRepository(InMemoryPendingWriteStore())
+        var epoch = 1L
+        queue.configureReplayScope { owner?.let { PendingWriteRepository.ReplayScope(it, epoch) } }
+        val seed = queue.enqueue("pin", "create", "{\"vineyardId\":\"A\"}")
+        val claim = requireNotNull(queue.claimReplay(seed))
+        owner = "other"; epoch++
+        assertFalse(queue.retryIfCurrent(claim, "{\"code\":\"VT_READ_ONLY\"}"))
+        assertTrue(gate.canWrite("A"))
+        assertEquals(listOf(claim), queue.list())
+    }
+
     @Test fun serverRejectionHoldsClaimWithoutBurningRetryBudget() {
         OperationalWrites.authority = authority()
         val queue = PendingWriteRepository(InMemoryPendingWriteStore())

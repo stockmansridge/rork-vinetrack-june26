@@ -29,6 +29,33 @@ final class StartTankCommitCoordinatorTests: XCTestCase {
         return (directory, persistence, store, SprayTankActualStore(persistence: persistence), original, updated, actual)
     }
 
+    func testEntitlementHoldRetainsInterruptedTankAndResumesOriginalAfterVerification() throws {
+        let (directory, persistence, store, actualStore, source, updated, actual) = try makeHarness()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let gate = VineyardWriteAuthority(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        gate.bind(userId: UUID())
+        store.operationalWriteAuthority = gate
+        let interrupted = StartTankCommitCoordinator(persistence: persistence, actualStore: actualStore, failurePoint: .afterActual)
+        XCTAssertThrowsError(try interrupted.commit(sourceTrip: source, updatedTrip: updated, actual: actual, store: store))
+        let frozen: StartTankCommitCoordinator.Journal = try XCTUnwrap(persistence.load(key: StartTankCommitCoordinator.persistenceKey))
+        _ = gate.handleServerCode("VT_READ_ONLY", vineyardId: vineyardId.uuidString)
+        let recovery = StartTankCommitCoordinator(persistence: persistence, actualStore: SprayTankActualStore(persistence: persistence))
+        var markers = 0; store.onTripChanged = { _ in markers += 1 }
+        XCTAssertFalse(recovery.recover(store: store))
+        XCTAssertFalse(recovery.resume(sourceTrip: source, tankNumber: 1, store: store))
+        XCTAssertEqual(markers, 0)
+        XCTAssertEqual(store.trips.first, source)
+        let retained: StartTankCommitCoordinator.Journal = try XCTUnwrap(persistence.load(key: StartTankCommitCoordinator.persistenceKey))
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        XCTAssertEqual(try encoder.encode(frozen), try encoder.encode(retained))
+        XCTAssertEqual(actualStore.records.map(\.id), [actual.id])
+        gate.verified(vineyardId: vineyardId.uuidString, access: VineyardOperationalAccess(legacyCanEnter: true, canWrite: true), explicitlyWritable: true)
+        XCTAssertTrue(recovery.recover(store: store))
+        XCTAssertEqual(store.trips.first?.tankSessions, updated.tankSessions)
+        XCTAssertEqual(actualStore.records.map(\.id), [actual.id])
+        XCTAssertNil(persistence.load(key: StartTankCommitCoordinator.persistenceKey) as StartTankCommitCoordinator.Journal?)
+    }
+
     func testUnestablishedRecoveryRechecksCurrentRecipeWithoutDiscardingJournal() throws {
         let (directory, persistence, store, actualStore, source, updated, actual) = try makeHarness()
         defer { try? FileManager.default.removeItem(at: directory) }

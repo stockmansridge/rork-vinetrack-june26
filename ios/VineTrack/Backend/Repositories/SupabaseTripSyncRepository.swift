@@ -32,7 +32,20 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         try await fetchTrips(vineyardId: vineyardId, since: nil)
     }
 
+    private func requireTripWrite(_ id: UUID) async throws -> UUID {
+        guard let owner = provider.client.auth.currentUser?.id else { throw CancellationError() }
+        struct Row: Decodable { let vineyard_id: UUID }
+        let rows: [Row] = try await provider.client.from("trips").select("vineyard_id")
+            .eq("id", value: id.uuidString).limit(2).execute().value
+        guard provider.client.auth.currentUser?.id == owner, rows.count == 1 else {
+            throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
+        }
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: rows[0].vineyard_id.uuidString)
+        return rows[0].vineyard_id
+    }
+
     func upsertTrip(_ trip: BackendTripUpsert) async throws {
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: trip.vineyardId.uuidString)
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         if TripOccurrenceCoverage.basis(trip.occurrenceCoverage) != .legacy {
             try await replayOccurrenceTrip(trip)
@@ -51,6 +64,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         for trip in occurrenceTrips { try await replayOccurrenceTrip(trip) }
         let legacyTrips = trips.filter { TripOccurrenceCoverage.basis($0.occurrenceCoverage) == .legacy }
         guard !legacyTrips.isEmpty else { return }
+        for trip in legacyTrips { try VineyardWriteAuthority.shared.requireWrite(vineyardId: trip.vineyardId.uuidString) }
         try await provider.client
             .from("trips")
             .upsert(legacyTrips, onConflict: "id")
@@ -60,6 +74,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     /// Called at the local creation commitment, before sync can observe a new occurrence trip.
     /// The ordinary native payload is retained verbatim; only the envelope is a separate RPC argument.
     func prepareOccurrenceCreation(_ trip: BackendTripUpsert, ownerId: UUID) throws {
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: trip.vineyardId.uuidString)
         guard let coverage = trip.occurrenceCoverage else { throw TripOccurrenceCoverage.Failure.updateRequired }
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         var metadata = try JSONDecoder().decode([String: TripOccurrenceCoverage.JSON].self, from: encoder.encode(trip))
@@ -108,7 +123,8 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
                     guard establishedSession.user.id == account, establishedSession.refreshToken == session.refreshToken else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                     sessionsEstablished = true
                 }
-                let result = try await occurrenceRequest(rpc: op.rpc, params: op.params, accessToken: session.accessToken)
+                try VineyardWriteAuthority.shared.requireWrite(vineyardId: trip.vineyardId.uuidString)
+                let result = try await occurrenceRequest(rpc: op.rpc, params: op.params, accessToken: session.accessToken, writeVineyard: trip.vineyardId)
                 let currentSession = try await provider.client.auth.session
             guard currentSession.user.id == account, currentSession.refreshToken == session.refreshToken else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                 try journal.acknowledge(result)
@@ -127,6 +143,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     }
 
     private func updateOccurrenceNonAuthorityFields(_ trip: BackendTripUpsert, accessToken: String) async throws {
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: trip.vineyardId.uuidString)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         var fields = try JSONDecoder().decode([String: TripOccurrenceCoverage.JSON].self, from: encoder.encode(trip))
@@ -144,7 +161,13 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         request.setValue("return=representation", forHTTPHeaderField: "Prefer")
         request.httpBody = try JSONEncoder().encode(fields)
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let code = (try? JSONDecoder().decode(PostgrestError.self, from: data))?.code
+            if VineyardWriteAuthority.shared.handleServerCode(code, vineyardId: trip.vineyardId.uuidString) {
+                throw VineyardWriteAuthority.Restricted(reason: "VT_READ_ONLY")
+            }
+            throw TripOccurrenceCoverage.Failure.reconciliation
+        }
         let rows = try JSONDecoder().decode([TripOccurrenceCoverage.JSON].self, from: data)
         guard rows.count == 1, rows.first?[occurrence: "id"]?.occurrenceString?.lowercased() == trip.id.uuidString.lowercased() else {
             throw TripOccurrenceCoverage.Failure.reconciliation
@@ -163,7 +186,8 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     }
 
     /// Captured credentials prevent a switched account being substituted mid-replay by an SDK refresh.
-    private func occurrenceRequest(rpc: String, params: TripOccurrenceCoverage.JSON, accessToken: String) async throws -> TripOccurrenceCoverage.JSON {
+    private func occurrenceRequest(rpc: String, params: TripOccurrenceCoverage.JSON, accessToken: String, writeVineyard: UUID? = nil) async throws -> TripOccurrenceCoverage.JSON {
+        if let writeVineyard { try VineyardWriteAuthority.shared.requireWrite(vineyardId: writeVineyard.uuidString) }
         guard ["create_trip_with_occurrences_v1", "activate_trip_occurrences_v1", "apply_trip_occurrence_action_v1",
                "finalize_trip_occurrences_v1", "get_trip_occurrence_recovery_v1"].contains(rpc) else { throw TripOccurrenceCoverage.Failure.invalidAction }
         var request = URLRequest(url: provider.supabaseURL.appendingPathComponent("rest/v1/rpc/\(rpc)"))
@@ -174,6 +198,9 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         request.httpBody = try JSONEncoder().encode(params)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            if let writeVineyard, VineyardWriteAuthority.shared.handleServerCode((try? JSONDecoder().decode(PostgrestError.self, from: data))?.code, vineyardId: writeVineyard.uuidString) {
+                throw VineyardWriteAuthority.Restricted(reason: "VT_READ_ONLY")
+            }
             let text = String(data: data, encoding: .utf8) ?? ""
             let range = text.range(of: "OCCURRENCE_[A-Z_]+", options: .regularExpression)
             throw OccurrenceRPCFailure(code: range.map { String(text[$0]) } ?? "OCCURRENCE_SYNC_UNAVAILABLE")
@@ -200,6 +227,8 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
 
     func updateTripVineyardAssignment(id: UUID, vineyardId: UUID, paddockId: UUID?) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        _ = try await requireTripWrite(id)
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId.uuidString)
         try await provider.client
             .from("trips")
             .update(TripVineyardAssignmentUpdate(
@@ -213,6 +242,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
 
     func updateTripWorkTaskLink(id: UUID, workTaskId: UUID?) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        _ = try await requireTripWrite(id)
         try await provider.client
             .from("trips")
             .update(TripWorkTaskLinkUpdate(
@@ -225,6 +255,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
 
     func softDeleteTrip(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        _ = try await requireTripWrite(id)
         try await provider.client
             .rpc("soft_delete_trip", params: SoftDeleteTripRequest(tripId: id))
             .execute()

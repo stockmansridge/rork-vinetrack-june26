@@ -970,9 +970,10 @@ final class MigratedDataStore {
     }
 
     func updatePin(_ pin: VinePin) {
-        guard admitSelectedMutation() else { return }
-        guard let vineyardId = selectedVineyardId else { return }
-        guard let index = pins.firstIndex(where: { $0.id == pin.id }) else { return }
+        let vineyardId = pin.vineyardId
+        guard selectedVineyardId == vineyardId,
+              let index = pins.firstIndex(where: { $0.id == pin.id && $0.vineyardId == vineyardId }) else { return }
+        guard operationalWriteAuthority.admit(vineyardId: vineyardId.uuidString) else { return }
         var item = pin
         // Self-heal: never push a pin with a nil createdByUserId if we have
         // an authenticated user available locally.
@@ -1004,6 +1005,9 @@ final class MigratedDataStore {
         notes: String?
     ) throws -> PinNotesUpdateOutcome {
         try operationalWriteAuthority.requireWrite(vineyardId: vineyardId.uuidString)
+        guard try pinRepo.loadAllForDurableUpdate().contains(where: { $0.id == pinId && $0.vineyardId == vineyardId }) else {
+            throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
+        }
         let draftText = notes ?? ""
         try pinNotesDraftStore.retain(pinId: pinId, vineyardId: vineyardId, notes: draftText)
         let updated = try pinRepo.updateNotesDurably(pinId: pinId, vineyardId: vineyardId, notes: notes)
@@ -1021,9 +1025,10 @@ final class MigratedDataStore {
     }
 
     func deletePin(_ pinId: UUID) {
-        guard admitSelectedMutation() else { return }
-        guard let vineyardId = selectedVineyardId,
-              let pin = pins.first(where: { $0.id == pinId }) else { return }
+        guard let pin = pins.first(where: { $0.id == pinId }) else { return }
+        let vineyardId = pin.vineyardId
+        guard selectedVineyardId == vineyardId else { return }
+        guard operationalWriteAuthority.admit(vineyardId: vineyardId.uuidString) else { return }
         if pin.growthStageCode != nil, onGrowthStagePinDeleted?(pin) == false {
             return
         }
@@ -1033,9 +1038,10 @@ final class MigratedDataStore {
     }
 
     func togglePinCompletion(_ pinId: UUID) {
-        guard admitSelectedMutation() else { return }
-        guard let vineyardId = selectedVineyardId else { return }
         guard let index = pins.firstIndex(where: { $0.id == pinId }) else { return }
+        let vineyardId = pins[index].vineyardId
+        guard selectedVineyardId == vineyardId else { return }
+        guard operationalWriteAuthority.admit(vineyardId: vineyardId.uuidString) else { return }
         var pin = pins[index]
         pin.isCompleted.toggle()
         pin.completedAt = pin.isCompleted ? Date() : nil
@@ -1419,9 +1425,11 @@ final class MigratedDataStore {
     }
 
     func updateTrip(_ trip: Trip) {
-        guard operationalWriteAuthority.admit(vineyardId: trip.vineyardId.uuidString) else { return }
-        guard let vineyardId = selectedVineyardId else { return }
-        guard let index = trips.firstIndex(where: { $0.id == trip.id }) else { return }
+        guard let index = trips.firstIndex(where: { $0.id == trip.id }),
+              trips[index].vineyardId == trip.vineyardId,
+              selectedVineyardId == trip.vineyardId else { return }
+        let vineyardId = trips[index].vineyardId
+        guard operationalWriteAuthority.admit(vineyardId: vineyardId.uuidString) else { return }
         trips[index] = trip
         tripRepo.saveSlice(trips, for: vineyardId)
         onTripChanged?(trip.id)
@@ -1429,8 +1437,8 @@ final class MigratedDataStore {
 
     func updateTripOrThrow(_ trip: Trip) throws {
         try operationalWriteAuthority.requireWrite(vineyardId: trip.vineyardId.uuidString)
-        guard let vineyardId = selectedVineyardId,
-              let index = trips.firstIndex(where: { $0.id == trip.id })
+        guard let vineyardId = selectedVineyardId, vineyardId == trip.vineyardId,
+              let index = trips.firstIndex(where: { $0.id == trip.id && $0.vineyardId == vineyardId })
         else { throw SprayTankActualValidationError.localSaveFailed }
         var next = trips
         next[index] = trip
@@ -1440,9 +1448,10 @@ final class MigratedDataStore {
     }
 
     func endTrip(_ tripId: UUID) {
-        guard admitSelectedMutation() else { return }
-        guard let vineyardId = selectedVineyardId else { return }
-        guard let index = trips.firstIndex(where: { $0.id == tripId }) else { return }
+        guard let index = trips.firstIndex(where: { $0.id == tripId }),
+              selectedVineyardId == trips[index].vineyardId else { return }
+        let vineyardId = trips[index].vineyardId
+        guard operationalWriteAuthority.admit(vineyardId: vineyardId.uuidString) else { return }
         var trip = trips[index]
         trip.isActive = false
         trip.endTime = Date()
@@ -1461,10 +1470,11 @@ final class MigratedDataStore {
     ///
     /// `endTime` is the moment the operator confirmed, matching `endTrip`.
     func endTripOrThrow(_ tripId: UUID) throws {
-        if let vineyard = selectedVineyardId { try operationalWriteAuthority.requireWrite(vineyardId: vineyard.uuidString) }
-        guard let vineyardId = selectedVineyardId,
-              let index = trips.firstIndex(where: { $0.id == tripId })
+        guard let index = trips.firstIndex(where: { $0.id == tripId }),
+              selectedVineyardId == trips[index].vineyardId
         else { throw TripEndPersistenceError.tripUnavailable }
+        let vineyardId = trips[index].vineyardId
+        try operationalWriteAuthority.requireWrite(vineyardId: vineyardId.uuidString)
         var next = trips
         var trip = next[index]
         trip.isActive = false
@@ -1476,9 +1486,10 @@ final class MigratedDataStore {
     }
 
     func deleteTrip(_ tripId: UUID) {
-        guard admitSelectedMutation() else { return }
+        guard let target = trips.first(where: { $0.id == tripId }), selectedVineyardId == target.vineyardId else { return }
+        let vineyardId = target.vineyardId
+        guard operationalWriteAuthority.admit(vineyardId: vineyardId.uuidString) else { return }
         guard tripId != deviceActiveTripId || isDeviceTripOwner else { return }
-        guard let vineyardId = selectedVineyardId else { return }
         // Clean up local links that depend on this trip BEFORE removing it so
         // nothing is left pointing at a missing trip.
         // 1. Trip cost allocations — soft-delete locally and propagate so the
@@ -1720,8 +1731,9 @@ final class MigratedDataStore {
     }
 
     func deleteSprayRecord(_ recordId: UUID) {
-        guard admitSelectedMutation() else { return }
-        guard let vineyardId = selectedVineyardId else { return }
+        guard let record = sprayRecords.first(where: { $0.id == recordId }), selectedVineyardId == record.vineyardId else { return }
+        let vineyardId = record.vineyardId
+        guard operationalWriteAuthority.admit(vineyardId: vineyardId.uuidString) else { return }
         sprayRecords.removeAll { $0.id == recordId }
         sprayRepo.saveRecordsSlice(sprayRecords, for: vineyardId)
         onSprayRecordDeleted?(recordId)

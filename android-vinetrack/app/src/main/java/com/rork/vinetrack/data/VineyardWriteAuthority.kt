@@ -11,6 +11,7 @@ class VineyardWriteAuthority(
     class Restricted(val reason: String) : IllegalStateException(reason)
     @Volatile var deniedVineyardId: String? = null
         private set
+    fun accountBinding(): String? = owner()
     private fun scope(vineyardId: String): String? = owner()?.lowercase(java.util.Locale.ROOT)?.let {
         "$it:${vineyardId.lowercase(java.util.Locale.ROOT)}"
     }

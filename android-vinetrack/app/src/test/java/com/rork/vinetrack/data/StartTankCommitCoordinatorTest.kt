@@ -73,6 +73,30 @@ class StartTankCommitCoordinatorTest {
         confirmedAt = "2026-09-05T01:00:00Z", confirmedBy = "user",
     )
 
+    @Test fun entitlementHoldRetainsInterruptedTankAndResumesOriginalAfterVerification() {
+        var ledger = emptyMap<String, String>()
+        val gate = VineyardWriteAuthority({ "user" }, { ledger }, { ledger = it })
+        OperationalWrites.authority = gate
+        try {
+            val h = Harness(failTrip = true)
+            assertFalse(h.coordinator().commit("user", "vineyard", sourceTrip, trip, actual))
+            val frozen = h.journals.journal
+            val counts = listOf(h.actualSaveCount, h.tripSaveCount, h.markerSaveCount)
+            gate.handleServerCode("VT_READ_ONLY", "vineyard")
+            h.failTrip = false
+            assertNull(h.coordinator().recover())
+            assertNull(h.coordinator().resume("user", "vineyard", sourceTrip, sourceTrip, 1))
+            assertEquals(frozen, h.journals.journal)
+            assertEquals(counts, listOf(h.actualSaveCount, h.tripSaveCount, h.markerSaveCount))
+            assertEquals(actual, h.actual); assertEquals(sourceTrip, h.trip)
+            gate.verified("vineyard", VineyardOperationalAccess(true, true), true)
+            assertNotNull(h.coordinator().recover())
+            assertEquals(actual, h.actual); assertEquals(trip, h.trip)
+            assertEquals(1, h.actualSaveCount)
+            assertNull(h.journals.journal)
+        } finally { OperationalWrites.authority = null }
+    }
+
     @Test fun preparedRecoveryCannotEstablishBlockedRecipeAndRetainsExactJournal() {
         val h = Harness(failActual = true)
         assertFalse(h.coordinator().commit("user", "vineyard", sourceTrip, trip, actual))

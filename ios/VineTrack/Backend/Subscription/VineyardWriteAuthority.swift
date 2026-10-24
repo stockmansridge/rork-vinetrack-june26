@@ -13,6 +13,8 @@ final class VineyardWriteAuthority {
     private let defaults: UserDefaults
     private let key = "vinetrack.vineyardWriteHolds.v1"
     private var userId: String?
+    /// Captured across suspensions; a capability refresh does not change account identity.
+    var accountBinding: String? { userId }
     private var holds: [String: String]
     private(set) var deniedVineyardId: String?
 

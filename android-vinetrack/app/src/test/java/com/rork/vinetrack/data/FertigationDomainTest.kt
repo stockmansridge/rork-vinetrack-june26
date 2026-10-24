@@ -31,17 +31,81 @@ class FertigationDomainTest {
         val requests = mutableListOf<Pair<String, JsonObject>>()
         val repo = FertigationRepository({ true }) { name, params ->
             requests += name to params
-            when (name) { "list_fertigation_applications", "list_fertigation_program_steps" -> "[]"; "get_irrigation_session_fertigation" -> "null"; else -> "{}" }
+            when (name) { "list_fertigation_applications" -> "[{\"id\":\"$stepId\",\"vineyard_id\":\"$vineyardId\"}]"; "list_fertigation_program_steps" -> "[]"; "get_irrigation_session_fertigation" -> "null"; else -> "{}" }
         }
         repo.capabilities(vineyardId); repo.programSteps(vineyardId); repo.sessionApplication(vineyardId, stepId)
         repo.applications(vineyardId, programStepId = stepId, includeReversed = true)
         repo.upsert(stepId, vineyardId, stepId, stepId, null, null, null, emptyList())
-        repo.reverse(stepId, null)
-        assertEquals(listOf("get_fertigation_capabilities", "list_fertigation_program_steps", "get_irrigation_session_fertigation", "list_fertigation_applications", "upsert_fertigation_application", "reverse_fertigation_application"), requests.map { it.first })
+        repo.reverse(stepId, null, vineyardId)
+        assertEquals(listOf("get_fertigation_capabilities", "list_fertigation_program_steps", "get_irrigation_session_fertigation", "list_fertigation_applications", "upsert_fertigation_application", "list_fertigation_applications", "reverse_fertigation_application"), requests.map { it.first })
         assertEquals(JsonPrimitive(stepId), requests[3].second["p_program_step_id"])
         assertEquals(JsonNull, requests[3].second["p_vintage_year"])
         assertEquals(JsonNull, requests[4].second["p_notes"])
+        assertEquals(JsonPrimitive(vineyardId), requests[5].second["p_vineyard_id"])
+        assertEquals(JsonPrimitive(true), requests[5].second["p_include_reversed"])
+        assertEquals(JsonNull, requests[6].second["p_reason"])
     }
+    @Test fun reverseUnknownOrMismatchedScopeNeverMutates() = runBlocking {
+        val requests = mutableListOf<String>()
+        val repo = FertigationRepository({ true }) { name, _ ->
+            requests += name
+            "[{\"id\":\"$stepId\",\"vineyard_id\":\"$stepId\"}]"
+        }
+        assertTrue(runCatching { repo.reverse(stepId, null) }.exceptionOrNull() is VineyardWriteAuthority.Restricted)
+        assertTrue(requests.isEmpty())
+        assertTrue(runCatching { repo.reverse(stepId, null, vineyardId) }.exceptionOrNull() is VineyardWriteAuthority.Restricted)
+        assertEquals(listOf("list_fertigation_applications"), requests)
+    }
+
+    @Test fun reverseAccountSwitchDuringMembershipReadCancelsBeforeMutation() = runBlocking {
+        var owner = "original"
+        var ledger = emptyMap<String, String>()
+        OperationalWrites.authority = VineyardWriteAuthority({ owner }, { ledger }, { ledger = it })
+        try {
+            val requests = mutableListOf<String>()
+            val repo = FertigationRepository({ true }) { name, _ ->
+                requests += name
+                kotlinx.coroutines.yield()
+                owner = "other"
+                "[{\"id\":\"$stepId\",\"vineyard_id\":\"$vineyardId\"}]"
+            }
+            assertTrue(runCatching { repo.reverse(stepId, null, vineyardId) }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+            assertEquals(listOf("list_fertigation_applications"), requests)
+        } finally { OperationalWrites.authority = null }
+    }
+
+    @Test fun expiryDuringRoleLookupStopsWriteButHistoryStillReads() = runBlocking {
+        var ledger = emptyMap<String, String>()
+        val gate = VineyardWriteAuthority({ "owner" }, { ledger }, { ledger = it })
+        OperationalWrites.authority = gate
+        try {
+            val requests = mutableListOf<String>()
+            val repo = FertigationRepository({
+                kotlinx.coroutines.yield()
+                gate.handleServerCode("VT_READ_ONLY", vineyardId)
+                true
+            }) { name, _ -> requests += name; "[]" }
+            assertTrue(runCatching { repo.upsert(stepId, vineyardId, stepId, stepId, null, null, null, emptyList()) }.exceptionOrNull() is VineyardWriteAuthority.Restricted)
+            assertTrue(requests.isEmpty())
+            repo.applications(vineyardId)
+            assertEquals(listOf("list_fertigation_applications"), requests)
+        } finally { OperationalWrites.authority = null }
+    }
+
+    @Test fun staleWriteRejectionCannotHoldAnotherAccount() = runBlocking {
+        var owner = "original"; var ledger = emptyMap<String, String>()
+        val gate = VineyardWriteAuthority({ owner }, { ledger }, { ledger = it })
+        OperationalWrites.authority = gate
+        try {
+            val repo = FertigationRepository({ true }) { _, _ ->
+                kotlinx.coroutines.yield(); owner = "other"
+                throw BackendError.Server(403, "{\"code\":\"VT_READ_ONLY\"}")
+            }
+            assertTrue(runCatching { repo.upsert(stepId, vineyardId, stepId, stepId, null, null, null, emptyList()) }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+            assertTrue(gate.canWrite(vineyardId)); assertTrue(ledger.isEmpty())
+        } finally { OperationalWrites.authority = null }
+    }
+
     @Test fun hectaresUseOnlyAuthoritativeAllocations() {
         val line = buildJsonObject { put("rate", 10); put("fertigation_rate_basis", "per_hectare"); put("fertigation_rate_unit", "kg/ha") }
         val result = FertigationDomain.plannedQuantity(line, FertigationDomain.Totals.from(listOf(FertigationDomain.Allocation(9620.0, 4500.0))))

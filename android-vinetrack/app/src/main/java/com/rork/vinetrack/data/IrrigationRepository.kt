@@ -3,6 +3,8 @@ package com.rork.vinetrack.data
 import android.content.Context
 import com.rork.vinetrack.data.auth.SessionStore
 import io.ktor.client.request.HttpRequestBuilder
+import io.ktor.client.request.get
+import io.ktor.client.request.parameter
 import io.ktor.client.request.headers
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -766,6 +768,9 @@ data class PendingIrrigationSession(
     val finishedAt: String? = null,
     val notes: String? = null,
     val localTotalVolumeLitres: Double? = null,
+    // A clock-based default must never be omitted and regenerated on journal reload.
+    @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+    @kotlinx.serialization.EncodeDefault
     val createdAtEpochMs: Long = System.currentTimeMillis(),
 )
 
@@ -1641,11 +1646,30 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
 
     private suspend fun rpc(name: String, params: JsonObject): HttpResponse {
         val mutations = setOf("create_irrigation_system", "update_irrigation_system", "create_irrigation_valve", "update_irrigation_valve", "set_irrigation_valve_blocks", "set_irrigation_valve_rows", "record_irrigation_session", "update_irrigation_session", "reverse_irrigation_session")
-        val vineyard = (params["p_vineyard_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
-        // ID-only update RPCs need their own verified record scope; never borrow a selection.
-        if (name in mutations && vineyard != null) OperationalWrites.requireWrite(vineyard)
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
+        val owner = session.userId ?: throw BackendError.Unauthorized
         val token = session.accessToken ?: throw BackendError.Unauthorized
+        val explicitVineyard = (params["p_vineyard_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+        val vineyard = if (name !in mutations) null else explicitVineyard ?: run {
+            val table = when (name) {
+                "update_irrigation_system" -> "irrigation_systems"
+                "update_irrigation_valve" -> "irrigation_valves"
+                "update_irrigation_session", "reverse_irrigation_session" -> "irrigation_sessions"
+                else -> throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+            }
+            val id = (params["p_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                ?: throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+            val result = SupabaseClient.http.get(SupabaseClient.restUrl(table)) {
+                authHeaders(token)
+                parameter("id", "eq.$id"); parameter("select", "vineyard_id"); parameter("limit", "2")
+            }
+            val rows = decode<List<JsonObject>>(ensureSuccess(result))
+            (rows.singleOrNull()?.get("vineyard_id") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                ?: throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+        }
+        // Keep the identity that authorised the lookup, even if account selection changed while suspended.
+        if (session.userId != owner || session.accessToken != token) throw kotlinx.coroutines.CancellationException("Account changed.")
+        vineyard?.let(OperationalWrites::requireWrite)
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl(name)) {
             authHeaders(token)
             contentType(ContentType.Application.Json)

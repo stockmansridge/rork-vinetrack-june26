@@ -36,30 +36,33 @@ class FertigationRepository(
                     setBody(params)
                 }
                 val body = response.bodyAsText()
-                val vineyard = params["p_vineyard_id"]?.jsonPrimitive?.contentOrNull
-                if (!response.status.isSuccess() && vineyard != null &&
-                    OperationalWrites.handleServerError(BackendError.Server(response.status.value, body), vineyard)) {
-                    throw VineyardWriteAuthority.Restricted("VT_READ_ONLY")
-                }
+                // Classify only at the scoped call boundary, after checking the originating account.
+                val code = runCatching { Json.parseToJsonElement(body).jsonObject["code"]?.jsonPrimitive?.contentOrNull }.getOrNull()
+                if (!response.status.isSuccess() && code == "VT_READ_ONLY") throw BackendError.Server(response.status.value, body)
                 when {
                     response.status.isSuccess() -> body
                     response.status.value == 401 -> throw BackendError.Unauthorized
-                    response.status.value in listOf(400, 403, 404, 409, 422) -> throw FertigationPermanentFailure()
+                    response.status.value in listOf(400, 403, 404, 409, 422) -> {
+                        throw FertigationPermanentFailure()
+                    }
                     else -> throw IllegalStateException("Couldn't complete Fertigation. Please try again.")
                 }
             }
         },
     )
     private val json = Json { ignoreUnknownKeys = true }
-    private suspend fun call(name: String, params: JsonObject): JsonElement {
-        val vineyard = if (name == "upsert_fertigation_application") params["p_vineyard_id"]?.jsonPrimitive?.contentOrNull else null
+    private suspend fun call(name: String, params: JsonObject, writeVineyard: String? = null): JsonElement {
+        val vineyard = writeVineyard ?: if (name == "upsert_fertigation_application") params["p_vineyard_id"]?.jsonPrimitive?.contentOrNull else null
+        val account = OperationalWrites.authority?.accountBinding()
         vineyard?.let(OperationalWrites::requireWrite)
         check(adminCheck()) { "System Admin required." }
+        if (OperationalWrites.authority?.accountBinding() != account) throw kotlinx.coroutines.CancellationException("Account changed.")
         vineyard?.let(OperationalWrites::requireWrite)
         return try {
             json.parseToJsonElement(transport(name, params))
         } catch (error: Exception) {
             if (error is kotlinx.coroutines.CancellationException) throw error
+            if (OperationalWrites.authority?.accountBinding() != account) throw kotlinx.coroutines.CancellationException("Account changed.")
             if (vineyard != null && OperationalWrites.handleServerError(error, vineyard)) {
                 throw VineyardWriteAuthority.Restricted("VT_READ_ONLY")
             }
@@ -99,7 +102,20 @@ class FertigationRepository(
             put("p_notes", notes?.let(::JsonPrimitive) ?: JsonNull)
             put("p_products", JsonArray(products))
         }).jsonObject
-    suspend fun reverse(id: String, reason: String?): JsonObject = call("reverse_fertigation_application", buildJsonObject {
-        put("p_id", id); put("p_reason", reason?.let(::JsonPrimitive) ?: JsonNull)
-    }).jsonObject
+    suspend fun reverse(id: String, reason: String?, vineyardId: String? = null): JsonObject {
+        // A selected vineyard alone cannot establish ownership of an opaque application ID.
+        val vineyard = vineyardId?.takeIf { it.isNotBlank() }
+            ?: throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+        OperationalWrites.requireWrite(vineyard)
+        val account = OperationalWrites.authority?.accountBinding()
+        val rows = applications(vineyard, includeReversed = true)
+        if (OperationalWrites.authority?.accountBinding() != account) throw kotlinx.coroutines.CancellationException("Account changed.")
+        if (rows.none { row -> row["id"]?.jsonPrimitive?.contentOrNull?.equals(id, true) == true &&
+                (row["vineyard_id"]?.jsonPrimitive?.contentOrNull?.equals(vineyard, true) != false) }) {
+            throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+        }
+        return call("reverse_fertigation_application", buildJsonObject {
+            put("p_id", id); put("p_reason", reason?.let(::JsonPrimitive) ?: JsonNull)
+        }, writeVineyard = vineyard).jsonObject
+    }
 }

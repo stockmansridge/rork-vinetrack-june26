@@ -31,6 +31,40 @@ final class TripOccurrenceJournalTests: XCTestCase {
     }
     private func directory() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
 
+    @MainActor func testEntitlementHoldPreservesJournalBytesButAllowsRealReceiptAndOriginalResume() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let authority = VineyardWriteAuthority(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        authority.bind(userId: UUID(uuidString: scope.ownerId)!)
+        let j = try TripOccurrenceJournal(scope: scope, directory: dir, authority: authority)
+        try j.initialize(fixture())
+        let original = try j.setStatus(a, status: "done")
+        let file = dir.appendingPathComponent(scope.ownerId).appendingPathComponent(scope.vineyardId).appendingPathComponent(scope.tripId + ".json")
+        let bytes = try Data(contentsOf: file)
+        authority.verified(vineyardId: scope.vineyardId, access: VineyardOperationalAccess(legacyCanEnter: false, canEnterVineyard: true, canWrite: false, readOnlyReason: "trial_expired"), explicitlyWritable: false)
+        let reopened = try TripOccurrenceJournal(scope: scope, directory: dir, authority: authority)
+        XCTAssertThrowsError(try reopened.setStatus(b, status: "skipped")) { XCTAssertTrue($0 is VineyardWriteAuthority.Restricted) }
+        XCTAssertThrowsError(try reopened.finalize(.object([:]))) { XCTAssertTrue($0 is VineyardWriteAuthority.Restricted) }
+        XCTAssertEqual(try Data(contentsOf: file), bytes)
+        XCTAssertEqual(try reopened.load()?.pending, [original])
+        try reopened.acknowledge(ack(original))
+        XCTAssertTrue(try XCTUnwrap(reopened.load()).pending.isEmpty)
+        XCTAssertEqual(try status(reopened, a), "done")
+        authority.verified(vineyardId: scope.vineyardId, access: VineyardOperationalAccess(legacyCanEnter: true, canWrite: true), explicitlyWritable: true)
+        let resumed = try reopened.setStatus(b, status: "skipped")
+        XCTAssertEqual(try reopened.load()?.pending, [resumed])
+        XCTAssertEqual(try status(reopened, a), "done")
+    }
+
+    @MainActor func testHeldCreationLeavesNoJournalDocument() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let authority = VineyardWriteAuthority(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        authority.bind(userId: UUID(uuidString: scope.ownerId)!)
+        _ = authority.handleServerCode("VT_READ_ONLY", vineyardId: scope.vineyardId)
+        let j = try TripOccurrenceJournal(scope: scope, directory: dir, authority: authority)
+        XCTAssertThrowsError(try j.prepareCreation(trip: .object(["id": .string(scope.tripId), "vineyard_id": .string(scope.vineyardId)]), coverage: fixture())) { XCTAssertTrue($0 is VineyardWriteAuthority.Restricted) }
+        XCTAssertNil(try j.load())
+    }
+
     @MainActor func testBlockQualifiedPlannerKeepsFourSameLabelPassesAndSubset() throws {
         let vineyard = try XCTUnwrap(UUID(uuidString: scope.vineyardId))
         let rows = [PaddockRow(number: 38, startPoint: .init(latitude: 0, longitude: 0), endPoint: .init(latitude: 0, longitude: 1)),

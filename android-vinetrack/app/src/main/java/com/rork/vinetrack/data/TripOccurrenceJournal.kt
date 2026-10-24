@@ -50,6 +50,7 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
     }
     /** Establishes all creation data in one commit; activation awaits an exact server receipt. */
     @Synchronized fun prepareCreation(trip: JsonObject, coverage: JsonObject): Operation {
+        OperationalWrites.requireWrite(scope.vineyardId)
         require(trip["id"].textOrNull() == scope.tripId && trip["vineyard_id"].textOrNull() == scope.vineyardId)
         val d = TripOccurrenceCoverage.requireDocument(coverage)
         require(d.revision == 0L && d.planRevision == 1L && d.items.all { d.status(it.id) == "incomplete" })
@@ -65,6 +66,7 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
     @Synchronized fun activate(start: JsonObject): Operation = lifecycle("activate", start)
     @Synchronized fun finalize(end: JsonObject): Operation = lifecycle("finalize", end)
     private fun lifecycle(kind: String, metadata: JsonObject): Operation {
+        OperationalWrites.requireWrite(scope.vineyardId)
         val state = load() ?: error("Occurrence journal missing.")
         check(state.heldReason == null)
         check(kind == "finalize" || state.creationConfirmed || (kind == "activate" && state.pending.size == 1 && state.pending.first().rpc == "create_trip_with_occurrences_v1"))
@@ -217,6 +219,7 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
         }
     }
     private fun append(actionBuilder: (TripOccurrenceCoverage.Document) -> JsonObject): Operation {
+        OperationalWrites.requireWrite(scope.vineyardId)
         val state = load() ?: error("Occurrence journal missing.")
         check(state.heldReason == null) { state.heldReason ?: "Reconciliation required." }
         check(canOperate(state)) {

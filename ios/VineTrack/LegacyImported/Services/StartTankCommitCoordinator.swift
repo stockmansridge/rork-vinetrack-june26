@@ -33,6 +33,7 @@ final class StartTankCommitCoordinator {
     }
 
     func commit(sourceTrip: Trip, updatedTrip: Trip, actual: SprayTankActual, store: MigratedDataStore) throws {
+        try store.operationalWriteAuthority.requireWrite(vineyardId: updatedTrip.vineyardId.uuidString)
         guard persistence.load(key: Self.persistenceKey) as Journal? == nil else {
             throw SprayTankActualValidationError.localSaveFailed
         }
@@ -83,6 +84,8 @@ final class StartTankCommitCoordinator {
     }
 
     private func finish(_ initial: Journal, store: MigratedDataStore) throws {
+        // Leave the frozen journal and all already-durable evidence intact while held.
+        try store.operationalWriteAuthority.requireWrite(vineyardId: initial.updatedTrip.vineyardId.uuidString)
         var journal = initial
         guard store.selectedVineyardId == journal.updatedTrip.vineyardId,
               let current = store.trips.first(where: { $0.id == journal.updatedTrip.id }),

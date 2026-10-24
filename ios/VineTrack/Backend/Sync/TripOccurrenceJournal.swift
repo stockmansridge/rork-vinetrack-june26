@@ -48,8 +48,10 @@ import Foundation
     }
     private let scope: Scope
     private let fileURL: URL
+    private let authority: VineyardWriteAuthority
 
-    init(scope: Scope, directory: URL? = nil) throws {
+    init(scope: Scope, directory: URL? = nil, authority: VineyardWriteAuthority = .shared) throws {
+        self.authority = authority
         guard [scope.ownerId, scope.vineyardId, scope.tripId].allSatisfy(TripOccurrenceCoverage.canonicalUUID) else { throw Failure.scopeConflict }
         self.scope = scope
         let root = try directory ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -75,6 +77,7 @@ import Foundation
         try save(state)
     }
     @discardableResult func prepareCreation(trip: JSON, coverage: JSON) throws -> Operation {
+        try authority.requireWrite(vineyardId: scope.vineyardId)
         guard trip[occurrence: "id"]?.occurrenceString?.lowercased() == scope.tripId,
               trip[occurrence: "vineyard_id"]?.occurrenceString?.lowercased() == scope.vineyardId else { throw Failure.scopeConflict }
         let d = try TripOccurrenceCoverage.requireDocument(coverage)
@@ -92,6 +95,7 @@ import Foundation
     @discardableResult func activate(_ start: JSON) throws -> Operation { try lifecycle("activate", metadata: start) }
     @discardableResult func finalize(_ end: JSON) throws -> Operation { try lifecycle("finalize", metadata: end) }
     private func lifecycle(_ kind: String, metadata: JSON) throws -> Operation {
+        try authority.requireWrite(vineyardId: scope.vineyardId)
         guard var state = try load(), state.heldReason == nil,
               kind == "finalize" || state.creationConfirmed != false || (kind == "activate" && state.pending.count == 1 && state.pending.first?.rpc == "create_trip_with_occurrences_v1"),
               !state.pending.contains(where: { $0.action[occurrence: "kind"]?.occurrenceString == "finalize" || (kind == "activate" && $0.action[occurrence: "kind"]?.occurrenceString == "activate") }) else { throw Failure.reconciliation }
@@ -238,6 +242,7 @@ import Foundation
         }
     }
     private func append(_ build: (TripOccurrenceCoverage.Document, JSON) throws -> JSON) throws -> Operation {
+        try authority.requireWrite(vineyardId: scope.vineyardId)
         guard var state = try load() else { throw Failure.missing }
         guard canOperate(state) else { throw Failure.reconciliation }
         let before = state.projected

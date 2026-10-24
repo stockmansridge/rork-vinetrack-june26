@@ -7,8 +7,10 @@ final class SupabaseFertigationRepository {
     typealias Object = FertigationDomain.Object
     private let adminCheck: () async throws -> Bool
     private let transport: (String, Object) async throws -> Data
+    private let authority: VineyardWriteAuthority
 
     init(provider: SupabaseClientProvider = .shared, expectedOwnerId: UUID? = nil) {
+        authority = .shared
         let admins = SupabaseSystemAdminRepository()
         adminCheck = {
             if let expectedOwnerId, provider.client.auth.currentUser?.id != expectedOwnerId { throw CancellationError() }
@@ -23,14 +25,28 @@ final class SupabaseFertigationRepository {
     }
 
     /// Injection isolates request-gating assertions from production accounts.
-    init(adminCheck: @escaping () async throws -> Bool, transport: @escaping (String, Object) async throws -> Data) {
+    init(authority: VineyardWriteAuthority = .shared, adminCheck: @escaping () async throws -> Bool, transport: @escaping (String, Object) async throws -> Data) {
+        self.authority = authority
         self.adminCheck = adminCheck
         self.transport = transport
     }
 
-    private func call<T: Decodable>(_ name: String, _ params: Object, as: T.Type) async throws -> T {
+    private func call<T: Decodable>(_ name: String, _ params: Object, as: T.Type, writeVineyard: UUID? = nil) async throws -> T {
+        let account = authority.accountBinding
+        if let writeVineyard { try authority.requireWrite(vineyardId: writeVineyard.uuidString) }
         guard try await adminCheck() else { throw FertigationDomain.Failure.systemAdminRequired }
-        return try JSONDecoder().decode(T.self, from: await transport(name, params))
+        guard authority.accountBinding == account else { throw CancellationError() }
+        // The role lookup suspends. Re-admit immediately before this independent send.
+        if let writeVineyard { try authority.requireWrite(vineyardId: writeVineyard.uuidString) }
+        do {
+            return try JSONDecoder().decode(T.self, from: await transport(name, params))
+        } catch {
+            guard authority.accountBinding == account else { throw CancellationError() }
+            if let writeVineyard, authority.handleServerCode((error as? PostgrestError)?.code, vineyardId: writeVineyard.uuidString) {
+                throw VineyardWriteAuthority.Restricted(reason: "VT_READ_ONLY")
+            }
+            throw error
+        }
     }
 
     func capabilities(vineyardId: UUID) async throws -> Object {
@@ -79,12 +95,21 @@ final class SupabaseFertigationRepository {
             "p_growth_stage_code": growthStageCode.map { .string($0) } ?? .null,
             "p_notes": notes.map { .string($0) } ?? .null,
             "p_products": .array(products.map { .object($0) })
-        ], as: FertigationDomain.Application.self)
+        ], as: FertigationDomain.Application.self, writeVineyard: vineyardId)
     }
 
-    func reverse(id: UUID, reason: String?) async throws -> FertigationDomain.Application {
-        try await call("reverse_fertigation_application", [
+    func reverse(id: UUID, reason: String?, vineyardId: UUID? = nil) async throws -> FertigationDomain.Application {
+        // An opaque ID is not authority. Verify membership using the existing authenticated read RPC.
+        guard let vineyardId else { throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED") }
+        try authority.requireWrite(vineyardId: vineyardId.uuidString)
+        let account = authority.accountBinding
+        let rows = try await applications(vineyardId: vineyardId, includeReversed: true)
+        guard authority.accountBinding == account else { throw CancellationError() }
+        guard rows.contains(where: { $0.id == id && (FertigationDomain.uuid($0.raw, "vineyard_id") == nil || FertigationDomain.uuid($0.raw, "vineyard_id") == vineyardId) }) else {
+            throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
+        }
+        return try await call("reverse_fertigation_application", [
             "p_id": .string(id.uuidString), "p_reason": reason.map { .string($0) } ?? .null
-        ], as: FertigationDomain.Application.self)
+        ], as: FertigationDomain.Application.self, writeVineyard: vineyardId)
     }
 }

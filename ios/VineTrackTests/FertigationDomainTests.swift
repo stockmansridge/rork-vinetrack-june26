@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Supabase
 @testable import VineTrack
 
 @MainActor
@@ -34,18 +35,85 @@ struct FertigationDomainTests {
         var requests: [(String, FertigationDomain.Object)] = []
         let repo = SupabaseFertigationRepository(adminCheck: { true }, transport: { name, params in
             requests.append((name, params))
-            return Data((name == "list_fertigation_applications" || name == "list_fertigation_program_steps" ? "[]" : name == "get_irrigation_session_fertigation" ? "null" : "{}").utf8)
+            if name == "list_fertigation_applications" {
+                return Data("[{\"id\":\"\(stepId.uuidString)\",\"vineyard_id\":\"\(vineyardId.uuidString)\"}]".utf8)
+            }
+            return Data((name == "list_fertigation_program_steps" ? "[]" : name == "get_irrigation_session_fertigation" ? "null" : "{}").utf8)
         })
         _ = try await repo.capabilities(vineyardId: vineyardId)
         _ = try await repo.programSteps(vineyardId: vineyardId)
         _ = try await repo.sessionApplication(vineyardId: vineyardId, sessionId: stepId)
         _ = try await repo.applications(vineyardId: vineyardId, programStepId: stepId, includeReversed: true)
         _ = try await repo.upsert(id: stepId, vineyardId: vineyardId, sessionId: stepId, stepId: stepId, frozenName: nil, growthStageCode: nil, notes: nil, products: [])
-        _ = try await repo.reverse(id: stepId, reason: nil)
-        #expect(requests.map(\.0) == ["get_fertigation_capabilities", "list_fertigation_program_steps", "get_irrigation_session_fertigation", "list_fertigation_applications", "upsert_fertigation_application", "reverse_fertigation_application"])
+        _ = try await repo.reverse(id: stepId, reason: nil, vineyardId: vineyardId)
+        #expect(requests.map(\.0) == ["get_fertigation_capabilities", "list_fertigation_program_steps", "get_irrigation_session_fertigation", "list_fertigation_applications", "upsert_fertigation_application", "list_fertigation_applications", "reverse_fertigation_application"])
         #expect(requests[3].1["p_program_step_id"] == .string(stepId.uuidString))
         #expect(requests[3].1["p_vintage_year"] == .null)
         #expect(requests[4].1["p_notes"] == .null)
+        #expect(requests[5].1["p_vineyard_id"] == .string(vineyardId.uuidString))
+        #expect(requests[5].1["p_include_reversed"] == .bool(true))
+        #expect(requests[6].1["p_reason"] == .null)
+    }
+
+    @Test func reverseUnknownOrMismatchedScopeNeverMutates() async throws {
+        var requests: [String] = []
+        let gate = VineyardWriteAuthority(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        gate.bind(userId: UUID())
+        let repo = SupabaseFertigationRepository(authority: gate, adminCheck: { true }, transport: { name, _ in
+            requests.append(name)
+            return Data("[{\"id\":\"\(stepId.uuidString)\",\"vineyard_id\":\"\(stepId.uuidString)\"}]".utf8)
+        })
+        do { _ = try await repo.reverse(id: stepId, reason: nil); Issue.record("Missing scope admitted") }
+        catch { #expect(error is VineyardWriteAuthority.Restricted) }
+        #expect(requests.isEmpty)
+        do { _ = try await repo.reverse(id: stepId, reason: nil, vineyardId: vineyardId); Issue.record("Mismatched scope admitted") }
+        catch { #expect(error is VineyardWriteAuthority.Restricted) }
+        #expect(requests == ["list_fertigation_applications"])
+    }
+
+    @Test func reverseAccountSwitchDuringMembershipReadCancelsBeforeMutation() async throws {
+        let gate = VineyardWriteAuthority(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        gate.bind(userId: UUID())
+        var requests: [String] = []
+        let repo = SupabaseFertigationRepository(authority: gate, adminCheck: { true }, transport: { name, _ in
+            requests.append(name)
+            await Task.yield()
+            gate.bind(userId: UUID())
+            return Data("[{\"id\":\"\(stepId.uuidString)\",\"vineyard_id\":\"\(vineyardId.uuidString)\"}]".utf8)
+        })
+        do { _ = try await repo.reverse(id: stepId, reason: nil, vineyardId: vineyardId); Issue.record("Stale account admitted") }
+        catch { #expect(error is CancellationError) }
+        #expect(requests == ["list_fertigation_applications"])
+    }
+
+    @Test func expiryDuringRoleLookupStopsWriteButHistoryStillReads() async throws {
+        let gate = VineyardWriteAuthority(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        gate.bind(userId: UUID())
+        var requests: [String] = []
+        let repo = SupabaseFertigationRepository(authority: gate, adminCheck: {
+            await Task.yield()
+            _ = gate.handleServerCode("VT_READ_ONLY", vineyardId: vineyardId.uuidString)
+            return true
+        }, transport: { name, _ in requests.append(name); return Data("[]".utf8) })
+        do { _ = try await repo.upsert(id: stepId, vineyardId: vineyardId, sessionId: stepId, stepId: stepId, frozenName: nil, growthStageCode: nil, notes: nil, products: []); Issue.record("Held write sent") }
+        catch { #expect(error is VineyardWriteAuthority.Restricted) }
+        #expect(requests.isEmpty)
+        _ = try await repo.applications(vineyardId: vineyardId)
+        #expect(requests == ["list_fertigation_applications"])
+    }
+
+    @Test func staleWriteRejectionCannotHoldAnotherAccount() async throws {
+        let gate = VineyardWriteAuthority(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        gate.bind(userId: UUID())
+        let rejection = try JSONDecoder().decode(PostgrestError.self, from: Data(#"{"code":"VT_READ_ONLY","message":"Read only","details":null,"hint":null}"#.utf8))
+        let repo = SupabaseFertigationRepository(authority: gate, adminCheck: { true }, transport: { _, _ in
+            await Task.yield()
+            gate.bind(userId: UUID())
+            throw rejection
+        })
+        do { _ = try await repo.upsert(id: stepId, vineyardId: vineyardId, sessionId: stepId, stepId: stepId, frozenName: nil, growthStageCode: nil, notes: nil, products: []); Issue.record("Stale response admitted") }
+        catch { #expect(error is CancellationError) }
+        #expect(gate.canWrite(vineyardId: vineyardId.uuidString))
     }
 
     @Test func hectaresUseOnlyAuthoritativeAllocations() {

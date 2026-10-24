@@ -54,6 +54,8 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     data class ReplayScope(val userId: String, val sessionEpoch: Long)
     private var scopeProvider: (() -> ReplayScope?)? = null
     private val claimedScopes = mutableMapOf<PendingWrite, ReplayScope>()
+    private val claimOriginals = mutableMapOf<PendingWrite, PendingWrite>()
+    private fun isHeld(write: PendingWrite): Boolean = vineyardOf(write.payloadJson)?.let { !OperationalWrites.canWrite(it) } == true
     private data class RetainedOutcome(val expected: PendingWrite, val retryOutcome: PendingWrite)
     private val retainedClaims = mutableMapOf<String, RetainedOutcome>()
 
@@ -276,7 +278,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
      * deliberately excluded. Read-only.
      */
     fun retryEligibleCount(): Int =
-        _writes.value.count { it.status == PendingWriteStatus.FAILED }
+        _writes.value.count { it.status == PendingWriteStatus.FAILED && !isHeld(it) }
 
     /**
      * Reset every retry-eligible FAILED row back to PENDING for an explicit
@@ -299,7 +301,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         val now = System.currentTimeMillis()
         update { list ->
             list.map {
-                if (it.status == PendingWriteStatus.FAILED) {
+                if (it.status == PendingWriteStatus.FAILED && !isHeld(it)) {
                     count++
                     it.copy(status = PendingWriteStatus.PENDING, lastError = null, updatedAt = now)
                 } else {
@@ -331,7 +333,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         val now = System.currentTimeMillis()
         update { list ->
             list.map {
-                if (it.id == id && it.status == PendingWriteStatus.FAILED) {
+                if (it.id == id && it.status == PendingWriteStatus.FAILED && !isHeld(it)) {
                     changed = true
                     it.copy(status = PendingWriteStatus.PENDING, lastError = null, updatedAt = now)
                 } else {
@@ -383,6 +385,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
             lastError = null, updatedAt = System.currentTimeMillis())
         if (!mutateIfCurrent(expected) { claimed }) return null
         if (scope != null) claimedScopes[claimed] = scope
+        claimOriginals[claimed] = expected
         return claimed
     }
 
@@ -398,9 +401,11 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
             if (expected.entityType != com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS ||
                 expected.status != PendingWriteStatus.IN_PROGRESS || !isCurrent(expected)) return@synchronized null
             val scope = claimedScopes[expected]
+            val original = claimOriginals[expected]
             val next = expected.copy(payloadJson = payload, updatedAt = System.currentTimeMillis())
             if (!mutateIfCurrent(expected) { next }) return@synchronized null
             if (scope != null) claimedScopes[next] = scope
+            if (original != null) claimOriginals[next] = original
             next
         }
     }
@@ -428,6 +433,8 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         storageResult(false) { admitted { retryIfCurrentLocked(expected, error, maxAttempts) } }
 
     private fun retryIfCurrentLocked(expected: PendingWrite, error: String, maxAttempts: Int): Boolean {
+        // A response for a stale account/version cannot establish a hold for the current account.
+        if (!isCurrent(expected)) return false
         val vineyard = vineyardOf(expected.payloadJson)
         if (vineyard != null) {
             val code = runCatching {
@@ -436,8 +443,13 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
             }.getOrNull()
             OperationalWrites.authority?.handleServerCode(code, vineyard)
             if (!OperationalWrites.canWrite(vineyard)) {
-                // Keep the original evidence and retry budget. Status alone releases a completed claim.
-                return mutateIfCurrent(expected) { it.copy(status = PendingWriteStatus.PENDING) }
+                // Undo only this claim's transport metadata. Preserve any legitimately retained GPS evidence.
+                val original = claimOriginals[expected]
+                return mutateIfCurrent(expected) { it.copy(
+                    status = original?.status ?: PendingWriteStatus.PENDING,
+                    lastError = original?.lastError,
+                    updatedAt = original?.updatedAt ?: it.updatedAt,
+                ) }
             }
         }
         return mutateIfCurrent(expected) {
@@ -455,9 +467,10 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         val committed = update { rows -> rows.mapNotNull { if (it == expected) desired else it } }
         if (committed) {
             claimedScopes.remove(expected)
+            claimOriginals.remove(expected)
             retainedClaims.remove(expected.id)
         } else if (expected.status == PendingWriteStatus.IN_PROGRESS) {
-            val outcome = desired?.takeIf { it.status in setOf(PendingWriteStatus.BLOCKED, PendingWriteStatus.FAILED) }
+            val outcome = desired?.takeIf { isHeld(expected) || it.status in setOf(PendingWriteStatus.BLOCKED, PendingWriteStatus.FAILED) }
                 ?: expected.copy(status = PendingWriteStatus.FAILED, updatedAt = System.currentTimeMillis(),
                     lastError = "Local acknowledgement couldn't be saved. Original change retained; retry verifies the server.")
             retainedClaims[expected.id] = RetainedOutcome(expected, outcome)

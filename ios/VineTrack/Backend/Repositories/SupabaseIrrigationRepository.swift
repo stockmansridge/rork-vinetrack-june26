@@ -335,6 +335,31 @@ final class SupabaseIrrigationRepository {
         }
     }
 
+    /// ID-only commands resolve the authenticated row, never the current screen's vineyard.
+    private func writeScope(table: String, id: UUID) async throws -> UUID {
+        guard let owner = provider.client.auth.currentUser?.id else { throw CancellationError() }
+        struct Row: Decodable { let vineyard_id: UUID }
+        let rows: [Row] = try await client.from(table).select("vineyard_id")
+            .eq("id", value: id.uuidString).limit(2).execute().value
+        guard provider.client.auth.currentUser?.id == owner, rows.count == 1 else {
+            throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
+        }
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: rows[0].vineyard_id.uuidString)
+        return rows[0].vineyard_id
+    }
+
+    private func mutate<T>(vineyardId: UUID, send: () async throws -> T) async throws -> T {
+        guard provider.client.auth.currentUser?.id != nil else { throw CancellationError() }
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId.uuidString)
+        do { return try await send() }
+        catch {
+            if VineyardWriteAuthority.shared.handleServerCode((error as? PostgrestError)?.code, vineyardId: vineyardId.uuidString) {
+                throw VineyardWriteAuthority.Restricted(reason: "VT_READ_ONLY")
+            }
+            throw error
+        }
+    }
+
     // MARK: Feature gate
 
     func hasAccess(vineyardId: UUID) async throws -> Bool {
@@ -367,20 +392,20 @@ final class SupabaseIrrigationRepository {
     @discardableResult
     func createSystem(id: UUID = UUID(), vineyardId: UUID, name: String,
                       waterSource: String?, notes: String?) async throws -> IrrigationSystem {
-        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId.uuidString)
-        return try await client
+        return try await mutate(vineyardId: vineyardId) { try await client
             .rpc("create_irrigation_system", params: CreateSystemParams(
                 id: id, vineyardId: vineyardId, name: name, waterSource: waterSource, notes: notes))
-            .execute().value
+            .execute().value }
     }
 
     @discardableResult
     func updateSystem(id: UUID, name: String? = nil, waterSource: String? = nil,
                       notes: String? = nil, isActive: Bool? = nil) async throws -> IrrigationSystem {
-        try await client
+        let vineyard = try await writeScope(table: "irrigation_systems", id: id)
+        return try await mutate(vineyardId: vineyard) { try await client
             .rpc("update_irrigation_system", params: UpdateSystemParams(
                 id: id, name: name, waterSource: waterSource, notes: notes, isActive: isActive))
-            .execute().value
+            .execute().value }
     }
 
     func listValves(vineyardId: UUID, includeInactive: Bool = false) async throws -> [IrrigationValve] {
@@ -393,25 +418,25 @@ final class SupabaseIrrigationRepository {
     func createValve(id: UUID = UUID(), vineyardId: UUID, systemId: UUID, name: String,
                      valveNumber: String?, configuredFlow: Double?, measuredFlow: Double?,
                      notes: String?) async throws -> IrrigationValve {
-        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId.uuidString)
-        return try await client
+        return try await mutate(vineyardId: vineyardId) { try await client
             .rpc("create_irrigation_valve", params: CreateValveParams(
                 id: id, vineyardId: vineyardId, irrigationSystemId: systemId, name: name,
                 valveNumber: valveNumber, configuredFlowLitresPerHour: configuredFlow,
                 measuredFlowLitresPerHour: measuredFlow, notes: notes))
-            .execute().value
+            .execute().value }
     }
 
     @discardableResult
     func updateValve(id: UUID, name: String? = nil, valveNumber: String? = nil,
                      configuredFlow: Double? = nil, measuredFlow: Double? = nil,
                      notes: String? = nil, isActive: Bool? = nil) async throws -> IrrigationValve {
-        try await client
+        let vineyard = try await writeScope(table: "irrigation_valves", id: id)
+        return try await mutate(vineyardId: vineyard) { try await client
             .rpc("update_irrigation_valve", params: UpdateValveParams(
                 id: id, name: name, valveNumber: valveNumber,
                 configuredFlowLitresPerHour: configuredFlow,
                 measuredFlowLitresPerHour: measuredFlow, notes: notes, isActive: isActive))
-            .execute().value
+            .execute().value }
     }
 
     func listValveBlocks(vineyardId: UUID, valveId: UUID? = nil) async throws -> [IrrigationValveBlock] {
@@ -423,11 +448,10 @@ final class SupabaseIrrigationRepository {
     @discardableResult
     func setValveBlocks(vineyardId: UUID, valveId: UUID,
                         blocks: [IrrigationValveBlockInput]) async throws -> [IrrigationValveBlock] {
-        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId.uuidString)
-        return try await client
+        return try await mutate(vineyardId: vineyardId) { try await client
             .rpc("set_irrigation_valve_blocks", params: SetValveBlocksParams(
                 vineyardId: vineyardId, valveId: valveId, blocks: blocks))
-            .execute().value
+            .execute().value }
     }
 
     // MARK: Row-based allocation (SQL 126)
@@ -449,11 +473,10 @@ final class SupabaseIrrigationRepository {
     /// connections and authoritative percentages (allocation_method = rows).
     @discardableResult
     func setValveRows(vineyardId: UUID, valveId: UUID, rowIds: [UUID]) async throws -> IrrigationValveRowsResult {
-        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId.uuidString)
-        return try await client
+        return try await mutate(vineyardId: vineyardId) { try await client
             .rpc("set_irrigation_valve_rows", params: SetValveRowsParams(
                 vineyardId: vineyardId, valveId: valveId, rowIds: rowIds))
-            .execute().value
+            .execute().value }
     }
 
     func setupStatus(vineyardId: UUID) async throws -> IrrigationSetupStatus {
@@ -487,8 +510,7 @@ final class SupabaseIrrigationRepository {
 
     @discardableResult
     func recordSession(_ pending: IrrigationPendingSession) async throws -> IrrigationSession {
-        try VineyardWriteAuthority.shared.requireWrite(vineyardId: pending.vineyardId.uuidString)
-        return try await client
+        return try await mutate(vineyardId: pending.vineyardId) { try await client
             .rpc("record_irrigation_session", params: RecordSessionParams(
                 id: pending.id, vineyardId: pending.vineyardId,
                 irrigationSystemId: pending.irrigationSystemId, valveId: pending.valveId,
@@ -500,7 +522,7 @@ final class SupabaseIrrigationRepository {
                 totalVolumeLitres: pending.totalVolumeLitres,
                 startedAt: pending.startedAt, finishedAt: pending.finishedAt,
                 notes: pending.notes, sourceType: "manual_ios"))
-            .execute().value
+            .execute().value }
     }
 
     @discardableResult
@@ -510,7 +532,8 @@ final class SupabaseIrrigationRepository {
                        startedAt: Date? = nil, finishedAt: Date? = nil,
                        clearTimes: Bool = false, notes: String?,
                        useCurrentConfiguration: Bool) async throws -> IrrigationSession {
-        try await client
+        let vineyard = try await writeScope(table: "irrigation_sessions", id: id)
+        return try await mutate(vineyardId: vineyard) { try await client
             .rpc("update_irrigation_session", params: UpdateSessionParams(
                 id: id, sessionDate: sessionDate, durationMinutes: durationMinutes,
                 calculationMethod: method?.rawValue, flowLitresPerHour: flow,
@@ -518,14 +541,15 @@ final class SupabaseIrrigationRepository {
                 totalVolumeLitres: totalVolume, startedAt: startedAt, finishedAt: finishedAt,
                 notes: notes, useCurrentConfiguration: useCurrentConfiguration,
                 clearTimes: clearTimes))
-            .execute().value
+            .execute().value }
     }
 
     @discardableResult
     func reverseSession(id: UUID) async throws -> IrrigationSession {
-        try await client
+        let vineyard = try await writeScope(table: "irrigation_sessions", id: id)
+        return try await mutate(vineyardId: vineyard) { try await client
             .rpc("reverse_irrigation_session", params: SessionIdParams(id: id))
-            .execute().value
+            .execute().value }
     }
 
     func getSession(id: UUID) async throws -> IrrigationSession {

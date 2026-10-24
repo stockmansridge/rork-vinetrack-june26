@@ -76,6 +76,7 @@ class StartTankCommitCoordinator internal constructor(
 
     @Synchronized
     private fun commitLocked(ownerUserId: String, vineyardId: String, sourceTrip: Trip, trip: Trip, actual: SprayTankActual): Boolean {
+        if (!OperationalWrites.admit(vineyardId)) return false
         require(sourceTrip.id == trip.id && actual.tripId == trip.id && actual.tankSessionId.isNotBlank())
         if (journalStorage.read() != null) return false
         val journal = Journal(
@@ -131,6 +132,8 @@ class StartTankCommitCoordinator internal constructor(
     }
 
     private fun finish(initial: Journal, currentOverride: Trip? = null): Trip? {
+        // No new publication, marker or cleanup while held. Recovery retains the exact journal.
+        if (!OperationalWrites.canWrite(initial.vineyardId)) return null
         var journal = initial
         val current = currentOverride?.takeIf {
             it.id == journal.updatedTrip.id && it.vineyardId == journal.vineyardId
