@@ -175,18 +175,24 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
         withContext(Dispatchers.IO) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
+            val mutation = VineyardRowMutation(session)
+            mutation.requireWrite(vineyardId)
             if (input.pinId != null && !isLinkedPinPersisted(input.pinId, vineyardId)) {
                 throw LinkedGrowthPinNotAcknowledged()
             }
+            mutation.requireWrite(vineyardId)
             val body = insertPayload(
                 vineyardId, input, id ?: UUID.randomUUID().toString(), clientUpdatedAt ?: nowIso(),
                 createdBy = session.userId, recordedByName = session.userName,
             )
-            val response = SupabaseClient.http.post(SupabaseClient.restUrl("growth_stage_records")) {
-                authHeaders(token)
-                headers { append("Prefer", "return=representation") }
-                contentType(ContentType.Application.Json)
-                setBody(body)
+            val response = mutation.send(vineyardId) {
+                SupabaseClient.http.post(SupabaseClient.restUrl("growth_stage_records")) {
+                    mutation.authorize(this, vineyardId)
+                    authHeaders(token)
+                    headers { append("Prefer", "return=representation") }
+                    contentType(ContentType.Application.Json)
+                    setBody(body)
+                }
             }
             firstRow(response)
         }
@@ -218,12 +224,7 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
                 notes = input.notes,
                 clientUpdatedAt = clientUpdatedAt ?: nowIso(),
             )
-            val response = SupabaseClient.http.patch(SupabaseClient.restUrl("growth_stage_records?id=eq.$id")) {
-                authHeaders(token)
-                headers { append("Prefer", "return=representation") }
-                contentType(ContentType.Application.Json)
-                setBody(patch)
-            }
+            val response = patchGrowth(id, patch)
             firstRow(response)
         }
 
@@ -240,27 +241,41 @@ class GrowthStageRecordRepository(private val session: SessionStore) : GrowthPho
                 photoPaths = paths?.takeIf { it.isNotEmpty() },
                 clientUpdatedAt = nowIso(),
             )
-            val response = SupabaseClient.http.patch(SupabaseClient.restUrl("growth_stage_records?id=eq.$id")) {
-                authHeaders(token)
-                headers { append("Prefer", "return=representation") }
-                contentType(ContentType.Application.Json)
-                setBody(patch)
-            }
+            val response = patchGrowth(id, patch)
             firstRow(response)
         }
 
     suspend fun softDeleteGrowthStageRecord(id: String) = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_growth_stage_record")) {
-            authHeaders(token)
-            contentType(ContentType.Application.Json)
-            setBody(SoftDeleteArgs(id))
+        val mutation = VineyardRowMutation(session)
+        val vineyard = mutation.resolve("growth_stage_records", id)
+        val response = mutation.send(vineyard) {
+            SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_growth_stage_record")) {
+                mutation.authorize(this, vineyard)
+                authHeaders(token)
+                contentType(ContentType.Application.Json)
+                setBody(SoftDeleteArgs(id))
+            }
         }
         when {
             response.status.isSuccess() -> Unit
             response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
+    private suspend inline fun <reified T> patchGrowth(id: String, payload: T): io.ktor.client.statement.HttpResponse {
+        val mutation = VineyardRowMutation(session)
+        val vineyard = mutation.resolve("growth_stage_records", id)
+        return mutation.send(vineyard) {
+            SupabaseClient.http.patch(SupabaseClient.restUrl("growth_stage_records?id=eq.$id&vineyard_id=eq.$vineyard")) {
+                mutation.authorize(this, vineyard)
+                authHeaders(session.accessToken ?: throw BackendError.Unauthorized)
+                headers { append("Prefer", "return=representation") }
+                contentType(ContentType.Application.Json)
+                setBody(payload)
+            }
         }
     }
 

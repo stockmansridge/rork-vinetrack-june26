@@ -1,5 +1,85 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Expired-trial enforcement — independent transports and Spray checkpoint, 24 October 2026
+
+**PARTIAL; ACCEPTANCE NOT GREEN. Historical entry and notice/purchase UX remain closed.** Both current normal builds PASS. Latest Android instrumentation selection is **8 passed /1 failed /0 skipped**; the existing reload-pending expectation remains unresolved. Native completeness, original23-case acceptance, isolated authenticated backend acceptance and physical readiness are not established.
+
+### A. Changed files
+
+Fourteen application/test files relative to observed base `9717a1108a2039dcef471ad20134dfbcc5ab32aa`, listed byte-for-byte in I. Report and approved plan are updated separately. No startup architecture, costing, dependency, version, signing, server or owner-data changes.
+
+- Android `PinPhotoRepository`: canonical original Pin/Growth object path owns upload/delete admission; reject unresolved paths; capture account incarnation and authority registry, attach per-request account/write attributes; preserve successful upload receipts.
+- Android `VineyardRowMutation`, `PinRepository`, `GrowthStageRecordRepository`: authenticated exact-one actual row ownership for independent ID-only mutations; duplicates, missing/mismatched IDs and wrong expected vineyard block. Explicit create owner/scope checked before IDs and after linked reads. Do not borrow selected B for held A.
+- iOS `VineyardWriteAuthority`, `VineyardMutationAdmission`, `SupabaseFertigationRepository`: runtime account generation distinguishes sign-out/return to the same UUID from uninterrupted refresh; recheck after existing ownership/role suspensions. Durable ledger and operational encoding unchanged.
+- Android `AppViewModel`, `LegacySpraySaveStore`, `LegacySprayPairReceipt`: admit new Spray work before IDs/journals/claims, inactive Trip activation and independent paired-save RPC. Validate frozen Trip/record owner and vineyard; opt into refresh/retry request admission. Known-held new saves stop, typed rejection restores the original unclaimed receipt journal; already-claimed receipt recovery remains a read. This is not all active Spray/occurrence acceptance.
+- Tests: new `PinPhotoAdmissionAndroidTest`; expanded `SprayStartProductionAndroidTest`, `VineyardMutationAdmissionTests` and `FertigationDomainTests`.
+
+### B. Admission and owning scope
+
+Independent Pin/Growth database writes resolve actual authenticated ownership, not current selection; storage scope comes from strict canonical original keys. Originating account incarnation and registered authority must remain current. The new paired-save boundary validates matching frozen owner/vineyard on both records and classifies structured read-only before ordinary auth/permission mapping. Normal reads, receipt recovery, legacy missing capabilities and paid-vineyard behavior are not deliberately restricted.
+
+### C. Retained journals, receipts and replay
+
+No hold-induced payload/ID/date/attachment recreation or retry consumption is intended in these bounded changes. Known-held Calculator Start leaves the original draft and native journal storage unchanged and sends zero save/activation/recovery calls. Structured paired-save rejection restores its original unclaimed attempt; a direct held save stops before transport while read-only recovery can inspect the same request. Genuine successful object uploads return the original receipt despite in-flight expiry; subsequent independent changes are admitted separately. Post-success cross-account receipt durability and all independent replay/unknown-outcome paths still need exhaustive acceptance.
+
+### D. Isolation and structured errors
+
+A stale account/authority cannot assign another account's hold in the guarded transports. Same-UUID return no longer resumes an iOS admission suspended before sign-out. Ordinary permission/auth/network failures do not imply trial expiry. Actual iOS Storage error representation and SDK refresh/retry interception remain unresolved; Android mock transport bypasses the production HTTP interceptor and therefore does not prove its refresh/retry execution.
+
+### E. iOS tests and separate build
+
+- Explicit authorised unchanged18-suite rerun: **282 passed in110s**, no startup changes; historical hosted-app zero-execution failure is not the current blocker.
+- Genuine failing-before same-account reincarnation regression: **0 passed /1 failed**, previous session resumed a suspended write. Added generation fencing and a separate fertigation role-lookup regression.
+- Same expanded18-suite selection after those changes: **284 passed in125s**. It covers DeviceTripOwnership, VineyardWriteAuthority, ReadOnlyEntitlementContract, SpraySaveForLater, EntitlementDecision, EntitlementAccessRegression, OfflineQuickActions, ResistancePlanRepository, ResistancePlanRevisionSync, FertigationMobileWorkflow, FertigationDomain, TripOccurrenceJournal, StartTankCommitCoordinator, PinPhotoWorkflow, VineyardMutationAdmission, LinkedPinGrowthDeletionWorkflow, MobileRequestSyncSafeguard and GrowthStageVarietyParity. Aggregate tool count is not a per-method/skipped XML manifest.
+- Separate current **`runChecks(ios)` PASS**, simulator only. No later iOS application/test changes after the284 selection; Android Spray changes do not inherit iOS test coverage. Device Release and handset acceptance unverified.
+
+### F. Android tests and separate build
+
+- Genuine held storage failing-before: **0/1**, held mutation escaped admission. Two storage checks then **2/0/0 in7s**.
+- Initial ID-only fixture ended on post-send `BackendError.Server(200)` from an empty response; corrected it to distinguish post-send failure from safe admission. Genuine failing-before then **0/1**, one request escaped actual ownership admission. After production fixes, all three photo/ownership methods plus held Tank instrumentation **4/0/0 in10s**.
+- Before Spray edits, host focused selection **209/209 in29.542s**, regressions **55/55 in13.274s**, zero failures/errors/skips; artifacts `/tmp/vinetrack-read-only-contract-zlk6vixu/`. These results alone do not validate later Spray edits.
+- New Spray hold test first hit a fixture NPE because `storedAttempts()` assumes the key exists. Raw preference snapshot fixed that pre-operation issue. Genuine failing-before **0/1**: known-held Start persisted and completed a new attempt. Production guards now stop that path.
+- First expanded eight-case run: **6 passed /2 failed /0 skipped**,3.427s: activation and reload fixture failures. Fixture previously installed synthetic credentials before signed-out startup completed, allowing its startup to revoke them. Fixture-only fix waits for SignedOut and persists selected vineyard; production startup unchanged. Next run **7/1/0**,3.410s. Scoped the injected reload failure to a created Trip, not unrelated empty startup reads.
+- Latest nine-case selection: **8 passed /1 failed /0 skipped,4.137s**. Passing: three `PinPhotoAdmissionAndroidTest` methods; retained Tank ViewModel method; held Calculator Start; structured receipt rejection/unclaimed restoration/direct held save/read recovery; blank-hours original activation/GPS safety; lost-response recovery with original operation. Failure: `SprayStartProductionAndroidTest#acceptedButReloadFailedRetriesOriginalWithoutAnotherCreate`, assertion expecting `first.isStarted == false`. Current production code already permits verified original Start receipt fallback after row hydration fails (`submitPreparedLegacySprayAwaited`); no fallback change is part of this delta. This is an unresolved test/behavior mismatch, **not** a passing reload gate or proven failing-before attribution. Assertion remains unchanged; no automatic unchanged rerun.
+- Newest host launch `/tmp/vinetrack-read-only-contract-8s9ek3_o/` terminated with **exit143**,5.515s, **zero tests/suites**; no `finished.json` and regressions did not execute. Normal build ran concurrently; causal attribution is unproven. A fresh serialized host attempt is recorded below after both builds finished.
+- Serialized current host result after both builds finished: focused11 suites **209/209 in29.293s**, separate existing six-suite regressions **55/55 in13.673s**, zero failures/errors/skips, both exit0. Artifacts `/tmp/vinetrack-read-only-contract-mgljcr6t/{contract,existing-regressions}/result.json`, suite XML and `finished.json`. This closes this host selection only, not the failed instrumentation or full operational gate.
+- Separate current **`runChecks(android-vinetrack)` PASS**. Existing asset URL advisories are nonblocking and unchanged. Build success does not override the failed instrumentation gate.
+
+### G. Restart/offline and zero-write scope
+
+Storage authority reconstruction and the synthetic held actual-ViewModel controls are bounded assertions, not process death, all historical exposed mutations, physical GPS or retained-owner installation acceptance. Known-held Start leaves raw journal preferences, recipe and ActiveTrip disk untouched. Receipt recovery is explicitly allowed during a hold. Full account/vineyard/restart/offline permutations and genuine completed-history all-exposed-mutation zero-write acceptance remain unfinished.
+
+### H. Remaining native and original23-case gate
+
+Still incomplete: Growth original-author/account-incarnation replay, orphan cleanup and unknown-outcome claims; maintenance/scouting/Insights storage and independent journals; other Android attachment transports; resistance/fertigation retry callers; suspended active Spray/occurrence/GPS completion and acknowledgement paths; every direct refresh/retry; historical Trip/Spray all-exposed-mutation zero-write and complete restart/isolation acceptance. The attempted subagent residual audit returned token-limit incomplete with **no findings**, not a completed audit.
+
+The original enumerated23-case matrix remains absent from prior recursive searches; do not invent a substitute or count helper cases as operational acceptance. Need the original checklist. Native work remains independently unfinished even when that checklist and backend scope arrive.
+
+### I. Exact source identity
+
+Base **`9717a1108a2039dcef471ad20134dfbcc5ab32aa`** plus the following sorted UTF-8 `SHA256(file bytes) + two spaces + path + newline` manifest. Fourteen files; manifest SHA256 **`eb113df33baa0edfbf3855d34aa2ca6aa88b9501cefd9feb8f1f556331cb3f81`**. Report/plan and two preexisting managed-history changes excluded. Earlier manifests remain historical. `git diff HEAD --check` passed before and after the report/plan update; embedded manifest was recomputed from current bytes and verified. Starting HEAD is not a final managed-save SHA.
+
+```text
+e890dfea7ce368a40aa89d0335a6d9f15b56a27cb8f4f04f4f4c2bb99414564c  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/PinPhotoAdmissionAndroidTest.kt
+35357f1f32726cc2f40d69efa786d9d2315dbaacd742d458c9d1b483c27ce4e0  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayStartProductionAndroidTest.kt
+d8fe77522d8fc91ae4a0132f800eefc59cddd394673d5f0db244077c4aa869c4  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/GrowthStageRecordRepository.kt
+f491b06189ae996b3810ed49b01afce6c941bef6aa53602accac6d76e212b0b3  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/LegacySprayPairReceipt.kt
+887b2f986f90cef43575af7902373809a8bb06d98e342bb778723728108e5ae9  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/LegacySpraySaveStore.kt
+e5944a8b8b71e0a661e2232e1718d5d98c2dde77f6a5a6bcc2e810dc79060491  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PinPhotoRepository.kt
+b38398a2ada82dfd420b5f9c1646ac92c536d62de2b4e86ae6c1327fd9828f7b  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PinRepository.kt
+1d74136879ac125dcc1334702010a8fd28029269f367b9a60e9e53a34ac15798  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/VineyardRowMutation.kt
+abaade3f0752edb1ea325ce74463306929f7ae8f8bf7cb70067eabcda6e9f623  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt
+7987e47d3df828c4119e272888f081b9c5d689d69087d597a78549696eb85d1a  ios/VineTrack/Backend/Repositories/SupabaseFertigationRepository.swift
+e40a10a4bf0a11ee4b97869a12baf43425151d2b68fe17ab4f16ea93744d5d86  ios/VineTrack/Backend/Subscription/VineyardMutationAdmission.swift
+cb685fc1111ebb1342a9048b67a78c6df83bcbfbe806b88ff21da3093350fa91  ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift
+e74f75f9a048c1ed4300cdb3e68d94d46d92b5246fcf6203b5e31b58adc9705a  ios/VineTrackTests/FertigationDomainTests.swift
+faf36455a0234c5f91e860723ff1a0f0525977c01e2602096dc0d8f96e9409d6  ios/VineTrackTests/VineyardMutationAdmissionTests.swift
+```
+
+### J. Backend, UX and physical limitations
+
+No authorised isolated non-owner account/vineyard/credentials or delivered server contract is available. Production discovery is not permission to query or mutate owner data; no authenticated backend acceptance, deployment or migration performed. Need the explicit isolated scope and original23 cases. Historical entry, persistent notice and deliberate purchase prompt remain disabled until **all** native/backend/operational gates pass. No physical readiness, handset reset/install/logout, store export/upload, version or signing change claimed or performed.
+
 ## Expired-trial read-only access — independent attachment and tank admission checkpoint, 24 October 2026
 
 **PARTIAL IMPLEMENTATION; HISTORICAL ENTRY REMAINS CLOSED.** Final iOS selection282 PASS; Android focused209 PASS, regressions55 PASS and one actual ViewModel instrumentation regression PASS. Both normal builds PASS, separately from tests. These are bounded source checks, not the full23-case gate, authenticated backend acceptance or physical-device readiness.

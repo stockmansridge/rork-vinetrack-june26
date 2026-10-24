@@ -33,15 +33,16 @@ final class SupabaseFertigationRepository {
 
     private func call<T: Decodable>(_ name: String, _ params: Object, as: T.Type, writeVineyard: UUID? = nil) async throws -> T {
         let account = authority.accountBinding
+        let generation = authority.accountGeneration
         if let writeVineyard { try authority.requireWrite(vineyardId: writeVineyard.uuidString) }
         guard try await adminCheck() else { throw FertigationDomain.Failure.systemAdminRequired }
-        guard authority.accountBinding == account else { throw CancellationError() }
+        guard authority.accountBinding == account, authority.accountGeneration == generation else { throw CancellationError() }
         // The role lookup suspends. Re-admit immediately before this independent send.
         if let writeVineyard { try authority.requireWrite(vineyardId: writeVineyard.uuidString) }
         do {
             return try JSONDecoder().decode(T.self, from: await transport(name, params))
         } catch {
-            guard authority.accountBinding == account else { throw CancellationError() }
+            guard authority.accountBinding == account, authority.accountGeneration == generation else { throw CancellationError() }
             if let writeVineyard, authority.handleServerCode((error as? PostgrestError)?.code, vineyardId: writeVineyard.uuidString) {
                 throw VineyardWriteAuthority.Restricted(reason: "VT_READ_ONLY")
             }
@@ -103,8 +104,9 @@ final class SupabaseFertigationRepository {
         guard let vineyardId else { throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED") }
         try authority.requireWrite(vineyardId: vineyardId.uuidString)
         let account = authority.accountBinding
+        let generation = authority.accountGeneration
         let rows = try await applications(vineyardId: vineyardId, includeReversed: true)
-        guard authority.accountBinding == account else { throw CancellationError() }
+        guard authority.accountBinding == account, authority.accountGeneration == generation else { throw CancellationError() }
         guard rows.contains(where: { $0.id == id && (FertigationDomain.uuid($0.raw, "vineyard_id") == nil || FertigationDomain.uuid($0.raw, "vineyard_id") == vineyardId) }) else {
             throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
         }

@@ -53,10 +53,13 @@ class PinPhotoRepository(private val session: SessionStore) : PinPhotoObjectGate
     override suspend fun uploadAtPath(path: String, jpeg: ByteArray): String =
         withContext(Dispatchers.IO) {
             requireConfig()
+            mutateObject(path) { vineyard, access ->
             val token = session.accessToken ?: throw BackendError.Unauthorized
             val response = SupabaseClient.http.post(
                 SupabaseClient.storageUrl("object/$BUCKET/$path")
             ) {
+                attributes.put(SupabaseClient.accountRequestScope, access)
+                attributes.put(SupabaseClient.operationalWriteVineyard, vineyard)
                 authHeaders(token)
                 headers {
                     append("x-upsert", "true")
@@ -64,10 +67,8 @@ class PinPhotoRepository(private val session: SessionStore) : PinPhotoObjectGate
                 }
                 setBody(ByteArrayContent(jpeg, ContentType.Image.JPEG))
             }
-            when {
-                response.status.isSuccess() -> path
-                response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
-                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+            path // Keep a real upload receipt even if authority changed in flight.
             }
         }
 
@@ -112,17 +113,49 @@ class PinPhotoRepository(private val session: SessionStore) : PinPhotoObjectGate
     /** Remove the stored photo. Gated server-side by the manager-only delete policy. */
     suspend fun delete(path: String) = withContext(Dispatchers.IO) {
         requireConfig()
-        val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.delete(
-            SupabaseClient.storageUrl("object/$BUCKET/$path")
-        ) {
-            authHeaders(token)
+        mutateObject(path) { vineyard, access ->
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.delete(
+                SupabaseClient.storageUrl("object/$BUCKET/$path")
+            ) {
+                attributes.put(SupabaseClient.accountRequestScope, access)
+                attributes.put(SupabaseClient.operationalWriteVineyard, vineyard)
+                authHeaders(token)
+            }
+            if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
         }
-        when {
-            response.status.isSuccess() -> Unit
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
-            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+    }
+
+    /** The canonical object key owns its scope, never the selected vineyard.
+     * Capture the existing session incarnation so refresh/retry cannot retarget it. */
+    private suspend fun <T> mutateObject(path: String, operation: suspend (String, com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess) -> T): T {
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        val gate = OperationalWrites.authority ?: throw BackendError.Unauthorized
+        val vineyard = objectVineyard(path)
+        val admission = TripWriteAdmission(
+            isAccountCurrent = {
+                session.isAccountAccessCurrent(access) && OperationalWrites.authority === gate &&
+                    gate.accountBinding() == access.userId
+            },
+            resolve = { emptyList() },
+        )
+        return try {
+            admission.send(vineyard) { operation(vineyard, access) }
+        } catch (error: BackendError.Server) {
+            // send classifies the structured expiry code BEFORE ordinary auth mapping.
+            if (error.code == 401 || error.code == 403) throw BackendError.Unauthorized
+            throw error
         }
+    }
+
+    private fun objectVineyard(path: String): String {
+        val parts = path.split('/')
+        val uuid = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+        if (parts.size != 4 || !uuid.matches(parts[0]) || parts[1] !in setOf("pins", "growth") ||
+            !uuid.matches(parts[2]) || !Regex("photo(?:-[A-Za-z0-9_-]+)?\\.jpg").matches(parts[3])) {
+            throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+        }
+        return parts[0].lowercase(java.util.Locale.ROOT)
     }
 
     private fun requireConfig() {

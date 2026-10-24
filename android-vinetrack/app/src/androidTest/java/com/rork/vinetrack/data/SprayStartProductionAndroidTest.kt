@@ -16,6 +16,7 @@ import org.junit.Rule
 import androidx.lifecycle.ViewModelStore
 import androidx.test.platform.app.InstrumentationRegistry
 import com.rork.vinetrack.data.auth.SessionStore
+import com.rork.vinetrack.data.auth.SessionPhase
 import com.rork.vinetrack.data.model.*
 import com.rork.vinetrack.data.spray.*
 import com.rork.vinetrack.ui.AppUiState
@@ -99,6 +100,8 @@ class SprayStartProductionAndroidTest {
                         savedRecord = body.getValue("p_record").jsonObject
                         hold?.await()
                         if (mode == "lost") error("Synthetic lost response after commitment")
+                        if (mode == "read_only") return@MockEngine respond(
+                            "{\"code\":\"VT_READ_ONLY\"}", HttpStatusCode.Forbidden, jsonHeaders)
                     } else {
                         recoveries++; assertEquals(savedRequest, body)
                     }
@@ -113,7 +116,7 @@ class SprayStartProductionAndroidTest {
                     }.toString(), HttpStatusCode.OK, jsonHeaders)
                 }
                 path.endsWith("/trips") && request.method == HttpMethod.Get -> {
-                    if (failReload) { failReload = false; respond("{}", HttpStatusCode.ServiceUnavailable, jsonHeaders) }
+                    if (failReload && savedTrip != null) { failReload = false; respond("{}", HttpStatusCode.ServiceUnavailable, jsonHeaders) }
                     else respond(JsonArray(listOfNotNull(savedTrip)).toString(), HttpStatusCode.OK, jsonHeaders)
                 }
                 path.endsWith("/trips") && request.method == HttpMethod.Patch -> {
@@ -136,7 +139,15 @@ class SprayStartProductionAndroidTest {
                 selectedVineyardId = vineyard
             }
             vm = AppViewModel(app); models.put("start", vm)
+        }
+        if (!forCalculatorUi) {
+            // Finish the genuine signed-out restore before installing this test's synthetic
+            // session. Otherwise startup can revoke it during the paired-save suspension.
+            compose.waitUntil(10_000) { vm.ui.value.sessionPhase == SessionPhase.SignedOut }
+        }
+        instrumentation.runOnMainSync {
             session().save("synthetic-access", "synthetic-refresh", actor, null)
+            session().selectedVineyardId = vineyard
             state().value = AppUiState(selectedVineyardId = vineyard, currentUserId = actor, isOnline = true,
                 members = listOf(VineyardMember(vineyardId = vineyard, userId = actor, role = "manager")))
         }
@@ -399,6 +410,47 @@ class SprayStartProductionAndroidTest {
         assertNull(work.selectedTripId.value); assertNull(ActiveTripStore(app).load()); assertEquals(1, creates)
         compose.onNodeWithText("Return to retained setup").performClick(); tick()
         compose.onNodeWithText("Start Spray Trip", substring = true).assertExists()
+    }
+
+    @Test fun expiredCalculatorStartDoesNotPrepareOrSendReplacementWork() {
+        setup()
+        val draft = input()
+        val frozen = SupabaseClient.json.encodeToString(SprayRecordRepository.SprayInput.serializer(), draft)
+        val attempts = app.getSharedPreferences(LegacySpraySaveStore.PREFERENCES, Context.MODE_PRIVATE)
+        val before = attempts.all.toMap()
+        requireNotNull(OperationalWrites.authority).handleServerCode("VT_READ_ONLY", vineyard)
+        val outcome = start(draft = draft)
+        assertFalse(outcome.isStarted)
+        assertEquals("Known expiry must not initiate a new journal", before, attempts.all)
+        assertEquals(0, creates)
+        assertEquals(0, activationRequests)
+        assertEquals(0, recoveries)
+        assertNull(ActiveTripStore(app).load())
+        assertEquals(frozen, SupabaseClient.json.encodeToString(SprayRecordRepository.SprayInput.serializer(), draft))
+    }
+
+    @Test fun receiptReadOnlyRestoresUnclaimedOriginalAndStillAllowsRecoveryRead() {
+        setup(); mode = "read_only"
+        assertFalse(start().isStarted)
+        val original = storedAttempts().single()
+        assertFalse(original.rpcClaimed); assertNull(original.candidate); assertNull(original.verified)
+        val gate = requireNotNull(OperationalWrites.authority)
+        assertNotNull(gate.heldReason(vineyard))
+        val frozen = storedAttempts()
+        kotlinx.coroutines.runBlocking {
+            val access = requireNotNull(session().accountAccess())
+            try {
+                LegacySprayPairReceipt.transport(session(), access, "save_legacy_spray_pair_v1", requireNotNull(original.rpc))
+                fail("Independent held save reached transport")
+            } catch (_: VineyardWriteAuthority.Restricted) { }
+            assertEquals(1, creates)
+            mode = "accepted"
+            val receipt = LegacySprayPairReceipt.transport(session(), access, "recover_legacy_spray_pair_v1", requireNotNull(original.rpc))
+            receipt.validate(original)
+        }
+        assertEquals(1, recoveries); assertEquals(frozen, storedAttempts())
+        assertFalse(start().isStarted); assertEquals(frozen, storedAttempts()); assertEquals(1, creates)
+        assertNull(ActiveTripStore(app).load())
     }
 
     @Test fun blankHoursActivateOriginalAndKeepFirstTankGpsSafetyGate() { setup(); assertActivation(null) }

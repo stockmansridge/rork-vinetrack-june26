@@ -137,6 +137,22 @@ struct VineyardMutationAdmissionTests {
         #expect(gate.canWrite(vineyardId: b.uuidString))
     }
 
+    @Test func sameAccountSignOutAndReturnCannotReuseSuspendedAdmission() async throws {
+        let owner = UUID(), id = UUID(), a = UUID()
+        let gate = authority(owner: owner)
+        let admission = try VineyardMutationAdmission(currentUserId: { owner }, authority: gate)
+        do {
+            _ = try await admission.resolve(id: id) {
+                gate.bind(userId: nil)
+                gate.bind(userId: owner)
+                return [.init(id: id, vineyardId: a)]
+            }
+            Issue.record("A previous session incarnation resumed its write")
+        } catch { #expect(error is BackendRepositoryError) }
+        // A new operation in the current incarnation remains permitted.
+        try VineyardMutationAdmission(currentUserId: { owner }, authority: gate).requireWrite(vineyardId: a)
+    }
+
     @Test func genuineReceiptSurvivesExpiryButNextSendIsHeld() async throws {
         let owner = UUID(), a = UUID(), receipt = UUID()
         let gate = authority(owner: owner)

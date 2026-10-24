@@ -49,12 +49,28 @@ object LegacySprayPairReceipt {
 
     suspend fun transport(session: SessionStore, access: AuthRetentionGuard.AccountAccess, rpc: String, request: Request): Receipt {
         check(session.isAccountAccessCurrent(access))
+        require(rpc in setOf("save_legacy_spray_pair_v1", "recover_legacy_spray_pair_v1"))
+        val saving = rpc == "save_legacy_spray_pair_v1"
+        val vineyard = (request.trip["vineyard_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            ?: throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+        if ((request.record["vineyard_id"] as? JsonPrimitive)?.content != vineyard) {
+            throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+        }
+        val mutation = if (saving) VineyardRowMutation(session).also {
+            it.requireOwner((request.trip["created_by"] as? JsonPrimitive)?.content)
+            it.requireOwner((request.record["created_by"] as? JsonPrimitive)?.content)
+            it.requireWrite(vineyard)
+        } else null
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.post(SupabaseClient.restUrl("rpc/$rpc")) {
+        suspend fun send() = SupabaseClient.http.post(SupabaseClient.restUrl("rpc/$rpc")) {
             attributes.put(SupabaseClient.accountRequestScope, access)
+            mutation?.authorize(this, vineyard)
             header("Authorization", "Bearer $token"); header("apikey", SupabaseClient.anonKey)
             contentType(ContentType.Application.Json); setBody(request.body())
         }
+        // Recovery is read-only and remains usable while the vineyard is held.
+        val response = try { if (mutation == null) send() else mutation.send(vineyard) { send() } }
+        catch (error: BackendError.Server) { throw TransportFailure(error.code) }
         check(session.isAccountAccessCurrent(access))
         if (response.status.value == 401) throw BackendError.Unauthorized
         if (!response.status.isSuccess()) throw TransportFailure(response.status.value)

@@ -11727,6 +11727,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         input.operationalBlocker()?.let { blocker -> _ui.update { it.copy(sprayError = blocker) }; onResult(false); return }
         val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        if (!admitTripVineyard(vineyardId)) { onResult(false); return }
         if (rowPlan?.rowSequence?.isNotEmpty() == true) {
             createQualifiedSpray(input, paddockId, paddockIds, paddockName, rowPlan, false, null, onResult)
             return
@@ -11832,6 +11833,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (originalAccess.userId != attempt.actorId || attempt.identityEpoch != session.retentionGuard.identityEpoch.value ||
             _ui.value.selectedVineyardId != attempt.trip.vineyardId) { onResult(false); return }
+        // Claimed/unknown requests may still use read-only receipt recovery below.
+        // Never initiate a new save claim while this exact scope is held.
+        if (!attempt.rpcClaimed && !admitTripVineyard(attempt.trip.vineyardId)) { onResult(false); return }
         if (!legacySpraySends.add(attempt.recordId)) {
             _ui.update { it.copy(sprayError = "Original spray request is already being recovered. Wait for it to finish; do not create a replacement.") }
             onResult(false); return
@@ -11926,6 +11930,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(sprayError = "This spray job's trip is no longer available.") }
             onResult(false); return
         }
+        if (!existing.isActive && !admitTripChange(existing)) { onResult(false); return }
         if (existing.isActive) {
             val retained = runCatching { activeTripStore.load() }.getOrNull()
             if (retained != null && retained.ownerUserId == session.userId && retained.vineyardId == existing.vineyardId &&
@@ -12084,6 +12089,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(sprayError = "Restore sign-in with the original account before starting this spray. Your setup and any retained request are unchanged.") }
             finish(false); return
         }
+        if (!admitTripVineyard(vineyardId)) { finish(false); return }
         startStage = "retained_start_recovery"
         val retained = runCatching { legacySpraySaves.retainedStart(vineyardId) }
         if (retained.isFailure) {
@@ -12172,8 +12178,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 check(plan.candidates.map { it.label } == plan.rowSequence) { "Reselect the block-qualified route." }
                 // Calculator creation was online-only. Preserve that rule until linked recipe offline replay is accepted.
                 check(_ui.value.isOnline) { "Save the linked spray recipe online before starting this planned spray offline." }
-                val now = java.time.Instant.now().toString()
                 val vineyard = _ui.value.selectedVineyardId ?: error("No vineyard selected.")
+                if (!admitTripVineyard(vineyard)) { onResult(false); return@launch }
+                val now = java.time.Instant.now().toString()
                 val base = Trip(id = java.util.UUID.randomUUID().toString(), vineyardId = vineyard,
                     paddockId = paddockId, paddockIds = paddockIds.distinct(), paddockName = paddockName,
                     startTime = if (active) now else input.startTime, clientUpdatedAt = now, isActive = active,

@@ -15,6 +15,9 @@ final class VineyardWriteAuthority {
     private var userId: String?
     /// Captured across suspensions; a capability refresh does not change account identity.
     var accountBinding: String? { userId }
+    /// Invalidates suspended operations across sign-out/account transitions,
+    /// including a return to the same UUID. Same-account capability refresh is not a transition.
+    private(set) var accountGeneration: UInt64 = 0
     private var holds: [String: String]
     private(set) var deniedVineyardId: String?
 
@@ -26,7 +29,9 @@ final class VineyardWriteAuthority {
         userId.map { $0.lowercased() + ":" + vineyardId.lowercased() }
     }
     func bind(userId: UUID?, cached: [String: VineyardOperationalAccess] = [:]) {
-        self.userId = userId?.uuidString
+        let next = userId?.uuidString
+        if self.userId != next { accountGeneration &+= 1 }
+        self.userId = next
         deniedVineyardId = nil
         // Cache may add a restriction; cache absence/legacy writable defaults never release one.
         for (vineyard, access) in cached where access.isTrialExpiredReadOnly {

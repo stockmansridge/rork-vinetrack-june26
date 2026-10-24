@@ -86,6 +86,23 @@ struct FertigationDomainTests {
         #expect(requests == ["list_fertigation_applications"])
     }
 
+    @Test func sameAccountReturnDuringRoleLookupDoesNotResumeOldWrite() async throws {
+        let gate = VineyardWriteAuthority(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        let owner = UUID()
+        gate.bind(userId: owner)
+        var requests: [String] = []
+        let repo = SupabaseFertigationRepository(authority: gate, adminCheck: {
+            gate.bind(userId: nil)
+            gate.bind(userId: owner)
+            return true
+        }, transport: { name, _ in requests.append(name); return Data("{}".utf8) })
+        do {
+            _ = try await repo.upsert(id: stepId, vineyardId: vineyardId, sessionId: stepId, stepId: stepId, frozenName: nil, growthStageCode: nil, notes: nil, products: [])
+            Issue.record("Old incarnation resumed fertigation write")
+        } catch { #expect(error is CancellationError) }
+        #expect(requests.isEmpty)
+    }
+
     @Test func expiryDuringRoleLookupStopsWriteButHistoryStillReads() async throws {
         let gate = VineyardWriteAuthority(defaults: UserDefaults(suiteName: UUID().uuidString)!)
         gate.bind(userId: UUID())

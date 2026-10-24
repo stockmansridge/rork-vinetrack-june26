@@ -15,6 +15,7 @@ struct VineyardMutationAdmission {
     private let currentUserId: () -> UUID?
     private let authority: VineyardWriteAuthority
     private let binding: String
+    private let generation: UInt64
 
     init(provider: SupabaseClientProvider = .shared) throws {
         try self.init(currentUserId: { provider.client.auth.currentUser?.id }, authority: .shared)
@@ -32,10 +33,12 @@ struct VineyardMutationAdmission {
         self.currentUserId = currentUserId
         self.authority = authority
         self.binding = binding
+        self.generation = authority.accountGeneration
     }
 
     private func requireAccount() throws {
-        guard currentUserId() == owner, authority.accountBinding == binding else {
+        guard currentUserId() == owner, authority.accountBinding == binding,
+              authority.accountGeneration == generation else {
             throw BackendRepositoryError.missingAuthenticatedUser
         }
     }

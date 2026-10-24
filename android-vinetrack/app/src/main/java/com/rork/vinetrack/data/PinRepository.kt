@@ -270,11 +270,7 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
     ): Unit = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("set_pin_row_segments")) {
-            authHeaders(token)
-            contentType(ContentType.Application.Json)
-            setBody(RowSegmentsArgs(pinId, segments))
-        }
+        val response = pinRPC(pinId, "set_pin_row_segments", RowSegmentsArgs(pinId, segments))
         when {
             response.status.isSuccess() -> Unit
             response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
@@ -333,11 +329,17 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
     suspend fun uploadCaptureEvidence(evidence: PinCaptureEvidenceStore.Evidence): Unit = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
+        val mutation = VineyardRowMutation(session)
+        mutation.requireOwner(evidence.captureUserId)
+        val vineyard = mutation.resolve("pins", evidence.pinId, evidence.vineyardId)
         val payload = captureEvidencePayload(evidence)
-        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("insert_pin_capture_evidence")) {
-            authHeaders(token)
-            contentType(ContentType.Application.Json)
-            setBody(EvidenceInsertArgs(payload))
+        val response = mutation.send(vineyard) {
+            SupabaseClient.http.post(SupabaseClient.rpcUrl("insert_pin_capture_evidence")) {
+                mutation.authorize(this, vineyard)
+                authHeaders(token)
+                contentType(ContentType.Application.Json)
+                setBody(EvidenceInsertArgs(payload))
+            }
         }
         when {
             response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
@@ -350,6 +352,9 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
     suspend fun createPin(input: PinInput): Pin = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
+        val mutation = VineyardRowMutation(session)
+        mutation.requireWrite(input.vineyardId)
+        if (input.createdBy != null) mutation.requireOwner(input.createdBy)
         // Generate the pin id on the client so the insert carries a stable UUID.
         // Pins remain online-only here (no enqueue/replay); the client id simply
         // makes a future offline queue idempotent against retries.
@@ -362,11 +367,14 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
             // "now" at the moment connectivity returned.
             createdAt = input.createdAt ?: Instant.now().toString(),
         )
-        val response = SupabaseClient.http.post(SupabaseClient.restUrl("pins")) {
-            authHeaders(token)
-            headers { append("Prefer", "return=representation") }
-            contentType(ContentType.Application.Json)
-            setBody(body)
+        val response = mutation.send(input.vineyardId) {
+            SupabaseClient.http.post(SupabaseClient.restUrl("pins")) {
+                mutation.authorize(this, input.vineyardId)
+                authHeaders(token)
+                headers { append("Prefer", "return=representation") }
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
         }
         when {
             response.status.isSuccess() -> response.body<List<Pin>>().firstOrNull()
@@ -400,12 +408,7 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
             isCompleted = isCompleted,
             clientUpdatedAt = Instant.now().toString(),
         )
-        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("pins?id=eq.$id")) {
-            authHeaders(token)
-            headers { append("Prefer", "return=representation") }
-            contentType(ContentType.Application.Json)
-            setBody(patch)
-        }
+        val response = patchPin(id, patch)
         when {
             response.status.isSuccess() -> response.body<List<Pin>>().firstOrNull()
                 ?: throw BackendError.Server(response.status.value, "Empty response")
@@ -422,12 +425,7 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
     suspend fun updatePinCompletion(id: String, isCompleted: Boolean): Pin = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("pins?id=eq.$id")) {
-            authHeaders(token)
-            headers { append("Prefer", "return=representation") }
-            contentType(ContentType.Application.Json)
-            setBody(CompletionPatch(isCompleted))
-        }
+        val response = patchPin(id, CompletionPatch(isCompleted))
         when {
             response.status.isSuccess() -> response.body<List<Pin>>().firstOrNull()
                 ?: throw BackendError.Server(response.status.value, "Empty response")
@@ -444,12 +442,7 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
     override suspend fun updatePhotoPath(id: String, photoPath: String?): Pin = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("pins?id=eq.$id")) {
-            authHeaders(token)
-            headers { append("Prefer", "return=representation") }
-            contentType(ContentType.Application.Json)
-            setBody(PhotoPatch(photoPath))
-        }
+        val response = patchPin(id, PhotoPatch(photoPath))
         when {
             response.status.isSuccess() -> response.body<List<Pin>>().firstOrNull()
                 ?: throw BackendError.Server(response.status.value, "Empty response")
@@ -482,12 +475,7 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
             notes = notes,
             clientUpdatedAt = clientUpdatedAt,
         )
-        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("pins?id=eq.$id")) {
-            authHeaders(token)
-            headers { append("Prefer", "return=representation") }
-            contentType(ContentType.Application.Json)
-            setBody(patch)
-        }
+        val response = patchPin(id, patch)
         when {
             response.status.isSuccess() -> response.body<List<Pin>>().firstOrNull()
                 ?: throw BackendError.Server(response.status.value, "Empty response")
@@ -532,12 +520,7 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
             mode = mode,
             clientUpdatedAt = Instant.now().toString(),
         )
-        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("pins?id=eq.$id")) {
-            authHeaders(token)
-            headers { append("Prefer", "return=representation") }
-            contentType(ContentType.Application.Json)
-            setBody(patch)
-        }
+        val response = patchPin(id, patch)
         when {
             response.status.isSuccess() -> response.body<List<Pin>>().firstOrNull()
                 ?: throw BackendError.Server(response.status.value, "Empty response")
@@ -569,15 +552,38 @@ class PinRepository(private val session: SessionStore) : PinPhotoReferenceGatewa
     override suspend fun softDeletePin(id: String) = withContext(Dispatchers.IO) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_pin")) {
-            authHeaders(token)
-            contentType(ContentType.Application.Json)
-            setBody(SoftDeleteArgs(id))
-        }
+        val response = pinRPC(id, "soft_delete_pin", SoftDeleteArgs(id))
         when {
             response.status.isSuccess() -> Unit
             response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        }
+    }
+
+    private suspend inline fun <reified T> patchPin(id: String, payload: T): io.ktor.client.statement.HttpResponse {
+        val mutation = VineyardRowMutation(session)
+        val vineyard = mutation.resolve("pins", id)
+        return mutation.send(vineyard) {
+            SupabaseClient.http.patch(SupabaseClient.restUrl("pins?id=eq.$id&vineyard_id=eq.$vineyard")) {
+                mutation.authorize(this, vineyard)
+                authHeaders(session.accessToken ?: throw BackendError.Unauthorized)
+                headers { append("Prefer", "return=representation") }
+                contentType(ContentType.Application.Json)
+                setBody(payload)
+            }
+        }
+    }
+
+    private suspend inline fun <reified T> pinRPC(id: String, rpc: String, payload: T): io.ktor.client.statement.HttpResponse {
+        val mutation = VineyardRowMutation(session)
+        val vineyard = mutation.resolve("pins", id)
+        return mutation.send(vineyard) {
+            SupabaseClient.http.post(SupabaseClient.rpcUrl(rpc)) {
+                mutation.authorize(this, vineyard)
+                authHeaders(session.accessToken ?: throw BackendError.Unauthorized)
+                contentType(ContentType.Application.Json)
+                setBody(payload)
+            }
         }
     }
 

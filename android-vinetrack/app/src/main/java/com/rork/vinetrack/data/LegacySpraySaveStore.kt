@@ -83,6 +83,7 @@ class LegacySpraySaveStore(context: Context) {
         check(prefs.edit().putString("attempts", value).commit() && prefs.getString("attempts", null) == value) { "Legacy save could not be durably retained." }
     }
     fun prepare(item: Attempt) = access.admittedForOwner(item.actorId) { synchronized(this) {
+        OperationalWrites.requireWrite(item.trip.vineyardId)
         validate(item)
         check(item.identityEpoch == access.identityEpoch)
         val items = read()
@@ -117,6 +118,7 @@ class LegacySpraySaveStore(context: Context) {
     ): Pair<com.rork.vinetrack.data.model.Trip, com.rork.vinetrack.data.model.SprayRecord> {
         check(item.rpc == null) { "RPC attempts cannot use the old REST writer." }
         check(isAuthorityCurrent())
+        OperationalWrites.requireWrite(item.trip.vineyardId)
         // This atomic transition also prevents concurrent reconnect/save paths from double sending.
         mark(item, Stage.TRIP_UNKNOWN)
         check(isAuthorityCurrent())
@@ -124,6 +126,7 @@ class LegacySpraySaveStore(context: Context) {
         check(isAuthorityCurrent())
         check(trip.id == item.trip.id && trip.vineyardId == item.trip.vineyardId && !trip.isActive && trip.endTime == null)
         mark(item, Stage.TRIP_CONFIRMED)
+        OperationalWrites.requireWrite(item.trip.vineyardId)
         mark(item, Stage.RECORD_UNKNOWN)
         check(isAuthorityCurrent())
         val record = sendRecord(item)
@@ -145,10 +148,17 @@ class LegacySpraySaveStore(context: Context) {
         } }
         val request = current.rpc ?: error(MESSAGE) // Old REST attempts are never adopted.
         if (!current.rpcClaimed) {
+            OperationalWrites.requireWrite(current.trip.vineyardId)
+            val unclaimed = current
             current = current.copy(rpcClaimed = true)
             replaceReceipt(item, current)
             check(isAuthorityCurrent())
-            val candidate = transport("save_legacy_spray_pair_v1", request)
+            val candidate = try { transport("save_legacy_spray_pair_v1", request) }
+            catch (held: VineyardWriteAuthority.Restricted) {
+                // Typed rejection confirms no write; preserve the original unclaimed journal.
+                replaceReceipt(current, unclaimed)
+                throw held
+            }
             check(isAuthorityCurrent()); candidate.validate(current)
             val next = current.copy(candidate = candidate)
             replaceReceipt(current, next); current = next
