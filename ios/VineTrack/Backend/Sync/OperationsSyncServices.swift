@@ -325,7 +325,8 @@ final class WorkTaskSyncService {
 
     /// Persists the authored row and existing durable marker before returning local success.
     func saveCompletion(_ task: WorkTask, dateOnly: Bool) {
-        guard let store else { return }
+        guard let store,
+              store.operationalWriteAuthority.admit(vineyardId: task.vineyardId.uuidString) else { return }
         let hadPendingHeader = metadata.pendingUpserts[task.id] != nil
         let earlierMode = metadata.completionMode(for: task.id)
         store.updateWorkTask(task)

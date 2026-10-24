@@ -116,6 +116,7 @@ class PendingPhotoRepository internal constructor(
 
     /** Atomically retain the newest capture for its actual pin/growth identity. */
     fun enqueue(target: PinPresentationTarget, jpeg: ByteArray, previousPhotoPaths: List<String> = emptyList()): PendingPhotoAttachment {
+        OperationalWrites.requireWrite(target.vineyardId)
         val bytes = jpeg.copyOf()
         val paths = previousPhotoPaths.toList()
         val createdAt = captureClock.updateAndGet { maxOf(System.currentTimeMillis(), it + 1L) }
@@ -295,6 +296,7 @@ class PendingPhotoRepository internal constructor(
     @Synchronized
     private fun updateStatusIfCurrentLocked(attachment: PendingPhotoAttachment, status: String, error: String? = null): Boolean {
         if (!isCurrent(attachment.id, attachment.revision)) return false
+        if (status == PendingPhotoStatus.IN_PROGRESS && !OperationalWrites.canWrite(attachment.vineyardId)) return false
         val scope = scopeProvider?.invoke()
         if (scopeProvider != null && scope == null) return false
         update { rows -> rows.map { if (it.id == attachment.id && it.revision == attachment.revision)
@@ -303,11 +305,26 @@ class PendingPhotoRepository internal constructor(
         return true
     }
 
+    /** Release only our claim after entitlement denial, retaining any upload receipt and original evidence. */
+    fun releaseReadOnlyClaim(attachment: PendingPhotoAttachment): Boolean = admitted {
+        synchronized(this) {
+            if (OperationalWrites.canWrite(attachment.vineyardId) || !isCurrent(attachment.id, attachment.revision)) return@synchronized false
+            if (claimedScopes[attachment.id to attachment.revision]?.let { it != scopeProvider?.invoke() } == true) return@synchronized false
+            update { rows -> rows.map {
+                if (it.id == attachment.id && it.revision == attachment.revision && it.status == PendingPhotoStatus.IN_PROGRESS)
+                    it.copy(status = attachment.status, lastError = attachment.lastError, updatedAt = attachment.updatedAt)
+                else it
+            } }
+            true
+        }
+    }
+
     fun retryIfCurrent(attachment: PendingPhotoAttachment, error: String, maxAttempts: Int): Boolean =
         admitted { retryIfCurrentLocked(attachment, error, maxAttempts) }
 
     @Synchronized
     private fun retryIfCurrentLocked(attachment: PendingPhotoAttachment, error: String, maxAttempts: Int): Boolean {
+        if (!OperationalWrites.canWrite(attachment.vineyardId)) return false
         if (!isCurrent(attachment.id, attachment.revision)) return false
         update { rows -> rows.map { if (it.id == attachment.id && it.revision == attachment.revision) {
             val attempts = it.attemptCount + 1

@@ -27,6 +27,7 @@
 
 import Foundation
 import Observation
+import Supabase
 
 // MARK: - Failure classification
 
@@ -444,19 +445,34 @@ enum SyncQueuePush {
         payloads: [Payload],
         queuedAt: [UUID: Date] = [:],
         vineyardId: UUID? = nil,
+        authority: VineyardWriteAuthority? = nil,
         batch: ([Payload]) async throws -> Void
     ) async -> SyncPushResult {
         var result = SyncPushResult()
         guard !ids.isEmpty, ids.count == payloads.count else { return result }
 
+        let admission = authority ?? VineyardWriteAuthority.shared
+        // The row's explicit scope wins over the selected sync slice. Never batch
+        // different vineyards: a rejection must be attributable to exactly one scope.
+        let scopes = payloads.map { payloadVineyard($0) ?? vineyardId }
+        let distinctScopes = Set(scopes.compactMap { $0 })
+        let allAdmitted = scopes.allSatisfy { $0.map { admission.canWrite(vineyardId: $0.uuidString) } ?? true }
+        func hold(_ error: Error, scope: UUID?) -> Bool {
+            if error is VineyardWriteAuthority.Restricted { return true }
+            guard let scope else { return false }
+            if admission.handleServerCode((error as? PostgrestError)?.code, vineyardId: scope.uuidString) { return true }
+            return !admission.canWrite(vineyardId: scope.uuidString)
+        }
+
         // A singleton already is an isolated request: do not resend it within the same sweep.
-        if ids.count > 1 {
+        if ids.count > 1 && allAdmitted && distinctScopes.count <= 1 {
             do {
                 try await batch(payloads)
                 result.uploaded = ids
                 SyncIssueCenter.shared.clearIssues(ids)
                 return result
             } catch {
+                if hold(error, scope: distinctScopes.first) { return result }
                 #if DEBUG
                 print("[\(entity)Sync] batch of \(ids.count) failed — falling back to per-item upload: \(BackendErrorDiagnostics.sanitise(String(describing: error), limit: 300))")
                 #endif
@@ -465,12 +481,15 @@ enum SyncQueuePush {
 
         // Isolation path: every item gets its own attempt.
         for (index, id) in ids.enumerated() {
+            let scope = scopes[index]
+            if let scope, !admission.canWrite(vineyardId: scope.uuidString) { continue }
             let payload = payloads[index]
             do {
                 try await batch([payload])
                 result.uploaded.append(id)
                 SyncIssueCenter.shared.clearIssues([id])
             } catch {
+                if hold(error, scope: scope) { continue }
                 let detail = BackendErrorDiagnostics.classify(error, endpoint: entity)
                 SyncIssueCenter.shared.recordFailure(
                     id: id,
@@ -492,6 +511,12 @@ enum SyncQueuePush {
             }
         }
         return result
+    }
+
+    private static func payloadVineyard<Payload: Encodable>(_ payload: Payload) -> UUID? {
+        guard let data = try? JSONEncoder().encode(payload),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return (object["vineyard_id"] as? String ?? object["vineyardId"] as? String).flatMap(UUID.init(uuidString:))
     }
 
     /// Top-level key names of an encodable payload — never the values.

@@ -11,6 +11,12 @@ import Observation
 @MainActor
 final class MigratedDataStore {
 
+    @ObservationIgnored var operationalWriteAuthority: VineyardWriteAuthority = .shared
+    private func admitSelectedMutation() -> Bool {
+        guard let vineyard = selectedVineyardId else { return true }
+        return operationalWriteAuthority.admit(vineyardId: vineyard.uuidString)
+    }
+
     // MARK: - State
 
     var vineyards: [Vineyard] = []
@@ -59,6 +65,7 @@ final class MigratedDataStore {
 
     /// Keep GPS on the owned trip when the operator views another vineyard.
     func updateDeviceOwnedTrip(_ trip: Trip) {
+        guard operationalWriteAuthority.admit(vineyardId: trip.vineyardId.uuidString) else { return }
         guard isDeviceTripOwner, trip.id == deviceActiveTripId else { return }
         if trip.vineyardId == selectedVineyardId {
             updateTrip(trip)
@@ -899,6 +906,7 @@ final class MigratedDataStore {
     /// the UI. The stable pin ID makes retries idempotent.
     @discardableResult
     func addPinDurably(_ pin: VinePin) throws -> VinePin {
+        if let vineyard = selectedVineyardId { try operationalWriteAuthority.requireWrite(vineyardId: vineyard.uuidString) }
         guard let vineyardId = selectedVineyardId else {
             throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "No vineyard is selected."])
         }
@@ -962,6 +970,7 @@ final class MigratedDataStore {
     }
 
     func updatePin(_ pin: VinePin) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = pins.firstIndex(where: { $0.id == pin.id }) else { return }
         var item = pin
@@ -994,6 +1003,7 @@ final class MigratedDataStore {
         vineyardId: UUID,
         notes: String?
     ) throws -> PinNotesUpdateOutcome {
+        try operationalWriteAuthority.requireWrite(vineyardId: vineyardId.uuidString)
         let draftText = notes ?? ""
         try pinNotesDraftStore.retain(pinId: pinId, vineyardId: vineyardId, notes: draftText)
         let updated = try pinRepo.updateNotesDurably(pinId: pinId, vineyardId: vineyardId, notes: notes)
@@ -1011,6 +1021,7 @@ final class MigratedDataStore {
     }
 
     func deletePin(_ pinId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId,
               let pin = pins.first(where: { $0.id == pinId }) else { return }
         if pin.growthStageCode != nil, onGrowthStagePinDeleted?(pin) == false {
@@ -1022,6 +1033,7 @@ final class MigratedDataStore {
     }
 
     func togglePinCompletion(_ pinId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = pins.firstIndex(where: { $0.id == pinId }) else { return }
         var pin = pins[index]
@@ -1244,6 +1256,7 @@ final class MigratedDataStore {
     }
 
     func addPaddock(_ paddock: Paddock) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         var item = paddock
         item.vineyardId = vineyardId
@@ -1253,6 +1266,7 @@ final class MigratedDataStore {
     }
 
     func updatePaddock(_ paddock: Paddock) {
+        guard admitSelectedMutation() else { return }
         guard let index = paddocks.firstIndex(where: { $0.id == paddock.id }) else { return }
         paddocks[index] = paddock
         savePaddocksToDisk()
@@ -1260,6 +1274,7 @@ final class MigratedDataStore {
     }
 
     func deletePaddock(_ paddockId: UUID) {
+        guard admitSelectedMutation() else { return }
         // Clean up local references that depend on this paddock BEFORE removing
         // it so nothing is left pointing at a missing paddock. Each helper marks
         // the affected record dirty so the cleared link propagates. Rows live
@@ -1369,6 +1384,7 @@ final class MigratedDataStore {
 
     /// Prospective planned starts publish only after the complete trip snapshot reaches disk.
     func savePlannedTripOrThrow(_ trip: Trip) throws {
+        try operationalWriteAuthority.requireWrite(vineyardId: trip.vineyardId.uuidString)
         guard selectedVineyardId == trip.vineyardId else { throw TripOccurrenceCoverage.Failure.scopeConflict }
         var next = trips
         if let index = next.firstIndex(where: { $0.id == trip.id }) { next[index] = trip }
@@ -1379,6 +1395,7 @@ final class MigratedDataStore {
     }
 
     func startTrip(_ trip: Trip) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         var item = trip
         item.vineyardId = vineyardId
@@ -1391,6 +1408,7 @@ final class MigratedDataStore {
     /// Add a trip without marking it active. Used for "Save Job for Later"
     /// flows where a placeholder trip is needed but should not auto-start.
     func addInactiveTrip(_ trip: Trip) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         var item = trip
         item.vineyardId = vineyardId
@@ -1401,6 +1419,7 @@ final class MigratedDataStore {
     }
 
     func updateTrip(_ trip: Trip) {
+        guard operationalWriteAuthority.admit(vineyardId: trip.vineyardId.uuidString) else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = trips.firstIndex(where: { $0.id == trip.id }) else { return }
         trips[index] = trip
@@ -1409,6 +1428,7 @@ final class MigratedDataStore {
     }
 
     func updateTripOrThrow(_ trip: Trip) throws {
+        try operationalWriteAuthority.requireWrite(vineyardId: trip.vineyardId.uuidString)
         guard let vineyardId = selectedVineyardId,
               let index = trips.firstIndex(where: { $0.id == trip.id })
         else { throw SprayTankActualValidationError.localSaveFailed }
@@ -1420,6 +1440,7 @@ final class MigratedDataStore {
     }
 
     func endTrip(_ tripId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = trips.firstIndex(where: { $0.id == tripId }) else { return }
         var trip = trips[index]
@@ -1440,6 +1461,7 @@ final class MigratedDataStore {
     ///
     /// `endTime` is the moment the operator confirmed, matching `endTrip`.
     func endTripOrThrow(_ tripId: UUID) throws {
+        if let vineyard = selectedVineyardId { try operationalWriteAuthority.requireWrite(vineyardId: vineyard.uuidString) }
         guard let vineyardId = selectedVineyardId,
               let index = trips.firstIndex(where: { $0.id == tripId })
         else { throw TripEndPersistenceError.tripUnavailable }
@@ -1454,6 +1476,7 @@ final class MigratedDataStore {
     }
 
     func deleteTrip(_ tripId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard tripId != deviceActiveTripId || isDeviceTripOwner else { return }
         guard let vineyardId = selectedVineyardId else { return }
         // Clean up local links that depend on this trip BEFORE removing it so
@@ -1554,6 +1577,7 @@ final class MigratedDataStore {
 
     /// Must precede even local occurrence-parent preparation for this paired legacy save.
     func prepareLegacySpraySave(record: SprayRecord, trip: Trip) throws {
+        try operationalWriteAuthority.requireWrite(vineyardId: record.vineyardId.uuidString)
         guard selectedVineyardId == record.vineyardId else {
             throw SprayTankActualValidationError.localSaveFailed
         }
@@ -1664,6 +1688,7 @@ final class MigratedDataStore {
 
     @discardableResult
     func addSprayRecord(_ record: SprayRecord) -> Bool {
+        guard admitSelectedMutation() else { return false }
         guard record.operationalPlanningBlocker == nil else { return false }
         guard let vineyardId = selectedVineyardId else { return false }
         var item = record
@@ -1680,6 +1705,7 @@ final class MigratedDataStore {
 
     @discardableResult
     func updateSprayRecord(_ record: SprayRecord) -> Bool {
+        guard operationalWriteAuthority.admit(vineyardId: record.vineyardId.uuidString) else { return false }
         guard record.operationalPlanningBlocker == nil else { return false }
         guard let vineyardId = selectedVineyardId, record.vineyardId == vineyardId else { return false }
         guard let index = sprayRecords.firstIndex(where: { $0.id == record.id && $0.vineyardId == vineyardId }) else { return false }
@@ -1694,6 +1720,7 @@ final class MigratedDataStore {
     }
 
     func deleteSprayRecord(_ recordId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         sprayRecords.removeAll { $0.id == recordId }
         sprayRepo.saveRecordsSlice(sprayRecords, for: vineyardId)
@@ -1739,6 +1766,7 @@ final class MigratedDataStore {
     // MARK: - MaintenanceLog CRUD
 
     func addMaintenanceLog(_ log: MaintenanceLog) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         var item = log
         item.vineyardId = vineyardId
@@ -1748,6 +1776,7 @@ final class MigratedDataStore {
     }
 
     func updateMaintenanceLog(_ log: MaintenanceLog) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = maintenanceLogs.firstIndex(where: { $0.id == log.id }) else { return }
         maintenanceLogs[index] = log
@@ -1756,6 +1785,7 @@ final class MigratedDataStore {
     }
 
     func deleteMaintenanceLog(_ logId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         maintenanceLogs.removeAll { $0.id == logId }
         maintenanceLogRepo.saveSlice(maintenanceLogs, for: vineyardId)
@@ -1765,6 +1795,7 @@ final class MigratedDataStore {
     // MARK: - WorkTask CRUD
 
     func addWorkTask(_ task: WorkTask) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         var item = task
         item.vineyardId = vineyardId
@@ -1774,6 +1805,7 @@ final class MigratedDataStore {
     }
 
     func updateWorkTask(_ task: WorkTask) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = workTasks.firstIndex(where: { $0.id == task.id }) else { return }
         workTasks[index] = task
@@ -1782,6 +1814,7 @@ final class MigratedDataStore {
     }
 
     func deleteWorkTask(_ taskId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         workTasks.removeAll { $0.id == taskId }
         workTaskRepo.saveSlice(workTasks, for: vineyardId)
@@ -1791,6 +1824,7 @@ final class MigratedDataStore {
     // MARK: - WorkTaskLabourLine CRUD
 
     func addWorkTaskLabourLine(_ line: WorkTaskLabourLine) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         var item = line
         item.vineyardId = vineyardId
@@ -1800,6 +1834,7 @@ final class MigratedDataStore {
     }
 
     func updateWorkTaskLabourLine(_ line: WorkTaskLabourLine) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = workTaskLabourLines.firstIndex(where: { $0.id == line.id }) else { return }
         workTaskLabourLines[index] = line
@@ -1808,6 +1843,7 @@ final class MigratedDataStore {
     }
 
     func deleteWorkTaskLabourLine(_ lineId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         workTaskLabourLines.removeAll { $0.id == lineId }
         workTaskLabourLineRepo.saveSlice(workTaskLabourLines, for: vineyardId)
@@ -1828,6 +1864,7 @@ final class MigratedDataStore {
     }
 
     func addPruningActivityLabourLine(_ line: PruningActivityLabourLine) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         var item = line
         item.vineyardId = vineyardId
@@ -1837,6 +1874,7 @@ final class MigratedDataStore {
     }
 
     func updatePruningActivityLabourLine(_ line: PruningActivityLabourLine) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = pruningActivityLabourLines.firstIndex(where: { $0.id == line.id }) else { return }
         pruningActivityLabourLines[index] = line
@@ -1845,6 +1883,7 @@ final class MigratedDataStore {
     }
 
     func deletePruningActivityLabourLine(_ lineId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let removed = pruningActivityLabourLines.first(where: { $0.id == lineId }) else { return }
         pruningActivityLabourLines.removeAll { $0.id == lineId }
@@ -1859,6 +1898,7 @@ final class MigratedDataStore {
         _ lines: [PruningActivityLabourLine],
         forPruningActivity activityId: UUID
     ) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         pruningActivityLabourLines.removeAll { $0.pruningActivityId == activityId }
         for (index, line) in lines.enumerated() {
@@ -1899,6 +1939,7 @@ final class MigratedDataStore {
     // MARK: - WorkTaskMachineLine CRUD
 
     func addWorkTaskMachineLine(_ line: WorkTaskMachineLine) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         var item = line
         item.vineyardId = vineyardId
@@ -1908,6 +1949,7 @@ final class MigratedDataStore {
     }
 
     func updateWorkTaskMachineLine(_ line: WorkTaskMachineLine) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = workTaskMachineLines.firstIndex(where: { $0.id == line.id }) else { return }
         workTaskMachineLines[index] = line
@@ -1916,6 +1958,7 @@ final class MigratedDataStore {
     }
 
     func deleteWorkTaskMachineLine(_ lineId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         workTaskMachineLines.removeAll { $0.id == lineId }
         workTaskMachineLineRepo.saveSlice(workTaskMachineLines, for: vineyardId)
@@ -1925,6 +1968,7 @@ final class MigratedDataStore {
     // MARK: - WorkTaskPaddock CRUD
 
     func addWorkTaskPaddock(_ paddock: WorkTaskPaddock) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         var item = paddock
         item.vineyardId = vineyardId
@@ -1934,6 +1978,7 @@ final class MigratedDataStore {
     }
 
     func updateWorkTaskPaddock(_ paddock: WorkTaskPaddock) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = workTaskPaddocks.firstIndex(where: { $0.id == paddock.id }) else { return }
         workTaskPaddocks[index] = paddock
@@ -1942,6 +1987,7 @@ final class MigratedDataStore {
     }
 
     func deleteWorkTaskPaddock(_ paddockRowId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         workTaskPaddocks.removeAll { $0.id == paddockRowId }
         workTaskPaddockRepo.saveSlice(workTaskPaddocks, for: vineyardId)
@@ -1958,6 +2004,7 @@ final class MigratedDataStore {
     }
 
     func addWorkTaskPieceRateRow(_ row: WorkTaskPieceRateRow) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         var item = row
         item.vineyardId = vineyardId
@@ -1967,6 +2014,7 @@ final class MigratedDataStore {
     }
 
     func updateWorkTaskPieceRateRow(_ row: WorkTaskPieceRateRow) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = workTaskPieceRateRows.firstIndex(where: { $0.id == row.id }) else { return }
         workTaskPieceRateRows[index] = row
@@ -1975,6 +2023,7 @@ final class MigratedDataStore {
     }
 
     func deleteWorkTaskPieceRateRow(_ rowId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         workTaskPieceRateRows.removeAll { $0.id == rowId }
         workTaskPieceRateRowRepo.saveSlice(workTaskPieceRateRows, for: vineyardId)
@@ -1988,6 +2037,7 @@ final class MigratedDataStore {
     /// the job are soft-deleted; the rest are upserted by their stable id, so a
     /// retry can never duplicate the history.
     func replaceWorkTaskPieceRateRows(_ rows: [WorkTaskPieceRateRow], forWorkTask workTaskId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         let existing = workTaskPieceRateRows.filter { $0.workTaskId == workTaskId }
         let keptIds = Set(rows.map(\.id))
@@ -2023,6 +2073,7 @@ final class MigratedDataStore {
     // MARK: Vineyard material library
 
     func addVineyardMaterial(_ material: VineyardMaterial) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         var item = material
         item.vineyardId = vineyardId
@@ -2032,6 +2083,7 @@ final class MigratedDataStore {
     }
 
     func updateVineyardMaterial(_ material: VineyardMaterial) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = vineyardMaterials.firstIndex(where: { $0.id == material.id }) else { return }
         vineyardMaterials[index] = material
@@ -2045,6 +2097,7 @@ final class MigratedDataStore {
     /// read from their own snapshot, so a retired material never erases or
     /// alters the tasks that used it.
     func deactivateVineyardMaterial(_ materialId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = vineyardMaterials.firstIndex(where: { $0.id == materialId }) else { return }
         vineyardMaterials[index].isActive = false
@@ -2053,6 +2106,7 @@ final class MigratedDataStore {
     }
 
     func deleteVineyardMaterial(_ materialId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         vineyardMaterials.removeAll { $0.id == materialId }
         vineyardMaterialRepo.saveSlice(vineyardMaterials, for: vineyardId)
@@ -2078,6 +2132,7 @@ final class MigratedDataStore {
     /// so the offline create, its replay and the eventual server row are all
     /// the same row — a replay can never produce a second material line.
     func addWorkTaskMaterial(_ material: WorkTaskMaterial) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         var item = material
         item.vineyardId = vineyardId
@@ -2087,6 +2142,7 @@ final class MigratedDataStore {
     }
 
     func updateWorkTaskMaterial(_ material: WorkTaskMaterial) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         guard let index = workTaskMaterials.firstIndex(where: { $0.id == material.id }) else { return }
         workTaskMaterials[index] = material
@@ -2095,6 +2151,7 @@ final class MigratedDataStore {
     }
 
     func deleteWorkTaskMaterial(_ materialId: UUID) {
+        guard admitSelectedMutation() else { return }
         guard let vineyardId = selectedVineyardId else { return }
         workTaskMaterials.removeAll { $0.id == materialId }
         workTaskMaterialRepo.saveSlice(workTaskMaterials, for: vineyardId)
@@ -2104,6 +2161,7 @@ final class MigratedDataStore {
     // MARK: - Settings
 
     func saveSettings(_ newSettings: AppSettings) {
+        guard admitSelectedMutation() else { return }
         settings = newSettings
         settingsRepo.upsert(newSettings)
     }

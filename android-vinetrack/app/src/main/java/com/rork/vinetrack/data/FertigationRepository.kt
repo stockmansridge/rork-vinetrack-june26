@@ -35,8 +35,14 @@ class FertigationRepository(
                     contentType(ContentType.Application.Json)
                     setBody(params)
                 }
+                val body = response.bodyAsText()
+                val vineyard = params["p_vineyard_id"]?.jsonPrimitive?.contentOrNull
+                if (!response.status.isSuccess() && vineyard != null &&
+                    OperationalWrites.handleServerError(BackendError.Server(response.status.value, body), vineyard)) {
+                    throw VineyardWriteAuthority.Restricted("VT_READ_ONLY")
+                }
                 when {
-                    response.status.isSuccess() -> response.bodyAsText()
+                    response.status.isSuccess() -> body
                     response.status.value == 401 -> throw BackendError.Unauthorized
                     response.status.value in listOf(400, 403, 404, 409, 422) -> throw FertigationPermanentFailure()
                     else -> throw IllegalStateException("Couldn't complete Fertigation. Please try again.")
@@ -46,8 +52,19 @@ class FertigationRepository(
     )
     private val json = Json { ignoreUnknownKeys = true }
     private suspend fun call(name: String, params: JsonObject): JsonElement {
+        val vineyard = if (name == "upsert_fertigation_application") params["p_vineyard_id"]?.jsonPrimitive?.contentOrNull else null
+        vineyard?.let(OperationalWrites::requireWrite)
         check(adminCheck()) { "System Admin required." }
-        return json.parseToJsonElement(transport(name, params))
+        vineyard?.let(OperationalWrites::requireWrite)
+        return try {
+            json.parseToJsonElement(transport(name, params))
+        } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            if (vineyard != null && OperationalWrites.handleServerError(error, vineyard)) {
+                throw VineyardWriteAuthority.Restricted("VT_READ_ONLY")
+            }
+            throw error
+        }
     }
     suspend fun capabilities(vineyardId: String): JsonObject = call("get_fertigation_capabilities", buildJsonObject {
         put("p_vineyard_id", vineyardId)

@@ -21,9 +21,9 @@ spec.loader.exec_module(runner)
 def main(output):
     app = ROOT / 'android-vinetrack'
     init = app / 'entitlement-tests.init.gradle'
-    metadata = {'starting_head': runner.git('rev-parse', 'HEAD'), 'scope': 'contract/cache preparation only'}
+    metadata = {'starting_head': runner.git('rev-parse', 'HEAD'), 'scope': 'contract/cache, write authority and scoped queue admission; not complete feature acceptance'}
     (output / 'metadata.json').write_text(json.dumps(metadata, indent=2))
-    focused = runner.run_stage('contract', app, ['*.ReadOnlyEntitlementContractTest', '*.VineTrackAccessRowCompatTest'], output, init)
+    focused = runner.run_stage('contract', app, ['*.ReadOnlyEntitlementContractTest', '*.VineTrackAccessRowCompatTest', '*.VineyardWriteAuthorityTest', '*.PinPhotoWorkflowTest', '*.FertigationMobileWorkflowTest', '*.ResistancePlanRepositoryTest', '*.ResistancePlanRevisionSyncTest'], output, init)
     if focused['exit'] != 0:
         return 1
     regressions = runner.run_stage('existing-regressions', app, [

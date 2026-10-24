@@ -290,6 +290,7 @@ final class EntitlementGate {
         )
         cachedOperationalAccessByVineyard = snapshot?.userId.flatMap(UUID.init(uuidString:)) == userId
             ? snapshot?.operationalAccessByVineyard ?? [:] : [:]
+        VineyardWriteAuthority.shared.bind(userId: userId, cached: cachedOperationalAccessByVineyard)
         accessMatrix = nil
         phase = .idle
         hasServerMismatch = false
@@ -307,6 +308,7 @@ final class EntitlementGate {
     /// removed so no cached access can leak to another account.
     func logout() {
         currentUserId = nil
+        VineyardWriteAuthority.shared.bind(userId: nil)
         hasPendingForcedRefresh = false
         phase = .idle
         accessMatrix = nil
@@ -438,6 +440,10 @@ final class EntitlementGate {
                 let matrix = try await matrixRepository.fetchMatrix()
                 guard currentUserId == userId else { return }
                 accessMatrix = matrix
+                for (vineyard, access) in matrix.operationalAccessByVineyard {
+                    VineyardWriteAuthority.shared.verified(vineyardId: vineyard, access: access,
+                        explicitlyWritable: UUID(uuidString: vineyard).flatMap { matrix.entry(for: $0) }?.canWrite == true)
+                }
                 cachedAccessibleVineyardIds = Set(matrix.accessibleVineyardIds)
                 cachedOperationalAccessByVineyard = matrix.operationalAccessByVineyard
                 EntitlementVerificationStore.shared.recordOperationalAccess(

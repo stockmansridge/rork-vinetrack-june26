@@ -1593,6 +1593,7 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
     }
 
     fun enqueuePending(pending: PendingIrrigationSession) {
+        OperationalWrites.requireWrite(pending.vineyardId)
         val all = pendingSessions().toMutableList()
         if (all.none { it.id == pending.id }) {
             all.add(pending)
@@ -1609,6 +1610,7 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
     suspend fun flushPending(vineyardId: String): Int {
         var flushed = 0
         for (pending in pendingSessions(vineyardId)) {
+            if (!OperationalWrites.canWrite(pending.vineyardId)) continue
             runCatching { recordSession(pending) }
                 .onSuccess {
                     removePending(pending.id)
@@ -1638,13 +1640,24 @@ class IrrigationRepository(private val session: SessionStore, context: Context) 
     // MARK: Plumbing (mirrors SystemAdminRepository)
 
     private suspend fun rpc(name: String, params: JsonObject): HttpResponse {
+        val mutations = setOf("create_irrigation_system", "update_irrigation_system", "create_irrigation_valve", "update_irrigation_valve", "set_irrigation_valve_blocks", "set_irrigation_valve_rows", "record_irrigation_session", "update_irrigation_session", "reverse_irrigation_session")
+        val vineyard = (params["p_vineyard_id"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+        // ID-only update RPCs need their own verified record scope; never borrow a selection.
+        if (name in mutations && vineyard != null) OperationalWrites.requireWrite(vineyard)
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        return SupabaseClient.http.post(SupabaseClient.rpcUrl(name)) {
+        val response = SupabaseClient.http.post(SupabaseClient.rpcUrl(name)) {
             authHeaders(token)
             contentType(ContentType.Application.Json)
             setBody(params)
         }
+        if (name in mutations && vineyard != null && !response.status.isSuccess()) {
+            val code = runCatching { (json.parseToJsonElement(response.bodyAsText()) as? JsonObject)?.get("code") as? kotlinx.serialization.json.JsonPrimitive }.getOrNull()?.content
+            if (OperationalWrites.authority?.handleServerCode(code, vineyard) == true) {
+                throw VineyardWriteAuthority.Restricted("VT_READ_ONLY")
+            }
+        }
+        return response
     }
 
     private inline fun <reified T> decode(text: String): T = json.decodeFromString(text)

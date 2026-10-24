@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import Supabase
 
 /// A Resistance Plan write the server refused because the row had moved on (sql/198).
 typealias ResistancePlanConflict = SyncRevisionConflict<ResistancePlan>
@@ -204,6 +205,7 @@ final class ResistancePlanRepository {
     /// asserting a `base_revision` it never actually read.
     func save(_ plan: ResistancePlan) {
         guard let vineyard = vineyardId else { return }
+        guard VineyardWriteAuthority.shared.admit(vineyardId: vineyard) else { return }
         let cached = allCached(vineyard)
         var stamped = plan
         if stamped.createdBy == nil { stamped.createdBy = currentUserId() }
@@ -225,6 +227,7 @@ final class ResistancePlanRepository {
     /// data) or here.
     func delete(id planId: String) {
         guard let vineyard = vineyardId else { return }
+        guard VineyardWriteAuthority.shared.admit(vineyardId: vineyard) else { return }
         let now = clock()
         let updated = allCached(vineyard).map { plan -> ResistancePlan in
             guard plan.id == planId else { return plan }
@@ -242,6 +245,7 @@ final class ResistancePlanRepository {
     /// Undo an archive.
     func restore(id planId: String) {
         guard let vineyard = vineyardId else { return }
+        guard VineyardWriteAuthority.shared.admit(vineyardId: vineyard) else { return }
         let now = clock()
         let updated = allCached(vineyard).map { plan -> ResistancePlan in
             guard plan.id == planId else { return plan }
@@ -265,6 +269,7 @@ final class ResistancePlanRepository {
     /// this is the grower saying "my version is the one I want", not a merge.
     func resolveKeepingLocal(id planId: String) {
         guard let vineyard = vineyardId else { return }
+        guard VineyardWriteAuthority.shared.admit(vineyardId: vineyard) else { return }
         guard let conflict = conflicts.first(where: { $0.rowId == planId }) else { return }
         var rebased = conflict.localPending
         rebased.serverRevision = conflict.serverRevision ?? conflict.localPending.serverRevision
@@ -284,6 +289,7 @@ final class ResistancePlanRepository {
     /// right (see sql/198 rationale).
     func resolveKeepingServer(id planId: String) {
         guard let vineyard = vineyardId else { return }
+        guard VineyardWriteAuthority.shared.admit(vineyardId: vineyard) else { return }
         guard let conflict = conflicts.first(where: { $0.rowId == planId }) else { return }
         let updated: [ResistancePlan]
         if let serverCopy = conflict.serverCurrent {
@@ -324,7 +330,7 @@ final class ResistancePlanRepository {
         }
         self.vineyardId = vineyardId
 
-        let adopted = adoptLocalOnlyPlans(vineyardId: vineyardId)
+        let adopted = VineyardWriteAuthority.shared.canWrite(vineyardId: vineyardId) ? adoptLocalOnlyPlans(vineyardId: vineyardId) : 0
 
         var pushed = 0
         var deletesPushed = 0
@@ -343,7 +349,7 @@ final class ResistancePlanRepository {
             var applied: [String: ResistancePlan] = [:]
             var conflictedRevisions: [String: (base: Int64?, server: Int64?)] = [:]
 
-            if !pending.isEmpty {
+            if !pending.isEmpty && VineyardWriteAuthority.shared.canWrite(vineyardId: vineyardId) {
                 let cached = allCached(vineyardId)
                 // A plan with an UNRESOLVED CONFLICT is not re-offered. Replaying it would
                 // resend the same stale `base_revision`, which the server refuses every
@@ -359,6 +365,7 @@ final class ResistancePlanRepository {
                 // AND deleted while offline still exists to be soft-deleted.
                 let live = toPush.filter { !$0.isDeleted }
                 if !live.isEmpty {
+                    try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId)
                     for outcome in try await server.upsert(live) {
                         switch outcome {
                         case .applied(let row):
@@ -372,6 +379,7 @@ final class ResistancePlanRepository {
                 for tombstoned in toPush.filter({ $0.isDeleted }) {
                     var revived = tombstoned
                     revived.deletedAtEpochMs = nil
+                    try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId)
                     let outcomes = try await server.upsert([revived])
                     if case .conflict(_, let base, let serverRevision) = outcomes.first {
                         // A delete that lost a race is still a conflict: the other device's
@@ -379,6 +387,7 @@ final class ResistancePlanRepository {
                         conflictedRevisions[tombstoned.id] = (base, serverRevision)
                         continue
                     }
+                    try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId)
                     try await server.softDelete(planId: tombstoned.id)
                     deletesPushed += 1
                     applied.removeValue(forKey: tombstoned.id)
@@ -457,6 +466,13 @@ final class ResistancePlanRepository {
                 staleRemoteIgnored: merge.staleRemoteIgnored
             )
         } catch {
+            let admission = VineyardWriteAuthority.shared
+            let serverHeld = admission.handleServerCode((error as? PostgrestError)?.code, vineyardId: vineyardId)
+            if serverHeld || error is VineyardWriteAuthority.Restricted || !admission.canWrite(vineyardId: vineyardId) {
+                refreshSyncState(force: true)
+                return ResistancePlanSyncResult(pushed: pushed, adopted: adopted, deletesPushed: deletesPushed,
+                    failure: admission.heldReason(vineyardId: vineyardId) ?? "VT_READ_ONLY")
+            }
             // Everything stays in the cache and in the outbox. The grower keeps working; the
             // next successful pass replays. A conflict never arrives here — the remote
             // returns it as an outcome precisely so it cannot be mistaken for this.
@@ -614,6 +630,7 @@ final class ResistancePlanRepository {
 
     private func refreshSyncState(force: Bool = false) {
         guard let vineyard = vineyardId else { return }
+        guard VineyardWriteAuthority.shared.admit(vineyardId: vineyard) else { return }
         guard remote != nil else { syncState = .localOnly; return }
         // A conflict outranks every other state. It is the only one that needs a person, and
         // showing "will retry" over the top of it would promise something the app cannot

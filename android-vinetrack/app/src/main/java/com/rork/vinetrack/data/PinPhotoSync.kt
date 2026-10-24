@@ -96,6 +96,7 @@ class PinPhotoSync(
                     (permittedAttachmentIds == null || it.id in permittedAttachmentIds)
             }
             for (att in candidates) {
+                if (!OperationalWrites.canWrite(att.vineyardId)) continue
                 // Pin-exists ordering: leave the attachment pending until its pin
                 // create has synced. Don't touch the file or counters.
                 if (att.clientPinId in deletingIds || att.growthRecordId in deletingIds) {
@@ -118,6 +119,7 @@ class PinPhotoSync(
 
                 if (!pending.updateStatusIfCurrent(att, PendingPhotoStatus.IN_PROGRESS)) continue
                 try {
+                    OperationalWrites.requireWrite(att.vineyardId)
                     val path = att.uploadedPath ?: when (att.entityKind) {
                         PendingPhotoEntityKind.GROWTH -> pinPhotoRepo.uploadAtPath(
                             pinPhotoRepo.growthStoragePath(att.vineyardId, requireNotNull(att.growthRecordId), att.revision),
@@ -128,6 +130,7 @@ class PinPhotoSync(
                     if (!pending.recordUploadedPath(att.id, att.revision, path)) continue
                     try {
                         if (!pending.isCurrent(att.id, att.revision)) continue
+                        OperationalWrites.requireWrite(att.vineyardId)
                         val growthPaths = replacingOwnedPhoto(att.previousPhotoPaths, path)
                         val confirmation = when (att.entityKind) {
                             PendingPhotoEntityKind.GROWTH -> {
@@ -143,6 +146,7 @@ class PinPhotoSync(
                                 val updatedPin = pinRepo.updatePhotoPath(att.clientPinId, path)
                                 val updatedGrowth = att.growthRecordId?.let {
                                     if (!pending.isCurrent(att.id, att.revision)) return@let null
+                                    OperationalWrites.requireWrite(att.vineyardId)
                                     growthRepo.updatePhotoPaths(it, growthPaths)
                                 }
                                 PhotoUploadConfirmation(
@@ -171,6 +175,10 @@ class PinPhotoSync(
                         // the file so a later retry re-runs updatePhotoPath.
                         retryOrBlock(att, "Sign-in needed to finish saving the photo.")
                     } catch (e: BackendError.Server) {
+                        if (OperationalWrites.handleServerError(e, att.vineyardId)) {
+                            pending.releaseReadOnlyClaim(att)
+                            continue
+                        }
                         when {
                             e.code in 500..599 -> retryOrBlock(att, "Server error (${e.code}).")
                             e.code == 401 || e.code == 403 ->
@@ -183,11 +191,19 @@ class PinPhotoSync(
                         pending.updateStatusIfCurrent(att, PendingPhotoStatus.FAILED, "Photo sync was interrupted. Ready to retry.")
                         throw e
                     } catch (e: Exception) {
+                        if (OperationalWrites.handleServerError(e, att.vineyardId)) {
+                            pending.releaseReadOnlyClaim(att)
+                            continue
+                        }
                         retryOrBlock(att, e.message ?: "No connection.")
                     }
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(att, "Sign-in needed to upload the photo.")
                 } catch (e: BackendError.Server) {
+                    if (OperationalWrites.handleServerError(e, att.vineyardId)) {
+                        pending.releaseReadOnlyClaim(att)
+                        continue
+                    }
                     when {
                         e.code in 500..599 -> retryOrBlock(att, "Server error (${e.code}).")
                         e.code == 401 || e.code == 403 ->
@@ -198,6 +214,10 @@ class PinPhotoSync(
                     pending.updateStatusIfCurrent(att, PendingPhotoStatus.FAILED, "Photo sync was interrupted. Ready to retry.")
                     throw e
                 } catch (e: Exception) {
+                    if (OperationalWrites.handleServerError(e, att.vineyardId)) {
+                        pending.releaseReadOnlyClaim(att)
+                        continue
+                    }
                     // Still offline / transient network failure — leave for next time.
                     retryOrBlock(att, e.message ?: "No connection.")
                 }

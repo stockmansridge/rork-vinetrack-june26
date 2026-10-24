@@ -243,6 +243,7 @@ class ResistancePlanRepository(
      */
     fun save(plan: ResistancePlan) {
         val vineyard = vineyardId ?: return
+        if (!com.rork.vinetrack.data.OperationalWrites.admit(vineyard)) return
         val cached = allCached(vineyard)
         val knownRevision = cached.firstOrNull { it.id == plan.id }?.serverRevision
         val stamped = plan.copy(
@@ -268,6 +269,7 @@ class ResistancePlanRepository(
      */
     fun delete(planId: String) {
         val vineyard = vineyardId ?: return
+        if (!com.rork.vinetrack.data.OperationalWrites.admit(vineyard)) return
         val now = clock()
         val updated = allCached(vineyard).map {
             if (it.id == planId) it.copy(deletedAtEpochMs = now, updatedAtEpochMs = now) else it
@@ -281,6 +283,7 @@ class ResistancePlanRepository(
     /** Undo an archive. */
     fun restore(planId: String) {
         val vineyard = vineyardId ?: return
+        if (!com.rork.vinetrack.data.OperationalWrites.admit(vineyard)) return
         val now = clock()
         val updated = allCached(vineyard).map {
             if (it.id == planId) it.copy(deletedAtEpochMs = null, updatedAtEpochMs = now) else it
@@ -304,6 +307,7 @@ class ResistancePlanRepository(
      */
     fun resolveKeepingLocal(planId: String) {
         val vineyard = vineyardId ?: return
+        if (!com.rork.vinetrack.data.OperationalWrites.admit(vineyard)) return
         val conflict = _conflicts.value.firstOrNull { it.rowId == planId } ?: return
         val rebased = conflict.localPending.copy(
             serverRevision = conflict.serverRevision ?: conflict.localPending.serverRevision,
@@ -326,6 +330,7 @@ class ResistancePlanRepository(
      */
     fun resolveKeepingServer(planId: String) {
         val vineyard = vineyardId ?: return
+        if (!com.rork.vinetrack.data.OperationalWrites.admit(vineyard)) return
         val conflict = _conflicts.value.firstOrNull { it.rowId == planId } ?: return
         val serverCopy = conflict.serverCurrent
         val updated = if (serverCopy == null) {
@@ -365,7 +370,7 @@ class ResistancePlanRepository(
         }
         this.vineyardId = vineyardId
 
-        val adopted = adoptLocalOnlyPlans(vineyardId)
+        val adopted = if (com.rork.vinetrack.data.OperationalWrites.canWrite(vineyardId)) adoptLocalOnlyPlans(vineyardId) else 0
 
         var pushed = 0
         var deletesPushed = 0
@@ -384,7 +389,7 @@ class ResistancePlanRepository(
             val applied = mutableMapOf<String, ResistancePlan>()
             val conflictedRevisions = mutableMapOf<String, Pair<Long?, Long?>>()
 
-            if (pending.isNotEmpty()) {
+            if (pending.isNotEmpty() && com.rork.vinetrack.data.OperationalWrites.canWrite(vineyardId)) {
                 val cached = allCached(vineyardId)
                 // A plan with an UNRESOLVED CONFLICT is not re-offered. Replaying it would
                 // resend the same stale `base_revision`, which the server refuses every
@@ -402,6 +407,7 @@ class ResistancePlanRepository(
                 // created AND deleted while offline still exists to be soft-deleted.
                 val live = toPush.filterNot { it.isDeleted }
                 if (live.isNotEmpty()) {
+                    com.rork.vinetrack.data.OperationalWrites.requireWrite(vineyardId)
                     for (outcome in server.upsert(live)) {
                         when (outcome) {
                             is VersionedWriteOutcome.Applied -> {
@@ -416,6 +422,7 @@ class ResistancePlanRepository(
                     }
                 }
                 for (tombstoned in toPush.filter { it.isDeleted }) {
+                    com.rork.vinetrack.data.OperationalWrites.requireWrite(vineyardId)
                     val revive = server.upsert(listOf(tombstoned.copy(deletedAtEpochMs = null)))
                     val conflict = revive.firstOrNull() as? VersionedWriteOutcome.Conflict
                     if (conflict != null) {
@@ -425,6 +432,7 @@ class ResistancePlanRepository(
                             conflict.baseRevision to conflict.serverRevision
                         continue
                     }
+                    com.rork.vinetrack.data.OperationalWrites.requireWrite(vineyardId)
                     server.softDelete(tombstoned.id)
                     deletesPushed++
                     applied.remove(tombstoned.id)
@@ -498,6 +506,12 @@ class ResistancePlanRepository(
                 staleRemoteIgnored = merge.staleRemoteIgnored,
             )
         } catch (error: Exception) {
+            if (error is kotlinx.coroutines.CancellationException) throw error
+            if (com.rork.vinetrack.data.OperationalWrites.handleServerError(error, vineyardId)) {
+                refreshSyncState(force = true)
+                return ResistancePlanSyncResult(pushed = pushed, adopted = adopted, deletesPushed = deletesPushed,
+                    failure = com.rork.vinetrack.data.OperationalWrites.authority?.heldReason(vineyardId) ?: "VT_READ_ONLY")
+            }
             // Everything stays in the cache and in the outbox. The grower keeps working;
             // the next successful pass replays. A conflict never arrives here — the remote
             // returns it as an outcome precisely so it cannot be mistaken for this.
@@ -653,6 +667,7 @@ class ResistancePlanRepository(
 
     private fun refreshSyncState(force: Boolean = false) {
         val vineyard = vineyardId ?: return
+        if (!com.rork.vinetrack.data.OperationalWrites.admit(vineyard)) return
         if (remote == null) {
             _syncState.value = ResistancePlanSyncState.LOCAL_ONLY
             return

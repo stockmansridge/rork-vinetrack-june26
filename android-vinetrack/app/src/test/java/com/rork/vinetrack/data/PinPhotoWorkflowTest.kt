@@ -21,6 +21,63 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PinPhotoWorkflowTest {
+    @Test fun `trial hold preserves photo bytes and row across restart then resumes original`() = runTest {
+        val root = Files.createTempDirectory("photo-entitlement-hold").toFile()
+        var holds = emptyMap<String, String>()
+        val gate = VineyardWriteAuthority({ "owner" }, { holds }, { holds = it })
+        OperationalWrites.authority = gate
+        try {
+            val store = MemoryPhotoStore()
+            val queue = PendingPhotoRepository(root, store)
+            val original = queue.enqueue("pin-1", "vineyard-1", byteArrayOf(1, 2, 3))
+            gate.verified("vineyard-1", VineyardOperationalAccess(true, false, "trial_expired"), false)
+            val objects = ObjectGateway()
+            PinPhotoSync(objects, PinGateway(), GrowthGateway(), queue) { emptyList() }.replayAll { error("Held photo published") }
+            val restarted = PendingPhotoRepository(root, store)
+            PinPhotoSync(objects, PinGateway(), GrowthGateway(), restarted) { emptyList() }.replayAll { error("Held photo published after restart") }
+            assertEquals(0, objects.uploadCount)
+            assertEquals(listOf(original), restarted.list())
+            assertEquals(listOf<Byte>(1, 2, 3), File(original.localPath).readBytes().toList())
+            gate.verified("vineyard-1", VineyardOperationalAccess(true, true), true)
+            var published: String? = null
+            PinPhotoSync(objects, PinGateway(), GrowthGateway(), restarted) { emptyList() }.replayAll { published = it.attachment.id }
+            assertEquals(original.id, published)
+            assertEquals(1, objects.uploadCount)
+            assertTrue(restarted.list().isEmpty())
+        } finally { OperationalWrites.authority = null; root.deleteRecursively() }
+    }
+
+    @Test fun `structured reference rejection retains uploaded receipt without consuming retries`() = runTest {
+        val root = Files.createTempDirectory("photo-entitlement-server").toFile()
+        var holds = emptyMap<String, String>()
+        val gate = VineyardWriteAuthority({ "owner" }, { holds }, { holds = it })
+        OperationalWrites.authority = gate
+        try {
+            val store = MemoryPhotoStore()
+            val queue = PendingPhotoRepository(root, store)
+            val original = queue.enqueue("pin-1", "vineyard-1", byteArrayOf(4, 5, 6))
+            val objects = ObjectGateway()
+            val rejected = object : PinPhotoReferenceGateway {
+                override suspend fun updatePhotoPath(id: String, photoPath: String?): Pin {
+                    throw BackendError.Server(403, "{\"code\":\"VT_READ_ONLY\"}")
+                }
+            }
+            PinPhotoSync(objects, rejected, GrowthGateway(), queue) { emptyList() }.replayAll { error("Rejected reference published") }
+            val held = queue.list().single()
+            assertEquals(original, held.copy(uploadedPath = null))
+            assertNotNull(held.uploadedPath)
+            assertTrue(File(held.localPath).exists())
+            assertEquals("VT_READ_ONLY", gate.heldReason("vineyard-1"))
+            val restarted = PendingPhotoRepository(root, store)
+            PinPhotoSync(objects, rejected, GrowthGateway(), restarted) { emptyList() }.replayAll { error("Held reference published") }
+            assertEquals(listOf(held), restarted.list())
+            gate.verified("vineyard-1", VineyardOperationalAccess(true, true), true)
+            PinPhotoSync(objects, PinGateway(), GrowthGateway(), restarted) { emptyList() }.replayAll { }
+            assertEquals(1, objects.uploadCount)
+            assertTrue(restarted.list().isEmpty())
+        } finally { OperationalWrites.authority = null; root.deleteRecursively() }
+    }
+
     @Test
     fun `replacement capture survives old reference success and repository restart`() = runTest {
         val root = Files.createTempDirectory("photo-older-reference").toFile()

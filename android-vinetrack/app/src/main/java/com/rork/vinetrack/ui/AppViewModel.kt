@@ -5750,6 +5750,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // Matrix capability verification is independent of account
                 // billing. Do not renew grace or erase it on provider refresh.
                 entitlementStore.recordOperationalAccess(userId, matrix.operationalAccessByVineyard)
+                matrix.vineyards.forEach { entry ->
+                    com.rork.vinetrack.data.OperationalWrites.authority?.verified(
+                        entry.vineyardId, entry.operationalAccess, entry.canWrite == true,
+                    )
+                }
             }
             if (access != null && access.grantsAppAccess) {
                 // Cache is CAPPED at the earliest known expiry (e.g. the

@@ -5,6 +5,7 @@ struct WorkTaskWriteCoordinator {
     let persistence: PersistenceStore
 
     func submit(_ intent: WorkTaskWriteIntent, canWrite: () -> Bool, send: (WorkTaskWriteIntent) async throws -> WorkTask) async throws -> WorkTask {
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: intent.vineyardID.uuidString)
         guard canWrite() else { throw WorkTaskPlanningWriteError.conflict }
         let outcome: PersistenceStore.LoadOutcome<WorkTaskWriteIntent> = persistence.loadOutcome(key: intent.persistenceKey)
         switch outcome {

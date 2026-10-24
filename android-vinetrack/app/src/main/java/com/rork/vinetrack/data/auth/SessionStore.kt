@@ -26,6 +26,15 @@ class SessionStore(context: Context) {
     }
 
     init {
+        val holdPrefs = appContext.getSharedPreferences("vinetrack_write_holds", Context.MODE_PRIVATE)
+        val holdJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val holdSerializer = kotlinx.serialization.builtins.MapSerializer(kotlinx.serialization.serializer<String>(), kotlinx.serialization.serializer<String>())
+        com.rork.vinetrack.data.OperationalWrites.authority = com.rork.vinetrack.data.VineyardWriteAuthority(
+            owner = { userId },
+            load = { holdJson.decodeFromString(holdSerializer, holdPrefs.getString("holds", "{}") ?: "{}") },
+            persist = { holds -> check(holdPrefs.edit().putString("holds", holdJson.encodeToString(holdSerializer, holds)).commit()) { "Could not retain entitlement hold" } },
+            cached = { owner, vineyard -> com.rork.vinetrack.data.subscription.EntitlementVerificationStore(appContext).load()?.operationalAccessFor(vineyard, owner) },
+        )
         // Surviving session context is ambiguity evidence, not ownership. Old auth exits may
         // have removed tokens without clearing authorless queues. Do not open those stores.
         if (runCatching {

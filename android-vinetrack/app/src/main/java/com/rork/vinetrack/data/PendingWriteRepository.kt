@@ -21,6 +21,20 @@ import java.util.UUID
  * No replay, retry, or backoff logic lives here.
  */
 class PendingWriteRepository(private val store: PendingWriteStoring) {
+    /** Resolve only explicit operation scope; never substitute the selected vineyard. */
+    private fun vineyardOf(payload: String): String? {
+        fun find(value: kotlinx.serialization.json.JsonElement): Set<String> = when (value) {
+            is kotlinx.serialization.json.JsonObject -> value.flatMap { (key, child) ->
+                if (key in setOf("vineyard_id", "vineyardId", "p_vineyard_id"))
+                    listOfNotNull((child as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it != "null" })
+                else find(child).toList()
+            }.toSet()
+            is kotlinx.serialization.json.JsonArray -> value.flatMap { find(it) }.toSet()
+            else -> emptySet()
+        }
+        return runCatching { find(kotlinx.serialization.json.Json.parseToJsonElement(payload)).singleOrNull() }.getOrNull()
+    }
+    private fun requirePayloadWrite(payload: String) { vineyardOf(payload)?.let(OperationalWrites::requireWrite) }
     private val fieldAccess = (store as? PendingWriteStore)?.fieldAccess
     private fun <T> admitted(action: () -> T): T = if (fieldAccess == null) action() else fieldAccess.admitted(action)
 
@@ -134,6 +148,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         payloadJson: String,
         clientId: String = UUID.randomUUID().toString(),
     ): PendingWrite {
+        requirePayloadWrite(payloadJson)
         val now = System.currentTimeMillis()
         val write = PendingWrite(
             id = UUID.randomUUID().toString(),
@@ -154,6 +169,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
 
     @Synchronized
     private fun upsertCoalescedLocked(entityType: String, clientId: String, payloadJson: String, opType: String = com.rork.vinetrack.data.model.PendingOpType.UPDATE): PendingWrite {
+        requirePayloadWrite(payloadJson)
         val now = System.currentTimeMillis()
         val existing = _writes.value.firstOrNull {
             it.entityType == entityType && it.clientId == clientId &&
@@ -190,6 +206,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         val existing = _writes.value.filter { it.entityType == entityType && it.opType == opType &&
             it.clientId == clientId && it.status in PendingWriteStatus.unresolved }
         val encoded = payload(existing)
+        requirePayloadWrite(encoded)
         val now = System.currentTimeMillis()
         val next = PendingWrite(id = UUID.randomUUID().toString(), entityType = entityType,
             opType = opType, clientId = clientId, payloadJson = encoded, createdAt = now, updatedAt = now)
@@ -218,6 +235,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
             "This spray operation is blocked or syncing. Its original evidence is retained for review."
         }
         val encoded = payload(existing)
+        requirePayloadWrite(encoded)
         val now = System.currentTimeMillis()
         val next = existing?.copy(payloadJson = encoded, status = PendingWriteStatus.PENDING, lastError = null, updatedAt = now)
             ?: PendingWrite(id = UUID.randomUUID().toString(), entityType = entityType,
@@ -355,6 +373,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
 
     @Synchronized
     private fun claimReplayLocked(expected: PendingWrite, permittedWrites: Map<String, PendingWrite>? = null): PendingWrite? {
+        if (vineyardOf(expected.payloadJson)?.let { !OperationalWrites.canWrite(it) } == true) return null
         if (permittedWrites != null && permittedWrites[expected.id] != expected) return null
         if (permittedWrites is FrozenVersions && permittedWrites.scope != scopeProvider?.invoke()) return null
         if (expected.status !in setOf(PendingWriteStatus.PENDING, PendingWriteStatus.FAILED)) return null
@@ -408,13 +427,26 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     fun retryIfCurrent(expected: PendingWrite, error: String, maxAttempts: Int = 8): Boolean =
         storageResult(false) { admitted { retryIfCurrentLocked(expected, error, maxAttempts) } }
 
-    private fun retryIfCurrentLocked(expected: PendingWrite, error: String, maxAttempts: Int): Boolean =
-        mutateIfCurrent(expected) {
+    private fun retryIfCurrentLocked(expected: PendingWrite, error: String, maxAttempts: Int): Boolean {
+        val vineyard = vineyardOf(expected.payloadJson)
+        if (vineyard != null) {
+            val code = runCatching {
+                (kotlinx.serialization.json.Json.parseToJsonElement(error) as? kotlinx.serialization.json.JsonObject)
+                    ?.get("code")?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+            }.getOrNull()
+            OperationalWrites.authority?.handleServerCode(code, vineyard)
+            if (!OperationalWrites.canWrite(vineyard)) {
+                // Keep the original evidence and retry budget. Status alone releases a completed claim.
+                return mutateIfCurrent(expected) { it.copy(status = PendingWriteStatus.PENDING) }
+            }
+        }
+        return mutateIfCurrent(expected) {
             val attempts = it.attemptCount + 1
             it.copy(attemptCount = attempts,
                 status = if (attempts >= maxAttempts) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED,
                 lastError = error, updatedAt = System.currentTimeMillis())
         }
+    }
 
     @Synchronized
     private fun mutateIfCurrent(expected: PendingWrite, transform: (PendingWrite) -> PendingWrite?): Boolean {

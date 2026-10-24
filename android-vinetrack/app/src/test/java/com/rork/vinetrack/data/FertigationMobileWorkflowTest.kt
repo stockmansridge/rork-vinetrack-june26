@@ -10,6 +10,47 @@ import org.junit.Test
 import java.util.UUID
 
 class FertigationMobileWorkflowTest {
+    @Test fun entitlementChangeAfterIrrigationHoldsDependentAcrossRestart() = heldDependent(false)
+    @Test fun structuredFertigationRejectionIsNotPermanentOrRetryFailure() = heldDependent(true)
+
+    private fun heldDependent(serverRejection: Boolean) = runBlocking {
+        val vineyard = UUID.randomUUID().toString(); val owner = UUID.randomUUID().toString()
+        var holds = emptyMap<String, String>()
+        val gate = VineyardWriteAuthority({ owner }, { holds }, { holds = it })
+        OperationalWrites.authority = gate
+        try {
+            val irrigation = PendingIrrigationSession(UUID.randomUUID().toString(), vineyard, "system", "valve", sessionDate = "2026-10-07", durationMinutes = 60, calculationMethod = "total_volume", totalVolumeLitres = 1000.0)
+            val entry = FertigationLinkedOutbox.Entry(UUID.randomUUID().toString(), owner, irrigation, buildJsonObject { put("name", "Frozen") }, emptyList(), "Original notes")
+            var bytes: String? = null
+            val outbox = FertigationLinkedOutbox({ bytes }, { bytes = it })
+            outbox.enqueue(entry)
+            val saved = IrrigationSessionRow(irrigation.id, vineyard, "system", "valve", "2026-10-07", status = "completed")
+            var sends = 0
+            outbox.flush(vineyard, owner, record = {
+                if (!serverRejection) gate.verified(vineyard, VineyardOperationalAccess(true, false, "trial_expired"), false)
+                saved
+            }, upsert = { _, _ ->
+                sends++
+                throw BackendError.Server(403, "{\"code\":\"VT_READ_ONLY\"}")
+            }, permanent = { error("Entitlement must not be classified as permanent") })
+            val held = outbox.entries().single()
+            assertEquals(FertigationLinkedOutbox.Phase.FERTIGATION_PENDING, held.phase)
+            assertEquals(entry.id, held.id); assertEquals(entry.irrigation, held.irrigation)
+            assertEquals(entry.notes, held.notes); assertNull(held.error)
+            val originalBytes = bytes
+            val restarted = FertigationLinkedOutbox({ bytes }, { bytes = it })
+            restarted.flush(vineyard, owner, record = { error("Must retain irrigation receipt") }, upsert = { _, _ -> error("Held dependent sent") }, permanent = { false })
+            assertEquals(originalBytes, bytes)
+            assertEquals(if (serverRejection) 1 else 0, sends)
+            gate.verified(vineyard, VineyardOperationalAccess(true, true), true)
+            restarted.flush(vineyard, owner, record = { error("Must not repeat irrigation") }, upsert = { original, _ ->
+                assertEquals(entry.id, original.id)
+                buildJsonObject { put("id", original.id); put("irrigation_session_id", irrigation.id) }
+            }, permanent = { false })
+            assertEquals(FertigationLinkedOutbox.Phase.ACKNOWLEDGED, restarted.entries().single().phase)
+        } finally { OperationalWrites.authority = null }
+    }
+
     @Test fun fertigationCannotPlanSpray() { assertFalse(SprayProgramLanding.canPlanSpray("Fertigation")) }
     @Test fun unknownCannotPlanSpray() { assertFalse(SprayProgramLanding.canPlanSpray("Autonomous Future Method")) }
     @Test fun normalSprayAllowListUnchanged() {

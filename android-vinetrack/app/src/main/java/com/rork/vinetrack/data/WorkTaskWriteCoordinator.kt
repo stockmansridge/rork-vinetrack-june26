@@ -5,6 +5,7 @@ import com.rork.vinetrack.data.model.WorkTask
 /** One-shot durable initiation; an unknown outcome is never retried or overwritten implicitly. */
 class WorkTaskWriteCoordinator(private val drafts: WorkTaskPlanningDraftStore) {
     suspend fun submit(intent: WorkTaskWriteIntent, canWrite: () -> Boolean, send: suspend (WorkTaskWriteIntent) -> WorkTask): WorkTask {
+        OperationalWrites.requireWrite(intent.vineyardId)
         check(canWrite())
         val prior = drafts.loadIntent(intent.authorId, intent.vineyardId, intent.taskId)
         check(prior == null || prior.acknowledged) { "Earlier save unconfirmed. Review server state; no retry or rebase." }

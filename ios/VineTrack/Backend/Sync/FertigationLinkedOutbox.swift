@@ -1,4 +1,5 @@
 import Foundation
+import Supabase
 
 /// Persisted dependent write. The irrigation payload and frozen Fertigation draft share one atomic file.
 @MainActor
@@ -27,7 +28,9 @@ final class FertigationLinkedOutbox {
     }
     private let file: URL
     private var isFlushing: Bool = false
-    init(file: URL? = nil) {
+    private let admission: VineyardWriteAuthority
+    init(file: URL? = nil, authority: VineyardWriteAuthority? = nil) {
+        self.admission = authority ?? VineyardWriteAuthority.shared
         self.file = file ?? URL.applicationSupportDirectory.appending(path: "vinetrack-fertigation-linked-outbox.json")
     }
     func entries() throws -> [Entry] {
@@ -39,6 +42,7 @@ final class FertigationLinkedOutbox {
         try JSONEncoder().encode(entries).write(to: file, options: .atomic)
     }
     func enqueue(_ entry: Entry) throws {
+        try admission.requireWrite(vineyardId: entry.irrigation.vineyardId.uuidString)
         var all = try entries()
         guard !all.contains(where: { $0.id == entry.id || $0.irrigation.id == entry.irrigation.id }) else { return }
         all.append(entry)
@@ -46,6 +50,7 @@ final class FertigationLinkedOutbox {
     }
     /// Existing sessions enter directly at Fertigation pending; acknowledged irrigation is immutable.
     func enqueueExisting(_ entry: Entry) throws {
+        try admission.requireWrite(vineyardId: entry.irrigation.vineyardId.uuidString)
         guard entry.existingSession == true, entry.phase == .fertigationPending,
               entry.acknowledgedTotals != nil, entry.acknowledgedProducts != nil else { throw FertigationDomain.Failure.invalidStep }
         var all = try entries()
@@ -63,6 +68,7 @@ final class FertigationLinkedOutbox {
     }
     func retry(id: UUID) throws {
         guard var entry = try entries().first(where: { $0.id == id }), entry.phase == .permanentError else { return }
+        try admission.requireWrite(vineyardId: entry.irrigation.vineyardId.uuidString)
         entry.phase = entry.existingSession == true || entry.acknowledgedTotals != nil ? .fertigationPending : .irrigationPending
         entry.error = nil
         try replace(entry)
@@ -76,6 +82,7 @@ final class FertigationLinkedOutbox {
         isFlushing = true
         defer { isFlushing = false }
         for var entry in try entries() where entry.irrigation.vineyardId == vineyardId && entry.ownerId == ownerId && entry.phase != .acknowledged && entry.phase != .permanentError {
+            guard admission.canWrite(vineyardId: vineyardId.uuidString) else { continue }
             do {
                 guard entry.existingSession != true || entry.phase == .fertigationPending else { throw FertigationDomain.Failure.invalidStep }
                 if entry.phase == .irrigationPending {
@@ -89,6 +96,7 @@ final class FertigationLinkedOutbox {
                     entry.error = nil
                     try replace(entry)
                 }
+                guard admission.canWrite(vineyardId: vineyardId.uuidString) else { continue }
                 if entry.acknowledgedProducts == nil {
                     guard let totals = entry.acknowledgedTotals else { throw FertigationDomain.Failure.invalidStep }
                     entry.acknowledgedProducts = try entry.products.map { try $0.payload(totals: totals, step: entry.step) }
@@ -101,6 +109,9 @@ final class FertigationLinkedOutbox {
                 entry.error = nil
                 try replace(entry)
             } catch {
+                if let rejection = error as? PostgrestError,
+                   admission.handleServerCode(rejection.code, vineyardId: vineyardId.uuidString) { continue }
+                if error is VineyardWriteAuthority.Restricted || !admission.canWrite(vineyardId: vineyardId.uuidString) { continue }
                 // Persistence failures must escape; never erase or claim an acknowledgement that was not stored.
                 entry.error = entry.phase == .irrigationPending ? "Irrigation is waiting to sync. Retry when connected." : "Check vineyard access and the Program Step, then retry Fertigation."
                 if entry.phase == .fertigationPending && permanent(error) { entry.phase = .permanentError }

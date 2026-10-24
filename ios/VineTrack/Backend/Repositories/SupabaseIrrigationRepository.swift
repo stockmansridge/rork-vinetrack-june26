@@ -367,7 +367,8 @@ final class SupabaseIrrigationRepository {
     @discardableResult
     func createSystem(id: UUID = UUID(), vineyardId: UUID, name: String,
                       waterSource: String?, notes: String?) async throws -> IrrigationSystem {
-        try await client
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId.uuidString)
+        return try await client
             .rpc("create_irrigation_system", params: CreateSystemParams(
                 id: id, vineyardId: vineyardId, name: name, waterSource: waterSource, notes: notes))
             .execute().value
@@ -392,7 +393,8 @@ final class SupabaseIrrigationRepository {
     func createValve(id: UUID = UUID(), vineyardId: UUID, systemId: UUID, name: String,
                      valveNumber: String?, configuredFlow: Double?, measuredFlow: Double?,
                      notes: String?) async throws -> IrrigationValve {
-        try await client
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId.uuidString)
+        return try await client
             .rpc("create_irrigation_valve", params: CreateValveParams(
                 id: id, vineyardId: vineyardId, irrigationSystemId: systemId, name: name,
                 valveNumber: valveNumber, configuredFlowLitresPerHour: configuredFlow,
@@ -421,7 +423,8 @@ final class SupabaseIrrigationRepository {
     @discardableResult
     func setValveBlocks(vineyardId: UUID, valveId: UUID,
                         blocks: [IrrigationValveBlockInput]) async throws -> [IrrigationValveBlock] {
-        try await client
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId.uuidString)
+        return try await client
             .rpc("set_irrigation_valve_blocks", params: SetValveBlocksParams(
                 vineyardId: vineyardId, valveId: valveId, blocks: blocks))
             .execute().value
@@ -446,7 +449,8 @@ final class SupabaseIrrigationRepository {
     /// connections and authoritative percentages (allocation_method = rows).
     @discardableResult
     func setValveRows(vineyardId: UUID, valveId: UUID, rowIds: [UUID]) async throws -> IrrigationValveRowsResult {
-        try await client
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId.uuidString)
+        return try await client
             .rpc("set_irrigation_valve_rows", params: SetValveRowsParams(
                 vineyardId: vineyardId, valveId: valveId, rowIds: rowIds))
             .execute().value
@@ -483,7 +487,8 @@ final class SupabaseIrrigationRepository {
 
     @discardableResult
     func recordSession(_ pending: IrrigationPendingSession) async throws -> IrrigationSession {
-        try await client
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: pending.vineyardId.uuidString)
+        return try await client
             .rpc("record_irrigation_session", params: RecordSessionParams(
                 id: pending.id, vineyardId: pending.vineyardId,
                 irrigationSystemId: pending.irrigationSystemId, valveId: pending.valveId,
@@ -601,6 +606,7 @@ final class SupabaseIrrigationRepository {
     }
 
     func enqueuePending(_ session: IrrigationPendingSession) {
+        guard VineyardWriteAuthority.shared.admit(vineyardId: session.vineyardId.uuidString) else { return }
         var queue = pendingSessions()
         guard !queue.contains(where: { $0.id == session.id }) else { return }
         queue.append(session)
@@ -623,11 +629,15 @@ final class SupabaseIrrigationRepository {
     func flushPending(vineyardId: UUID) async -> Int {
         var flushed = 0
         for pending in pendingSessions() where pending.vineyardId == vineyardId {
+            guard VineyardWriteAuthority.shared.canWrite(vineyardId: vineyardId.uuidString) else { continue }
             do {
                 _ = try await recordSession(pending)
                 removePending(id: pending.id)
                 flushed += 1
             } catch {
+                if let rejection = error as? PostgrestError,
+                   VineyardWriteAuthority.shared.handleServerCode(rejection.code, vineyardId: vineyardId.uuidString) { continue }
+                if error is VineyardWriteAuthority.Restricted { continue }
                 print("[Irrigation] pending replay failed for \(pending.id): \(error.localizedDescription)")
             }
         }

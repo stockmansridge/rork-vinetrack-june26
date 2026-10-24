@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Supabase
 @testable import VineTrack
 
 @MainActor
@@ -65,6 +66,48 @@ struct FertigationMobileWorkflowTests {
         #expect(draft.products[1].id == intendedId)
         #expect(draft.chemicalLines()[1].chemicalId == chemical.id)
         #expect(draft.products[1].fertigationRateBasis == nil && draft.products[1].fertigationRateUnit == nil)
+    }
+
+    @Test(arguments: [false, true])
+    func entitlementHoldsDependentWithOriginalReceiptAcrossRestart(serverRejection: Bool) async throws {
+        let vineyard = UUID(), owner = UUID(), sessionId = UUID()
+        let defaults = UserDefaults(suiteName: "fertigation-hold-\(UUID())")!
+        let authority = VineyardWriteAuthority(defaults: defaults)
+        authority.bind(userId: owner)
+        let file = FileManager.default.temporaryDirectory.appending(path: "fertigation-hold-\(UUID()).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let pending = IrrigationPendingSession(id: sessionId, vineyardId: vineyard, irrigationSystemId: UUID(), valveId: UUID(), valveName: "Valve", sessionDate: "2026-10-07", durationMinutes: 60, calculationMethod: "total_volume", flowLitresPerHour: nil, meterStartLitres: nil, meterFinishLitres: nil, totalVolumeLitres: 1000, startedAt: nil, finishedAt: nil, notes: "Original", localTotalVolumeLitres: nil, createdAt: Date())
+        let step = FertigationDomain.ProgramStep(raw: ["id": .string(UUID().uuidString), "name": .string("Frozen"), "vineyard_id": .string(vineyard.uuidString), "is_template": .bool(true), "operation_type": .string("Fertigation")])
+        let entry = FertigationLinkedOutbox.Entry(id: UUID(), ownerId: owner, irrigation: pending, step: step, products: [], notes: "Original notes")
+        let outbox = FertigationLinkedOutbox(file: file, authority: authority)
+        try outbox.enqueue(entry)
+        let ack: FertigationDomain.Object = ["id": .string(sessionId.uuidString), "vineyard_id": .string(vineyard.uuidString), "irrigation_system_id": .string(pending.irrigationSystemId.uuidString), "valve_id": .string(pending.valveId.uuidString), "session_date": .string("2026-10-07"), "vintage_year": .number(2027), "duration_minutes": .number(60), "calculation_method": .string("total_volume"), "total_volume_litres": .number(1000), "status": .string("completed"), "source_type": .string("manual_ios"), "blocks": .array([])]
+        let saved = try JSONDecoder().decode(IrrigationSession.self, from: JSONEncoder().encode(ack))
+        let rejection = try JSONDecoder().decode(PostgrestError.self, from: Data(#"{"code":"VT_READ_ONLY","message":"Read only","details":null,"hint":null}"#.utf8))
+        var sends = 0
+        try await outbox.flush(vineyardId: vineyard, ownerId: owner, record: { _ in
+            if !serverRejection { authority.verified(vineyardId: vineyard.uuidString, access: .init(legacyCanEnter: true, canWrite: false, readOnlyReason: "trial_expired"), explicitlyWritable: false) }
+            return saved
+        }, upsert: { _, _ in sends += 1; throw rejection }, permanent: { _ in Issue.record("Entitlement is not a permanent failure"); return true })
+        let held = try #require(outbox.entries().first)
+        #expect(held.phase == .fertigationPending && held.error == nil)
+        #expect(held.id == entry.id && held.notes == entry.notes)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        #expect(try encoder.encode(held.irrigation) == encoder.encode(entry.irrigation))
+        let originalBytes = try Data(contentsOf: file)
+        let restartedAuthority = VineyardWriteAuthority(defaults: defaults)
+        restartedAuthority.bind(userId: owner)
+        let restarted = FertigationLinkedOutbox(file: file, authority: restartedAuthority)
+        try await restarted.flush(vineyardId: vineyard, ownerId: owner, record: { _ in Issue.record("Must retain receipt"); return saved }, upsert: { _, _ in Issue.record("Held dependent sent"); return .init(raw: [:]) }, permanent: { _ in false })
+        #expect(try Data(contentsOf: file) == originalBytes)
+        #expect(sends == (serverRejection ? 1 : 0))
+        restartedAuthority.verified(vineyardId: vineyard.uuidString, access: .init(legacyCanEnter: true, canWrite: true), explicitlyWritable: true)
+        try await restarted.flush(vineyardId: vineyard, ownerId: owner, record: { _ in Issue.record("Must not repeat irrigation"); return saved }, upsert: { original, _ in
+            #expect(original.id == entry.id)
+            return .init(raw: ["id": .string(original.id.uuidString), "irrigation_session_id": .string(sessionId.uuidString)])
+        }, permanent: { _ in false })
+        #expect(try restarted.entries().first?.phase == .acknowledged)
     }
 
     @Test(arguments: ["online", "fertigationFailure", "offline", "permanent", "wrongAck", "otherOwner"])

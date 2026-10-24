@@ -1,5 +1,107 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Expired-trial read-only access — enforcement implementation checkpoint, 23 October 2026
+
+**PARTIAL IMPLEMENTATION, NOT FEATURE ACCEPTANCE.** This supersedes the audit-only status below: native command admission, durable owner/vineyard holds and several independent replay/error paths are now implemented and tested. Coverage is not exhaustive. Expired-trial historical entry remains CLOSED, with existing routes unchanged. Neither the 23-case operational gate nor authenticated live acceptance is complete. Unfinished native engineering is separate from the server dependency.
+
+### A. Exact changed application/test/runner files
+
+27 files, relative to the project root (existing plan/report updated separately; pre-existing managed fingerprint/history changes preserved):
+
+- `ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift` — new scoped admission and durable sidecar hold authority.
+- `ios/VineTrack/Backend/Subscription/EntitlementGate.swift` — bind matching owner/cache and process fresh raw matrix write capability.
+- `ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift` — injectable authority; guards on main Pin/notes, Paddock, Trip, Spray, maintenance, Work Task/resource/material/pruning-labour and settings commands; Save for Later admission before journal creation.
+- `ios/VineTrack/Backend/Sync/WorkTaskWriteCoordinator.swift` — admission before durable intent creation.
+- `ios/VineTrack/Backend/Sync/OperationsSyncServices.swift` — Work Task completion admission before either row or completion metadata changes.
+- `ios/VineTrack/Backend/Sync/SyncQueueDiagnostics.swift` — shared upsert replay admission, row scope preferred over selected slice, same-vineyard batching and structured read-only handling without per-item retry fan-out.
+- `ios/VineTrack/Backend/Sync/FertigationLinkedOutbox.swift` — enqueue/manual retry/dependent-send admission, injectable authority and structured rejection holds.
+- `ios/VineTrack/Backend/Repositories/SupabaseIrrigationRepository.swift` — scoped mutation/enqueue/replay guards and structured replay rejection.
+- `ios/VineTrack/App/Resistance/ResistancePlanRepository.swift` — local command/send guards and read-only rejection handling; held sync skips adoption/push while retaining pull/reconciliation.
+- `ios/VineTrackTests/VineyardWriteAuthorityTests.swift` — 18 new authority/store/shared-replay cases.
+- `ios/VineTrackTests/FertigationMobileWorkflowTests.swift` — two parameterized real-file dependent hold/restart/restoration cases, retaining existing workflow tests.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/VineyardWriteAuthority.kt` — new authority, registry and exact structured server-code helper.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/SessionStore.kt` — install authority with owner/cache callbacks and separate synchronously committed hold preferences.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt` — fresh matrix verification only; exactly five added lines. Startup, completion and costing logic untouched.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PendingWriteRepository.kt` — unique explicit-payload scope extraction, enqueue/claim/structured-rejection hold seams.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PendingPhotoRepository.kt` — admission before file/enqueue/claim/retry and conditional read-only claim release retaining upload receipt.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PinPhotoSync.kt` — admission before upload/reference sends; structured rejection bypasses failure budgets and retains file/receipt.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/WorkTaskWriteCoordinator.kt` — admission before intent creation.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/IrrigationRepository.kt` — explicit scoped mutation RPC/enqueue/replay admission and structured rejection.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/FertigationLinkedOutbox.kt` — phase/send/retry admission and typed/structured rejection holding.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/FertigationRepository.kt` — scoped upsert admission before/after suspended admin verification; structured rejection before HTTP permanent-error mapping; reads stay available.
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/resistance/ResistancePlanRepository.kt` — local command/send guards; held sync still pulls; entitlement is not generic FAILED.
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/VineyardWriteAuthorityTest.kt` — 15 new authority/outbox cases.
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/PinPhotoWorkflowTest.kt` — two real-file hold/restart/resume/receipt cases.
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/FertigationMobileWorkflowTest.kt` — two dependent-phase hold/restart/restoration cases.
+- `android-vinetrack/entitlement-tests.init.gradle` — focused existing/new test selection only, not app build configuration.
+- `scripts/run-read-only-entitlement-contract.py` — expanded focused host selection and scope metadata.
+
+### B. Central write authority
+
+Both platforms use one cheap owner/vineyard authority, additional to—not replacing—auth/role checks. No action performs a capability network lookup. A separate sidecar ledger stores `READ_ONLY_TRIAL_EXPIRED` for confirmed trial restrictions and `VT_READ_ONLY` for generic structured server rejection. Keys normalize both account and vineyard. Cache absence, provider refresh and legacy writable defaults do not release known holds; logout/account switching does not erase them. Only fresh raw explicit `can_write=true` plus effective writable/enterable access releases the matching hold. Personal trial dates/status do not participate. Generic server rejection does not infer trial expiry or grant historical entry.
+
+Main-store admission is not universal enforcement: selected-slice methods, public arrays/extensions and direct repositories still need complete caller/scope proof. Android registry relies on SessionStore installation; no new permission/auth bypass is intended. There is no blanket block on persistence, remote reconciliation, reads or telemetry. Shared prompt state is not yet observable/presented.
+
+### C. Queues and hold preservation
+
+- **iOS main Save for Later:** denied before a new recovery attempt or row publication; existing recovery journals remain available for evidence reconciliation. Do not blanket-block their hydration/receipt processing. All later recovery transport paths are not yet closed.
+- **iOS shared upsert helper:** known-held payloads are not sent, acknowledged or classified failed. Explicit row scope wins over a different selected sync vineyard; writable records in a mixed-vineyard set can proceed independently. Exact read-only batch rejection does not trigger singleton fan-out. Helper result does not clear retained queue entries for held IDs. Separate deletes, orphan cleanup before the helper and multi-send closures remain gaps.
+- **Both Work Task initiation coordinators:** admission precedes new intent creation; original successful-send receipt acknowledgement semantics remain unchanged.
+- **Both linked fertigation outboxes:** checks before initiation/retry and each dependent phase's new send. If irrigation is already acknowledged, retain that receipt and pause only the remaining fertigation phase. Read-only denial does not become a permanent phase/error. Tests restore the original application/session IDs rather than recreating irrigation.
+- **Both irrigation queues:** scoped enqueue and replay checks are present; retained sessions skip send. Direct ID-only system/valve/session update and reversal still need verified record scope.
+- **Both resistance repositories:** local mutation guards, pre-send checks and typed rejection handling added. Held sync skips adoption/push but can pull with existing pending-row protection. Full conflict/adoption/direct-caller acceptance is not yet established.
+- **Android shared PendingWrite:** uniquely scoped explicit payloads are held before claim; structured rejection retains ID/payload/createdAt/attempt budget and returns the claim to PENDING. The existing pre-send claim timestamp is NOT restored by this path; exact pre-claim timestamp preservation is still open. Missing/multiple scope and ID-only operations are not universally covered.
+- **Android photos:** known hold skips file examination/deletion/claim; per-send checks cover object and linked reference writes. Server restriction releases only the matching claim to its original status/error/update time, without consuming retries; any successful upload path is retained as a receipt. Tests prove no repeated object upload on restored reference replay. Manual status/reset APIs and independent capture-evidence/chemical-photo families remain unverified.
+
+All other independent queue families in the historical inventory below remain open unless explicitly described here. A vineyard sidecar hold is not an assertion that every operation family consults it.
+
+### D. Server-error path
+
+Exact structured `PostgrestError.code` / JSON `code` equal to `VT_READ_ONLY` is recognized in the listed shared/independent seams. HTTP 401/403 by itself is not entitlement. Generic server rejection preserves an already confirmed specific trial reason, but does not invent it. Android Fertigation now checks the code before ordinary permanent HTTP mapping. Android photo object/reference rejection retains evidence and the uploaded path without ordinary retry consumption. Resistance rejection does not mark the repository generic FAILED. No automatic access-refresh/purchase-prompt integration has been completed, and no universal direct-transport classifier is claimed.
+
+### E. iOS tests and build
+
+Final ten-suite selection: `VineyardWriteAuthorityTests`, `ReadOnlyEntitlementContractTests`, `SpraySaveForLaterTests`, `EntitlementDecisionTests`, `EntitlementAccessRegressionTests`, `DeviceTripOwnershipTests`, `OfflineQuickActionsTests`, `ResistancePlanRepositoryTests`, `ResistancePlanRevisionSyncTests`, `FertigationMobileWorkflowTests`.
+
+Final managed result: **191 passed in 138s**, no reported failures. The runner provides aggregate results, not a per-method discovery manifest or skipped count. This includes the two new real-file fertigation scenarios and expanded shared-replay authority cases; it is not the full operational acceptance matrix. Final normal `runChecks(ios)` **PASS**, simulator build only; device Release build not verified.
+
+Earlier implementation run: 118 passed/1 failed because the synthetic Save for Later journal fixture directory did not exist (`NSCocoaErrorDomain Code=4`). Added directory creation in that fixture; the same seven-suite selection then passed119 in177s. Expanded selection subsequently passed189 in142s before the last two fertigation cases; final191 supersedes it. No assertions were weakened.
+
+### F. Android tests and build
+
+Host runner: `python3 scripts/run-read-only-entitlement-contract.py --launch`; final logs/XML/finished summary at `/tmp/vinetrack-read-only-contract-40anc9fj/`.
+
+**134 focused tests passed, zero failures/errors/skips**, seven suites: Fertigation15, PinPhoto23, read-only contract16, resistance repository35, resistance revision19, access compatibility11, authority15. This is four new independent photo/fertigation hold cases plus existing workflow regressions; resistance suites here are existing regressions, not new exhaustive trial-transition acceptance.
+
+**55 existing regressions passed, zero failures/errors/skips**, six suites: ActiveTrip1, OfflineQuickActions6, RetainedStartup13, SyncCrashIsolation5, SyncRecoveryStorage15, TripEndGate15. Both host stages exited0. Earlier narrower run at `/tmp/vinetrack-read-only-contract-waa23q4q/` passed42 focused and55 regressions. Final normal `runChecks(android-vinetrack)` **PASS**. Existing unrelated asset-address advisories untouched. Previously documented five completion failures were not selected, repaired or declared fixed; protected costing was not changed or rerun.
+
+### G. Offline/restart and active-operation status
+
+Synthetic tests establish owner/vineyard isolation, hold persistence across authority recreation without capability snapshot, no legacy release, original PendingWrite retention/claim restoration, Save for Later pre-journal denial and main-store stale Trip/Spray admission. Both platforms test real dependent outbox restart while held and resume using the original irrigation receipt/application ID. Android photo tests retain original bytes/row across repository recreation; structured reference rejection retains the uploaded object path and restores only the original reference operation without a second object upload. iOS tests exercise payload-vineyard isolation and recheck after suspension between sends.
+
+These are native/source tests, not an authenticated app restart, offline historical-screen journey, active handset GPS transition or UI proof. Full journal/evidence/cleanup/active Trip/Spray coverage remains **UNVERIFIED**. No owner device, real account, queue or server record was operated.
+
+### H. Uncovered paths / remaining native work
+
+The feature is not safe to enable yet. Remaining work includes direct and ID-only repository mutations and trustworthy record scopes; full iOS metadata push/delete/orphan/manual retry/force-push closure; main-store extensions/public arrays and equivalent Android pre-enqueue local changes; Insights/vintage, chemical attachments/catalogue, weather/rainfall/settings/configuration/import paths; remaining Trip occurrence/labour, Spray planning/manual/tank and evidence journals; Quick Actions and active Trip/Spray/GPS callbacks. Existing tests do not prove all new sends after suspension within a caller-supplied batch closure are blocked. Generic unscoped payloads remain compatible, not protected by guessing current selection.
+
+Common persistent notice, mutation-only purchase prompt, scoped observable state, server-triggered access reconciliation and eventual explicit-capability historical entry are **not implemented**. No full 23-case operational matrix, opening/editing/cancelling-without-save UI gate or protected telemetry/purchase/support/admin integration acceptance has passed. Swift malformed sidecar recovery, exact Android claimed timestamp retention, account changes during in-flight responses and exhaustive registry initialization order still require review. No native environment blocker is established; these are unfinished engineering, not solely backend access.
+
+### I. Exact source identity and preservation
+
+Observed starting/current managed HEAD: `bc9513910ca11881796a6a833e9d15391a1080e1`. Requested baseline `f4908f430b04b498baec43d296342e8501c3c575` to this HEAD application/test/runner diff is empty. Accepted foundation `60cacb0300d608495293b69fd3f3860281eb4577` is preserved as the content baseline described historically, not asserted to be an ancestor. Do not reset to either SHA or recreate the managed empty Config placeholder.
+
+The 27 changed application/test/runner files above have ordered content manifest SHA-256 **`52caecb5d4ac11c2e4ce602824e2c8cd479dda94f183458926779e95fb73397c`**. Construction: sorted paths; UTF-8 lines `SHA256(file bytes) + two spaces + project-relative path + newline`, then SHA-256 of the combined lines. This binds the validated working source plus base; final managed-save commit is assigned after the turn and is not available yet. No manual Git commit/push.
+
+`git diff HEAD --check` PASS. No Xcode project, app Gradle/dependency/signing/version, SQL/Supabase/Portal or costing edits. Android AppViewModel delta is solely the five matrix-authority lines; accepted final constructor observer/startup replay code is untouched. Versions remain3.1.8/iOS139/Android12. Test/build output is ignored or outside the project. No store export/upload, device reset/uninstall, data/cache clearing, forced logout, queue/draft deletion, production retained-payload rewriting or live server mutation.
+
+### J. Separate server dependency and rollout gate
+
+No authenticated live server check/change was performed. The previously supplied server contract still lacks explicit vineyard write capability. Backend delivery must separately provide effective `can_enter_vineyard=true`, `can_write=false`, `read_only_reason="trial_expired"` only for legitimate expired-trial historical access; preserve genuine revoked/foreign/disabled denials and paid/manual/legacy/admin access; enforce writes at the database with structured `VT_READ_ONLY` while leaving `record_my_client_activity` available.
+
+Release/entry acceptance still requires complete native admission and the23-case gate, then authenticated permitted read, denied write with unchanged database row, retained held queue, correct scoped notice/prompt, purchase and explicit verified write restoration, paid/legacy regressions. **Entry remains closed. This checkpoint does not complete the user request or authorise rollout.**
+
+
 ## Expired-trial read-only access — continuation audit, 23 October 2026
 
 **AUDIT-ONLY CHECKPOINT; FEATURE INCOMPLETE. Expired-trial entry remains closed.** No native enforcement, queue hold, UI or server-error integration was delivered in this continuation. Findings below identify required admission points, not guarded paths. The earlier contract/cache tests remain historical, not operational acceptance. Server delivery is not the only outstanding work.
