@@ -5,6 +5,7 @@ import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -168,13 +169,14 @@ class MaintenanceLogCreateSync(
                     it.opType == PendingOpType.CREATE &&
                     (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
             }
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            val versions = pending.freezeReplayVersions(candidates)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, versions) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (payload == null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved maintenance log.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved maintenance log.")
                     continue
                 }
                 try {
@@ -197,8 +199,13 @@ class MaintenanceLogCreateSync(
                         id = payload.id,
                         clientUpdatedAt = payload.clientUpdatedAt,
                     )
-                    pending.remove(write.id)
-                    onSynced(created)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.removeIfCurrent(write)) onSynced(created)
+                } catch (e: VineyardWriteAuthority.Restricted) {
+                    pending.restoreClaimIfCurrent(write)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.restoreClaimIfCurrent(write)
+                    throw e
                 } catch (e: BackendError.Unauthorized) {
                     // Session expired mid-replay — retry after re-auth (bounded by the cap).
                     retryOrBlock(write, "Sign-in needed to sync this maintenance log.")
@@ -207,10 +214,10 @@ class MaintenanceLogCreateSync(
                         // Duplicate primary key — the client id is already on the
                         // server, so the log exists. Idempotent success; the
                         // optimistic row stays as-is.
-                        e.code == 409 -> pending.remove(write.id)
+                        e.code == 409 -> pending.removeIfCurrent(write)
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
+                        else -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The maintenance log was rejected (${e.code}).",
                         )
@@ -227,10 +234,7 @@ class MaintenanceLogCreateSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

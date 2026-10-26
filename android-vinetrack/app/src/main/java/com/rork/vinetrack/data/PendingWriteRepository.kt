@@ -80,7 +80,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
             if (!isCurrent(outcome.expected)) return@forEach
             // Preserve a computed block/failure and its attempts verbatim. A
             // failed permission/conflict block must never become an automatic retry.
-            mutateIfCurrent(outcome.expected) { outcome.retryOutcome }
+            mutateIfCurrent(outcome.expected, retainedOutcome = outcome.retryOutcome) { outcome.retryOutcome }
         }
     } } }
 
@@ -420,6 +420,13 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
                 updatedAt = System.currentTimeMillis()) }
         } } }
 
+    /** Restore only this exact account-bound claim after typed admission denial.
+     * ID-only payloads may not carry vineyard scope; never charge a denial as a retry. */
+    fun restoreClaimIfCurrent(expected: PendingWrite): Boolean = storageResult(false) { admitted { synchronized(this) {
+        val original = claimOriginals[expected] ?: return@synchronized false
+        mutateIfCurrent(expected, retainedOutcome = original) { original }
+    } } }
+
     /** Durable compare-and-remove under the same lock as every queue write. */
     fun removeIfCurrent(expected: PendingWrite): Boolean = storageResult(false) { admitted { mutateIfCurrent(expected) { null } } }
 
@@ -461,7 +468,8 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     }
 
     @Synchronized
-    private fun mutateIfCurrent(expected: PendingWrite, transform: (PendingWrite) -> PendingWrite?): Boolean {
+    private fun mutateIfCurrent(expected: PendingWrite, retainedOutcome: PendingWrite? = null,
+        transform: (PendingWrite) -> PendingWrite?): Boolean {
         if (!isCurrent(expected)) return false
         val desired = transform(expected)
         val committed = update { rows -> rows.mapNotNull { if (it == expected) desired else it } }
@@ -470,7 +478,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
             claimOriginals.remove(expected)
             retainedClaims.remove(expected.id)
         } else if (expected.status == PendingWriteStatus.IN_PROGRESS) {
-            val outcome = desired?.takeIf { isHeld(expected) || it.status in setOf(PendingWriteStatus.BLOCKED, PendingWriteStatus.FAILED) }
+            val outcome = retainedOutcome ?: desired?.takeIf { isHeld(expected) || it.status in setOf(PendingWriteStatus.BLOCKED, PendingWriteStatus.FAILED) }
                 ?: expected.copy(status = PendingWriteStatus.FAILED, updatedAt = System.currentTimeMillis(),
                     lastError = "Local acknowledgement couldn't be saved. Original change retained; retry verifies the server.")
             retainedClaims[expected.id] = RetainedOutcome(expected, outcome)

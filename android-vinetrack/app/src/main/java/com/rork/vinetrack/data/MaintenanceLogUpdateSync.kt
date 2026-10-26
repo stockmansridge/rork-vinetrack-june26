@@ -5,6 +5,7 @@ import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -125,8 +126,8 @@ class MaintenanceLogUpdateSync(
      * (returns) if a replay is already running. For each item: mark in-progress,
      * then resolve:
      *  - corrupt payload -> blocked so it can't loop,
-     *  - same-log create still unresolved -> deferred (FAILED, retry-eligible,
-     *    no attempt consumed), never PATCHed against a missing row,
+     *  - same-log create still unresolved -> original claim restored unchanged,
+     *    no attempt consumed, never PATCHed against a missing row,
      *  - PATCH succeeds -> removed from the outbox; [onSynced] fires with the
      *    server row so the caller reconciles by id,
      *  - transient (network / 5xx / expired session) -> back to failed for a
@@ -143,13 +144,14 @@ class MaintenanceLogUpdateSync(
                     it.opType == PendingOpType.UPDATE &&
                     (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
             }
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            val versions = pending.freezeReplayVersions(candidates)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, versions) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (payload == null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved maintenance log edit.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved maintenance log edit.")
                     continue
                 }
                 // Dependency gate: never PATCH while the same log's create is
@@ -157,11 +159,7 @@ class MaintenanceLogUpdateSync(
                 // without consuming a retry attempt. Normally the ViewModel folds
                 // edits into a pending create so this is only a safety net.
                 if (hasUnresolvedCreate(payload.id)) {
-                    pending.updateStatus(
-                        write.id,
-                        PendingWriteStatus.FAILED,
-                        "Waiting for this maintenance log to finish saving first.",
-                    )
+                    pending.restoreClaimIfCurrent(write)
                     continue
                 }
                 try {
@@ -183,15 +181,20 @@ class MaintenanceLogUpdateSync(
                         ),
                         clientUpdatedAt = payload.clientUpdatedAt,
                     )
-                    pending.remove(write.id)
-                    onSynced(updated)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.removeIfCurrent(write)) onSynced(updated)
+                } catch (e: VineyardWriteAuthority.Restricted) {
+                    pending.restoreClaimIfCurrent(write)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.restoreClaimIfCurrent(write)
+                    throw e
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to sync this maintenance log edit.")
                 } catch (e: BackendError.Server) {
                     when {
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
+                        else -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The maintenance log edit was rejected (${e.code}).",
                         )
@@ -220,10 +223,7 @@ class MaintenanceLogUpdateSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

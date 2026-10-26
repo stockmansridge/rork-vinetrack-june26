@@ -6,6 +6,7 @@ gradle.projectsEvaluated {
         setSource(app.fileTree('src/test/java') {
             include '**/ReadOnlyEntitlementContractTest.kt', '**/VineTrackAccessRowCompatTest.kt'
             include '**/VineyardWriteAuthorityTest.kt', '**/TripWriteAdmissionTest.kt'
+            include '**/MaintenancePhotoEvidenceStoreTest.kt'
             include '**/FertigationDomainTest.kt', '**/TripOccurrenceJournalTest.kt', '**/StartTankCommitCoordinatorTest.kt'
             include '**/PinPhotoWorkflowTest.kt', '**/FertigationMobileWorkflowTest.kt'
             include '**/ResistancePlanRepositoryTest.kt', '**/ResistancePlanRevisionSyncTest.kt'

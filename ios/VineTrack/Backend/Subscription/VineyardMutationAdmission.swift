@@ -75,7 +75,10 @@ struct VineyardMutationAdmission {
         } catch {
             try requireAccount()
             if error is VineyardWriteAuthority.Restricted { throw error }
-            if authority.handleServerCode((error as? PostgrestError)?.code, vineyardId: vineyardId.uuidString) {
+            // Storage's SDK exposes its structured server error as `error`,
+            // not PostgrestError.code. Never infer expiry from status or message.
+            let serverCode = (error as? PostgrestError)?.code ?? (error as? StorageError)?.error
+            if authority.handleServerCode(serverCode, vineyardId: vineyardId.uuidString) {
                 throw VineyardWriteAuthority.Restricted(reason: authority.heldReason(vineyardId: vineyardId.uuidString) ?? "VT_READ_ONLY")
             }
             throw error

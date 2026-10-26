@@ -4,6 +4,7 @@ import com.rork.vinetrack.data.model.PendingEntityType
 import com.rork.vinetrack.data.model.PendingOpType
 import com.rork.vinetrack.data.model.PendingWrite
 import com.rork.vinetrack.data.model.PendingWriteStatus
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -35,8 +36,8 @@ import kotlinx.serialization.json.Json
  * Dependency gate (safety net): a delete is never finalised while same-log
  * create / update work is still unresolved — deleting first would race those
  * writes (a CREATE could re-insert the row, an UPDATE would 404 against a gone
- * row). Such a marker is deferred (kept FAILED, retry-eligible, no attempt
- * consumed) until the dependencies clear. The caller additionally cancels a
+ * row). Such a marker is deferred with its original status/error/time and no
+ * attempt consumed until the dependencies clear. The caller additionally cancels a
  * local-only create rather than enqueueing, so this gate is a safety net for
  * markers that appear after enqueue.
  *
@@ -122,8 +123,8 @@ class MaintenanceLogDeleteSync(
      * if a replay is already running. For each item: mark in-progress, then
      * resolve:
      *  - corrupt payload -> blocked so it can't loop,
-     *  - same-log create / update still unresolved -> deferred (FAILED,
-     *    retry-eligible, no attempt consumed), never deleted,
+     *  - same-log create / update still unresolved -> original claim restored
+     *    without status/error/time or attempt changes, never deleted,
      *  - soft-delete succeeds (or the row is already gone / not found) -> removed
      *    from the outbox and [onDeleted] fires so the caller can keep the log
      *    hidden,
@@ -140,30 +141,34 @@ class MaintenanceLogDeleteSync(
                     it.opType == PendingOpType.DELETE &&
                     (it.status == PendingWriteStatus.PENDING || it.status == PendingWriteStatus.FAILED)
             }
-            for (write in candidates) {
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+            val versions = pending.freezeReplayVersions(candidates)
+            for (candidate in candidates) {
+                val write = pending.claimReplay(candidate, versions) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (payload == null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved maintenance log delete.")
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED, "Couldn't read the saved maintenance log delete.")
                     continue
                 }
                 // Dependency gate: never delete while the same log's create /
                 // update work is still unresolved. Defer without consuming a retry
                 // attempt so a legitimately-waiting delete can't exhaust its cap.
                 if (hasUnresolvedDependencies(payload.maintenanceLogId)) {
-                    pending.updateStatus(
-                        write.id,
-                        PendingWriteStatus.FAILED,
-                        "Waiting for this maintenance log's other changes to sync first.",
-                    )
+                    // An ID-only delete may belong to a held vineyard. Waiting
+                    // is not failure: retain the original status/error/time exactly.
+                    pending.restoreClaimIfCurrent(write)
                     continue
                 }
                 try {
                     maintenanceRepo.softDeleteMaintenanceLog(payload.maintenanceLogId)
-                    pending.remove(write.id)
-                    onDeleted(payload.maintenanceLogId)
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (pending.removeIfCurrent(write)) onDeleted(payload.maintenanceLogId)
+                } catch (e: VineyardWriteAuthority.Restricted) {
+                    pending.restoreClaimIfCurrent(write)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.restoreClaimIfCurrent(write)
+                    throw e
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to delete this maintenance log.")
                 } catch (e: BackendError.Server) {
@@ -171,12 +176,11 @@ class MaintenanceLogDeleteSync(
                         // Already deleted / never existed server-side — the delete
                         // intent is satisfied. Idempotent success.
                         e.code == 404 -> {
-                            pending.remove(write.id)
-                            onDeleted(payload.maintenanceLogId)
+                            if (pending.removeIfCurrent(write)) onDeleted(payload.maintenanceLogId)
                         }
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
+                        else -> pending.updateStatusIfCurrent(
+                            write,
                             PendingWriteStatus.BLOCKED,
                             "The delete was rejected (${e.code}).",
                         )
@@ -206,10 +210,7 @@ class MaintenanceLogDeleteSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

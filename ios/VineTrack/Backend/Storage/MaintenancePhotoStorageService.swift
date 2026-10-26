@@ -24,31 +24,62 @@ nonisolated enum MaintenancePhotoStorage {
     }
 }
 
+@MainActor
 final class MaintenancePhotoStorageService {
     private let provider: SupabaseClientProvider
+    private let makeAdmission: () throws -> VineyardMutationAdmission
+    private let readOwnership: (UUID) async throws -> [VineyardMutationAdmission.Ownership]
+    private let uploadObject: (String, Data) async throws -> Void
+    private let removeObject: (String) async throws -> Void
 
     init(provider: SupabaseClientProvider = .shared) {
         self.provider = provider
+        self.makeAdmission = { try VineyardMutationAdmission(provider: provider) }
+        self.readOwnership = { id in
+            guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+            return try await provider.client.from("maintenance_logs").select("id,vineyard_id")
+                .eq("id", value: id.uuidString).execute().value
+        }
+        self.uploadObject = { path, payload in
+            _ = try await provider.client.storage.from(MaintenancePhotoStorage.bucket).upload(
+                path, data: payload,
+                options: FileOptions(cacheControl: "3600", contentType: "image/jpeg", upsert: true))
+        }
+        self.removeObject = { path in
+            _ = try await provider.client.storage.from(MaintenancePhotoStorage.bucket).remove(paths: [path])
+        }
+    }
+
+    /// Test seam replaces only external I/O; production ownership/admission and cache behavior remain in use.
+    init(admission: @escaping () throws -> VineyardMutationAdmission,
+         readOwnership: @escaping (UUID) async throws -> [VineyardMutationAdmission.Ownership],
+         upload: @escaping (String, Data) async throws -> Void,
+         remove: @escaping (String) async throws -> Void) {
+        self.provider = .shared
+        self.makeAdmission = admission
+        self.readOwnership = readOwnership
+        self.uploadObject = upload
+        self.removeObject = remove
+    }
+
+    private func owner(id: UUID, vineyardId: UUID, allowMissing: Bool,
+                       admission: VineyardMutationAdmission) async throws -> UUID {
+        // Known holds stop before even an ownership read. Existing remote rows must agree;
+        // an absent row is permitted only for an explicit local-first create/upload.
+        try admission.requireWrite(vineyardId: vineyardId)
+        return try await admission.resolve(id: id, expectedVineyardId: vineyardId,
+                                          allowMissingForCreate: allowMissing) {
+            try await readOwnership(id)
+        }
     }
 
     @discardableResult
     func uploadPhoto(vineyardId: UUID, maintenanceId: UUID, imageData: Data) async throws -> String {
-        guard provider.isConfigured else {
-            throw BackendRepositoryError.missingSupabaseConfiguration
-        }
-        let path = MaintenancePhotoStorage.path(vineyardId: vineyardId, maintenanceId: maintenanceId)
+        let admission = try makeAdmission()
+        let vineyard = try await owner(id: maintenanceId, vineyardId: vineyardId, allowMissing: true, admission: admission)
+        let path = MaintenancePhotoStorage.path(vineyardId: vineyard, maintenanceId: maintenanceId)
         let payload = MaintenancePhotoStorage.compress(imageData) ?? imageData
-        _ = try await provider.client.storage
-            .from(MaintenancePhotoStorage.bucket)
-            .upload(
-                path,
-                data: payload,
-                options: FileOptions(
-                    cacheControl: "3600",
-                    contentType: "image/jpeg",
-                    upsert: true
-                )
-            )
+        try await admission.send(vineyardId: vineyard) { try await uploadObject(path, payload) }
         SharedImageCache.shared.saveImageData(
             payload,
             for: .maintenancePhoto(vineyardId: vineyardId, maintenanceId: maintenanceId),
@@ -75,16 +106,18 @@ final class MaintenancePhotoStorageService {
     }
 
     func deletePhoto(path: String, vineyardId: UUID? = nil, maintenanceId: UUID? = nil) async throws {
-        guard provider.isConfigured else {
-            throw BackendRepositoryError.missingSupabaseConfiguration
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 4, parts[1] == "maintenance", parts[3] == "photo.jpg",
+              let vineyard = UUID(uuidString: String(parts[0])),
+              let record = UUID(uuidString: String(parts[2])),
+              path == MaintenancePhotoStorage.path(vineyardId: vineyard, maintenanceId: record),
+              vineyardId == nil || vineyardId == vineyard,
+              maintenanceId == nil || maintenanceId == record else {
+            throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
         }
-        _ = try await provider.client.storage
-            .from(MaintenancePhotoStorage.bucket)
-            .remove(paths: [path])
-        if let vineyardId, let maintenanceId {
-            SharedImageCache.shared.removeCachedImage(
-                for: .maintenancePhoto(vineyardId: vineyardId, maintenanceId: maintenanceId)
-            )
-        }
+        let admission = try makeAdmission()
+        _ = try await owner(id: record, vineyardId: vineyard, allowMissing: false, admission: admission)
+        try await admission.send(vineyardId: vineyard) { try await removeObject(path) }
+        SharedImageCache.shared.removeCachedImage(for: .maintenancePhoto(vineyardId: vineyard, maintenanceId: record))
     }
 }

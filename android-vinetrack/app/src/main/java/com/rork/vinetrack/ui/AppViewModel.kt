@@ -1421,6 +1421,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val savedSprayPresetRepo = SavedSprayPresetRepository(session)
     private val maintenanceRepo = MaintenanceLogRepository(session)
     private val maintenancePhotoRepo = MaintenancePhotoRepository(session)
+    private val maintenancePhotoEvidence by lazy {
+        com.rork.vinetrack.data.MaintenancePhotoEvidenceStore(java.io.File(getApplication<Application>().filesDir, "maintenance-photo-evidence-v1"))
+    }
     private val growthRepo = GrowthStageRecordRepository(session)
     private val paddockRepo = PaddockRepository(session)
     private val yieldRepo = YieldRepository(session)
@@ -14945,12 +14948,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun uploadMaintenancePhoto(log: MaintenanceLog, uri: Uri, onResult: (Boolean) -> Unit) {
         val vineyardId = log.vineyardId
+        val account = session.accountAccess() ?: run { onResult(false); return }
         _ui.update { it.copy(maintenancePhotoBusy = true, maintenanceError = null) }
         viewModelScope.launch {
             try {
+                if (!session.isAccountAccessCurrent(account)) throw BackendError.Unauthorized
+                com.rork.vinetrack.data.OperationalWrites.requireWrite(vineyardId)
                 val jpeg = PinPhotoImageUtil.compress(getApplication(), uri)
-                val path = maintenancePhotoRepo.upload(vineyardId, log.id, jpeg)
+                var evidence = maintenancePhotoEvidence.stage(account.userId, vineyardId, log.id, jpeg)
+                val path = evidence.uploadedPath ?: maintenancePhotoRepo.upload(vineyardId, log.id, maintenancePhotoEvidence.bytes(evidence)).also {
+                    // Keep the real receipt under its original author even if authority
+                    // changes during transport; the following PATCH is separately admitted.
+                    evidence = maintenancePhotoEvidence.recordReceipt(evidence, it)
+                }
+                if (!session.isAccountAccessCurrent(account)) throw BackendError.Unauthorized
                 val updated = maintenanceRepo.updatePhotoPath(log.id, path)
+                maintenancePhotoEvidence.complete(evidence)
+                if (!session.isAccountAccessCurrent(account)) { onResult(false); return@launch }
                 _ui.update { st ->
                     st.copy(
                         maintenanceLogs = st.maintenanceLogs.map { if (it.id == log.id) updated else it },
@@ -14958,7 +14972,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
                 onResult(true)
+            } catch (e: com.rork.vinetrack.data.VineyardWriteAuthority.Restricted) {
+                _ui.update { it.copy(maintenancePhotoBusy = false, maintenanceError = "Maintenance photo retained while changes are held.") }
+                onResult(false)
             } catch (e: BackendError.Unauthorized) {
+                if (!session.isAccountAccessCurrent(account)) { onResult(false); return@launch }
                 _ui.update { it.copy(maintenancePhotoBusy = false) }; onUnauthorized("uploadMaintenancePhoto"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(maintenancePhotoBusy = false, maintenanceError = friendlyWriteError(e.code)) }
@@ -14974,11 +14992,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun removeMaintenancePhoto(log: MaintenanceLog, onResult: (Boolean) -> Unit) {
         val path = log.photoPath
         if (path.isNullOrBlank()) { onResult(true); return }
+        val account = session.accountAccess() ?: run { onResult(false); return }
         _ui.update { it.copy(maintenancePhotoBusy = true, maintenanceError = null) }
         viewModelScope.launch {
             try {
-                runCatching { maintenancePhotoRepo.delete(path) }
+                if (!session.isAccountAccessCurrent(account)) throw BackendError.Unauthorized
+                // A held/failed delete is not an acknowledgement. Retain the
+                // original photo reference and do not send a follow-up PATCH.
+                maintenancePhotoRepo.delete(path)
+                if (!session.isAccountAccessCurrent(account)) throw BackendError.Unauthorized
                 val updated = maintenanceRepo.updatePhotoPath(log.id, null)
+                if (!session.isAccountAccessCurrent(account)) { onResult(false); return@launch }
                 _ui.update { st ->
                     st.copy(
                         maintenanceLogs = st.maintenanceLogs.map { if (it.id == log.id) updated else it },
@@ -14986,7 +15010,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
                 onResult(true)
+            } catch (e: com.rork.vinetrack.data.VineyardWriteAuthority.Restricted) {
+                _ui.update { it.copy(maintenancePhotoBusy = false, maintenanceError = "The original maintenance photo is retained while changes are held.") }
+                onResult(false)
             } catch (e: BackendError.Unauthorized) {
+                if (!session.isAccountAccessCurrent(account)) { onResult(false); return@launch }
                 _ui.update { it.copy(maintenancePhotoBusy = false) }; onUnauthorized("removeMaintenancePhoto"); onResult(false)
             } catch (e: BackendError.Server) {
                 _ui.update { it.copy(maintenancePhotoBusy = false, maintenanceError = friendlyWriteError(e.code)) }

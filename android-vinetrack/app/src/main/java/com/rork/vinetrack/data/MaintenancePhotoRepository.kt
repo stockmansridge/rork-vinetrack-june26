@@ -36,11 +36,17 @@ class MaintenancePhotoRepository(private val session: SessionStore) {
     suspend fun upload(vineyardId: String, logId: String, jpeg: ByteArray): String =
         withContext(Dispatchers.IO) {
             requireConfig()
+            val scope = MaintenanceWriteScope(session)
+            val vineyard = scope.owner(logId, vineyardId)
+            val path = storagePath(vineyard, logId)
+            MaintenanceWriteScope.objectOwner(path)
+            scope.send(vineyard) {
             val token = session.accessToken ?: throw BackendError.Unauthorized
-            val path = storagePath(vineyardId, logId)
             val response = SupabaseClient.http.post(
                 SupabaseClient.storageUrl("object/$BUCKET/$path")
             ) {
+                attributes.put(SupabaseClient.accountRequestScope, scope.account)
+                attributes.put(SupabaseClient.operationalWriteVineyard, vineyard)
                 authHeaders(token)
                 headers {
                     append("x-upsert", "true")
@@ -48,10 +54,8 @@ class MaintenancePhotoRepository(private val session: SessionStore) {
                 }
                 setBody(ByteArrayContent(jpeg, ContentType.Image.JPEG))
             }
-            when {
-                response.status.isSuccess() -> path
-                response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
-                else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+            if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+            path // Preserve the real receipt even if authority changed during upload.
             }
         }
 
@@ -81,16 +85,19 @@ class MaintenancePhotoRepository(private val session: SessionStore) {
     /** Remove the stored photo. Gated server-side by the bucket delete policy. */
     suspend fun delete(path: String) = withContext(Dispatchers.IO) {
         requireConfig()
+        val (pathVineyard, record) = MaintenanceWriteScope.objectOwner(path)
+        val scope = MaintenanceWriteScope(session)
+        val vineyard = scope.owner(record, pathVineyard)
+        scope.send(vineyard) {
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.delete(
             SupabaseClient.storageUrl("object/$BUCKET/$path")
         ) {
+            attributes.put(SupabaseClient.accountRequestScope, scope.account)
+            attributes.put(SupabaseClient.operationalWriteVineyard, vineyard)
             authHeaders(token)
         }
-        when {
-            response.status.isSuccess() -> Unit
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
-            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
         }
     }
 

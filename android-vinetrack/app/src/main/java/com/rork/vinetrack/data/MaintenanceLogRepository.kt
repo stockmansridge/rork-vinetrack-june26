@@ -114,9 +114,12 @@ class MaintenanceLogRepository(private val session: SessionStore) {
     ): MaintenanceLog =
         withContext(Dispatchers.IO) {
             requireConfig()
+            val scope = MaintenanceWriteScope(session)
+            val recordId = id ?: UUID.randomUUID().toString()
+            val vineyard = scope.owner(recordId, vineyardId, allowMissingForCreate = true)
             val token = session.accessToken ?: throw BackendError.Unauthorized
             val body = MaintenanceInsert(
-                id = id ?: UUID.randomUUID().toString(),
+                id = recordId,
                 vineyardId = vineyardId,
                 itemName = input.itemName,
                 equipmentSource = input.equipmentSource,
@@ -133,13 +136,18 @@ class MaintenanceLogRepository(private val session: SessionStore) {
                 createdBy = session.userId,
                 clientUpdatedAt = clientUpdatedAt ?: nowIso(),
             )
+            scope.send(vineyard) {
             val response = SupabaseClient.http.post(SupabaseClient.restUrl("maintenance_logs")) {
+                attributes.put(SupabaseClient.accountRequestScope, scope.account)
+                attributes.put(SupabaseClient.operationalWriteVineyard, vineyard)
                 authHeaders(token)
                 headers { append("Prefer", "return=representation") }
                 contentType(ContentType.Application.Json)
                 setBody(body)
             }
+            if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
             firstRow(response)
+            }
         }
 
     /**
@@ -157,6 +165,8 @@ class MaintenanceLogRepository(private val session: SessionStore) {
     ): MaintenanceLog =
         withContext(Dispatchers.IO) {
             requireConfig()
+            val scope = MaintenanceWriteScope(session)
+            val vineyard = scope.owner(id)
             val token = session.accessToken ?: throw BackendError.Unauthorized
             val patch = MaintenancePatch(
                 itemName = input.itemName,
@@ -173,13 +183,18 @@ class MaintenanceLogRepository(private val session: SessionStore) {
                 isFinalized = input.isFinalized,
                 clientUpdatedAt = clientUpdatedAt ?: nowIso(),
             )
+            scope.send(vineyard) {
             val response = SupabaseClient.http.patch(SupabaseClient.restUrl("maintenance_logs?id=eq.$id")) {
+                attributes.put(SupabaseClient.accountRequestScope, scope.account)
+                attributes.put(SupabaseClient.operationalWriteVineyard, vineyard)
                 authHeaders(token)
                 headers { append("Prefer", "return=representation") }
                 contentType(ContentType.Application.Json)
                 setBody(patch)
             }
+            if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
             firstRow(response)
+            }
         }
 
     /**
@@ -190,28 +205,39 @@ class MaintenanceLogRepository(private val session: SessionStore) {
      */
     suspend fun updatePhotoPath(id: String, photoPath: String?): MaintenanceLog = withContext(Dispatchers.IO) {
         requireConfig()
+        val scope = MaintenanceWriteScope(session)
+        val pathOwner = photoPath?.let { MaintenanceWriteScope.objectOwner(it) }
+        if (pathOwner != null && !pathOwner.second.equals(id, true)) throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+        val vineyard = scope.owner(id, pathOwner?.first)
+        scope.send(vineyard) {
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.patch(SupabaseClient.restUrl("maintenance_logs?id=eq.$id")) {
+            attributes.put(SupabaseClient.accountRequestScope, scope.account)
+            attributes.put(SupabaseClient.operationalWriteVineyard, vineyard)
             authHeaders(token)
             headers { append("Prefer", "return=representation") }
             contentType(ContentType.Application.Json)
             setBody(PhotoPatch(photoPath))
         }
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
         firstRow(response)
+        }
     }
 
     suspend fun softDeleteMaintenanceLog(id: String) = withContext(Dispatchers.IO) {
         requireConfig()
+        val scope = MaintenanceWriteScope(session)
+        val vineyard = scope.owner(id)
+        scope.send(vineyard) {
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_maintenance_log")) {
+            attributes.put(SupabaseClient.accountRequestScope, scope.account)
+            attributes.put(SupabaseClient.operationalWriteVineyard, vineyard)
             authHeaders(token)
             contentType(ContentType.Application.Json)
             setBody(SoftDeleteArgs(id))
         }
-        when {
-            response.status.isSuccess() -> Unit
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
-            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
         }
     }
 

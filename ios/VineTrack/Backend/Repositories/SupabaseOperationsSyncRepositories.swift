@@ -278,12 +278,31 @@ final class SupabaseMaintenanceLogSyncRepository: MaintenanceLogSyncRepositoryPr
     func upsertMany(_ items: [BackendMaintenanceLogUpsert]) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard !items.isEmpty else { return }
-        try await provider.client.from("maintenance_logs").upsert(items, onConflict: "id").execute()
+        let admission = try VineyardMutationAdmission(provider: provider)
+        for item in items {
+            try admission.requireWrite(vineyardId: item.vineyardId)
+            _ = try await admission.resolve(id: item.id, expectedVineyardId: item.vineyardId, allowMissingForCreate: true) {
+                try await provider.client.from("maintenance_logs").select("id,vineyard_id")
+                    .eq("id", value: item.id.uuidString).execute().value
+            }
+        }
+        for (vineyard, group) in Dictionary(grouping: items, by: \.vineyardId) {
+            try await admission.send(vineyardId: vineyard) {
+                try await provider.client.from("maintenance_logs").upsert(group, onConflict: "id").execute()
+            }
+        }
     }
 
     func softDelete(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client.rpc("soft_delete_maintenance_log", params: OpsSoftDeleteByIdRequest(id: id)).execute()
+        let admission = try VineyardMutationAdmission(provider: provider)
+        let vineyard = try await admission.resolve(id: id) {
+            try await provider.client.from("maintenance_logs").select("id,vineyard_id")
+                .eq("id", value: id.uuidString).execute().value
+        }
+        try await admission.send(vineyardId: vineyard) {
+            try await provider.client.rpc("soft_delete_maintenance_log", params: OpsSoftDeleteByIdRequest(id: id)).execute()
+        }
     }
 }
 

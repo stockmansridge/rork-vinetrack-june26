@@ -45,6 +45,12 @@ final class OperationsSyncMetadata {
     var pendingUpserts: [UUID: Date] { state.pendingUpserts }
     var pendingDeletes: [UUID: Date] { state.pendingDeletes }
 
+    /// Metadata acknowledgement is not a photo acknowledgement. Keep the original
+    /// dirty timestamp until its attachment is uploaded; do not mint a new retry.
+    func acknowledgeMaintenanceMetadata(_ uploaded: [UUID], pendingPhotos: Set<UUID>) {
+        clearDirty(uploaded.filter { !pendingPhotos.contains($0) })
+    }
+
     func completionMode(for id: UUID) -> Bool? { state.workTaskCompletionModes?[id] }
     func setCompletionMode(_ mode: Bool, for id: UUID) {
         var modes = state.workTaskCompletionModes ?? [:]
@@ -1344,17 +1350,18 @@ final class MaintenanceLogSyncService {
             let byId = Dictionary(store.maintenanceLogs.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendMaintenanceLogUpsert] = []
             var pushed: [UUID] = []
-            var orphans: [UUID] = []
             var photoUploadFailures: [String] = []
+            var pendingPhotos: Set<UUID> = []
+            let admission = try VineyardMutationAdmission()
             for (id, ts) in dirty {
-                // Reclaim queue entries whose local record no longer exists — they
-                // can never upload and used to wedge the queue forever. Records from
-                // another vineyard are still uploaded: the payload carries its own
-                // vineyard id.
-                guard var item = byId[id] else { orphans.append(id); continue }
+                // Absence from the currently loaded slice is not proof that an
+                // original in another vineyard/account was deleted. Keep its marker.
+                guard var item = byId[id] else { continue }
                 // Photos live under the record's OWN vineyard, not whichever
                 // vineyard happens to be selected during this sweep.
                 let photoVineyardId = item.vineyardId
+                do { try admission.requireWrite(vineyardId: photoVineyardId) }
+                catch is VineyardWriteAuthority.Restricted { continue }
                 // If the log has a local invoice photo but no synced path, upload first.
                 if let data = item.invoicePhotoData, item.photoPath == nil {
                     SharedImageCache.shared.saveImageData(
@@ -1375,23 +1382,30 @@ final class MaintenanceLogSyncService {
                         #if DEBUG
                         print("[MaintenanceLogSync] photo upload failed for \(item.id): \(error.localizedDescription)")
                         #endif
+                        pendingPhotos.insert(id)
+                        if error is VineyardWriteAuthority.Restricted { continue }
                         photoUploadFailures.append(error.localizedDescription)
-                        // Still push log metadata; photo will retry next sync.
+                        // Metadata can succeed independently, but must not erase the photo retry.
                     }
                 }
+                // Keep a genuine upload receipt above even if expiry arrived in flight;
+                // never let the following metadata write borrow fresh account authority.
+                do { try admission.requireWrite(vineyardId: photoVineyardId) }
+                catch is VineyardWriteAuthority.Restricted { continue }
                 payloads.append(BackendMaintenanceLog.upsert(from: item, createdBy: createdBy, clientUpdatedAt: ts))
                 pushed.append(id)
             }
-            metadata.clearDirty(orphans)
-            SyncIssueCenter.shared.clearIssues(orphans)
             let result = await SyncQueuePush.run(
                 entity: "Maintenance Logs",
                 ids: pushed,
                 payloads: payloads,
                 queuedAt: dirty,
                 vineyardId: vineyardId
-            ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
+            ) { items in
+                for item in items { try admission.requireWrite(vineyardId: item.vineyardId) }
+                try await repository.upsertMany(items)
+            }
+            metadata.acknowledgeMaintenanceMetadata(result.uploaded, pendingPhotos: pendingPhotos)
             SyncIssueCenter.shared.notePending(entity: "Maintenance Logs", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
             if !photoUploadFailures.isEmpty {
