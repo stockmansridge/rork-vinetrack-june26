@@ -1,5 +1,110 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Isolated acceptance continuation — 26 October 2026 — NOT READY FOR PHYSICAL DEVICE TESTING
+
+The owner supplied the authoritative23-case matrix and authorised isolated authenticated test-account/test-vineyard acceptance. Those are no longer missing permissions/checklist blockers. **Actual isolated connection details, test credentials, fixture IDs and the expiry/reactivation control contract remain missing.** Native enforcement completeness also remains independently unfinished. Historical entry and notice/purchase UX have NOT been enabled; no store upload/release, production owner-data query/mutation, migration/deployment or retained-device operation occurred.
+
+### A. Changes and accepted recovery contract
+
+Only `android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayStartProductionAndroidTest.kt` changed in application/test paths from starting HEAD `7a6fa9b855b384738fc0c1285ffc9aec9e1897ba`. Existing report/approved plan updated separately. Preexisting managed history and skills-mount fingerprint retained. No production recovery, startup, costing, version/signing/dependency or entitlement-routing change.
+
+Confirmed intended behavior from the existing16 October accepted bounded Start closeout below, section A, and `AppViewModel.submitPreparedLegacySprayAwaited`: exact verified immutable Start receipt permits original frozen pair fallback on metadata hydration failure. It does not permit arbitrary history adoption, unknown acceptance, cancellation or unauthorized fallback. The old test's reload-pending assertion was obsolete.
+
+Renamed the test to `acceptedButReloadFailedStartsVerifiedOriginalWithoutAnotherCreate`. It now requires the injected reload failure actually to occur; successful original Start; accepted candidate/verified receipt equality and validation; original operation/Trip/actor/vineyard; original engine hours; one durable original local-first activation marker; unchanged active disk/journal/marker on return through saved-Trip entry; no duplicate create/recovery/activation send; required Tank1 review and no tracking bypass. Working recovery logic unchanged.
+
+### B. Shared enforcement and native gaps
+
+Receipt recovery and operational writes remain separate. This pass corrected a contract expectation, not the enforcement architecture. The previous bounded guards remain in place; the UI is not being used as the security boundary.
+
+Known native gaps remain: full Growth original-owner/account-incarnation replay; independent scouting/Insights/planning/maintenance journals; other direct attachment transports; fertigation/resistance retry callers; suspended active Spray/occurrence/GPS acknowledgements; SDK/HTTP refresh-retry execution; completed-history all-exposed-mutation zero-write; full restart/offline/account/vineyard permutations. Reinspection confirms iOS `MaintenancePhotoStorageService.uploadPhoto/deletePhoto` and Android `MaintenancePhotoRepository.upload/delete` still directly call storage without the vineyard write-admission boundary. That is a concrete source gap for case13, not an authenticated exploit reproduction or a passing case. Do not enable historical entry merely because the narrow regression selection is now green.
+
+### C. Journals, identity and receipt evidence
+
+The corrected test checks the existing verified original pair, not a recreated replacement. Candidate and verified receipt validate the frozen operation, Trip, record and vineyard; returning to the owned Trip preserves the complete stored attempt and active snapshot and the same activation queue row. The request/receipt fixture is synthetic and intercepted; PostgreSQL fingerprint validity, actual deployed atomicity and exact-once server behavior are not thereby proven.
+
+### D. Backend discovery and missing access
+
+`backendStatus` reports only production ref `tbafuqwruefgkbyxrxyb`, native Supabase Auth/RLS, no preview and no deployed Edge Functions. No isolated test URL/accounts/fixture controls were configured in the sandbox; existing scripts contain no authenticated acceptance fixture. **No authenticated request, signup, broad record enumeration, server-data read/write, schema migration or deployment was made.** Production metadata discovery is not owner-data acceptance.
+
+Required next input through secure server-only configuration: test backend URL and anon key; two ordinary synthetic test-account credentials; explicit allowlisted test vineyard A/B and seeded block/completed Spray/Trip/Tank/planned/active record IDs; deployed capability/receipt contract; approved test-only mechanism to move A writable→expired→writable and capture authoritative readback. Do not put a service-role credential into either native client, invent a control endpoint or silently modify production subscriptions.
+
+### E. iOS automated tests and separate build
+
+Fresh requested18-suite selection: **284 passed in106s**, tool success, no reported failures. Selection: DeviceTripOwnershipTests, VineyardWriteAuthorityTests, ReadOnlyEntitlementContractTests, SpraySaveForLaterTests, EntitlementDecisionTests, EntitlementAccessRegressionTests, OfflineQuickActionsTests, ResistancePlanRepositoryTests, ResistancePlanRevisionSyncTests, FertigationMobileWorkflowTests, FertigationDomainTests, TripOccurrenceJournalTests, StartTankCommitCoordinatorTests, PinPhotoWorkflowTests, VineyardMutationAdmissionTests, LinkedPinGrowthDeletionWorkflowTests, MobileRequestSyncSafeguardTests, GrowthStageVarietyParityTests. Aggregate count is not a per-method/discovery/skipped XML manifest or a historical-screen UI journey.
+
+Separate current **`runChecks(ios)` PASS**, simulator build only; physical-device/Release acceptance not established. No post-entry/UX result is claimed because those paths remain disabled.
+
+### F. Android host, instrumentation and separate build
+
+- Fresh host focused11 suites **209/209,27.516s**, separate existing six-suite regressions **55/55,12.051s**, both exit0 and zero failures/errors/skips. Artifacts `/tmp/vinetrack-read-only-contract-7gbss8d_/{contract,existing-regressions}/result.json`, XML and `finished.json`. Runner unchanged; no concurrent normal build during host execution.
+- First revised instrumentation selection **8 passed/1 failed/0 skipped,4.020s**: original Start and receipt assertions passed, but new test incorrectly tried a fresh calculator Start after the original Start was already complete/owned. The accepted creation admission correctly refused. Fixture changed to return via the existing saved-Trip entry, as its existing valid-hours regression does; no production change.
+- Next selection **8/1/0,4.005s**: it incorrectly required one immediate HTTP activation. Existing architecture activates locally and durably enqueues a marker, with replay separately admitted. Corrected test asserts one exact original activation marker and no additional send/marker on saved-Trip return, rather than forcing replay or changing production startup/session/replay admission.
+- Final affected selection: **9 passed/0 failed/0 skipped in15s**, authoritative successful `androidTest` tool result. Three `PinPhotoAdmissionAndroidTest` methods; `RetainedStartupConstructionTest#expiredTankPreviewAndCommandsKeepOriginalDiskDraftAndReconciliationMarker`; `SprayStartProductionAndroidTest` methods `expiredCalculatorStartDoesNotPrepareOrSendReplacementWork`, `receiptReadOnlyRestoresUnclaimedOriginalAndStillAllowsRecoveryRead`, `blankHoursActivateOriginalAndKeepFirstTankGpsSafetyGate`, `acceptedButReloadFailedStartsVerifiedOriginalWithoutAnotherCreate`, `lostResponseUsesRecoveryOnlyAndKeepsOriginalOperation`. Synthetic HTTP/disposable preferences, not live backend or physical GPS. The local `/tmp/rork-android-test-android-vinetrack.log` still contains the preceding failed run; do not mislabel that retained log as the final pass artifact.
+- Separate current **`runChecks(android-vinetrack)` PASS**. Existing nonblocking legacy asset-address advisories unchanged. Five unrelated historical completion failures were not repaired or included in this selected host gate; not a whole-project green claim.
+
+### G. Exact23-case acceptance ledger
+
+**23/23 NOT ACHIEVED. None is signed off as complete both-platform operational/authenticated acceptance in this run.** The exact supplied cases are retained below. PARTIAL means bounded native automated evidence exists, not operational PASS. NOT RUN means no authorised isolated execution yet. SOURCE GAP means known unclosed enforcement, not a fabricated runtime failure.
+
+1. **Expired user can authenticate successfully. — NOT RUN:** no genuine expired test-account credentials.
+2. **Expired user can enter the app once historical access is intentionally enabled for acceptance. — NOT RUN:** entry not enabled while enforcement remains incomplete; isolated test-candidate entry journey pending.
+3. **Expired user can view vineyard/block/history data. — NOT RUN:** no scoped authenticated fixture or expired historical UI journey.
+4. **Expired user can open a completed Spray record. — NOT RUN:** no scoped completed Spray fixture/entry journey.
+5. **Expired user can open a completed Trip. — NOT RUN:** no scoped completed Trip fixture/entry journey.
+6. **Expired user can inspect historical Tank data. — NOT RUN:** no scoped completed Tank fixture/entry journey.
+7. **Expired user cannot create a new Spray. — PARTIAL:** held Android Calculator Start sends zero paired-save/activation/recovery and creates no journal; iOS held Save-for-Later/service guards covered. All creation routes/both native apps authenticated acceptance pending.
+8. **Expired user cannot start an existing planned Spray. — PARTIAL:** admission/occurrence suites exist; all planned legacy/qualified routes and actual backend zero-write acceptance pending.
+9. **Expired user cannot modify an active Trip. — PARTIAL:** held active-command and authoritative Trip tests green; every exposed active transition and suspended acknowledgement pending.
+10. **Expired user cannot change Tank/fill actuals. — PARTIAL:** held Tank actual-ViewModel and Start Tank suites green; full exposed actuals and server-state proof pending.
+11. **Expired user cannot create or alter GPS evidence. — PARTIAL:** held active GPS/service guards green; full local evidence/transport/restart acceptance pending.
+12. **Expired user cannot create or alter Pin/Growth records. — PARTIAL:** direct ownership/transport tests green; Growth author/incarnation replay and every exposed route pending.
+13. **Expired user cannot upload or delete photos/attachments. — SOURCE GAP:** Pin/Growth held transport tests green; unguarded maintenance storage paths still exist on both platforms; other attachment families and actual SDK rejection representation pending.
+14. **Expired user cannot create or modify Fertigation records. — PARTIAL:** scoped service/role/replay suites green; all independent callers and authenticated before/after proof pending.
+15. **Expired user cannot create or modify resistance/scouting or other independent journal records. — PARTIAL/OPEN INVENTORY:** resistance selection green; full independent journal/local-claim/transport inventory incomplete.
+16. **Any attempted write while read-only produces zero server mutation and does not consume retry attempts. — PARTIAL:** selected synthetic zero-send and attempt-retention tests green; no exhaustive native route exercise or authenticated database snapshots.
+17. **Work created while writable and queued before expiry remains locally intact after expiry. — PARTIAL:** selected outbox/photo/journal retention fixtures green; all original work families not yet accepted.
+18. **App restart while expired preserves held work with original IDs, timestamps, ownership, journal/receipt metadata and attachments. — PARTIAL:** selected disk/service/authority recreation fixtures green; full main-app process-restart matrix not executed.
+19. **Offline restart while expired does not replay held work. — PARTIAL:** isolated offline/replay admission fixtures green; both-platform full process/offline transport evidence pending.
+20. **Fresh read-only authority after reconnect keeps the original work held. — PARTIAL:** capability/hold tests green; genuine reconnect against the deployed server contract pending.
+21. **Fresh writable authority for the same account and vineyard releases the exact original held work once, without duplicates. — PARTIAL:** scoped synthetic replay/receipt tests green; real before/after row counts and immutable receipt lineage pending.
+22. **Writable Vineyard B must not release work held for read-only Vineyard A, and account switching must not release another account’s held work. — PARTIAL:** selected A/B and stale-account native tests green; comprehensive native queue families and backend RLS/cross-account boundary pending.
+23. **Sign-out/sign-in, stale cache, stale entitlement responses and delayed backend responses must not restore write access without a fresh explicit writable result for the owning account/vineyard. — PARTIAL:** same-account incarnation, stale errors and cached-capability fixtures green; full delayed entitlement/SDK retry/main-app transition matrix and genuine backend responses pending.
+
+### H. Authenticated backend, restart/offline, isolation and zero-write results
+
+- **Authenticated backend: NOT RUN/BLOCKED on actual isolated test access and control contract.** Historical reads, denied-mutation before/after equality, exact-once reactivation, journal/receipt lineage and backend account/vineyard isolation are not proven. No deployed contract was inferred from native mocks.
+- **Restart/offline: PARTIAL native selection only.** No full both-platform process death/offline reconnect acceptance; no retained-owner-handset operation.
+- **Account/vineyard isolation: PARTIAL synthetic/native tests.** Not genuine backend RLS/membership revocation acceptance.
+- **Zero-write evidence: bounded only.** Known-held Calculator Start leaves native journal preference map/draft/ActiveTrip unchanged with zero mock save/activation/recovery sends. Pin/Growth held upload/delete and actual-row ownership tests intercept no prohibited mock mutation; held Tank commands preserve disk/marker/draft. These do not cover maintenance/all transports or prove actual server row equality. Zero authenticated requests made in this pass is a safety record, NOT proof the backend denies writes.
+- Required backend evidence remains: authenticated permitted scoped reads; each prohibited mutation against seeded isolated records with row/object/receipt snapshot equality; held-native transport counter zero and retries unchanged; original replay once after explicit owning-scope writable verification; exact original IDs/payload/receipt chain and no duplicates; cross-account/vineyard denial without changing A.
+
+### I. Source identity and validation boundary
+
+Starting HEAD **`7a6fa9b855b384738fc0c1285ffc9aec9e1897ba`**, plus one test-file delta. Sorted UTF-8 `SHA256(file bytes) + two spaces + project-relative path + newline` manifest SHA256 **`3d0427151bf17bce0fd0f5e774c791bd7ffa5fb691347bfb4580f5e94d241999`**:
+
+```text
+b0c414c6651d6e74a40a46ad99368c7b271c73c3a9bc3bcb0ed45af86f7d6194  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayStartProductionAndroidTest.kt
+```
+
+Report/approved plan and preexisting managed state excluded. Production iOS/Android source unchanged relative to this starting HEAD. Prior14-file manifest remains historical in the checkpoint below. Final manifest-byte and whitespace verification recorded before handoff. Starting HEAD is not a final managed-save revision or signed device artifact binding.
+
+### J. Entry/UX gate and physical-only verification
+
+**NOT READY FOR PHYSICAL DEVICE TESTING.** Do not issue READY based on the green narrow selection. Remaining native and isolated authenticated gates above must close first. The intended isolated acceptance entry path for cases2–6 must be deliberately enabled only after shared enforcement is complete; no global early release. Final entry/UX must be followed by fresh relevant automated tests and both builds. No post-UX validation is claimed in this run.
+
+Required eventual copy remains: “Your trial has ended. VineTrack is currently read-only. Purchase a subscription to make changes.” Primary **View plans / Purchase**; secondary **Cancel / Keep viewing**; existing billing/restore, no background prompt stacking and no UI-only boundary.
+
+After software/backend gates pass, exact physical verification still required on both iPhone and Android:
+- Source-bound candidate identity/signing and compatible retained-data in-place installation; stable true cold launch/live process and retained originals without uninstall/cache clear/reset.
+- Real expired authentication and historical vineyard/block/completed Spray/Trip/Tank screen navigation; no render/open/cancel side effects.
+- Foreground/background/OS process termination and real flight-mode restart/reconnect with held work/evidence intact; no automatic replay or retry consumption during expiry.
+- Live Trip/Spray entitlement change with actual location permissions/provider, GPS capture state and delayed responses; no unintended completion, tank/fill correction or discarded evidence. Tank1 Actual review must still precede recording.
+- Actual camera/photo attachment handling and byte/revision retention through interruption; receipt/reference resumes without duplicate upload once authorised.
+- Read-only notice and deliberate-change prompt readability/accessibility, dismissal/keep-viewing, no background stacking; sandbox purchase/restore/cancel and fresh authority restoration through existing billing.
+- Owning-vineyard exact-once resumption, vineyard/account switches and sign-out/return with real network delay/reauthentication. Backend row/object counts must corroborate device observations.
+
+No physical verification is represented by these automated counts. No store upload or production release.
+
 ## Expired-trial enforcement — independent transports and Spray checkpoint, 24 October 2026
 
 **PARTIAL; ACCEPTANCE NOT GREEN. Historical entry and notice/purchase UX remain closed.** Both current normal builds PASS. Latest Android instrumentation selection is **8 passed /1 failed /0 skipped**; the existing reload-pending expectation remains unresolved. Native completeness, original23-case acceptance, isolated authenticated backend acceptance and physical readiness are not established.

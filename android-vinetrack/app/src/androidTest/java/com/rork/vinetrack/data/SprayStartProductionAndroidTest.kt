@@ -678,15 +678,50 @@ class SprayStartProductionAndroidTest {
         assertEquals(savedTrip!!.getValue("id").jsonPrimitive.content, LegacySpraySaveStore(app).retainedStart(vineyard)?.trip?.id)
         assertFalse(start().isStarted); assertEquals(1, creates)
     }
-    @Test fun acceptedButReloadFailedRetriesOriginalWithoutAnotherCreate() {
+    @Test fun acceptedButReloadFailedStartsVerifiedOriginalWithoutAnotherCreate() {
         failReload = true; setup()
         val first = start(123.5)
-        assertFalse(first.isStarted); assertTrue(first.message!!.contains("reload is pending"))
-        val original = requireNotNull(LegacySpraySaveStore(app).retainedStart(vineyard))
-        val recovered = start(999.0)
-        assertTrue(recovered.message, recovered.isStarted); assertEquals(original.trip.id, recovered.tripId)
-        assertEquals(123.5, ActiveTripStore(app).load()!!.trip.startEngineHours!!, 0.0)
+        // Accepted contract: metadata hydration is not a prerequisite after exact
+        // immutable receipt verification. Recover only this frozen Start, not history.
+        assertTrue(first.message, first.isStarted)
+        assertFalse("The injected post-acceptance reload failure was not exercised", failReload)
+        val original = storedAttempts().single()
+        assertTrue(original.startRequested); assertTrue(original.startCompleted)
+        assertEquals("accepted", original.verified?.status)
+        requireNotNull(original.verified).validate(original)
+        assertEquals(original.candidate, original.verified)
+        assertEquals(original.trip.id, first.tripId)
+        assertEquals(original.rpc?.operation, first.operationId)
+        assertEquals(actor, original.actorId); assertEquals(vineyard, original.trip.vineyardId)
+        val active = requireNotNull(ActiveTripStore(app).load())
+        assertEquals(original.trip.id, active.trip.id); assertEquals(actor, active.ownerUserId)
+        assertEquals(123.5, active.trip.startEngineHours!!, 0.0)
+        assertTrue(vm.requiresFirstTankReview(active.trip))
+        assertFalse("Receipt fallback must not bypass Tank 1 GPS safety", vm.ui.value.isTracking)
+        val pending = AppViewModel::class.java.getDeclaredField("pendingWrites").let {
+            it.isAccessible = true; it.get(vm) as PendingWriteRepository
+        }
+        val activation = pending.list().filter { it.entityType == PendingEntityType.TRIP_START && it.clientId == original.trip.id }
+        assertEquals("Local-first activation must retain exactly one original marker", 1, activation.size)
+        val payload = SupabaseClient.json.decodeFromString(TripStartSync.Payload.serializer(), activation.single().payloadJson)
+        assertTrue(payload.activateExisting); assertEquals(original.trip.id, payload.tripId)
+        assertEquals(vineyard, payload.vineyardId); assertEquals(123.5, payload.startEngineHours!!, 0.0)
+        val sentActivations = activationRequests
+        // A completed Start returns through the existing saved-Trip entry, not a new
+        // calculator creation (which correctly refuses while a recording is owned).
+        var callbacks = 0
+        instrumentation.runOnMainSync {
+            vm.startSprayJob(original.trip.id, 999.0) { ok ->
+                assertTrue("Return to verified original failed: ${vm.ui.value.sprayError}", ok)
+                callbacks++
+            }
+        }
+        assertEquals(1, callbacks)
+        assertEquals(active, ActiveTripStore(app).load())
+        assertEquals(listOf(original), storedAttempts())
         assertEquals(1, creates); assertEquals(1, recoveries)
+        assertEquals(sentActivations, activationRequests)
+        assertEquals(activation, pending.list().filter { it.entityType == PendingEntityType.TRIP_START && it.clientId == original.trip.id })
     }
     @Test fun lostResponseUsesRecoveryOnlyAndKeepsOriginalOperation() {
         mode = "lost"; setup()
