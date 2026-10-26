@@ -14717,6 +14717,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // MARK: - Maintenance log write path
 
+    /** Editor-bound account incarnation and owning vineyard; never recaptured on Save. */
+    class MaintenanceEditScope internal constructor(
+        val vineyardId: String,
+        private val currentAccount: () -> Boolean,
+        private val authority: com.rork.vinetrack.data.VineyardWriteAuthority,
+    ) {
+        internal val draftId: String by lazy { java.util.UUID.randomUUID().toString() }
+        internal val draftUpdatedAt: String by lazy { Instant.now().toString() }
+        fun isCurrent(): Boolean = currentAccount()
+        fun requireWrite() {
+            if (!isCurrent()) throw BackendError.Unauthorized
+            authority.requireWrite(vineyardId)
+        }
+    }
+
+    fun captureMaintenanceEditScope(vineyardId: String?): MaintenanceEditScope? {
+        if (vineyardId.isNullOrBlank()) return null
+        val account = session.accountAccess() ?: return null
+        val authority = com.rork.vinetrack.data.OperationalWrites.authority ?: return null
+        if (authority.accountBinding() != account.userId) return null
+        return MaintenanceEditScope(vineyardId, {
+            session.isAccountAccessCurrent(account) &&
+                com.rork.vinetrack.data.OperationalWrites.authority === authority && authority.accountBinding() == account.userId
+        }, authority)
+    }
+
+    private fun admitMaintenanceEdit(vineyardId: String, scope: MaintenanceEditScope?): MaintenanceEditScope? {
+        val captured = scope ?: captureMaintenanceEditScope(vineyardId) ?: return null
+        if (captured.vineyardId != vineyardId) return null
+        return try { captured.requireWrite(); captured }
+        catch (_: BackendError.Unauthorized) { null }
+        catch (_: com.rork.vinetrack.data.VineyardWriteAuthority.Restricted) { null }
+    }
+
+    /** A stale response must not overwrite another slice or replace a newer local edit. */
+    private fun restoreMaintenanceOriginal(id: String, original: MaintenanceLog?, attempted: MaintenanceLog?) {
+        _ui.update { st -> st.copy(maintenanceBusy = false, maintenanceLogs = when {
+            original == null -> st.maintenanceLogs.filterNot { it.id == id && it == attempted }
+            st.maintenanceLogs.none { it.id == id } -> if (st.selectedVineyardId == original.vineyardId) st.maintenanceLogs + original else st.maintenanceLogs
+            else -> st.maintenanceLogs.map { if (it.id == id && it == attempted) original else it }
+        }) }
+    }
+
     /**
      * Log a new maintenance record (Android Stage K-1 — offline/retryable). The
      * id and client_updated_at are minted up front so the same id is shared by
@@ -14736,11 +14779,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun createMaintenanceLog(
         input: MaintenanceLogRepository.MaintenanceInput,
         photoUri: Uri? = null,
+        scope: MaintenanceEditScope? = null,
         onResult: (Boolean) -> Unit,
     ) {
-        val vineyardId = _ui.value.selectedVineyardId ?: run { onResult(false); return }
-        val id = maintenanceRepo.newId()
-        val clientUpdatedAt = Instant.now().toString()
+        val vineyardId = scope?.vineyardId ?: _ui.value.selectedVineyardId ?: run { onResult(false); return }
+        val admission = admitMaintenanceEdit(vineyardId, scope) ?: run { onResult(false); return }
+        val id = admission.draftId
+        // A genuine response may already have acknowledged this draft while expiry
+        // kept its editor open. Do not send or prepend the same create a second time.
+        if (_ui.value.maintenanceLogs.any { it.id == id }) { onResult(false); return }
+        val clientUpdatedAt = admission.draftUpdatedAt
         val optimistic = MaintenanceLog(
             id = id,
             vineyardId = vineyardId,
@@ -14763,7 +14811,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         // Known-offline: queue the create marker without touching the network.
         if (!_ui.value.isOnline) {
-            maintenanceCreateSync.enqueue(id, vineyardId, input, clientUpdatedAt)
+            try { maintenanceCreateSync.enqueue(id, vineyardId, input, clientUpdatedAt) }
+            catch (e: Exception) {
+                restoreMaintenanceOriginal(id, null, optimistic)
+                onResult(false); return
+            }
             _ui.update { it.copy(maintenanceError = "Maintenance log saved offline — will sync when connection is available.") }
             onResult(true)
             return
@@ -14772,22 +14824,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _ui.update { it.copy(maintenanceBusy = true) }
             try {
+                admission.requireWrite()
                 val created = maintenanceRepo.createMaintenanceLog(vineyardId, input, id, clientUpdatedAt)
-                _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it.id == id) created else it }, maintenanceBusy = false) }
-                // Attach the invoice photo (if one was picked) now that the row exists.
-                if (photoUri != null) uploadMaintenancePhoto(created, photoUri) {}
-                onResult(true)
+                if (!admission.isCurrent()) { onResult(false); return@launch }
+                // A genuine response stays acknowledged even if authority changed in flight.
+                _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it == optimistic) created else it }, maintenanceBusy = false) }
+                val writable = com.rork.vinetrack.data.OperationalWrites.canWrite(vineyardId)
+                if (writable && photoUri != null) uploadMaintenancePhoto(created, photoUri) {}
+                onResult(writable)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: com.rork.vinetrack.data.VineyardWriteAuthority.Restricted) {
+                if (admission.isCurrent()) restoreMaintenanceOriginal(id, null, optimistic)
+                onResult(false)
             } catch (e: BackendError.Unauthorized) {
+                if (!admission.isCurrent()) { onResult(false); return@launch }
                 _ui.update { it.copy(maintenanceBusy = false) }; onUnauthorized("createMaintenanceLog"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — roll the optimistic row
                 // back, surface, don't queue as retryable.
-                _ui.update { st -> st.copy(maintenanceBusy = false, maintenanceLogs = st.maintenanceLogs.filterNot { it.id == id }, maintenanceError = friendlyWriteError(e.code)) }
+                if (!admission.isCurrent()) { onResult(false); return@launch }
+                restoreMaintenanceOriginal(id, null, optimistic)
+                _ui.update { it.copy(maintenanceError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
                 // Transient network failure — keep the optimistic row and queue a
                 // create marker for automatic replay rather than rolling back.
-                maintenanceCreateSync.enqueue(id, vineyardId, input, clientUpdatedAt)
+                if (admitMaintenanceEdit(vineyardId, admission) == null) {
+                    if (admission.isCurrent()) restoreMaintenanceOriginal(id, null, optimistic)
+                    onResult(false); return@launch
+                }
+                try { maintenanceCreateSync.enqueue(id, vineyardId, input, clientUpdatedAt) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    restoreMaintenanceOriginal(id, null, optimistic)
+                    onResult(false); return@launch
+                }
                 _ui.update { it.copy(maintenanceBusy = false, maintenanceError = "Maintenance log saved offline — will sync when connection is available.") }
                 onResult(true)
             }
@@ -14814,9 +14886,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *    and surface the error; never queued as retryable. Unauthorized signs
      *    out.
      */
-    fun updateMaintenanceLog(id: String, input: MaintenanceLogRepository.MaintenanceInput, onResult: (Boolean) -> Unit) {
-        val previous = _ui.value.maintenanceLogs
-        val vineyardId = _ui.value.selectedVineyardId
+    fun updateMaintenanceLog(id: String, input: MaintenanceLogRepository.MaintenanceInput, scope: MaintenanceEditScope? = null, onResult: (Boolean) -> Unit) {
+        val original = _ui.value.maintenanceLogs.singleOrNull { it.id == id } ?: run { onResult(false); return }
+        val vineyardId = original.vineyardId
+        val admission = admitMaintenanceEdit(vineyardId, scope) ?: run { onResult(false); return }
+        val attempted = original.applyMaintenanceInput(input)
         val clientUpdatedAt = Instant.now().toString()
         // Optimistic edit in place — the operator sees the change straight away.
         _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it.id == id) it.applyMaintenanceInput(input) else it }, maintenanceError = null) }
@@ -14824,7 +14898,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Known-offline: fold into a pending create if present, else coalesce one
         // UPDATE marker. No network.
         if (!_ui.value.isOnline) {
-            queueMaintenanceEdit(id, vineyardId, input, clientUpdatedAt)
+            try { queueMaintenanceEdit(id, vineyardId, input, clientUpdatedAt) }
+            catch (e: Exception) {
+                restoreMaintenanceOriginal(id, original, attempted)
+                onResult(false); return
+            }
             _ui.update { it.copy(maintenanceError = "Maintenance log saved offline — will sync when connection is available.") }
             onResult(true)
             return
@@ -14833,20 +14911,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _ui.update { it.copy(maintenanceBusy = true) }
             try {
-                val updated = maintenanceRepo.updateMaintenanceLog(id, input, clientUpdatedAt)
-                _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it.id == id) updated else it }, maintenanceBusy = false) }
-                onResult(true)
+                admission.requireWrite()
+                val updated = maintenanceRepo.updateMaintenanceLog(id, input, clientUpdatedAt, expectedVineyardId = vineyardId)
+                if (!admission.isCurrent()) { onResult(false); return@launch }
+                _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it == attempted) updated else it }, maintenanceBusy = false) }
+                onResult(com.rork.vinetrack.data.OperationalWrites.canWrite(vineyardId))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: com.rork.vinetrack.data.VineyardWriteAuthority.Restricted) {
+                if (admission.isCurrent()) restoreMaintenanceOriginal(id, original, attempted)
+                onResult(false)
             } catch (e: BackendError.Unauthorized) {
+                if (!admission.isCurrent()) { onResult(false); return@launch }
                 _ui.update { it.copy(maintenanceBusy = false) }; onUnauthorized("updateMaintenanceLog"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — restore the previous list,
                 // surface, don't queue as retryable.
-                _ui.update { it.copy(maintenanceBusy = false, maintenanceLogs = previous, maintenanceError = friendlyWriteError(e.code)) }
+                if (!admission.isCurrent()) { onResult(false); return@launch }
+                restoreMaintenanceOriginal(id, original, attempted)
+                _ui.update { it.copy(maintenanceError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
                 // Transient network failure — keep the optimistic edit and
                 // fold/queue a marker for automatic replay rather than rolling back.
-                queueMaintenanceEdit(id, vineyardId, input, clientUpdatedAt)
+                if (admitMaintenanceEdit(vineyardId, admission) == null) {
+                    if (admission.isCurrent()) restoreMaintenanceOriginal(id, original, attempted)
+                    onResult(false); return@launch
+                }
+                try { queueMaintenanceEdit(id, vineyardId, input, clientUpdatedAt) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    restoreMaintenanceOriginal(id, original, attempted)
+                    onResult(false); return@launch
+                }
                 _ui.update { it.copy(maintenanceBusy = false, maintenanceError = "Maintenance log saved offline — will sync when connection is available.") }
                 onResult(true)
             }
@@ -14867,7 +14964,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         input: MaintenanceLogRepository.MaintenanceInput,
         clientUpdatedAt: String,
     ) {
-        if (maintenanceCreateSync.foldEdit(id, input, clientUpdatedAt)) return
+        if (maintenanceCreateSync.foldEdit(id, input, clientUpdatedAt, expectedVineyardId = vineyardId)) return
         val scope = vineyardId
             ?: _ui.value.maintenanceLogs.firstOrNull { it.id == id }?.vineyardId
             ?: return
@@ -14892,24 +14989,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      *    create/edit but not delete: restore the previous list, surface the
      *    error, and never queue as retryable. Unauthorized signs out.
      */
-    fun deleteMaintenanceLog(id: String, onResult: (Boolean) -> Unit) {
+    fun deleteMaintenanceLog(id: String, scope: MaintenanceEditScope? = null, onResult: (Boolean) -> Unit) {
+        val original = _ui.value.maintenanceLogs.singleOrNull { it.id == id } ?: run { onResult(false); return }
+        val admission = admitMaintenanceEdit(original.vineyardId, scope) ?: run { onResult(false); return }
         // Local-only offline-created log: cancel the queued create (and any
         // same-log update) instead of sending a server delete, so
         // MaintenanceLogCreateSync can never resurrect it. The log never existed
         // server-side, so no DELETE marker is queued and the RPC is skipped.
-        if (maintenanceDeleteSync.cancelLocalCreate(id)) {
+        val cancelledCreate = try { maintenanceDeleteSync.cancelLocalCreate(id, expectedVineyardId = original.vineyardId) }
+        catch (e: Exception) { onResult(false); return }
+        if (cancelledCreate) {
             _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.filterNot { it.id == id }, maintenanceError = null) }
             onResult(true)
             return
         }
 
-        val previous = _ui.value.maintenanceLogs
         // Optimistic hide for a synced log.
         _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.filterNot { it.id == id }, maintenanceError = null) }
 
         // Known-offline: queue the soft-delete marker without touching the network.
         if (!_ui.value.isOnline) {
-            maintenanceDeleteSync.enqueue(id)
+            try { maintenanceDeleteSync.enqueue(id, original.vineyardId) }
+            catch (e: Exception) {
+                restoreMaintenanceOriginal(id, original, null)
+                onResult(false); return
+            }
             _ui.update { it.copy(maintenanceError = "Maintenance log deleted offline — will sync when connection is available.") }
             onResult(true)
             return
@@ -14917,18 +15021,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch {
             try {
-                maintenanceRepo.softDeleteMaintenanceLog(id)
-                onResult(true)
+                admission.requireWrite()
+                maintenanceRepo.softDeleteMaintenanceLog(id, expectedVineyardId = original.vineyardId)
+                if (!admission.isCurrent()) { onResult(false); return@launch }
+                onResult(com.rork.vinetrack.data.OperationalWrites.canWrite(original.vineyardId))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: com.rork.vinetrack.data.VineyardWriteAuthority.Restricted) {
+                if (admission.isCurrent()) restoreMaintenanceOriginal(id, original, null)
+                onResult(false)
             } catch (e: BackendError.Unauthorized) {
+                if (!admission.isCurrent()) { onResult(false); return@launch }
                 onUnauthorized("deleteMaintenanceLog"); onResult(false)
             } catch (e: BackendError.Server) {
                 // Validation / permission / rejection — restore, surface, don't queue.
-                _ui.update { it.copy(maintenanceLogs = previous, maintenanceError = friendlyWriteError(e.code)) }
+                if (!admission.isCurrent()) { onResult(false); return@launch }
+                restoreMaintenanceOriginal(id, original, null)
+                _ui.update { it.copy(maintenanceError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
                 // Transient network failure — keep the optimistic hide and queue a
                 // soft-delete marker for automatic replay rather than rolling back.
-                maintenanceDeleteSync.enqueue(id)
+                if (admitMaintenanceEdit(original.vineyardId, admission) == null) {
+                    if (admission.isCurrent()) restoreMaintenanceOriginal(id, original, null)
+                    onResult(false); return@launch
+                }
+                try { maintenanceDeleteSync.enqueue(id, original.vineyardId) }
+                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) {
+                    restoreMaintenanceOriginal(id, original, null)
+                    onResult(false); return@launch
+                }
                 _ui.update { it.copy(maintenanceError = "Maintenance log deleted offline — will sync when connection is available.") }
                 onResult(true)
             }

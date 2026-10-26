@@ -26,6 +26,9 @@ struct AddEditMaintenanceLogView: View {
     @State private var showCamera: Bool = false
     @State private var showPhotoSource: Bool = false
     @State private var showDeleteAlert: Bool = false
+    @State private var editScope: MigratedDataStore.MaintenanceEditScope?
+    @State private var initializedDraft = false
+    @State private var draftIdentity = UUID()
 
     private var isEditing: Bool { existingLog != nil }
 
@@ -329,10 +332,10 @@ struct AddEditMaintenanceLogView: View {
             }
             .alert("Delete Record", isPresented: $showDeleteAlert) {
                 Button("Delete", role: .destructive) {
-                    if let log = existingLog {
-                        store.deleteMaintenanceLog(log.id)
+                    if canDelete, let log = existingLog, let editScope,
+                       store.deleteMaintenanceLog(log.id, scope: editScope) {
+                        dismiss()
                     }
-                    dismiss()
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -355,6 +358,11 @@ struct AddEditMaintenanceLogView: View {
                 }
             }
             .onAppear {
+                guard !initializedDraft else { return }
+                initializedDraft = true
+                if let vineyardId = existingLog?.vineyardId ?? store.selectedVineyardId {
+                    editScope = store.captureMaintenanceEditScope(vineyardId: vineyardId)
+                }
                 if let log = existingLog {
                     itemName = log.itemName
                     equipmentSource = log.equipmentSource
@@ -388,9 +396,10 @@ struct AddEditMaintenanceLogView: View {
 
     private func saveLog() {
         let trimmedName = itemName.trimmingCharacters(in: .whitespaces)
-        guard !trimmedName.isEmpty else { return }
+        guard !trimmedName.isEmpty, let editScope,
+              store.selectedVineyardId == editScope.vineyardId else { return }
 
-        var log = existingLog ?? MaintenanceLog()
+        var log = existingLog ?? MaintenanceLog(id: draftIdentity, vineyardId: editScope.vineyardId)
         log.itemName = trimmedName
         // Persist the stable equipment link when an asset was selected;
         // otherwise classify as free text. item_name is always preserved.
@@ -415,14 +424,14 @@ struct AddEditMaintenanceLogView: View {
         if photoChanged {
             log.photoPath = nil
         }
-        let userName = auth.userName ?? ""
-        log.createdBy = userName.isEmpty ? nil : userName
-
-        if isEditing {
-            store.updateMaintenanceLog(log)
-        } else {
-            store.addMaintenanceLog(log)
+        if !isEditing {
+            let userName = auth.userName ?? ""
+            log.createdBy = userName.isEmpty ? nil : userName
         }
-        dismiss()
+
+        let saved = isEditing
+            ? store.updateMaintenanceLog(log, scope: editScope)
+            : store.addMaintenanceLog(log, scope: editScope)
+        if saved { dismiss() }
     }
 }

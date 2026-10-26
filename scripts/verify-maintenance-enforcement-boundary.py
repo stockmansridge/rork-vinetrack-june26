@@ -15,6 +15,9 @@ FILES = sorted([
     'ios/VineTrack/Backend/Subscription/VineyardMutationAdmission.swift',
     'ios/VineTrack/Backend/Sync/OperationsSyncServices.swift',
     'ios/VineTrackTests/MaintenancePhotoAdmissionTests.swift',
+    'ios/VineTrackTests/MaintenanceForegroundAdmissionTests.swift',
+    'ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift',
+    'ios/VineTrack/LegacyImported/Views/Maintenance/AddEditMaintenanceLogView.swift',
     'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/MaintenanceLogRepository.kt',
     'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/MaintenanceLogCreateSync.kt',
     'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/MaintenanceLogUpdateSync.kt',
@@ -24,6 +27,9 @@ FILES = sorted([
     'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/MaintenancePhotoEvidenceStore.kt',
     'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/MaintenanceWriteScope.kt',
     'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt',
+    'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/MaintenanceScreen.kt',
+    'android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/RetainedStartupConstructionTest.kt',
+    'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/MaintenanceForegroundQueueTest.kt',
     'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/MaintenancePhotoEvidenceStoreTest.kt',
     'android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/MaintenancePhotoAdmissionAndroidTest.kt',
     'android-vinetrack/entitlement-tests.init.gradle',
@@ -47,12 +53,17 @@ def main():
     vm = 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt'
     original = git('show', f'HEAD:{vm}')
     current = (ROOT / vm).read_text()
-    current = re.sub(r'    private val maintenancePhotoEvidence by lazy \{\n.*?\n    \}\n', '', current, count=1, flags=re.S)
-    def outside_photo_callers(text):
-        start = text.index('    fun uploadMaintenancePhoto(')
+    def outside_maintenance_callers(text):
+        start = text.index('    // MARK: - Maintenance log write path')
         end = text.index('    /** Mint a signed URL so Coil', start)
         return text[:start] + text[end:]
-    assert outside_photo_callers(original) == outside_photo_callers(current), 'Unrelated ViewModel startup/costing/recovery source changed'
+    assert outside_maintenance_callers(original) == outside_maintenance_callers(current), 'Unrelated ViewModel startup/costing/recovery source changed'
+    store = 'ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift'
+    def outside_maintenance_store(text):
+        start = text.index('    // MARK: - MaintenanceLog CRUD')
+        end = text.index('    // MARK: - WorkTask CRUD', start)
+        return text[:start] + text[end:]
+    assert outside_maintenance_store(git('show', f'HEAD:{store}')) == outside_maintenance_store((ROOT / store).read_text()), 'Unrelated iOS store source changed'
     for file in FILES:
         if file.endswith('.py'):
             ast.parse((ROOT / file).read_text(), filename=file)

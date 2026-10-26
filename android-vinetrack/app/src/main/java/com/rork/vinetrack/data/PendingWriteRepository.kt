@@ -247,6 +247,50 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
         return next
     }
 
+    /** Maintenance foreground replacement is one durable commit. Never remove an
+     * original before admission/persistence, or rewrite blocked/in-flight evidence. */
+    internal fun coalesceMaintenanceIntent(clientId: String, opType: String, vineyardId: String?,
+        payloadJson: String, admit: (String) -> Unit): PendingWrite = admitted { synchronized(this) {
+        val entity = com.rork.vinetrack.data.model.PendingEntityType.MAINTENANCE_LOG
+        val originals = _writes.value.filter { it.entityType == entity && it.clientId == clientId &&
+            it.status in PendingWriteStatus.unresolved }
+        originals.forEach { original ->
+            val owner = vineyardOf(original.payloadJson)
+                ?: throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+            if (vineyardId == null || !owner.equals(vineyardId, true)) throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+            admit(owner)
+        }
+        vineyardId?.let(admit)
+        val matching = originals.filter { it.opType == opType }
+        if (matching.size > 1 || matching.any { it.status !in setOf(PendingWriteStatus.PENDING, PendingWriteStatus.FAILED) }) {
+            throw VineyardWriteAuthority.Restricted("ORIGINAL_MAINTENANCE_INTENT_RETAINED")
+        }
+        val original = matching.singleOrNull()
+        val now = System.currentTimeMillis()
+        val next = original?.copy(payloadJson = payloadJson, status = PendingWriteStatus.PENDING, lastError = null, updatedAt = now)
+            ?: PendingWrite(id = UUID.randomUUID().toString(), entityType = entity, opType = opType,
+                clientId = clientId, payloadJson = payloadJson, createdAt = now, updatedAt = now)
+        requirePayloadWrite(payloadJson)
+        check(update { rows -> rows.filterNot { it == original } + next }) { "Maintenance intent could not be committed durably." }
+        next
+    } }
+
+    internal fun cancelUnsentMaintenanceCreate(clientId: String, admit: (String) -> Unit): Boolean = admitted { synchronized(this) {
+        val originals = _writes.value.filter { it.entityType == com.rork.vinetrack.data.model.PendingEntityType.MAINTENANCE_LOG &&
+            it.clientId == clientId && it.status in PendingWriteStatus.unresolved }
+        val creates = originals.filter { it.opType == com.rork.vinetrack.data.model.PendingOpType.CREATE }
+        if (creates.isEmpty()) return@synchronized false
+        val vineyard = creates.singleOrNull()?.let { vineyardOf(it.payloadJson) }
+            ?: throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+        admit(vineyard)
+        // Once attempted, failure is not proof the server never saw the create.
+        if (originals.any { it.status != PendingWriteStatus.PENDING || it.attemptCount != 0 || vineyardOf(it.payloadJson) != vineyard }) {
+            throw VineyardWriteAuthority.Restricted("ORIGINAL_MAINTENANCE_INTENT_RETAINED")
+        }
+        check(update { rows -> rows.filterNot { it in originals } }) { "Maintenance cancellation could not be committed durably." }
+        true
+    } }
+
     /** Update the status and optional error of a pending write by id. */
     fun updateStatus(id: String, status: String, lastError: String? = null) {
         val now = System.currentTimeMillis()

@@ -11,6 +11,8 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import io.ktor.client.engine.mock.respond
+import io.ktor.serialization.kotlinx.json.json
 
 /** Disposable namespaced test Application only. Never a retained owner-install fixture. */
 class RetainedStartupConstructionTest {
@@ -112,6 +114,192 @@ class RetainedStartupConstructionTest {
                     com.rork.vinetrack.data.OperationalWrites.authority = previousAuthority
                 }
             }
+        }
+    }
+
+    @Test fun heldMaintenanceForegroundDoesNotEditCancelOrCreateOfflineWork() {
+        constructAndAwaitLogin { vm ->
+            instrumentation.runOnMainSync {
+                val session = AppViewModel::class.java.getDeclaredField("session").apply { isAccessible = true }.get(vm) as SessionStore
+                session.accessToken = "synthetic-not-a-live-token"
+                session.userId = "44444444-4444-4444-8444-444444444444"
+                val a = "11111111-1111-4111-8111-111111111111"
+                val b = "22222222-2222-4222-8222-222222222222"
+                val id = "33333333-3333-4333-8333-333333333333"
+                val input = com.rork.vinetrack.data.MaintenanceLogRepository.MaintenanceInput(
+                    "Original", null, null, 2.0, null, "Retain", "", 1.0, 3.0, "2026-10-24T00:00:00Z")
+                val pending = AppViewModel::class.java.getDeclaredField("pendingWrites").apply { isAccessible = true }
+                    .get(vm) as com.rork.vinetrack.data.PendingWriteRepository
+                val creates = com.rork.vinetrack.data.MaintenanceLogCreateSync(com.rork.vinetrack.data.MaintenanceLogRepository(session), pending)
+                creates.enqueue(id, a, input, "2026-10-24T00:00:00Z")
+                val originalQueue = pending.list().toList()
+                val originalDisk = app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).all.toMap()
+                val original = com.rork.vinetrack.data.model.MaintenanceLog(id = id, vineyardId = a, itemName = "Original", date = input.date)
+                @Suppress("UNCHECKED_CAST")
+                val state = AppViewModel::class.java.getDeclaredField("_ui").apply { isAccessible = true }
+                    .get(vm) as kotlinx.coroutines.flow.MutableStateFlow<com.rork.vinetrack.ui.AppUiState>
+                state.value = state.value.copy(selectedVineyardId = b, currentUserId = session.userId,
+                    maintenanceLogs = listOf(original), isOnline = false, maintenanceError = null)
+                val gate = requireNotNull(com.rork.vinetrack.data.OperationalWrites.authority)
+                gate.handleServerCode("VT_READ_ONLY", a)
+                gate.verified(b, com.rork.vinetrack.data.VineyardOperationalAccess(true, true), true)
+                val scope = requireNotNull(vm.captureMaintenanceEditScope(a))
+                var successes = 0
+                vm.updateMaintenanceLog(id, input.copy(itemName = "Not admitted"), scope = scope) { if (it) successes++ }
+                vm.deleteMaintenanceLog(id) { if (it) successes++ }
+                // A new draft belongs to A, not the writable selection B.
+                vm.createMaintenanceLog(input, scope = scope) { if (it) successes++ }
+                assertEquals(listOf(original), vm.ui.value.maintenanceLogs)
+                assertEquals(originalQueue, pending.list())
+                assertEquals(originalDisk, app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).all)
+                assertEquals(0, successes)
+                gate.verified(a, com.rork.vinetrack.data.VineyardOperationalAccess(true, true), true)
+                vm.updateMaintenanceLog(id, input, scope = scope) { if (it) successes++ }
+                assertEquals(1, successes)
+                assertEquals(originalQueue.single().id, pending.list().single().id)
+                assertEquals(originalQueue.single().createdAt, pending.list().single().createdAt)
+                assertEquals(originalQueue.single().attemptCount, pending.list().single().attemptCount)
+                assertEquals(a, vm.ui.value.maintenanceLogs.single().vineyardId)
+            }
+        }
+    }
+
+    @Test fun maintenanceExpiryDuringOwnershipReadRetainsOriginalAndPublishesNoSuccess() {
+        constructAndAwaitLogin { vm ->
+            val session = AppViewModel::class.java.getDeclaredField("session").apply { isAccessible = true }.get(vm) as SessionStore
+            session.accessToken = "synthetic-not-a-live-token"
+            session.userId = "44444444-4444-4444-8444-444444444444"
+            val a = "11111111-1111-4111-8111-111111111111"
+            val id = "33333333-3333-4333-8333-333333333333"
+            val input = com.rork.vinetrack.data.MaintenanceLogRepository.MaintenanceInput(
+                "Attempted edit", null, null, 2.0, null, "Retain", "", 1.0, 3.0, "2026-10-24T00:00:00Z")
+            val original = com.rork.vinetrack.data.model.MaintenanceLog(id = id, vineyardId = a, itemName = "Original", date = input.date, photoPath = "$a/maintenance/$id/photo.jpg")
+            @Suppress("UNCHECKED_CAST")
+            val state = AppViewModel::class.java.getDeclaredField("_ui").apply { isAccessible = true }
+                .get(vm) as kotlinx.coroutines.flow.MutableStateFlow<com.rork.vinetrack.ui.AppUiState>
+            val gate = requireNotNull(com.rork.vinetrack.data.OperationalWrites.authority)
+            var mutations = 0
+            val client = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { request ->
+                if (request.method != io.ktor.http.HttpMethod.Get) mutations++
+                gate.handleServerCode("VT_READ_ONLY", a)
+                respond("[{\"id\":\"$id\",\"vineyard_id\":\"$a\"}]", io.ktor.http.HttpStatusCode.OK,
+                    io.ktor.http.headersOf("Content-Type", "application/json"))
+            }) { install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json(com.rork.vinetrack.data.SupabaseClient.json) } }
+            com.rork.vinetrack.data.SupabaseClient.installInstrumentationTransport(client)
+            try {
+                for (operation in listOf("create", "update", "delete")) {
+                    gate.verified(a, com.rork.vinetrack.data.VineyardOperationalAccess(true, true), true)
+                    val completed = CompletableDeferred<Boolean>()
+                    instrumentation.runOnMainSync {
+                        state.value = state.value.copy(selectedVineyardId = a, currentUserId = session.userId,
+                            maintenanceLogs = listOf(original), isOnline = true, maintenanceError = null)
+                        when (operation) {
+                            "create" -> vm.createMaintenanceLog(input) { completed.complete(it) }
+                            "update" -> vm.updateMaintenanceLog(id, input) { completed.complete(it) }
+                            else -> vm.deleteMaintenanceLog(id) { completed.complete(it) }
+                        }
+                    }
+                    val success = runBlocking { withTimeout(15_000) { completed.await() } }
+                    assertFalse("$operation published success while held", success)
+                    assertEquals(listOf(original), vm.ui.value.maintenanceLogs)
+                    assertEquals(0, mutations)
+                    assertFalse(vm.ui.value.maintenanceBusy)
+                    assertNull(app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).getString("pending_writes_json", null))
+                }
+            } finally { com.rork.vinetrack.data.SupabaseClient.installInstrumentationTransport(null); client.close() }
+        }
+    }
+
+    @Test fun maintenanceCreateReceiptDuringExpiryCannotDuplicateStableDraftOnRetry() {
+        constructAndAwaitLogin { vm ->
+            val session = AppViewModel::class.java.getDeclaredField("session").apply { isAccessible = true }.get(vm) as SessionStore
+            session.accessToken = "synthetic-not-a-live-token"
+            session.userId = "44444444-4444-4444-8444-444444444444"
+            val a = "11111111-1111-4111-8111-111111111111"
+            val input = com.rork.vinetrack.data.MaintenanceLogRepository.MaintenanceInput(
+                "Original draft", null, null, 2.0, null, "Retain", "", 1.0, 3.0, "2026-10-24T00:00:00Z")
+            @Suppress("UNCHECKED_CAST")
+            val state = AppViewModel::class.java.getDeclaredField("_ui").apply { isAccessible = true }
+                .get(vm) as kotlinx.coroutines.flow.MutableStateFlow<com.rork.vinetrack.ui.AppUiState>
+            lateinit var scope: AppViewModel.MaintenanceEditScope
+            instrumentation.runOnMainSync {
+                state.value = state.value.copy(selectedVineyardId = a, currentUserId = session.userId,
+                    maintenanceLogs = emptyList(), isOnline = true)
+                scope = requireNotNull(vm.captureMaintenanceEditScope(a))
+            }
+            val id = scope.draftId
+            val stamp = scope.draftUpdatedAt
+            val gate = requireNotNull(com.rork.vinetrack.data.OperationalWrites.authority)
+            var mutations = 0
+            val client = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { request ->
+                if (request.method == io.ktor.http.HttpMethod.Get) {
+                    respond("[]", io.ktor.http.HttpStatusCode.OK, io.ktor.http.headersOf("Content-Type", "application/json"))
+                } else {
+                    mutations++
+                    gate.handleServerCode("VT_READ_ONLY", a)
+                    respond("[{\"id\":\"$id\",\"vineyard_id\":\"$a\",\"item_name\":\"Acknowledged original\"}]",
+                        io.ktor.http.HttpStatusCode.OK, io.ktor.http.headersOf("Content-Type", "application/json"))
+                }
+            }) { install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json(com.rork.vinetrack.data.SupabaseClient.json) } }
+            com.rork.vinetrack.data.SupabaseClient.installInstrumentationTransport(client)
+            try {
+                val completed = CompletableDeferred<Boolean>()
+                instrumentation.runOnMainSync { vm.createMaintenanceLog(input, scope = scope) { completed.complete(it) } }
+                assertFalse(runBlocking { withTimeout(15_000) { completed.await() } })
+                val acknowledged = vm.ui.value.maintenanceLogs.single()
+                assertEquals(id, acknowledged.id)
+                assertEquals("Acknowledged original", acknowledged.itemName)
+                gate.verified(a, com.rork.vinetrack.data.VineyardOperationalAccess(true, true), true)
+                val retried = CompletableDeferred<Boolean>()
+                instrumentation.runOnMainSync { vm.createMaintenanceLog(input, scope = scope) { retried.complete(it) } }
+                assertFalse(runBlocking { withTimeout(15_000) { retried.await() } })
+                assertEquals(listOf(acknowledged), vm.ui.value.maintenanceLogs)
+                assertEquals(1, mutations)
+                assertEquals(id, scope.draftId)
+                assertEquals(stamp, scope.draftUpdatedAt)
+            } finally { com.rork.vinetrack.data.SupabaseClient.installInstrumentationTransport(null); client.close() }
+        }
+    }
+
+    @Test fun staleMaintenanceSuccessCannotOverwriteNextAccountOrPublishSuccess() {
+        constructAndAwaitLogin { vm ->
+            val session = AppViewModel::class.java.getDeclaredField("session").apply { isAccessible = true }.get(vm) as SessionStore
+            session.accessToken = "synthetic-not-a-live-token"
+            session.userId = "44444444-4444-4444-8444-444444444444"
+            val a = "11111111-1111-4111-8111-111111111111"
+            val b = "22222222-2222-4222-8222-222222222222"
+            val id = "33333333-3333-4333-8333-333333333333"
+            val input = com.rork.vinetrack.data.MaintenanceLogRepository.MaintenanceInput(
+                "Edit", null, null, 2.0, null, "Retain", "", 1.0, 3.0, "2026-10-24T00:00:00Z")
+            val original = com.rork.vinetrack.data.model.MaintenanceLog(id = id, vineyardId = a, itemName = "Original")
+            val nextAccountRow = original.copy(vineyardId = b, itemName = "Next account")
+            @Suppress("UNCHECKED_CAST")
+            val state = AppViewModel::class.java.getDeclaredField("_ui").apply { isAccessible = true }
+                .get(vm) as kotlinx.coroutines.flow.MutableStateFlow<com.rork.vinetrack.ui.AppUiState>
+            var mutations = 0
+            val client = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { request ->
+                if (request.method != io.ktor.http.HttpMethod.Get) {
+                    mutations++
+                    session.userId = b
+                    state.value = state.value.copy(currentUserId = b, selectedVineyardId = b, maintenanceLogs = listOf(nextAccountRow), maintenanceBusy = false)
+                }
+                respond("[{\"id\":\"$id\",\"vineyard_id\":\"$a\",\"item_name\":\"Server edit\"}]", io.ktor.http.HttpStatusCode.OK,
+                    io.ktor.http.headersOf("Content-Type", "application/json"))
+            }) { install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json(com.rork.vinetrack.data.SupabaseClient.json) } }
+            com.rork.vinetrack.data.SupabaseClient.installInstrumentationTransport(client)
+            try {
+                val completed = CompletableDeferred<Boolean>()
+                instrumentation.runOnMainSync {
+                    state.value = state.value.copy(selectedVineyardId = a, currentUserId = session.userId, maintenanceLogs = listOf(original), isOnline = true)
+                    vm.updateMaintenanceLog(id, input) { completed.complete(it) }
+                }
+                val success = runBlocking { withTimeout(15_000) { completed.await() } }
+                assertFalse(success)
+                assertEquals(1, mutations)
+                assertEquals(listOf(nextAccountRow), vm.ui.value.maintenanceLogs)
+                assertEquals(b, session.userId)
+                assertNull(app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).getString("pending_writes_json", null))
+            } finally { com.rork.vinetrack.data.SupabaseClient.installInstrumentationTransport(null); client.close() }
         }
     }
 

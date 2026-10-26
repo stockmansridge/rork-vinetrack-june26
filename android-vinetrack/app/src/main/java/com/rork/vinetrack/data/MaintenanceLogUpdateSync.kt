@@ -88,14 +88,7 @@ class MaintenanceLogUpdateSync(
         input: MaintenanceLogRepository.MaintenanceInput,
         clientUpdatedAt: String,
     ): PendingWrite {
-        pending.list()
-            .filter {
-                it.entityType == PendingEntityType.MAINTENANCE_LOG &&
-                    it.opType == PendingOpType.UPDATE &&
-                    it.clientId == id &&
-                    it.status != PendingWriteStatus.SYNCED
-            }
-            .forEach { pending.remove(it.id) }
+        maintenanceRepo.requireLocalWrite(vineyardId)
         val payload = Payload(
             id = id,
             vineyardId = vineyardId,
@@ -113,12 +106,8 @@ class MaintenanceLogUpdateSync(
             isFinalized = input.isFinalized,
             clientUpdatedAt = clientUpdatedAt,
         )
-        return pending.enqueue(
-            entityType = PendingEntityType.MAINTENANCE_LOG,
-            opType = PendingOpType.UPDATE,
-            payloadJson = json.encodeToString(Payload.serializer(), payload),
-            clientId = id,
-        )
+        return pending.coalesceMaintenanceIntent(id, PendingOpType.UPDATE, vineyardId,
+            json.encodeToString(Payload.serializer(), payload), maintenanceRepo::requireLocalWrite)
     }
 
     /**
@@ -180,6 +169,7 @@ class MaintenanceLogUpdateSync(
                             isFinalized = payload.isFinalized,
                         ),
                         clientUpdatedAt = payload.clientUpdatedAt,
+                        expectedVineyardId = payload.vineyardId,
                     )
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     if (pending.removeIfCurrent(write)) onSynced(updated)

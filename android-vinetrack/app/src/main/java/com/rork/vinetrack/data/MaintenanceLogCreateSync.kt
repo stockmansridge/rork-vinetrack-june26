@@ -82,14 +82,7 @@ class MaintenanceLogCreateSync(
         input: MaintenanceLogRepository.MaintenanceInput,
         clientUpdatedAt: String,
     ): PendingWrite {
-        pending.list()
-            .filter {
-                it.entityType == PendingEntityType.MAINTENANCE_LOG &&
-                    it.opType == PendingOpType.CREATE &&
-                    it.clientId == id &&
-                    it.status != PendingWriteStatus.SYNCED
-            }
-            .forEach { pending.remove(it.id) }
+        maintenanceRepo.requireLocalWrite(vineyardId)
         val payload = Payload(
             id = id,
             vineyardId = vineyardId,
@@ -107,12 +100,8 @@ class MaintenanceLogCreateSync(
             isFinalized = input.isFinalized,
             clientUpdatedAt = clientUpdatedAt,
         )
-        return pending.enqueue(
-            entityType = PendingEntityType.MAINTENANCE_LOG,
-            opType = PendingOpType.CREATE,
-            payloadJson = json.encodeToString(Payload.serializer(), payload),
-            clientId = id,
-        )
+        return pending.coalesceMaintenanceIntent(id, PendingOpType.CREATE, vineyardId,
+            json.encodeToString(Payload.serializer(), payload), maintenanceRepo::requireLocalWrite)
     }
 
     /**
@@ -130,6 +119,7 @@ class MaintenanceLogCreateSync(
         id: String,
         input: MaintenanceLogRepository.MaintenanceInput,
         clientUpdatedAt: String,
+        expectedVineyardId: String? = null,
     ): Boolean {
         val existing = pending.list().filter {
             it.entityType == PendingEntityType.MAINTENANCE_LOG &&
@@ -139,11 +129,12 @@ class MaintenanceLogCreateSync(
         }
         if (existing.isEmpty()) return false
         // Preserve the vineyard scope captured when the create was first queued.
-        val vineyardId = existing
-            .mapNotNull { runCatching { json.decodeFromString(Payload.serializer(), it.payloadJson) }.getOrNull() }
-            .firstOrNull()
-            ?.vineyardId
-            ?: return false
+        val original = existing.singleOrNull()?.let { runCatching { json.decodeFromString(Payload.serializer(), it.payloadJson) }.getOrNull() }
+            ?: throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+        if (original.id != id || (expectedVineyardId != null && original.vineyardId != expectedVineyardId)) {
+            throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+        }
+        val vineyardId = original.vineyardId
         enqueue(id, vineyardId, input, clientUpdatedAt)
         return true
     }

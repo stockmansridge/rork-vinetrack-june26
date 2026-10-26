@@ -599,6 +599,8 @@ private fun MaintenanceSheet(
     val vine = LocalVineColors.current
     val sheetState = rememberGuardedSheetState(skipPartiallyExpanded = true)
 
+    val editScope = remember { vm.captureMaintenanceEditScope(existing?.vineyardId ?: state.selectedVineyardId) }
+
     // Equipment options grouped like the iOS picker: machines/tractors, spray
     // equipment, and Other Equipment & Assets, with a "None" choice.
     val machineOptions = remember(state.machines) {
@@ -661,7 +663,7 @@ private fun MaintenanceSheet(
         (labourCostText.replace(',', '.').toDoubleOrNull() ?: 0.0)
 
     fun save() {
-        if (!canSave) return
+        if (!canSave || editScope == null || state.selectedVineyardId != editScope.vineyardId) return
         saving = true
         val input = MaintenanceLogRepository.MaintenanceInput(
             itemName = resolvedName,
@@ -678,7 +680,8 @@ private fun MaintenanceSheet(
             isFinalized = existing?.isFinalized ?: false,
         )
         val cb: (Boolean) -> Unit = { ok -> saving = false; if (ok) onSaved() }
-        if (existing == null) vm.createMaintenanceLog(input, pendingPhotoUri, cb) else vm.updateMaintenanceLog(existing.id, input, cb)
+        if (existing == null) vm.createMaintenanceLog(input, pendingPhotoUri, scope = editScope, onResult = cb)
+        else vm.updateMaintenanceLog(existing.id, input, scope = editScope, onResult = cb)
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -852,8 +855,9 @@ private fun MaintenanceSheet(
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false
-                    vm.deleteMaintenanceLog(existing.id) {}
-                    onSaved()
+                    if (canDelete && editScope != null) {
+                        vm.deleteMaintenanceLog(existing.id, scope = editScope) { ok -> if (ok) onSaved() }
+                    }
                 }) { Text("Delete", color = VineColors.Destructive) }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },

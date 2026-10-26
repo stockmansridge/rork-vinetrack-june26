@@ -21,6 +21,8 @@ internal class MaintenanceWriteScope(private val session: SessionStore) {
         resolve = { emptyList() },
     )
 
+    fun requireLocalWrite(vineyardId: String) { admission.requireVineyard(vineyardId) }
+
     @Serializable
     private data class Ownership(val id: String, @SerialName("vineyard_id") val vineyardId: String)
 

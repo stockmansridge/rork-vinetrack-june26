@@ -1777,31 +1777,73 @@ final class MigratedDataStore {
 
     // MARK: - MaintenanceLog CRUD
 
-    func addMaintenanceLog(_ log: MaintenanceLog) {
-        guard admitSelectedMutation() else { return }
-        guard let vineyardId = selectedVineyardId else { return }
-        var item = log
-        item.vineyardId = vineyardId
-        maintenanceLogs.append(item)
-        maintenanceLogRepo.saveSlice(maintenanceLogs, for: vineyardId)
-        onMaintenanceLogChanged?(item.id)
+    /// Captured once when a maintenance editor opens, not when Save is tapped.
+    /// The admission retains the account incarnation but rechecks current entitlement.
+    struct MaintenanceEditScope {
+        let vineyardId: UUID
+        fileprivate let admission: VineyardMutationAdmission
     }
 
-    func updateMaintenanceLog(_ log: MaintenanceLog) {
-        guard admitSelectedMutation() else { return }
-        guard let vineyardId = selectedVineyardId else { return }
-        guard let index = maintenanceLogs.firstIndex(where: { $0.id == log.id }) else { return }
-        maintenanceLogs[index] = log
-        maintenanceLogRepo.saveSlice(maintenanceLogs, for: vineyardId)
+    func captureMaintenanceEditScope(vineyardId: UUID) -> MaintenanceEditScope? {
+        guard let userProvider = currentUserIdProvider,
+              let admission = try? VineyardMutationAdmission(currentUserId: userProvider, authority: operationalWriteAuthority) else { return nil }
+        return MaintenanceEditScope(vineyardId: vineyardId, admission: admission)
+    }
+
+    private func admitMaintenanceMutation(vineyardId: UUID, scope: MaintenanceEditScope?) -> Bool {
+        guard let captured = scope ?? captureMaintenanceEditScope(vineyardId: vineyardId),
+              captured.vineyardId == vineyardId else { return false }
+        do {
+            try captured.admission.requireWrite(vineyardId: vineyardId)
+            return true
+        } catch { return false }
+    }
+
+    /// Persisted ownership wins over stale editor/selected-slice data. Ambiguity is a hold.
+    private func maintenanceOriginal(_ id: UUID) -> MaintenanceLog? {
+        let disk = maintenanceLogRepo.loadAll().filter { $0.id == id }
+        if !disk.isEmpty { return disk.count == 1 ? disk.first : nil }
+        let loaded = maintenanceLogs.filter { $0.id == id }
+        return loaded.count == 1 ? loaded.first : nil
+    }
+
+    @discardableResult
+    func addMaintenanceLog(_ log: MaintenanceLog, scope: MaintenanceEditScope? = nil) -> Bool {
+        guard !maintenanceLogRepo.loadAll().contains(where: { $0.id == log.id }),
+              !maintenanceLogs.contains(where: { $0.id == log.id }),
+              admitMaintenanceMutation(vineyardId: log.vineyardId, scope: scope) else { return false }
+        var slice = maintenanceLogRepo.load(for: log.vineyardId)
+        slice.append(log)
+        maintenanceLogRepo.saveSlice(slice, for: log.vineyardId)
+        if selectedVineyardId == log.vineyardId { maintenanceLogs = slice }
         onMaintenanceLogChanged?(log.id)
+        return true
     }
 
-    func deleteMaintenanceLog(_ logId: UUID) {
-        guard admitSelectedMutation() else { return }
-        guard let vineyardId = selectedVineyardId else { return }
-        maintenanceLogs.removeAll { $0.id == logId }
-        maintenanceLogRepo.saveSlice(maintenanceLogs, for: vineyardId)
+    @discardableResult
+    func updateMaintenanceLog(_ log: MaintenanceLog, scope: MaintenanceEditScope? = nil) -> Bool {
+        guard let original = maintenanceOriginal(log.id), original.vineyardId == log.vineyardId,
+              admitMaintenanceMutation(vineyardId: original.vineyardId, scope: scope) else { return false }
+        var slice = maintenanceLogRepo.load(for: original.vineyardId)
+        var item = log
+        item.createdBy = original.createdBy
+        if let index = slice.firstIndex(where: { $0.id == log.id }) { slice[index] = item }
+        else { slice.append(item) }
+        maintenanceLogRepo.saveSlice(slice, for: original.vineyardId)
+        if selectedVineyardId == original.vineyardId { maintenanceLogs = slice }
+        onMaintenanceLogChanged?(log.id)
+        return true
+    }
+
+    @discardableResult
+    func deleteMaintenanceLog(_ logId: UUID, scope: MaintenanceEditScope? = nil) -> Bool {
+        guard let original = maintenanceOriginal(logId),
+              admitMaintenanceMutation(vineyardId: original.vineyardId, scope: scope) else { return false }
+        let slice = maintenanceLogRepo.load(for: original.vineyardId).filter { $0.id != logId }
+        maintenanceLogRepo.saveSlice(slice, for: original.vineyardId)
+        if selectedVineyardId == original.vineyardId { maintenanceLogs = slice }
         onMaintenanceLogDeleted?(logId)
+        return true
     }
 
     // MARK: - WorkTask CRUD

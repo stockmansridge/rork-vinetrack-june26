@@ -91,6 +91,10 @@ class MaintenanceLogRepository(private val session: SessionStore) {
         val isFinalized: Boolean = false,
     )
 
+    internal fun requireLocalWrite(vineyardId: String) {
+        MaintenanceWriteScope(session).requireLocalWrite(vineyardId)
+    }
+
     private fun nowIso(): String = Instant.now().toString()
 
     /** Mint a stable maintenance-log id up front so the optimistic row, the
@@ -106,15 +110,15 @@ class MaintenanceLogRepository(private val session: SessionStore) {
      * `created_by` always resolves from the live session, never from a payload;
      * `photo_path` is never sent or mutated here.
      */
-    suspend fun createMaintenanceLog(
+    internal suspend fun createMaintenanceLog(
         vineyardId: String,
         input: MaintenanceInput,
         id: String? = null,
         clientUpdatedAt: String? = null,
+        scope: MaintenanceWriteScope = MaintenanceWriteScope(session),
     ): MaintenanceLog =
         withContext(Dispatchers.IO) {
             requireConfig()
-            val scope = MaintenanceWriteScope(session)
             val recordId = id ?: UUID.randomUUID().toString()
             val vineyard = scope.owner(recordId, vineyardId, allowMissingForCreate = true)
             val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -158,15 +162,16 @@ class MaintenanceLogRepository(private val session: SessionStore) {
      * `photo_path` and server-managed audit/sync columns are never sent or
      * mutated here.
      */
-    suspend fun updateMaintenanceLog(
+    internal suspend fun updateMaintenanceLog(
         id: String,
         input: MaintenanceInput,
         clientUpdatedAt: String? = null,
+        expectedVineyardId: String? = null,
+        scope: MaintenanceWriteScope = MaintenanceWriteScope(session),
     ): MaintenanceLog =
         withContext(Dispatchers.IO) {
             requireConfig()
-            val scope = MaintenanceWriteScope(session)
-            val vineyard = scope.owner(id)
+            val vineyard = scope.owner(id, expectedVineyardId)
             val token = session.accessToken ?: throw BackendError.Unauthorized
             val patch = MaintenancePatch(
                 itemName = input.itemName,
@@ -224,10 +229,10 @@ class MaintenanceLogRepository(private val session: SessionStore) {
         }
     }
 
-    suspend fun softDeleteMaintenanceLog(id: String) = withContext(Dispatchers.IO) {
+    internal suspend fun softDeleteMaintenanceLog(id: String, expectedVineyardId: String? = null,
+        scope: MaintenanceWriteScope = MaintenanceWriteScope(session)) = withContext(Dispatchers.IO) {
         requireConfig()
-        val scope = MaintenanceWriteScope(session)
-        val vineyard = scope.owner(id)
+        val vineyard = scope.owner(id, expectedVineyardId)
         scope.send(vineyard) {
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_maintenance_log")) {

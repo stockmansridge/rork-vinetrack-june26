@@ -23,7 +23,7 @@ def main(output):
     init = app / 'entitlement-tests.init.gradle'
     metadata = {'starting_head': runner.git('rev-parse', 'HEAD'), 'scope': 'contract/cache, write authority and scoped queue admission; not complete feature acceptance'}
     (output / 'metadata.json').write_text(json.dumps(metadata, indent=2))
-    focused = runner.run_stage('contract', app, ['*.ReadOnlyEntitlementContractTest', '*.VineTrackAccessRowCompatTest', '*.VineyardWriteAuthorityTest', '*.PinPhotoWorkflowTest', '*.FertigationMobileWorkflowTest', '*.ResistancePlanRepositoryTest', '*.ResistancePlanRevisionSyncTest', '*.FertigationDomainTest', '*.TripOccurrenceJournalTest', '*.StartTankCommitCoordinatorTest', '*.TripWriteAdmissionTest', '*.MaintenancePhotoEvidenceStoreTest'], output, init)
+    focused = runner.run_stage('contract', app, ['*.ReadOnlyEntitlementContractTest', '*.VineTrackAccessRowCompatTest', '*.VineyardWriteAuthorityTest', '*.PinPhotoWorkflowTest', '*.FertigationMobileWorkflowTest', '*.ResistancePlanRepositoryTest', '*.ResistancePlanRevisionSyncTest', '*.FertigationDomainTest', '*.TripOccurrenceJournalTest', '*.StartTankCommitCoordinatorTest', '*.TripWriteAdmissionTest', '*.MaintenancePhotoEvidenceStoreTest', '*.MaintenanceForegroundQueueTest'], output, init)
     if focused['exit'] != 0:
         return 1
     regressions = runner.run_stage('existing-regressions', app, [

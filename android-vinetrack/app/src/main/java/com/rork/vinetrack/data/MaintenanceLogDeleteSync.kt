@@ -62,7 +62,7 @@ class MaintenanceLogDeleteSync(
 
     /** Soft-delete-only replay payload. Just the target maintenance-log id — nothing else. */
     @Serializable
-    data class Payload(val maintenanceLogId: String)
+    data class Payload(val maintenanceLogId: String, val vineyardId: String? = null)
 
     /**
      * Queue (or replace) a soft-delete for [maintenanceLogId]. Coalesces by log
@@ -72,22 +72,11 @@ class MaintenanceLogDeleteSync(
      * local-only pending-create log is cancelled in place rather than queued for
      * delete.
      */
-    fun enqueue(maintenanceLogId: String): PendingWrite {
-        pending.list()
-            .filter {
-                it.entityType == PendingEntityType.MAINTENANCE_LOG &&
-                    it.opType == PendingOpType.DELETE &&
-                    it.clientId == maintenanceLogId &&
-                    it.status != PendingWriteStatus.SYNCED
-            }
-            .forEach { pending.remove(it.id) }
-        val payload = json.encodeToString(Payload.serializer(), Payload(maintenanceLogId))
-        return pending.enqueue(
-            entityType = PendingEntityType.MAINTENANCE_LOG,
-            opType = PendingOpType.DELETE,
-            payloadJson = payload,
-            clientId = maintenanceLogId,
-        )
+    fun enqueue(maintenanceLogId: String, vineyardId: String): PendingWrite {
+        maintenanceRepo.requireLocalWrite(vineyardId)
+        val payload = json.encodeToString(Payload.serializer(), Payload(maintenanceLogId, vineyardId))
+        return pending.coalesceMaintenanceIntent(maintenanceLogId, PendingOpType.DELETE, vineyardId,
+            payload, maintenanceRepo::requireLocalWrite)
     }
 
     /**
@@ -99,23 +88,11 @@ class MaintenanceLogDeleteSync(
      * when the log is already synced server-side (the caller should then take the
      * normal optimistic-hide + enqueue path).
      */
-    fun cancelLocalCreate(maintenanceLogId: String): Boolean {
-        val pendingCreate = pending.list().firstOrNull {
-            it.entityType == PendingEntityType.MAINTENANCE_LOG &&
-                it.opType == PendingOpType.CREATE &&
-                it.clientId == maintenanceLogId &&
-                it.status != PendingWriteStatus.SYNCED
-        } ?: return false
-        pending.remove(pendingCreate.id)
-        pending.list()
-            .filter {
-                it.entityType == PendingEntityType.MAINTENANCE_LOG &&
-                    it.opType == PendingOpType.UPDATE &&
-                    it.clientId == maintenanceLogId &&
-                    it.status != PendingWriteStatus.SYNCED
-            }
-            .forEach { pending.remove(it.id) }
-        return true
+    fun cancelLocalCreate(maintenanceLogId: String, expectedVineyardId: String? = null): Boolean {
+        return pending.cancelUnsentMaintenanceCreate(maintenanceLogId) { vineyard ->
+            if (expectedVineyardId != null && vineyard != expectedVineyardId) throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
+            maintenanceRepo.requireLocalWrite(vineyard)
+        }
     }
 
     /**
@@ -161,7 +138,7 @@ class MaintenanceLogDeleteSync(
                     continue
                 }
                 try {
-                    maintenanceRepo.softDeleteMaintenanceLog(payload.maintenanceLogId)
+                    maintenanceRepo.softDeleteMaintenanceLog(payload.maintenanceLogId, expectedVineyardId = payload.vineyardId)
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     if (pending.removeIfCurrent(write)) onDeleted(payload.maintenanceLogId)
                 } catch (e: VineyardWriteAuthority.Restricted) {

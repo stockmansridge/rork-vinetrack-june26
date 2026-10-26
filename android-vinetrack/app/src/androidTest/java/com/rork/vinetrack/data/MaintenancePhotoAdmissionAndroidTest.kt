@@ -21,6 +21,34 @@ class MaintenancePhotoAdmissionAndroidTest {
     private val log = "33333333-3333-4333-8333-333333333333"
     private val owner = "44444444-4444-4444-8444-444444444444"
 
+    @Test fun heldForegroundCoalescingAndCancellationRetainExactOriginalQueue() {
+        val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as CleanExitFixtureApplication
+        app.resetFixture()
+        val session = SessionStore(app)
+        session.save("synthetic-access", "synthetic-refresh", owner, null)
+        val pending = PendingWriteRepository(app)
+        val repo = MaintenanceLogRepository(session)
+        val creates = MaintenanceLogCreateSync(repo, pending)
+        val updates = MaintenanceLogUpdateSync(repo, pending)
+        val deletes = MaintenanceLogDeleteSync(repo, pending)
+        val input = MaintenanceLogRepository.MaintenanceInput("Original", null, null, 2.0, null, "Retain", "", 1.0, 3.0, "2026-10-24T00:00:00Z")
+        creates.enqueue(log, a, input, "2026-10-24T00:00:00Z")
+        val frozen = pending.list().toList()
+        val disk = app.getSharedPreferences("vinetrack_pending_writes", android.content.Context.MODE_PRIVATE).all.toMap()
+        requireNotNull(OperationalWrites.authority).handleServerCode("VT_READ_ONLY", a)
+        val operations = listOf<() -> Unit>(
+            { creates.foldEdit(log, input.copy(itemName = "Replace"), "later"); Unit },
+            { creates.enqueue(log, a, input, "later"); Unit },
+            { updates.enqueue(log, a, input, "later"); Unit },
+            { deletes.cancelLocalCreate(log); Unit },
+        )
+        for (operation in operations) {
+            try { operation() } catch (_: VineyardWriteAuthority.Restricted) { }
+            assertEquals("Held foreground path changed the original queue", frozen, pending.list())
+            assertEquals(disk, app.getSharedPreferences("vinetrack_pending_writes", android.content.Context.MODE_PRIVATE).all)
+        }
+    }
+
     @Test fun heldUploadDeleteAndReferenceSendZeroMutations() = runBlocking {
         withTimeout(15_000) {
             val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as CleanExitFixtureApplication
@@ -150,7 +178,9 @@ class MaintenancePhotoAdmissionAndroidTest {
         val repo = MaintenanceLogRepository(session)
         val input = MaintenanceLogRepository.MaintenanceInput("Pump", null, null, 0.0, null, "Service", "", 0.0, 0.0, "2026-10-01")
         MaintenanceLogCreateSync(repo, pending).enqueue(log, a, input, "2026-10-01T03:04:05Z")
-        MaintenanceLogDeleteSync(repo, pending).enqueue(log)
+        // Retained legacy ID-only bytes, not a newly admitted foreground delete.
+        pending.enqueue(com.rork.vinetrack.data.model.PendingEntityType.MAINTENANCE_LOG,
+            com.rork.vinetrack.data.model.PendingOpType.DELETE, "{\"maintenanceLogId\":\"$log\"}", log)
         val original = pending.list()
         requireNotNull(OperationalWrites.authority).handleServerCode("VT_READ_ONLY", a)
         val client = HttpClient(MockEngine { fail("Dependent held delete reached transport"); error("No live fallback") })
@@ -189,7 +219,8 @@ class MaintenancePhotoAdmissionAndroidTest {
             val row = when (op) {
                 "CREATE" -> create.enqueue(log, a, input, "2026-10-01T03:04:05Z")
                 "UPDATE" -> update.enqueue(log, a, input, "2026-10-01T03:04:05Z")
-                else -> delete.enqueue(log)
+                else -> pending.enqueue(com.rork.vinetrack.data.model.PendingEntityType.MAINTENANCE_LOG,
+                    com.rork.vinetrack.data.model.PendingOpType.DELETE, "{\"maintenanceLogId\":\"$log\"}", log)
             }
             pending.incrementAttempt(row.id)
             pending.updateStatus(row.id, com.rork.vinetrack.data.model.PendingWriteStatus.FAILED, "Original error")
@@ -257,7 +288,7 @@ class MaintenancePhotoAdmissionAndroidTest {
                 when (op) {
                     "CREATE" -> MaintenanceLogCreateSync(repo, pending).enqueue(log, a, input, "2026-10-01T03:04:05Z")
                     "UPDATE" -> MaintenanceLogUpdateSync(repo, pending).enqueue(log, a, input, "2026-10-01T03:04:05Z")
-                    else -> MaintenanceLogDeleteSync(repo, pending).enqueue(log)
+                    else -> MaintenanceLogDeleteSync(repo, pending).enqueue(log, a)
                 }
                 var claimed: com.rork.vinetrack.data.model.PendingWrite? = null
                 var callbacks = 0
