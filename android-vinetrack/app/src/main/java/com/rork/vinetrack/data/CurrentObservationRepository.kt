@@ -99,6 +99,31 @@ class CurrentObservationRepository(private val session: SessionStore) {
         if (action == MAIT && row?.observedAt != null && (updated?.observedAt == row.observedAt || updated == null)) "no_newer" else "ok"
     }
 
+    /** Independent authenticated sensor read. A failure never changes the primary cache. */
+    suspend fun supplementary(vineyardId: String): MAITSupplementarySensors = withContext(Dispatchers.IO) {
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        val selectedAtStart = session.selectedVineyardId
+        fun requireScope() {
+            if (!session.isAccountAccessCurrent(access) || session.selectedVineyardId != selectedAtStart) throw BackendError.Unauthorized
+        }
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        requireScope()
+        val response = SupabaseClient.http.post(SupabaseClient.functionUrl("mait-intelliweb-proxy")) {
+            attributes.put(SupabaseClient.accountRequestScope, access)
+            headers {
+                append("apikey", SupabaseClient.anonKey)
+                append("Authorization", "Bearer $token")
+            }
+            contentType(ContentType.Application.Json)
+            setBody(supplementaryBody(vineyardId))
+        }
+        requireScope()
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, MAITSupplementarySensors.WARNING)
+        val decoded = SupabaseClient.json.decodeFromString<MAITSupplementarySensors>(response.bodyAsText())
+        requireScope()
+        if (response.status.value == 206) decoded.copy(partial = true) else decoded
+    }
+
     private suspend fun rpc(name: String, body: JsonObject): String {
         val access = session.accountAccess() ?: throw BackendError.Unauthorized
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -120,6 +145,17 @@ class CurrentObservationRepository(private val session: SessionStore) {
         const val MAIT = "mait_intelliweb"
         const val MAIT_LABEL = "MAIT iNTELLiWeb"
         const val MAIT_HELP = "MAIT iNTELLiWeb is configured in the VineTrack Portal by a Vineyard Owner or Manager."
+
+        fun supplementaryBody(vineyardId: String): JsonObject = buildJsonObject {
+            put("vineyardId", vineyardId)
+            put("action", "supplementary_current")
+        }
+
+        fun compassDirection(degrees: Double): String {
+            val directions = listOf("N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW")
+            val normalized = ((degrees % 360) + 360) % 360
+            return directions[kotlin.math.floor(normalized / 22.5 + 0.5).toInt() % 16]
+        }
 
         fun retainingLastKnown(incoming: CachedRow?, previous: CachedRow?): CachedRow? = when {
             incoming == null -> previous

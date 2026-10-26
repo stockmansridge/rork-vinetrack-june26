@@ -401,7 +401,12 @@ nonisolated struct WeatherCurrentService: Sendable {
         }
     }
 
-    static func maitRequest(vineyardId: UUID, token: String) throws -> URLRequest {
+    nonisolated enum MAITAction: String, Sendable {
+        case current
+        case supplementary = "supplementary_current"
+    }
+
+    static func maitRequest(vineyardId: UUID, token: String, action: MAITAction = .current) throws -> URLRequest {
         guard !token.isEmpty else { throw WeatherFetchError.network("Sign in to refresh MAIT iNTELLiWeb") }
         let base = AppConfig.supabaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: "\(base)/functions/v1/mait-intelliweb-proxy") else {
@@ -413,7 +418,7 @@ nonisolated struct WeatherCurrentService: Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["vineyardId": vineyardId.uuidString, "action": "current"])
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["vineyardId": vineyardId.uuidString, "action": action.rawValue])
         return request
     }
 

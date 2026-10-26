@@ -929,9 +929,7 @@ struct WeatherDataSettingsView: View {
                         NotificationCenter.default.post(name: .rainfallCalendarShouldReload, object: nil)
                     } catch {
                         guard vineyardId == vid, origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) else { return }
-                        observationStatus = config.localObservationProvider == .mait
-                            ? "Live observations not refreshed — MAIT iNTELLiWeb"
-                            : "Observation refresh failed: \(error.localizedDescription)"
+                        observationStatus = "Live observations not refreshed — \(WeatherCurrentService.CachedSnapshot.displaySource(config.localObservationProvider.rawValue))"
                     }
                 }
             } label: {

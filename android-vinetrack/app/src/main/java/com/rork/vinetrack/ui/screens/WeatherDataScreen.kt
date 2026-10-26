@@ -76,6 +76,8 @@ import com.rork.vinetrack.data.WeatherIntegrationProvider
 import com.rork.vinetrack.data.WillyWeatherLocation
 import com.rork.vinetrack.data.WillyWeatherRepository
 import com.rork.vinetrack.data.auth.SessionStore
+import androidx.compose.runtime.key
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
@@ -119,6 +121,22 @@ fun WeatherDataScreen(
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
     onOpenTool: ((ToolRoute) -> Unit)? = null,
+) {
+    val context = LocalContext.current
+    val session = remember { SessionStore(context) }
+    val epoch by session.retentionGuard.identityEpoch.collectAsStateWithLifecycle()
+    key(state.selectedVineyardId, session.userId, epoch) {
+        WeatherDataContent(state, modifier, onBack, onOpenTool)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WeatherDataContent(
+    state: AppUiState,
+    modifier: Modifier,
+    onBack: (() -> Unit)?,
+    onOpenTool: ((ToolRoute) -> Unit)?,
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
@@ -333,7 +351,7 @@ fun WeatherDataScreen(
                     "wunderground_pws" to "Weather Underground PWS",
                 ).forEach { (source, label) ->
                     TextButton(
-                        enabled = canEdit && !observationBusy && vineyardId != null && selectedObservation != CurrentObservationRepository.MAIT,
+                        enabled = canEdit && !loading && !observationBusy && vineyardId != null && selectedObservation != CurrentObservationRepository.MAIT,
                         onClick = {
                             val id = vineyardId ?: return@TextButton
                             observationBusy = true
@@ -355,7 +373,7 @@ fun WeatherDataScreen(
                 }
                 if (selectedObservation == null) Text("Legacy selection: Davis first, then Weather Underground", fontSize = 12.sp)
                 Button(
-                    enabled = !observationBusy && vineyardId != null,
+                    enabled = !loading && !observationBusy && vineyardId != null,
                     onClick = {
                         val id = vineyardId ?: return@Button
                         observationBusy = true
@@ -367,9 +385,7 @@ fun WeatherDataScreen(
                                     else -> "Selected observations refreshed."
                                 }
                             } catch (_: Exception) {
-                                statusMessage = if (selectedObservation == CurrentObservationRepository.MAIT)
-                                    "Live observations not refreshed — MAIT iNTELLiWeb"
-                                else "Selected observation refresh failed. Try again later."
+                                statusMessage = "Live observations not refreshed — ${CurrentObservationRepository.labelFor(selectedObservation ?: "selected source")}"
                             } finally { observationBusy = false }
                         }
                     },

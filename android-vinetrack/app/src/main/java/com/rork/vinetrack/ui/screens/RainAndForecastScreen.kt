@@ -74,6 +74,9 @@ import com.rork.vinetrack.data.VineyardWeatherIntegrationRepository
 import com.rork.vinetrack.data.WeatherIntegrationProvider
 import com.rork.vinetrack.data.WillyWeatherRepository
 import com.rork.vinetrack.data.toRainDay
+import com.rork.vinetrack.data.MAITSupplementarySensors
+import androidx.compose.runtime.key
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.components.BackNavIcon
@@ -103,6 +106,9 @@ fun RainAndForecastScreen(
     onBack: (() -> Unit)? = null,
     onOpenWeatherSettings: (() -> Unit)? = null,
 ) {
+    val weatherContext = LocalContext.current
+    val weatherSession = remember { SessionStore(weatherContext) }
+    val weatherEpoch by weatherSession.retentionGuard.identityEpoch.collectAsStateWithLifecycle()
     var showCalendar by remember { mutableStateOf(false) }
     AnimatedContent(
         targetState = showCalendar,
@@ -113,12 +119,15 @@ fun RainAndForecastScreen(
         if (calendar) {
             RainfallCalendarScreen(state, onBack = { showCalendar = false })
         } else {
-            RainAndForecastContent(
-                state = state,
-                onBack = onBack,
-                onOpenCalendar = { showCalendar = true },
-                onOpenWeatherSettings = onOpenWeatherSettings,
-            )
+            // Reuse the existing auth incarnation to dispose all old request/UI holders.
+            key(state.selectedVineyardId, weatherSession.userId, weatherEpoch) {
+                RainAndForecastContent(
+                    state = state,
+                    onBack = onBack,
+                    onOpenCalendar = { showCalendar = true },
+                    onOpenWeatherSettings = onOpenWeatherSettings,
+                )
+            }
         }
     }
 }
@@ -162,6 +171,8 @@ private fun RainAndForecastContent(
     val weatherAccount = sessionStore.userId
     var currentConditions by remember(state.selectedVineyardId, weatherAccount) { mutableStateOf<CachedRow?>(null) }
     var currentMessage by remember(state.selectedVineyardId, weatherAccount) { mutableStateOf<String?>(null) }
+    var supplementary by remember { mutableStateOf<MAITSupplementarySensors?>(null) }
+    var supplementaryMessage by remember { mutableStateOf<String?>(null) }
     // WillyWeather forecast override — non-null when the shared server-side
     // provider preference resolved to WillyWeather and the proxy returned
     // forecast days. Mirrors iOS `IrrigationForecastService`.
@@ -177,7 +188,7 @@ private fun RainAndForecastContent(
     var hasLoaded by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    fun refresh() {
+    fun refresh(forceCurrent: Boolean = false) {
         if (isLoading) return
         val loc = location
         scope.launch {
@@ -198,7 +209,7 @@ private fun RainAndForecastContent(
                 val cached = runCatching { currentRepo.current(vineyardId) }.getOrNull()
                 if (stillCurrent()) currentConditions = CurrentObservationRepository.retainingLastKnown(cached, currentConditions)
                 try {
-                    val result = currentRepo.refresh(vineyardId)
+                    val result = currentRepo.refresh(vineyardId, force = forceCurrent)
                     val updated = currentRepo.current(vineyardId)
                     if (stillCurrent()) {
                         currentConditions = CurrentObservationRepository.retainingLastKnown(updated, currentConditions)
@@ -206,6 +217,13 @@ private fun RainAndForecastContent(
                     }
                 } catch (_: Exception) {
                     if (stillCurrent()) currentMessage = currentConditions?.refreshFailureMessage ?: "Live observations not refreshed — selected source"
+                }
+                // Extra sensor read is independent, including on primary-refresh failure.
+                try {
+                    val extra = currentRepo.supplementary(vineyardId)
+                    if (stillCurrent()) { supplementary = extra; supplementaryMessage = extra.warning }
+                } catch (_: Exception) {
+                    if (stillCurrent()) supplementaryMessage = MAITSupplementarySensors.WARNING
                 }
             }
 
@@ -308,7 +326,7 @@ private fun RainAndForecastContent(
                 title = { Text("Rain & Forecast") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 actions = {
-                    IconButton(onClick = { refresh() }, enabled = !isLoading) {
+                    IconButton(onClick = { refresh(forceCurrent = true) }, enabled = !isLoading) {
                         if (isLoading) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                         } else {
@@ -351,6 +369,9 @@ private fun RainAndForecastContent(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item { CurrentConditionsCard(currentConditions, currentMessage) }
+            supplementary?.takeIf { it.modules.isNotEmpty() }?.let { extra ->
+                item { SupplementarySensorsCard(extra, supplementaryMessage) }
+            }
             item {
                 StatusBanner(
                     todayMm = todayMm,
@@ -448,7 +469,7 @@ private fun CurrentConditionsCard(snapshot: CachedRow?, refreshMessage: String?)
                 snapshot.temperatureC?.let { "Temperature" to "${it.roundToInt()}°C" },
                 snapshot.humidityPct?.let { "Humidity" to "${it.roundToInt()}%" },
                 snapshot.windSpeedKmh?.let { "Wind" to fmt.formatSpeed(it, 0) },
-                snapshot.windDirectionDeg?.let { "Wind direction" to "${it.roundToInt()}°" },
+                snapshot.windDirectionDeg?.let { "Wind direction" to CurrentObservationRepository.compassDirection(it) },
                 snapshot.windGustKmh?.let { "Wind gust" to fmt.formatSpeed(it, 0) },
                 snapshot.rainTodayMm?.let { "Rain today" to fmt.formatRainfall(it) },
                 snapshot.rainRateMmPerHr?.let { "Rain rate" to "${fmt.formatRainfall(it)}/h" },
@@ -465,6 +486,31 @@ private fun CurrentConditionsCard(snapshot: CachedRow?, refreshMessage: String?)
             Text("No current station observation available. Forecast and rainfall history remain below.", fontSize = 12.sp, color = vine.textSecondary)
         }
         refreshMessage?.let { Text(it, fontSize = 12.sp, color = vine.textSecondary) }
+    }
+}
+
+@Composable
+private fun SupplementarySensorsCard(extra: MAITSupplementarySensors, message: String?) {
+    val vine = LocalVineColors.current
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(vine.cardBackground).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Additional MAIT sensors", fontWeight = FontWeight.SemiBold, fontSize = 17.sp, color = vine.textPrimary)
+        extra.modules.forEach { module ->
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(module.title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                Text(module.statusLabel, fontSize = 12.sp, color = vine.textSecondary)
+                module.observedAt?.let { Text(it, fontSize = 11.sp, color = vine.textSecondary) }
+                module.visibleReadings.forEach { reading ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(reading.title, fontSize = 13.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
+                        Text(reading.displayValue.orEmpty(), fontSize = 13.sp, color = vine.textPrimary)
+                    }
+                }
+            }
+        }
+        (message ?: extra.warning)?.let { Text(it, fontSize = 12.sp, color = vine.textSecondary) }
     }
 }
 

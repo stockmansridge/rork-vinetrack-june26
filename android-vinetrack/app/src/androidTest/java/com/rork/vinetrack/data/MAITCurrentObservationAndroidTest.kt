@@ -162,6 +162,140 @@ class MAITCurrentObservationAndroidTest {
         }
     }
 
+    @Test fun supplementaryUsesMemberScopeExactBodyAnd206WithoutPrimaryChanges() = runBlocking {
+        withTimeout(15_000) {
+            val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as CleanExitFixtureApplication
+            app.resetFixture()
+            val session = SessionStore(app)
+            session.save("synthetic-member-jwt", "synthetic-refresh", owner, null)
+            session.selectedVineyardId = vineyard
+            requireNotNull(OperationalWrites.authority).handleServerCode("VT_READ_ONLY", vineyard)
+            val paths = mutableListOf<String>()
+            val client = HttpClient(MockEngine { request ->
+                paths += request.url.encodedPath
+                assertEquals("Bearer synthetic-member-jwt", request.headers["Authorization"])
+                assertEquals(owner, request.attributes[SupabaseClient.accountRequestScope].userId)
+                if (request.url.encodedPath.endsWith("get_vineyard_current_weather")) respond(row, HttpStatusCode.OK)
+                else {
+                    assertEquals("/functions/v1/mait-intelliweb-proxy", request.url.encodedPath)
+                    val body = SupabaseClient.json.parseToJsonElement((request.body as TextContent).text).jsonObject
+                    assertEquals(setOf("vineyardId", "action"), body.keys)
+                    assertEquals(vineyard, body["vineyardId"]?.jsonPrimitive?.content)
+                    assertEquals("supplementary_current", body["action"]?.jsonPrimitive?.content)
+                    respond("""{"success":true,"partial":false,"modules":[{"module_id":221,"friendly_name":"EnviroPro Moisture","observed_at":"2026-10-26T06:00:00Z","status":"ok","readings":[{"canonical_metric":"soil_moisture","source_unit":"%","raw_value":245,"value":24.5}]},{"module_id":222,"friendly_name":"EnviroPro Temperature","status":"error"}]}""", HttpStatusCode.PartialContent)
+                }
+            }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
+            SupabaseClient.installInstrumentationTransport(client)
+            try {
+                val repo = CurrentObservationRepository(session)
+                val primary = repo.current(vineyard)
+                val extra = repo.supplementary(vineyard)
+                assertEquals(24.5, extra.modules[0].visibleReadings[0].value)
+                assertEquals("EnviroPro Moisture", extra.modules[0].title)
+                assertEquals("Sensor data unavailable", extra.modules[1].statusLabel)
+                assertEquals(MAITSupplementarySensors.WARNING, extra.warning)
+                assertEquals(primary, repo.current(vineyard))
+                assertEquals(listOf("/rest/v1/rpc/get_vineyard_current_weather", "/functions/v1/mait-intelliweb-proxy", "/rest/v1/rpc/get_vineyard_current_weather"), paths)
+                assertFalse(requireNotNull(OperationalWrites.authority).canWrite(vineyard))
+            } finally { SupabaseClient.installInstrumentationTransport(null); client.close() }
+        }
+    }
+
+    @Test fun supplementaryFailureIsSanitizedAndCannotRefreshOrErasePrimary() = runBlocking {
+        withTimeout(15_000) {
+            val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as CleanExitFixtureApplication
+            app.resetFixture()
+            val session = SessionStore(app)
+            session.save("synthetic-jwt", "synthetic-refresh", owner, null)
+            session.selectedVineyardId = vineyard
+            var sends = 0
+            val client = HttpClient(MockEngine { request ->
+                if (request.url.encodedPath.endsWith("get_vineyard_current_weather")) respond(row, HttpStatusCode.OK)
+                else { sends++; assertEquals("/functions/v1/mait-intelliweb-proxy", request.url.encodedPath); respond("private-upstream-diagnostic", HttpStatusCode.BadGateway) }
+            }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
+            SupabaseClient.installInstrumentationTransport(client)
+            try {
+                val repo = CurrentObservationRepository(session)
+                val before = repo.current(vineyard)
+                try { repo.supplementary(vineyard); fail("Expected supplementary error") }
+                catch (e: BackendError.Server) { assertFalse(e.message.orEmpty().contains("private-upstream")) }
+                assertEquals(before, repo.current(vineyard))
+                assertEquals(1, sends)
+                assertEquals("2026-10-26T01:00:00Z", before?.observedAt)
+                assertEquals(21.0, before?.temperatureC)
+            } finally { SupabaseClient.installInstrumentationTransport(null); client.close() }
+        }
+    }
+
+    @Test fun supplementaryDiscardsChangedVineyardAccountAndRevokedIncarnation() = runBlocking {
+        withTimeout(15_000) {
+            val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as CleanExitFixtureApplication
+            for (change in listOf("vineyard", "account", "incarnation")) {
+                app.resetFixture()
+                val session = SessionStore(app)
+                session.save("synthetic-jwt", "synthetic-refresh", owner, null)
+                session.selectedVineyardId = vineyard
+                var sends = 0
+                val client = HttpClient(MockEngine { request ->
+                    sends++
+                    assertEquals("/functions/v1/mait-intelliweb-proxy", request.url.encodedPath)
+                    when (change) {
+                        "vineyard" -> session.selectedVineyardId = "22222222-2222-4222-8222-222222222222"
+                        "account" -> session.userId = "55555555-5555-4555-8555-555555555555"
+                        else -> {
+                            session.retentionGuard.rejectSession { }
+                            // Simulated verified original-principal recovery on this disposable fixture.
+                            // The delayed request must fail by incarnation, not by lock/user mismatch.
+                            assertTrue(session.restoreOriginal("synthetic-return-jwt", "synthetic-return-refresh", com.rork.vinetrack.data.model.AppUser(owner), setOf(vineyard)))
+                            assertEquals(owner, session.userId)
+                        }
+                    }
+                    respond("""{"success":true,"modules":[{"friendly_name":"Old account module","status":"ok","readings":[{"canonical_metric":"soil_moisture","value":99}]}]}""", HttpStatusCode.OK)
+                }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
+                SupabaseClient.installInstrumentationTransport(client)
+                try {
+                    try { CurrentObservationRepository(session).supplementary(vineyard); fail("Old $change scope returned sensor data") }
+                    catch (_: BackendError.Unauthorized) { }
+                    assertEquals(1, sends)
+                } finally { SupabaseClient.installInstrumentationTransport(null); client.close() }
+            }
+        }
+    }
+
+    @Test fun explicitWUAndDavisFailureNeverCallsMAITOrAnotherProviderAndNoneSendsNothing() = runBlocking {
+        withTimeout(15_000) {
+            val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as CleanExitFixtureApplication
+            app.resetFixture()
+            val session = SessionStore(app)
+            session.save("synthetic-jwt", "synthetic-refresh", owner, null)
+            var selected = "wunderground_pws"
+            val functions = mutableListOf<String>()
+            val client = HttpClient(MockEngine { request ->
+                val path = request.url.encodedPath
+                when {
+                    path.endsWith("get_vineyard_current_observation_provider") -> respond("\"$selected\"", HttpStatusCode.OK)
+                    path.endsWith("get_vineyard_current_weather") -> respond(row.replace("mait_intelliweb", selected).replace("\"station_name\"", "\"station_id\":\"synthetic-station\",\"station_name\""), HttpStatusCode.OK)
+                    else -> { functions += path; respond("unavailable", HttpStatusCode.BadGateway) }
+                }
+            }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
+            SupabaseClient.installInstrumentationTransport(client)
+            try {
+                val repo = CurrentObservationRepository(session)
+                for (provider in listOf("wunderground_pws", "davis_weatherlink")) {
+                    selected = provider
+                    val before = repo.current(vineyard)
+                    try { repo.refresh(vineyard, true); fail("Expected selected failure") } catch (_: BackendError.Server) { }
+                    assertEquals(before, CurrentObservationRepository.retainingLastKnown(null, before))
+                    if (provider == "wunderground_pws") assertEquals("Live observations not refreshed — Weather Underground PWS", before?.refreshFailureMessage)
+                }
+                assertEquals(listOf("/functions/v1/wunderground-proxy", "/functions/v1/davis-proxy"), functions)
+                selected = "none"
+                repo.refresh(vineyard, true)
+                assertEquals(2, functions.size)
+            } finally { SupabaseClient.installInstrumentationTransport(null); client.close() }
+        }
+    }
+
     @Test fun accountChangeDuringSelectionPreventsCurrentAndProxyCalls() = runBlocking {
         withTimeout(15_000) {
             val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as CleanExitFixtureApplication

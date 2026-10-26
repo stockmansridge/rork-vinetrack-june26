@@ -15,7 +15,9 @@ struct RainAndForecastView: View {
     @State private var currentAccountBinding: String?
     @State private var currentAccountGeneration: UInt64?
     @State private var currentRefreshMessage: String?
-    @State private var isRefreshingCurrent = false
+    @State private var currentRequestID: UUID?
+    @State private var supplementary: MAITSupplementarySensors?
+    @State private var supplementaryMessage: String?
     @State private var selectedForecastDay: Int = 0
     @State private var forecastDays: [ForecastDay] = []
     @State private var sprayPeriods: [SprayForecastPeriod] = []
@@ -51,10 +53,21 @@ struct RainAndForecastView: View {
     /// (Region & Units → Rainfall) see converted values everywhere on this page.
     private var fmt: RegionFormatter { store.settings.regionFormatter }
 
+    private var weatherScope: String {
+        "\(store.selectedVineyardId?.uuidString ?? "")/\(VineyardWriteAuthority.shared.accountBinding ?? "")/\(VineyardWriteAuthority.shared.accountGeneration)"
+    }
+
+    private var currentScopeMatches: Bool {
+        currentVineyardId == store.selectedVineyardId && currentAccountBinding == VineyardWriteAuthority.shared.accountBinding && currentAccountGeneration == VineyardWriteAuthority.shared.accountGeneration
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                currentConditionsSection
+                if currentScopeMatches {
+                    currentConditionsSection
+                    supplementarySection
+                }
                 statusBanner
                 if let warning = windWarning {
                     windWarningBanner(warning)
@@ -66,7 +79,7 @@ struct RainAndForecastView: View {
                 }
                 dailyForecastSection
                 sprayWindowSection
-                conditionsCheckSection
+                if currentScopeMatches { conditionsCheckSection }
                 rainfallHistorySection
                 calendarLink
                 Spacer(minLength: 24)
@@ -77,8 +90,8 @@ struct RainAndForecastView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Rain & Forecast")
         .navigationBarTitleDisplayMode(.inline)
-        .refreshable { await reload() }
-        .task(id: store.selectedVineyardId) { await reload() }
+        .refreshable { await reload(forceCurrent: true) }
+        .task(id: weatherScope) { await reload() }
     }
 
     private var currentConditionsSection: some View {
@@ -116,6 +129,32 @@ struct RainAndForecastView: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 18))
+    }
+
+    @ViewBuilder private var supplementarySection: some View {
+        if let supplementary, !supplementary.modules.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Additional MAIT sensors").font(.headline)
+                ForEach(Array(supplementary.modules.enumerated()), id: \.offset) { _, module in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(module.friendlyName).font(.subheadline.weight(.semibold))
+                        Text(module.statusLabel).font(.caption).foregroundStyle(.secondary)
+                        if let time = module.observedAt { Text(time).font(.caption2).foregroundStyle(.secondary) }
+                        ForEach(Array(module.visibleReadings.enumerated()), id: \.offset) { _, reading in
+                            if let value = reading.displayValue {
+                                LabeledContent(reading.title, value: value).font(.subheadline)
+                            }
+                        }
+                    }
+                }
+                if let message = supplementaryMessage ?? supplementary.warning {
+                    Text(message).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 18))
+        }
     }
 
     private func conditionMetric(_ title: String, _ value: String, icon: String) -> some View {
@@ -753,11 +792,26 @@ struct RainAndForecastView: View {
 
     // MARK: - Loading
 
-    private func reload() async {
+    private func reload(forceCurrent: Bool = false) async {
+        resetCurrentScopeIfNeeded()
         await loadWindThreshold()
         await loadForecast()
-        await loadToday()
+        guard !Task.isCancelled else { return }
+        await loadToday(force: forceCurrent)
         await loadHistory()
+    }
+
+    private func resetCurrentScopeIfNeeded() {
+        guard !currentScopeMatches else { return }
+        currentConditions = nil
+        supplementary = nil
+        supplementaryMessage = nil
+        currentRefreshMessage = nil
+        currentRequestID = nil
+        todayMm = nil
+        currentVineyardId = store.selectedVineyardId
+        currentAccountBinding = VineyardWriteAuthority.shared.accountBinding
+        currentAccountGeneration = VineyardWriteAuthority.shared.accountGeneration
     }
 
     private func loadWindThreshold() async {
@@ -767,22 +821,20 @@ struct RainAndForecastView: View {
         }
     }
 
-    private func loadToday() async {
+    private func loadToday(force: Bool) async {
         let origin = (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration)
+        guard let vid = store.selectedVineyardId else {
+            todayMm = nil; currentConditions = nil; supplementary = nil; supplementaryMessage = nil; currentRefreshMessage = nil; currentRequestID = nil
+            return
+        }
+        resetCurrentScopeIfNeeded()
+        guard currentRequestID == nil else { return }
+        let requestID = UUID()
+        currentRequestID = requestID
         func stillCurrent(_ vid: UUID) -> Bool {
-            store.selectedVineyardId == vid && !Task.isCancelled && origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration)
+            currentRequestID == requestID && store.selectedVineyardId == vid && !Task.isCancelled && origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration)
         }
-        guard let vid = store.selectedVineyardId else { todayMm = nil; currentConditions = nil; return }
-        if currentVineyardId != vid || currentAccountBinding != origin.0 || currentAccountGeneration != origin.1 {
-            currentConditions = nil
-            todayMm = nil
-            currentVineyardId = vid
-            currentAccountBinding = origin.0
-            currentAccountGeneration = origin.1
-        }
-        guard !isRefreshingCurrent else { return }
-        isRefreshingCurrent = true
-        defer { isRefreshingCurrent = false }
+        defer { if currentRequestID == requestID { currentRequestID = nil } }
         currentRefreshMessage = nil
         let weather = WeatherCurrentService()
         // Hydrate last-known first. A refresh error must not erase it.
@@ -792,7 +844,7 @@ struct RainAndForecastView: View {
         }
         let previous = currentConditions
         do {
-            let updated = try await weather.refreshSelectedCurrent(vineyardId: vid)
+            let updated = try await weather.refreshSelectedCurrent(vineyardId: vid, force: force)
             guard stillCurrent(vid) else { return }
             if let updated {
                 currentConditions = WeatherCurrentService.CachedSnapshot.retainingLastKnown(updated, previous: currentConditions)
@@ -803,6 +855,16 @@ struct RainAndForecastView: View {
         } catch {
             guard stillCurrent(vid) else { return }
             currentRefreshMessage = currentConditions?.refreshFailureMessage ?? "Live observations not refreshed — selected source"
+        }
+        // Independent extra-sensor read: never changes primary or rainfall state.
+        do {
+            let extra = try await weather.fetchSupplementaryCurrent(vineyardId: vid)
+            guard stillCurrent(vid) else { return }
+            supplementary = extra
+            supplementaryMessage = extra.warning
+        } catch {
+            guard stillCurrent(vid) else { return }
+            supplementaryMessage = MAITSupplementarySensors.warning
         }
         var resolved: Double?
         if let snap = currentConditions, snap.status == "ok", let r = snap.rainTodayMm {

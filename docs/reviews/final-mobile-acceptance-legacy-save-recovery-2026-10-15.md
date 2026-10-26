@@ -1,5 +1,95 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Mobile weather parity / supplementary MAIT sensors — 26 October 2026 — AUTOMATED GATES PASS
+
+Latest bounded weather continuation. This supersedes the earlier weather-source freeze only for the changes listed here; it does not close native-wide enforcement, authenticated backend, physical-device or release gates. Base revision `de8d6cc9560d660e2b1758618ae232d8febb6e6b` plus the exact eleven-file application/test manifest below identifies this source. Managed history/state changes are excluded from that application manifest and preserved.
+
+### Source audit reported before application edits
+
+Both existing Current Conditions cards already used the same normalized nullable primary model. No architecture unification was needed. The grouped parity matrix was reported in chat before application edits; the seventeen individually exposed behaviours are expanded here:
+
+| Exposure / behaviour | iOS before | Android before | Final bounded change |
+|---|---|---|---|
+| Primary provider label | Present | Present | Existing canonical labels retained |
+| Station name | Present | Present | Unchanged |
+| Observation timestamp | Present | Present | Unchanged |
+| Temperature | Non-null only | Non-null only | Unchanged |
+| Humidity | Non-null only | Non-null only | Unchanged |
+| Wind speed | Non-null only | Non-null only | Unchanged |
+| Wind direction | 16-point compass | Rounded degrees | Android now uses matching compass; 133 degrees is SE |
+| Wind gust | Non-null only | Non-null only | Unchanged |
+| Rain today | Non-null only, includes actual zero | Same | Unchanged |
+| Rain rate | Non-null only | Non-null only | Unchanged |
+| Leaf wetness | Non-null only | Non-null only | Unchanged |
+| Stale status / retained readings | Present | Present | Preserved |
+| Refresh-error copy | Source-specific rain page; variable settings copy | Same | Settings use source-specific wording |
+| No-newer MAIT feedback | Present | Present | Preserved |
+| Portal-only MAIT guidance/read-only status | Present | Present | Preserved; no setup controls added |
+| Additional MAIT sensors / scoped partial warning | Absent | Absent | Added independent section on both rain pages |
+| Exact frozen MAIT irrigation label | Present | Present | Unchanged and regression-selected |
+
+The existing rain-page user refresh was stale-only on both platforms. Deliberate refresh now forces only the resolved primary provider, follows its normalized reread, then independently reads supplementary sensors. Automatic loads remain stale-only. No client current-weather throttle existed in either repository, so none was added. Provider resolution still precedes routing, and unresolved/auth/network selection failure cannot become a fallback. Explicit `none` makes no primary-provider refresh. The Davis/WU legacy null-selection path remains distinct from explicit selection.
+
+### Delivered boundaries
+
+- Primary weather remains `get_vineyard_current_weather(p_vineyard_id)`. No second primary MAIT observation model. The supplied primary fixture retains temperature14.5, humidity54.4, wind4/direction133/gust14.5, actual rain0, station/time and two absent metrics; wind uses SE on both platforms.
+- Supplementary reads use the authenticated VineTrack `mait-intelliweb-proxy` only, with exactly `vineyardId` and `action: supplementary_current`. iOS reuses the primary MAIT request builder/session and account-generation checks; Android reuses the signed-in bearer token and `accountRequestScope` through the existing HTTP client. No service-role token, Network ID, MAIT credential, upstream host or management action was added.
+- The independent supplementary read discovers available modules, including alongside a non-MAIT primary source; it is not a selected-primary refresh or fallback. No modules means no Additional MAIT sensors section. A failed discovery with no previously returned modules also leaves the section hidden. Existing same-scope modules can remain with the scoped warning after a failed reload.
+- Modules show friendly names, actual observed timestamps, status and available normalized readings. Soil moisture uses `value` with the supplied unit; soil temperature uses `value` in Celsius; leaf wetness uses `value` and its supplied unit when present. `raw_value` is never used for conversion. Null readings are hidden, not fabricated as zero. `no_data` says “No recent data”; `error` says “Sensor data unavailable”. Successful modules are not suppressed by another module's error.
+- HTTP206 is decoded as usable data with the warning “Some MAIT sensor data may be incomplete. Primary weather is unaffected.” Payload/module partial and module-error conditions also yield that scoped warning. Supplementary errors never replace primary readings, timestamps or primary-refresh feedback.
+- iOS current/supplementary presentation is fenced by existing vineyard/account binding/generation, cleared before unrelated reload work, and asynchronous publication additionally checks the current request identity. Its forecast-before-rainfall sequence is preserved so persisted-rainfall day calculation still uses the resolved forecast timezone. The existing root removes the signed-in shell on sign-out; shared authority/auth/session code was not changed.
+- Android rain and weather-settings holders are disposed/recreated using selected vineyard, signed-in account and the existing identity epoch. Old coroutine/UI holders cannot become the new screen's state. The supplementary repository also rejects account-incarnation and selected-vineyard changes across transport.
+- Forecast selection, Davis/WU primary fallback rules, persisted rainfall sources/calculations, irrigation usage, frozen irrigation provenance, session volumes/durations and field-operation/startup/costing/entitlement code were not changed. No migration, Portal/server, version/build-number, signing, release or store upload operation was performed. Historical read-only entry and notice/purchase UX remain disabled.
+
+### Executed validation — separate results, never combined with historical gates
+
+**iOS final exact11-suite selection:** managed `swiftTest(ios)` returned **142 passed in58s**. Tool success, zero failures reported. Skipped count and per-suite discovery manifest are not exposed, so skipped is **unavailable**, not inferred zero. All selectors under `VineTrackTests/`:
+
+`MAITSupplementarySensorTests`, `MAITCurrentObservationTests`, `CurrentObservationProviderTests`, `ReadOnlyEntitlementContractTests`, `VineyardWriteAuthorityTests`, `EntitlementAccessRegressionTests`, `EquipmentVineyardIsolationTests`, `ForecastParityContractTests`, `ForecastSupplementationFocusedTests`, `IrrigationCalculatorFixtureTests`, `RegionFormatterWeatherParityTests`.
+
+New Swift coverage exercises exact supplementary host/path/method/body/member JWT, HTTP206 and partial warning, supplied names/time/normalized values, empty modules, independent module error/no-data, null/zero and supplied units, obsolete-scope rejection before/after transport, sanitized supplementary failure, primary fixture/nulls/compass, forced fresh refresh, explicit MAIT/Davis/WU/none exclusivity and unresolved-selection zero-send. These are production decoding/formatting/routing and injected transport/scope assertions, not rendered-screen or live-backend acceptance.
+
+Earlier runs in this continuation: first failed at compile with **0 passed/0 failed**, missing `Supabase` import in the new supplementary file; import corrected. Next selection **142 passed in73s** and a normal simulator build passed, before the final view-only restoration of forecast/rainfall ordering/request-publication fencing. Final142/58s above and a new separate normal simulator build **PASS** cover the final iOS source. Do not combine the overlapping142 results. The historical297 gate was not rerun.
+
+**Android host:** unchanged `scripts/run-mait-mobile-contract.py`, serial stages, artifact root `/tmp/vinetrack-mait-contract-o0mlbrtq`. Each stage exit0, failures0, errors0, skipped0:
+
+- Weather/irrigation **52 passed in215.740s**: `MAITCurrentObservationContractTest`, `CurrentObservationRepositoryTest`, `ForecastParityContractTest`, `SprayForecastWindowsTest`, `IrrigationCalculatorFixtureTest`, `IrrigationRegionalAdviceTest`.
+- Authority/isolation **209 passed in12.488s**: `ReadOnlyEntitlementContractTest`, `VineTrackAccessRowCompatTest`, `VineyardWriteAuthorityTest`, `PinPhotoWorkflowTest`, `FertigationMobileWorkflowTest`, `ResistancePlanRepositoryTest`, `ResistancePlanRevisionSyncTest`, `FertigationDomainTest`, `TripOccurrenceJournalTest`, `StartTankCommitCoordinatorTest`, `TripWriteAdmissionTest`.
+- Startup/offline **55 passed in12.037s**: `RetainedStartupTest`, `SyncRecoveryStorageTest`, `SyncCrashIsolationTest`, `ActiveTripStoreTest`, `OfflineQuickActionsTest`, `TripEndGateTest`.
+
+Artifacts include each stage's `result.json`, exact Gradle command, suite/case XML and `gradle.log`; aggregate `summary.json`. All application/host-test source remained unchanged after these results. The subsequent change was instrumentation-fixture-only.
+
+**Android instrumentation:** final `com.rork.vinetrack.data.MAITCurrentObservationAndroidTest` returned **9 passed/0 failed/0 skipped in12s**. Production repositories and disposable synthetic sessions, MockEngine HTTP; no live customer/station connection. New methods cover exact supplementary member JWT/body/request-scope under a read-only vineyard,206 and independent module failure, unchanged primary reread, sanitized supplementary failure, switched vineyard/account and recovered same-account incarnation rejecting old responses, explicit WU/Davis failures never invoking another primary provider and explicit none sending no primary refresh.
+
+Initial instrumentation selection returned **4 passed/5 failed/0 skipped**. The new incarnation scenario left its test-only in-memory guard locked; subsequent tests failed at synthetic `SessionStore.save`, not a weather assertion. Test fixture corrected to call the existing verified-original restoration seam with a synthetic original principal before returning the delayed response. The response must now be rejected even with the same account restored and guard unlocked, and subsequent tests remain isolated. No production recovery or session relaxation. Final nine-test selection above passed after that correction; do not add overlapping executions.
+
+**Final builds:** separate normal `runChecks(ios)` **PASS, simulator build succeeded**; normal `runChecks(android-vinetrack)` **PASS, build succeeded**, after their focused test gates. No overlapping Android Gradle operations. Existing nonblocking legacy asset-address advisories remain unchanged. `git diff HEAD --check` PASS. No dependency, project/scheme, manifest, version, release or signing configuration edits.
+
+### Exact changed application/test files and source identity
+
+Eleven-file delta manifest relative to base `de8d6cc9560d660e2b1758618ae232d8febb6e6b`; SHA256 of the ordered lines below, including their newline separators, is `446b4ee1ea07e83cc29558505acc491af10100a0737373842d454d1822e97bb1`:
+
+```text
+aa6a664b73c39a4424ac6ee2b73d61417f05807dc28649d5a6f0e18beb074ffe  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/MAITCurrentObservationAndroidTest.kt
+23b5b781a7e9f0e2d7953bc11cb33692d3f9674a321de2c7c10ffdbbbd47f652  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/CurrentObservationRepository.kt
+79d0c76632a9216a6f35f05efa1a9e160854ae409a049a2a397bd221ede75c2c  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/MAITSupplementarySensors.kt
+adb5f1d2506a04ef3a116ff5585e9a34d5d9ea9abc5197dab4610124b3dffd6a  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/RainAndForecastScreen.kt
+8fce9572d64489467934966cc4f23ce0bc8028d515e099b7cb7cca3f14049bf2  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WeatherDataScreen.kt
+380b53ee543882f94a23078cc78025ae3a647d46e8b028321af3317494b931ad  android-vinetrack/app/src/test/java/com/rork/vinetrack/data/MAITCurrentObservationContractTest.kt
+1264ef4fa8ee40b529a8e71c398cefe02aed161e85bbd34499deed7fc0338d66  ios/VineTrack/App/MAITSupplementarySensors.swift
+f563249e6a7448c22dd4bded4fbf06d9dea54c11f9d3b037c78eb0ca4cc3eccc  ios/VineTrack/App/RainAndForecastView.swift
+b712471685d5b3ead55d362b16d78137e19a8439f1e83de858cad22fa28487b3  ios/VineTrack/App/WeatherCurrentService.swift
+e1a756b29f7735da518f03ef0f97456f93003cec26ddc4887af2acc9d1bf2fe1  ios/VineTrack/App/WeatherDataSettingsView.swift
+2d95b4adc748813f3b2e9df2258d8b6ef80c5d93242156fe8741c24a9d5140e8  ios/VineTrackTests/MAITSupplementarySensorTests.swift
+```
+
+The existing approved plan and this existing report were updated separately. No additional reporting scripts, new documentation files or backend files were created. Managed project state/history changes are not application code and were preserved.
+
+### Remaining acceptance / limits
+
+No configured-vineyard live backend response was fetched or verified; the supplied contract/fixtures are the implementation basis. No physical iPhone/Android device, interactive screen QA, actual account-switch UI journey, station outage or Portal-change propagation acceptance was performed. Confirm friendly names/timestamps/readings for configured additional modules, nulls/statuses/206, manual refresh/no-newer and primary retention, immediate clearing during real account/vineyard switches, unchanged forecasts/rainfall and exact frozen irrigation labels on physical devices. Authenticated RLS/member access and real token refresh/retry are not established by synthetic HTTP. Device/Release iOS build is not verified. Native-wide enforcement, unknown-outcome/process-death recovery, the separate23-case backend fixture and all release gates remain independently open.
+
+
 ## Exact expanded iOS MAIT regression rerun — 26 October 2026 — PASS
 
 **Expanded iOS MAIT regression gate: PASS.** Explicitly authorised exact20-suite rerun against unchanged current application and test source. Managed `swiftTest(ios)` returned: **“Swift tests passed for ios: 297 passed in 78s.”** This is a genuinely executed successful result, not the preceding zero-test framework-loading failure and not a union of earlier selections.
