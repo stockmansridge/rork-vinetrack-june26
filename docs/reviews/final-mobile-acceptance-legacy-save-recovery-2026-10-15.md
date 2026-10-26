@@ -1,5 +1,47 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Exact expanded iOS MAIT regression rerun — 26 October 2026 — PASS
+
+**Expanded iOS MAIT regression gate: PASS.** Explicitly authorised exact20-suite rerun against unchanged current application and test source. Managed `swiftTest(ios)` returned: **“Swift tests passed for ios: 297 passed in 78s.”** This is a genuinely executed successful result, not the preceding zero-test framework-loading failure and not a union of earlier selections.
+
+- Tests executed: **297 confirmed passing executions**; the runner exposes no separate total including skipped tests.
+- Passed: **297**.
+- Failed: **0 reported; tool returned success**.
+- Skipped: **not reported by the runner; do not infer zero**.
+- Duration: **78 seconds**, as returned by the runner; no separate build/execution timing supplied.
+- Final tested application/test source revision: **`601d581867e69bad5a03d0725eaabdf077f568e1`**. `git diff HEAD -- ios android-vinetrack` empty before execution; no app, test, scheme, project, dependency, startup/session, MAIT, authority, version, signing or backend edits. Subsequent changes are this report and the existing approved plan only, apart from preserved managed state. The later documentation save does not change the tested source identity.
+
+Exact submitted selectors (all under `VineTrackTests`):
+
+1. `MAITCurrentObservationTests`
+2. `CurrentObservationProviderTests`
+3. `DeviceTripOwnershipTests`
+4. `VineyardWriteAuthorityTests`
+5. `ReadOnlyEntitlementContractTests`
+6. `SpraySaveForLaterTests`
+7. `EntitlementDecisionTests`
+8. `EntitlementAccessRegressionTests`
+9. `OfflineQuickActionsTests`
+10. `ResistancePlanRepositoryTests`
+11. `ResistancePlanRevisionSyncTests`
+12. `FertigationMobileWorkflowTests`
+13. `FertigationDomainTests`
+14. `TripOccurrenceJournalTests`
+15. `StartTankCommitCoordinatorTests`
+16. `PinPhotoWorkflowTests`
+17. `VineyardMutationAdmissionTests`
+18. `LinkedPinGrowthDeletionWorkflowTests`
+19. `MobileRequestSyncSafeguardTests`
+20. `GrowthStageVarietyParityTests`
+
+The result is the managed runner's aggregate for that exact request, not a per-suite/per-method discovery manifest. Do not add the earlier78, focused11, maintenance302 or separate79 results: they overlap or select different boundaries.
+
+Environment handling: inspected the existing shared Debug Test action, enabled hosted `VineTrackTests`, `TEST_HOST`/`BUNDLE_LOADER`, iOS18 deployment settings and Swift Testing imports without edits. The managed runner builds and executes the test products; no exposed parameter permits remote derived-data cleaning, test-host reconstruction or independent SDK/runtime framework inspection. One explicitly authorised rerun succeeded, so no speculative environment patch or repeated retry was made. The local `/tmp/rork-swift-test-ios.log` was inspected but is **stale** (mtime05:17 UTC versus this run around06:44 UTC) and ends in an earlier hosted-bundle connection failure; its SDK, dependency versions, failure and timing are not evidence for this successful run. No current detailed result bundle, skipped metric or runtime inventory was exposed. The historical Apple `Testing.framework` failure remains recorded as infrastructure/unverified, not a MAIT product failure; its root cause is not claimed fixed or diagnosed.
+
+**MAIT mobile source frozen for the next stage: configured-vineyard physical acceptance.** Android's accepted311 host plus5 MAIT instrumentation and normal build results remain accepted; no Android work rerun. Both existing normal builds are retained; no unnecessary build, preview, release/upload, owner-data or operational action performed.
+
+Physical acceptance remains separate and unexecuted: selected MAIT/source/station and timestamp; available temperature/humidity/wind/rain; absent metrics staying absent; stale state; failed refresh retaining last-known readings; same-timestamp/no-newer feedback; account/vineyard switching; unchanged forecasts; Portal-only configuration; frozen MAIT irrigation source label and no historical recalculation. This closes the requested automated MAIT gate only, not the independent23-case read-only/native/backend or release gates below.
+
 ## Maintenance attachment enforcement and fixture preparation — 26 October 2026 — PARTIAL, NOT NATIVE-COMPLETE
 
 **Maintenance transports are guarded; overarching native enforcement and authenticated 23-case acceptance remain incomplete.** Do not claim NATIVE ENFORCEMENT COMPLETE — BACKEND FIXTURE READY FOR 23-CASE ACCEPTANCE. Historical entry and notice/purchase UX remain disabled. This supersedes the earlier MAIT-only latest-scope label, not its accepted implementation.
