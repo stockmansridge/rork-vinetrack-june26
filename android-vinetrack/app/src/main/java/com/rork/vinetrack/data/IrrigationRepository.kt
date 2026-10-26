@@ -345,6 +345,13 @@ data class IrrigationImportInfo(
 }
 
 @Serializable
+data class IrrigationConfigurationSnapshot(
+    @SerialName("import") val imported: ImportSource? = null,
+) {
+    @Serializable data class ImportSource(val provider: String? = null)
+}
+
+@Serializable
 data class IrrigationSessionRow(
     val id: String,
     @SerialName("vineyard_id") val vineyardId: String,
@@ -373,6 +380,7 @@ data class IrrigationSessionRow(
     // SQL 142 — frozen controller-import metadata (null for manual sessions).
     @SerialName("import_info") val importInfo: IrrigationImportInfo? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
+    @SerialName("configuration_snapshot") val configurationSnapshot: IrrigationConfigurationSnapshot? = null,
 ) {
     val blockNames: String get() = blocks.mapNotNull { it.blockName }.joinToString(", ")
 
@@ -387,7 +395,7 @@ data class IrrigationSessionRow(
             "manual_portal" -> "Portal"
             "galcon_gsi_import" -> "Galcon GSI import"
             "csv_import" -> "CSV import"
-            "controller_api" -> "Controller"
+            "controller_api" -> if (configurationSnapshot?.imported?.provider == "mait_intelliweb") "MAIT iNTELLiWeb" else "Controller"
             else -> sourceType
         }
 }

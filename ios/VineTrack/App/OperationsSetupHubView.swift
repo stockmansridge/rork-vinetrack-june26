@@ -1411,13 +1411,15 @@ private struct WeatherSummaryInfo {
             } else {
                 parts.append("Davis WeatherLink")
             }
+        case .mait:
+            parts.append("MAIT iNTELLiWeb · Portal configured")
         case .wunderground:
             parts.append("Weather Underground PWS")
         }
 
         let symbol: String
         switch config.localObservationProvider {
-        case .davis: symbol = "sensor.tag.radiowaves.forward.fill"
+        case .davis, .mait: symbol = "sensor.tag.radiowaves.forward.fill"
         case .wunderground: symbol = "antenna.radiowaves.left.and.right"
         case .none:
             symbol = config.forecastProvider == .willyWeather

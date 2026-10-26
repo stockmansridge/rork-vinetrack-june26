@@ -61,8 +61,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.PersistedRainfallRepository
 import com.rork.vinetrack.data.OpenMeteoDailyCondition
-import com.rork.vinetrack.data.insights.ScoutWeatherRepository
-import com.rork.vinetrack.data.insights.ScoutWeatherSnapshot
+import com.rork.vinetrack.data.CurrentObservationRepository
+import com.rork.vinetrack.data.CurrentObservationRepository.CachedRow
 import com.rork.vinetrack.data.RegionFormatter
 import com.rork.vinetrack.data.RainDay
 import com.rork.vinetrack.data.RainForecastBundle
@@ -139,7 +139,7 @@ private fun RainAndForecastContent(
     val persistedRepo = remember { PersistedRainfallRepository(sessionStore) }
     val wwRepo = remember { WillyWeatherRepository(sessionStore) }
     val integrationRepo = remember { VineyardWeatherIntegrationRepository(sessionStore) }
-    val currentRepo = remember { ScoutWeatherRepository(sessionStore) }
+    val currentRepo = remember { CurrentObservationRepository(sessionStore) }
 
     val paddocks = remember(state.paddocks, state.selectedVineyardId) {
         val vid = state.selectedVineyardId
@@ -159,7 +159,9 @@ private fun RainAndForecastContent(
     var sprayPeriods by remember { mutableStateOf<List<SprayForecastPeriod>>(emptyList()) }
     var persistedHistory by remember { mutableStateOf<List<HistoryDay>?>(null) }
     var persistedTodayMm by remember { mutableStateOf<Double?>(null) }
-    var currentConditions by remember { mutableStateOf<ScoutWeatherSnapshot?>(null) }
+    val weatherAccount = sessionStore.userId
+    var currentConditions by remember(state.selectedVineyardId, weatherAccount) { mutableStateOf<CachedRow?>(null) }
+    var currentMessage by remember(state.selectedVineyardId, weatherAccount) { mutableStateOf<String?>(null) }
     // WillyWeather forecast override — non-null when the shared server-side
     // provider preference resolved to WillyWeather and the proxy returned
     // forecast days. Mirrors iOS `IrrigationForecastService`.
@@ -176,15 +178,8 @@ private fun RainAndForecastContent(
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     fun refresh() {
-        val loc = location ?: run {
-            hasLoaded = true
-            bundle = null
-            sprayPeriods = emptyList()
-            persistedHistory = null
-            persistedTodayMm = null
-            currentConditions = null
-            return
-        }
+        if (isLoading) return
+        val loc = location
         scope.launch {
             isLoading = true
             errorMessage = null
@@ -196,9 +191,28 @@ private fun RainAndForecastContent(
             rolling48hMm = null
             rollingSource = null
             fallbackNote = null
-            currentConditions = null
+            currentMessage = null
             state.selectedVineyardId?.let { vineyardId ->
-                currentConditions = runCatching { currentRepo.current(vineyardId, java.time.Instant.now().toString()) }.getOrNull()
+                val access = sessionStore.accountAccess()
+                fun stillCurrent() = access != null && sessionStore.isAccountAccessCurrent(access) && sessionStore.selectedVineyardId == vineyardId
+                val cached = runCatching { currentRepo.current(vineyardId) }.getOrNull()
+                if (stillCurrent()) currentConditions = CurrentObservationRepository.retainingLastKnown(cached, currentConditions)
+                try {
+                    val result = currentRepo.refresh(vineyardId)
+                    val updated = currentRepo.current(vineyardId)
+                    if (stillCurrent()) {
+                        currentConditions = CurrentObservationRepository.retainingLastKnown(updated, currentConditions)
+                        if (result == "no_newer") currentMessage = "MAIT iNTELLiWeb returned no newer reading — the station has not reported since the last update."
+                    }
+                } catch (_: Exception) {
+                    if (stillCurrent()) currentMessage = currentConditions?.refreshFailureMessage ?: "Live observations not refreshed — selected source"
+                }
+            }
+
+            if (loc == null) {
+                hasLoaded = true
+                isLoading = false
+                return@launch
             }
 
             // 1. Try WillyWeather first when the shared server-side provider
@@ -316,7 +330,7 @@ private fun RainAndForecastContent(
         val rain48h = rolling48hMm
         val rain7d = days.take(7).sumOf { it.rainMm }
         // Today so far is observed/persisted rain, never forecast today.
-        val todayMm = persistedTodayMm ?: currentConditions?.takeIf { !it.isUnavailable }?.recentRainfallMm
+        val todayMm = persistedTodayMm ?: currentConditions?.takeIf { it.status == "ok" }?.rainTodayMm
         val zone = TimeZone.getTimeZone(wwTimezone ?: bundle?.timezone ?: "UTC")
         val hasLocation = location != null
         val fallbackKeyFmt = remember(zone.id) {
@@ -336,7 +350,7 @@ private fun RainAndForecastContent(
             ),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            item { CurrentConditionsCard(currentConditions, todayMm) }
+            item { CurrentConditionsCard(currentConditions, currentMessage) }
             item {
                 StatusBanner(
                     todayMm = todayMm,
@@ -417,7 +431,7 @@ private fun RainAndForecastContent(
 }
 
 @Composable
-private fun CurrentConditionsCard(snapshot: ScoutWeatherSnapshot?, todayMm: Double?) {
+private fun CurrentConditionsCard(snapshot: CachedRow?, refreshMessage: String?) {
     val vine = LocalVineColors.current
     val fmt = regionFormatter
     Column(
@@ -426,18 +440,31 @@ private fun CurrentConditionsCard(snapshot: ScoutWeatherSnapshot?, todayMm: Doub
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("Current Conditions", fontWeight = FontWeight.SemiBold, fontSize = 17.sp, color = vine.textPrimary)
-            Text(if (snapshot?.isStale == false && !snapshot.isUnavailable) "Observed" else "Latest available", fontSize = 11.sp, color = vine.textSecondary)
+            Text(if (snapshot?.isStale == false && snapshot.status == "ok") "Observed" else "Latest available", fontSize = 11.sp, color = vine.textSecondary)
         }
-        if (snapshot != null && !snapshot.isUnavailable) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                CurrentMetric("Temperature", snapshot.temperatureCelsius?.let { "${it.roundToInt()}°C" } ?: "—", Modifier.weight(1f))
-                CurrentMetric("Wind", snapshot.windSpeedKph?.let { fmt.formatSpeed(it, 0) } ?: "—", Modifier.weight(1f))
-                CurrentMetric("Rain today", formatMm(fmt, todayMm), Modifier.weight(1f))
+        if (snapshot != null && snapshot.status == "ok") {
+            // Reuse the normalized model and metric component for every provider.
+            val metrics = listOfNotNull(
+                snapshot.temperatureC?.let { "Temperature" to "${it.roundToInt()}°C" },
+                snapshot.humidityPct?.let { "Humidity" to "${it.roundToInt()}%" },
+                snapshot.windSpeedKmh?.let { "Wind" to fmt.formatSpeed(it, 0) },
+                snapshot.windDirectionDeg?.let { "Wind direction" to "${it.roundToInt()}°" },
+                snapshot.windGustKmh?.let { "Wind gust" to fmt.formatSpeed(it, 0) },
+                snapshot.rainTodayMm?.let { "Rain today" to fmt.formatRainfall(it) },
+                snapshot.rainRateMmPerHr?.let { "Rain rate" to "${fmt.formatRainfall(it)}/h" },
+                snapshot.leafWetness?.let { "Leaf wetness" to it.toString() },
+            )
+            metrics.chunked(2).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    row.forEach { (label, value) -> CurrentMetric(label, value, Modifier.weight(1f)) }
+                }
             }
-            Text(listOfNotNull(snapshot.source, snapshot.observedAtIso).joinToString(" · "), fontSize = 11.sp, color = vine.textSecondary)
+            Text(listOfNotNull(snapshot.sourceLabel, snapshot.stationName, snapshot.observedAt).joinToString(" · "), fontSize = 11.sp, color = vine.textSecondary)
         } else {
+            snapshot?.let { Text(it.sourceLabel, fontSize = 11.sp, color = vine.textSecondary) }
             Text("No current station observation available. Forecast and rainfall history remain below.", fontSize = 12.sp, color = vine.textSecondary)
         }
+        refreshMessage?.let { Text(it, fontSize = 12.sp, color = vine.textSecondary) }
     }
 }
 
@@ -451,23 +478,23 @@ private fun CurrentMetric(label: String, value: String, modifier: Modifier = Mod
 }
 
 @Composable
-private fun ConditionsCheckCard(snapshot: ScoutWeatherSnapshot?, windCautionKmh: Double) {
+private fun ConditionsCheckCard(snapshot: CachedRow?, windCautionKmh: Double) {
     val vine = LocalVineColors.current
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(vine.cardBackground).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("Conditions Check", fontWeight = FontWeight.SemiBold, fontSize = 17.sp, color = vine.textPrimary)
-        val wind = snapshot?.takeIf { !it.isUnavailable && !it.isStale }?.windSpeedKph
+        val wind = snapshot?.takeIf { it.status == "ok" && !it.isStale }?.windSpeedKmh
         Text(
             wind?.let { "Wind ${regionFormatter.formatSpeed(it, 0)} · ${if (it < windCautionKmh) "below caution level" else "check on-site before spraying"}" }
                 ?: "Live wind check unavailable.",
             fontSize = 13.sp, color = if (wind != null && wind >= windCautionKmh) VineColors.Orange else vine.textSecondary,
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            CurrentMetric("Temperature", snapshot?.temperatureCelsius?.let { "${it.roundToInt()}°C" } ?: "—", Modifier.weight(1f))
-            CurrentMetric("Rain today", snapshot?.recentRainfallMm?.let { regionFormatter.formatRainfall(it) } ?: "—", Modifier.weight(1f))
-            CurrentMetric("Humidity", snapshot?.humidityPercent?.let { "${it.roundToInt()}%" } ?: "—", Modifier.weight(1f))
+            snapshot?.temperatureC?.let { CurrentMetric("Temperature", "${it.roundToInt()}°C", Modifier.weight(1f)) }
+            snapshot?.rainTodayMm?.let { CurrentMetric("Rain today", regionFormatter.formatRainfall(it), Modifier.weight(1f)) }
+            snapshot?.humidityPct?.let { CurrentMetric("Humidity", "${it.roundToInt()}%", Modifier.weight(1f)) }
         }
         Text("Spray windows use detailed four-hour forecasts. Always check conditions and product labels on-site.", fontSize = 11.sp, color = vine.textSecondary)
     }
@@ -930,6 +957,7 @@ private fun forecastSourceLabel(source: String?): String? {
 /** Pretty per-row provenance label, mirroring iOS `prettySource`. */
 private fun prettySource(source: String?): String = when (source) {
     "manual" -> "Manual"
+    "mait_intelliweb" -> "MAIT iNTELLiWeb"
     "davis_weatherlink" -> "Davis"
     "open_meteo" -> "Open-Meteo"
     "weather_underground" -> "Wunderground"

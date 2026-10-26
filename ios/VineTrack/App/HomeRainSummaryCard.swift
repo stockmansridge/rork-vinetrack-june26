@@ -198,7 +198,7 @@ struct HomeRainSummaryCard: View {
             // "Today's rain" value and we label it as the live station.
             if snap.rainTodayMm != nil {
                 resolvedIsLiveStation = (snap.source == "davis_weatherlink"
-                    || snap.source == "wunderground_pws")
+                    || snap.source == "wunderground_pws" || snap.source == "mait_intelliweb")
             }
         }
 
@@ -362,6 +362,7 @@ struct HomeRainSummaryCard: View {
         guard let raw = rawSource, !raw.isEmpty else { return nil }
         let label: String
         switch raw {
+        case "mait_intelliweb": label = "MAIT iNTELLiWeb"
         case "davis_weatherlink": label = "Davis WeatherLink"
         case "wunderground_pws": label = "Weather Underground"
         case "manual": label = "Manual"

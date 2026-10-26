@@ -289,6 +289,7 @@ private fun SourceCard(
 private fun primaryStationSourceLabel(days: Collection<PersistedRainfallDay>): String {
     val sources = days.mapNotNull { it.source }
     return when {
+        sources.any { it == "mait_intelliweb" } -> "MAIT iNTELLiWeb"
         sources.any { it == "davis_weatherlink" } -> "Davis WeatherLink"
         sources.any { it == "wunderground" } -> "Weather Underground"
         sources.any { it == "manual" } -> "Manual entries"

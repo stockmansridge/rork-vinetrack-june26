@@ -851,7 +851,12 @@ struct WeatherDataSettingsView: View {
 
     private var localObservationSection: some View {
         Section {
-            ForEach(LocalObservationProvider.allCases) { provider in
+            if config.localObservationProvider == .mait {
+                LabeledContent("MAIT iNTELLiWeb", value: "Configured for this vineyard")
+            }
+            Text(LocalObservationProvider.mait.helpCopy)
+                .font(.caption).foregroundStyle(.secondary)
+            ForEach(LocalObservationProvider.mobileSelectable) { provider in
                 Button {
                     guard canEdit, !isSavingObservationProvider, let vid = vineyardId else { return }
                     isSavingObservationProvider = true
@@ -900,25 +905,33 @@ struct WeatherDataSettingsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(!canEdit || isSavingObservationProvider)
+                .disabled(!canEdit || isSavingObservationProvider || config.localObservationProvider == .mait)
             }
             Button {
                 guard let vid = vineyardId, !isRefreshingSelectedObservation else { return }
                 isRefreshingSelectedObservation = true
+                let origin = (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration)
                 Task {
                     defer { isRefreshingSelectedObservation = false }
                     do {
                         let weather = WeatherCurrentService()
-                        guard let selected = try await weather.fetchCachedCurrent(vineyardId: vid),
-                              selected.status != "not_configured" else {
+                        let selected = try await weather.fetchCachedCurrent(vineyardId: vid)
+                        guard vineyardId == vid, origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) else { return }
+                        if selected?.status == "not_configured" {
                             observationStatus = "No active local observation station is configured."
                             return
                         }
-                        try await weather.refreshSelectedCurrent(vineyardId: vid, force: true)
-                        observationStatus = "Selected observation source refreshed."
+                        let updated = try await weather.refreshSelectedCurrent(vineyardId: vid, force: true)
+                        guard vineyardId == vid, origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) else { return }
+                        observationStatus = updated?.refreshAttempted == true && updated?.source == "mait_intelliweb" && selected?.observedAt != nil && updated?.observedAt == selected?.observedAt
+                            ? "MAIT iNTELLiWeb returned no newer reading — the station has not reported since the last update."
+                            : "Selected observation source refreshed."
                         NotificationCenter.default.post(name: .rainfallCalendarShouldReload, object: nil)
                     } catch {
-                        observationStatus = "Observation refresh failed: \(error.localizedDescription)"
+                        guard vineyardId == vid, origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) else { return }
+                        observationStatus = config.localObservationProvider == .mait
+                            ? "Live observations not refreshed — MAIT iNTELLiWeb"
+                            : "Observation refresh failed: \(error.localizedDescription)"
                     }
                 }
             } label: {
@@ -2476,6 +2489,7 @@ struct WeatherDataSettingsView: View {
 
     private func localProviderColor(_ p: LocalObservationProvider) -> Color {
         switch p {
+        case .mait: return .teal
         case .none: return .blue
         case .wunderground: return .orange
         case .davis: return .indigo
@@ -2520,14 +2534,19 @@ struct WeatherDataSettingsView: View {
         config = c
         davisStations = c.davisAvailableStations
         print("[DavisConfig] loadConfig vineyardId=\(vid) localProvider=\(c.localObservationProvider.rawValue) hasKeychain=\(c.davisHasCredentials) cachedShared=\(c.davisIsVineyardShared) cachedHasServerSecret=\(c.davisVineyardHasServerCredentials) cachedStationId=\(c.davisStationId ?? "-")")
+        let origin = (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration)
         Task {
-            if let selected = try? await WeatherCurrentService().selectedProvider(vineyardId: vid) {
-                hasSharedObservationSelection = true
+            do {
+                let selected = try await WeatherCurrentService().selectedProvider(vineyardId: vid)
+                guard vineyardId == vid, origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) else { return }
+                hasSharedObservationSelection = selected != nil
                 var updated = config
-                updated.localObservationProvider = selected
+                if let selected { updated.localObservationProvider = selected }
+                else if updated.localObservationProvider == .mait { updated.localObservationProvider = .none }
                 config = updated
                 WeatherProviderStore.shared.save(updated, for: vid)
-            }
+            } catch { /* Keep the last verified configuration on read failure. */ }
+            guard vineyardId == vid, origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) else { return }
             await loadVineyardIntegration(for: vid)
         }
     }

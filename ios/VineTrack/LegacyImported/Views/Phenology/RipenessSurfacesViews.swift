@@ -72,7 +72,8 @@ enum RipenessMath {
         case .wunderground:
             guard let stationId = store.settings.weatherStationId, !stationId.isEmpty else { return [] }
             return [RipenessSourceCandidate(source: .weatherUnderground(stationId: stationId), usesProxy: false)]
-        case .none:
+        case .none, .mait:
+            // MAIT supplies current observations, not a mobile history transport.
             guard let lat, let lon else { return [] }
             return [RipenessSourceCandidate(source: .openMeteoArchive(latitude: lat, longitude: lon), usesProxy: false)]
         }

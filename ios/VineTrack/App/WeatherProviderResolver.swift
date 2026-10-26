@@ -26,7 +26,7 @@ nonisolated struct WeatherSourceStatus: Sendable, Equatable {
     var compactLabel: String {
         switch provider {
         case .automatic:
-            return "Source: Automatic Forecast"
+            return "Source: \(primaryLabel)"
         case .wunderground:
             return "Source: Weather Underground PWS — \(detailLabel)"
         case .davis:
@@ -49,6 +49,16 @@ enum WeatherProviderResolver {
     /// Falls back to `.automatic` if a configured provider lacks required setup.
     static func resolve(for vineyardId: UUID, weatherStationId: String?) -> WeatherSourceStatus {
         let cfg = WeatherProviderStore.shared.config(for: vineyardId)
+
+        if cfg.localObservationProvider == .mait {
+            return WeatherSourceStatus(
+                provider: .automatic, // Legacy enum; no MAIT forecast/history route.
+                quality: .localStation,
+                primaryLabel: LocalObservationProvider.mait.displayName,
+                detailLabel: "Configured for this vineyard",
+                lastUpdated: cfg.lastSuccessfulUpdate
+            )
+        }
 
         // A vineyard-shared Davis integration counts as a working local
         // source for every member, even on devices that don't hold the

@@ -740,6 +740,13 @@ nonisolated struct IrrigationImportInfo: Decodable, Sendable, Hashable {
     }
 }
 
+/// Decode only the frozen source identity, never controller setup or secrets.
+nonisolated struct IrrigationConfigurationSnapshot: Decodable, Sendable, Hashable {
+    struct ImportSource: Decodable, Sendable, Hashable { let provider: String? }
+    let imported: ImportSource?
+    enum CodingKeys: String, CodingKey { case imported = "import" }
+}
+
 nonisolated struct IrrigationSession: Decodable, Sendable, Identifiable, Hashable {
     let id: UUID
     let vineyardId: UUID
@@ -769,6 +776,7 @@ nonisolated struct IrrigationSession: Decodable, Sendable, Identifiable, Hashabl
     /// SQL 142 — frozen controller-import metadata (nil for manual sessions).
     let importInfo: IrrigationImportInfo?
     var deletedAt: String? = nil
+    var configurationSnapshot: IrrigationConfigurationSnapshot? = nil
 
     enum CodingKeys: String, CodingKey {
         case id, status, notes, blocks, duplicate, warnings
@@ -790,6 +798,7 @@ nonisolated struct IrrigationSession: Decodable, Sendable, Identifiable, Hashabl
         case systemName = "system_name"
         case valveName = "valve_name"
         case importInfo = "import_info"
+        case configurationSnapshot = "configuration_snapshot"
         case deletedAt = "deleted_at"
     }
 
@@ -808,7 +817,8 @@ nonisolated struct IrrigationSession: Decodable, Sendable, Identifiable, Hashabl
         case "manual_portal": return "Portal"
         case "galcon_gsi_import": return "Galcon GSI import"
         case "csv_import": return "CSV import"
-        case "controller_api": return "Controller"
+        case "controller_api":
+            return configurationSnapshot?.imported?.provider == "mait_intelliweb" ? "MAIT iNTELLiWeb" : "Controller"
         default: return sourceType
         }
     }

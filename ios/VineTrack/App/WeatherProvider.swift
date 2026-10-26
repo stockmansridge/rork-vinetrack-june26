@@ -96,10 +96,25 @@ nonisolated enum LocalObservationProvider: String, Codable, Sendable, CaseIterab
     case none
     case davis
     case wunderground
+    case mait = "mait_intelliweb"
+
+    /// MAIT is Portal-managed and must never be selected or configured locally.
+    static var mobileSelectable: [Self] { [.none, .davis, .wunderground] }
+
+    static func fromBackend(_ source: String?) -> Self? {
+        switch source {
+        case "none": return Self.none
+        case "davis_weatherlink": return .davis
+        case "wunderground_pws": return .wunderground
+        case "mait_intelliweb": return .mait
+        default: return nil
+        }
+    }
 
     var id: String { rawValue }
     var displayName: String {
         switch self {
+        case .mait: return "MAIT iNTELLiWeb"
         case .none: return "None / Automatic"
         case .davis: return "Davis WeatherLink"
         case .wunderground: return "Weather Underground PWS"
@@ -107,6 +122,7 @@ nonisolated enum LocalObservationProvider: String, Codable, Sendable, CaseIterab
     }
     var symbol: String {
         switch self {
+        case .mait: return "sensor.tag.radiowaves.forward.fill"
         case .none: return "cloud.sun.fill"
         case .davis: return "sensor.tag.radiowaves.forward.fill"
         case .wunderground: return "antenna.radiowaves.left.and.right"
@@ -114,6 +130,8 @@ nonisolated enum LocalObservationProvider: String, Codable, Sendable, CaseIterab
     }
     var helpCopy: String {
         switch self {
+        case .mait:
+            return "MAIT iNTELLiWeb is configured in the VineTrack Portal by a Vineyard Owner or Manager."
         case .none:
             return "No local station. Actual rainfall and current conditions fall back to the historical archive."
         case .davis:
@@ -186,7 +204,9 @@ nonisolated struct WeatherProviderConfig: Codable, Sendable, Equatable {
     var provider: WeatherProvider {
         get {
             switch localObservationProvider {
-            case .none: return .automatic
+            // Legacy consumers have no MAIT history/forecast transport. Only
+            // the normalized current-observation path supports MAIT.
+            case .none, .mait: return .automatic
             case .davis: return .davis
             case .wunderground: return .wunderground
             }

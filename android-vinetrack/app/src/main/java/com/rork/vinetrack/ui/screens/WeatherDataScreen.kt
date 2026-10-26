@@ -127,7 +127,8 @@ fun WeatherDataScreen(
     val integrationRepo = remember { VineyardWeatherIntegrationRepository(SessionStore(context)) }
     val davisRepo = remember { DavisWeatherLinkRepository(SessionStore(context)) }
     val backfillRepo = remember { RainfallHistoryBackfillRepository(SessionStore(context)) }
-    val observationRepo = remember { CurrentObservationRepository(SessionStore(context)) }
+    val weatherSession = remember { SessionStore(context) }
+    val observationRepo = remember { CurrentObservationRepository(weatherSession) }
     val vineyardId = state.selectedVineyardId
     val vineyard = state.vineyards.firstOrNull { it.id == vineyardId }
     val canEdit = state.currentRole == "owner" || state.currentRole == "manager"
@@ -161,8 +162,8 @@ fun WeatherDataScreen(
     var davisIntegration by remember { mutableStateOf<VineyardWeatherIntegration?>(null) }
     var loading by remember { mutableStateOf(true) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
-    var selectedObservation by remember { mutableStateOf<String?>(null) }
-    var observationBusy by remember { mutableStateOf(false) }
+    var selectedObservation by remember(vineyardId, weatherSession.userId) { mutableStateOf<String?>(null) }
+    var observationBusy by remember(vineyardId, weatherSession.userId) { mutableStateOf(false) }
 
     suspend fun reload() {
         if (vineyardId == null) return
@@ -178,7 +179,10 @@ fun WeatherDataScreen(
         davisIntegration = runCatching {
             integrationRepo.fetch(vineyardId, WeatherIntegrationProvider.DAVIS)
         }.getOrNull()
-        selectedObservation = runCatching { observationRepo.selected(vineyardId) }.getOrNull()
+        val access = weatherSession.accountAccess()
+        runCatching { observationRepo.selected(vineyardId) }.onSuccess {
+            if (access != null && weatherSession.isAccountAccessCurrent(access) && weatherSession.selectedVineyardId == vineyardId) selectedObservation = it
+        }
     }
 
     LaunchedEffect(vineyardId) {
@@ -318,13 +322,18 @@ fun WeatherDataScreen(
             // Shared observation selection is separate from the forecast picker.
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SectionHeader("Current Observation Source", onLight = true)
+                if (selectedObservation == CurrentObservationRepository.MAIT) {
+                    Text(CurrentObservationRepository.MAIT_LABEL, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Text("Configured for this vineyard", fontSize = 12.sp, color = vine.textSecondary)
+                }
+                Text(CurrentObservationRepository.MAIT_HELP, fontSize = 12.sp, color = vine.textSecondary)
                 listOf(
                     "none" to "None / Automatic",
                     "davis_weatherlink" to "Davis WeatherLink",
                     "wunderground_pws" to "Weather Underground PWS",
                 ).forEach { (source, label) ->
                     TextButton(
-                        enabled = canEdit && !observationBusy && vineyardId != null,
+                        enabled = canEdit && !observationBusy && vineyardId != null && selectedObservation != CurrentObservationRepository.MAIT,
                         onClick = {
                             val id = vineyardId ?: return@TextButton
                             observationBusy = true
@@ -354,10 +363,13 @@ fun WeatherDataScreen(
                             try {
                                 statusMessage = when (observationRepo.refresh(id, force = true)) {
                                     "not_configured" -> "No active local observation station is configured."
+                                    "no_newer" -> "MAIT iNTELLiWeb returned no newer reading — the station has not reported since the last update."
                                     else -> "Selected observations refreshed."
                                 }
                             } catch (_: Exception) {
-                                statusMessage = "Selected observation refresh failed. Try again later."
+                                statusMessage = if (selectedObservation == CurrentObservationRepository.MAIT)
+                                    "Live observations not refreshed — MAIT iNTELLiWeb"
+                                else "Selected observation refresh failed. Try again later."
                             } finally { observationBusy = false }
                         }
                     },

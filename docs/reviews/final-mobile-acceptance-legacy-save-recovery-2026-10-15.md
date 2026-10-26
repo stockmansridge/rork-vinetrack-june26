@@ -1,5 +1,69 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## MAIT iNTELLiWeb mobile-only implementation — 26 October 2026
+
+**Implementation and both normal builds complete; expanded iOS regression gate remains UNVERIFIED. No overall release or physical-device clearance.** This is the latest scope, not completion of the preceding expired-trial23-case acceptance. Previous enforcement/startup/costing work and its open gates remain unchanged.
+
+### Delivered behavior and architecture
+
+- Audited both native apps before editing. iOS retains its role-aware local-provider enum, resolver, integration cache and `WeatherCurrentService.CachedSnapshot`. Android retains its string-provider repository architecture, expanding the existing normalized `CurrentObservationRepository.CachedRow` rather than adding a MAIT model/cache. Rain & Forecast now uses that normalized row; Scout/Crop Health models remain unchanged.
+- Explicit backend `mait_intelliweb` selection is displayed as **MAIT iNTELLiWeb**, current/local only. MAIT is absent from forecast choices and mobile setup options. While MAIT is selected, mobile cannot change/disconnect its source through the existing observation picker. Setup, testing, disconnect and controller mappings remain in the Portal. Ordinary members have the same read/refresh path; backend authentication/membership remains authoritative.
+- Refresh POSTs only to VineTrack `mait-intelliweb-proxy`, with the signed-in user's JWT and exactly `vineyardId` plus `action: current`; a successful refresh rereads `get_vineyard_current_weather`. Missing prior normalized rows can refresh an explicitly selected source. An explicit backend `not_configured` status still prevents a refresh.
+- No integration/cached MAIT source becomes an automatic fallback. Legacy null selection retains backend-resolved Davis then WU. A genuinely absent older-server selection RPC may use the same legacy route; network/auth/permission errors are not interpreted as null. Failures do not dispatch to a second provider. Existing WillyWeather/Open-Meteo forecast logic is unchanged.
+- Current Conditions and Conditions Check show only present normalized metrics: temperature, humidity, wind speed/direction/gust, daily rainfall, rain rate and leaf wetness. No invented zeros or mobile MAIT channel/rainfall aggregation. Existing rainfall/history calculations are unchanged; only canonical MAIT provenance labels were extended.
+- Last-known same-source readings, observation time and backend staleness survive failed/missing/no-data refreshes. Feedback uses “Live observations not refreshed — MAIT iNTELLiWeb” and, after an actual same-timestamp refresh, “MAIT iNTELLiWeb returned no newer reading — the station has not reported since the last update.” Account-generation/request-scope checks reject suspended results after account changes; dashboard state is scoped to the account/vineyard. iOS selected-source hydration no longer depends on a successful Davis setup-metadata read. A successful legacy/null selection clears a formerly explicit MAIT configuration, whereas selection transport failure retains the last verified configuration.
+- Irrigation labels change **only** for `source_type == controller_api` plus `configuration_snapshot.import.provider == mait_intelliweb`. Other controller, CSV, Galcon and manual labels remain unchanged. `import_info` is not used to infer MAIT. Only minimal frozen source identity is decoded; no usage sync, recalculation, controller import, hardware or scheduling operation was added.
+
+### iOS tests and build — separate evidence
+
+1. Initial six-suite weather/regression selection **78 passed in136s**: `MAITCurrentObservationTests`, `CurrentObservationProviderTests`, `ForecastParityContractTests`, `RegionFormatterWeatherParityTests`, `IrrigationCalculatorFixtureTests`, `FertigationHistoryTests`. This predates the final account/selection handling refinements; it is not represented as a final-source comprehensive regression result.
+2. Requested expanded20-suite selection **INCOMPLETE: zero passed/zero failed because zero executed**. The tool reported failure connecting to the hosted test bundle and Apple `Testing.framework` bundle loading (“The bundle couldn't be loaded”; “Referenced from … VineTrack”; “Expected in … Testing.framework”). No compiler error was reported. The underlying framework/runner cause is not proven; this does not establish a production startup regression. Do not change startup or weaken tests to conceal the failure. The unchanged expanded selection was not automatically repeated.
+3. After the actual selection-error handling correction and new error-path assertion, the final focused `VineTrackTests/MAITCurrentObservationTests` selection **11 passed in133s**. Covers explicit selection and non-fallback, normalized null metrics, authenticated exact request, refresh/reread ordering, absent prior row, no refresh for fresh readings, failure retention/no fallback, no-data retention, cancellation, selection network errors and frozen irrigation labels. Request construction and injected production workflow are tested separately; this is not live authenticated backend or physical acceptance.
+4. Expanded failed selection was the final focused MAIT/current-provider pair plus these18 existing suites: `DeviceTripOwnershipTests`, `VineyardWriteAuthorityTests`, `ReadOnlyEntitlementContractTests`, `SpraySaveForLaterTests`, `EntitlementDecisionTests`, `EntitlementAccessRegressionTests`, `OfflineQuickActionsTests`, `ResistancePlanRepositoryTests`, `ResistancePlanRevisionSyncTests`, `FertigationMobileWorkflowTests`, `FertigationDomainTests`, `TripOccurrenceJournalTests`, `StartTankCommitCoordinatorTests`, `PinPhotoWorkflowTests`, `VineyardMutationAdmissionTests`, `LinkedPinGrowthDeletionWorkflowTests`, `MobileRequestSyncSafeguardTests`, `GrowthStageVarietyParityTests`. Their earlier historical passes are not current MAIT regression evidence. Needs an explicitly authorised rerun.
+5. Final separate `runChecks(ios)` **PASS: simulator build succeeded**. Physical-device/Release build and store delivery not attempted. Existing unrelated asset-URL advisories were not changed.
+
+### Android tests and build — separate evidence
+
+- Initial four-test instrumentation attempt: **3 passed/1 failed/0 skipped**. Failure was a test-only invalid cast of Ktor `TextContent` to `ByteArrayContent` while inspecting the request. Corrected the assertion fixture to read the actual `TextContent`; production transport was not changed for this failure. Corrected selection **4 passed/0 failed/0 skipped in10s**.
+- After the older-server selection-RPC compatibility correction, final `com.rork.vinetrack.data.MAITCurrentObservationAndroidTest`: **5 passed/0 failed/0 skipped in7s**. Uses the production repository, disposable application/session and MockEngine: exact JWT/body/URL/scope, normalized reread, permitted refresh despite a read-only vineyard hold, no newer/no prior row, HTTP502/403/401 failure sanitization/no fallback/retention, missing older-server RPC versus permission denial, and account change during suspended selection. No production account, credential or backend was used.
+- Final `scripts/run-mait-mobile-contract.py` host run at `/tmp/vinetrack-mait-contract-zsspvtsi`: **47/47 weather/irrigation in13.201s; 209/209 authority/isolation in12.442s; 55/55 startup/offline in12.180s**. Every stage has zero failures/errors/skips. The47 includes new six-test MAIT contract/null/full-metric/retention/request/snapshot-label suite plus existing current routing, forecast parity, forecast-window and irrigation calculator/regional-advice suites. Exact selections are retained in the runner; XML/result summaries are outside the project. Earlier run also passed47/209/55, before the final selection-RPC compatibility change.
+- Final separate `runChecks(android-vinetrack)` **PASS: normal build succeeded**. No Play/AAB/release/signing/versionCode operation. Existing unrelated asset-URL advisories were not changed. The unrelated five historical completion failures were not repaired or represented as green.
+
+### Security, preserved scope and remaining acceptance
+
+- `python3 scripts/verify-mait-mobile-boundary.py` **PASS**: scans native production source for direct upstream MAIT endpoint/configuration credentials and new service-role/`sync_usage` operations; verifies no backend/schema edit. Native assertions verify the JWT/body/provider boundary. Source audit is not a live-backend security certification.
+- `git diff HEAD --check` **PASS**. No SQL, Edge Function, Supabase table, dependency, app version/build/versionCode/signing, startup authority, entitlement authority, costing source or owner-device-data change. No live backend read/write, migration, store upload/release or retained-handset reset. Existing managed history/fingerprint changes were present before this work and are not part of the native source manifest.
+- **Still required:** explicitly authorised expanded iOS regression rerun; physical iOS/Android acceptance on a safely configured synthetic/member vineyard for source/status/station/time, each supported/missing metric, stale/error/no-newer behavior, refresh authentication and vineyard/account switching, Portal-only configuration, unchanged forecast and canonical persisted rainfall totals, and correct controller snapshot label without historical volume/duration changes. No live MAIT station or physical device has been exercised here. Retained offline/restart/operator behavior is only partially covered by synthetic tests, not a full live field journey.
+
+### Exact changed native/test/runner files
+
+Starting HEAD **`0af7743a657c5c2775481aa3b5377365c70744e8`** plus the22 files below. Manifest SHA-256 **`e46c66e16d6f6a08a0bf7c5fccb8a4a6cc8b521d6ebabdb76afd8bc6c06402af`**, computed as sorted `path + NUL + lowercase SHA-256(file bytes) + NUL`. Final managed commit is assigned after the turn; do not substitute the starting HEAD for it. Existing report and approved plan updated separately.
+
+```text
+88504008222d70dbb16b21aa817e4b07b2e0730b194835c4574b7c6a26e3804e  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/MAITCurrentObservationAndroidTest.kt
+58bba9dfd83242c11ec6f857d653dcc7dc205fa61deea4b029aa897cc8a48635  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/CurrentObservationRepository.kt
+e3c8d62a7a3b573730e00a6176ee38eca068c49f022ce04b980fa3b5b06a4e2f  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/IrrigationRepository.kt
+d4df7adbae6f7f2961605bb057c191ebe20e15f378b5c317054d55ce9d8a8095  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PersistedRainfallRepository.kt
+683b44722a90ca8ba625782360a7d1af3659a2ac4b1b52760f247814578cc6d5  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/RainAndForecastScreen.kt
+aefc9484f8788fdd8c36dbc812cf56195e7a22abb235810ff5f232bc7ca75c6f  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/RainfallCalendarScreen.kt
+b6934105fa1a81556d5300d42ab49c0fcb4b2e3d8a41578d8b98d542945f881b  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WeatherDataScreen.kt
+4b0b90d23874f2edeb412ca686e4d94fbdd712f380159f06ef1c52b3a1e0e0b8  android-vinetrack/app/src/test/java/com/rork/vinetrack/data/MAITCurrentObservationContractTest.kt
+00ed49bd392bc9b89938e51fa091fcfdb0c73602261cdd4c3f4b7e10c425cda6  android-vinetrack/mait-tests.init.gradle
+b47c0f174c1b3747865ccec0c0967abfbd2d464adaacd077398db364f0d8284e  ios/VineTrack/App/HomeRainSummaryCard.swift
+6032d664d7a8443ba5e1b617d1bc42d9d2cb98a051f58268a77b6642891b369b  ios/VineTrack/App/OperationsSetupHubView.swift
+3e51f52817e154582f235f89d4cda88d4863557a3186911106153af6f427fb65  ios/VineTrack/App/RainAndForecastView.swift
+32c4dba87c5c1a91310c084e70ca6d99281e6f5a1f64fb0d2a5e436bcb4dfa00  ios/VineTrack/App/VineyardWeatherIntegrationCache.swift
+73d85175a38d6b134088fa30304ec0e2a500335fecac1f1a1ba43cc364654271  ios/VineTrack/App/WeatherCurrentService.swift
+36c7f6b27068560d485de0dff6ec1e7b99a88c95a8bf6afc94397064ee9b4fb8  ios/VineTrack/App/WeatherDataSettingsView.swift
+0a8baef1d5b6a1382c4e9444a882eebcff907462280758d603ed50e4f588b926  ios/VineTrack/App/WeatherProvider.swift
+7b84201a53708728d695d19af4d831258d55212d13a4d375709e9057cf316d5d  ios/VineTrack/App/WeatherProviderResolver.swift
+04cdf87352d8a6f7b2c9f056aa1e337af778b9c569db22c95e5cad505f1ff7b1  ios/VineTrack/Backend/Models/BackendIrrigation.swift
+98d8f24efa84ffd7ca0a38d9879135da33cbe2e792b1dc739f9313500a5894c8  ios/VineTrack/LegacyImported/Views/Phenology/RipenessSurfacesViews.swift
+1a112fd55af1077551d131728773848c3c1a8ea2c0f8f6ed30609c8767a3cdcd  ios/VineTrackTests/MAITCurrentObservationTests.swift
+5a707d29e1cd0acbc3d514a16bc45f177bc3777025417c0db210ba7acfa996c8  scripts/run-mait-mobile-contract.py
+6cd9759b2a3bdb820d841d324aaa22b43d486096216adabb1834abf41c85a160  scripts/verify-mait-mobile-boundary.py
+```
+
 ## Isolated acceptance continuation — 26 October 2026 — NOT READY FOR PHYSICAL DEVICE TESTING
 
 The owner supplied the authoritative23-case matrix and authorised isolated authenticated test-account/test-vineyard acceptance. Those are no longer missing permissions/checklist blockers. **Actual isolated connection details, test credentials, fixture IDs and the expiry/reactivation control contract remain missing.** Native enforcement completeness also remains independently unfinished. Historical entry and notice/purchase UX have NOT been enabled; no store upload/release, production owner-data query/mutation, migration/deployment or retained-device operation occurred.

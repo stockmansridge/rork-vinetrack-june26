@@ -39,21 +39,33 @@ final class VineyardWeatherIntegrationCache {
             await task.value
             return
         }
+        let origin = (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration)
         let task = Task { [repository] in
+            var selected: LocalObservationProvider?
+            var selectionLoaded = false
+            do {
+                selected = try await WeatherCurrentService().selectedProvider(vineyardId: vineyardId)
+                selectionLoaded = true
+            } catch { /* Retain the last verified selection on transport failure. */ }
+            guard !Task.isCancelled, origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) else { return }
             do {
                 let integ = try await repository.fetch(
                     vineyardId: vineyardId,
                     provider: "davis_weatherlink"
                 )
-                let selected = try? await WeatherCurrentService().selectedProvider(vineyardId: vineyardId)
+                guard !Task.isCancelled, origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) else { return }
                 await MainActor.run {
                     self.cached[vineyardId] = integ
                     print("[DavisConfig] cache load vineyardId=\(vineyardId) source=rpc configured=\(integ?.isFullyConfigured ?? false) hasKey=\(integ?.hasApiKey ?? false) hasSecret=\(integ?.hasApiSecret ?? false) stationId=\(integ?.stationId ?? "-")")
-                    self.applyToConfig(integ, selectedProvider: selected, for: vineyardId)
+                    self.applyToConfig(integ, selectedProvider: selected, selectionLoaded: selectionLoaded, for: vineyardId)
                 }
             } catch {
                 print("[DavisConfig] local fallback used reason=\(error.localizedDescription) vineyardId=\(vineyardId)")
-                // Silent fallback: leave config untouched.
+                // Member-readable selection must not depend on Davis setup access.
+                guard !Task.isCancelled, origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) else { return }
+                if selectionLoaded {
+                    self.applyToConfig(self.cached[vineyardId], selectedProvider: selected, selectionLoaded: true, for: vineyardId)
+                }
             }
             await MainActor.run {
                 self.loadedOnce.insert(vineyardId)
@@ -95,9 +107,14 @@ final class VineyardWeatherIntegrationCache {
     private func applyToConfig(
         _ integ: VineyardWeatherIntegration?,
         selectedProvider: LocalObservationProvider?,
+        selectionLoaded: Bool,
         for vineyardId: UUID
     ) {
         var c = WeatherProviderStore.shared.config(for: vineyardId)
+        // A successful legacy/null selection must not inherit a former MAIT selection.
+        if selectionLoaded, selectedProvider == nil, c.localObservationProvider == .mait {
+            c.localObservationProvider = .none
+        }
         if let integ {
             c.davisIsVineyardShared = true
             c.davisVineyardHasServerCredentials = integ.hasApiSecret

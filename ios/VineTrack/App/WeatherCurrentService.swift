@@ -35,6 +35,27 @@ nonisolated struct WeatherCurrentService: Sendable {
         /// 'ok', 'no_data', 'not_configured'.
         let status: String
         let message: String
+        var refreshAttempted: Bool = false
+
+        var sourceLabel: String { Self.displaySource(source) }
+        var refreshFailureMessage: String { "Live observations not refreshed — \(sourceLabel)" }
+
+        static func retainingLastKnown(_ incoming: Self?, previous: Self?) -> Self? {
+            guard let incoming else { return previous }
+            if incoming.status != "ok", let previous, previous.status == "ok", previous.source == incoming.source {
+                return previous
+            }
+            return incoming
+        }
+
+        static func displaySource(_ source: String) -> String {
+            switch source {
+            case "mait_intelliweb": return LocalObservationProvider.mait.displayName
+            case "davis_weatherlink": return "Davis WeatherLink"
+            case "wunderground_pws": return "Weather Underground PWS"
+            default: return source
+            }
+        }
     }
 
     nonisolated struct Snapshot: Sendable {
@@ -260,7 +281,11 @@ nonisolated struct WeatherCurrentService: Sendable {
             .execute()
             .value
         guard let row = rows.first else { return nil }
-        return CachedSnapshot(
+        return Self.snapshot(row)
+    }
+
+    static func snapshot(_ row: CurrentWeatherRow) -> CachedSnapshot {
+        CachedSnapshot(
             source: row.source ?? "none",
             stationId: row.stationId,
             stationName: row.stationName,
@@ -283,22 +308,91 @@ nonisolated struct WeatherCurrentService: Sendable {
     static func currentAction(source: String, status: String, isStale: Bool, force: Bool) -> String? {
         guard status != "not_configured", force || isStale || status == "no_data" else { return nil }
         switch source {
-        case "davis_weatherlink", "wunderground_pws": return source
+        case "davis_weatherlink", "wunderground_pws", "mait_intelliweb": return source
         default: return nil
         }
     }
 
     /// The server RPC chooses the active source and decides staleness. Never
     /// route based on a device-only setting or fall back to a different station.
-    func refreshSelectedCurrent(vineyardId: UUID, force: Bool = false) async throws {
-        guard let snap = try await fetchCachedCurrent(vineyardId: vineyardId),
-              let action = Self.currentAction(source: snap.source, status: snap.status,
-                                              isStale: snap.isStale, force: force) else { return }
+    @discardableResult
+    func refreshSelectedCurrent(vineyardId: UUID, force: Bool = false) async throws -> CachedSnapshot? {
+        let origin = await MainActor.run { (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) }
+        return try await Self.refreshCurrent(
+            vineyardId: vineyardId, force: force,
+            read: { id in
+                let before = await MainActor.run { (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) }
+                guard origin == before, !Task.isCancelled else { throw CancellationError() }
+                let result = try await fetchCachedCurrent(vineyardId: id)
+                let current = await MainActor.run { (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) }
+                guard origin == current, !Task.isCancelled else { throw CancellationError() }
+                return result
+            },
+            selection: { id in
+                let result = try await selectedProvider(vineyardId: id)
+                let current = await MainActor.run { (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) }
+                guard origin == current, !Task.isCancelled else { throw CancellationError() }
+                return result
+            },
+            refresh: { source, id, station in
+                let current = await MainActor.run { (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) }
+                guard origin == current, !Task.isCancelled else { throw CancellationError() }
+                try await refreshProvider(source, vineyardId: id, stationId: station, origin: origin)
+            }
+        )
+    }
+
+    /// Legacy null selection may use Davis then WU as resolved by the backend,
+    /// but never promotes a cached/integrated MAIT source into that fallback.
+    static func resolvedSource(selection: LocalObservationProvider?, cachedSource: String) -> String {
+        switch selection {
+        case .mait: return "mait_intelliweb"
+        case .davis: return "davis_weatherlink"
+        case .wunderground: return "wunderground_pws"
+        case .none?: return "none"
+        case nil: return ["davis_weatherlink", "wunderground_pws"].contains(cachedSource) ? cachedSource : "none"
+        }
+    }
+
+    static func refreshCurrent(
+        vineyardId: UUID, force: Bool,
+        read: (UUID) async throws -> CachedSnapshot?,
+        selection: (UUID) async throws -> LocalObservationProvider?,
+        refresh: (String, UUID, String?) async throws -> Void
+    ) async throws -> CachedSnapshot? {
+        let selected: LocalObservationProvider?
+        do { selected = try await selection(vineyardId) }
+        catch {
+            // Only a genuinely older server may use the normalized Davis/WU
+            // legacy route. Auth/network errors must not masquerade as a null selection.
+            guard ["PGRST202", "42883"].contains((error as? PostgrestError)?.code ?? "") else { throw error }
+            selected = nil
+        }
+        try Task.checkCancellation()
+        let snap = try await read(vineyardId)
+        let source = resolvedSource(selection: selected, cachedSource: snap?.source ?? "none")
+        guard let action = currentAction(source: source, status: snap?.status ?? "no_data", isStale: snap?.isStale ?? true, force: force) else { return snap }
+        try await refresh(action, vineyardId, snap?.stationId)
+        var updated = CachedSnapshot.retainingLastKnown(try await read(vineyardId), previous: snap)
+        updated?.refreshAttempted = true
+        return updated
+    }
+
+    private func refreshProvider(_ action: String, vineyardId: UUID, stationId: String?, origin: (String?, UInt64)) async throws {
         switch action {
+        case "mait_intelliweb":
+            let session = try await SupabaseClientProvider.shared.client.auth.session
+            let current = await MainActor.run { (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) }
+            guard origin == current, !Task.isCancelled else { throw CancellationError() }
+            let request = try Self.maitRequest(vineyardId: vineyardId, token: session.accessToken)
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw WeatherFetchError.network("Live observations not refreshed — MAIT iNTELLiWeb")
+            }
         case "wunderground_pws":
             try await VineyardWundergroundProxyService.fetchCurrent(vineyardId: vineyardId)
         case "davis_weatherlink":
-            guard let stationId = snap.stationId, !stationId.isEmpty else { return }
+            guard let stationId, !stationId.isEmpty else { return }
             _ = try await VineyardDavisProxyService.fetchCurrentConditions(
                 vineyardId: vineyardId, stationId: stationId
             )
@@ -307,9 +401,27 @@ nonisolated struct WeatherCurrentService: Sendable {
         }
     }
 
+    static func maitRequest(vineyardId: UUID, token: String) throws -> URLRequest {
+        guard !token.isEmpty else { throw WeatherFetchError.network("Sign in to refresh MAIT iNTELLiWeb") }
+        let base = AppConfig.supabaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(base)/functions/v1/mait-intelliweb-proxy") else {
+            throw WeatherFetchError.network("Invalid VineTrack weather URL")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["vineyardId": vineyardId.uuidString, "action": "current"])
+        return request
+    }
+
     func setSelectedProvider(_ selection: LocalObservationProvider, vineyardId: UUID) async throws {
+        guard selection != .mait else { throw WeatherFetchError.network(LocalObservationProvider.mait.helpCopy) }
         let source: String
         switch selection {
+        case .mait: return // Portal only; guarded above.
         case .none: source = "none"
         case .davis: source = "davis_weatherlink"
         case .wunderground: source = "wunderground_pws"
@@ -327,12 +439,7 @@ nonisolated struct WeatherCurrentService: Sendable {
             "get_vineyard_current_observation_provider",
             params: GetCurrentWeatherParams(pVineyardId: vineyardId)
         ).execute().value
-        switch source {
-        case "none": return LocalObservationProvider.none
-        case "davis_weatherlink": return .davis
-        case "wunderground_pws": return .wunderground
-        default: return nil // Legacy: no shared selection yet.
-        }
+        return LocalObservationProvider.fromBackend(source)
     }
 
     nonisolated private struct GetCurrentWeatherParams: Encodable, Sendable {
@@ -340,7 +447,7 @@ nonisolated struct WeatherCurrentService: Sendable {
         enum CodingKeys: String, CodingKey { case pVineyardId = "p_vineyard_id" }
     }
 
-    nonisolated private struct CurrentWeatherRow: Decodable, Sendable {
+    nonisolated struct CurrentWeatherRow: Decodable, Sendable {
         let source: String?
         let stationId: String?
         let stationName: String?

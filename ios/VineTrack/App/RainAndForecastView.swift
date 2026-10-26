@@ -11,6 +11,11 @@ struct RainAndForecastView: View {
 
     @State private var todayMm: Double?
     @State private var currentConditions: WeatherCurrentService.CachedSnapshot?
+    @State private var currentVineyardId: UUID?
+    @State private var currentAccountBinding: String?
+    @State private var currentAccountGeneration: UInt64?
+    @State private var currentRefreshMessage: String?
+    @State private var isRefreshingCurrent = false
     @State private var selectedForecastDay: Int = 0
     @State private var forecastDays: [ForecastDay] = []
     @State private var sprayPeriods: [SprayForecastPeriod] = []
@@ -85,19 +90,28 @@ struct RainAndForecastView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             if let current = currentConditions, current.status == "ok" {
-                HStack(spacing: 16) {
-                    conditionMetric("Temperature", current.temperatureC.map { "\(Int($0.rounded()))°C" } ?? "—", icon: "thermometer")
-                    conditionMetric("Wind", current.windSpeedKmh.map { fmt.formatSpeed(kmh: $0, fractionDigits: 0) } ?? "—", icon: "wind")
-                    conditionMetric("Rain today", formatMm(todayMm), icon: "drop")
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 12) {
+                    if let value = current.temperatureC { conditionMetric("Temperature", "\(Int(value.rounded()))°C", icon: "thermometer") }
+                    if let value = current.humidityPct { conditionMetric("Humidity", "\(Int(value.rounded()))%", icon: "humidity") }
+                    if let value = current.windSpeedKmh { conditionMetric("Wind", fmt.formatSpeed(kmh: value, fractionDigits: 0), icon: "wind") }
+                    if let value = current.windDirectionDeg { conditionMetric("Wind direction", WeatherCurrentService.compassDirection(degrees: value), icon: "location.north") }
+                    if let value = current.windGustKmh { conditionMetric("Wind gust", fmt.formatSpeed(kmh: value, fractionDigits: 0), icon: "wind") }
+                    if let value = current.rainTodayMm { conditionMetric("Rain today", formatMm(value), icon: "drop") }
+                    if let value = current.rainRateMmPerHr { conditionMetric("Rain rate", "\(fmt.formatRainfall(mm: value))/h", icon: "drop") }
+                    if let value = current.leafWetness { conditionMetric("Leaf wetness", value.formatted(), icon: "leaf") }
                 }
+                Text(current.sourceLabel).font(.caption).foregroundStyle(.secondary)
+                if let name = current.stationName, !name.isEmpty { Text(name).font(.caption2).foregroundStyle(.secondary) }
                 if let observedAt = current.observedAt {
-                    Text("\(current.source) · \(observedAt.formatted(date: .abbreviated, time: .shortened))")
+                    Text(observedAt.formatted(date: .abbreviated, time: .shortened))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             } else {
+                if let currentConditions { Text(currentConditions.sourceLabel).font(.caption).foregroundStyle(.secondary) }
                 Text("No current station observation available. Forecast and rainfall history remain below.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
+            if let currentRefreshMessage { Text(currentRefreshMessage).font(.caption).foregroundStyle(.secondary) }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -123,9 +137,9 @@ struct RainAndForecastView: View {
                 Text("Live wind check unavailable.").font(.subheadline).foregroundStyle(.secondary)
             }
             HStack(spacing: 12) {
-                conditionMetric("Temperature", currentConditions?.temperatureC.map { "\(Int($0.rounded()))°C" } ?? "—", icon: "thermometer")
-                conditionMetric("Rain today", formatMm(todayMm), icon: "drop")
-                conditionMetric("Humidity", currentConditions?.humidityPct.map { "\(Int($0.rounded()))%" } ?? "—", icon: "humidity")
+                if let value = currentConditions?.temperatureC { conditionMetric("Temperature", "\(Int(value.rounded()))°C", icon: "thermometer") }
+                if let value = currentConditions?.rainTodayMm { conditionMetric("Rain today", formatMm(value), icon: "drop") }
+                if let value = currentConditions?.humidityPct { conditionMetric("Humidity", "\(Int(value.rounded()))%", icon: "humidity") }
             }
             Text("Spray windows use detailed four-hour forecasts. Always check conditions and product labels on-site.")
                 .font(.caption).foregroundStyle(.secondary)
@@ -728,6 +742,7 @@ struct RainAndForecastView: View {
     private func prettySource(_ source: String?) -> String {
         switch source {
         case "manual": return "Manual"
+        case "mait_intelliweb": return "MAIT iNTELLiWeb"
         case "davis_weatherlink": return "Davis"
         case "open_meteo": return "Open-Meteo"
         case "weather_underground": return "Wunderground"
@@ -753,9 +768,43 @@ struct RainAndForecastView: View {
     }
 
     private func loadToday() async {
-        guard let vid = store.selectedVineyardId else { todayMm = nil; return }
+        let origin = (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration)
+        func stillCurrent(_ vid: UUID) -> Bool {
+            store.selectedVineyardId == vid && !Task.isCancelled && origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration)
+        }
+        guard let vid = store.selectedVineyardId else { todayMm = nil; currentConditions = nil; return }
+        if currentVineyardId != vid || currentAccountBinding != origin.0 || currentAccountGeneration != origin.1 {
+            currentConditions = nil
+            todayMm = nil
+            currentVineyardId = vid
+            currentAccountBinding = origin.0
+            currentAccountGeneration = origin.1
+        }
+        guard !isRefreshingCurrent else { return }
+        isRefreshingCurrent = true
+        defer { isRefreshingCurrent = false }
+        currentRefreshMessage = nil
+        let weather = WeatherCurrentService()
+        // Hydrate last-known first. A refresh error must not erase it.
+        if let cached = try? await weather.fetchCachedCurrent(vineyardId: vid) {
+            guard stillCurrent(vid) else { return }
+            currentConditions = WeatherCurrentService.CachedSnapshot.retainingLastKnown(cached, previous: currentConditions)
+        }
+        let previous = currentConditions
+        do {
+            let updated = try await weather.refreshSelectedCurrent(vineyardId: vid)
+            guard stillCurrent(vid) else { return }
+            if let updated {
+                currentConditions = WeatherCurrentService.CachedSnapshot.retainingLastKnown(updated, previous: currentConditions)
+                if updated.refreshAttempted, updated.source == "mait_intelliweb", let date = previous?.observedAt, updated.observedAt == date {
+                    currentRefreshMessage = "MAIT iNTELLiWeb returned no newer reading — the station has not reported since the last update."
+                }
+            }
+        } catch {
+            guard stillCurrent(vid) else { return }
+            currentRefreshMessage = currentConditions?.refreshFailureMessage ?? "Live observations not refreshed — selected source"
+        }
         var resolved: Double?
-        currentConditions = try? await WeatherCurrentService().fetchCachedCurrent(vineyardId: vid)
         if let snap = currentConditions, snap.status == "ok", let r = snap.rainTodayMm {
             resolved = r
         }
@@ -769,6 +818,7 @@ struct RainAndForecastView: View {
                 resolved = r
             }
         }
+        guard stillCurrent(vid) else { return }
         todayMm = resolved
     }
 

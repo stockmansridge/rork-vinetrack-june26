@@ -162,6 +162,7 @@ class PersistedRainfallRepository(private val session: SessionStore) {
     private fun recentSourceLabel(days: List<PersistedRainfallDay>): String {
         val sources = days.mapNotNull { it.source }
         return when {
+            sources.any { it == "mait_intelliweb" } -> "MAIT iNTELLiWeb"
             sources.any { it == "davis_weatherlink" } -> "Davis WeatherLink"
             sources.any { it == "manual" } -> "Manual readings"
             sources.any { it == "wunderground" } -> "Weather Underground"
