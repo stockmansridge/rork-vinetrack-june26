@@ -8,6 +8,7 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import com.rork.vinetrack.data.BackendError
 import com.rork.vinetrack.data.SupabaseClient
+import com.rork.vinetrack.data.attachmentScope
 import com.rork.vinetrack.data.model.SavedChemical
 import io.ktor.client.request.headers
 import io.ktor.client.request.get
@@ -219,7 +220,7 @@ class MasterChemicalV2Repository {
         throw IllegalStateException("Open Chemical Search to use the VineTrack catalogue.")
 }
 
-class ChemicalLabelAttachmentV2Repository {
+class ChemicalLabelAttachmentV2Repository(private val session: com.rork.vinetrack.data.auth.SessionStore) {
     @Serializable
     internal data class AttachmentInsert(
         val id: String,
@@ -230,21 +231,27 @@ class ChemicalLabelAttachmentV2Repository {
 
     /** Same V2 bucket/table, but a stable object path and row id make lost acknowledgements retry-safe. */
     suspend fun upload(jpeg: ByteArray, vineyardId: String, chemicalId: String, attachmentId: String, path: String) =
-        withContext(Dispatchers.IO) {
-            val token = SupabaseClient.sessionRefresher?.sessionAccessToken ?: throw BackendError.Unauthorized
+        com.rork.vinetrack.data.vineyardAttachmentWrite(session, vineyardId) { scope ->
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            scope.owner(chemicalId, vineyardId, table = "saved_chemicals")
             val expected = "${vineyardId.lowercase()}/${chemicalId.lowercase()}/$attachmentId.jpg"
             require(path == expected) { "Invalid chemical label attachment path." }
             val headers: io.ktor.client.request.HttpRequestBuilder.() -> Unit = {
+                attachmentScope(scope, vineyardId)
                 headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
             }
             // If a previous INSERT succeeded but its acknowledgement was lost, do not upload again.
-            if (attachmentExists(attachmentId, vineyardId, chemicalId, path, token)) return@withContext
+            if (attachmentExists(attachmentId, vineyardId, chemicalId, path, token)) {
+                scope.requireCurrent()
+                return@vineyardAttachmentWrite
+            }
             val upload = SupabaseClient.http.post(SupabaseClient.storageUrl("object/chemical-label-photos/$path")) {
                 headers()
                 headers { append("x-upsert", "true") }
                 setBody(ByteArrayContent(jpeg, ContentType.Image.JPEG))
             }
             if (!upload.status.isSuccess()) throw BackendError.Server(upload.status.value, upload.bodyAsText())
+            scope.requireLocalWrite(vineyardId)
             val insert = SupabaseClient.http.post(SupabaseClient.restUrl("saved_chemical_attachments")) {
                 headers()
                 contentType(ContentType.Application.Json)
@@ -253,6 +260,7 @@ class ChemicalLabelAttachmentV2Repository {
             if (!insert.status.isSuccess() && !attachmentExists(attachmentId, vineyardId, chemicalId, path, token)) {
                 throw BackendError.Server(insert.status.value, insert.bodyAsText())
             }
+            scope.requireCurrent()
         }
 
     private suspend fun attachmentExists(id: String, vineyardId: String, chemicalId: String, path: String, token: String): Boolean {

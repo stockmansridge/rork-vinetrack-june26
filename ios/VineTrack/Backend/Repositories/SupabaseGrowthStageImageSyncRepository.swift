@@ -31,17 +31,24 @@ final class SupabaseGrowthStageImageSyncRepository: GrowthStageImageSyncReposito
     func upsertMany(_ items: [BackendGrowthStageImageUpsert]) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard !items.isEmpty else { return }
-        try await provider.client
-            .from("vineyard_growth_stage_images")
-            .upsert(items, onConflict: "id")
-            .execute()
+        let admission = try VineyardMutationAdmission(provider: provider)
+        for (vineyard, rows) in Dictionary(grouping: items, by: \.vineyardId) {
+            try await admission.send(vineyardId: vineyard) {
+                try await provider.client.from("vineyard_growth_stage_images").upsert(rows, onConflict: "id").execute()
+            }
+        }
     }
 
     func softDelete(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        try await provider.client
-            .rpc("soft_delete_growth_stage_image", params: SoftDeleteGSIRequest(imageId: id))
-            .execute()
+        let admission = try VineyardMutationAdmission(provider: provider)
+        let vineyard = try await admission.resolve(id: id) {
+            try await provider.client.from("vineyard_growth_stage_images").select("id,vineyard_id")
+                .eq("id", value: id.uuidString).execute().value
+        }
+        try await admission.send(vineyardId: vineyard) {
+            try await provider.client.rpc("soft_delete_growth_stage_image", params: SoftDeleteGSIRequest(imageId: id)).execute()
+        }
     }
 }
 

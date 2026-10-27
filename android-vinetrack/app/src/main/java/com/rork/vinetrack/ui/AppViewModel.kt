@@ -1892,7 +1892,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     )
     private val chemicalLabelPhotos = ChemicalLabelPhotoRepository(app)
     private val chemicalLabelPhotoSync = ChemicalLabelPhotoSync(
-        chemicalLabelPhotos, pendingWrites, savedChemicalRepo, { session.userId },
+        chemicalLabelPhotos, pendingWrites, savedChemicalRepo, { session.userId }, session = session,
     )
 
     /**

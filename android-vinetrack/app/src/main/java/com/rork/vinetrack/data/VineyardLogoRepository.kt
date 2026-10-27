@@ -34,13 +34,14 @@ class VineyardLogoRepository(private val session: SessionStore) {
         "${vineyardId.lowercase()}/logo.jpg"
 
     /** Upload compressed JPEG bytes, upserting over any existing logo. Returns the object path. */
-    suspend fun upload(vineyardId: String, jpeg: ByteArray): String = withContext(Dispatchers.IO) {
+    suspend fun upload(vineyardId: String, jpeg: ByteArray): String = vineyardAttachmentWrite(session, vineyardId) { scope ->
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val path = storagePath(vineyardId)
         val response = SupabaseClient.http.post(
             SupabaseClient.storageUrl("object/$BUCKET/$path")
         ) {
+            attachmentScope(scope, vineyardId)
             authHeaders(token)
             headers {
                 append("x-upsert", "true")
@@ -50,7 +51,6 @@ class VineyardLogoRepository(private val session: SessionStore) {
         }
         when {
             response.status.isSuccess() -> path
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }
     }
@@ -100,17 +100,19 @@ class VineyardLogoRepository(private val session: SessionStore) {
     }
 
     /** Remove the stored logo. Gated server-side by the manager-only delete policy. */
-    suspend fun delete(path: String) = withContext(Dispatchers.IO) {
+    suspend fun delete(path: String) = vineyardAttachmentWrite(session, attachmentVineyard(path)) { scope ->
+        val vineyardId = attachmentVineyard(path)
+        require(path == storagePath(vineyardId)) { "Invalid vineyard logo path." }
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.delete(
             SupabaseClient.storageUrl("object/$BUCKET/$path")
         ) {
+            attachmentScope(scope, vineyardId)
             authHeaders(token)
         }
         when {
             response.status.isSuccess() -> Unit
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }
     }

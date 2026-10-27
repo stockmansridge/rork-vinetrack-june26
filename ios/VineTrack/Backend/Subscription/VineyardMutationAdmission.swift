@@ -36,6 +36,8 @@ struct VineyardMutationAdmission {
         self.generation = authority.accountGeneration
     }
 
+    func requireCurrentAccount() throws { try requireAccount() }
+
     private func requireAccount() throws {
         guard currentUserId() == owner, authority.accountBinding == binding,
               authority.accountGeneration == generation else {

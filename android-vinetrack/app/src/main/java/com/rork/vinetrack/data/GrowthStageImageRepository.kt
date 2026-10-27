@@ -70,7 +70,8 @@ class GrowthStageImageRepository(private val session: SessionStore) {
         vineyardId: String,
         stageCode: String,
         imagePath: String,
-    ): GrowthStageImage = withContext(Dispatchers.IO) {
+    ): GrowthStageImage = vineyardAttachmentWrite(session, vineyardId) { scope ->
+        require(imagePath == storagePath(vineyardId, stageCode)) { "Invalid growth image path." }
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val body = ImageUpsert(
@@ -83,6 +84,7 @@ class GrowthStageImageRepository(private val session: SessionStore) {
         val response = SupabaseClient.http.post(
             SupabaseClient.restUrl("vineyard_growth_stage_images?on_conflict=vineyard_id,stage_code"),
         ) {
+            attachmentScope(scope, vineyardId)
             authHeaders(token)
             headers {
                 append("Prefer", "return=representation,resolution=merge-duplicates")
@@ -93,40 +95,45 @@ class GrowthStageImageRepository(private val session: SessionStore) {
         when {
             response.status.isSuccess() -> response.body<List<GrowthStageImage>>().firstOrNull()
                 ?: throw BackendError.Server(response.status.value, "Empty response")
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }
     }
 
     /** Soft-delete the metadata row via the manager-gated RPC. */
-    suspend fun softDeleteImage(id: String) = withContext(Dispatchers.IO) {
-        requireConfig()
-        val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.post(
-            SupabaseClient.rpcUrl("soft_delete_growth_stage_image"),
-        ) {
-            authHeaders(token)
-            contentType(ContentType.Application.Json)
-            setBody(SoftDeleteArgs(id))
-        }
-        when {
-            response.status.isSuccess() -> Unit
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
-            else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+    suspend fun softDeleteImage(id: String) {
+        val scope = MaintenanceWriteScope(session)
+        withContext(Dispatchers.IO) {
+            val vineyardId = scope.owner(id, table = "vineyard_growth_stage_images")
+            scope.send(vineyardId) {
+                requireConfig()
+                val token = session.accessToken ?: throw BackendError.Unauthorized
+                val response = SupabaseClient.http.post(
+                    SupabaseClient.rpcUrl("soft_delete_growth_stage_image"),
+                ) {
+                    attachmentScope(scope, vineyardId)
+                    authHeaders(token)
+                    contentType(ContentType.Application.Json)
+                    setBody(SoftDeleteArgs(id))
+                }
+                when {
+                    response.status.isSuccess() -> Unit
+                    else -> throw BackendError.Server(response.status.value, response.bodyAsText())
+                }
+            }
         }
     }
-
     // MARK: - Storage object
 
     /** Upload compressed JPEG bytes, upserting over any existing object. Returns the path. */
     suspend fun uploadObject(vineyardId: String, stageCode: String, jpeg: ByteArray): String =
-        withContext(Dispatchers.IO) {
+        vineyardAttachmentWrite(session, vineyardId) { scope ->
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
             val path = storagePath(vineyardId, stageCode)
             val response = SupabaseClient.http.post(
                 SupabaseClient.storageUrl("object/$BUCKET/$path"),
             ) {
+                attachmentScope(scope, vineyardId)
                 authHeaders(token)
                 headers {
                     append("x-upsert", "true")
@@ -173,21 +180,22 @@ class GrowthStageImageRepository(private val session: SessionStore) {
         }
         when {
             response.status.isSuccess() -> response.bodyAsBytes()
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }
     }
 
     /** Remove the stored object. Gated server-side by the manager-only delete policy. */
-    suspend fun deleteObject(path: String) = withContext(Dispatchers.IO) {
+    suspend fun deleteObject(path: String) = vineyardAttachmentWrite(session, attachmentVineyard(path)) { scope ->
+        val vineyardId = attachmentVineyard(path)
+        require(path.split('/').size == 3 && path.split('/')[1] == "el-stages" && path.endsWith(".jpg")) { "Invalid growth image path." }
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.delete(SupabaseClient.storageUrl("object/$BUCKET/$path")) {
+            attachmentScope(scope, vineyardId)
             authHeaders(token)
         }
         when {
             response.status.isSuccess() -> Unit
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }
     }

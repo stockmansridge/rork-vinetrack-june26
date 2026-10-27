@@ -320,15 +320,21 @@ struct ChemicalLabelAttachmentRepository: Sendable {
     }
 
     func upload(_ image: Data, vineyardId: UUID, chemicalId: UUID) async throws {
+        let admission = try VineyardMutationAdmission(provider: provider)
+        try admission.requireWrite(vineyardId: vineyardId)
+        _ = try await admission.resolve(id: chemicalId, expectedVineyardId: vineyardId) {
+            try await provider.client.from("saved_chemicals").select("id,vineyard_id")
+                .eq("id", value: chemicalId.uuidString).execute().value
+        }
         let path = "\(vineyardId.uuidString.lowercased())/\(chemicalId.uuidString.lowercased())/\(UUID().uuidString.lowercased()).jpg"
         let payload = PinPhotoStorage.compress(image) ?? image
-        _ = try await provider.client.storage.from("chemical-label-photos").upload(
+        _ = try await admission.send(vineyardId: vineyardId) { try await provider.client.storage.from("chemical-label-photos").upload(
             path, data: payload,
             options: FileOptions(cacheControl: "3600", contentType: "image/jpeg", upsert: false)
-        )
-        try await provider.client.from("saved_chemical_attachments").insert(
+        ) }
+        try await admission.send(vineyardId: vineyardId) { try await provider.client.from("saved_chemical_attachments").insert(
             Insert(vineyardId: vineyardId, savedChemicalId: chemicalId, storagePath: path)
-        ).execute()
+        ).execute() }
     }
 }
 

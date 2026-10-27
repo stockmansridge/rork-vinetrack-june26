@@ -38,9 +38,10 @@ final class ELStageImageStorageService {
         guard provider.isConfigured else {
             throw BackendRepositoryError.missingSupabaseConfiguration
         }
+        let admission = try VineyardMutationAdmission(provider: provider)
         let path = ELStageImageStorage.path(vineyardId: vineyardId, stageCode: stageCode)
         let payload = ELStageImageStorage.compress(imageData) ?? imageData
-        _ = try await provider.client.storage
+        _ = try await admission.send(vineyardId: vineyardId) { try await provider.client.storage
             .from(ELStageImageStorage.bucket)
             .upload(
                 path,
@@ -50,7 +51,8 @@ final class ELStageImageStorageService {
                     contentType: "image/jpeg",
                     upsert: true
                 )
-            )
+            ) }
+        try admission.requireCurrentAccount()
         SharedImageCache.shared.saveImageData(
             payload,
             for: .elStageImage(vineyardId: vineyardId, stageCode: stageCode),
@@ -80,9 +82,18 @@ final class ELStageImageStorageService {
         guard provider.isConfigured else {
             throw BackendRepositoryError.missingSupabaseConfiguration
         }
-        _ = try await provider.client.storage
-            .from(ELStageImageStorage.bucket)
-            .remove(paths: [path])
+        let owner = try VineyardAttachmentPath.vineyard(path)
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        guard parts.count == 3, parts[1] == "el-stages", path.hasSuffix(".jpg"),
+              vineyardId == nil || vineyardId == owner,
+              stageCode == nil || path == ELStageImageStorage.path(vineyardId: owner, stageCode: stageCode!) else {
+            throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
+        }
+        let admission = try VineyardMutationAdmission(provider: provider)
+        _ = try await admission.send(vineyardId: owner) {
+            try await provider.client.storage.from(ELStageImageStorage.bucket).remove(paths: [path])
+        }
+        try admission.requireCurrentAccount()
         if let vineyardId, let stageCode {
             SharedImageCache.shared.removeCachedImage(
                 for: .elStageImage(vineyardId: vineyardId, stageCode: stageCode)

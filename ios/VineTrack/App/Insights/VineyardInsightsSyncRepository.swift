@@ -389,21 +389,28 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
     /// a row pointing at an object that does not exist would render as a broken
     /// image on another device, which is worse than a photo still marked as
     /// pending upload.
-    func pushPhotoRow(_ photo: PhotoUpsert) async throws {
+    @MainActor func pushPhotoRow(_ photo: PhotoUpsert) async throws {
         try requireConfigured()
-        try await provider.client
+        let owner = try VineyardAttachmentPath.vineyard(photo.storage_path)
+        guard owner.uuidString.lowercased() == photo.vineyard_id.lowercased() else {
+            throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
+        }
+        let admission = try VineyardMutationAdmission(provider: provider)
+        try await admission.send(vineyardId: owner) { try await provider.client
             .from("scout_observation_photos")
             .upsert(photo, onConflict: "id")
-            .execute()
+            .execute() }
     }
 
     /// Upload photo bytes into the private `scout-photos` bucket.
     ///
     /// The path's first folder is the vineyard id because the SQL 236 storage
     /// policies authorise on `storage_first_folder_uuid(name)`.
-    func uploadPhotoBytes(path: String, data: Data) async throws -> String {
+    @MainActor func uploadPhotoBytes(path: String, data: Data) async throws -> String {
         try requireConfigured()
-        _ = try await provider.client.storage
+        let owner = try VineyardAttachmentPath.vineyard(path)
+        let admission = try VineyardMutationAdmission(provider: provider)
+        _ = try await admission.send(vineyardId: owner) { try await provider.client.storage
             .from(Self.photoBucket)
             .upload(
                 path,
@@ -415,7 +422,8 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
                     // own object rather than failing forever on a conflict.
                     upsert: true
                 )
-            )
+            ) }
+        try admission.requireCurrentAccount()
         return path
     }
 
@@ -425,9 +433,14 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
     }
 
     /// Remove an uploaded object that has no committed metadata row.
-    func removePhotoObject(path: String) async throws {
+    @MainActor func removePhotoObject(path: String) async throws {
         try requireConfigured()
-        _ = try await provider.client.storage.from(Self.photoBucket).remove(paths: [path])
+        let owner = try VineyardAttachmentPath.vineyard(path)
+        let admission = try VineyardMutationAdmission(provider: provider)
+        _ = try await admission.send(vineyardId: owner) {
+            try await provider.client.storage.from(Self.photoBucket).remove(paths: [path])
+        }
+        try admission.requireCurrentAccount()
     }
 
     // MARK: - Deletion
@@ -487,10 +500,15 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
         let allowed_roles: [String] = ["owner", "manager"]
     }
 
-    func softDeletePhoto(_ revision: VineyardInsightsStore.PhotoDeletionRevision) async throws {
+    @MainActor func softDeletePhoto(_ revision: VineyardInsightsStore.PhotoDeletionRevision) async throws {
         try requireConfigured()
+        let admission = try VineyardMutationAdmission(provider: provider)
+        let owner = try await admission.resolve(id: revision.photoID, expectedVineyardId: revision.vineyardID) {
+            try await provider.client.from("scout_observation_photos").select("id,vineyard_id")
+                .eq("id", value: revision.photoID.uuidString).execute().value
+        }
         let timestamp = Self.timestamp(revision.deletedAt)
-        try await provider.client
+        try await admission.send(vineyardId: owner) { try await provider.client
             .from("scout_observation_photos")
             .update(
                 SoftDeletePatch(
@@ -500,7 +518,7 @@ nonisolated final class VineyardInsightsSyncRepository: Sendable {
                 )
             )
             .eq("id", value: revision.photoID.uuidString)
-            .execute()
+            .execute() }
     }
 
     // MARK: - Scout pull

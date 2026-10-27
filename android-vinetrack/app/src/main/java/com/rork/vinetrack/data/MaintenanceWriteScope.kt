@@ -21,17 +21,21 @@ internal class MaintenanceWriteScope(private val session: SessionStore) {
         resolve = { emptyList() },
     )
 
-    fun requireLocalWrite(vineyardId: String) { admission.requireVineyard(vineyardId) }
+    fun requireCurrent() { admission.requireCurrent() }
+    fun requireLocalWrite(vineyardId: String) {
+        requireUuid(vineyardId)
+        admission.requireVineyard(vineyardId.lowercase(java.util.Locale.ROOT))
+    }
 
     @Serializable
     private data class Ownership(val id: String, @SerialName("vineyard_id") val vineyardId: String)
 
-    suspend fun owner(id: String, expectedVineyard: String? = null, allowMissingForCreate: Boolean = false): String {
+    suspend fun owner(id: String, expectedVineyard: String? = null, allowMissingForCreate: Boolean = false, table: String = "maintenance_logs"): String {
         requireUuid(id)
         expectedVineyard?.let { requireUuid(it); admission.requireVineyard(it.lowercase(java.util.Locale.ROOT)) }
         admission.requireCurrent()
         val token = session.accessToken ?: throw BackendError.Unauthorized
-        val response = SupabaseClient.http.get(SupabaseClient.restUrl("maintenance_logs")) {
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl(table)) {
             attributes.put(SupabaseClient.accountRequestScope, account)
             url { parameters.append("select", "id,vineyard_id"); parameters.append("id", "eq.$id") }
             headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }

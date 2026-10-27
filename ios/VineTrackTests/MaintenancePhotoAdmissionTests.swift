@@ -5,6 +5,31 @@ import Supabase
 
 @MainActor
 struct MaintenancePhotoAdmissionTests {
+    @Test func newerMaintenanceRevisionSurvivesOlderAcknowledgementAcrossRecreation() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let record = UUID(), old = Date(timeIntervalSince1970: 100), newer = Date(timeIntervalSince1970: 200)
+        let metadata = OperationsSyncMetadata(key: "maintenance-revision", persistence: PersistenceStore(directory: directory))
+        metadata.markDirty(record, at: old)
+        let captured = metadata.pendingUpserts
+        metadata.markDirty(record, at: newer)
+        metadata.acknowledgeMaintenanceMetadata([record], pendingPhotos: [], expected: captured)
+        let recreated = OperationsSyncMetadata(key: "maintenance-revision", persistence: PersistenceStore(directory: directory))
+        #expect(recreated.pendingUpserts == [record: newer])
+        recreated.acknowledgeMaintenanceMetadata([record], pendingPhotos: [], expected: [record: newer])
+        #expect(recreated.pendingUpserts.isEmpty)
+    }
+
+    @Test func attachmentPathsRejectTraversalAndDoNotBorrowSelectedOwner() throws {
+        let owner = UUID(), other = UUID()
+        #expect(try VineyardAttachmentPath.vineyard(VineyardLogoStorage.path(for: owner)) == owner)
+        #expect(try VineyardAttachmentPath.vineyard(ELStageImageStorage.path(vineyardId: other, stageCode: "EL 4")) == other)
+        for path in ["\(owner)/../logo.jpg", "\(owner)//logo.jpg", "\(owner)/logo.jpg?other", "\(owner)/%2e%2e/photo.jpg", "not-a-vineyard/photo.jpg"] {
+            #expect(throws: (any Error).self) { try VineyardAttachmentPath.vineyard(path) }
+        }
+    }
+
     @Test func heldUploadAndDeleteKeepEvidenceAndNeverReadOrSend() async throws {
         let user = UUID(), vineyard = UUID(), record = UUID(), other = UUID()
         let defaults = UserDefaults(suiteName: "maintenance-" + UUID().uuidString)!

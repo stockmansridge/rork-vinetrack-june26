@@ -23,8 +23,9 @@ final class VineyardLogoStorageService {
         guard provider.isConfigured else {
             throw BackendRepositoryError.missingSupabaseConfiguration
         }
+        let admission = try VineyardMutationAdmission(provider: provider)
         let path = VineyardLogoStorage.path(for: vineyardId)
-        _ = try await provider.client.storage
+        _ = try await admission.send(vineyardId: vineyardId) { try await provider.client.storage
             .from(VineyardLogoStorage.bucket)
             .upload(
                 path,
@@ -34,7 +35,8 @@ final class VineyardLogoStorageService {
                     contentType: "image/jpeg",
                     upsert: true
                 )
-            )
+            ) }
+        try admission.requireCurrentAccount()
         SharedImageCache.shared.saveImageData(
             imageData,
             for: .vineyardLogo(vineyardId: vineyardId),
@@ -64,9 +66,15 @@ final class VineyardLogoStorageService {
         guard provider.isConfigured else {
             throw BackendRepositoryError.missingSupabaseConfiguration
         }
-        _ = try await provider.client.storage
-            .from(VineyardLogoStorage.bucket)
-            .remove(paths: [path])
+        let owner = try VineyardAttachmentPath.vineyard(path)
+        guard path == VineyardLogoStorage.path(for: owner), vineyardId == nil || vineyardId == owner else {
+            throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
+        }
+        let admission = try VineyardMutationAdmission(provider: provider)
+        _ = try await admission.send(vineyardId: owner) {
+            try await provider.client.storage.from(VineyardLogoStorage.bucket).remove(paths: [path])
+        }
+        try admission.requireCurrentAccount()
         if let vineyardId {
             SharedImageCache.shared.removeCachedImage(for: .vineyardLogo(vineyardId: vineyardId))
         }

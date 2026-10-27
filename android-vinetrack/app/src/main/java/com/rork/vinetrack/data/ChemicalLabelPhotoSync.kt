@@ -13,9 +13,10 @@ internal class ChemicalLabelPhotoSync(
     private val writes: PendingWriteRepository,
     private val repository: SavedChemicalRepository,
     private val ownerId: () -> String?,
+    private val session: com.rork.vinetrack.data.auth.SessionStore? = null,
     private val findParent: suspend (String) -> com.rork.vinetrack.data.model.SavedChemical? = repository::findById,
     private val upload: suspend (ChemicalLabelAttachment, ByteArray) -> Unit = { attachment, bytes ->
-        ChemicalLabelAttachmentV2Repository().upload(
+        ChemicalLabelAttachmentV2Repository(requireNotNull(session)).upload(
             bytes, attachment.vineyardId, attachment.chemicalId, attachment.id, attachment.remotePath,
         )
     },
@@ -26,6 +27,7 @@ internal class ChemicalLabelPhotoSync(
         if (!lock.tryLock()) return
         try {
             val owner = ownerId() ?: return
+            val scope = session?.let { MaintenanceWriteScope(it) }
             for (attachment in photos.list().filter { it.ownerId == owner && it.status in setOf(
                 ChemicalLabelAttachment.PENDING, ChemicalLabelAttachment.FAILED,
             ) }) {
@@ -33,6 +35,8 @@ internal class ChemicalLabelPhotoSync(
                 if (writes.list().any { it.entityType == PendingEntityType.SAVED_CHEMICAL &&
                         it.opType == PendingOpType.CREATE && it.clientId == attachment.chemicalId }) continue
                 try {
+                    scope?.requireLocalWrite(attachment.vineyardId)
+                    if (ownerId() != owner) return
                     val parent = findParent(attachment.chemicalId)
                     if (parent == null) continue // creation may be acknowledged but not yet visible
                     if (parent.id != attachment.chemicalId || parent.vineyardId != attachment.vineyardId || parent.deletedAt != null) {
@@ -44,10 +48,16 @@ internal class ChemicalLabelPhotoSync(
                         photos.update(attachment.id) { it.copy(status = ChemicalLabelAttachment.BLOCKED, lastError = "Saved label photo is missing.") }
                         continue
                     }
+                    scope?.requireLocalWrite(attachment.vineyardId)
+                    if (ownerId() != owner) return
                     photos.update(attachment.id) { it.copy(status = ChemicalLabelAttachment.IN_PROGRESS) }
                     upload(attachment, file.readBytes())
                     // Remote attachment is reconciled before the local marker/file is removed.
+                    scope?.requireCurrent()
+                    if (ownerId() != owner) return
                     photos.remove(attachment.id)
+                } catch (_: VineyardWriteAuthority.Restricted) {
+                    photos.update(attachment.id) { attachment }
                 } catch (cancelled: CancellationException) {
                     photos.update(attachment.id) { it.copy(status = ChemicalLabelAttachment.FAILED, lastError = "Upload interrupted.") }
                     throw cancelled

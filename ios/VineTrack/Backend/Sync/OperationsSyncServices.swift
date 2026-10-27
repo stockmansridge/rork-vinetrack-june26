@@ -47,8 +47,10 @@ final class OperationsSyncMetadata {
 
     /// Metadata acknowledgement is not a photo acknowledgement. Keep the original
     /// dirty timestamp until its attachment is uploaded; do not mint a new retry.
-    func acknowledgeMaintenanceMetadata(_ uploaded: [UUID], pendingPhotos: Set<UUID>) {
-        clearDirty(uploaded.filter { !pendingPhotos.contains($0) })
+    func acknowledgeMaintenanceMetadata(_ uploaded: [UUID], pendingPhotos: Set<UUID>, expected: [UUID: Date]? = nil) {
+        clearDirty(uploaded.filter {
+            !pendingPhotos.contains($0) && (expected == nil || state.pendingUpserts[$0] == expected?[$0])
+        })
     }
 
     func completionMode(for id: UUID) -> Bool? { state.workTaskCompletionModes?[id] }
@@ -1405,7 +1407,8 @@ final class MaintenanceLogSyncService {
                 for item in items { try admission.requireWrite(vineyardId: item.vineyardId) }
                 try await repository.upsertMany(items)
             }
-            metadata.acknowledgeMaintenanceMetadata(result.uploaded, pendingPhotos: pendingPhotos)
+            try admission.requireCurrentAccount()
+            metadata.acknowledgeMaintenanceMetadata(result.uploaded, pendingPhotos: pendingPhotos, expected: dirty)
             SyncIssueCenter.shared.notePending(entity: "Maintenance Logs", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
             if !photoUploadFailures.isEmpty {
@@ -1413,20 +1416,25 @@ final class MaintenanceLogSyncService {
                 errorMessage = "Some maintenance photos failed to upload: \(first)"
             }
         }
-        for (id, _) in metadata.pendingDeletes {
+        let deleteAdmission = try VineyardMutationAdmission()
+        for (id, timestamp) in metadata.pendingDeletes {
             do {
                 try await repository.softDelete(id: id)
-                metadata.clearDeleted([id])
+                try deleteAdmission.requireCurrentAccount()
+                if metadata.pendingDeletes[id] == timestamp { metadata.clearDeleted([id]) }
             } catch {
-                if isOperationsMissingRowError(error) { metadata.clearDeleted([id]) }
+                try deleteAdmission.requireCurrentAccount()
+                if isOperationsMissingRowError(error), metadata.pendingDeletes[id] == timestamp { metadata.clearDeleted([id]) }
             }
         }
     }
 
     private func pull(vineyardId: UUID) async throws {
         guard let store else { return }
+        let admission = try VineyardMutationAdmission()
         let lastSync = metadata.lastSync(for: vineyardId)
         let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
+        try admission.requireCurrentAccount()
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
             let local = store.maintenanceLogs.filter { $0.vineyardId == vineyardId }
@@ -1449,6 +1457,10 @@ final class MaintenanceLogSyncService {
             if remote.isEmpty { return }
         }
         for item in remote {
+            try admission.requireCurrentAccount()
+            // A remote metadata acknowledgement is never proof that a pending
+            // local photo or a newer revision was delivered. Preserve both.
+            if metadata.pendingUpserts[item.id] != nil || metadata.pendingDeletes[item.id] != nil { continue }
             if item.deletedAt != nil {
                 if let local = store.maintenanceLogs.first(where: { $0.id == item.id }) {
                     SharedImageCache.shared.removeCachedImage(
@@ -1501,8 +1513,9 @@ final class MaintenanceLogSyncService {
                 }
             }
 
+            try admission.requireCurrentAccount()
+            guard metadata.pendingUpserts[item.id] == nil, metadata.pendingDeletes[item.id] == nil else { continue }
             store.applyRemoteMaintenanceLogUpsert(mapped)
-            metadata.clearDirty([item.id])
         }
     }
 }

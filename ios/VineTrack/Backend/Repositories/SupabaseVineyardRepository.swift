@@ -86,14 +86,19 @@ final class SupabaseVineyardRepository: VineyardRepositoryProtocol {
     @discardableResult
     func updateVineyardLogoPath(vineyardId: UUID, logoPath: String?) async throws -> Date? {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let admission = try VineyardMutationAdmission(provider: provider)
+        if let logoPath, logoPath != VineyardLogoStorage.path(for: vineyardId) {
+            throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
+        }
         let now = Date()
-        let response: [VineyardLogoUpdateResponse] = try await provider.client
+        let response: [VineyardLogoUpdateResponse] = try await admission.send(vineyardId: vineyardId) { try await provider.client
             .from("vineyards")
             .update(VineyardLogoUpdate(logoPath: logoPath, logoUpdatedAt: now))
             .eq("id", value: vineyardId.uuidString)
             .select("logo_updated_at")
             .execute()
-            .value
+            .value }
+        try admission.requireCurrentAccount()
         return response.first?.logoUpdatedAt ?? now
     }
 

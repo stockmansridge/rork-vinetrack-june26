@@ -1,6 +1,10 @@
 package com.rork.vinetrack.data.insights
 
 import com.rork.vinetrack.data.BackendError
+import com.rork.vinetrack.data.MaintenanceWriteScope
+import com.rork.vinetrack.data.attachmentScope
+import com.rork.vinetrack.data.attachmentVineyard
+import com.rork.vinetrack.data.vineyardAttachmentWrite
 import com.rork.vinetrack.data.SupabaseClient
 import com.rork.vinetrack.data.auth.SessionStore
 import io.ktor.client.call.body
@@ -79,26 +83,28 @@ class VineyardInsightsSyncRepository(
         visit: VineyardInsightsSyncApi.VisitUpsert,
         assessments: List<VineyardInsightsSyncApi.AssessmentUpsert>,
         observations: List<VineyardInsightsSyncApi.ObservationUpsert>,
-    ): VineyardInsightsSyncApi.VisitRow = withContext(Dispatchers.IO) {
-        val acknowledged = upsertVisitReturning(visit)
+    ): VineyardInsightsSyncApi.VisitRow = vineyardAttachmentWrite(session, visit.vineyardId) { scope ->
+        require(assessments.all { it.vineyardId == visit.vineyardId } && observations.all { it.vineyardId == visit.vineyardId }) { "Scout owner mismatch." }
+        val acknowledged = upsertVisitReturning(visit, scope)
         // Release the active (visit, block) key before sending a re-selection.
         for (rows in listOf(assessments.filter { it.deletedAt != null }, assessments.filter { it.deletedAt == null })) {
             for (batch in rows.chunked(100)) {
-                upsert("scout_block_assessments", batch, VineyardInsightsSyncApi.AssessmentUpsert.serializer())
+                upsert("scout_block_assessments", batch, VineyardInsightsSyncApi.AssessmentUpsert.serializer(), scope, visit.vineyardId)
             }
         }
         for (batch in observations.chunked(100)) {
-            upsert("scout_observations", batch, VineyardInsightsSyncApi.ObservationUpsert.serializer())
+            upsert("scout_observations", batch, VineyardInsightsSyncApi.ObservationUpsert.serializer(), scope, visit.vineyardId)
         }
         acknowledged
     }
 
     override suspend fun pushPhotoRow(photo: VineyardInsightsSyncApi.PhotoUpsert) =
-        withContext(Dispatchers.IO) {
+        vineyardAttachmentWrite(session, photo.vineyardId) { scope ->
+            require(attachmentVineyard(photo.storagePath) == photo.vineyardId.lowercase()) { "Scout photo owner mismatch." }
             upsert(
                 "scout_observation_photos",
                 listOf(photo),
-                VineyardInsightsSyncApi.PhotoUpsert.serializer(),
+                VineyardInsightsSyncApi.PhotoUpsert.serializer(), scope, photo.vineyardId,
             )
         }
 
@@ -109,12 +115,14 @@ class VineyardInsightsSyncRepository(
      * policies authorise on `storage_first_folder_uuid(name)`.
      */
     override suspend fun uploadPhotoBytes(path: String, jpeg: ByteArray): String =
-        withContext(Dispatchers.IO) {
+        vineyardAttachmentWrite(session, attachmentVineyard(path)) { scope ->
+            val vineyardId = attachmentVineyard(path)
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
             val response = SupabaseClient.http.post(
                 SupabaseClient.storageUrl("object/$PHOTO_BUCKET/$path"),
             ) {
+                attachmentScope(scope, vineyardId)
                 authHeaders(token)
                 headers {
                     // Upsert so a retry after an ambiguous failure overwrites
@@ -126,8 +134,6 @@ class VineyardInsightsSyncRepository(
             }
             when {
                 response.status.isSuccess() -> path
-                response.status.value == 401 || response.status.value == 403 ->
-                    throw BackendError.Unauthorized
                 else -> throw BackendError.Server(response.status.value, response.bodyAsText())
             }
         }
@@ -155,20 +161,20 @@ class VineyardInsightsSyncRepository(
         }
     }
 
-    override suspend fun removePhotoObject(path: String) = withContext(Dispatchers.IO) {
+    override suspend fun removePhotoObject(path: String) = vineyardAttachmentWrite(session, attachmentVineyard(path)) { scope ->
+        val vineyardId = attachmentVineyard(path)
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.delete(
             SupabaseClient.storageUrl("object/$PHOTO_BUCKET/$path"),
         ) {
+            attachmentScope(scope, vineyardId)
             authHeaders(token)
         }
         when {
             response.status.isSuccess() -> Unit
             // Already gone is the desired end state, not a failure.
             response.status.value == 404 -> Unit
-            response.status.value == 401 || response.status.value == 403 ->
-                throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }
     }
@@ -218,10 +224,11 @@ class VineyardInsightsSyncRepository(
 
     override suspend fun softDeletePhoto(
         revision: VineyardInsightsStore.PhotoDeletionRevision,
-    ) = withContext(Dispatchers.IO) {
+    ) = vineyardAttachmentWrite(session, revision.vineyardId) { scope ->
+        scope.owner(revision.photoId, revision.vineyardId, table = "scout_observation_photos")
         patchRows(
             "scout_observation_photos?id=eq.${revision.photoId}",
-            SoftDeletePatch(revision.deletedAt, revision.deletedAt, revision.id),
+            SoftDeletePatch(revision.deletedAt, revision.deletedAt, revision.id), scope, revision.vineyardId,
         )
     }
 
@@ -439,6 +446,7 @@ class VineyardInsightsSyncRepository(
 
     private suspend fun upsertVisitReturning(
         visit: VineyardInsightsSyncApi.VisitUpsert,
+        scope: MaintenanceWriteScope,
     ): VineyardInsightsSyncApi.VisitRow {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -447,6 +455,7 @@ class VineyardInsightsSyncRepository(
             listOf(visit),
         )
         val response = SupabaseClient.http.post(SupabaseClient.restUrl("scout_visits")) {
+            attachmentScope(scope, visit.vineyardId)
             authHeaders(token)
             contentType(ContentType.Application.Json)
             headers { append("Prefer", "resolution=merge-duplicates,return=representation") }
@@ -454,7 +463,6 @@ class VineyardInsightsSyncRepository(
         }
         return when {
             response.status.isSuccess() -> response.body<List<VineyardInsightsSyncApi.VisitRow>>().first()
-            response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }
     }
@@ -463,6 +471,8 @@ class VineyardInsightsSyncRepository(
         table: String,
         rows: List<T>,
         serializer: kotlinx.serialization.KSerializer<T>,
+        scope: MaintenanceWriteScope,
+        vineyardId: String,
     ) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
@@ -471,24 +481,26 @@ class VineyardInsightsSyncRepository(
             rows,
         )
         val response = SupabaseClient.http.post(SupabaseClient.restUrl(table)) {
+            attachmentScope(scope, vineyardId)
             authHeaders(token)
             contentType(ContentType.Application.Json)
             headers { append("Prefer", "resolution=merge-duplicates,return=minimal") }
             setBody(body)
         }
-        checkWrite(response.status.value) { response.bodyAsText() }
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
     }
 
-    private suspend fun patchRows(path: String, patch: SoftDeletePatch) {
+    private suspend fun patchRows(path: String, patch: SoftDeletePatch, scope: MaintenanceWriteScope, vineyardId: String) {
         requireConfig()
         val token = session.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.patch(SupabaseClient.restUrl(path)) {
+            attachmentScope(scope, vineyardId)
             authHeaders(token)
             contentType(ContentType.Application.Json)
             headers { append("Prefer", "return=minimal") }
             setBody(patch)
         }
-        checkWrite(response.status.value) { response.bodyAsText() }
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
     }
 
     private suspend fun checkWrite(status: Int, body: suspend () -> String) {
