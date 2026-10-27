@@ -100,6 +100,14 @@ class ActiveTripStore internal constructor(
         else fieldAccess.admittedForOwner(ownerUserId) { synchronized(this, write) }
     }
 
+    internal fun freezeForRecovery(): () -> Snapshot? {
+        val raw = storage.read()
+        return { raw?.let { runCatching {
+            Json { ignoreUnknownKeys = true; encodeDefaults = true }
+                .decodeFromString(Snapshot.serializer(), it)
+        }.getOrNull() } }
+    }
+
     /** Read the persisted snapshot, or null when none is stored / it can't decode. */
     fun load(): Snapshot? {
         val raw = storage.read() ?: return null

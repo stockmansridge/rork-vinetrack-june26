@@ -19,12 +19,17 @@ final class MigratedDataStore {
 
     #if DEBUG
     @ObservationIgnored var switchPerformanceSample: ((VineyardSwitchPerformanceProbe.Sample) -> Void)?
+    @ObservationIgnored var preparedSelectionMeasurement: ((String, Double) -> Void)?
     #endif
 
     // MARK: - State
 
     var vineyards: [Vineyard] = []
     var selectedVineyardId: UUID?
+    /// Presentation acknowledges the request while operational authority keeps
+    /// its complete old slice until the atomic, non-suspending commit.
+    private(set) var preparingVineyard: Vineyard?
+    @ObservationIgnored private var vineyardPreparationGeneration: UInt64 = 0
     @ObservationIgnored var canDeleteWorkerType: (UUID) -> Bool = { _ in false }
 
     var pins: [VinePin] = []
@@ -515,7 +520,7 @@ final class MigratedDataStore {
     }
 
     /// Reload all per-vineyard scoped collections from disk for the currently selected vineyard.
-    func reloadCurrentVineyardData() {
+    func reloadCurrentVineyardData(deferSelectionRepairs: Bool = false) {
         #if DEBUG
         let switchProbe = VineyardSwitchPerformanceProbe(receive: switchPerformanceSample)
         defer { switchProbe.finish() }
@@ -591,7 +596,7 @@ final class MigratedDataStore {
         #if DEBUG
         switchProbe.next("legacy-spray-recovery")
         #endif
-        try? reconcileLegacySpraySaves()
+        if !deferSelectionRepairs { try? reconcileLegacySpraySaves() }
         #if DEBUG
         switchProbe.next("chemical-and-spray-reference")
         #endif
@@ -655,11 +660,13 @@ final class MigratedDataStore {
         // After paddocks + varieties are loaded for this vineyard, repair
         // any drift between built-in variety ids and existing block
         // allocations (e.g. duplicate seedings from earlier app versions).
-        GrapeVarietyCanonicalization.run(store: self)
+        if !deferSelectionRepairs { GrapeVarietyCanonicalization.run(store: self) }
     }
 
     /// Clear in-memory state without touching disk.
     func clearInMemoryState() {
+        vineyardPreparationGeneration &+= 1
+        preparingVineyard = nil
         vineyards = []
         selectedVineyardId = nil
         pins = []
@@ -759,10 +766,76 @@ final class MigratedDataStore {
         return vineyards.first { $0.id == id }
     }
 
-    func selectVineyard(_ vineyard: Vineyard) {
+    /// Interactive path: no observable store/repository is sent to a worker.
+    /// Exact current bytes remain authoritative at the final synchronous load.
+    func prepareAndSelectVineyard(_ vineyard: Vineyard) async {
+        #if DEBUG
+        let requestStart = ProcessInfo.processInfo.systemUptime
+        #endif
+        vineyardPreparationGeneration &+= 1
+        let generation = vineyardPreparationGeneration
+        let account = currentUserIdProvider?()
+        let binding = operationalWriteAuthority.accountBinding
+        let incarnation = operationalWriteAuthority.accountGeneration
+        let originalSelection = selectedVineyardId
+        preparingVineyard = vineyard
+        #if DEBUG
+        preparedSelectionMeasurement?("selection-state-acknowledgement", (ProcessInfo.processInfo.systemUptime - requestStart) * 1000)
+        let preparationStart = ProcessInfo.processInfo.systemUptime
+        #endif
+        defer {
+            if generation == vineyardPreparationGeneration { preparingVineyard = nil }
+        }
+        func isCurrent() -> Bool {
+            !Task.isCancelled && generation == vineyardPreparationGeneration &&
+                currentUserIdProvider?() == account &&
+                operationalWriteAuthority.accountBinding == binding &&
+                operationalWriteAuthority.accountGeneration == incarnation &&
+                selectedVineyardId == originalSelection
+        }
+        // These already-audited Sendable collections dominate cold hydration.
+        // Each preparation owns its decoder. It cannot repair or mutate files.
+        await persistence.prepareDecode([VinePin].self, key: PinRepository.storageKey)
+        guard isCurrent() else { return }
+        await persistence.prepareDecode([Trip].self, key: TripRepository.storageKey)
+        guard isCurrent() else { return }
+        await persistence.prepareDecode([WorkTask].self, key: WorkTaskRepository.storageKey)
+        guard isCurrent() else { return }
+        await persistence.prepareDecode([SavedChemical].self, key: SprayRepository.savedChemicalsKey)
+        guard isCurrent() else { return }
+        await persistence.prepareDecode([Paddock].self, key: "vinetrack_paddocks")
+        guard isCurrent() else { return }
+        // No await from selection through full hydration/persistence. Writers,
+        // GPS and sync never observe empty/partly loaded operational arrays.
+        #if DEBUG
+        preparedSelectionMeasurement?("snapshot-preparation-including-waits", (ProcessInfo.processInfo.systemUptime - preparationStart) * 1000)
+        let commitStart = ProcessInfo.processInfo.systemUptime
+        #endif
+        selectVineyard(vineyard, deferSelectionRepairs: true)
+        #if DEBUG
+        preparedSelectionMeasurement?("atomic-selection-commit", (ProcessInfo.processInfo.systemUptime - commitStart) * 1000)
+        #endif
+        let committedGeneration = vineyardPreparationGeneration
+        Task { [weak self] in
+            await Task.yield()
+            guard let self, self.vineyardPreparationGeneration == committedGeneration,
+                  self.selectedVineyardId == vineyard.id,
+                  self.currentUserIdProvider?() == account,
+                  self.operationalWriteAuthority.accountBinding == binding,
+                  self.operationalWriteAuthority.accountGeneration == incarnation else { return }
+            // Sync/write preflights still reconcile independently. These local
+            // repairs execute only against the fully hydrated, current slice.
+            try? self.reconcileLegacySpraySaves()
+            GrapeVarietyCanonicalization.run(store: self)
+        }
+    }
+
+    func selectVineyard(_ vineyard: Vineyard, deferSelectionRepairs: Bool = false) {
+        vineyardPreparationGeneration &+= 1
+        preparingVineyard = nil
         VineyardSelectionDiagnostics.started(vineyardId: vineyard.id)
         selectedVineyardId = vineyard.id
-        reloadCurrentVineyardData()
+        reloadCurrentVineyardData(deferSelectionRepairs: deferSelectionRepairs)
         // Commit the durable selection only after local hydration completes. If
         // hydration stalls, relaunch returns to the previous working vineyard so
         // the bounded diagnostic can be retrieved without re-entering the stall.
@@ -785,6 +858,8 @@ final class MigratedDataStore {
 
         if let defaultId, memberIds.contains(defaultId) {
             if selectedVineyardId != defaultId {
+                vineyardPreparationGeneration &+= 1
+                preparingVineyard = nil
                 selectedVineyardId = defaultId
                 persistence.save(SelectedVineyardWrapper(id: defaultId), key: Keys.selectedVineyardId)
                 reloadCurrentVineyardData()
@@ -799,11 +874,15 @@ final class MigratedDataStore {
         }
 
         if let first = vineyards.first {
+            vineyardPreparationGeneration &+= 1
+            preparingVineyard = nil
             selectedVineyardId = first.id
             persistence.save(SelectedVineyardWrapper(id: first.id), key: Keys.selectedVineyardId)
             reloadCurrentVineyardData()
             Task { await VineyardWeatherIntegrationCache.shared.ensureLoaded(for: first.id) }
         } else {
+            vineyardPreparationGeneration &+= 1
+            preparingVineyard = nil
             selectedVineyardId = nil
             persistence.remove(key: Keys.selectedVineyardId)
             reloadCurrentVineyardData()

@@ -74,6 +74,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -955,8 +958,10 @@ private fun QuickActionCard(
 
 @Composable
 private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
+    val preparationTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
     val totalHectares = state.totalHectares
     val totalVines = state.paddocks.sumOf { it.summaryVineCount }
+    com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("home-overview-derivation", preparationTiming)
     // Area is stored canonically in hectares and must be presented in the
     // selected vineyard's unit — this tile previously printed the raw canonical
     // number under a hardcoded "Hectares" caption, so an acres vineyard saw
@@ -1161,6 +1166,24 @@ private fun ManagementSection(onOpenTool: (ToolRoute) -> Unit) {
     }
 }
 
+/** Identity-keyed presentation inputs: unrelated publications must not reparse every date. */
+private class HomeSummaryInput(val state: AppUiState) {
+    override fun equals(other: Any?): Boolean {
+        if (other !is HomeSummaryInput) return false
+        val a = state
+        val b = other.state
+        return a.currentUserId == b.currentUserId && a.selectedVineyardId == b.selectedVineyardId &&
+            a.currentSeasonVintage == b.currentSeasonVintage && a.seasonStartMonth == b.seasonStartMonth &&
+            a.seasonStartDay == b.seasonStartDay && a.seasonZone == b.seasonZone &&
+            a.pins === b.pins && a.trips === b.trips && a.sprayRecords === b.sprayRecords && a.paddocks === b.paddocks
+    }
+    override fun hashCode(): Int = System.identityHashCode(state.pins)
+}
+
+private data class HomeVintageCounts(
+    val input: HomeSummaryInput, val pins: Int, val trips: Int, val sprays: Int, val blocks: Int,
+)
+
 /**
  * Current-vintage summary card mirroring iOS. Every tally is constrained to
  * the selected vineyard's shared season boundary and timezone.
@@ -1168,24 +1191,37 @@ private fun ManagementSection(onOpenTool: (ToolRoute) -> Unit) {
 @Composable
 private fun RecentSection(state: AppUiState) {
     val vine = LocalVineColors.current
+    val preparationTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
     val vintage = state.currentSeasonVintage
-    val window = SeasonWindow.forVintage(vintage, state.seasonStartMonth, state.seasonStartDay)
-    val vintagePins = state.pins.filter { window.containsIsoDate(it.createdAt, state.seasonZone) }
-    val vintageTrips = state.trips.filter { window.containsEpochMs(it.startEpochMs, state.seasonZone) }
-    val vintageSprayRecords = state.sprayRecords.filter { window.containsEpochMs(it.dateEpochMs, state.seasonZone) }
-    val workedBlockIds = dashboardWorkedBlockIds(
-        currentBlockIds = state.paddocks.map { it.id },
-        pinBlockIds = vintagePins.mapNotNull { it.paddockId },
-        tripBlockIds = vintageTrips.flatMap { it.effectivePaddockIds },
-        sprayBlockIds = vintageSprayRecords.flatMap { record ->
-            record.applicationBlocks?.map { it.blockId } ?: record.blockIds.orEmpty()
-        },
-    )
+    val input = HomeSummaryInput(state)
+    val prepared by produceState<HomeVintageCounts?>(null, input) {
+        value = withContext(Dispatchers.Default) {
+            val stage = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
+            try {
+                val source = input.state
+                val window = SeasonWindow.forVintage(vintage, source.seasonStartMonth, source.seasonStartDay)
+                val pins = source.pins.filter { window.containsIsoDate(it.createdAt, source.seasonZone) }
+                val trips = source.trips.filter { window.containsEpochMs(it.startEpochMs, source.seasonZone) }
+                val sprays = source.sprayRecords.filter { window.containsEpochMs(it.dateEpochMs, source.seasonZone) }
+                val blocks = dashboardWorkedBlockIds(
+                    currentBlockIds = source.paddocks.map { it.id },
+                    pinBlockIds = pins.mapNotNull { it.paddockId },
+                    tripBlockIds = trips.flatMap { it.effectivePaddockIds },
+                    sprayBlockIds = sprays.flatMap { it.applicationBlocks?.map { block -> block.blockId } ?: it.blockIds.orEmpty() },
+                )
+                HomeVintageCounts(input, pins.size, trips.size, sprays.size, blocks.size)
+            } finally { com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("home-vintage-derivation-worker", stage) }
+        }
+    }
+    // Never label an old account/vineyard/season/list result as the current one.
+    // Cancellation also prevents a superseded worker from publishing late.
+    val counts = prepared?.takeIf { it.input == input }
+    com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("home-vintage-derivation", preparationTiming)
     val rows = listOf(
-        Triple("Pins", vintagePins.size, Icons.Filled.LocationOn) to VineColors.Orange,
-        Triple("Trips", vintageTrips.size, Icons.Filled.Map) to VineColors.Info,
-        Triple("Spray records", vintageSprayRecords.size, Icons.Filled.Science) to VineColors.Indigo,
-        Triple("Blocks worked", workedBlockIds.size, Icons.Filled.Grass) to VineColors.LeafGreen,
+        Triple("Pins", counts?.pins, Icons.Filled.LocationOn) to VineColors.Orange,
+        Triple("Trips", counts?.trips, Icons.Filled.Map) to VineColors.Info,
+        Triple("Spray records", counts?.sprays, Icons.Filled.Science) to VineColors.Indigo,
+        Triple("Blocks worked", counts?.blocks, Icons.Filled.Grass) to VineColors.LeafGreen,
     )
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -1203,7 +1239,7 @@ private fun RecentSection(state: AppUiState) {
                     Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
                     Text(label, color = vine.textPrimary, fontSize = 15.sp, modifier = Modifier.weight(1f))
                     Text(
-                        "$value",
+                        value?.toString() ?: "—",
                         color = vine.textSecondary,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,

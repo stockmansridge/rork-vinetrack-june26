@@ -40,6 +40,11 @@ class PendingWriteStore(context: Context) : PendingWriteStoring {
         return decodeForRecovery(raw)
     }
 
+    internal fun freezeForRecovery(): () -> LocalEvidenceRead<PendingWrite> {
+        val raw = prefs.getString(KEY_WRITES, null)
+        return { raw?.let(::decodeForRecovery) ?: LocalEvidenceRead(emptyList()) }
+    }
+
     /** Persist the full outbox, replacing any previous contents. */
     override fun save(writes: List<PendingWrite>): Boolean {
         val readable = runCatching { prefs.getString(KEY_WRITES, null)?.let { json.decodeFromString(serializer, it) } }.isSuccess

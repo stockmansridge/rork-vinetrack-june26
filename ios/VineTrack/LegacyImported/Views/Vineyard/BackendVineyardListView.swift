@@ -407,7 +407,7 @@ struct BackendVineyardCardRow: View {
 
     var body: some View {
         Button {
-            store.selectVineyard(vineyard)
+            Task { await store.prepareAndSelectVineyard(vineyard) }
         } label: {
             HStack(spacing: 14) {
                 ZStack {

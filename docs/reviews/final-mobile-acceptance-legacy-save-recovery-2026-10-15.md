@@ -1,5 +1,117 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Cold-switch and Android Home continuation — 27 October 2026 — MATERIAL IMPROVEMENTS; FULL PERFORMANCE ACCEPTANCE STILL OPEN
+
+This supersedes the preceding warm-only checkpoint where explicitly measured below. Performance only: accepted Yield/Bunch Weights, Weather/MAIT, Saved Chemical batching, access/read-only policy, original recovery evidence, backend/Portal, versions, signing and releases remain unchanged. No customer/backend data was used. Starting HEAD is `07dde3babbb2361e2696b30893cffd94b7770c14`. Performance sources matched requested reference `ec48c6c3b0605b01ff8545c44ee074a16f6ffe54`, apart from the pre-existing Config.swift deletion. No reset or revert was performed.
+
+### Boundaries and safety changes
+
+- **A — acknowledgement:** Android publishes the selected ID, cleared old scoped data and loading state immediately. iOS publishes a requested-vineyard/loading presentation immediately, but retains the complete previous operational selection until atomic hydration. Neither callback assertion is a two-visible-frames measurement.
+- **B — synchronous UI work:** separately measured from suspended worker spans. `main=true` on an including-waits span describes its completion thread, not continuous blocking.
+- **C — cached availability:** Android waits for durable preservation before cache publication; iOS waits for audited worker predecode, then performs its final authoritative atomic reload. These waits are not UI callback latency. Exact current C values were not returned by successful aggregate runners and must not be reconstructed by adding nested timings.
+- **D — refresh completion:** the original switch fixture intercepts every request with503; its load lifetime is failed-refresh settlement, NOT successful remote completion. The separate mounted Android Home fixture supplies five successful real repository collection responses per switch; other endpoints still fail locally. No live network or full successful sync sweep is claimed.
+- Android freezes raw cache, strict outbox, active-trip and pin-evidence sources before its first suspension. Pin evidence includes retained recovery-file bytes/errors and acknowledgement/unproven relationships. Existing decoding/assembly/encoding/durable commit then runs on IO. A shared nonblocking first-capture reservation spans asynchronous and existing synchronous callers. Failed preservation still prevents remote mutation/reconciliation; cancellation and original FieldStoreAccess admission remain in force. Existing exact-byte memos, corrupt-original refusal and unproven-first-byte durability handling were not replaced by memory-read proof.
+- Android cached pin reconciliation and other display overlays now prepare on Default. Publication validates account/incarnation, vineyard/selection epoch/load generation, current source bytes, fresh pending contents and referential identity of affected collections. An intervening foreground/GPS/outbox change invalidates speculative cache publication rather than overwriting it. New probes include both initial and final Main validation; exact timings for these new probes were not returned by the passing runner.
+- iOS prepares existing audited Sendable collections without sending the observable store/repositories across actors. No await splits final operational selection/hydration. The loading overlay hides old content and blocks its hit testing during preparation; GPS/sync retain the previous complete slice until commit. Interactive menu/list/Return-to-Trip routes use this path. Noninteractive and other existing synchronous paths remain unchanged. This is audited predecode plus final reload, **not a complete all-collection background snapshot**.
+- iOS legacy spray recovery and grape canonicalization defer until after a yield only on this prepared path, with committed generation/account/incarnation/vineyard checks. Existing sync/write preflights remain independent. Clear-store and actual default-selection transitions invalidate preparation generations, including a default A→B→A round trip.
+
+### Android — Stage | Before | After | Thread | Publications
+
+All values below are milliseconds. The precise post-overlay numbers are from the executed four-passing-test portion of a run whose overall result was4 passed/1 class-selector failure; that overall run is NOT represented as green. Later corrected source selection passed7/0/0. The cold/A and B samples are simulator observations, not paired physical-device guarantees.
+
+| Stage | Before | After | Thread | Publications |
+| --- | ---: | ---: | --- | --- |
+| State/call acknowledgement, first A / first B | 926.818 / 727.427 | 7.217 / 5.631 | Main | Synchronous selection3→1 |
+| Repeated acknowledgement | 242–251 (three repeated selections) | 4.636 / 3.783 / 3.547 (three repeated selections) | Main | Synchronous selection3→1 |
+| Preservation, first A / B | 759.334 / 681.034 synchronous | Freeze1.441 /2.051; worker867.779 /704.212 | Short freeze Main; decode/encode/commit IO | 0 |
+| Cached settings, first A | 156.744 synchronous | Worker62.299; authoritative rows/publication15.844 | IO preparation; fresh overlay/publication Main | 1, unchanged stage |
+| Cached overlay preparation | First cold publication83.128 before this additional correction | Worker78.631 cold,14.192–28.220 later | Default, measured off-Main | 0 |
+| Cached snapshot publication | 83.128 cold;9.554–16.569 subsequent (preceding cold-refactor capture) | 1.012 cold;0.577–0.789 subsequent | Main; final exact-byte/pending validation still required | 1 |
+| D: intercepted503 load settlement, first A | 1768.622 including waits | 1878.477 including waits | Suspended coroutine; completion Main | 4 in overlapping lifetime, unchanged |
+
+The preservation worker is not faster in elapsed time; removing it from Main is the improvement. Final successful tests preserve the all-five-selection32ms callback requirement. They do not enforce16ms on every hydration/validation/persistence stage or measure actual drawn acknowledgement frames. The Main settings sample15.844ms leaves little margin. No successful remote-latency speedup, universal32ms hydration total, or full end-to-end warm nonregression is claimed.
+
+### iOS — Stage | Before | After | Main thread before | Main thread after
+
+Cold / maximum of four subsequent selections, milliseconds. The visible post-change report was verified on a separate billed iPhone simulator at13:32 UTC, not the selected Android preview. The invocation mistakenly supplied an undocumented setup object rather than the required launchArguments shape; the returned screenshot nevertheless directly verified the fixture title and numerical summary. This is visible report evidence, not proof of launch arguments, user interactions or frame latency. Do not repeat that setup form in later runs.
+
+| Stage | Before | After | Main thread before | Main thread after |
+| --- | ---: | --- | --- | --- |
+| Presentation acknowledgement | No separate visible-frame measurement | All-five state-boundary assertions<32ms; precise values not retrieved | Synchronous selection | Immediate Main presentation; drawn frames unmeasured |
+| Core records | 53.09 /4.71 | 7.45 /5.11 | Yes | Final reload Main; audited decode prepared on worker |
+| Spray records | 4.38 /3.82 | 5.00 /4.11 | Yes | Yes; not moved by this correction |
+| Chemical / spray reference | 10.11 /0.39 | Full after row not retrieved | Yes | Chemical audited decode prepared; final reference hydration Main |
+| Yield | 4.19 /2.66 | Full after row not retrieved | Yes | Yes |
+| Block / equipment / buttons | 2.23/0.45;0.98/0.66;2.16/1.13 | Full after rows not retrieved | Yes | Audited block decode prepared; final hydration Main |
+| Atomic publication / total blocking | 82.51 /15.47 | **27.47 /16.09** | Yes | Yes, bounded complete commit; preparation wait excluded |
+| Legacy recovery / canonicalization repairs | 0.61/0.03;0.79/0.47 | Outside prepared first commit; later duration unmeasured | Yes | Still Main, deferred and fenced after yield |
+
+The cold commit improved about66.7% in these separate simulator captures. The warm maximum16.09ms is0.62ms above the earlier15.47ms; these are not paired/JIT-controlled physical measurements, so strict warm nonregression is **not established**. A pass proves the fixture's32ms atomic-commit assertions, not every16ms stage target. Changed-byte memo preparation can still fall back to authoritative Main decode because the existing preparation skips populated memo entries; legacy/ineligible collections also remain synchronous. Those known limitations and other synchronous callers prevent a universal cold-switch completion claim.
+
+### Home during sync — separate table
+
+| Platform / stage | Before | After | Thread / publications / persistence / batch |
+| --- | --- | --- | --- |
+| Android Home vintage summary | **223.135ms** first populated computation; later populated computations35.716–82.536ms | Executed unchanged **≤16ms Main budget** now passes; exact after timings not exposed | Date filtering/block tally moved to Default; result matches account/vineyard/season and collection identities; cancellation prevents late display |
+| Android Home overview | 0.006–0.325ms | Same calculation retained;≤16ms assertion passes | Main; not a demonstrated bottleneck |
+| Android sync application / cache persistence | Five real collection responses per selection | Same25 successful collection requests over five selections; remote titles verified |3,350 remote records/selection;2,850 summary inputs. No per-row batching, publication-count reduction or persistence-operation reduction claimed |
+| iOS Home rendering during application/scroll | **Not measured** | **Not implemented/verified in this continuation** | Existing Home date filtering and per-row spray/trip sync remain candidates only |
+
+Android fixture mounts the actual HomeDashboard and sends real scroll gestures while the production load is active, including large responses through real repositories/overlays/cache application. Every successful body is synthetic and every other request is intercepted; no network fallback. A first test exposed a fixture-only missing JSON ContentNegotiation plugin; after restoring the existing production-compatible plugin the remote-title assertion passed. Adding the legitimate16ms Home derivation budget then reproduced0 passed/1 failed with the223.135ms Main stage. That same assertion passes after the correction.
+
+Only summary preparation changed: labels/layout/date semantics and source collections remain the same. While a new exact input is computing, summary values briefly show an unavailable dash rather than stale counts from another input. These derived counts cannot authorize a write, change evidence or acknowledge a pending operation. Unrelated publications reuse the identity-keyed preparation instead of reparsing dates. This adds a local presentation-result update; it does **not** reduce sync StateFlow publications or persistent writes.
+
+Important limits: gestures during a load do not prove that a finger gesture overlapped the final publication/persistence span. No hardware frame metrics, FPS, long-frame distribution or visible two-frame acknowledgement assertion was added. The final remote-application reconciliation/serialization stages are not independently bounded below16ms. Android Home's measured expensive derivation is materially improved, but full Home-during-sync contention acceptance and iOS Home remain open.
+
+### Root causes proven
+
+1. **Android cold recovery codecs/durable preservation on Main:** freezing original evidence before suspension and retaining the durable gate reduced observed cold call acknowledgement926.8ms to7.2ms without allowing remote work before preservation.
+2. **Android cached pin reconciliation on Main:** moving immutable display overlays to a worker reduced the observed cold publication83.128ms to1.012ms. Main revalidation remains necessary and newly separately instrumented.
+3. **Android Home vintage derivation:** real mounted Home computation took223.135ms after cached collection publication and35.716–82.536ms subsequently. Moving that read-only calculation off Main changes the same executed16ms Main-stage failure to a pass.
+4. **iOS cold core hydration:** audited predecode reduced measured Main core53.09ms to7.45ms and cold atomic commit82.51ms to27.47ms. This does not attribute every collection cost to JSON or establish a full background snapshot.
+
+### Apple Portal Login / read-only conclusion
+
+No login, Portal or read-only safeguard was removed. Existing final access/isolation selections pass, but operation-level entitlement-cache, access-matrix, hold-ledger and binding counts/timings were **not captured in this continuation**. The six prior commits remain source candidates, not proven causes or exonerated paths. These measurements support neither blaming Apple Portal Login nor declaring its added work negligible. Awaited network time must not be called synchronous UI blocking. Access-cost attribution remains an independent open goal.
+
+### Serialized validation — exact current-source results
+
+- Android focused managed selection: **7 passed/0 failed/0 skipped in32s**. Exact selectors: `com.rork.vinetrack.data.VineyardSwitchPerformanceAndroidTest` (callback fixture plus mounted Home fixture), `com.rork.vinetrack.data.PreparedRecoveryAndroidTest`, `com.rork.vinetrack.data.SavedChemicalDecodeMemoAndroidTest`. Frozen-source original bytes survive a suspended source change; concurrent capture refuses; rejected ordinary account transition revokes prepared commit; corrupt originals remain untouched; legacy chemical-generated identities/current bytes remain authoritative. Class-level aggregate result does not supply numeric successful attachments.
+- Android separate final device regressions: **34 passed/0 failed/0 skipped in18s**. Exact selectors: `com.rork.vinetrack.data.OfflineQuickActionsAndroidTest`, `com.rork.vinetrack.data.ReadOnlyEntitlementCacheTest`, `com.rork.vinetrack.data.YieldMasterWeightCacheAndroidTest`, `com.rork.vinetrack.data.YieldTripNavigationAndroidTest`, `com.rork.vinetrack.data.MAITCurrentObservationAndroidTest`, `com.rork.vinetrack.data.auth.RetainedStartupConstructionTest`.
+- Android host: recovery/chemical **60/0/0/0,18.177s**, Yield **95/0/0/0,18.651s**, weather **52/0/0/0,22.593s**, authority/isolation **209/0/0/0,10.516s**, startup/offline **55/0/0/0,10.852s**. Commands are the unchanged `run-switch-performance-regressions.py`, `run-yield-completion-tests.py`, `run-mait-mobile-contract.py` with outputs `/tmp/vinetrack-cold-home-{recovery,yield,weather}`. Exact host class lists remain those recorded in the preceding checkpoint and checked into these runners. Results overlap and are not summed.
+- iOS focused switch/storage/access selection: **136 passed in137s**. Exact selectors, all `VineTrackTests/`: `PreparedVineyardSelectionTests`, `VineyardSwitchPerformanceTests`, `PersistencePerformanceTests`, `PerformanceValidationTests`, `SavedChemicalBatchReconciliationTests`, `EquipmentVineyardIsolationTests`, `VineyardWriteAuthorityTests`, `ReadOnlyEntitlementContractTests`, `OfflineQuickActionsTests`, `ActiveTripRouteRecoveryTests`, `DeviceTripOwnershipTests`, `SpraySaveForLaterTests`. Includes superseded preparation, clear-store invalidation and default-selection A→B→A rejection. New preparation-only selection separately3 passed in150s is overlapping, not additional coverage.
+- iOS separate accepted-feature selection: **192 passed in54s**. Exact16 selectors are unchanged from the preceding192 selection: `YieldBunchWeightsManagementTests`, `CurrentYieldMasterParityTests`, `YieldMasterWeightCacheTests`, `YieldCompletionPersistenceTests`, `YieldVintageReportTests`, `YieldAuthoritativeVineCountTests`, `SeasonYieldDamageParityTests`, `PruningYieldSettingsTests`, `PruningYieldSettingsRevisionSyncTests`, `MAITCurrentObservationTests`, `MAITSupplementarySensorTests`, `CurrentObservationProviderTests`, `RegionFormatterWeatherParityTests`, `EquipmentVineyardIsolationTests`, `SavedChemicalBatchReconciliationTests` under `VineTrackTests/`, plus `VineTrackUITests/YieldTripNavigationUITests`. Skipped/per-case discovery metrics are not returned; overlapping results are not summed.
+- Final iOS source `runChecks(ios)` **PASS**, simulator build. No subsequent iOS source edits; the unchanged-source regression selections above followed that build. Two pre-existing direct-storage-URL advisories remain untouched.
+- Separate final Android **Debug-only build PASS**, exit0 in**9.121s**, `python3 scripts/run-yield-completion-tests.py --debug-build --output /tmp/vinetrack-cold-home-final-debug`. Generic Android runChecks was not run because it builds Release, prohibited by this task. No Release assembly, store upload, physical-device installation or version/configuration operation.
+- `git diff --check HEAD` **PASS**. Numerical temporary evidence copied to `/tmp/vinetrack-pre-overlay-2026-10-27.log` and `/tmp/vinetrack-home-before-2026-10-27.log`; this report retains the durable values. Success does not refresh the managed failure-log file; do not mislabel a retained older failure log as a newer passing run.
+
+Historical development failures retained, not counted as passes: first recovery/device selection5 passed/1 failed because ordinary different-user SessionStore replacement was correctly denied; corrected the test to assert denial rather than relaxing policy. A later4 passed/1 failed run used nonexistent `SavedChemicalLocalStoreAndroidTest`; corrected the selector to the existing decode-memo class. The first mounted Home selection2 passed/1 failed lacked the fixture JSON plugin; no production parser changed. The legitimate before-optimization Home budget failure was0/1/0. A host runner initially could not create its output subdirectory because its /tmp parent was absent; created that parent, then executed all three host stages successfully. No product assertion was disabled or budget relaxed.
+
+### Exact source manifest
+
+Native/test/harness diff SHA-256 against starting HEAD, `git diff HEAD --binary -- ios android-vinetrack scripts`: **`7b18d806a71a196967ce64013db39fdddac27663bfceb3e5a803acd03307a0a1`**. Exact16 files (this report, existing plan and tool-managed simulator state excluded):
+
+- `android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/PreparedRecoveryAndroidTest.kt`
+- `android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/VineyardSwitchPerformanceAndroidTest.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/ActiveTripStore.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/DomainCacheStore.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PendingWriteStore.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PinCaptureEvidenceStore.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/RecoverySnapshotStore.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/HomeDashboard.kt`
+- `ios/VineTrack/App/NewMainTabView.swift`
+- `ios/VineTrack/App/SyntheticSwitchPerformanceView.swift`
+- `ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift`
+- `ios/VineTrack/LegacyImported/Views/Trips/TripView.swift`
+- `ios/VineTrack/LegacyImported/Views/Vineyard/BackendVineyardListView.swift`
+- `ios/VineTrackTests/PreparedVineyardSelectionTests.swift`
+- `ios/VineTrackTests/VineyardSwitchPerformanceTests.swift`
+
+### Remaining physical-device gate
+
+**NOT COMPLETE / NO RELEASE CLEARANCE.** Cold callback/commit blocking and one measured Android Home hotspot materially improved; this is not full both-platform Home acceptance. Still required: mounted iOS Home during representative real application batches, independently timed remote application/persistence and complete hydration/validation stages, actual drawn acknowledgement/frame measurements, strict warm nonregression, measured entitlement/authority/hold/binding attribution, and physical iPhone/Android confirmation. Android rapid A→B→A/identity-incarnation races at every new overlay publication boundary also lack a new deterministic end-to-end device fixture; existing guards and focused recovery/isolation tests are not that journey. No physical device is attached, and simulator smoothness is not physical smoothness. Keep the corrective-performance and Home/physical plan goals unchecked until those done-when conditions hold.
+
 ## Measured mobile responsiveness — 27 October 2026 — PARTIAL WARM-SWITCH IMPROVEMENT; COLD/HOME/PHYSICAL GATES OPEN
 
 This section supersedes the earlier absence of switch timing evidence, not the accepted feature behavior. No backend, Portal, customer-data, access-policy, version, signing, release configuration or release-artifact changes. No ordinary authentication bypass. The isolated fixtures use local synthetic contents and intercepted-only Android HTTP, never a real customer account. Requested accepted baseline `1c837a738bf69a018bdc9fae3ef36060b318747d` was unavailable (`not our ref` / `Not a valid commit name`); no reset/revert was attempted. The clean starting revision `6893beb87cf6ab3e6f96f0de1cfc99551d6bc23d` plus stage instrumentation is the measured baseline. These results do not retrospectively prove performance at the unavailable accepted revision.

@@ -117,6 +117,18 @@ class PinCaptureEvidenceStore(context: Context) {
         readRetainedEvidence(primary, listOf(base, File(base.path + ".bak"), File(base.path + ".new")))
     } }
 
+    /** Capture all AtomicFile candidates and acknowledgement proof before suspension. */
+    internal fun freezeForRecovery(): () -> List<Evidence> = fieldAccess.admitted { synchronized(evidenceLock) {
+        val raw = preferences.getString(KEY, null)
+        val unproven = raw != null && raw == unprovenPrimaryRaw
+        val base = recoveryFile.baseFile
+        val retained = listOf(base, File(base.path + ".bak"), File(base.path + ".new")).map {
+            if (it.exists()) it.readText() else null
+        }
+        val decode: () -> List<Evidence> = { decodeRetainedEvidence(raw, retained, unproven) }
+        decode
+    } }
+
     private fun persist(records: List<Evidence>): Boolean = fieldAccess.admitted {
         val encoded = json.encodeToString(serializer, records)
         unprovenPrimaryRaw = encoded
@@ -164,11 +176,16 @@ class PinCaptureEvidenceStore(context: Context) {
         internal fun readRetainedEvidence(primary: String?, files: List<File>): List<Evidence> {
             // A newer unknown evidence field cannot be safely re-encoded by
             // this build. Hold its original sources rather than discard fields.
+            return decodeRetainedEvidence(primary, files.map { if (it.exists()) it.readText() else null }, false)
+        }
+
+        internal fun decodeRetainedEvidence(primary: String?, retained: List<String?>, unproven: Boolean): List<Evidence> {
             val codec = Json { ignoreUnknownKeys = false; encodeDefaults = true; explicitNulls = false }
             fun decode(raw: String) = codec.decodeFromString(ListSerializer(Evidence.serializer()), raw)
-            val candidates = primary?.let(::decode).orEmpty() + files.flatMap { file ->
-                if (file.exists()) decode(file.readText()) else emptyList()
+            val primaryRows = primary?.let(::decode).orEmpty().let { rows ->
+                if (unproven) rows.map { it.copy(uploaded = false) } else rows
             }
+            val candidates = primaryRows + retained.filterNotNull().flatMap(::decode)
             return candidates.groupBy { it.pinId to it.evidenceRevision }.values.map { versions ->
                 check(versions.map { it.copy(uploaded = false) }.distinct().size == 1) {
                     "Conflicting capture evidence needs recovery review. Original sources were retained."

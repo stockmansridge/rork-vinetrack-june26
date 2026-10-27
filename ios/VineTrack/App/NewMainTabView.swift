@@ -135,6 +135,18 @@ struct NewMainTabView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
                 .tag(4)
         }
+        .allowsHitTesting(store.preparingVineyard == nil)
+        .overlay {
+            if let vineyard = store.preparingVineyard {
+                VStack(spacing: 12) {
+                    Text(vineyard.name).font(.headline)
+                    ProgressView("Loading vineyard…")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.background)
+                .accessibilityIdentifier("vineyard-selection-loading")
+            }
+        }
         .environment(\.accessControl, accessControl.legacyAccessControl(for: store.selectedVineyardId, userId: auth.userId))
         .safeAreaInset(edge: .top, spacing: 0) {
             OfflineGraceBanner()
@@ -949,7 +961,7 @@ private struct NewHomeTabView: View {
                     ForEach(store.vineyards, id: \.id) { vineyard in
                         Button {
                             guard vineyard.id != store.selectedVineyardId else { return }
-                            store.selectVineyard(vineyard)
+                            Task { await store.prepareAndSelectVineyard(vineyard) }
                         } label: {
                             if vineyard.id == store.selectedVineyardId {
                                 Label(vineyard.name, systemImage: "checkmark")

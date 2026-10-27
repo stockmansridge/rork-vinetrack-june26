@@ -173,6 +173,17 @@ class DomainCacheStore(context: Context) {
     fun loadPins(vineyardId: String): List<Pin> =
         decode(prefs.getString(keyPins(vineyardId), null), pinSerializer)
 
+    /** Freeze bytes before yielding; the returned reader never touches live storage. */
+    internal fun freezePinsForRecovery(vineyardId: String): () -> LocalEvidenceRead<Pin> {
+        val raw = prefs.getString(keyPins(vineyardId), null)
+        return { recoveryDecode(raw, pinSerializer, "cached pin") }
+    }
+
+    internal fun freezeTripsForRecovery(vineyardId: String): () -> LocalEvidenceRead<Trip> {
+        val raw = prefs.getString(keyTrips(vineyardId), null)
+        return { recoveryDecode(raw, tripSerializer, "cached trip") }
+    }
+
     fun loadPinsForRecovery(vineyardId: String): LocalEvidenceRead<Pin> =
         recoveryDecode(prefs.getString(keyPins(vineyardId), null), pinSerializer, "cached pin")
 

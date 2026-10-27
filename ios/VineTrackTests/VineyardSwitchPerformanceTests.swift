@@ -4,8 +4,8 @@ import XCTest
 
 final class VineyardSwitchPerformanceTests: XCTestCase {
     /// Same substantial, isolated fixture used by the debug evidence screen.
-    @MainActor func testSyntheticRepeatedSwitchStages() throws {
-        let report = try SyntheticSwitchPerformanceFixture.capture()
+    @MainActor func testSyntheticRepeatedSwitchStages() async throws {
+        let report = try await SyntheticSwitchPerformanceFixture.capture()
         XCTAssertTrue(report.contains("Switch 4 total"))
         let attachment = XCTAttachment(string: report)
         attachment.name = "Synthetic production switch stages"

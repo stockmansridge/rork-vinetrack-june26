@@ -41,7 +41,7 @@ struct TripView: View {
                         ContentUnavailableView("Trip already in progress", systemImage: "tractor", description: Text("You already have an active trip in \(store.vineyards.first(where: { $0.id == owned.vineyardId })?.name ?? "another vineyard"). Finish or return to that trip before starting another."))
                         Button("Return to Trip") {
                             if let vineyard = store.vineyards.first(where: { $0.id == owned.vineyardId }) {
-                                store.selectVineyard(vineyard)
+                                Task { await store.prepareAndSelectVineyard(vineyard) }
                             }
                         }
                         .buttonStyle(.borderedProminent)

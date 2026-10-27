@@ -10,7 +10,7 @@ struct SyntheticSwitchPerformanceView: View {
                 Text(report).font(.system(size: 12, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).padding()
             }.navigationTitle("Synthetic switch evidence")
         }.task {
-            do { report = try SyntheticSwitchPerformanceFixture.capture() }
+            do { report = try await SyntheticSwitchPerformanceFixture.capture() }
             catch { report = "Synthetic fixture failed" }
         }
     }
@@ -18,7 +18,7 @@ struct SyntheticSwitchPerformanceView: View {
 
 @MainActor
 enum SyntheticSwitchPerformanceFixture {
-    static func capture() throws -> String {
+    static func capture(prepared: Bool = true) async throws -> String {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -65,9 +65,21 @@ enum SyntheticSwitchPerformanceFixture {
         for (iteration, vineyard) in [vineyards[0], vineyards[1], vineyards[0], vineyards[1], vineyards[0]].enumerated() {
             var samples: [VineyardSwitchPerformanceProbe.Sample] = []
             store.switchPerformanceSample = { samples.append($0) }
+            var boundary: [String: Double] = [:]
+            store.preparedSelectionMeasurement = { boundary[$0] = $1 }
             let started = ProcessInfo.processInfo.systemUptime
-            store.selectVineyard(vineyard)
-            let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1000
+            if prepared { await store.prepareAndSelectVineyard(vineyard) }
+            else { store.selectVineyard(vineyard) }
+            let completion = (ProcessInfo.processInfo.systemUptime - started) * 1000
+            let elapsed = prepared ? (boundary["atomic-selection-commit"] ?? completion) : completion
+            if prepared {
+                guard (boundary["selection-state-acknowledgement"] ?? .infinity) < 32, elapsed < 32 else {
+                    throw CocoaError(.coderInvalidValue)
+                }
+                report += String(format: "\nAcknowledgement %.2fms; preparation including waits %.2fms; cached availability %.2fms\n",
+                    boundary["selection-state-acknowledgement"] ?? 0,
+                    boundary["snapshot-preparation-including-waits"] ?? 0, completion)
+            }
             guard store.pins.count == 2_000, store.pins.allSatisfy({ $0.vineyardId == vineyard.id }),
                   store.trips.count == 500, store.workTasks.count == 500, store.sprayRecords.count == 250,
                   store.savedChemicals.count == 250, store.maintenanceLogs.count == 250,
@@ -85,7 +97,7 @@ enum SyntheticSwitchPerformanceFixture {
             summary += String(format: "%@ %.2f / %.2f\n", first.stage, first.milliseconds, warm)
         }
         summary += String(format: "TOTAL %.2f / %.2f\n", totals[0], totals.dropFirst().max() ?? 0)
-        summary += "All stages main thread. No sync included.\n\n"
+        summary += "Hydration/commit stages MainActor; preparation worker decoding measured separately. No sync included.\n\n"
         print("SWITCH_PERFORMANCE_BEGIN\n\(summary)\(report)SWITCH_PERFORMANCE_END")
         return summary + report
     }

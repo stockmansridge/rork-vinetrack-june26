@@ -234,8 +234,17 @@ class RecoverySnapshotStore internal constructor(
             PendingEntityType.TRIP_END,
         )
 
+        // A competing capture fails closed rather than blocking Main on a worker.
+        // All production capture callers (load/replay/export) share this reservation.
+        private val captures = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
         /** Captures current local stores once and reports whether durable preservation succeeded. */
         fun captureBeforeMutation(context: Context, vineyardId: String): SaveResult {
+            if (!captures.add(vineyardId)) return SaveResult.Failed
+            return try { captureReserved(context, vineyardId) } finally { captures.remove(vineyardId) }
+        }
+
+        private fun captureReserved(context: Context, vineyardId: String): SaveResult {
             val store = RecoverySnapshotStore(context)
             if (!store.hasUnprovenWrite(vineyardId)) {
                 when (val existing = store.loadResult(vineyardId)) {
@@ -245,6 +254,49 @@ class RecoverySnapshotStore internal constructor(
                 }
             }
             return store.saveIfAbsent(collectSnapshot(context, vineyardId))
+        }
+
+        /** No source reads are deferred: only decoding/assembly/commit run on IO.
+         * Reservation survives cancellation until the worker has terminated. The
+         * caller must revalidate its account/selection scope after this suspension.
+         */
+        internal suspend fun captureBeforeMutationPrepared(context: Context, vineyardId: String,
+            afterFreeze: suspend () -> Unit = {}): SaveResult {
+            if (!captures.add(vineyardId)) return SaveResult.Failed
+            try {
+                val access = com.rork.vinetrack.data.auth.FieldStoreAccess(context)
+                val frozen = freezeSnapshot(context, vineyardId)
+                val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                val store = RecoverySnapshotStore(
+                    readRaw = { prefs.getString(it, null) },
+                    writeRawIfAbsent = { key, value -> access.commit {
+                        synchronized(prefs) { if (prefs.contains(key)) false else prefs.edit().putString(key, value).commit() }
+                    } },
+                    rewriteUnprovenRaw = { key, value -> access.commit {
+                        synchronized(prefs) { prefs.edit().putString(key, value).commit() }
+                    } },
+                )
+                return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    afterFreeze()
+                    val timing = VineyardSwitchPerformanceProbe.begin()
+                    try {
+                        if (!store.hasUnprovenWrite(vineyardId)) {
+                            when (val existing = store.loadResult(vineyardId)) {
+                                is LoadResult.Valid -> return@withContext SaveResult.Existing(existing.snapshot)
+                                is LoadResult.Unreadable -> return@withContext SaveResult.ExistingUnreadable(existing.originalBytes)
+                                LoadResult.Missing -> Unit
+                            }
+                        }
+                        store.saveIfAbsent(frozen())
+                    } finally { VineyardSwitchPerformanceProbe.end("recovery-preservation-worker", timing) }
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: com.rork.vinetrack.data.auth.FieldAccessRevoked) {
+                return SaveResult.Failed
+            } catch (_: com.rork.vinetrack.data.auth.FieldSaveBusy) {
+                return SaveResult.Failed
+            } finally { captures.remove(vineyardId) }
         }
 
         fun collectCurrentEvidence(context: Context, vineyardId: String): CurrentEvidence {
@@ -343,13 +395,33 @@ class RecoverySnapshotStore internal constructor(
             return included to excluded
         }
 
+        private fun freezeSnapshot(context: Context, vineyardId: String): () -> Snapshot {
+            val timing = VineyardSwitchPerformanceProbe.begin()
+            try {
+                val cache = DomainCacheStore(context)
+                val pins = cache.freezePinsForRecovery(vineyardId)
+                val trips = cache.freezeTripsForRecovery(vineyardId)
+                val pending = PendingWriteStore(context).freezeForRecovery()
+                val active = ActiveTripStore(context).freezeForRecovery()
+                val capture = runCatching { PinCaptureEvidenceStore(context).freezeForRecovery() }
+                val at = Instant.now().toString()
+                return { assembleSnapshot(vineyardId, pins(), trips(), pending(),
+                    active()?.takeIf { it.vineyardId == vineyardId }?.trip,
+                    capture.mapCatching { it() }, at) }
+            } finally { VineyardSwitchPerformanceProbe.end("recovery-freeze-inputs", timing) }
+        }
+
         private fun collectSnapshot(context: Context, vineyardId: String): Snapshot {
             val cache = DomainCacheStore(context)
-            val pinRead = cache.loadPinsForRecovery(vineyardId)
-            val tripRead = cache.loadTripsForRecovery(vineyardId)
-            val pendingRead = PendingWriteStore(context).loadForRecovery()
-            val activeTrip = ActiveTripStore(context).load()?.takeIf { it.vineyardId == vineyardId }?.trip
-            val captureRead = runCatching { PinCaptureEvidenceStore(context).load() }
+            return assembleSnapshot(vineyardId, cache.loadPinsForRecovery(vineyardId),
+                cache.loadTripsForRecovery(vineyardId), PendingWriteStore(context).loadForRecovery(),
+                ActiveTripStore(context).load()?.takeIf { it.vineyardId == vineyardId }?.trip,
+                runCatching { PinCaptureEvidenceStore(context).load() }, Instant.now().toString())
+        }
+
+        private fun assembleSnapshot(vineyardId: String, pinRead: LocalEvidenceRead<Pin>,
+            tripRead: LocalEvidenceRead<Trip>, pendingRead: LocalEvidenceRead<PendingWrite>,
+            activeTrip: Trip?, captureRead: Result<List<PinCaptureEvidenceStore.Evidence>>, at: String): Snapshot {
             val captureEvidence = captureRead.getOrDefault(emptyList()).filter { it.vineyardId == vineyardId }
             val knownTripIds = tripRead.items.mapTo(mutableSetOf()) { it.id }.apply { activeTrip?.id?.let(::add) }
             val knownPinIds = pinRead.items.mapTo(mutableSetOf()) { it.id }
@@ -366,7 +438,7 @@ class RecoverySnapshotStore internal constructor(
                 vineyardId = vineyardId,
                 appVersion = BuildConfig.VERSION_NAME,
                 buildVersion = BuildConfig.VERSION_CODE.toLong(),
-                snapshotAt = Instant.now().toString(),
+                snapshotAt = at,
                 source = "before_vineyard_load_refresh_or_replay",
                 pendingWrites = pendingWrites,
                 captureEvidence = captureEvidence,
