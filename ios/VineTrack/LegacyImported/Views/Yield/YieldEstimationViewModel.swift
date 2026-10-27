@@ -389,7 +389,11 @@ class YieldEstimationViewModel {
     }
 
     func toSession(vineyardId: UUID, samplesPerHectare: Int) -> YieldEstimationSession {
-        YieldEstimationSession(
+        // Capture once, including callers which did not use startNewTrip().
+        // Repeated saves and completion must upsert the same trip.
+        if sessionId == nil { sessionId = UUID() }
+        if sessionCreatedAt == nil { sessionCreatedAt = Date() }
+        return YieldEstimationSession(
             id: sessionId ?? UUID(),
             vineyardId: vineyardId,
             createdAt: sessionCreatedAt ?? Date(),

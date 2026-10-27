@@ -194,9 +194,9 @@ class DomainCacheRepository(context: Context) {
 
     // MARK: - Yield estimation sessions by vineyard
 
-    fun saveYieldSessions(userId: String?, vineyardId: String, sessions: List<YieldEstimationSession>) {
-        if (!ownerMatches(userId)) return
-        store.saveYieldSessions(vineyardId, sessions, System.currentTimeMillis())
+    fun saveYieldSessions(userId: String?, vineyardId: String, sessions: List<YieldEstimationSession>): Boolean {
+        if (!ownerMatches(userId)) return false
+        return store.saveYieldSessions(vineyardId, sessions, System.currentTimeMillis())
     }
 
     fun loadYieldSessions(userId: String?, vineyardId: String): List<YieldEstimationSession>? {

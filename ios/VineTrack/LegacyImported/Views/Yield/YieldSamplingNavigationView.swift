@@ -14,6 +14,8 @@ struct YieldSamplingNavigationView: View {
     @Environment(\.dismiss) private var dismiss
 
     let viewModel: YieldEstimationViewModel
+    var onReturnToTrips: () -> Void
+    @State private var saveFailed = false
 
     @State private var currentSiteId: UUID?
     @State private var bunchesText: String = ""
@@ -86,9 +88,20 @@ struct YieldSamplingNavigationView: View {
                 bottomPanel
             }
         }
+        .navigationBarBackButtonHidden(true)
         .navigationTitle("Guided Sampling")
+        .alert("Trip not saved", isPresented: $saveFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The trip could not be saved on this device. Keep it open and retry.")
+        }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button(action: onReturnToTrips) {
+                    Label("Yield Estimate Trips", systemImage: "chevron.left")
+                }
+            }
             if let sessionId = viewModel.sessionId {
                 ToolbarItem(placement: .topBarLeading) {
                     RecordSyncBadge(
@@ -135,6 +148,12 @@ struct YieldSamplingNavigationView: View {
         }
         .navigationDestination(isPresented: $showReport) {
             YieldReportView(viewModel: viewModel)
+                .navigationBarBackButtonHidden(true)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Yield Estimate Trips", action: onReturnToTrips)
+                    }
+                }
         }
         .confirmationDialog(
             "Complete Yield Estimation?",
@@ -143,8 +162,7 @@ struct YieldSamplingNavigationView: View {
         ) {
             Button("Complete & Lock") {
                 viewModel.markCompleted(paddocks: paddocks)
-                saveSession()
-                showReport = true
+                if saveSession() { onReturnToTrips() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -577,9 +595,9 @@ struct YieldSamplingNavigationView: View {
             .tint(.purple)
 
             Button {
-                dismiss()
+                onReturnToTrips()
             } label: {
-                Text("Return to Yield Forecasting")
+                Text("Return to Yield Estimate Trips")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
@@ -711,13 +729,16 @@ struct YieldSamplingNavigationView: View {
         }
     }
 
-    private func saveSession() {
-        guard let vid = store.selectedVineyardId else { return }
+    @discardableResult
+    private func saveSession() -> Bool {
+        guard let vid = store.selectedVineyardId else { return false }
         let session = viewModel.toSession(
             vineyardId: vid,
             samplesPerHectare: store.settings.samplesPerHectare
         )
-        store.saveYieldSession(session)
+        let accepted = store.saveYieldSession(session)
+        saveFailed = !accepted
+        return accepted
     }
 
     // MARK: - Map helpers

@@ -2,6 +2,7 @@ package com.rork.vinetrack.data
 
 import com.rork.vinetrack.data.model.BunchCountEntry
 import com.rork.vinetrack.data.model.DamageRecord
+import com.rork.vinetrack.data.model.CoordinatePoint
 import com.rork.vinetrack.data.model.HistoricalBlockResult
 import com.rork.vinetrack.data.model.HistoricalYieldRecord
 import com.rork.vinetrack.data.model.Paddock
@@ -119,14 +120,32 @@ class YieldVintageReportTest {
 
     // ---- Damage adjustment ------------------------------------------------
 
+    // These report assertions describe damage across the WHOLE physical block.
+    // Supply a real mapped area and a fixed vintage, as required by the current
+    // area-weighted damage engine, rather than the retired percentage-only path.
+    private fun wholeBlockDamage(percent: Double) = DamageRecord(
+        id = "d1", vineyardId = vy, paddockId = blockA,
+        date = "2026-01-10T00:00:00Z", vintage = 2026, damagePercent = percent,
+        polygonPoints = listOf(
+            CoordinatePoint(latitude = 0.0, longitude = 0.0),
+            CoordinatePoint(latitude = 0.0, longitude = 0.001),
+            CoordinatePoint(latitude = 0.001, longitude = 0.001),
+            CoordinatePoint(latitude = 0.001, longitude = 0.0),
+        ),
+    )
+
+    private fun paddocksWithMappedBlockArea(damage: DamageRecord) = paddocks.map {
+        if (it.id == blockA) it.copy(polygonPoints = damage.polygonPoints) else it
+    }
+
     @Test
     fun damageAdjustsDisplayWithoutMutatingBase() {
         val session = trip("t-1", blockA, avgBunches = 30.0, completedAt = "2026-01-15T02:00:00Z")
         val damage = listOf(
-            DamageRecord(id = "d1", vineyardId = vy, paddockId = blockA, damagePercent = 20.0),
+            wholeBlockDamage(20.0),
         )
 
-        val rows = YieldVintageReport.estimateRows(listOf(session), paddocks, damage, 2026, 7, 1)
+        val rows = YieldVintageReport.estimateRows(listOf(session), paddocksWithMappedBlockArea(damage.single()), damage, 2026, 7, 1)
         val row = rows.single()
 
         assertEquals(3.0, row.baseTonnes, 1e-9)
@@ -140,10 +159,10 @@ class YieldVintageReportTest {
     fun applyDamageFalseShowsBaseButKeepsAdjustedAvailable() {
         val session = trip("t-1", blockA, avgBunches = 30.0, completedAt = "2026-01-15T02:00:00Z", applyDamage = false)
         val damage = listOf(
-            DamageRecord(id = "d1", vineyardId = vy, paddockId = blockA, damagePercent = 50.0),
+            wholeBlockDamage(50.0),
         )
 
-        val row = YieldVintageReport.estimateRows(listOf(session), paddocks, damage, 2026, 7, 1).single()
+        val row = YieldVintageReport.estimateRows(listOf(session), paddocksWithMappedBlockArea(damage.single()), damage, 2026, 7, 1).single()
         assertEquals(3.0, row.displayTonnes, 1e-9)
         assertEquals(1.5, row.adjustedTonnes, 1e-9)
     }

@@ -4699,8 +4699,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayPendingYieldSessions() {
         if (session.accessToken == null || !_ui.value.isOnline) return
+        val originalAccount = session.accountAccess() ?: return
         launchReplayStage("yield-session") {
-            yieldSessionSaveSync.replayAll { saved ->
+            yieldSessionSaveSync.replayAll(retainConfirmed = { saved ->
+                if (!session.isAccountAccessCurrent(originalAccount)) false else {
+                    val cached = domainCache.loadYieldSessions(originalAccount.userId, saved.vineyardId).orEmpty()
+                    domainCache.saveYieldSessions(originalAccount.userId, saved.vineyardId,
+                        cached.filterNot { it.id == saved.id } + saved)
+                }
+            }) { saved ->
                 _ui.update { st ->
                     if (saved.vineyardId != st.selectedVineyardId) return@update st
                     if (st.yieldSessions.any { it.id == saved.id }) {
@@ -17093,10 +17100,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun saveYieldSession(session: YieldEstimationSession, onResult: (Boolean) -> Unit = {}) {
         val vineyardId = _ui.value.selectedVineyardId
-        if (vineyardId == null) { onResult(false); return }
+        if (vineyardId == null || !session.vineyardId.equals(vineyardId, true)) { onResult(false); return }
         val clientUpdatedAt = Instant.now().toString()
-        val scoped = session.copy(vineyardId = vineyardId)
-        val previous = _ui.value.yieldSessions
+        val scoped = session
+        // Write-ahead for BOTH online and offline saves. Never close the
+        // completion screen on optimistic memory alone or send before this commit.
+        try {
+            yieldSessionSaveSync.enqueue(scoped, clientUpdatedAt)
+        } catch (e: Exception) {
+            _ui.update { it.copy(yieldSessionError = "Trip could not be saved on this device. Please retry.") }
+            onResult(false)
+            return
+        }
         _ui.update { st ->
             val next = if (st.yieldSessions.any { it.id == scoped.id }) {
                 st.yieldSessions.map { if (it.id == scoped.id) scoped else it }
@@ -17107,34 +17122,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         if (!_ui.value.isOnline) {
-            yieldSessionSaveSync.enqueue(scoped, clientUpdatedAt)
             _ui.update { it.copy(yieldSessionError = "Estimation saved offline — will sync when connection is available.") }
-            onResult(true)
-            return
         }
-
-        viewModelScope.launch {
-            _ui.update { it.copy(yieldSessionBusy = true) }
-            try {
-                val saved = yieldSessionRepo.upsertSession(scoped, clientUpdatedAt)
-                _ui.update { st ->
-                    st.copy(
-                        yieldSessions = st.yieldSessions.map { if (it.id == saved.id) saved else it },
-                        yieldSessionBusy = false,
-                    )
-                }
-                onResult(true)
-            } catch (e: BackendError.Unauthorized) {
-                _ui.update { it.copy(yieldSessionBusy = false) }; onUnauthorized("saveYieldSession"); onResult(false)
-            } catch (e: BackendError.Server) {
-                _ui.update { it.copy(yieldSessions = previous, yieldSessionBusy = false, yieldSessionError = friendlyWriteError(e.code)) }
-                onResult(false)
-            } catch (e: Exception) {
-                yieldSessionSaveSync.enqueue(scoped, clientUpdatedAt)
-                _ui.update { it.copy(yieldSessionBusy = false, yieldSessionError = "Estimation saved offline — will sync when connection is available.") }
-                onResult(true)
-            }
-        }
+        onResult(true) // durable local acceptance, not a server acknowledgement
+        replayPendingYieldSessions()
     }
 
     /**

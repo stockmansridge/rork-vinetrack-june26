@@ -21,6 +21,7 @@ struct YieldEstimationView: View {
     /// Whether a trip (draft or completed history view) is open. False shows
     /// the Bunch Count Trip home (start / resume / history).
     @State private var tripStarted: Bool = false
+    @State private var saveFailed = false
     private let samplingSettingsRepo = SupabaseYieldSamplingSettingsRepository()
 
     private var paddocks: [Paddock] {
@@ -62,6 +63,11 @@ struct YieldEstimationView: View {
             }
         }
         .task { await syncSamplingDefault() }
+        .alert("Trip not saved", isPresented: $saveFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The trip could not be saved on this device. Keep it open and retry.")
+        }
     }
 
     // MARK: - Bunch Count Trip home (start / resume / history)
@@ -236,7 +242,13 @@ struct YieldEstimationView: View {
         }
         .navigationTitle("Bunch Count Trip")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { tripStarted = false } label: {
+                    Label("Yield Estimate Trips", systemImage: "chevron.left")
+                }
+            }
             if showsTripMenu {
                 ToolbarItem(placement: .topBarTrailing) {
                     tripOptionsMenu
@@ -277,7 +289,10 @@ struct YieldEstimationView: View {
                 .presentationDetents([.medium])
         }
         .navigationDestination(isPresented: $showSampling) {
-            YieldSamplingNavigationView(viewModel: viewModel)
+            YieldSamplingNavigationView(viewModel: viewModel, onReturnToTrips: {
+                showSampling = false
+                tripStarted = false
+            })
         }
         .alert("Delete Trip?", isPresented: $showDeleteEstimationConfirm) {
             Button("Delete", role: .destructive) {
@@ -1029,8 +1044,9 @@ struct YieldEstimationView: View {
             ) {
                 Button("Save Trip") {
                     viewModel.markCompleted(paddocks: paddocks)
-                    saveSession()
-                    withAnimation(.smooth(duration: 0.3)) { tripStarted = false }
+                    if saveSession() {
+                        withAnimation(.smooth(duration: 0.3)) { tripStarted = false }
+                    }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
@@ -1210,10 +1226,13 @@ struct YieldEstimationView: View {
 
     // MARK: - Persistence
 
-    private func saveSession() {
-        guard let vid = store.selectedVineyardId else { return }
+    @discardableResult
+    private func saveSession() -> Bool {
+        guard let vid = store.selectedVineyardId else { return false }
         let session = viewModel.toSession(vineyardId: vid, samplesPerHectare: samplesPerHa)
-        store.saveYieldSession(session)
+        let accepted = store.saveYieldSession(session)
+        saveFailed = !accepted
+        return accepted
     }
 
     private func applyDefaultBunchWeights() {

@@ -1,5 +1,67 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Yield completion checkpoint — 27 October 2026 — PARTIAL, NOT FULL YIELD PARITY
+
+Scope is only Yield Estimate/Bunch Count Trip completion persistence/replay, promoted completion decoding and associated Back/save outcomes. No backend/schema/Portal, release/upload, version/signing, billing/authentication, spraying, fertigation, costing, weather, irrigation or other workflow change was made. Shared files were edited only in their Yield sections. No failing-before Yield reproduction was executed; new tests are post-repair regressions. Earlier unrelated results below are not added to these counts.
+
+### iOS — implemented and validated seams
+
+- Cause: local sessions and independent dirty markers were separate commits; an older in-flight draft acknowledgement could clear a newer completion. A session could also acquire a different identity on repeated serialization if a caller skipped new-trip initialization.
+- Fix: a backward-compatible atomic sessions-plus-save-intents envelope at the existing `vinetrack_yield_sessions` key; actual completion timestamp required; each save carries an exact UUID acknowledgement token, including saves within the same serialized second. Commit precedes memory updates and notifications. Failed commits return false and keep completion UI open with an error. Exact acknowledgement removes only its intent and leaves the completed record durable.
+- Replay recovers durable intents independently of legacy notifications, reads all persisted sessions rather than only the selected slice, suppresses overlapping sweeps, checks original user ID after upload and protects pending saves/deletes during pull. Stable trip ID/creation time survives repeated serialization. Promoted server completion/creation fields override stale payload fields; legacy payload-only rows remain readable; deleted/ID-mismatched rows are omitted.
+- Navigation code directs trip/sampling/completion/report Back or successful finish to the trips list; normal list-to-hub navigation is retained. This was compiled, not interactively exercised. Richer list/detail names, master provenance, sampled area and current-trip labels are not implemented by this checkpoint.
+- Final focused selection: **99 passed in 32s**, runner successful; skipped count not exposed. Exact selectors, all prefixed `VineTrackTests/`: `YieldCompletionPersistenceTests`, `YieldVintageReportTests`, `YieldAuthoritativeVineCountTests`, `SeasonYieldDamageParityTests`, `PruningYieldSettingsTests`, `PruningYieldSettingsRevisionSyncTests`. Includes **15 new completion tests**. Initial selection was 98 passed/1 failed: the existing financial fixture expected 2 tonnes × 1500 = 3, corrected to 3000 in the test only.
+- Final normal simulator build via `runChecks(appPath: "ios")`: **PASS**. Existing unrelated storage URL warnings in `TripTypeChoiceSheet.swift:18` and `UCRInfoSheet.swift:23` left untouched. No release/export/upload.
+- This evidence covers repository restart, exact stale acknowledgements, failed durable commit/ack, legacy arrays, pending replacement/vineyard retention, stable ID/time and completion serialization/mapping. It does **not** establish actual app process death, live service acknowledgement/reload, same-account session-incarnation fencing or a rendered completion-save journey.
+
+Exact iOS source/test files (9):
+
+```text
+ios/VineTrack/Backend/Models/BackendOperations.swift
+ios/VineTrack/Backend/Sync/OperationsSyncServices.swift
+ios/VineTrack/LegacyImported/Repositories/YieldRepository.swift
+ios/VineTrack/LegacyImported/Services/MigratedDataStore+Yield.swift
+ios/VineTrack/LegacyImported/Views/Yield/YieldEstimationView.swift
+ios/VineTrack/LegacyImported/Views/Yield/YieldEstimationViewModel.swift
+ios/VineTrack/LegacyImported/Views/Yield/YieldSamplingNavigationView.swift
+ios/VineTrackTests/YieldCompletionPersistenceTests.swift
+ios/VineTrackTests/YieldVintageReportTests.swift
+```
+
+### Android — implemented and validated seams
+
+- Cause: online saves could send before durable intent existed, queue coalescing removed then enqueued in separate commits, and stale draft success/failure could consume or publish over a newer completion. A transport response previously fell back to the submitted payload rather than requiring genuine acknowledgement.
+- Fix: both online/offline saves atomically enqueue before optimistic memory or transport; durable failure returns false and leaves completion open with an error. Existing bounded replay sends the same trip ID and timestamp. Exact claim/current/remove/retry operations prevent stale acknowledgement/failure from consuming a replacement. Interrupted/typed-held claims restore the original state. Server-confirmed snapshot must commit into original-account/vineyard cache before the current claim can be acknowledged. Account-incarnation check suppresses stale-account retention.
+- Upsert requires completed timestamp, parses it and checks a real returned acknowledgement for identity, vineyard, completion and time. Promoted completion/creation fields are decoded over stale payloads; deleted rows are omitted. Domain cache Yield writes use synchronous durable commit and propagate its Boolean result.
+- Navigation code sends system/toolbar Back from trip workflow/sampling/completion to the trips list. Completion exits only after durable local acceptance, not server acknowledgement. Richer list/detail presentation remains unfinished; no interactive navigation run was performed.
+- Final focused selection: **80 passed / 0 failures / 0 errors / 0 skipped in 25.419s**, exit 0. Exact selectors, each prefixed `*.`: `YieldCompletionPersistenceTest` (15), `YieldVintageReportTest` (9), `YieldAuthoritativeVineCountTest` (17), `SeasonYieldDamageParityTest` (16), `PruningYieldFormulaParityTest` (7), `PruningYieldSettingsRevisionSyncTest` (16). New completion tests cover queue restart/interrupted claim, atomic replacement failure, stale ack/failure, unknown-outcome retry, cache-before-ack, timestamp validation, delete precedence, promoted/legacy/deleted mapping, serialization and stale-account acknowledgement. These are host tests, not instrumentation or live backend acceptance.
+- Runner: `python3 scripts/run-yield-completion-tests.py --launch`; final external artifacts `/tmp/vinetrack-yield-completion-o64pila8/{finished.json,yield/result.json,yield/gradle.log}` plus suite XML. First run `/tmp/vinetrack-yield-completion-m_taloxa`: 80 tests/2 failures. Intermediate `/tmp/vinetrack-yield-completion-b3hgoy21`: 80 tests/2 failures in 27.093s. All 15 new completion tests passed on every run. Both failures were existing damage-report fixtures with no polygon/vintage or physical block geometry. Corrected fixtures supply fixed 2026 vintage and matching mapped block/damage polygons; intermediate saved-area-only fix was insufficient because production reads polygon-derived physical area. Assertions remain 3.0 base, 2.4/1.5 adjusted. No damage production logic changed.
+- Final separate **Debug build PASS**, `:app:assembleDebug`, exit 0 in **85.628s** (Gradle reports 1m 25s). Runner `python3 scripts/run-yield-completion-tests.py --debug-build --launch`; external artifacts `/tmp/vinetrack-yield-completion-3o_nhjms/{finished.json,debug-build.log}`. Initial foreground invocation timed out at 60s during dex generation; inspected process/artifact state, confirmed no Gradle process remained, then resumed via the background runner. No Release task or upload ran. `runChecks` was not used for Android because its documented operation assembles Release, outside the explicitly authorised Debug-only scope.
+
+Exact Android application/test files (8), plus shared host tooling (2):
+
+```text
+android-vinetrack/app/src/main/java/com/rork/vinetrack/data/DomainCacheRepository.kt
+android-vinetrack/app/src/main/java/com/rork/vinetrack/data/DomainCacheStore.kt
+android-vinetrack/app/src/main/java/com/rork/vinetrack/data/YieldEstimationSessionRepository.kt
+android-vinetrack/app/src/main/java/com/rork/vinetrack/data/YieldSessionSaveSync.kt
+android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt
+android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldEstimationScreen.kt
+android-vinetrack/app/src/test/java/com/rork/vinetrack/data/YieldCompletionPersistenceTest.kt
+android-vinetrack/app/src/test/java/com/rork/vinetrack/data/YieldVintageReportTest.kt
+android-vinetrack/yield-tests.init.gradle
+scripts/run-yield-completion-tests.py
+```
+
+### Master weights, no-150 paths and parity — NOT COMPLETE on either platform
+
+- **No current 150 g authority path was removed in this checkpoint.** iOS still has `YieldEstimationViewModel.bunchWeightKg(for:)` fallback `0.15`, `YieldEstimationView` initial `"150"` and `applyDefaultBunchWeights()`, plus snapshot-based model/report calculations. Android still has `BunchWeightDefaultsStore.DEFAULT_BUNCH_WEIGHT_GRAMS = 150.0`, local preference/editor seeding and existing session/default-based calculations. These remain active current fallbacks, not justified historical-only retention.
+- Historical `blockBunchWeightsKg`, `averageBunchWeightKg`, counts and snapshots were not rewritten. Separating/labeling historical weights from current authority remains outstanding.
+- Neither platform yet reads/caches `public.yield_bunch_weights` or integrates `resolve_yield_bunch_weight(p_vineyard_id,p_paddock_id,p_variety_key)`. No exact canonical-key block-override → vineyard-master → required resolver or account/vineyard/block/key master cache is claimed. The changed Android cache is for confirmed **trip sessions**, not master weights.
+- Missing work: every mixed-block contributing canonical allocation, fail-closed missing master, current authoritative vines, sampled-block-only physical-area denominator, current completed trip retained as “Bunch weight required” rather than pruning fallback, and complete provenance/count/area/status presentation across all production calculation entry points.
+- There are **15 new completion cases per platform, not the requested minimum 26**, and no newly executed shared fixture parity matrix. Existing mirrored pruning/damage/report suites passing does not establish the new Portal master-weight contract. No tested no-150 acceptance, interactive save/Back/reload flow, actual process-death replay or live Supabase acceptance is claimed. Overall Yield plan checkboxes remain open.
+- Source base: `47d082d0b80e363962f7cd873c7b3c818906fded` plus exactly the 19 application/test/tooling files listed above. Sorted UTF-8 manifest format is `sha256  path\n`; manifest SHA256 `2ebf6fe86188f7b25da8cb343b7ad3f807791f0b56cd762e26721badbb7fe742`. Existing plan/report and managed history/fingerprint changes are excluded and preserved. No release or readiness clearance follows from this partial checkpoint.
+
 ## Acceptance-mode attachment checkpoint — 27 October 2026 — NOT YET A PHYSICAL CANDIDATE
 
 The owner's bounded acceptance-mode instruction supersedes the older open-ended caller audit and automatic full23-case/backend prerequisite for starting physical acceptance. Scope is only known attachment families, independent journal/replay callers and maintenance unknown-outcome/process-death recovery. The dedicated synthetic account/vineyard option was selected by the owner; identifiers, ordinary test login method and safe expiry/reactivation control remain unsupplied. No customer-wide enablement, backend authentication/customer-data access, server change, store upload, version/signing change, retained-install reset or evidence purge occurred.

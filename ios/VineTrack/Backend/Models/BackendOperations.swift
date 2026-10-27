@@ -1140,7 +1140,15 @@ extension BackendYieldEstimationSession {
     }
 
     func toYieldEstimationSession() -> YieldEstimationSession? {
-        payload
+        guard deletedAt == nil, var session = payload else { return nil }
+        // Promoted fields are explicit server state. Never infer completion
+        // merely from recorded sample sites, or invent a historical timestamp.
+        guard session.id == id else { return nil }
+        session.vineyardId = vineyardId
+        session.isCompleted = isCompleted ?? session.isCompleted
+        session.completedAt = completedAt ?? session.completedAt
+        session.createdAt = sessionCreatedAt ?? session.createdAt
+        return session
     }
 }
 

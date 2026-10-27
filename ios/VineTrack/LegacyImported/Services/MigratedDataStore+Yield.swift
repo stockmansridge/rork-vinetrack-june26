@@ -30,17 +30,20 @@ extension MigratedDataStore {
 
     // MARK: - YieldEstimationSession
 
-    func saveYieldSession(_ session: YieldEstimationSession) {
-        guard let vineyardId = selectedVineyardId else { return }
-        var item = session
-        item.vineyardId = vineyardId
+    @discardableResult
+    func saveYieldSession(_ session: YieldEstimationSession) -> Bool {
+        guard let vineyardId = selectedVineyardId, session.vineyardId == vineyardId else { return false }
+        let item = session
+        do {
+            try yieldRepo.saveLocalSession(item, at: Date())
+        } catch { return false }
         if let index = yieldSessions.firstIndex(where: { $0.id == item.id }) {
             yieldSessions[index] = item
         } else {
             yieldSessions.append(item)
         }
-        yieldRepo.saveSessionsSlice(yieldSessions, for: vineyardId)
         onYieldSessionChanged?(item.id)
+        return true
     }
 
     func deleteYieldSession(_ session: YieldEstimationSession) {

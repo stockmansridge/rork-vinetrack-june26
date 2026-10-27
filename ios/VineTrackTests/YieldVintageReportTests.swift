@@ -278,13 +278,13 @@ final class YieldVintageReportTests: XCTestCase {
     func testFinancialMergeAppliesManagerProjection() {
         let masked = pick(blockId: blockA, variety: "Shiraz", weightKg: 2000, vintage: 2025, sold: true)
         let merged = PickingFinancialsMerge.apply(
-            [PickingFinancialRow(pickingRecordId: masked.id, soldTo: "Wine Co", pricePerTonne: 1500, grapeValue: 3.0)],
+            [PickingFinancialRow(pickingRecordId: masked.id, soldTo: "Wine Co", pricePerTonne: 1500, grapeValue: 3000.0)],
             to: [masked]
         )[0]
         XCTAssertEqual(merged.soldTo, "Wine Co")
         XCTAssertEqual(merged.pricePerTonne ?? 0, 1500, accuracy: 1e-9)
-        // Computed grape value mirrors the server: 2 t × 1500 = 3.0.
-        XCTAssertEqual(merged.grapeValue ?? 0, 3.0, accuracy: 1e-9)
+        // Computed grape value mirrors the server: 2 t × 1500 = 3000.
+        XCTAssertEqual(merged.grapeValue ?? 0, 3000.0, accuracy: 1e-9)
 
         // Operators (no projection) keep masked NULLs.
         let untouched = PickingFinancialsMerge.apply([], to: [masked])[0]

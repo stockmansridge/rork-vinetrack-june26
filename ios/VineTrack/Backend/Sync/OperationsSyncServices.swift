@@ -1533,11 +1533,15 @@ final class YieldEstimationSessionSyncService {
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
-    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
+    private var pendingSessionSaves: [UUID: Date] {
+        metadata.pendingUpserts.merging(store?.yieldRepo.pendingSessionSaves() ?? [:]) { _, durable in durable }
+    }
+    var pendingUpsertCount: Int { pendingSessionSaves.count }
     var pendingDeleteCount: Int { metadata.pendingDeletes.count }
 
-    /// Whether a specific yield session has local changes queued for upload.
-    func isPendingUpsert(_ id: UUID) -> Bool { metadata.pendingUpserts[id] != nil }
+    /// Includes the durable session/intent commit even if the process stopped
+    /// before the legacy notification marker was written.
+    func isPendingUpsert(_ id: UUID) -> Bool { pendingSessionSaves[id] != nil }
 
     /// Whether a specific yield session is queued for a remote delete.
     func isPendingDelete(_ id: UUID) -> Bool { metadata.pendingDeletes[id] != nil }
@@ -1586,6 +1590,7 @@ final class YieldEstimationSessionSyncService {
     }
 
     func sync(vineyardId: UUID) async {
+        guard !isSyncing else { return }
         guard SupabaseClientProvider.shared.isConfigured else {
             errorMessage = "Supabase not configured"; syncStatus = .failure("Supabase not configured"); return
         }
@@ -1605,9 +1610,11 @@ final class YieldEstimationSessionSyncService {
     private func push(vineyardId: UUID) async throws {
         guard let store else { return }
         let createdBy = auth?.userId
-        let dirty = metadata.pendingUpserts
+        let metadataSnapshot = metadata.pendingUpserts
+        let intentSnapshot = store.yieldRepo.pendingSessionIntents()
+        let dirty = pendingSessionSaves
         if !dirty.isEmpty {
-            let byId = Dictionary(store.yieldSessions.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            let byId = Dictionary(store.yieldRepo.loadAllSessions().map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendYieldEstimationSessionUpsert] = []
             var pushed: [UUID] = []
             var orphans: [UUID] = []
@@ -1629,9 +1636,12 @@ final class YieldEstimationSessionSyncService {
                 queuedAt: dirty,
                 vineyardId: vineyardId
             ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
-            metadata.markUpsertsFailed(result.failed)
-            SyncIssueCenter.shared.notePending(entity: "Yield Estimates", count: metadata.pendingUpserts.count)
+            guard auth?.userId == createdBy else { throw CancellationError() }
+            let acknowledged = Dictionary(uniqueKeysWithValues: result.uploaded.compactMap { id in intentSnapshot[id].map { (id, $0.token) } })
+            try store.yieldRepo.acknowledgeSessionSaves(acknowledged)
+            metadata.clearDirty(result.uploaded.filter { metadata.pendingUpserts[$0] == metadataSnapshot[$0] })
+            metadata.markUpsertsFailed(result.failed.filter { pendingSessionSaves[$0] == dirty[$0] })
+            SyncIssueCenter.shared.notePending(entity: "Yield Estimates", count: pendingUpsertCount)
             if let error = result.firstRetryableError { throw error }
         }
         for (id, _) in metadata.pendingDeletes {
@@ -1674,13 +1684,12 @@ final class YieldEstimationSessionSyncService {
             if remote.isEmpty { return }
         }
         for item in remote {
+            // Pending local intent is not acknowledged by a pull, regardless of
+            // wall-clock skew or an older draft's later server updated_at.
+            if isPendingUpsert(item.id) || isPendingDelete(item.id) { continue }
             if item.deletedAt != nil {
                 store.applyRemoteYieldSessionDelete(item.id)
                 metadata.clearDirty([item.id]); metadata.clearDeleted([item.id]); continue
-            }
-            if let pendingAt = metadata.pendingUpserts[item.id] {
-                let remoteAt = item.clientUpdatedAt ?? item.updatedAt ?? .distantPast
-                if pendingAt > remoteAt { continue }
             }
             guard let mapped = item.toYieldEstimationSession() else { continue }
             store.applyRemoteYieldSessionUpsert(mapped)

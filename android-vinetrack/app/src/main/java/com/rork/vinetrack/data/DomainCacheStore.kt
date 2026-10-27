@@ -232,12 +232,11 @@ class DomainCacheStore(context: Context) {
     fun loadYieldSessions(vineyardId: String): List<YieldEstimationSession> =
         decode(prefs.getString(keyYieldSession(vineyardId), null), yieldSessionSerializer)
 
-    fun saveYieldSessions(vineyardId: String, sessions: List<YieldEstimationSession>, syncedAt: Long) {
-        prefs.edit {
-            putString(keyYieldSession(vineyardId), encode(yieldSessionSerializer, sessions))
-            putLong(keyYieldSessionAt(vineyardId), syncedAt)
-        }
-    }
+    fun saveYieldSessions(vineyardId: String, sessions: List<YieldEstimationSession>, syncedAt: Long): Boolean =
+        prefs.edit()
+            .putString(keyYieldSession(vineyardId), encode(yieldSessionSerializer, sessions))
+            .putLong(keyYieldSessionAt(vineyardId), syncedAt)
+            .commit()
 
     fun yieldSessionsSyncedAt(vineyardId: String): Long? = readTimestamp(keyYieldSessionAt(vineyardId))
 

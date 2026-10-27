@@ -33,10 +33,14 @@ import java.time.Instant
  * may soft-delete. Upsert is keyed on `id` (merge-duplicates) so a retried save
  * is idempotent and last-write-wins via `client_updated_at`.
  */
-class YieldEstimationSessionRepository(private val session: SessionStore) {
+interface YieldSessionWriting {
+    suspend fun upsertSession(session: YieldEstimationSession, clientUpdatedAt: String? = null): YieldEstimationSession
+}
+
+class YieldEstimationSessionRepository(private val session: SessionStore) : YieldSessionWriting {
 
     @Serializable
-    private data class SessionUpsert(
+    internal data class SessionUpsert(
         val id: String,
         @SerialName("vineyard_id") val vineyardId: String,
         val payload: YieldEstimationSession,
@@ -48,12 +52,25 @@ class YieldEstimationSessionRepository(private val session: SessionStore) {
     )
 
     @Serializable
-    private data class SessionRow(
+    internal data class SessionRow(
         val id: String,
         @SerialName("vineyard_id") val vineyardId: String,
         val payload: YieldEstimationSession? = null,
+        @SerialName("is_completed") val isCompleted: Boolean? = null,
+        @SerialName("completed_at") val completedAt: String? = null,
+        @SerialName("session_created_at") val sessionCreatedAt: String? = null,
         @SerialName("deleted_at") val deletedAt: String? = null,
-    )
+    ) {
+        fun toSession(): YieldEstimationSession? {
+            if (deletedAt != null) return null
+            return payload?.copy(
+                id = id, vineyardId = vineyardId,
+                isCompleted = isCompleted ?: payload.isCompleted,
+                completedAt = completedAt ?: payload.completedAt,
+                createdAt = sessionCreatedAt ?: payload.createdAt,
+            )
+        }
+    }
 
     @Serializable
     private data class SoftDeleteArgs(@SerialName("p_id") val id: String)
@@ -72,17 +89,19 @@ class YieldEstimationSessionRepository(private val session: SessionStore) {
             ) { authHeaders(token) }
             when {
                 response.status.isSuccess() ->
-                    response.body<List<SessionRow>>().mapNotNull { it.payload }
+                    response.body<List<SessionRow>>().mapNotNull { it.toSession() }
                 response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
                 else -> throw BackendError.Server(response.status.value, response.bodyAsText())
             }
         }
 
     /** Insert or update (upsert by id) a yield session. Idempotent / last-write-wins. */
-    suspend fun upsertSession(
+    override suspend fun upsertSession(
         session: YieldEstimationSession,
-        clientUpdatedAt: String? = null,
+        clientUpdatedAt: String?,
     ): YieldEstimationSession = withContext(Dispatchers.IO) {
+        require(!session.isCompleted || !session.completedAt.isNullOrBlank()) { "Completed trip requires its actual completion time." }
+        if (session.isCompleted) Instant.parse(session.completedAt)
         requireConfig()
         val token = this@YieldEstimationSessionRepository.session.accessToken
             ?: throw BackendError.Unauthorized
@@ -106,8 +125,15 @@ class YieldEstimationSessionRepository(private val session: SessionStore) {
             setBody(listOf(body))
         }
         when {
-            response.status.isSuccess() ->
-                response.body<List<SessionRow>>().firstOrNull()?.payload ?: session
+            response.status.isSuccess() -> {
+                val saved = response.body<List<SessionRow>>().firstOrNull()?.toSession()
+                    ?: throw IllegalStateException("Trip acknowledgement is missing; saved intent retained for retry.")
+                check(saved.id.equals(session.id, true) && saved.vineyardId.equals(session.vineyardId, true) &&
+                    saved.isCompleted == session.isCompleted && (!session.isCompleted || saved.completedAt?.let { Instant.parse(it) } == Instant.parse(session.completedAt))) {
+                    "Trip acknowledgement did not confirm the saved completion."
+                }
+                saved
+            }
             response.status.value == 401 || response.status.value == 403 -> throw BackendError.Unauthorized
             else -> throw BackendError.Server(response.status.value, response.bodyAsText())
         }

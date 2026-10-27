@@ -144,8 +144,7 @@ fun YieldEstimationScreen(
             ?: state.yieldSessions.firstOrNull { it.id == activeTripId }
 
     fun apply(updated: YieldEstimationSession) {
-        localDraft = updated
-        vm.saveYieldSession(updated)
+        vm.saveYieldSession(updated) { accepted -> if (accepted) localDraft = updated }
     }
 
     fun closeTrip() {
@@ -163,6 +162,18 @@ fun YieldEstimationScreen(
         else -> "home"
     }
 
+    if (state.yieldSessionError?.startsWith("Trip could not be saved") == true) {
+        AlertDialog(onDismissRequest = { vm.clearYieldSessionError() },
+            title = { Text("Trip not saved") },
+            text = { Text(state.yieldSessionError) },
+            confirmButton = { TextButton(onClick = { vm.clearYieldSessionError() }) { Text("OK") } })
+    }
+
+    androidx.activity.compose.BackHandler(enabled = screen != "home") {
+        viewingTripId = ""
+        closeTrip()
+    }
+
     AnimatedContent(
         targetState = screen,
         transitionSpec = { fadeIn() togetherWith fadeOut() },
@@ -177,7 +188,7 @@ fun YieldEstimationScreen(
                         apply(s.recordBunch(siteId, bunches, recordedBy))
                     },
                     onComplete = { showSampling = false; showCompletion = true },
-                    onBack = { showSampling = false },
+                    onBack = { closeTrip() },
                 )
             }
             "completion" -> session?.let { s ->
@@ -187,7 +198,7 @@ fun YieldEstimationScreen(
                     session = s,
                     onApply = { apply(it) },
                     onSaved = { closeTrip() },
-                    onBack = { showCompletion = false },
+                    onBack = { closeTrip() },
                 )
             }
             "setup" -> session?.let { s ->
@@ -981,14 +992,18 @@ private fun TripCompletionScreen(
             text = { Text("This completes the trip as a dated observation. It becomes the latest estimate for its blocks; earlier trips stay in history. Counts and weights can no longer be edited.") },
             confirmButton = {
                 TextButton(onClick = {
-                    onApply(session.copy(
+                    val completed = session.copy(
                         isCompleted = true,
-                        completedAt = Instant.now().toString(),
+                        completedAt = session.completedAt ?: Instant.now().toString(),
                         blockVineCounts = selectedBlocks
                             .associate { it.id.lowercase() to it.authoritativeVineCount },
-                    ))
-                    showSaveConfirm = false
-                    onSaved()
+                    )
+                    vm.saveYieldSession(completed) { accepted ->
+                        if (accepted) {
+                            showSaveConfirm = false
+                            onSaved()
+                        }
+                    }
                 }) { Text("Save Trip") }
             },
             dismissButton = { TextButton(onClick = { showSaveConfirm = false }) { Text("Cancel") } },

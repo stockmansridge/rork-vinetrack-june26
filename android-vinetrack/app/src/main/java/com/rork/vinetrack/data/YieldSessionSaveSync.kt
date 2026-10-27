@@ -34,7 +34,7 @@ import kotlinx.serialization.json.Json
  * [YieldSessionDeleteSync]).
  */
 class YieldSessionSaveSync(
-    private val sessionRepo: YieldEstimationSessionRepository,
+    private val sessionRepo: YieldSessionWriting,
     private val pending: PendingWriteRepository,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -55,20 +55,13 @@ class YieldSessionSaveSync(
      * so only the latest session payload is ever replayed.
      */
     fun enqueue(session: YieldEstimationSession, clientUpdatedAt: String): PendingWrite {
-        pending.list()
-            .filter {
-                it.entityType == PendingEntityType.YIELD_SESSION &&
-                    it.opType == PendingOpType.UPDATE &&
-                    it.clientId == session.id &&
-                    it.status != PendingWriteStatus.SYNCED
-            }
-            .forEach { pending.remove(it.id) }
+        require(!session.isCompleted || !session.completedAt.isNullOrBlank()) { "Completed trip requires its actual completion time." }
         val payload = Payload(session = session, clientUpdatedAt = clientUpdatedAt)
-        return pending.enqueue(
+        return pending.enqueueReplacingUnresolved(
             entityType = PendingEntityType.YIELD_SESSION,
             opType = PendingOpType.UPDATE,
-            payloadJson = json.encodeToString(Payload.serializer(), payload),
             clientId = session.id,
+            payload = { json.encodeToString(Payload.serializer(), payload) },
         )
     }
 
@@ -82,7 +75,10 @@ class YieldSessionSaveSync(
      *
      * Caller must only invoke this when online and a session token exists.
      */
-    suspend fun replayAll(onSynced: (YieldEstimationSession) -> Unit) {
+    suspend fun replayAll(
+        retainConfirmed: (YieldEstimationSession) -> Boolean = { true },
+        onSynced: (YieldEstimationSession) -> Unit,
+    ) {
         if (!replayLock.tryLock()) return
         try {
             val candidates = pending.list().filter {
@@ -100,34 +96,41 @@ class YieldSessionSaveSync(
                         it.status != PendingWriteStatus.SYNCED
                 }
                 if (hasDelete) {
-                    pending.remove(write.id)
+                    pending.removeIfCurrent(write)
                     continue
                 }
-                pending.updateStatus(write.id, PendingWriteStatus.IN_PROGRESS)
+                val claimed = pending.claimReplay(write) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)
                 }.getOrNull()
                 if (payload == null) {
-                    pending.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Couldn't read the saved estimation.")
+                    pending.updateStatusIfCurrent(claimed, PendingWriteStatus.BLOCKED, "Couldn't read the saved estimation.")
                     continue
                 }
                 try {
                     val saved = sessionRepo.upsertSession(payload.session, payload.clientUpdatedAt)
-                    pending.remove(write.id)
-                    onSynced(saved)
+                    // An earlier draft response must not consume or publish over a
+                    // completion queued while this request was suspended.
+                    if (pending.isCurrent(claimed) && retainConfirmed(saved) && pending.removeIfCurrent(claimed)) onSynced(saved)
+                    else if (pending.isCurrent(claimed)) retryOrBlock(claimed, "Trip acknowledgement could not be retained locally.")
                 } catch (e: BackendError.Unauthorized) {
-                    retryOrBlock(write, "Sign-in needed to sync this estimation.")
+                    retryOrBlock(claimed, "Sign-in needed to sync this estimation.")
                 } catch (e: BackendError.Server) {
                     when {
-                        e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
-                        else -> pending.updateStatus(
-                            write.id,
+                        e.code in 500..599 -> retryOrBlock(claimed, "Server error (${e.code}).")
+                        else -> pending.updateStatusIfCurrent(
+                            claimed,
                             PendingWriteStatus.BLOCKED,
                             "The estimation was rejected (${e.code}).",
                         )
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    pending.restoreClaimIfCurrent(claimed)
+                    throw e
+                } catch (e: VineyardWriteAuthority.Restricted) {
+                    pending.restoreClaimIfCurrent(claimed)
                 } catch (e: Exception) {
-                    retryOrBlock(write, e.message ?: "No connection.")
+                    retryOrBlock(claimed, e.message ?: "No connection.")
                 }
             }
         } finally {
@@ -137,10 +140,7 @@ class YieldSessionSaveSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.incrementAttempt(write.id)
-        val attempts = write.attemptCount + 1
-        val status = if (attempts >= MAX_ATTEMPTS) PendingWriteStatus.BLOCKED else PendingWriteStatus.FAILED
-        pending.updateStatus(write.id, status, error)
+        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {
