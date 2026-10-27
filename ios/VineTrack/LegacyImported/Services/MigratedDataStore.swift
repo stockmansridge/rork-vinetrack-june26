@@ -30,11 +30,25 @@ final class MigratedDataStore {
     /// its complete old slice until the atomic, non-suspending commit.
     private(set) var preparingVineyard: Vineyard?
     @ObservationIgnored private var vineyardPreparationGeneration: UInt64 = 0
+    var vineyardSelectionGeneration: UInt64 { vineyardPreparationGeneration }
+    @ObservationIgnored private(set) var deferredSelectionRepairs: Task<Void, Never>?
     @ObservationIgnored var canDeleteWorkerType: (UUID) -> Bool = { _ in false }
 
-    var pins: [VinePin] = []
+    var pins: [VinePin] = [] {
+        didSet {
+            #if DEBUG
+            SyntheticHomePerformanceProbe.publication()
+            #endif
+        }
+    }
     var paddocks: [Paddock] = []
-    var trips: [Trip] = []
+    var trips: [Trip] = [] {
+        didSet {
+            #if DEBUG
+            SyntheticHomePerformanceProbe.publication()
+            #endif
+        }
+    }
     /// The UUID claimed by this device, never inferred from server-active rows.
     private struct DeviceTripOwnership: Codable {
         let tripId: UUID
@@ -92,8 +106,20 @@ final class MigratedDataStore {
     var settings: AppSettings = AppSettings()
     var savedCustomPatterns: [SavedCustomPattern] = []
 
-    var sprayRecords: [SprayRecord] = []
-    var savedChemicals: [SavedChemical] = []
+    var sprayRecords: [SprayRecord] = [] {
+        didSet {
+            #if DEBUG
+            SyntheticHomePerformanceProbe.publication()
+            #endif
+        }
+    }
+    var savedChemicals: [SavedChemical] = [] {
+        didSet {
+            #if DEBUG
+            SyntheticHomePerformanceProbe.publication()
+            #endif
+        }
+    }
     var savedSprayPresets: [SavedSprayPreset] = []
     var savedEquipmentOptions: [SavedEquipmentOption] = []
     var sprayEquipment: [SprayEquipmentItem] = []
@@ -108,7 +134,13 @@ final class MigratedDataStore {
     var equipmentItems: [EquipmentItem] = []
     var buttonTemplates: [ButtonTemplate] = []
 
-    var yieldSessions: [YieldEstimationSession] = []
+    var yieldSessions: [YieldEstimationSession] = [] {
+        didSet {
+            #if DEBUG
+            SyntheticHomePerformanceProbe.publication()
+            #endif
+        }
+    }
     var damageRecords: [DamageRecord] = []
     var historicalYieldRecords: [HistoricalYieldRecord] = []
     var yieldDeterminationResults: [YieldDeterminationResult] = []
@@ -117,8 +149,20 @@ final class MigratedDataStore {
     /// Shared per-block Pruning Yield Calculator configuration (sql/181).
     var pruningYieldSettings: [PruningYieldSettings] = []
 
-    var maintenanceLogs: [MaintenanceLog] = []
-    var workTasks: [WorkTask] = []
+    var maintenanceLogs: [MaintenanceLog] = [] {
+        didSet {
+            #if DEBUG
+            SyntheticHomePerformanceProbe.publication()
+            #endif
+        }
+    }
+    var workTasks: [WorkTask] = [] {
+        didSet {
+            #if DEBUG
+            SyntheticHomePerformanceProbe.publication()
+            #endif
+        }
+    }
     var workTaskLabourLines: [WorkTaskLabourLine] = []
     /// Labour lines owned by PRUNING ACTIVITIES (sql/190). Labour is
     /// pruning-owned: a linked Work Task never holds a copy, it reads THROUGH to
@@ -759,6 +803,12 @@ final class MigratedDataStore {
         clearInMemoryState()
     }
 
+    /// Read-only worker preparation; the repository rereads exact current bytes
+    /// before reusing the result. Does not mutate records or acknowledge sync.
+    func prepareRemoteTripCache() async {
+        await persistence.prepareDecode([Trip].self, key: TripRepository.storageKey)
+    }
+
     // MARK: - Vineyard selection
 
     var selectedVineyard: Vineyard? {
@@ -772,6 +822,7 @@ final class MigratedDataStore {
         #if DEBUG
         let requestStart = ProcessInfo.processInfo.systemUptime
         #endif
+        deferredSelectionRepairs?.cancel()
         vineyardPreparationGeneration &+= 1
         let generation = vineyardPreparationGeneration
         let account = currentUserIdProvider?()
@@ -816,21 +867,39 @@ final class MigratedDataStore {
         preparedSelectionMeasurement?("atomic-selection-commit", (ProcessInfo.processInfo.systemUptime - commitStart) * 1000)
         #endif
         let committedGeneration = vineyardPreparationGeneration
-        Task { [weak self] in
+        deferredSelectionRepairs = Task { [weak self] in
             await Task.yield()
-            guard let self, self.vineyardPreparationGeneration == committedGeneration,
+            guard !Task.isCancelled, let self, self.vineyardPreparationGeneration == committedGeneration,
                   self.selectedVineyardId == vineyard.id,
                   self.currentUserIdProvider?() == account,
                   self.operationalWriteAuthority.accountBinding == binding,
                   self.operationalWriteAuthority.accountGeneration == incarnation else { return }
             // Sync/write preflights still reconcile independently. These local
             // repairs execute only against the fully hydrated, current slice.
+            #if DEBUG
+            let recoveryStart = ProcessInfo.processInfo.systemUptime
+            #endif
             try? self.reconcileLegacySpraySaves()
+            #if DEBUG
+            self.preparedSelectionMeasurement?("deferred-legacy-spray-recovery", (ProcessInfo.processInfo.systemUptime - recoveryStart) * 1000)
+            #endif
+            guard !Task.isCancelled, self.vineyardPreparationGeneration == committedGeneration,
+                  self.selectedVineyardId == vineyard.id,
+                  self.currentUserIdProvider?() == account,
+                  self.operationalWriteAuthority.accountBinding == binding,
+                  self.operationalWriteAuthority.accountGeneration == incarnation else { return }
+            #if DEBUG
+            let canonicalizationStart = ProcessInfo.processInfo.systemUptime
+            #endif
             GrapeVarietyCanonicalization.run(store: self)
+            #if DEBUG
+            self.preparedSelectionMeasurement?("deferred-variety-canonicalization", (ProcessInfo.processInfo.systemUptime - canonicalizationStart) * 1000)
+            #endif
         }
     }
 
     func selectVineyard(_ vineyard: Vineyard, deferSelectionRepairs: Bool = false) {
+        deferredSelectionRepairs?.cancel()
         vineyardPreparationGeneration &+= 1
         preparingVineyard = nil
         VineyardSelectionDiagnostics.started(vineyardId: vineyard.id)

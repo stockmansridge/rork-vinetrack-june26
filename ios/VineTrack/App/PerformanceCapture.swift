@@ -148,10 +148,16 @@ final class PerformanceCapture {
 
     /// Aggregate pure view preparation only. This is not SwiftUI/CoreText layout or a usable-frame marker.
     func beginComputation() -> TimeInterval? {
-        shouldCapture ? ProcessInfo.processInfo.systemUptime : nil
+        #if DEBUG
+        if SyntheticHomePerformanceProbe.enabled { return ProcessInfo.processInfo.systemUptime }
+        #endif
+        return shouldCapture ? ProcessInfo.processInfo.systemUptime : nil
     }
 
     func endComputation(_ start: TimeInterval?, label: StaticString, records: Int) {
+        #if DEBUG
+        if let start { SyntheticHomePerformanceProbe.end(String(describing: label), start) }
+        #endif
         guard let start, shouldCapture else { return }
         let name = String(describing: label)
         let occurrence = (operationCounts[name] ?? 0) + 1

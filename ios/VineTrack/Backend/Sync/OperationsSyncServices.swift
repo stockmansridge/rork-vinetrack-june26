@@ -1463,6 +1463,7 @@ final class MaintenanceLogSyncService {
 
     private func pull(vineyardId: UUID) async throws {
         guard let store else { return }
+        let isCurrent = store.remoteApplicationCurrentCheck()
         let admission = try VineyardMutationAdmission()
         let lastSync = metadata.lastSync(for: vineyardId)
         let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
@@ -1489,6 +1490,9 @@ final class MaintenanceLogSyncService {
             if remote.isEmpty { return }
         }
         for item in remote {
+            await Task.yield()
+            try Task.checkCancellation()
+            guard isCurrent() else { throw CancellationError() }
             try admission.requireCurrentAccount()
             // A remote metadata acknowledgement is never proof that a pending
             // local photo or a newer revision was delivered. Preserve both.

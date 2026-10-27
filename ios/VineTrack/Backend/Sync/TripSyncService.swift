@@ -771,6 +771,7 @@ final class TripSyncService {
 
     func pullRemoteTrips(vineyardId: UUID) async throws {
         guard let store else { return }
+        let isCurrent = store.remoteApplicationCurrentCheck()
         let lastSync = metadata.lastSync(for: vineyardId)
         let remote = try await repository.fetchTrips(vineyardId: vineyardId, since: lastSync)
 
@@ -818,7 +819,9 @@ final class TripSyncService {
             return
         }
 
-        for backendTrip in remote {
+        try await ResponsiveRemoteApplication.forEach(remote, isCurrent: isCurrent) { backendTrip in
+            await store.prepareRemoteTripCache()
+            guard isCurrent(), self.store === store else { throw CancellationError() }
             await applyRemote(backendTrip, vineyardId: vineyardId, store: store)
         }
     }

@@ -135,18 +135,7 @@ struct NewMainTabView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
                 .tag(4)
         }
-        .allowsHitTesting(store.preparingVineyard == nil)
-        .overlay {
-            if let vineyard = store.preparingVineyard {
-                VStack(spacing: 12) {
-                    Text(vineyard.name).font(.headline)
-                    ProgressView("Loading vineyard…")
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.background)
-                .accessibilityIdentifier("vineyard-selection-loading")
-            }
-        }
+        .modifier(VineyardLoadingPresentation())
         .environment(\.accessControl, accessControl.legacyAccessControl(for: store.selectedVineyardId, userId: auth.userId))
         .safeAreaInset(edge: .top, spacing: 0) {
             OfflineGraceBanner()
@@ -839,7 +828,7 @@ private struct ScenePhaseVineyardKey: Hashable {
 
 // MARK: - Home Tab
 
-private struct NewHomeTabView: View {
+struct NewHomeTabView: View {
     @Binding var selectedTab: Int
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(MigratedDataStore.self) private var store
@@ -847,6 +836,9 @@ private struct NewHomeTabView: View {
     @Environment(OperationalToolLayoutStore.self) private var toolLayout
     @Environment(SystemAdminService.self) private var systemAdmin
 
+    #if DEBUG
+    @Environment(\.syntheticHomeOffline) private var syntheticHomeOffline
+    #endif
     @State private var showQuickPin: Bool = false
     @State private var showTripChoice: Bool = false
     @State private var showStartTrip: Bool = false
@@ -1049,7 +1041,11 @@ private struct NewHomeTabView: View {
         VStack(alignment: .leading, spacing: 10) {
             AppNoticesBanner()
             plainSectionHeader("Today")
+            #if DEBUG
+            if !syntheticHomeOffline { HomeRainSummaryCard() }
+            #else
             HomeRainSummaryCard()
+            #endif
             HomeAlertsCard()
         }
     }

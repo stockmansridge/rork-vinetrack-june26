@@ -3,22 +3,41 @@ import SwiftUI
 
 /// Separate opt-in sandbox. No authenticated screens, production persistence, or writes to a server.
 struct SyntheticSwitchPerformanceView: View {
-    @State private var report = "Preparing synthetic cache…"
+    @State private var reports = Array(repeating: "Preparing synthetic cache…", count: 4)
+    @State private var section = CommandLine.arguments.contains("--synthetic-access-performance") ? 2 : 0
+    private let sections = ["Switch", "Home", "Access", "Control"]
     var body: some View {
         NavigationStack {
-            ScrollView {
-                Text(report).font(.system(size: 12, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).padding()
+            VStack {
+                Picker("Evidence section", selection: $section) {
+                    ForEach(sections.indices, id: \.self) { index in
+                        Text(sections[index]).tag(index)
+                    }
+                }.pickerStyle(.segmented).padding(.horizontal)
+                ScrollView {
+                    Text(reports[section]).font(.system(size: 12, design: .monospaced)).frame(maxWidth: .infinity, alignment: .leading).padding()
+                }.id(section)
             }.navigationTitle("Synthetic switch evidence")
         }.task {
-            do { report = try await SyntheticSwitchPerformanceFixture.capture() }
-            catch { report = "Synthetic fixture failed" }
+            do {
+                _ = try await SyntheticSwitchPerformanceFixture.capture(prepared: false)
+                let baseline = SyntheticSwitchPerformanceFixture.latestSummary
+                _ = try await SyntheticSwitchPerformanceFixture.capture()
+                let after = SyntheticSwitchPerformanceFixture.latestSummary
+                let home = try await SyntheticHomePerformanceFixture.capture()
+                let access = try SyntheticAccessPerformanceFixture.capture()
+                reports = ["CURRENT SWITCH\n" + after, "HOME APPLICATION\n" + home.report,
+                           "ACCESS COST SAMPLE\n" + access.report, "PAIRED UNPREPARED CONTROL\n" + baseline]
+            } catch { reports = Array(repeating: "Synthetic fixture failed: \(error)", count: 4) }
         }
     }
 }
 
 @MainActor
 enum SyntheticSwitchPerformanceFixture {
-    static func capture(prepared: Bool = true) async throws -> String {
+    static private(set) var latestSummary = ""
+    static private(set) var warmCommits: [Double] = []
+    static func capture(prepared: Bool = true, mounted: Bool = true, switchCount: Int = 25) async throws -> String {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -60,13 +79,27 @@ enum SyntheticSwitchPerformanceFixture {
         try disk.saveOrThrow(blocks, key: "vinetrack_paddocks")
         try disk.saveOrThrow(tractors, key: "vinetrack_tractors")
         var report = "Per vineyard: 2000 pins, 500 trips/tasks,\n250 spray/chemicals/maintenance/Yield,\n100 blocks, 50 tractors. No network sync.\n"
+        let mount = mounted ? SyntheticHomeMount(store: store) : nil
+        defer { mount?.close() }
+        let display = SyntheticSwitchDisplayRecorder()
+        defer { display.stop() }
+        SyntheticHomePerformanceProbe.reset()
+        SyntheticHomePerformanceProbe.enabled = true
+        defer { SyntheticHomePerformanceProbe.enabled = false }
+        if mounted { try await Task.sleep(for: .milliseconds(40)) }
         var allSamples: [[VineyardSwitchPerformanceProbe.Sample]] = []
         var totals: [Double] = []
-        for (iteration, vineyard) in [vineyards[0], vineyards[1], vineyards[0], vineyards[1], vineyards[0]].enumerated() {
+        var boundaries: [[String: Double]] = []
+        var loadingTicks: [Double?] = []
+        var interactiveTicks: [Double?] = []
+        var loadingLifetimes: [Double] = []
+        for iteration in 0..<switchCount {
+            let vineyard = vineyards[iteration % 2]
             var samples: [VineyardSwitchPerformanceProbe.Sample] = []
             store.switchPerformanceSample = { samples.append($0) }
             var boundary: [String: Double] = [:]
             store.preparedSelectionMeasurement = { boundary[$0] = $1 }
+            if mounted { display.start(store: store, target: vineyard.id) }
             let started = ProcessInfo.processInfo.systemUptime
             if prepared { await store.prepareAndSelectVineyard(vineyard) }
             else { store.selectVineyard(vineyard) }
@@ -86,6 +119,18 @@ enum SyntheticSwitchPerformanceFixture {
                   store.yieldSessions.count == 250, store.paddocks.count == 100, store.tractors.count == 50 else {
                 throw CocoaError(.coderInvalidValue)
             }
+            await store.deferredSelectionRepairs?.value
+            if mounted {
+                for _ in 0..<10 {
+                    if display.interactiveTick != nil { break }
+                    try await Task.sleep(for: .milliseconds(16))
+                }
+            }
+            boundaries.append(boundary)
+            loadingTicks.append(display.loadingTick)
+            interactiveTicks.append(display.interactiveTick)
+            loadingLifetimes.append(completion)
+            display.stop()
             allSamples.append(samples)
             totals.append(elapsed)
             report += String(format: "\nSwitch %d total %.2fms (main)\n", iteration, elapsed)
@@ -97,7 +142,24 @@ enum SyntheticSwitchPerformanceFixture {
             summary += String(format: "%@ %.2f / %.2f\n", first.stage, first.milliseconds, warm)
         }
         summary += String(format: "TOTAL %.2f / %.2f\n", totals[0], totals.dropFirst().max() ?? 0)
-        summary += "Hydration/commit stages MainActor; preparation worker decoding measured separately. No sync included.\n\n"
+        func coldWarm(_ values: [Double]) -> String {
+            String(format: "%.3f / %.3f", values.first ?? 0, values.dropFirst().max() ?? 0)
+        }
+        summary += "\nTransition cold / warm maximum ms (\(switchCount) alternating switches):\n"
+        for stage in ["selection-state-acknowledgement", "snapshot-preparation-including-waits", "atomic-selection-commit", "deferred-legacy-spray-recovery", "deferred-variety-canonicalization"] {
+            summary += "\(stage): \(coldWarm(boundaries.map { $0[stage] ?? 0 }))\n"
+        }
+        summary += "Loading state lifetime: \(coldWarm(loadingLifetimes))\n"
+        summary += "Loading first display-link observation (not pixel proof): \(loadingTicks.first.flatMap { $0 }.map { String(format: "%.3f", $0) } ?? "not observed") / warm observed \(loadingTicks.dropFirst().compactMap { $0 }.count) of \(switchCount - 1)\n"
+        summary += "Interactive first display-link observation (not input/pixel proof): \(coldWarm(interactiveTicks.compactMap { $0 }))\n"
+        let warm = totals.dropFirst().sorted()
+        if !warm.isEmpty {
+            summary += String(format: "Warm commit p50 %.3f p95 %.3f max %.3f mean %.3fms\n", warm[warm.count / 2], warm[min(warm.count - 1, Int(Double(warm.count) * 0.95))], warm.last!, warm.reduce(0, +) / Double(warm.count))
+        }
+        summary += SyntheticHomePerformanceProbe.report()
+        summary += "Hydration/commit stages MainActor; preparation worker decoding measured separately. No sync included. Display-link observations are NOT a drawn-surface or interactive-input latency assertion.\n\n"
+        latestSummary = summary
+        warmCommits = Array(totals.dropFirst())
         print("SWITCH_PERFORMANCE_BEGIN\n\(summary)\(report)SWITCH_PERFORMANCE_END")
         return summary + report
     }

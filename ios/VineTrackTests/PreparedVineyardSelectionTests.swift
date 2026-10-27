@@ -3,6 +3,61 @@ import XCTest
 @testable import VineTrack
 
 final class PreparedVineyardSelectionTests: XCTestCase {
+    @MainActor func testDeferredRepairsIgnoredAfterNewSelectionRequest() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: root))
+        let a = Vineyard(name: "A"), b = Vineyard(name: "B")
+        store.vineyards = [a, b]
+        var repairStages: [String] = []
+        store.preparedSelectionMeasurement = { stage, _ in
+            if stage.hasPrefix("deferred-") { repairStages.append(stage) }
+        }
+        await store.prepareAndSelectVineyard(a)
+        let firstRepairs = store.deferredSelectionRepairs
+        // No suspension: invalidate the queued A repairs before their yield resumes.
+        store.selectVineyard(b, deferSelectionRepairs: true)
+        await firstRepairs?.value
+        XCTAssertEqual(store.selectedVineyardId, b.id)
+        XCTAssertTrue(repairStages.isEmpty)
+    }
+
+    @MainActor func testDeferredRepairsFenceAccountIncarnation() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: root))
+        let suite = "PreparedRepairs.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let authority = VineyardWriteAuthority(defaults: defaults)
+        let owner = UUID()
+        authority.bind(userId: owner)
+        store.operationalWriteAuthority = authority
+        store.currentUserIdProvider = { owner }
+        var ran = false
+        store.preparedSelectionMeasurement = { stage, _ in if stage.hasPrefix("deferred-") { ran = true } }
+        await store.prepareAndSelectVineyard(Vineyard(name: "A"))
+        let repairs = store.deferredSelectionRepairs
+        authority.bind(userId: nil)
+        authority.bind(userId: owner)
+        await repairs?.value
+        XCTAssertFalse(ran)
+    }
+
+    @MainActor func testCurrentDeferredRepairsExecuteBothStagesWithinFrameBudget() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: root))
+        var stages: [String: Double] = [:]
+        store.preparedSelectionMeasurement = { stage, duration in stages[stage] = duration }
+        await store.prepareAndSelectVineyard(Vineyard(name: "A"))
+        await store.deferredSelectionRepairs?.value
+        for name in ["deferred-legacy-spray-recovery", "deferred-variety-canonicalization"] {
+            let value = try XCTUnwrap(stages[name])
+            XCTAssertLessThan(value, 16)
+        }
+    }
+
     @MainActor func testSupersededPreparationCannotSelectOrPublishOldVineyard() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

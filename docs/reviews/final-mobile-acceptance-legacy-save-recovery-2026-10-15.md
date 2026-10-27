@@ -1,5 +1,118 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## iOS mounted Home / full selection continuation — 27 October 2026 — PARTIAL CORRECTION; 16ms ACCEPTANCE REMAINS RED
+
+This section supersedes preceding statements that iOS mounted Home and local access-operation costs are unmeasured. Scope is iOS performance only. Android and shared fixtures are untouched. Yield/Bunch Weights calculations and application, Weather/MAIT, access rules, recovery/receipt ordering, Saved Chemical batching, backend/Portal, versions, signing and release settings remain unchanged. No customer records, authenticated service calls, release build or upload were used.
+
+Starting HEAD: `3dea2d3391cb8aaa5f5b0078ab4c89c37e7f74af`. Requested reference `b3b3b260049240617519685d7c04a6279f64926c` could not be retrieved (`not our ref` / `bad object`); exact comparison to it is unavailable. Accepted performance source present in the checkout was retained without reset/revert. Source hashes below identify this continuation independently of that missing reference.
+
+### What changed and what did not
+
+- Actual `NewHomeTabView` is mounted in an isolated hosting window, with programmatic scroll updates during synthetic store application. Fixture per vineyard: 100 blocks, 2,000 pins, 500 trips/tasks and 250 spray/chemical/maintenance/Yield records. Incoming updates: 200 pins, 100 tasks/chemicals, 50 trips/sprays, 20 maintenance and 10 Yield. A DEBUG-only environment omits the rain transport card, without changing Weather source or normal launches. No live auth or network is required.
+- Trip and spray application now yield **between complete rows**; maintenance yields before each complete row. Cancellation, selected vineyard, selection-request generation, account provider, authority identity, account binding and incarnation are checked. A→B→A and same-user sign-out/sign-in cannot resume stale application. Existing per-row conflict/persistence/acknowledgement ordering and admission remain intact; this is scheduling, not new batching.
+- Trip cache decoding uses the existing audited worker preparation before a row. Actual repository reads still reread current bytes and reject changed/corrupt memo reuse. The rejected experiment retaining native values immediately after save was removed completely: ISO8601 round-trip semantics must remain authoritative. `LegacyStorage.swift` has no diff.
+- Deferred recovery is retained as a cancellable task. New selections cancel prior work, and current generation/vineyard/account/incarnation are checked before both legacy repair and canonicalization. Those repairs still run on Main, now separately measured. Their tested small cost does not establish a bound for arbitrarily large recovery journals.
+- Production and the mounted fixture share the exact existing loading overlay: full background, requested vineyard, spinner and disabled underlying hit testing. Its extraction is not a new feature. DEBUG-only measurement hooks cover summary derivation, collection setters, persistence and local access operations.
+- The Home vintage calculation was already below16ms and is unchanged. Yield application is explicitly frozen: the observed Yield burst remains a known16ms failure, rather than weakening the assertion or silently omitting it.
+
+### iOS vineyard switch — latest visible mounted capture
+
+Milliseconds; cold is first selection and warm is the maximum of24 subsequent alternating selections. This is an isolated cached-selection fixture, not a successful remote refresh or physical-device claim. Latest visible report: state acknowledgement0.042/0.025ms. Earlier cold commit27.47ms and warm16.09ms are separate historical captures, not a paired comparison with these new values.
+
+| Metric | Cold | Warm |
+| --- | ---: | ---: |
+| Tap → loading actually drawn | **Unverified** | **Unverified** |
+| Snapshot preparation, including suspension/waits | 60.407ms | 0.010ms |
+| Atomic authoritative commit, MainActor | **18.675ms** | **16.701ms** |
+| Deferred longest stage | 0.088ms canonicalization | 0.076ms canonicalization |
+| Loading-state lifetime, not drawn-surface lifetime | 79.375ms | 16.736ms |
+| First fully interactive input/rendered frame | **Unverified** | **Unverified** |
+
+Deferred legacy repair separately0.083/0.068ms. Stage durations are nested and must not be added to reconstruct end-to-end values. CADisplayLink samples observe state only; they are not drawn-pixel or accepted-input proof. The loading lifetime ends with cached selection, not remote-sync completion. Atomic commits still exceed16ms and remain an explicit open gate.
+
+Paired warm test uses25 unprepared control switches followed by25 prepared switches in the same test:24 warm observations each, all retained. **Median nonregression within a2ms allowance passed.** Reports retain p50/p95/max/mean, but successful managed test results did not expose attachment numbers. This is not strict zero-regression, randomized-order, p95/max, end-to-end loading or physical-frame nonregression. Do not infer those gates from the passing median assertion.
+
+### iOS Home during sync — strict budget-run evidence
+
+Numbers below come from the explicit before/after budget runs, not from mixing later report-screen captures. The actual Home is mounted, but application invokes production store primitives and the production scheduling helper rather than an entire mocked service/repository pull. Full service reconciliation/metadata costs may be additional.
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| Largest uninterrupted measured MainActor stage | **1080.858ms**, 50-trip loop | **29.094ms**, unchanged10-Yield loop — FAIL16ms |
+| Individual trip application maximum | 22.780ms | 8.366ms |
+| Spray application | 266.406ms uninterrupted50-row loop; row6.137ms | Yielded rows; maximum4.723ms |
+| Maintenance application | 104.079ms uninterrupted20-row loop | Yielded rows; maximum5.868ms |
+| Pin / task / chemical batch maxima | 19.898 /9.142 /5.490ms | 14.440 /6.285 /3.960ms |
+| Home vintage summary maximum | 3.195ms | 2.269ms, unchanged calculation |
+| Home overview maximum | 0.474ms | 0.280ms |
+| Observable collection setter mutations | 133 | 133 |
+| MainActor persistence operations / writes | 286 /133 | 286 /133 |
+| Longest measured persistence occupancy | 16.478ms | 12.305ms |
+
+No batch size, persistence-operation or publication reduction is claimed. Setter counts are **not** measured SwiftUI invalidation/render counts. After yielding, vintage computed103times,186.561ms aggregate, with2.269ms maximum; this repeated small work is disclosed, not hidden. The fixture recorded82programmatic scroll updates in that budget run, not actual finger gestures or hardware frame metrics. Later visible Home report maxima1.903–1.907ms are separate samples and do not replace the29.094ms failed acceptance result.
+
+**Home16ms acceptance remains FAIL:** `HomeSyncPerformanceTests/testMountedHomeDuringProductionSyncApplication` retains its original strict16ms assertion. Frozen Yield's10-row burst29.094ms is not corrected under this scope. Whole-collection persistence/repeated per-row application, not an Android-style vintage-date parsing defect, was the material iOS cause. Trip application occupancy is materially improved, but full Home smoothness is not accepted.
+
+### Access attribution — CLEARED AS MATERIAL CAUSE OF MEASURED LOCAL STALLS
+
+Observed budget-run hooks:104account-binding reads, total0.013ms;6effective-role calls, maximum0.031ms, total0.039ms. Separately, a real local-operation stress fixture uses isolated defaults,64synthetic capabilities and32repetitions per operation under each phase label. The phase labels do not simulate an authenticated login or establish actual production frequency. Cache, matrix/legacy role, binding and writable/held outcomes are checked without weakening authorization.
+
+Visible access-report measurements, **maximum / total ms for32operations**:
+
+| Local operation | Switch sample | First Home sample | Sync sample |
+| --- | ---: | ---: | ---: |
+| Entitlement-cache read | 0.4719 /4.3809 | 0.1306 /3.9971 | 0.1373 /4.0175 |
+| Write-authority / hold lookup | 0.0019 /0.0254 | 0.0009 /0.0222 | 0.0008 /0.0219 |
+
+The complete isolated fixture's maximum-operation16ms assertion passed in the264-test selection. On the access screenshot, the switch matrix lookup maximum0.2060ms/total0.3239ms, authority binding0.0014/0.0175ms and role/legacy matrix0.0277/0.1186ms are also small. Local access work is **cleared as a material cause of the measured local switch/Home stalls**; no removed safeguards, authority memo shortcut or policy change. Authenticated-login networking, backend resolution, cold disk under other conditions and customer-device latency remain unmeasured, not exonerated by this sample.
+
+### Serialized validation, historical failures and visible evidence
+
+All Swift selectors below are requested selections; managed success exposes aggregate counts, not per-case discovery or skipped metrics. Overlapping runs are not added into one total.
+
+1. Initial mounted Home fixture compile failed with zero tests: immutable `buttonName` assignment; changed only the fixture mutation to notes. First real budget run then genuinely failed0passed/1failed at1080.858ms.
+2. Intermediate scheduling/native-value memo experiment returned0/1 at frozen Yield26.451ms. Native-value memo was subsequently removed. A compile attempt then failed0tests because `persistence` was private in an extension; the existing worker preparation call moved inside its owning store.
+3. Corrected preparation/responsiveness/switch selection **10passed in86s**: `TripPullResponsivenessTests`, `PreparedVineyardSelectionTests`, `VineyardSwitchPerformanceTests`. This preceded the added paired warm and access tests.
+4. Latest strict mounted Home run **0passed/1failed**,29.094333ms unchanged Yield burst. No unchanged retry or relaxed threshold is represented as green.
+5. Focused selection **264passed in152s**, all under `VineTrackTests/`: `VineyardSwitchPerformanceTests`, `PreparedVineyardSelectionTests`, `TripPullResponsivenessTests`, `AccessPerformanceTests`, `PersistencePerformanceTests`, `PerformanceValidationTests`, `EquipmentVineyardIsolationTests`, `VineyardMutationAdmissionTests`, `VineyardWriteAuthorityTests`, `ReadOnlyEntitlementContractTests`, `EntitlementAccessRegressionTests`, `EntitlementDecisionTests`, `OfflineQuickActionsTests`, `ActiveTripRouteRecoveryTests`, `DeviceTripOwnershipTests`, `SpraySaveForLaterTests`, `LegacySprayPairReceiptTests`, `TripOccurrenceJournalTests`, `SavedChemicalBatchReconciliationTests`, `WorkTaskBatchReconciliationTests`.
+6. Broader selection **209passed/1failed**, all under `VineTrackTests/`: `YieldBunchWeightsManagementTests`, `CurrentYieldMasterParityTests`, `YieldMasterWeightCacheTests`, `YieldCompletionPersistenceTests`, `YieldVintageReportTests`, `YieldAuthoritativeVineCountTests`, `SeasonYieldDamageParityTests`, `PruningYieldSettingsTests`, `PruningYieldSettingsRevisionSyncTests`, `MAITCurrentObservationTests`, `MAITSupplementarySensorTests`, `CurrentObservationProviderTests`, `RegionFormatterWeatherParityTests`, `MaintenanceDurableRecoveryTests`, `MaintenanceForegroundAdmissionTests`, `MaintenancePhotoAdmissionTests`, `PruningResourceRecoveryAcceptanceTests`, `SyncQueueRegressionTests`, `SyncCompatibilityTests`, `MobileRequestSyncSafeguardTests`. Failure: `healthyBatchUsesFastPath()` expected1call but received22, because its fixture generated22different vineyards and existing access safety intentionally isolates mixed scopes. Production batching/rules were not changed. The healthy-batch fixture now shares one synthetic vineyard; affected `SyncQueueRegressionTests` then **12passed in135s**. The original broader run is still recorded as failed, not retroactively green.
+7. Final separate UI selection **4passed in212s**: `VineTrackUITests/YieldTripNavigationUITests`, `VineTrackUITests/LegacySprayRecoveryUITests`.
+8. Final source `runChecks(ios)` **PASS**, simulator build, after the debug report's separate sections/direct access launch route. Earlier builds also passed. The two pre-existing storage-URL advisories remain untouched. No release/device validation or upload.
+9. `git diff HEAD --check` **PASS**. Android/shared source diff is empty. Android was **not rerun**: retained historical acknowledgement≈7ms, preservation onIO, publication≈1ms, warm≈8–12ms and corrected Home16ms assertion remain the earlier evidence, not new results. Earlier Android focused7/0/0, separate34/0/0 and host60/95/52/209/55 green results are retained without summing overlaps.
+
+Visible fixture checks ran on **separate billed iPhone simulators**, not the selected Android preview. First combined report check failed overall: switch/Home visible, Access not reached. After splitting the report into native sections, the second combined check also failed overall with Switch/Home visible but Access not reached. Those failures are retained; their switch/Home screenshots support only the specific reported numeric text. After adding direct Access selection in the debug report, a separate bounded Access-only check **passed1/1visible criterion**, including the numeric cache/hold values above. Invocations used an undocumented `setup.configured` object rather than the required launchArguments shape; screenshots establish the screen actually shown, not correct launch-argument delivery or use of the new route. Do not repeat that setup form. Runtime-log search did not supply the fixture reports, so successful test attachments were not fabricated into exact numerical evidence.
+
+### Exact changed iOS source/test manifest — SHA256
+
+Configuration, Android, shared fixtures and `LegacyStorage.swift` are unchanged. The20files below exclude this report/plan and unrelated managed `.rork` history/fingerprint updates. No managed history was edited manually.
+
+```text
+433d17c1bd1160d069f6197b4625345e935460469bd2eb5b6bdc9834f6e2dd85  ios/VineTrack/App/BackendAccessControl.swift
+993eaa78c2be046fd5a2072eaf12341d49e239360d96a79c7317fa012e233757  ios/VineTrack/App/NewMainTabView.swift
+3095302965b4f0bd12fd3c5de7e35d7552438e7053f7f8769f72b03a63446862  ios/VineTrack/App/PerformanceCapture.swift
+20ee7447a00e3990d04f3386adcf08762991c19476f8fe925f24e8a429b651ab  ios/VineTrack/App/SyntheticAccessPerformance.swift
+cbf8bd581ec9e3cf8c437ac5fc5a37d44f3cc9e717e361c557d98197701b8c55  ios/VineTrack/App/SyntheticHomePerformance.swift
+cf7cf27a796bdbc369f67fed2b265b280c063ecf7daf413eaef871f05a9c8212  ios/VineTrack/App/SyntheticSwitchPerformanceView.swift
+236a71daacdb3211d961470a7e66d8b2b5d709bb49219c1dfc81f50642f1fb9b  ios/VineTrack/App/VineyardLoadingPresentation.swift
+42a98ad83182b944d6d2bff2d431023f610862eda236373fd8e7447929003ae3  ios/VineTrack/Backend/Subscription/EntitlementVerificationStore.swift
+e724df1c5061665e06ce2984059346966e1a688dbc400c967d2dbabfc3b63838  ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift
+08991828ba1914bed0b36d3c896415147dd0eb5754ac5de9ccd2dfea01dc6da0  ios/VineTrack/Backend/Sync/OperationsSyncServices.swift
+f99eb690e9314efe5f62d99ffecd84852b74b004e6e8e40b96069d27da468082  ios/VineTrack/Backend/Sync/ResponsiveRemoteApplication.swift
+85f157b676c8daaa4d2966e1a7c5642c4e7ad73a1d0d563df2d3064b03af2182  ios/VineTrack/Backend/Sync/SprayRecordSyncService.swift
+d971b98864bcff5643e23bded593ceda7b6efcc523cff73c53a21ed371391ba7  ios/VineTrack/Backend/Sync/TripSyncService.swift
+f6e5adecf3437b3c5ac11864616796955d2abc18d6d2397c8aa12ea4269918bd  ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift
+66b5b2cab2e55c2c035c301d0192bb4e0e46044ca8b309bc407c8700ea0ad68e  ios/VineTrackTests/AccessPerformanceTests.swift
+ee5db1016848e97d806d703d2e25060b29bf3dfac559e9712847d3d2475dfcdc  ios/VineTrackTests/HomeSyncPerformanceTests.swift
+f1ae87a0207caf48d8a5e75eece316317427ac6faf805bd624b4530583c9efc0  ios/VineTrackTests/PreparedVineyardSelectionTests.swift
+dec0abaf702b82c40f8b89c50b50346fe83b450b383c3bdd9911061d463de2a2  ios/VineTrackTests/SyncQueueRegressionTests.swift
+73baf64f34b3e7b4090ef86bda320d58c5957e1cde11cf7731b097545ae50c1f  ios/VineTrackTests/TripPullResponsivenessTests.swift
+14cdd51e585bce03622422df1391ede3fc18ad934635414647b3205eb9e0ce4c  ios/VineTrackTests/VineyardSwitchPerformanceTests.swift
+```
+
+### Completion gates
+
+**Not complete / no release clearance.** Remaining: the unchanged29.094ms Yield burst; atomic selection18.675/16.701ms; full real-pull reconciliation/metadata application measurement; actual loading pixels and accepted-input frames; strict warm-tail/end-to-end nonregression; physical iPhone/Android scrolling/switching. Local access attribution is cleared only within the measured scope. No physical devices were attached. The existing overall performance and physical plan gates remain unchecked.
+
 ## Cold-switch and Android Home continuation — 27 October 2026 — MATERIAL IMPROVEMENTS; FULL PERFORMANCE ACCEPTANCE STILL OPEN
 
 This supersedes the preceding warm-only checkpoint where explicitly measured below. Performance only: accepted Yield/Bunch Weights, Weather/MAIT, Saved Chemical batching, access/read-only policy, original recovery evidence, backend/Portal, versions, signing and releases remain unchanged. No customer/backend data was used. Starting HEAD is `07dde3babbb2361e2696b30893cffd94b7770c14`. Performance sources matched requested reference `ec48c6c3b0605b01ff8545c44ee074a16f6ffe54`, apart from the pre-existing Config.swift deletion. No reset or revert was performed.

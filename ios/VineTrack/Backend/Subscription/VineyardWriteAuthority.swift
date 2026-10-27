@@ -14,7 +14,13 @@ final class VineyardWriteAuthority {
     private let key = "vinetrack.vineyardWriteHolds.v1"
     private var userId: String?
     /// Captured across suspensions; a capability refresh does not change account identity.
-    var accountBinding: String? { userId }
+    var accountBinding: String? {
+        #if DEBUG
+        let start = SyntheticHomePerformanceProbe.start()
+        defer { SyntheticHomePerformanceProbe.end("access account binding", start) }
+        #endif
+        return userId
+    }
     /// Invalidates suspended operations across sign-out/account transitions,
     /// including a return to the same UUID. Same-account capability refresh is not a transition.
     private(set) var accountGeneration: UInt64 = 0
@@ -29,6 +35,10 @@ final class VineyardWriteAuthority {
         userId.map { $0.lowercased() + ":" + vineyardId.lowercased() }
     }
     func bind(userId: UUID?, cached: [String: VineyardOperationalAccess] = [:]) {
+        #if DEBUG
+        let start = SyntheticHomePerformanceProbe.start()
+        defer { SyntheticHomePerformanceProbe.end("access authority bind", start) }
+        #endif
         let next = userId?.uuidString
         if self.userId != next { accountGeneration &+= 1 }
         self.userId = next
@@ -53,7 +63,13 @@ final class VineyardWriteAuthority {
         holds[scope] = reason
         defaults.set(holds, forKey: key)
     }
-    func heldReason(vineyardId: String) -> String? { scope(vineyardId).flatMap { holds[$0] } }
+    func heldReason(vineyardId: String) -> String? {
+        #if DEBUG
+        let start = SyntheticHomePerformanceProbe.start()
+        defer { SyntheticHomePerformanceProbe.end("access hold ledger lookup", start) }
+        #endif
+        return scope(vineyardId).flatMap { holds[$0] }
+    }
     func canWrite(vineyardId: String) -> Bool { heldReason(vineyardId: vineyardId) == nil }
     func admit(vineyardId: String) -> Bool {
         guard !canWrite(vineyardId: vineyardId) else { return true }

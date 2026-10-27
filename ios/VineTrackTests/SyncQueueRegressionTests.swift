@@ -24,8 +24,8 @@ struct SyncQueueRegressionTests {
         let text: String
     }
 
-    private func payload(_ id: UUID, note: String = "field note") -> FakePayload {
-        FakePayload(id: id, vineyard_id: UUID(), note: note)
+    private func payload(_ id: UUID, vineyardId: UUID = UUID(), note: String = "field note") -> FakePayload {
+        FakePayload(id: id, vineyard_id: vineyardId, note: note)
     }
 
     // MARK: - One bad item must not block the rest
@@ -59,12 +59,14 @@ struct SyncQueueRegressionTests {
     func healthyBatchUsesFastPath() async {
         SyncIssueCenter.shared.clearAll()
         let ids = (0..<22).map { _ in UUID() }
+        // A healthy batch must share one vineyard; mixed scopes intentionally isolate requests.
+        let vineyardId = UUID()
         var callCount = 0
 
         let result = await SyncQueuePush.run(
             entity: "Work Tasks",
             ids: ids,
-            payloads: ids.map { payload($0) }
+            payloads: ids.map { payload($0, vineyardId: vineyardId) }
         ) { _ in callCount += 1 }
 
         #expect(callCount == 1)

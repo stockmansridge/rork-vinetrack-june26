@@ -25,6 +25,10 @@ final class BackendAccessControl {
     private var loadedSignOutSequence: Int = 0
 
     private var effectiveRole: BackendRole? {
+        #if DEBUG
+        let start = SyntheticHomePerformanceProbe.start()
+        defer { SyntheticHomePerformanceProbe.end("access effective role", start) }
+        #endif
         guard let auth = scopedAuth else { return loadedUserId == nil ? currentRole : nil }
         guard auth.isSignedIn, auth.userId == loadedUserId,
               auth.completedSignOutSequence == loadedSignOutSequence else { return nil }
@@ -89,6 +93,10 @@ final class BackendAccessControl {
 
     /// Only Inventory flags are scoped here; unrelated legacy permissions stay unchanged.
     func legacyAccessControl(for vineyardId: UUID?, userId: UUID?) -> LegacyAccessControl {
+        #if DEBUG
+        let start = SyntheticHomePerformanceProbe.start()
+        defer { SyntheticHomePerformanceProbe.end("access legacy matrix", start) }
+        #endif
         var access = legacyAccessControl
         guard let vineyardId, let userId, !isLoading,
               loadedVineyardId == vineyardId, loadedUserId == userId,

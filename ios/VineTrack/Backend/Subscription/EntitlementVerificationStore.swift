@@ -74,6 +74,10 @@ final class EntitlementVerificationStore {
     }
 
     func load() -> EntitlementVerificationSnapshot? {
+        #if DEBUG
+        let start = SyntheticHomePerformanceProbe.start()
+        defer { SyntheticHomePerformanceProbe.end("access entitlement cache read", start) }
+        #endif
         guard let data = defaults.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(EntitlementVerificationSnapshot.self, from: data)
     }

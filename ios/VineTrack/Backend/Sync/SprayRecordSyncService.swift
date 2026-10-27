@@ -221,6 +221,7 @@ final class SprayRecordSyncService {
 
     func pullRemoteSprayRecords(vineyardId: UUID) async throws {
         guard let store else { return }
+        let isCurrent = store.remoteApplicationCurrentCheck()
         let lastSync = metadata.lastSync(for: vineyardId)
         let remote = try await repository.fetchSprayRecords(vineyardId: vineyardId, since: lastSync)
 
@@ -243,7 +244,7 @@ final class SprayRecordSyncService {
             return
         }
 
-        for backendRecord in remote {
+        try await ResponsiveRemoteApplication.forEach(remote, isCurrent: isCurrent) { backendRecord in
             applyRemote(backendRecord, vineyardId: vineyardId, store: store)
         }
     }
