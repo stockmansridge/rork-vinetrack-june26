@@ -144,23 +144,50 @@ enum SyntheticHomePerformanceFixture {
             log.date = date.addingTimeInterval(60)
             stage("sync maintenance row") { store.applyRemoteMaintenanceLogUpsert(log) }
         }
-        // Yield does not feed the vintage summary; exercise its existing application only.
-        stage("sync Yield 10 uninterrupted") {
-            for var session in yields.prefix(10) {
-                session.createdAt = date.addingTimeInterval(60)
-                stage("sync Yield row") { store.applyRemoteYieldSessionUpsert(session) }
-            }
+        // Exercise the actual production pull, including conflict checks and metadata,
+        // not a fixture-only yielding loop around the store primitive.
+        let yieldRows = yields.prefix(10).map { original in
+            var changed = original
+            changed.createdAt = date.addingTimeInterval(60)
+            return SyntheticYieldPullRepository.row(changed)
         }
+        let yieldMetadata = OperationsSyncMetadata(key: "synthetic_yield_pull_metadata", persistence: disk)
+        yieldMetadata.setLastSync(date, for: vineyard.id)
+        let yieldService = YieldEstimationSessionSyncService(
+            repository: SyntheticYieldPullRepository(rows: yieldRows), metadata: yieldMetadata)
+        let yieldAuth = NewBackendAuthService()
+        yieldService.configure(store: store, auth: yieldAuth)
+        var yieldApplications = 0
+        yieldService.remoteRowMeasurementForTesting = { _, _ in yieldApplications += 1 }
+        let yieldStart = ProcessInfo.processInfo.systemUptime
+        try await yieldService.pull(vineyardId: vineyard.id)
+        let yieldElapsed = (ProcessInfo.processInfo.systemUptime - yieldStart) * 1000
         for _ in 0..<3 { try await Task.sleep(for: .milliseconds(20)) }
         guard store.pins.count == 2_000, store.trips.count == 500, store.workTasks.count == 500,
               store.sprayRecords.count == 250, store.savedChemicals.count == 250 else { throw CocoaError(.coderInvalidValue) }
         let probe = SyntheticHomePerformanceProbe.self
         let summaries = probe.stages.filter { $0.name == "Home vintage summary" }
-        let report = probe.report() + "Programmatic scroll updates during application: \(scrollUpdates). Weather card excluded to prevent all weather transport; no gesture/frame claim. Growth records are service-owned and not Home inputs.\n"
+        let longest = probe.stages.max { $0.milliseconds < $1.milliseconds }
+        let yieldMaximum = probe.stages.filter { $0.name == "sync Yield row" }.map(\.milliseconds).max() ?? 0
+        let headline = String(format: "Largest uninterrupted MainActor stage: %@ %.3fms\nYield rows: %d; longest row / uninterrupted Yield stage: %.3fms\nTotal Yield pull elapsed including yields: %.3fms\n", longest?.name ?? "none", longest?.milliseconds ?? 0, yieldApplications, yieldMaximum, yieldElapsed)
+        let report = headline + probe.report() + "Programmatic scroll updates during application: \(scrollUpdates). Weather card excluded to prevent all weather transport; no gesture/frame claim. Growth records are service-owned and not Home inputs.\n"
         print("HOME_PERFORMANCE_BEGIN\n\(report)HOME_PERFORMANCE_END")
         return Result(report: report, longestMainStage: probe.stages.map(\.milliseconds).max() ?? 0,
                       summaryMaximum: summaries.map(\.milliseconds).max() ?? 0, summaryCount: summaries.count,
                       publications: probe.publications, persistenceCount: probe.persistence.count)
+    }
+}
+
+/// Transport-only synthetic responses; all application uses the production service.
+nonisolated struct SyntheticYieldPullRepository: YieldEstimationSessionSyncRepositoryProtocol {
+    let rows: [BackendYieldEstimationSession]
+    func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendYieldEstimationSession] { rows }
+    func upsertMany(_ items: [BackendYieldEstimationSessionUpsert]) async throws {}
+    func softDelete(id: UUID) async throws {}
+    static func row(_ session: YieldEstimationSession, deletedAt: Date? = nil) -> BackendYieldEstimationSession {
+        BackendYieldEstimationSession(id: session.id, vineyardId: session.vineyardId, payload: session,
+            isCompleted: session.isCompleted, completedAt: session.completedAt, sessionCreatedAt: session.createdAt,
+            createdBy: nil, createdAt: nil, updatedAt: nil, deletedAt: deletedAt, clientUpdatedAt: nil)
     }
 }
 

@@ -1,5 +1,80 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Final targeted iOS Yield sync scheduling — 27 October 2026 — STRICT HOME 16ms GATE PASS; STOP FOR HANDSET ACCEPTANCE
+
+This supersedes the preceding frozen-Yield29.094ms Home failure as the current automated status. Only Yield remote-row scheduling was unfrozen by the owner. No Yield feature/calculation, master-weight rule, no-150/current resolver, variety key, mixed-variety calculation, base/damage tonnes, sampled-area value, current-trip selection, completion/replay, historical evidence, Bunch Weight management or presentation changed. Home summary derivation, access enforcement, prepared vineyard selection/loading overlay, Android/shared source, Weather/MAIT, backend/Portal, versions, signing and release configuration are unchanged.
+
+Starting HEAD `e127909968e59465f1b251e30d987e476fca9ac3`. Requested source `2a8244c9d396c50670ebd6d75113243a06472851` is retrievable; it is not an ancestor in this checkout's graph, but `git diff` of its iOS source against starting HEAD shows **only the managed Config.swift deletion**. Performance and Yield source match. That managed configuration difference was not reverted or edited. No reset, checkout, commit or push was performed by the agent.
+
+### Bounded production change and safety
+
+- `YieldEstimationSessionSyncService.pull` uses the already accepted `ResponsiveRemoteApplication.forEach`: complete row, yield, revalidate, next row. There is no suspension inside a Yield row. Existing pending-intent/delete checks, tombstone application, mapping, store persistence and metadata acknowledgement remain in their original order. `continue` became closure-local `return`, not early termination of the pull. No multi-row persistence batch, new durability model or changed recovery behavior.
+- Capture the existing store scope predicate before fetching: provider account/user, authority identity/binding/incarnation, selected vineyard and selection-request generation. Validate after fetch, after the existing initial seed await, before each row and on resumption after every helper yield, including the last. Service-store identity and cancellation are checked too. Selection A→B→A or same-user sign-out/sign-in cannot revive the original operation.
+- The session repository pulls **all vintages** and does not capture a season-filtered result, season-specific current estimate or master cache. Therefore season is not added as an artificial cancellation boundary; it does not authorize applying season-derived state elsewhere.
+- Existing row application and repository/persistence implementations are untouched. Original persistence error-handling semantics are retained, not represented as newly strengthened guarantees. No acknowledgement was moved ahead of persistence.
+- A DEBUG-only row timing callback instruments the complete actual production row, including conflict checks, mapping, store persistence and metadata. An optional isolated metadata dependency and internal visibility for the existing pull let tests invoke the real service without auth/network or installed metadata. Default production construction and migration behavior are unchanged.
+- The mounted fixture's Yield section now supplies synthetic backend responses through that **actual service pull**, not a fixture-only yielding loop. Other Home input/application stages, strict assertion and fixture sizes remain unchanged. The complete application fixture still uses store primitives for other domains; this is not a full authenticated sync sweep.
+
+### Yield sync responsiveness
+
+After numbers below are from the current-source visible fixture capture; the same fixture/source passed the strict XCTest separately. Successful managed test results do not expose the numeric attachment, so these are not falsely labelled as timings extracted from that particular test execution. All values are milliseconds.
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| Yield rows applied | 10 | 10 |
+| Longest uninterrupted Yield application stage | **29.094**, synchronous10-row loop | **7.126**, longest complete production row |
+| Longest individual Yield row | 3.052, store primitive only | **7.126**, full pull row including checks/metadata |
+| Total Yield elapsed time | 29.094, synchronous store-application loop | **54.205**, full service pull including yields |
+
+The measurement boundary is deliberately stronger after correction: before timings covered store applications, while after timings include the real pull's pending checks, mapping and metadata. The individual-row and total elapsed columns are therefore not apples-to-apples CPU-speed comparisons. The scheduling result is that the avoidable10-row continuous stage disappears; total elapsed is allowed to remain above16ms and may increase as other MainActor work runs. No claim of faster total Yield completion, fewer persistence operations or fewer publications.
+
+### Mounted Home — current sample and strict gate
+
+- **Largest measured uninterrupted MainActor stage:14.070ms**, `sync spray row` (unchanged production operation). No measured operation in this capture exceeds16ms.
+- **`HomeSyncPerformanceTests/testMountedHomeDuringProductionSyncApplication`: PASS**, original strict `XCTAssertLessThan(result.longestMainStage, 16, result.report)` unchanged. The test file's SHA256 remains `ee5db1016848e97d806d703d2e25060b29bf3dfac559e9712847d3d2475dfcdc`.
+- **308MainActor persistence calls /144writes**, **133observable collection setter mutations**. These are not SwiftUI invalidation or rendered-publication counts.
+- Previous fixture286calls/133writes did not measure the real Yield service. The expanded boundary adds10per-row metadata writes plus1fixture last-sync setup write and corresponding reads/checks. This accounts for the11additional measured writes; it is not a production persistence-semantics change. No durability optimization was attempted. Original store application implementation remains unchanged.
+- Home vintage calculation is unchanged. Access/read-only enforcement remains accepted as cleared as a material cause of the measured local stalls; no further optimization or attribution work was performed.
+
+### New Yield-specific tests
+
+Eight XCTest cases in `VineTrackTests/YieldPullResponsivenessTests`, using real service pulls and isolated disk metadata:
+
+1. `testMultiRowPullYieldsBetweenCompleteDurableApplicationsAndAppliesAllRows`: a queued MainActor observer runs between completed rows, disk already contains every completed row, all10identities apply.
+2. `testVineyardChangeStopsRemainingRows`: after a complete first row, A→B prevents remaining applications; first durable row retained.
+3. `testVineyardRoundTripCannotReviveOriginalPull`: A→B→A leaves only the first completed row, despite original identity being selected again.
+4. `testSameUserAccountIncarnationStopsOriginalPull`: sign-out/same-user rebinding invalidates the original incarnation; only first row persists.
+5. `testAccountProviderChangeStopsRemainingRows`: provider identity changes invalidate remaining work.
+6. `testFetchSuspensionRejectsSelectionRoundTripBeforeFirstApplication`: an A→B→A transition while the repository fetch suspends results in zero applications.
+7. `testRowPersistencePrecedesMetadataAndNextRow`: independent disk hooks assert row-persistence → metadata-persistence → row-complete for each of3rows, with no interleaving row mutation inside that sequence.
+8. `testScheduledResultsMatchUnscheduledProductionPrimitiveAndRetainPendingCompletion`: byte-equivalent encoded in-memory and reopened records against the original unscheduled production store primitive, with recorded counts, weight evidence, completion dates, vine counts and damage flags preserved; pulled draft still cannot clear the pending completion token or overwrite completion. Existing independent calculation suites are rerun unchanged, not replaced by this comparison.
+
+### Exact serial validation
+
+All selectors below are under `VineTrackTests/`. Successful managed calls return aggregate counts, not per-case discovery/skipped metrics. Overlapping runs are not summed.
+
+- Initial focused `HomeSyncPerformanceTests`, `YieldPullResponsivenessTests`: **7passed/2failed**. Strict Home passed on this first production correction. Both failures were new test fixture setup errors: the separate metadata/control subdirectories were missing, so metadata-write events and control rows were absent. Only directory creation in the tests was corrected; no production behavior, threshold or comparison expectation was changed to make these pass. Historical log was `/tmp/rork-swift-test-ios.log` at that call; later contents are not that preserved run.
+- Corrected new suite alone: **8passed in37s**.
+- Final Home/Yield/Trip selection: **145passed in21s**. Exact selectors: `HomeSyncPerformanceTests`, `YieldPullResponsivenessTests`, `TripPullResponsivenessTests`, `YieldBunchWeightsManagementTests`, `CurrentYieldMasterParityTests`, `YieldMasterWeightCacheTests`, `YieldCompletionPersistenceTests`, `YieldVintageReportTests`, `YieldAuthoritativeVineCountTests`, `SeasonYieldDamageParityTests`, `PruningYieldSettingsTests`, `PruningYieldSettingsRevisionSyncTests`.
+- Separate isolation/recovery/authority/batching/switch selection: **267passed in26s**. Exact selectors: `EquipmentVineyardIsolationTests`, `VineyardMutationAdmissionTests`, `VineyardWriteAuthorityTests`, `ReadOnlyEntitlementContractTests`, `EntitlementAccessRegressionTests`, `EntitlementDecisionTests`, `ActiveTripRouteRecoveryTests`, `DeviceTripOwnershipTests`, `SpraySaveForLaterTests`, `LegacySprayPairReceiptTests`, `TripOccurrenceJournalTests`, `SavedChemicalBatchReconciliationTests`, `WorkTaskBatchReconciliationTests`, `PreparedVineyardSelectionTests`, `VineyardSwitchPerformanceTests`, `MaintenanceDurableRecoveryTests`, `PruningResourceRecoveryAcceptanceTests`, `SyncQueueRegressionTests`, `SyncCompatibilityTests`, `OfflineQuickActionsTests`.
+- Final `runChecks(ios)`: **PASS, iOS simulator build**. Two pre-existing direct-storage-URL advisories remain untouched. No Release build, physical install, version/configuration change, upload or backend operation.
+- Bounded visible Home report check: **PASS,2/2visible criteria**, after one Home-picker tap. It ran on a **separate billed iPhone simulator**, not the selected Android preview. Screenshots prove only the displayed synthetic numeric report above; not finger smoothness, hidden state or input/render-frame latency. The invocation again supplied an undocumented `setup.configured` object rather than the prescribed launchArguments schema; visible evidence establishes the screen shown, not valid launch-argument delivery. No repeat of that already-successful check is needed.
+- Whitespace check `git diff HEAD --check`: **PASS**. Android, shared files, loading/selection/access source and calculation implementations have no diff in this pass; Android was not rerun. Prior Android performance evidence remains accepted, not newly executed evidence.
+
+### Exact source manifest
+
+Three changed/new iOS source/test files; the existing Home strict test is unchanged. Managed history/simulator records and this report/plan are excluded.
+
+```text
+f3704ddf14ab31a62c0f39622041091d5e4a84094515e81fb08a043c39c7578d  ios/VineTrack/Backend/Sync/OperationsSyncServices.swift
+9b4e7103afd2fae1b9a422267ecc448bf5a1763fdc2beace06f4f94698a03a43  ios/VineTrack/App/SyntheticHomePerformance.swift
+077e09214fc787aced85e4fd31ce4fe82eb1eccb0738c57ffd5e867a49aaf841  ios/VineTrackTests/YieldPullResponsivenessTests.swift
+```
+
+### Stop condition and final handset gate
+
+**Strict automated Home gate is green. Production changes stop here.** Do not chase the existing18.675ms cold/16.701ms warm synthetic atomic selection commit with more architecture changes. Prepared selection/loading safety remains intact. Actual finger-scroll smoothness during sync, tap→loading surface actually drawn, first accepted input frame and physical vineyard-switch feel are the final handset acceptance checks. No physical-device result or release readiness is claimed. Separate historical safety/backend/release gates elsewhere in this report are not changed by this performance-only closeout.
+
 ## iOS mounted Home / full selection continuation — 27 October 2026 — PARTIAL CORRECTION; 16ms ACCEPTANCE REMAINS RED
 
 This section supersedes preceding statements that iOS mounted Home and local access-operation costs are unmeasured. Scope is iOS performance only. Android and shared fixtures are untouched. Yield/Bunch Weights calculations and application, Weather/MAIT, access rules, recovery/receipt ordering, Saved Chemical batching, backend/Portal, versions, signing and release settings remain unchanged. No customer records, authenticated service calls, release build or upload were used.

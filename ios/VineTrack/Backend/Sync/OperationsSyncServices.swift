@@ -1599,9 +1599,15 @@ final class YieldEstimationSessionSyncService {
     private let metadata: OperationsSyncMetadata
     private var isConfigured: Bool = false
 
-    init(repository: (any YieldEstimationSessionSyncRepositoryProtocol)? = nil) {
+    #if DEBUG
+    @ObservationIgnored var remoteRowMeasurementForTesting: ((UUID, Double) -> Void)?
+    #endif
+
+    init(repository: (any YieldEstimationSessionSyncRepositoryProtocol)? = nil, metadata: OperationsSyncMetadata? = nil) {
         self.repository = repository ?? SupabaseYieldEstimationSessionSyncRepository()
-        self.metadata = OperationsSyncMetadata(key: "vinetrack_yield_session_sync_metadata")
+        self.metadata = metadata ?? OperationsSyncMetadata(key: "vinetrack_yield_session_sync_metadata")
+        // Injected metadata belongs to an isolated fixture, not the installed outbox.
+        guard metadata == nil else { return }
 
         let migrationKey = "vinetrack_yield_session_sync_reset_v1"
         if !UserDefaults.standard.bool(forKey: migrationKey) {
@@ -1694,10 +1700,16 @@ final class YieldEstimationSessionSyncService {
         }
     }
 
-    private func pull(vineyardId: UUID) async throws {
+    func pull(vineyardId: UUID) async throws {
         guard let store else { return }
+        // This repository pulls ALL vintages; no season-filtered derived state is captured.
+        let isCurrent = store.remoteApplicationCurrentCheck()
+        try Task.checkCancellation()
+        guard isCurrent() else { throw CancellationError() }
         let lastSync = metadata.lastSync(for: vineyardId)
         let remote = try await repository.fetch(vineyardId: vineyardId, since: lastSync)
+        try Task.checkCancellation()
+        guard isCurrent(), self.store === store else { throw CancellationError() }
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
             let local = store.yieldSessions.filter { $0.vineyardId == vineyardId }
@@ -1717,17 +1729,30 @@ final class YieldEstimationSessionSyncService {
                     #endif
                 }
             }
+            try Task.checkCancellation()
+            guard isCurrent(), self.store === store else { throw CancellationError() }
             if remote.isEmpty { return }
         }
-        for item in remote {
+        try await ResponsiveRemoteApplication.forEach(remote, isCurrent: {
+            isCurrent() && self.store === store
+        }) { item in
+            #if DEBUG
+            let started = ProcessInfo.processInfo.systemUptime
+            defer {
+                let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1000
+                SyntheticHomePerformanceProbe.end("sync Yield row", started)
+                self.remoteRowMeasurementForTesting?(item.id, elapsed)
+            }
+            #endif
+            // No suspension within a row: preserve merge/persistence/ack ordering.
             // Pending local intent is not acknowledged by a pull, regardless of
             // wall-clock skew or an older draft's later server updated_at.
-            if isPendingUpsert(item.id) || isPendingDelete(item.id) { continue }
+            if isPendingUpsert(item.id) || isPendingDelete(item.id) { return }
             if item.deletedAt != nil {
                 store.applyRemoteYieldSessionDelete(item.id)
-                metadata.clearDirty([item.id]); metadata.clearDeleted([item.id]); continue
+                metadata.clearDirty([item.id]); metadata.clearDeleted([item.id]); return
             }
-            guard let mapped = item.toYieldEstimationSession() else { continue }
+            guard let mapped = item.toYieldEstimationSession() else { return }
             store.applyRemoteYieldSessionUpsert(mapped)
             metadata.clearDirty([item.id])
         }
