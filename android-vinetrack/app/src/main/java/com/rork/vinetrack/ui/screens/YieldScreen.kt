@@ -426,6 +426,13 @@ private fun YieldHubView(
                 onClick = onEstimate,
             )
             YieldHubOptionRow(
+                icon = Icons.Filled.Scale,
+                gradient = listOf(VineColors.Info, VineColors.LeafGreen),
+                title = "Bunch Weights",
+                subtitle = "Shared variety masters and planted-block overrides",
+                onClick = onSettings,
+            )
+            YieldHubOptionRow(
                 icon = Icons.Filled.EditNote,
                 gradient = listOf(VineColors.LeafGreen, VineColors.DarkGreen),
                 title = "Record Actual Yield",
@@ -459,13 +466,6 @@ private fun YieldHubView(
                 detail = state.grapeAllocations.size.takeIf { it > 0 }
                     ?.let { "$it allocation${if (it == 1) "" else "s"}" },
                 onClick = onAllocation,
-            )
-            YieldHubOptionRow(
-                icon = Icons.Filled.Scale,
-                gradient = listOf(VineColors.Indigo, VineColors.Purple),
-                title = "Yield Settings",
-                subtitle = "Default bunch weights per block",
-                onClick = onSettings,
             )
 
             Row(

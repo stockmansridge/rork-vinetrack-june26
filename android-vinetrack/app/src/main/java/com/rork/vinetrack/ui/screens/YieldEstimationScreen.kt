@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -36,6 +37,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Scale
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -293,6 +295,8 @@ private fun BunchCountTripHome(
 ) {
     val vine = LocalVineColors.current
     val blocks = remember(state.paddocks) { state.paddocks.filter { it.hasGeometry } }
+    // One resolver refresh for the list, not one complete vineyard refresh per history row.
+    val weights = rememberYieldMasterWeights(state)
 
     Scaffold(
         containerColor = vine.appBackground,
@@ -380,21 +384,23 @@ private fun BunchCountTripHome(
                     val tripVintage = YieldVintageReport.sessionVintage(
                         trip, state.seasonStartMonth, state.seasonStartDay,
                     )
-                    val currentEstimate = currentYieldTrip(state, trip)
-                    val vintage = tripVintage
+                    val currentEstimate = remember(trip, state.paddocks, weights, state.damageRecords, state.seasonStartMonth, state.seasonStartDay) {
+                        com.rork.vinetrack.data.CurrentYieldEstimate.trip(trip, state.paddocks, weights) { block ->
+                            state.damageRecords.remainingYieldMultiplierForVintage(block, state.paddocks, tripVintage, state.seasonStartMonth, state.seasonStartDay)
+                        }
+                    }
                     VineyardCard(modifier = Modifier.testTag("yield.completed.${trip.id.lowercase()}").clickable { onOpenTrip(trip) }) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(
-                                    (trip.completedAt ?: trip.createdAt).take(10),
-                                    color = vine.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
-                                )
-                                Text(
-                                    "Completed · Vintage $vintage · ${trip.recordedSiteCount} sites",
-                                    color = vine.textSecondary, fontSize = 12.sp,
-                                )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(currentEstimate.blocks.joinToString(", ") { it.name }.ifBlank { "Block unavailable" },
+                                    color = vine.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 2)
+                                Text(currentEstimate.blocks.map { it.varieties }.filter { it.isNotBlank() }.distinct().joinToString(", "),
+                                    color = vine.textSecondary, fontSize = 12.sp, maxLines = 2)
+                                Text((trip.completedAt ?: trip.createdAt).take(10), color = vine.textSecondary, fontSize = 12.sp)
                             }
-                            CurrentYieldEstimateSummary(currentEstimate, detailed = false, current = isCurrentYieldTrip(state, trip))
+                            Text(currentEstimate.totalTonnes?.let { String.format(java.util.Locale.US, "%.3f t", it) } ?: "Bunch weight required",
+                                color = VineColors.LeafGreen, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, modifier = Modifier.widthIn(max = 120.dp))
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Open trip", tint = vine.textSecondary)
                         }
                     }
                 }

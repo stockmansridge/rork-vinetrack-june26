@@ -1,5 +1,87 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Mobile UX, shared Bunch Weights and weather — 27 October 2026 — AUTOMATED SOURCE GATES PASS; PERFORMANCE UNPROVEN
+
+This checkpoint supersedes the earlier read-only weight viewer and compact-history presentation, not the accepted Yield calculations or safety contracts. No backend/schema/SQL/Portal changes, customer-row reads, release/upload, signing/configuration or version/build-number changes. Versions remain iOS3.1.9/build139 and Android3.1.9/versionCode12. Metadata-only reads inspected the three existing weight function definitions; they do not establish authenticated live-service behavior.
+
+### Yield UX
+
+- Both hubs expose **Bunch Weights** beside Yield Estimate. The native manager groups canonical planting keys, shows grams and vineyard masters, and expands only planted blocks to show inherited values or explicit overrides. Owners/Managers/Supervisors can edit; other members can view. Existing backend authorization and authoritative read-only admission remain required; this is not UI-only security.
+- Existing contracts only: `yield_bunch_weights`, `resolve_yield_bunch_weight`, `upsert_yield_bunch_weight`, `soft_delete_yield_bunch_weight`. Masters send an explicit null `p_paddock_id`; input must be finite, greater than0 and at most5000g. Initial editor values preserve fractional precision. Canonical keys are never substituted with current display names.
+- Confirm absence only after complete, counted, authenticated pagination of active rows, stable `updated_at.desc,id.asc`, pages of200 and consistent bounded counts. Reject missing/changing counts, duplicate IDs, wrong vineyard, invalid values and premature empty pages; retain the last confirmed list on failure. Complete confirmed lists update the current-weight resolver caches, with iOS request invalidation and Android serialization under the existing resolver mutex.
+- Current precedence remains exact block/key override → vineyard/key master → Not configured. No historical150g/local default, offline mutation queue or speculative success/cache. Delete resolves the actual authenticated row owner before its ID-only RPC. Original-account/incarnation checks fence reads, mutations and publication; editor targets cannot switch to a newly selected vineyard. A confirmed mutation followed by failed list refresh is reported distinctly from an unconfirmed mutation.
+- Failed editor saves keep the entered number and provide a refresh-without-discarding-entry action. Android delete failures remain visible in the confirmation dialog with a refresh action. Lost-response uncertainty is stated explicitly; no claim that a failed response proves a server rejection.
+- Completed trips now show actual block names, variety names, date, total estimated tonnes or required-weight state and disclosure, with full-row opening. Detailed diagnostics/provenance remain in trip details. Android hoists the history resolver refresh once per list rather than once per row; outer history layouts remain eager. This is a bounded source change, not measured scroll remediation.
+- Accepted arithmetic, exact recorded averages, authoritative current vines, contributing mixed-variety completeness, base/damage separation, sampled physical area, completion/replay, historical evidence and GPS logic were not changed.
+
+### Performance — evidence before remediation
+
+- Before application edits, `swiftTest` requested `VineTrackTests/PersistencePerformanceTests` and `VineTrackTests/PerformanceValidationTests`: **23 passed in237s**. The managed result supplied no per-switch, hydration-stage, main-thread or hitch timings. Total runner duration includes build/execution overhead and is not a vineyard-switch benchmark.
+- Runtime query `rork-agent logs runtime --limit 100 | rg -i 'performance|vineyard.*(select|hydrat)|main.thread|hitch|freeze'` returned exit1/no matches; older logs were available before79993. No before/after device capture was obtained. Neither tests nor absence of matching logs proves smoothness.
+- Source candidates on iOS: synchronous MainActor `MigratedDataStore.reloadCurrentVineyardData` core/spray/yield/block/equipment/button hydration and canonicalization; recovery remains a safety operation. Existing async decode preparation does not remove exact-byte authoritative rereads. On Android: selection quick-action hydration duplication, cache/pending-overlay decoding and saved-chemical/region work inside `_ui.update`; retryable update lambdas must not gain side effects. Existing recovery snapshots are mutating safety work, not speculative reads.
+- No central hydration/state-store optimization or guard reversal was attempted without timing evidence. The iOS sync batching around `3097a0859c303f934cd84aef95965283313d4f22` and its regression tests are preserved; central store files are absent from this checkpoint's manifest.
+
+**All six specified read-only/login commits were inspected. Contribution is unproven for each; it is not established that all six—or any one—caused the reported scroll/switch regression.** Added source work is separated below from measured cause:
+
+- `60cacb0300d608495293b69fd3f3860281eb4577`: entitlement snapshot decode/encode and `UserDefaults.set` on existing iOS entitlement-refresh paths; no additional Android matrix fetch in the inspected hunk. `UserDefaults.set` does not establish a synchronous physical disk flush. No direct general-list/hydration rewrite or measured attribution.
+- `04923f6e4a0149d7bd19f7f7718789dda895f256`: cached-hold/account binding and per-vineyard verification; writable entries can also be persisted, while existing holds short-circuit trial work. Candidate refresh/cache cost only; no measured switch/scroll attribution.
+- `1f9f0d07c77512efe28854508fb6f7a88a96c6f8`: iOS `updatePinNotesDurably` adds whole-pin-cache load/decode and membership scan via `loadAllForDurableUpdate`; Android pending-write eligibility/reset/retention paths add hold checks, recursive payload vineyard scans and original-claim bookkeeping. Ownership reads are awaited network requests, not synchronous network blocking. No measured general-scroll attribution.
+- `91f4b3d3d502eab700e71bb5ed46e170fb84e8ed`: iOS per-location authority lookup and active-trip/journal projection resolution; active getter also stops initializing missing journals. Android command admission scans trips and publishes denial state; patch/delete/occurrence transport adds awaited ownership reads. These affect particular active-command/sync paths, not a demonstrated general rendering regression.
+- `3a20ec8a76b03ed4c9d8da88995c6ca388eece09`: iOS `PinSyncService.pushPendingConfirmations` adds a synchronous full durable pin load and owner scans; pending-owner/hold and original-evidence bookkeeping adds safety persistence. Pin/Growth batch repositories add sequential awaited authenticated ownership GETs before writes, increasing possible sync latency without blocking the thread on network IO. Android adds active tank/draft/command admission and skips repair while held. No direct general hydration/scroll rewrite; sync overlap remains a profiling candidate, not proven causation.
+- `54d01831d20f2b2985d43e294bdab6b922099f96`: iOS maintenance CRUD adds authoritative whole-store/slice reads and synchronous saves on the action path. Android maintenance commands add original-account/owner checks, list scans/restoration and queue coalescing/cancellation; `PendingWriteRepository` synchronizes original-payload scans and durable updates. These are maintenance-action costs; no direct general selection/render rewrite or measured contribution.
+
+Actual physical scroll responsiveness, vineyard-switch before/after stage timings, long-frame capture and causal attribution remain **NOT VERIFIED**. The performance goal stays unchecked. No physical-device access, interactive simulator operation or invented timing claim was used.
+
+### MAIT / Weather
+
+- Both weather roots now use **Current Weather**, **Chosen Sources**, **Weather Providers**. All five providers remain visible: MAIT iNTELLiWeb, Davis, Weather Underground, WillyWeather, Open-Meteo. Provider/source destinations retain the existing configuration controls and role boundaries instead of inventing a new routing system.
+- Exact MAIT text: **“Configured in the VineTrack Portal by a Vineyard Owner or Manager”**. Setup, connection tests and controller mapping remain Portal-managed; mobile has no MAIT configuration/disconnect substitute.
+- Current sections reuse server-normalized selected observations and supplementary sensors: provider/station/time/status, available metrics,16-point wind compass and missing/unavailable states. Explicit refresh preserves last-known readings, provider-specific errors and MAIT no-newer behavior. Forecast preferences remain distinct from selected station observations; refresh failure does not choose another observation provider.
+- New content is recreated on account/incarnation/vineyard scope changes and checks original scope after async reads. Unknown integration/selection reads stay unconfirmed rather than being labelled unconfigured or Automatic. iOS WillyWeather preference loading copies the latest configuration after the await even when it fails, avoiding overwrite of a newer observation selection.
+- Normalized observation services, forecasts/rainfall calculations, imported-irrigation labels/records, operational commands and account enforcement are unchanged. Existing service/isolation regressions pass; rendered settings navigation, account-switch UI journeys and live-station no-data/stale/no-newer acceptance remain unexecuted.
+
+### Final executed validation — serialized; do not sum overlapping runs
+
+- **iOS192 passed in159s**. Exact managed selectors: `VineTrackTests/YieldBunchWeightsManagementTests`, `VineTrackTests/CurrentYieldMasterParityTests`, `VineTrackTests/YieldMasterWeightCacheTests`, `VineTrackTests/YieldCompletionPersistenceTests`, `VineTrackTests/YieldVintageReportTests`, `VineTrackTests/YieldAuthoritativeVineCountTests`, `VineTrackTests/SeasonYieldDamageParityTests`, `VineTrackTests/PruningYieldSettingsTests`, `VineTrackTests/PruningYieldSettingsRevisionSyncTests`, `VineTrackTests/MAITCurrentObservationTests`, `VineTrackTests/MAITSupplementarySensorTests`, `VineTrackTests/CurrentObservationProviderTests`, `VineTrackTests/RegionFormatterWeatherParityTests`, `VineTrackTests/EquipmentVineyardIsolationTests`, `VineTrackTests/SavedChemicalBatchReconciliationTests`, `VineTrackUITests/YieldTripNavigationUITests`. Runner returns aggregate passes, not per-test discovery or skipped metric. Earlier new-management-only14 passed in152s is overlapping, not additional coverage.
+- Separate final **iOS `runChecks` PASS**, simulator build succeeded. Device/Release success not verified. Two pre-existing unrelated direct-storage-URL warnings remain unchanged.
+- **Android instrumentation27 passed,0 failed,0 skipped in11s**. Exact selectors: `com.rork.vinetrack.data.YieldBunchWeightsManagementAndroidTest`, `com.rork.vinetrack.data.YieldMasterWeightCacheAndroidTest`, `com.rork.vinetrack.data.YieldTripNavigationAndroidTest`, `com.rork.vinetrack.data.MAITCurrentObservationAndroidTest`, `com.rork.vinetrack.data.ReadOnlyEntitlementCacheTest`. New management suite separately8/0/0 in7s before expansion; overlapping, not summed. These include production repository/transport and existing trip navigation, not a rendered Bunch Weights/weather-settings test suite or physical acceptance.
+- **Android Yield host95 tests,0 failures,0 errors,0 skipped in17.626s**: `python3 scripts/run-yield-completion-tests.py --output /tmp/vinetrack-mobile-ux-final-yield-host`. Exact classes prefixed `*.`: `YieldCompletionPersistenceTest`, `YieldVintageReportTest`, `YieldAuthoritativeVineCountTest`, `CurrentYieldMasterParityTest`, `SeasonYieldDamageParityTest`, `PruningYieldFormulaParityTest`, `PruningYieldSettingsRevisionSyncTest`.
+- **Android weather/irrigation host52/0/0/0 in22.064s**, authority/isolation209/0/0/0 in10.578s, startup/offline55/0/0/0 in10.308s: `python3 scripts/run-mait-mobile-contract.py --output /tmp/vinetrack-mobile-ux-final-weather-host`. Weather selectors prefixed `*.`: `MAITCurrentObservationContractTest`, `CurrentObservationRepositoryTest`, `ForecastParityContractTest`, `SprayForecastWindowsTest`, `IrrigationCalculatorFixtureTest`, `IrrigationRegionalAdviceTest`. Authority: `ReadOnlyEntitlementContractTest`, `VineTrackAccessRowCompatTest`, `VineyardWriteAuthorityTest`, `PinPhotoWorkflowTest`, `FertigationMobileWorkflowTest`, `ResistancePlanRepositoryTest`, `ResistancePlanRevisionSyncTest`, `FertigationDomainTest`, `TripOccurrenceJournalTest`, `StartTankCommitCoordinatorTest`, `TripWriteAdmissionTest`. Startup: `RetainedStartupTest`, `SyncRecoveryStorageTest`, `SyncCrashIsolationTest`, `ActiveTripStoreTest`, `OfflineQuickActionsTest`, `TripEndGateTest`. Result evidence under that output's `summary.json` and individual stage `result.json` files.
+- Separate final **Android Debug-only assembly PASS**, exit0 in8.803s: `python3 scripts/run-yield-completion-tests.py --debug-build --output /tmp/vinetrack-mobile-ux-final-debug`, `:app:assembleDebug`. Generic Android `runChecks` assembles Release and was deliberately not used under the Debug-only authorization. No release/upload/distribution.
+- All three shared parity fixtures retain SHA-256 `1b6eda2b9e8efa6189501bd750c90ae0e28e08a44a20052f421e4e01b1d5b818`; accepted6.8t base/5.56t adjusted fixture expectations remain unchanged. Both staged and working-tree whitespace checks pass.
+
+### Intermediate failures and limits retained
+
+- Initial iOS build failed due to editor catch-variable shadowing; corrected to `self.error`. Earlier passing normal build preceded transport/weather refinements; the final build above validates current source.
+- First Android Debug build failed at missing `widthIn` import; fixed. First new instrumentation build then failed on an invalid multiple-variable Kotlin declaration/reserved `override` test variable. Local compile-only diagnostics confirmed the exact test line; split declarations/use `blockOverride`, then8 and expanded27 executed successfully. This was not a production assertion failure.
+- First weather host-script invocation stopped before tests because its supplied output root did not exist. Confirmed the missing directory, created it outside the project and reran successfully; no app/test assertion changed.
+- New management tests cover real repository admission/paging/cache/encoding and transport interception, not a live server write. Existing trip navigation tests do not prove weight-manager role dialogs, settings provider navigation, live account transitions, full app process-death recovery, physical GPS, VoiceOver/dynamic type or scroll smoothness. No physical/live-service or overall release clearance is claimed.
+
+### Exact source identity and manifest
+
+Baseline `5eca094f0b0921cbc9c09b776ba9c51e94cbcc89` plus managed changes. SHA-256 of `git diff HEAD --binary -- ios android-vinetrack scripts/inspect-yield-weight-contract.py`: **`cb7afdc925589bbd94b334f9f1cf18d1814ec347594d49593874d7901b64490f`**. Final Debug APK SHA-256 **`c74cf7d0c2a3217585c4087fa66aea75a2f5c6057c5fb9bdbbe6636582253a42`**. No manual commit/push; plan/report/Rork-managed state excluded from this19-file source manifest:
+
+- `android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/YieldBunchWeightsManagementAndroidTest.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/YieldBunchWeightsRepository.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/YieldMasterWeightRepository.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CurrentWeatherSettingsSection.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/RainAndForecastScreen.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WeatherDataScreen.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldEstimationScreen.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldSettingsScreen.kt`
+- `ios/VineTrack/App/BackendAccessControl.swift`
+- `ios/VineTrack/App/CurrentWeatherSettingsSection.swift`
+- `ios/VineTrack/App/WeatherDataSettingsView.swift`
+- `ios/VineTrack/Backend/Repositories/YieldBunchWeightsRepository.swift`
+- `ios/VineTrack/Backend/Repositories/YieldMasterWeightCache.swift`
+- `ios/VineTrack/LegacyImported/Views/Yield/YieldEstimationView.swift`
+- `ios/VineTrack/LegacyImported/Views/Yield/YieldHubView.swift`
+- `ios/VineTrack/LegacyImported/Views/Yield/YieldSettingsView.swift`
+- `ios/VineTrackTests/YieldBunchWeightsManagementTests.swift`
+- `scripts/inspect-yield-weight-contract.py`
+
+
 ## Yield master authority and trip parity — 27 October 2026 — AUTOMATED SOURCE GATE PASS
 
 Latest scope was limited to Yield Estimates, Bunch Sampling and shared Master Bunch Weight reads. Accepted completion/outbox safeguards and historical payloads remain intact. No SQL/Portal/server mutation, customer-record access, release/upload, signing/version/build-number change or physical-device acceptance occurred. Read-only deployed schema/resolver metadata was inspected; that is not authenticated live resolver acceptance.

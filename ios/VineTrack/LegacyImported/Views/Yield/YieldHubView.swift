@@ -71,6 +71,14 @@ struct YieldHubView: View {
                     }
                     .buttonStyle(.plain)
 
+                    NavigationLink {
+                        YieldSettingsView()
+                    } label: {
+                        hubOption(icon: "scalemass", iconGradient: [.teal, VineyardTheme.leafGreen],
+                                  title: "Bunch Weights", subtitle: "Shared variety masters and planted-block overrides", detail: nil)
+                    }
+                    .buttonStyle(.plain)
+
                     Button {
                         showRecordActualSheet = true
                     } label: {

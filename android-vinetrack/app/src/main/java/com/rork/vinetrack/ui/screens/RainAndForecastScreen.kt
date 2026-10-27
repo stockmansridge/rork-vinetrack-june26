@@ -452,7 +452,7 @@ private fun RainAndForecastContent(
 }
 
 @Composable
-private fun CurrentConditionsCard(snapshot: CachedRow?, refreshMessage: String?) {
+internal fun CurrentConditionsCard(snapshot: CachedRow?, refreshMessage: String?, title: String = "Current Conditions", emptyMessage: String = "No current station observation available. Forecast and rainfall history remain below.") {
     val vine = LocalVineColors.current
     val fmt = regionFormatter
     Column(
@@ -460,7 +460,7 @@ private fun CurrentConditionsCard(snapshot: CachedRow?, refreshMessage: String?)
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Current Conditions", fontWeight = FontWeight.SemiBold, fontSize = 17.sp, color = vine.textPrimary)
+            Text(title, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, color = vine.textPrimary)
             Text(if (snapshot?.isStale == false && snapshot.status == "ok") "Observed" else "Latest available", fontSize = 11.sp, color = vine.textSecondary)
         }
         if (snapshot != null && snapshot.status == "ok") {
@@ -480,17 +480,17 @@ private fun CurrentConditionsCard(snapshot: CachedRow?, refreshMessage: String?)
                     row.forEach { (label, value) -> CurrentMetric(label, value, Modifier.weight(1f)) }
                 }
             }
-            Text(listOfNotNull(snapshot.sourceLabel, snapshot.stationName, snapshot.observedAt).joinToString(" · "), fontSize = 11.sp, color = vine.textSecondary)
+            Text(listOfNotNull(snapshot.sourceLabel, snapshot.stationName, snapshot.stationId, snapshot.observedAt).joinToString(" · "), fontSize = 11.sp, color = vine.textSecondary)
         } else {
             snapshot?.let { Text(it.sourceLabel, fontSize = 11.sp, color = vine.textSecondary) }
-            Text("No current station observation available. Forecast and rainfall history remain below.", fontSize = 12.sp, color = vine.textSecondary)
+            Text(emptyMessage, fontSize = 12.sp, color = vine.textSecondary)
         }
         refreshMessage?.let { Text(it, fontSize = 12.sp, color = vine.textSecondary) }
     }
 }
 
 @Composable
-private fun SupplementarySensorsCard(extra: MAITSupplementarySensors, message: String?) {
+internal fun SupplementarySensorsCard(extra: MAITSupplementarySensors, message: String?) {
     val vine = LocalVineColors.current
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(vine.cardBackground).padding(16.dp),

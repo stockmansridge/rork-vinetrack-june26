@@ -153,21 +153,23 @@ struct YieldEstimationView: View {
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
                         ForEach(completedTrips) { trip in
+                            let estimate = currentEstimate(trip)
                             Button {
                                 resumeTrip(trip)
                             } label: {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 2) {
-                                        Text(fmt.formatDate(trip.completedAt ?? trip.createdAt))
+                                        Text(estimate.blocks.map(\.name).joined(separator: ", ").isEmpty ? "Block unavailable" : estimate.blocks.map(\.name).joined(separator: ", "))
                                             .font(.subheadline.weight(.semibold))
                                             .foregroundStyle(.primary)
-                                        Text("Completed · \(trip.sampleSites.filter(\.isRecorded).count) sites")
-                                        CurrentYieldEstimateSummary(estimate: currentEstimate(trip), detailed: false, current: isCurrent(trip))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .lineLimit(2)
+                                        Text(Array(Set(estimate.blocks.map(\.varieties).filter { !$0.isEmpty })).sorted().joined(separator: ", "))
+                                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                        Text(fmt.formatDate(trip.completedAt ?? trip.createdAt))
+                                            .font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    Text(currentEstimate(trip).totalTonnes.map { String(format: "%.3f t", $0) } ?? "Bunch weight required")
+                                    Text(estimate.totalTonnes.map { String(format: "%.3f t", $0) } ?? "Bunch weight required")
                                         .font(.subheadline.weight(.bold))
                                         .foregroundStyle(VineyardTheme.leafGreen)
                                     Image(systemName: "chevron.right")
@@ -175,7 +177,9 @@ struct YieldEstimationView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 .padding(12)
+                                .frame(maxWidth: .infinity)
                                 .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier("yield.completed.\(trip.id.uuidString.lowercased())")

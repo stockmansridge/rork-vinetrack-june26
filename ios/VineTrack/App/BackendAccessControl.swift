@@ -48,6 +48,11 @@ final class BackendAccessControl {
     /// Field pricing (piece rate per vine on an unpriced job). Supervisors and
     /// above. Reviewing or changing an existing price stays on `canViewCosting`.
     var canEnterPricing: Bool { effectiveRole?.canEnterPricing ?? false }
+    /// Mirrors the existing shared bunch-weight RPC role contract, independent of settings access.
+    var canManageBunchWeights: Bool {
+        guard let role = effectiveRole else { return false }
+        return role == .owner || role == .manager || role == .supervisor
+    }
     /// Owner/manager — the client-side mirror of the `spray_jobs` UPDATE policy.
     var canManageSprayProgram: Bool { effectiveRole?.canManageSprayProgram ?? false }
     var canManageManualSprays: Bool { effectiveRole?.canManageManualSprays ?? false }

@@ -70,6 +70,20 @@ class YieldMasterWeightRepository internal constructor(context: Context) {
             if (session.retentionGuard.isAccountCurrent(account, session.userId)) weights else emptyMap()
         }
     }
+    suspend fun installConfirmedRows(vineyardId: String, paddocks: List<Paddock>, rows: List<YieldBunchWeightRow>, account: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess) {
+        check(session.retentionGuard.isAccountCurrent(account, session.userId)) { "Account changed" }
+        val scope = scope(vineyardId) ?: return
+        mutex.withLock {
+            val weights = paddocks.filter { it.vineyardId.equals(vineyardId, true) }.flatMap { block ->
+                CurrentYieldEstimate.plantings(block).map { planting ->
+                    CurrentYieldEstimate.key(block.id, planting.key) to YieldBunchWeightRow.resolved(rows, vineyardId, block.id, planting.key)
+                }
+            }.toMap()
+            check(session.retentionGuard.withAccount(account, { session.userId }) {
+                check(prefs.edit().putString(scope, json.encodeToString(serializer, weights)).commit())
+            }) { "Account changed" }
+        }
+    }
     companion object {
         @Volatile private var instance: YieldMasterWeightRepository? = null
         fun get(context: Context): YieldMasterWeightRepository = instance ?: synchronized(this) {

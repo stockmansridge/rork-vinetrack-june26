@@ -10,6 +10,17 @@ private extension String {
 
 struct WeatherDataSettingsView: View {
     @Environment(MigratedDataStore.self) private var store
+    var body: some View {
+        WeatherDataSettingsContent()
+            .id("\(store.selectedVineyardId?.uuidString ?? "none")/\(YieldMasterWeightCache.shared.scopeIdentity)")
+    }
+}
+
+private enum WeatherSettingsDetail { case sources, mait, davis, wunderground, willyWeather, openMeteo }
+
+private struct WeatherDataSettingsContent: View {
+    var detail: WeatherSettingsDetail? = nil
+    @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(SystemAdminService.self) private var systemAdmin
 
@@ -50,6 +61,11 @@ struct WeatherDataSettingsView: View {
     @State private var observationStatus: String?
     @State private var isSavingObservationProvider: Bool = false
     @State private var hasSharedObservationSelection: Bool = false
+    @State private var observationSelectionConfirmed = false
+    @State private var forecastSelectionConfirmed = false
+    @State private var wwConfigurationConfirmed = false
+    @State private var wuConfigurationConfirmed = false
+    @State private var davisConfigurationConfirmed = false
     /// Status text for the Owner/Manager-only "Backfill Davis rainfall"
     /// action. Posts `action: backfill_rainfall` to the davis-proxy edge
     /// function which iterates closed days and upserts `rainfall_daily`
@@ -97,7 +113,7 @@ struct WeatherDataSettingsView: View {
     private let integrationRepository: any VineyardWeatherIntegrationRepositoryProtocol
         = SupabaseVineyardWeatherIntegrationRepository()
 
-    private var canEdit: Bool { accessControl.canChangeSettings }
+    private var canEdit: Bool { accessControl.loadedVineyardId == vineyardId && accessControl.canChangeSettings }
     private var isOperator: Bool { !canEdit }
 
     enum DavisStatus: Equatable {
@@ -165,6 +181,27 @@ struct WeatherDataSettingsView: View {
 
     var body: some View {
         Form {
+            if detail == nil {
+                CurrentWeatherSettingsSection()
+                chosenSourcesSection
+                providersSection
+            } else if detail == .mait {
+                Section("MAIT iNTELLiWeb") {
+                    Text("Configured in the VineTrack Portal by a Vineyard Owner or Manager")
+                    Text(!observationSelectionConfirmed ? "Current-observation selection not confirmed" : config.localObservationProvider == .mait ? "Selected current-observation source" : "Not selected as the current-observation source")
+                    Text("Station setup, connection testing and controller mapping remain in the Portal. Refreshing does not change the selected provider.").font(.caption).foregroundStyle(.secondary)
+                }
+            } else if detail == .davis {
+                davisSection
+                davisHelpSection
+            } else if detail == .wunderground {
+                weatherUndergroundVineyardSection
+            } else if detail == .willyWeather {
+                willyWeatherSection
+            } else if detail == .openMeteo {
+                Section("Open-Meteo") { Text("Available forecast fallback. Automatic forecasts use WillyWeather when configured, otherwise Open-Meteo. This does not replace selected station observations.") }
+                if canEdit { openMeteoFallbackSection }
+            } else {
             if canEdit { wizardSection }
             headerSection
             if showMigratePrompt && canEdit { migrationPromptSection }
@@ -211,8 +248,9 @@ struct WeatherDataSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            }
         }
-        .navigationTitle("Weather Data & Forecasting")
+        .navigationTitle(detail == nil ? "Weather Data & Forecasting" : "Weather Configuration")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             loadConfig()
@@ -220,7 +258,7 @@ struct WeatherDataSettingsView: View {
                 Task { await loadWuIntegration(for: vid) }
                 Task {
                     await loadWwIntegration(for: vid)
-                    await autoMatchWillyWeatherIfNeeded(for: vid)
+                    if detail == .sources || detail == .willyWeather { await autoMatchWillyWeatherIfNeeded(for: vid) }
                 }
             }
         }
@@ -294,6 +332,37 @@ struct WeatherDataSettingsView: View {
                 }
             }
             .presentationDetents([.medium])
+        }
+    }
+
+    private var chosenSourcesSection: some View {
+        Section("Chosen Sources") {
+            LabeledContent("Current observations", value: !observationSelectionConfirmed ? "Selection not confirmed" : hasSharedObservationSelection ? config.localObservationProvider.displayName : "Legacy · Davis, then Weather Underground")
+            LabeledContent("Forecast", value: forecastSelectionConfirmed ? config.forecastProvider.displayName : "Selection not confirmed")
+            Text("Automatic forecasts use WillyWeather when configured, otherwise Open-Meteo. A station refresh failure never selects another observation source.").font(.caption).foregroundStyle(.secondary)
+            NavigationLink("Source selection & advanced settings") { WeatherDataSettingsContent(detail: .sources) }
+        }
+    }
+
+    private var providersSection: some View {
+        Section("Weather Providers") {
+            providerLink("MAIT iNTELLiWeb", symbol: "sensor.fill", status: !observationSelectionConfirmed ? "Selection not confirmed · Portal managed" : config.localObservationProvider == .mait ? "Selected · Portal managed" : "Portal managed · Not selected", detail: .mait)
+            providerLink("Davis WeatherLink", symbol: "antenna.radiowaves.left.and.right", status: !davisConfigurationConfirmed ? "Configuration not confirmed" : vineyardIntegration?.isActive == true && vineyardIntegration?.isFullyConfigured == true ? "Station configured" : "No active station selected", detail: .davis)
+            providerLink("Weather Underground", symbol: "cloud.sun.fill", status: !wuConfigurationConfirmed ? "Configuration not confirmed" : wuIntegration?.isActive == true && wuIntegration?.stationId?.isEmpty == false ? "Station configured" : "Not configured", detail: .wunderground)
+            providerLink("WillyWeather", symbol: "sun.max.fill", status: !wwConfigurationConfirmed ? "Configuration not confirmed" : wwIntegration?.isActive == true && wwIntegration?.stationId?.isEmpty == false ? "Location configured" : "Not configured", detail: .willyWeather)
+            providerLink("Open-Meteo", symbol: "globe", status: "Available · Forecast fallback", detail: .openMeteo)
+        }
+    }
+    private func providerLink(_ name: String, symbol: String, status: String, detail: WeatherSettingsDetail) -> some View {
+        NavigationLink { WeatherDataSettingsContent(detail: detail) } label: {
+            HStack(spacing: 12) {
+                SettingsIconTile(symbol: symbol, color: .teal)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(name).font(.subheadline.weight(.semibold))
+                    Text(status).font(.caption).foregroundStyle(.secondary)
+                    if detail == .mait { Text("Configured in the VineTrack Portal by a Vineyard Owner or Manager").font(.caption).foregroundStyle(.secondary) }
+                }
+            }.padding(.vertical, 4)
         }
     }
 
@@ -1972,18 +2041,23 @@ struct WeatherDataSettingsView: View {
     }
 
     private func loadWwIntegration(for vineyardId: UUID) async {
+        let origin = YieldMasterWeightCache.shared.scopeIdentity
         do {
             let integ = try await integrationRepository.fetch(
                 vineyardId: vineyardId, provider: "willyweather"
             )
+            guard self.vineyardId == vineyardId, origin == YieldMasterWeightCache.shared.scopeIdentity else { return }
             wwIntegration = integ
-            var c = WeatherProviderStore.shared.config(for: vineyardId)
-            // API key is global now — always treat as available.
+            wwConfigurationConfirmed = true
+            // Read the preference before copying config: even a failed await must
+            // preserve an observation selection received while it was suspended.
+            let backendProvider = try? await VineyardWillyWeatherProxyService.getProviderPreference(vineyardId: vineyardId)
+            guard self.vineyardId == vineyardId, origin == YieldMasterWeightCache.shared.scopeIdentity else { return }
+            var c = config
             c.willyWeatherHasApiKey = true
-            // Pull the shared forecast provider preference so iOS/Lovable stay aligned.
-            if let backendProvider = try? await VineyardWillyWeatherProxyService.getProviderPreference(vineyardId: vineyardId),
-               let mapped = mapBackendForecastProvider(backendProvider) {
+            if let backendProvider, let mapped = mapBackendForecastProvider(backendProvider) {
                 c.forecastProvider = mapped
+                forecastSelectionConfirmed = true
             }
             if let sid = integ?.stationId, !sid.isEmpty {
                 c.willyWeatherLocationId = sid
@@ -2001,12 +2075,15 @@ struct WeatherDataSettingsView: View {
     }
 
     private func loadWuIntegration(for vineyardId: UUID) async {
+        let origin = YieldMasterWeightCache.shared.scopeIdentity
         isLoadingWuIntegration = true
         defer { isLoadingWuIntegration = false }
         do {
             let integ = try await integrationRepository.fetch(
                 vineyardId: vineyardId, provider: "wunderground"
             )
+            guard self.vineyardId == vineyardId, origin == YieldMasterWeightCache.shared.scopeIdentity else { return }
+            wuConfigurationConfirmed = true
             wuIntegration = integ
             wuStationIdInput = integ?.stationId ?? ""
             wuStationNameInput = integ?.stationName ?? ""
@@ -2537,6 +2614,7 @@ struct WeatherDataSettingsView: View {
             do {
                 let selected = try await WeatherCurrentService().selectedProvider(vineyardId: vid)
                 guard vineyardId == vid, origin == (VineyardWriteAuthority.shared.accountBinding, VineyardWriteAuthority.shared.accountGeneration) else { return }
+                observationSelectionConfirmed = true
                 hasSharedObservationSelection = selected != nil
                 var updated = config
                 if let selected { updated.localObservationProvider = selected }
@@ -2550,6 +2628,7 @@ struct WeatherDataSettingsView: View {
     }
 
     private func loadVineyardIntegration(for vineyardId: UUID) async {
+        let origin = YieldMasterWeightCache.shared.scopeIdentity
         isLoadingVineyardIntegration = true
         defer { isLoadingVineyardIntegration = false }
         do {
@@ -2557,6 +2636,8 @@ struct WeatherDataSettingsView: View {
                 vineyardId: vineyardId,
                 provider: "davis_weatherlink"
             )
+            guard self.vineyardId == vineyardId, origin == YieldMasterWeightCache.shared.scopeIdentity else { return }
+            davisConfigurationConfirmed = true
             vineyardIntegration = integ
             vineyardIntegrationError = nil
             print("[DavisConfig] load vineyardId=\(vineyardId) provider=davis source=rpc configured=\(integ?.isFullyConfigured ?? false) hasKey=\(integ?.hasApiKey ?? false) hasSecret=\(integ?.hasApiSecret ?? false) stationId=\(integ?.stationId ?? "-") callerRole=\(integ?.callerRole ?? "-") lastTestStatus=\(integ?.lastTestStatus ?? "-")")
@@ -2566,7 +2647,7 @@ struct WeatherDataSettingsView: View {
             // them to the vineyard so other members/devices can fetch
             // via davis-proxy. We still show a confirmation message
             // afterwards so the owner/manager knows it happened.
-            if canEdit,
+            if canEdit, detail == .sources || detail == .davis,
                WeatherKeychain.hasCredentials,
                (integ?.hasApiSecret != true) {
                 await runMigrationToVineyard(silent: true)

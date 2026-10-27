@@ -88,6 +88,10 @@ import com.rork.vinetrack.ui.theme.LocalVineColors
 import com.rork.vinetrack.ui.theme.VineColors
 import kotlinx.coroutines.launch
 
+private enum class WeatherSettingsPage(val title: String) {
+    Sources("Chosen Sources"), MAIT("MAIT iNTELLiWeb"), Davis("Davis WeatherLink"), Underground("Weather Underground"), Willy("WillyWeather"), OpenMeteo("Open-Meteo")
+}
+
 /** Forecast provider preference stored on `vineyards.forecast_provider`. */
 private enum class ForecastProvider(
     val key: String,
@@ -125,7 +129,8 @@ fun WeatherDataScreen(
     val context = LocalContext.current
     val session = remember { SessionStore(context) }
     val epoch by session.retentionGuard.identityEpoch.collectAsStateWithLifecycle()
-    key(state.selectedVineyardId, session.userId, epoch) {
+    val locked by session.retentionGuard.state.collectAsStateWithLifecycle()
+    key(state.selectedVineyardId, session.userId, epoch, locked) {
         WeatherDataContent(state, modifier, onBack, onOpenTool)
     }
 }
@@ -162,6 +167,8 @@ private fun WeatherDataContent(
         if (lat != null && lon != null && (lat != 0.0 || lon != 0.0)) Pair(lat, lon) else null
     }
 
+    var detail by remember { mutableStateOf<WeatherSettingsPage?>(null) }
+    BackHandler(enabled = detail != null) { detail = null }
     var showWizard by remember { mutableStateOf(false) }
     if (showWizard) {
         BackHandler { showWizard = false }
@@ -175,6 +182,7 @@ private fun WeatherDataContent(
     }
 
     var forecastProvider by remember { mutableStateOf(ForecastProvider.Auto) }
+    var forecastSelectionConfirmed by remember { mutableStateOf(false) }
     var wwIntegration by remember { mutableStateOf<VineyardWeatherIntegration?>(null) }
     var wuIntegration by remember { mutableStateOf<VineyardWeatherIntegration?>(null) }
     var davisIntegration by remember { mutableStateOf<VineyardWeatherIntegration?>(null) }
@@ -182,25 +190,37 @@ private fun WeatherDataContent(
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var selectedObservation by remember(vineyardId, weatherSession.userId) { mutableStateOf<String?>(null) }
     var observationBusy by remember(vineyardId, weatherSession.userId) { mutableStateOf(false) }
+    val account = remember { weatherSession.accountAccess() }
+    fun isCurrent() = account != null && weatherSession.isAccountAccessCurrent(account) && weatherSession.selectedVineyardId == vineyardId
+    var observationSelectionConfirmed by remember { mutableStateOf(false) }
+    var configConfirmed by remember { mutableStateOf(emptySet<WeatherSettingsPage>()) }
 
     suspend fun reload() {
-        if (vineyardId == null) return
-        runCatching { wwRepo.getProviderPreference(vineyardId) }.getOrNull()?.let {
-            forecastProvider = ForecastProvider.from(it)
+        if (vineyardId == null || !isCurrent()) return
+        try {
+            val preference = wwRepo.getProviderPreference(vineyardId)
+            if (!isCurrent()) return
+            forecastProvider = ForecastProvider.from(preference)
+            forecastSelectionConfirmed = true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (_: Exception) { }
+        for ((page, provider) in listOf(WeatherSettingsPage.Willy to WeatherIntegrationProvider.WILLY_WEATHER, WeatherSettingsPage.Underground to WeatherIntegrationProvider.WUNDERGROUND, WeatherSettingsPage.Davis to WeatherIntegrationProvider.DAVIS)) {
+            try {
+                val integration = integrationRepo.fetch(vineyardId, provider)
+                if (!isCurrent()) return
+                when (page) {
+                    WeatherSettingsPage.Willy -> wwIntegration = integration
+                    WeatherSettingsPage.Underground -> wuIntegration = integration
+                    else -> davisIntegration = integration
+                }
+                configConfirmed = configConfirmed + page
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (_: Exception) { }
         }
-        wwIntegration = runCatching {
-            integrationRepo.fetch(vineyardId, WeatherIntegrationProvider.WILLY_WEATHER)
-        }.getOrNull()
-        wuIntegration = runCatching {
-            integrationRepo.fetch(vineyardId, WeatherIntegrationProvider.WUNDERGROUND)
-        }.getOrNull()
-        davisIntegration = runCatching {
-            integrationRepo.fetch(vineyardId, WeatherIntegrationProvider.DAVIS)
-        }.getOrNull()
-        val access = weatherSession.accountAccess()
-        runCatching { observationRepo.selected(vineyardId) }.onSuccess {
-            if (access != null && weatherSession.isAccountAccessCurrent(access) && weatherSession.selectedVineyardId == vineyardId) selectedObservation = it
-        }
+        try {
+            val selected = observationRepo.selected(vineyardId)
+            if (!isCurrent()) return
+            selectedObservation = selected
+            observationSelectionConfirmed = true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (_: Exception) { }
     }
 
     LaunchedEffect(vineyardId) {
@@ -210,13 +230,17 @@ private fun WeatherDataContent(
     }
 
     fun selectForecastProvider(p: ForecastProvider) {
-        if (!canEdit || vineyardId == null || p == forecastProvider) return
+        if (!canEdit || vineyardId == null || !isCurrent() || (forecastSelectionConfirmed && p == forecastProvider)) return
         val previous = forecastProvider
         forecastProvider = p
         scope.launch {
             try {
                 wwRepo.setProviderPreference(vineyardId, p.key)
-            } catch (e: Exception) {
+                if (!isCurrent()) return@launch
+                forecastSelectionConfirmed = true
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+              catch (e: Exception) {
+                if (!isCurrent()) return@launch
                 forecastProvider = previous
                 statusMessage = e.message ?: "Couldn't update forecast source."
             }
@@ -228,8 +252,8 @@ private fun WeatherDataContent(
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
-                title = { Text("Weather Data & Forecasting") },
-                navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
+                title = { Text(detail?.title ?: "Weather Data & Forecasting") },
+                navigationIcon = { if (detail != null) BackNavIcon { detail = null } else if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },
@@ -258,8 +282,62 @@ private fun WeatherDataContent(
                 }
             }
 
+            if (detail == null) {
+                CurrentWeatherSettingsSection(vineyardId, weatherSession, observationRepo)
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Chosen Sources", onLight = true)
+                    VineyardCard {
+                        Text("Current observations", fontWeight = FontWeight.SemiBold)
+                        Text(if (!observationSelectionConfirmed) "Selection not confirmed" else when (selectedObservation) {
+                            null -> "Legacy · Davis, then Weather Underground"
+                            "none" -> "None / Automatic"
+                            else -> CurrentObservationRepository.labelFor(selectedObservation!!)
+                        })
+                        Text(if (forecastSelectionConfirmed) "Forecast: ${forecastProvider.title}" else "Forecast: Selection not confirmed")
+                        Text("Automatic forecasts use WillyWeather when configured, otherwise Open-Meteo. Station refresh failures never select a different observation provider.", fontSize = 12.sp, color = vine.textSecondary)
+                        TextButton(onClick = { detail = WeatherSettingsPage.Sources }) { Text("Source selection & advanced settings") }
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SectionHeader("Weather Providers", onLight = true)
+                    VineyardCard {
+                        WeatherSettingsPage.entries.filter { it != WeatherSettingsPage.Sources }.forEachIndexed { index, provider ->
+                            if (index > 0) RowDividerWx(vine.cardBorder)
+                            val configured = when (provider) {
+                                WeatherSettingsPage.MAIT -> if (selectedObservation == CurrentObservationRepository.MAIT) "Selected · Portal managed" else "Portal managed · Not selected"
+                                WeatherSettingsPage.Davis -> if (davisIntegration?.isActive == true && !davisIntegration?.stationId.isNullOrBlank()) "Station configured" else "No active station selected"
+                                WeatherSettingsPage.Underground -> if (wuIntegration?.isActive == true && !wuIntegration?.stationId.isNullOrBlank()) "Station configured" else "Not configured"
+                                WeatherSettingsPage.Willy -> if (wwIntegration?.isActive == true) "Location configured" else "Not configured"
+                                else -> "Available · Forecast fallback"
+                            }
+                            Row(Modifier.fillMaxWidth().clickable { detail = provider }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(provider.title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                                    Text(if (loading) "Checking configuration…" else if (provider in listOf(WeatherSettingsPage.Davis, WeatherSettingsPage.Underground, WeatherSettingsPage.Willy) && provider !in configConfirmed) "Configuration not confirmed" else if (provider == WeatherSettingsPage.MAIT && !observationSelectionConfirmed) "Selection not confirmed · Portal managed" else configured, fontSize = 12.sp, color = vine.textSecondary)
+                                    if (provider == WeatherSettingsPage.MAIT) Text("Configured in the VineTrack Portal by a Vineyard Owner or Manager", fontSize = 12.sp, color = vine.textSecondary)
+                                }
+                                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = vine.textSecondary)
+                            }
+                        }
+                    }
+                }
+            }
+            if (detail == WeatherSettingsPage.MAIT) {
+                VineyardCard {
+                    Text("Configured in the VineTrack Portal by a Vineyard Owner or Manager")
+                    Text(if (selectedObservation == CurrentObservationRepository.MAIT) "Selected current-observation source" else "Not selected as the current-observation source")
+                    Text("Station setup, connection testing and controller mapping remain in the Portal. Refreshing does not change the selected provider.", fontSize = 12.sp, color = vine.textSecondary)
+                }
+            }
+            if (detail == WeatherSettingsPage.OpenMeteo) {
+                VineyardCard {
+                    Text("Available forecast fallback")
+                    Text("Automatic forecasts use WillyWeather when configured, otherwise Open-Meteo. This does not replace selected station observations.")
+                    TextButton(onClick = { detail = WeatherSettingsPage.Sources }) { Text("Source selection & rainfall history") }
+                }
+            }
             // Guided setup wizard entry (owner/manager only)
-            if (canEdit) {
+            if (canEdit && detail == WeatherSettingsPage.Sources) {
                 VineyardCard {
                     Row(
                         modifier = Modifier.fillMaxWidth().clickable { showWizard = true },
@@ -281,14 +359,14 @@ private fun WeatherDataContent(
             }
 
             // Forecast source picker
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (detail == WeatherSettingsPage.Sources) Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SectionHeader("Forecast Source", onLight = true)
                 VineyardCard {
                     ForecastProvider.entries.forEachIndexed { index, p ->
                         if (index > 0) RowDividerWx(vine.cardBorder)
                         ForecastProviderRow(
                             provider = p,
-                            selected = forecastProvider == p,
+                            selected = forecastSelectionConfirmed && forecastProvider == p,
                             enabled = canEdit,
                             onClick = { selectForecastProvider(p) },
                         )
@@ -303,7 +381,7 @@ private fun WeatherDataContent(
             }
 
             // WillyWeather location (shown for Auto + WillyWeather)
-            if (forecastProvider != ForecastProvider.OpenMeteo) {
+            if (detail == WeatherSettingsPage.Willy || (detail == WeatherSettingsPage.Sources && forecastProvider != ForecastProvider.OpenMeteo)) {
                 WillyWeatherLocationSection(
                     integration = wwIntegration,
                     canEdit = canEdit,
@@ -338,7 +416,7 @@ private fun WeatherDataContent(
             }
 
             // Shared observation selection is separate from the forecast picker.
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (detail == WeatherSettingsPage.Sources) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SectionHeader("Current Observation Source", onLight = true)
                 if (selectedObservation == CurrentObservationRepository.MAIT) {
                     Text(CurrentObservationRepository.MAIT_LABEL, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
@@ -393,7 +471,7 @@ private fun WeatherDataContent(
             }
 
             // Local observation source (Weather Underground PWS + Davis status)
-            LocalObservationSection(
+            if (detail == WeatherSettingsPage.Underground || detail == WeatherSettingsPage.Sources) LocalObservationSection(
                 wuIntegration = wuIntegration,
                 davisIntegration = davisIntegration,
                 canEdit = canEdit,
@@ -444,7 +522,7 @@ private fun WeatherDataContent(
             )
 
             // Weather-driven tools
-            if (onOpenTool != null) {
+            if (onOpenTool != null && detail == WeatherSettingsPage.Sources) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     SectionHeader("Weather-Driven Tools", onLight = true)
                     VineyardCard {
@@ -468,7 +546,7 @@ private fun WeatherDataContent(
             }
 
             // Davis WeatherLink — full credential setup, test, station picker
-            DavisWeatherLinkSection(
+            if (detail == WeatherSettingsPage.Davis || detail == WeatherSettingsPage.Sources) DavisWeatherLinkSection(
                 integration = davisIntegration,
                 canEdit = canEdit,
                 vineyardId = vineyardId,
@@ -478,7 +556,7 @@ private fun WeatherDataContent(
             )
 
             // Build rainfall history — Davis → WU → Open-Meteo gap fill
-            if (canEdit) {
+            if (canEdit && detail == WeatherSettingsPage.Sources) {
                 BuildRainfallHistorySection(
                     vineyardId = vineyardId,
                     repo = backfillRepo,

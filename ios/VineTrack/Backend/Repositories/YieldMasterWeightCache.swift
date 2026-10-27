@@ -34,6 +34,20 @@ import PostgREST
         if let snapshot = snapshots[scope] { return snapshot }
         return defaults.data(forKey: scope).flatMap { try? JSONDecoder().decode([String: YieldMasterWeight].self, from: $0) } ?? [:]
     }
+    /// A complete, authenticated table read is also confirmation of absence.
+    func installConfirmedRows(_ rows: [YieldBunchWeightRow], vineyardId: UUID, paddocks: [Paddock]) {
+        guard let scope = scope(vineyardId) else { return }
+        requests[scope] = UUID() // an older resolver response must not replace a newer management read
+        var snapshot: [String: YieldMasterWeight] = [:]
+        for paddock in paddocks where paddock.vineyardId == vineyardId {
+            for planting in CurrentYieldEstimate.plantings(paddock) {
+                snapshot[CurrentYieldEstimate.key(blockId: paddock.id, varietyKey: planting.key)] = YieldBunchWeightRow.resolved(rows, vineyard: vineyardId, block: paddock.id, key: planting.key)
+            }
+        }
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        defaults.set(data, forKey: scope)
+        snapshots[scope] = snapshot
+    }
     private nonisolated struct Args: Encodable, Sendable {
         let p_vineyard_id: UUID
         let p_paddock_id: UUID
