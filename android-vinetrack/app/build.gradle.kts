@@ -57,9 +57,9 @@ android {
         minSdk = 24
         targetSdk = 36
         testInstrumentationRunner = "com.rork.vinetrack.data.auth.CleanExitTestRunner"
-        // v3.1.8 release — keep versionCode monotonically increasing.
+        // v3.1.9 — keep versionCode monotonically increasing for future releases.
         versionCode = 12
-        versionName = "3.1.8"
+        versionName = "3.1.9"
 
         // No runtime/property override: live storage cutover needs separate approval.
         buildConfigField("boolean", "FIELD_STORAGE_ISOLATION_ACTIVATED", "false")
