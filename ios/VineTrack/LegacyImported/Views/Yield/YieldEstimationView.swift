@@ -8,9 +8,6 @@ struct YieldEstimationView: View {
     @State private var viewModel = YieldEstimationViewModel()
     @State private var mapPosition: MapCameraPosition = .automatic
     @State private var showBunchCountSheet: Bool = false
-    @State private var showBunchWeightEditor: Bool = false
-    @State private var bunchWeightText: String = "150"
-    @State private var editingBunchWeightPaddockId: UUID?
     @State private var showFullScreenMap: Bool = false
     @State private var fullScreenSelectedSite: SampleSite?
     @State private var showCompleteConfirmation: Bool = false
@@ -23,6 +20,7 @@ struct YieldEstimationView: View {
     @State private var tripStarted: Bool = false
     @State private var saveFailed = false
     private let samplingSettingsRepo = SupabaseYieldSamplingSettingsRepository()
+    var refreshSharedDefaults = true
 
     private var paddocks: [Paddock] {
         store.orderedPaddocks.filter { $0.polygonPoints.count >= 3 }
@@ -62,7 +60,8 @@ struct YieldEstimationView: View {
                 introContent
             }
         }
-        .task { await syncSamplingDefault() }
+        .task { if refreshSharedDefaults { await syncSamplingDefault() } }
+        .modifier(YieldMasterRefresh(enabled: refreshSharedDefaults))
         .alert("Trip not saved", isPresented: $saveFailed) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -124,6 +123,9 @@ struct YieldEstimationView: View {
                         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("yield.resume")
+                    Text("Draft")
+                    CurrentYieldEstimateSummary(estimate: currentEstimate(draft), detailed: false)
                 }
 
                 Button {
@@ -159,12 +161,13 @@ struct YieldEstimationView: View {
                                         Text(fmt.formatDate(trip.completedAt ?? trip.createdAt))
                                             .font(.subheadline.weight(.semibold))
                                             .foregroundStyle(.primary)
-                                        Text("\(trip.selectedPaddockIds.count) block\(trip.selectedPaddockIds.count == 1 ? "" : "s") · \(trip.sampleSites.filter(\.isRecorded).count) sites")
+                                        Text("Completed · \(trip.sampleSites.filter(\.isRecorded).count) sites")
+                                        CurrentYieldEstimateSummary(estimate: currentEstimate(trip), detailed: false, current: isCurrent(trip))
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
                                     }
                                     Spacer()
-                                    Text(String(format: "%.1f t", completedTripTonnes(trip)))
+                                    Text(currentEstimate(trip).totalTonnes.map { String(format: "%.3f t", $0) } ?? "Bunch weight required")
                                         .font(.subheadline.weight(.bold))
                                         .foregroundStyle(VineyardTheme.leafGreen)
                                     Image(systemName: "chevron.right")
@@ -175,6 +178,7 @@ struct YieldEstimationView: View {
                                 .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 12))
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("yield.completed.\(trip.id.uuidString.lowercased())")
                         }
                     }
                 }
@@ -186,23 +190,27 @@ struct YieldEstimationView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    /// Display tonnes for a completed trip in history (respects its damage flag).
-    private func completedTripTonnes(_ trip: YieldEstimationSession) -> Double {
-        paddocks
-            .filter { p in trip.selectedPaddockIds.contains(p.id) }
-            .compactMap { paddock -> Double? in
-                guard let base = YieldVintageReport.baseEstimate(session: trip, paddock: paddock) else { return nil }
-                let tripVintage = YieldVintageReport.sessionVintage(
-                    trip,
-                    seasonStartMonth: store.settings.seasonStartMonth,
-                    seasonStartDay: store.settings.seasonStartDay
-                )
-                let remaining = trip.applyDamage
-                    ? store.remainingYieldMultiplier(for: paddock.id, vintage: tripVintage)
-                    : 1.0
-                return base.tonnes * remaining
-            }
-            .reduce(0, +)
+    private func currentEstimate(_ trip: YieldEstimationSession) -> CurrentYieldEstimate.Trip {
+        let vintage = YieldVintageReport.sessionVintage(trip, seasonStartMonth: store.settings.seasonStartMonth, seasonStartDay: store.settings.seasonStartDay)
+        return CurrentYieldEstimate.trip(session: trip, paddocks: store.paddocks,
+            weights: YieldMasterWeightCache.shared.weights(vineyardId: trip.vineyardId),
+            remaining: { store.remainingYieldMultiplier(for: $0, vintage: vintage) })
+    }
+
+    private func isCurrent(_ trip: YieldEstimationSession) -> Bool {
+        trip.selectedPaddockIds.contains { block in
+            YieldVintageReport.latestCompletedSessionForBlock(sessions: store.yieldSessions.filter { $0.vineyardId == trip.vineyardId },
+                paddockId: block, vintage: VintageResolver.vintageYear(for: Date(), seasonStartMonth: store.settings.seasonStartMonth, seasonStartDay: store.settings.seasonStartDay),
+                seasonStartMonth: store.settings.seasonStartMonth, seasonStartDay: store.settings.seasonStartDay)?.id == trip.id
+        }
+    }
+
+    private var observation: YieldEstimationSession {
+        YieldEstimationSession(id: viewModel.sessionId ?? store.selectedVineyardId ?? UUID(),
+            vineyardId: store.selectedVineyardId ?? UUID(), createdAt: viewModel.sessionCreatedAt ?? Date(),
+            selectedPaddockIds: Array(viewModel.selectedPaddockIds), sampleSites: viewModel.sampleSites,
+            blockBunchWeightsKg: viewModel.blockBunchWeightsKg, isCompleted: viewModel.isCompleted,
+            completedAt: viewModel.completedAt, applyDamage: viewModel.applyDamage)
     }
 
     private func startTrip() {
@@ -213,7 +221,6 @@ struct YieldEstimationView: View {
 
     private func resumeTrip(_ session: YieldEstimationSession) {
         viewModel.loadSession(session)
-        applyDefaultBunchWeights()
         withAnimation(.smooth(duration: 0.25)) { tripStarted = true }
         fitMapToSites()
     }
@@ -248,6 +255,7 @@ struct YieldEstimationView: View {
                 Button { tripStarted = false } label: {
                     Label("Yield Estimate Trips", systemImage: "chevron.left")
                 }
+                .accessibilityIdentifier("yield.backToTrips")
             }
             if showsTripMenu {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -280,9 +288,6 @@ struct YieldEstimationView: View {
                     saveSession()
                 }
             }
-        }
-        .sheet(isPresented: $showBunchWeightEditor) {
-            bunchWeightSheet
         }
         .sheet(isPresented: $showSamplesPerHaEditor) {
             samplesPerHaSheet
@@ -380,7 +385,7 @@ struct YieldEstimationView: View {
                 }
 
                 if viewModel.isCompleted {
-                    completedSummary
+                    CurrentYieldEstimateSummary(estimate: currentEstimate(observation), current: isCurrent(observation))
                     startNewTripButton
                 }
             }
@@ -753,8 +758,7 @@ struct YieldEstimationView: View {
                 Button {
                     withAnimation(.smooth(duration: 0.3)) {
                         viewModel.adoptRoute(route)
-                        applyDefaultBunchWeights()
-                        viewModel.generatePath(paddocks: paddocks)
+                                        viewModel.generatePath(paddocks: paddocks)
                     }
                     fitMapToSites()
                     saveSession()
@@ -771,8 +775,7 @@ struct YieldEstimationView: View {
             Button {
                 withAnimation(.smooth(duration: 0.3)) {
                     viewModel.generateSampleSites(paddocks: paddocks, samplesPerHectare: samplesPerHa)
-                    applyDefaultBunchWeights()
-                    viewModel.generatePath(paddocks: paddocks)
+                                viewModel.generatePath(paddocks: paddocks)
                 }
                 fitMapToSites()
                 saveSession()
@@ -824,8 +827,7 @@ struct YieldEstimationView: View {
         Button {
             withAnimation(.smooth(duration: 0.3)) {
                 viewModel.generateSampleSites(paddocks: paddocks, samplesPerHectare: samplesPerHa)
-                applyDefaultBunchWeights()
-                viewModel.generatePath(paddocks: paddocks)
+                        viewModel.generatePath(paddocks: paddocks)
             }
             fitMapToSites()
             saveSession()
@@ -856,48 +858,6 @@ struct YieldEstimationView: View {
         .tint(VineyardTheme.leafGreen)
     }
 
-    // MARK: - Bunch Weight (completion stage only)
-
-    /// Editable per-block bunch weight rows — shown at the Complete
-    /// Estimation stage, never on the pre-start route preview.
-    private var bunchWeightRows: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            let selectedPaddocksList = paddocks.filter { viewModel.selectedPaddockIds.contains($0.id) }
-
-            ForEach(selectedPaddocksList) { paddock in
-                let weight = viewModel.bunchWeightKg(for: paddock.id)
-                let color = colorFor(paddock)
-
-                Button {
-                    if !viewModel.isCompleted {
-                        editingBunchWeightPaddockId = paddock.id
-                        bunchWeightText = String(format: "%.0f", weight * 1000)
-                        showBunchWeightEditor = true
-                    }
-                } label: {
-                    HStack(spacing: 10) {
-                        Circle()
-                            .fill(color)
-                            .frame(width: 10, height: 10)
-                        Text(paddock.name)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Text(String(format: "%.0f g", weight * 1000))
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(color)
-                        Image(systemName: "pencil")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(10)
-                    .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-
     // MARK: - Completed Banner
 
     private var completedBanner: some View {
@@ -924,41 +884,6 @@ struct YieldEstimationView: View {
         .background(VineyardTheme.leafGreen.gradient, in: .rect(cornerRadius: 12))
     }
 
-    // MARK: - Completed summary (read-only history)
-
-    private var completedSummary: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            let baseEstimates = viewModel.calculateYieldEstimates(paddocks: paddocks)
-            ForEach(baseEstimates.filter { $0.samplesRecorded > 0 }, id: \.paddockId) { est in
-                let remaining = store.remainingYieldMultiplier(for: est.paddockId, vintage: tripVintage)
-                let display = viewModel.applyDamage ? est.estimatedYieldTonnes * remaining : est.estimatedYieldTonnes
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Text(est.paddockName)
-                            .font(.subheadline.weight(.semibold))
-                        Spacer()
-                        Text(String(format: "%.1f t", display))
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(VineyardTheme.leafGreen)
-                    }
-                    Text(YieldVintageReport.varietyLabel(paddocks.first { $0.id == est.paddockId }))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("\(est.samplesRecorded)/\(est.samplesTotal) samples · \(String(format: "%.1f", est.averageBunchesPerVine)) bunches/vine · \(String(format: "%.0f g", est.averageBunchWeightKg * 1000))/bunch")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    if viewModel.applyDamage, remaining < 1.0 {
-                        Text(String(format: "Base %.1f t → damage adjusted %.1f t", est.estimatedYieldTonnes, est.estimatedYieldTonnes * remaining))
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                }
-                .padding(10)
-                .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
-            }
-        }
-    }
-
     // MARK: - Complete Job Button (completion stage)
 
     private var completeJobButton: some View {
@@ -966,49 +891,11 @@ struct YieldEstimationView: View {
             Label("Complete Estimation", systemImage: "checkmark.seal.fill")
                 .font(.headline)
 
-            // Bunch weight belongs here — AFTER the field count, never before
-            // the trip starts.
-            Text("Confirm the average bunch weight for each block, then save the trip.")
+            Text("Current weights come from shared Master Bunch Weights. Missing weights do not prevent saving the recorded observation.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            bunchWeightRows
-
-            // Per-block summary from the recorded samples — the BASE estimate
-            // is always shown; damage only changes the displayed figure.
-            let baseEstimates = viewModel.calculateYieldEstimates(paddocks: paddocks)
-            ForEach(baseEstimates.filter { $0.samplesRecorded > 0 }, id: \.paddockId) { est in
-                let remaining = store.remainingYieldMultiplier(for: est.paddockId, vintage: tripVintage)
-                let display = viewModel.applyDamage ? est.estimatedYieldTonnes * remaining : est.estimatedYieldTonnes
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Text(est.paddockName)
-                            .font(.subheadline.weight(.semibold))
-                        Spacer()
-                        Text(String(format: "%.1f t", display))
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(VineyardTheme.leafGreen)
-                    }
-                    Text(YieldVintageReport.varietyLabel(paddocks.first { $0.id == est.paddockId }))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("\(est.samplesRecorded)/\(est.samplesTotal) samples · \(String(format: "%.1f", est.averageBunchesPerVine)) bunches/vine · \(String(format: "%.0f g", est.averageBunchWeightKg * 1000))/bunch")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    if est.areaHectares > 0 {
-                        Text(fmt.formatYieldPerArea(perHectare: display / est.areaHectares))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    if viewModel.applyDamage, remaining < 1.0 {
-                        Text(String(format: "Base %.1f t → damage adjusted %.1f t", est.estimatedYieldTonnes, est.estimatedYieldTonnes * remaining))
-                            .font(.caption2)
-                            .foregroundStyle(.orange)
-                    }
-                }
-                .padding(10)
-                .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
-            }
+            CurrentYieldEstimateSummary(estimate: currentEstimate(observation))
 
             // Damage adjustment is presentation-time — the base bunch-count
             // estimate is always preserved and recoverable.
@@ -1037,6 +924,7 @@ struct YieldEstimationView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.green)
+            .accessibilityIdentifier("yield.saveTrip")
             .confirmationDialog(
                 "Save Bunch Count Trip?",
                 isPresented: $showCompleteConfirmation,
@@ -1071,88 +959,6 @@ struct YieldEstimationView: View {
             if viewModel.totalSiteCount > 0 {
                 ProgressView(value: Double(viewModel.recordedSiteCount), total: Double(viewModel.totalSiteCount))
                     .tint(viewModel.recordedSiteCount == viewModel.totalSiteCount ? .green : .orange)
-            }
-        }
-    }
-
-    // MARK: - Bunch Weight Sheet
-
-    private var bunchWeightSheet: some View {
-        NavigationStack {
-            Form {
-                if let pid = editingBunchWeightPaddockId,
-                   let paddock = paddocks.first(where: { $0.id == pid }) {
-                    Section {
-                        HStack(spacing: 8) {
-                            Circle()
-                                .fill(colorFor(paddock))
-                                .frame(width: 10, height: 10)
-                            Text(paddock.name)
-                                .font(.subheadline.weight(.semibold))
-                        }
-                    } header: {
-                        Text("Block")
-                    }
-                }
-
-                Section {
-                    TextField("Weight in grams", text: $bunchWeightText)
-                        .keyboardType(.decimalPad)
-                } header: {
-                    Text("Bunch Weight (grams)")
-                } footer: {
-                    Text("Enter the average bunch weight in grams for this block.")
-                }
-
-                if !viewModel.previousBunchWeights.isEmpty {
-                    Section {
-                        ForEach(viewModel.previousBunchWeights.sorted(by: { $0.date > $1.date }).prefix(5)) { record in
-                            Button {
-                                bunchWeightText = String(format: "%.0f", record.weightKg * 1000)
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(fmt.formatDate(record.date))
-                                            .font(.subheadline)
-                                            .foregroundStyle(.primary)
-                                        Text(String(format: "%.0f g", record.weightKg * 1000))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "arrow.uturn.left")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    } header: {
-                        Text("Previous Records")
-                    }
-                }
-            }
-            .navigationTitle("Bunch Weight")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showBunchWeightEditor = false }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        if let grams = Double(bunchWeightText), grams > 0,
-                           let pid = editingBunchWeightPaddockId {
-                            let kg = grams / 1000.0
-                            viewModel.setBunchWeight(kg, for: pid)
-                            let record = BunchWeightRecord(date: Date(), weightKg: kg)
-                            viewModel.previousBunchWeights.append(record)
-                            syncBunchWeightToSettings(paddockId: pid, grams: grams)
-                            saveSession()
-                        }
-                        showBunchWeightEditor = false
-                    }
-                    .fontWeight(.semibold)
-                    .disabled(Double(bunchWeightText) == nil || (Double(bunchWeightText) ?? 0) <= 0)
-                }
             }
         }
     }
@@ -1233,22 +1039,6 @@ struct YieldEstimationView: View {
         let accepted = store.saveYieldSession(session)
         saveFailed = !accepted
         return accepted
-    }
-
-    private func applyDefaultBunchWeights() {
-        let defaults = store.settings.defaultBlockBunchWeightsGrams
-        for paddockId in viewModel.selectedPaddockIds {
-            if viewModel.blockBunchWeightsKg[paddockId] == nil,
-               let grams = defaults[paddockId], grams > 0 {
-                viewModel.setBunchWeight(grams / 1000.0, for: paddockId)
-            }
-        }
-    }
-
-    private func syncBunchWeightToSettings(paddockId: UUID, grams: Double) {
-        var s = store.settings
-        s.defaultBlockBunchWeightsGrams[paddockId] = grams
-        store.updateSettings(s)
     }
 
     // MARK: - Map Helpers

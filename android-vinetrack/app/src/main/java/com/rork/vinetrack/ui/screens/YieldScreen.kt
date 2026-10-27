@@ -93,6 +93,7 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.data.BunchCountTripLogic
 import com.rork.vinetrack.data.SugarMeasurementUnit
 import com.rork.vinetrack.data.VintageResolver
+import com.rork.vinetrack.data.remainingYieldMultiplierForVintage
 import com.rork.vinetrack.data.YieldVintageReport
 import com.rork.vinetrack.data.model.TeamRole
 import com.rork.vinetrack.data.YieldDeterminationPrefsStore
@@ -1155,6 +1156,17 @@ private fun YieldListView(
         YieldVintageReport.actualRows(selectedVintage, state.paddocks, state.yieldRecords, state.pickingRecords)
     }
     val isCurrentVintage = selectedVintage == currentVintage
+    var masterRefreshToken by remember { mutableIntStateOf(0) }
+    val currentWeights = rememberYieldMasterWeights(state, masterRefreshToken)
+    val currentBlocks = state.paddocks.mapNotNull { paddock ->
+        val trip = YieldVintageReport.latestCompletedSessionForBlock(
+            state.yieldSessions.filter { it.vineyardId == state.selectedVineyardId }, paddock.id,
+            selectedVintage, state.seasonStartMonth, state.seasonStartDay) ?: return@mapNotNull null
+        com.rork.vinetrack.data.CurrentYieldEstimate.block(trip, paddock, currentWeights,
+            state.damageRecords.remainingYieldMultiplierForVintage(paddock.id, state.paddocks, selectedVintage, state.seasonStartMonth, state.seasonStartDay))
+    }
+    val currentTotal = if (currentBlocks.isEmpty() || currentBlocks.any { it.displayTonnes == null }) null else currentBlocks.sumOf { it.displayTonnes ?: 0.0 }
+    val currentReport = com.rork.vinetrack.data.CurrentYieldEstimate.Trip(currentBlocks, currentBlocks.sumOf { it.sampledAreaHa }, currentTotal)
 
     val totalActual = records.sumOf { it.totalActualYieldTonnes ?: 0.0 }
     val totalEstimated = records.sumOf { it.totalYieldTonnes }
@@ -1255,8 +1267,9 @@ private fun YieldListView(
                     if (isCurrentVintage) {
                         item(key = "vintage-est-hdr") {
                             SectionHeader("Estimated Yield · Vintage $selectedVintage", onLight = true)
+                            TextButton(onClick = { masterRefreshToken++ }) { Text("Refresh shared bunch weights") }
                         }
-                        if (estimateRows.isEmpty()) {
+                        if (currentBlocks.isEmpty()) {
                             item(key = "vintage-est-empty") {
                                 VineyardCard {
                                     Text(
@@ -1266,15 +1279,9 @@ private fun YieldListView(
                                 }
                             }
                         } else {
-                            items(estimateRows.size, key = { "est-${estimateRows[it].paddockId}" }) { idx ->
-                                VintageEstimateCard(estimateRows[idx], state.regionFormatter)
-                            }
-                            item(key = "vintage-est-total") {
-                                Text(
-                                    "Total estimated: ${formatTonnes(estimateRows.sumOf { it.displayTonnes })} t · latest completed trip per block" +
-                                        if (estimateRows.any { it.applyDamage && it.remainingYieldMultiplier < 1.0 }) " · damage adjusted" else "",
-                                    color = vine.textSecondary, fontSize = 11.sp,
-                                )
+                            item(key = "vintage-est-current") {
+                                CurrentYieldEstimateSummary(currentReport, current = true)
+                                Text("Latest completed observation per block; current shared weights and vines.", color = vine.textSecondary, fontSize = 11.sp)
                             }
                         }
                         // Picking already underway this vintage — shown alongside,
@@ -1326,8 +1333,8 @@ private fun YieldListView(
                         VineyardCard {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 YieldStat("Actual", formatTonnes(totalActual), Icons.Filled.Scale, VineColors.Info, Modifier.weight(1f))
-                                YieldStat("Estimated", formatTonnes(totalEstimated), Icons.Filled.Agriculture, VineColors.LeafGreen, Modifier.weight(1f))
-                                YieldStat("Area", state.regionFormatter.formatAreaCompact(totalArea), Icons.Filled.SquareFoot, VineColors.Orange, Modifier.weight(1f))
+                                YieldStat("Archived est.", formatTonnes(totalEstimated), Icons.Filled.Agriculture, VineColors.LeafGreen, Modifier.weight(1f))
+                                YieldStat("Archived area", state.regionFormatter.formatAreaCompact(totalArea), Icons.Filled.SquareFoot, VineColors.Orange, Modifier.weight(1f))
                             }
                         }
                     }

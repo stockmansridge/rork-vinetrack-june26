@@ -67,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -106,6 +107,9 @@ import java.time.Instant
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
+
+/** Allows native tests to exclude an emulator map renderer without replacing workflow controls. */
+internal val LocalYieldMapPreview = androidx.compose.runtime.staticCompositionLocalOf<(@Composable () -> Unit)?> { null }
 
 /**
  * Bunch Count Trip workflow — the field data-collection tool behind the
@@ -335,7 +339,7 @@ private fun BunchCountTripHome(
                 }
             } else {
                 if (draft != null) {
-                    VineyardCard(modifier = Modifier.clickable { onResume(draft) }) {
+                    VineyardCard(modifier = Modifier.testTag("yield.resume").clickable { onResume(draft) }) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = VineColors.Info, modifier = Modifier.size(22.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -352,6 +356,10 @@ private fun BunchCountTripHome(
                     }
                 }
 
+                if (draft != null) {
+                    Text("Draft", color = vine.textSecondary)
+                    CurrentTripEstimateSummary(state, draft, detailed = false)
+                }
                 Button(
                     onClick = onStart,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
@@ -372,39 +380,21 @@ private fun BunchCountTripHome(
                     val tripVintage = YieldVintageReport.sessionVintage(
                         trip, state.seasonStartMonth, state.seasonStartDay,
                     )
-                    val estimates = remember(trip, state.paddocks, state.damageRecords, tripVintage) {
-                        YieldSampleGenerator.calculateYieldEstimates(trip, state.paddocks) { paddockId ->
-                            if (trip.applyDamage) {
-                                state.damageRecords.remainingYieldMultiplierForVintage(
-                                    paddockId = paddockId,
-                                    blocks = state.paddocks,
-                                    vintage = tripVintage,
-                                    seasonStartMonth = state.seasonStartMonth,
-                                    seasonStartDay = state.seasonStartDay,
-                                )
-                            } else {
-                                1.0
-                            }
-                        }
-                    }
-                    val tonnes = estimates.sumOf { it.estimatedYieldTonnes }
+                    val currentEstimate = currentYieldTrip(state, trip)
                     val vintage = tripVintage
-                    VineyardCard(modifier = Modifier.clickable { onOpenTrip(trip) }) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    VineyardCard(modifier = Modifier.testTag("yield.completed.${trip.id.lowercase()}").clickable { onOpenTrip(trip) }) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Text(
                                     (trip.completedAt ?: trip.createdAt).take(10),
                                     color = vine.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
                                 )
                                 Text(
-                                    "Vintage $vintage · ${trip.selectedPaddockIds.size} block${if (trip.selectedPaddockIds.size == 1) "" else "s"} · ${trip.recordedSiteCount} sites",
+                                    "Completed · Vintage $vintage · ${trip.recordedSiteCount} sites",
                                     color = vine.textSecondary, fontSize = 12.sp,
                                 )
                             }
-                            Text(
-                                "${formatTonnes(tonnes)} t",
-                                color = VineColors.LeafGreen, fontWeight = FontWeight.Bold, fontSize = 15.sp,
-                            )
+                            CurrentYieldEstimateSummary(currentEstimate, detailed = false, current = isCurrentYieldTrip(state, trip))
                         }
                     }
                 }
@@ -430,8 +420,6 @@ private fun TripSetupScreen(
     onBack: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val context = LocalContext.current
-    val bunchWeightStore = remember { com.rork.vinetrack.data.BunchWeightDefaultsStore(context) }
     val blocks = remember(state.paddocks) { state.paddocks.filter { it.hasGeometry } }
     // Block areas are stored in canonical hectares; display follows the
     // vineyard's Region & Units.
@@ -455,15 +443,8 @@ private fun TripSetupScreen(
         BunchCountTripLogic.reusableRoute(state.yieldSessions, session.selectedPaddockIds, session.id)
     }
 
-    fun defaultWeights(base: Map<String, Double>): Map<String, Double> {
-        val weights = base.toMutableMap()
-        selectedBlocks.forEach { b ->
-            if (weights.keys.none { it.equals(b.id, ignoreCase = true) }) {
-                weights[b.id] = bunchWeightStore.weightGrams(b.id) / 1000.0
-            }
-        }
-        return weights
-    }
+    // Historical payload weights are preserved, never seeded from device defaults.
+    fun defaultWeights(base: Map<String, Double>): Map<String, Double> = base
 
     fun generateNewRoute() {
         val sites = YieldSampleGenerator.generateSampleSites(
@@ -816,35 +797,10 @@ private fun TripCompletionScreen(
     onBack: () -> Unit,
 ) {
     val vine = LocalVineColors.current
-    val context = LocalContext.current
-    val bunchWeightStore = remember { com.rork.vinetrack.data.BunchWeightDefaultsStore(context) }
     val blocks = remember(state.paddocks) { state.paddocks.filter { it.hasGeometry } }
-    var editingWeightFor by remember { mutableStateOf<Paddock?>(null) }
     var showSaveConfirm by remember { mutableStateOf(false) }
 
     val selectedBlocks = blocks.filter { session.isPaddockSelected(it.id) }
-    // Base (no damage) and current damage factor per block — the base is
-    // always shown so applying damage never hides the field observation.
-    val baseEstimates = remember(session, blocks) {
-        YieldSampleGenerator.calculateYieldEstimates(session, blocks) { 1.0 }
-    }
-    val fmt = state.regionFormatter
-    // Damage is scoped to the trip's own vintage and weighted by each block's
-    // mapped damaged area (sql/221 parity contract).
-    val sessionVintage = YieldVintageReport.sessionVintage(
-        session, state.seasonStartMonth, state.seasonStartDay,
-    )
-    val baseTotal = baseEstimates.sumOf { it.estimatedYieldTonnes }
-    val adjustedTotal = baseEstimates.sumOf {
-        it.estimatedYieldTonnes * state.damageRecords.remainingYieldMultiplierForVintage(
-            paddockId = it.paddockId,
-            blocks = blocks,
-            vintage = sessionVintage,
-            seasonStartMonth = state.seasonStartMonth,
-            seasonStartDay = state.seasonStartDay,
-        )
-    }
-    val displayTotal = if (session.applyDamage) adjustedTotal else baseTotal
 
     Scaffold(
         containerColor = vine.appBackground,
@@ -873,59 +829,8 @@ private fun TripCompletionScreen(
             }
 
             // Per-block summary + bunch weight confirmation.
-            Text("Confirm average bunch weight for each block", color = vine.textSecondary, fontSize = 13.sp)
-            selectedBlocks.forEach { block ->
-                val base = baseEstimates.firstOrNull { it.paddockId.equals(block.id, ignoreCase = true) } ?: return@forEach
-                val remaining = state.damageRecords.remainingYieldMultiplierForVintage(
-                    paddockId = block.id,
-                    blocks = blocks,
-                    vintage = sessionVintage,
-                    seasonStartMonth = state.seasonStartMonth,
-                    seasonStartDay = state.seasonStartDay,
-                )
-                val adjusted = base.estimatedYieldTonnes * remaining
-                val display = if (session.applyDamage) adjusted else base.estimatedYieldTonnes
-                VineyardCard {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(block.name, color = vine.textPrimary, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                                Text(YieldVintageReport.varietyLabel(block), color = vine.textSecondary, fontSize = 12.sp)
-                            }
-                            Text("${formatTonnes(display)} t", color = VineColors.LeafGreen, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        }
-                        Text(
-                            "${base.samplesRecorded}/${base.samplesTotal} samples · ${formatBunches(base.averageBunchesPerVine)} bunches/vine · ${base.totalVines} vines",
-                            color = vine.textSecondary, fontSize = 12.sp,
-                        )
-                        if (block.areaHectares > 0) {
-                            Text(
-                                fmt.formatYieldPerArea(display / block.areaHectares),
-                                color = vine.textSecondary, fontSize = 12.sp,
-                            )
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
-                                .clickable { editingWeightFor = block }.padding(vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(Icons.Filled.Scale, contentDescription = null, tint = VineColors.Orange, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Average bunch weight", color = vine.textPrimary, modifier = Modifier.weight(1f), fontSize = 13.sp)
-                            Text(
-                                "${formatGrams(session.bunchWeightKg(block.id))} g",
-                                color = VineColors.Info, fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                        if (session.applyDamage && remaining < 1.0) {
-                            Text(
-                                "Base ${formatTonnes(base.estimatedYieldTonnes)} t → damage adjusted ${formatTonnes(adjusted)} t (${((1 - remaining) * 100).roundToInt()}% loss)",
-                                color = VineColors.Orange, fontSize = 12.sp,
-                            )
-                        }
-                    }
-                }
-            }
+            Text("Shared Master Bunch Weights · configure missing weights in the Portal", color = vine.textSecondary, fontSize = 13.sp)
+            CurrentTripEstimateSummary(state, session)
 
             // Step 12 — damage adjustment (presentation-time; base is preserved).
             VineyardCard {
@@ -944,17 +849,6 @@ private fun TripCompletionScreen(
                 }
             }
 
-            VineyardCard {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row {
-                        Text("Yield Estimate", color = vine.textPrimary, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                        Text("${formatTonnes(displayTotal)} t", color = VineColors.LeafGreen, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                    }
-                    if (session.applyDamage && adjustedTotal < baseTotal) {
-                        Text("Base estimate ${formatTonnes(baseTotal)} t before damage", color = vine.textSecondary, fontSize = 12.sp)
-                    }
-                }
-            }
 
             Button(
                 onClick = { showSaveConfirm = true },
@@ -967,22 +861,6 @@ private fun TripCompletionScreen(
                 Text("Save Bunch Count Trip", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         }
-    }
-
-    editingWeightFor?.let { block ->
-        BunchWeightDialog(
-            blockName = block.name,
-            currentKg = session.bunchWeightKg(block.id),
-            onDismiss = { editingWeightFor = null },
-            onSave = { kg ->
-                val weights = session.blockBunchWeightsKg.toMutableMap()
-                weights[block.id] = kg
-                onApply(session.copy(blockBunchWeightsKg = weights))
-                // Sync the edited weight back as the block's default (matches iOS).
-                bunchWeightStore.setWeightGrams(block.id, kg * 1000.0)
-                editingWeightFor = null
-            },
-        )
     }
 
     if (showSaveConfirm) {
@@ -1028,9 +906,6 @@ private fun CompletedTripScreen(
     val blocks = remember(state.paddocks) { state.paddocks.filter { it.hasGeometry } }
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
-    val baseEstimates = remember(session, blocks) {
-        YieldSampleGenerator.calculateYieldEstimates(session, blocks) { 1.0 }
-    }
     val vintage = YieldVintageReport.sessionVintage(session, state.seasonStartMonth, state.seasonStartDay)
 
     Scaffold(
@@ -1064,34 +939,7 @@ private fun CompletedTripScreen(
                 )
             }
 
-            baseEstimates.filter { it.samplesRecorded > 0 }.forEach { e ->
-                val remaining = state.damageRecords.remainingYieldMultiplierForVintage(
-                    paddockId = e.paddockId,
-                    blocks = blocks,
-                    vintage = vintage,
-                    seasonStartMonth = state.seasonStartMonth,
-                    seasonStartDay = state.seasonStartDay,
-                )
-                val display = if (session.applyDamage) e.estimatedYieldTonnes * remaining else e.estimatedYieldTonnes
-                VineyardCard {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row {
-                            Text(e.paddockName, color = vine.textPrimary, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                            Text("${formatTonnes(display)} t", color = VineColors.LeafGreen, fontWeight = FontWeight.Bold)
-                        }
-                        Text(
-                            "${e.samplesRecorded}/${e.samplesTotal} samples · ${formatBunches(e.averageBunchesPerVine)} bunches/vine · ${formatGrams(e.averageBunchWeightKg)} g/bunch",
-                            color = vine.textSecondary, fontSize = 12.sp,
-                        )
-                        if (session.applyDamage && remaining < 1.0) {
-                            Text(
-                                "Base ${formatTonnes(e.estimatedYieldTonnes)} t before damage adjustment",
-                                color = vine.textSecondary, fontSize = 12.sp,
-                            )
-                        }
-                    }
-                }
-            }
+            CurrentTripEstimateSummary(state, session)
 
             SamplePreviewMap(
                 blocks = blocks.filter { session.isPaddockSelected(it.id) },
@@ -1165,6 +1013,11 @@ private fun SamplePreviewMap(
     onSiteTap: (SampleSite) -> Unit,
     modifier: Modifier = Modifier.height(300.dp),
 ) {
+    val preview = LocalYieldMapPreview.current
+    if (preview != null) {
+        Box(modifier.fillMaxWidth()) { preview() }
+        return
+    }
     val camera = rememberCameraPositionState()
     val allPoints = remember(blocks, session.sampleSites) {
         blocks.flatMap { it.polygonPoints ?: emptyList() }.map { LatLng(it.latitude, it.longitude) } +

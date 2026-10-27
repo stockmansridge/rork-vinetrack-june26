@@ -1,0 +1,23 @@
+{
+  "vineyardId": "11111111-1111-4111-8111-111111111111",
+  "tripId": "99999999-9999-4999-8999-999999999999",
+  "blocks": [
+    {"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","name":"North Shiraz","vines":1000,"sideMetres":100,"counts":[18,22],"remaining":0.9,"plantings":[{"key":"shiraz","name":"Renamed Shiraz","share":100}]},
+    {"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","name":"River Merlot","vines":500,"sideMetres":100,"counts":[20],"remaining":0.8,"plantings":[{"key":"merlot","name":"Merlot","share":100}]},
+    {"id":"cccccccc-cccc-4ccc-8ccc-cccccccccccc","name":"Mixed Hill","vines":600,"sideMetres":100,"counts":[25],"remaining":0.75,"plantings":[{"key":"shiraz","name":"Shiraz","share":50},{"key":"merlot","name":"Merlot","share":50}]},
+    {"id":"dddddddd-dddd-4ddd-8ddd-dddddddddddd","name":"Planned Only","vines":9000,"sideMetres":1000,"counts":[],"remaining":1,"plantings":[{"key":"missing","name":"Not sampled","share":100}]}
+  ],
+  "resolutions": [
+    {"block":0,"key":"shiraz","grams":120,"source":"block_override"},
+    {"block":1,"key":"merlot","grams":200,"source":"variety_default"},
+    {"block":2,"key":"shiraz","grams":120,"source":"variety_default"},
+    {"block":2,"key":"merlot","grams":200,"source":"variety_default"}
+  ],
+  "expectedWeightsKg":[0.12,0.2,0.16],
+  "expectedBaseTonnes":[2.4,2,2.4],
+  "expectedAdjustedTonnes":[2.16,1.6,1.8],
+  "expectedTotalBase":6.8,
+  "expectedTotalAdjusted":5.56,
+  "expectedSampledAreaHa":3,
+  "expectedPerHa":1.8533333333333333
+}

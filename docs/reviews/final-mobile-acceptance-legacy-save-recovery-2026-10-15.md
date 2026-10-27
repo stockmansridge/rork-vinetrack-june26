@@ -1,5 +1,96 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Yield master authority and trip parity — 27 October 2026 — AUTOMATED SOURCE GATE PASS
+
+Latest scope was limited to Yield Estimates, Bunch Sampling and shared Master Bunch Weight reads. Accepted completion/outbox safeguards and historical payloads remain intact. No SQL/Portal/server mutation, customer-record access, release/upload, signing/version/build-number change or physical-device acceptance occurred. Read-only deployed schema/resolver metadata was inspected; that is not authenticated live resolver acceptance.
+
+### iOS implementation
+
+- Current calculations and list/detail/report presentation use exact canonical planting keys, authenticated server-confirmed weights and current authoritative vines. Resolver order is exact block/key override, vineyard/key master, then not configured. Name fallback is used only without a stored key. Historical trip weights are displayed separately and never fill missing current authority.
+- Every contributing mixed-variety weight is required. Exact recorded averages drive base tonnes; damage-adjusted tonnes remain separate and `applyDamage` chooses presentation without altering observations. Only blocks with recorded counts contribute physical area. Any unresolved sampled block withholds the whole-trip numeric tonnes and Per ha, while observations remain saveable.
+- Confirmed cache is scoped by account/vineyard/block/key, fences request UUID and account incarnation, retains last confirmed values on failed reads and replaces availability with confirmed absence. Malformed, mismatched-key, nonpositive/nonfinite or record-ID-free available responses are rejected.
+- Final source audit found active legacy calculations in the report overview, session list and archive preparation. These now use current authority; archiving is unavailable for unresolved totals. Past-vintage historical estimate/actual paths and codecs remain unchanged. Report detail explicitly shows Draft/Completed and Current Estimate when applicable. Settings is a read-only shared-master viewer, not a local override editor.
+- DEBUG-only launch fixture has dedicated local storage and no shared-default/master reads. Native tests exercise production trips list → resume → Back, completion returning/refreshing the list, completed read-only reopen and real app terminate/relaunch. One process-static fixture store prevents SwiftUI reconstruction from resetting/reseeding completed storage. No production-visible fixture controls were added.
+
+### Android implementation
+
+- Mirrored current engine, confirmed account/vineyard/block/key cache, mixed-variety requirements, exact averages, current vines, damage separation and sampled-area rules. Current trip/list/report summaries and read-only shared-master settings use this engine. Deliberate shared-weight refresh is exposed; historical record totals are labelled archived rather than current estimates.
+- Cache captures the original account before waiting on its mutex, sends account-scoped RPC requests and fences synchronous durable commits. Failed cache persistence never publishes newly confirmed values into memory. Account-incarnation and malformed-response tests exercise the production repository with intercepted HTTP only.
+- Two native Compose tests use the production workflow and AppViewModel save with isolated preferences/files and HTTP interception. They assert Back returns to trips, completion refreshes the list, recreated outbox retains the original completed trip ID/time/count, and the completed trip reopens without a save action. This is **not Android main-app process-death acceptance**.
+- Test composition excludes only the map-preview renderer after an observed emulator microG/Mapbox teardown exception. Normal composition retains the existing map and GPS behavior; map rendering/GPS acceptance is not claimed by these navigation tests. Production account-switch retention safety was preserved: the cache test now asserts direct replacement is denied, then checks another separately admitted auth store against the same shared cache disk.
+
+### Final executed validation — keep platforms and overlapping runs separate
+
+- **iOS: 121 passed in146s**, final managed selection successful after the final report status change. The selection requests the preceding99 plus15 current-master calculation cases,5 cache cases and2 native UI cases; the runner exposes an aggregate count, not independent per-test discovery or a skipped metric. Exact selectors: `VineTrackTests/CurrentYieldMasterParityTests`, `VineTrackTests/YieldMasterWeightCacheTests`, `VineTrackTests/YieldCompletionPersistenceTests`, `VineTrackTests/YieldVintageReportTests`, `VineTrackTests/YieldAuthoritativeVineCountTests`, `VineTrackTests/SeasonYieldDamageParityTests`, `VineTrackTests/PruningYieldSettingsTests`, `VineTrackTests/PruningYieldSettingsRevisionSyncTests`, `VineTrackUITests/YieldTripNavigationUITests`.
+- Separate final `runChecks(appPath: "ios")`: **PASS**, simulator build only. Two pre-existing unrelated direct-storage-URL warnings remain unchanged; no device/Release artifact verified.
+- **Android host:95 tests,0 failures,0 errors,0 skipped**, exit0,20.766s. Command: `python3 scripts/run-yield-completion-tests.py --output /tmp/vinetrack-yield-master-final-host`. Exact class selectors, each prefixed `*.`: `YieldCompletionPersistenceTest`, `YieldVintageReportTest`, `YieldAuthoritativeVineCountTest`, `CurrentYieldMasterParityTest`, `SeasonYieldDamageParityTest`, `PruningYieldFormulaParityTest`, `PruningYieldSettingsRevisionSyncTest`. Retains the preceding80 regressions plus15 current-master cases. Evidence: `/tmp/vinetrack-yield-master-final-host/{yield/result.json,finished.json}`.
+- **Android emulator:7 passed,0 failed,0 skipped in11s**. Exact selectors: `com.rork.vinetrack.data.YieldTripNavigationAndroidTest`, `com.rork.vinetrack.data.YieldMasterWeightCacheAndroidTest`. Five production cache tests and two production Compose workflow tests; not JVM tests or live-service acceptance.
+- Separate final Android **Debug-only assembly PASS**, exit0 in9.661s: `python3 scripts/run-yield-completion-tests.py --debug-build --output /tmp/vinetrack-yield-master-final-debug`, running `:app:assembleDebug`. Generic Android `runChecks` was not invoked because it assembles Release, outside the authorised Debug-only scope. No new Release build/upload was run.
+- All three shared fixtures are byte-identical: SHA-256 `1b6eda2b9e8efa6189501bd750c90ae0e28e08a44a20052f421e4e01b1d5b818`. Both index and working-tree whitespace checks pass.
+
+### Shared deterministic fixture — side-by-side validated expectations
+
+| Quantity | iOS | Android |
+|---|---:|---:|
+| North Shiraz weight; current vines; recorded average |120g;1,000;20|120g;1,000;20|
+| North Shiraz base / damage-adjusted tonnes |2.4 /2.16|2.4 /2.16|
+| River Merlot weight; current vines; recorded average |200g;500;20|200g;500;20|
+| River Merlot base / damage-adjusted tonnes |2.0 /1.6|2.0 /1.6|
+| Mixed Hill50% Shiraz +50% Merlot weight; vines; average |160g;600;25|160g;600;25|
+| Mixed Hill base / damage-adjusted tonnes |2.4 /1.8|2.4 /1.8|
+| Whole-trip base / damage-adjusted tonnes |6.8 /5.56|6.8 /5.56|
+| Sampled physical area |approximately3ha|approximately3ha|
+| Adjusted Per ha |approximately1.8533333333t/ha|approximately1.8533333333t/ha|
+| Planned Only9000 vines /100ha, no count |excluded from sampled area/total|excluded from sampled area/total|
+| Missing contributing Merlot master |mixed block +whole-trip totals withheld|mixed block +whole-trip totals withheld|
+
+These are fixture expectations asserted against each production engine, not measured customer yields. Weight/tonnes tolerance is1e-12; polygon-derived area/Per ha tolerance is1e-8. Historical150g weights and snapshot vine counts of1 deliberately conflict with current authority. Zero recorded counts are valid samples; no recorded samples yield no numeric trip estimate. Damage-off restores6.8t without modifying count evidence.
+
+### Intermediate failures retained, not superseded as if they never occurred
+
+- Initial iOS normal build lacked Supabase/PostgREST imports; corrected. Calculation-only selection then15 passed in135s. Cache closure actor annotations initially failed compilation with zero executed; corrected.
+- Expanded iOS selection initially120 passed/1 failed, followed by narrow1/1 navigation runs while map-edge scrolling, transition waits and fixture reset were diagnosed. Latest earlier failure was “Persisted completion must not reload as a draft”; fixed process-static fixture initialization. Narrow2 passed in219s, then expanded121 passed in91s; final report-status refinement was followed by the final121/146s and separate passing simulator build. These overlapping runs are not summed.
+- First Android instrumentation infrastructure failure executed0 passes/1 failure due to the emulator map teardown exception. After the test-only renderer seam,5 passed/2 failed: non-scrollable Complete action incorrectly used `performScrollTo`, and a direct account replacement hit retention protection. Direct click and isolated fixture directories improved the selection to6/1; inspecting SessionStore established direct account replacement is intentionally forbidden even with empty fixture files. Test corrected to assert that denial and use a separately admitted auth store; final7/0/0 passes. Production retention guard was not weakened.
+- Earlier Android host95/0/0/0 and initial Debug pass are historical; final host/Debug results above identify the final Android source.
+
+### Exact source/artifact identity and manifest
+
+Visible baseline remains `16c19e54eaa9c3ecc990a54923f986be539bf223` plus managed changes, not HEAD alone. SHA-256 of `git diff HEAD --binary -- ios android-vinetrack fixtures scripts/inspect-yield-weight-contract.py scripts/run-yield-completion-tests.py`: **`12a90e6da2ffb0b4c167dfa0148bac2372544796160efe2568712b869f9e689b`**. Final managed commit is not yet exposed; no manual commit/push. Final Debug APK `android-vinetrack/app/build/outputs/apk/debug/app-debug.apk` SHA-256 **`c108efe9622e6197b7fd8ce1a45d5d1856569a7d1c5223d55686ed2e14d9338f`**; no signed handset iOS artifact or distribution claim.
+
+Exact27-file implementation/test/fixture/tooling manifest relative to that baseline (plan/report and Rork-managed history/state excluded):
+
+- `ios/VineTrack/App/YieldTripValidationView.swift`
+- `ios/VineTrack/Backend/Repositories/YieldMasterWeightCache.swift`
+- `ios/VineTrack/LegacyImported/Models/CurrentYieldEstimate.swift`
+- `ios/VineTrack/LegacyImported/Views/Yield/CurrentYieldEstimateSummary.swift`
+- `ios/VineTrack/LegacyImported/Views/Yield/YieldEstimationView.swift`
+- `ios/VineTrack/LegacyImported/Views/Yield/YieldReportView.swift`
+- `ios/VineTrack/LegacyImported/Views/Yield/YieldReportsListView.swift`
+- `ios/VineTrack/LegacyImported/Views/Yield/YieldSettingsView.swift`
+- `ios/VineTrack/VineTrackApp.swift`
+- `ios/VineTrackTests/CurrentYieldMasterParityTests.swift`
+- `ios/VineTrackTests/YieldMasterWeightCacheTests.swift`
+- `ios/VineTrackTests/yield-master-parity.json`
+- `ios/VineTrackUITests/YieldTripNavigationUITests.swift`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/CurrentYieldEstimate.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/YieldMasterWeightRepository.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CurrentYieldEstimateSummary.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldEstimationScreen.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldSettingsScreen.kt`
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/CurrentYieldMasterParityTest.kt`
+- `android-vinetrack/app/src/test/resources/yield-master-parity.json`
+- `android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/YieldMasterWeightCacheAndroidTest.kt`
+- `android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/YieldTripNavigationAndroidTest.kt`
+- `android-vinetrack/yield-tests.init.gradle`
+- `fixtures/yield-master-parity.json`
+- `scripts/inspect-yield-weight-contract.py`
+- `scripts/run-yield-completion-tests.py`
+
+### Remaining acceptance boundaries
+
+Automated native calculation/cache/navigation/completion source gate is green; full operational acceptance and release clearance are not claimed. Still unexecuted: authenticated live master edits/removal/reconnect, concurrent actual server completion/replay receipts, Android main-app process death, physical GPS/map/navigation, configured account-switch UI and handset dark/large-text acceptance. iOS terminate/relaunch proves the isolated local completion fixture, not OS kill during a write or server acknowledgement. Historical compatibility150g getters/calculators remain only in inactive current code or explicitly past-vintage historical paths; no historical payload rewrite was made. Independent maintenance synthetic entitlement fixture remains stopped under its preceding scope; this Yield work does not unblock it.
+
 ## Bounded maintenance durable recovery — 27 October 2026 — GREEN SOURCE FREEZE; FIXTURE PREPARATION STOPPED
 
 This checkpoint supersedes the concrete maintenance implementation blockers listed in the older attachment checkpoint below, not its unexecuted operational acceptance. Scope remained maintenance foreground save/edit/delete, photo evidence and existing replay/receipt paths. Accepted Yield and earlier work were preserved. No authentication/customer-record read, synthetic signup, server mutation/deployment, trial-date or billing edit, rollout flag change, historical-entry/purchase UX enabling, store delivery, version/signing change or retained-device reset occurred.

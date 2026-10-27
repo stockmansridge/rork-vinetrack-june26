@@ -56,6 +56,21 @@ struct YieldReportsListView: View {
         )
     }
 
+    private var currentReport: CurrentYieldEstimate.Trip {
+        let weights = YieldMasterWeightCache.shared.weights(vineyardId: store.selectedVineyardId)
+        let blocks = store.paddocks.compactMap { paddock -> CurrentYieldEstimate.Block? in
+            guard let trip = YieldVintageReport.latestCompletedSessionForBlock(
+                sessions: store.yieldSessions.filter { $0.vineyardId == store.selectedVineyardId },
+                paddockId: paddock.id, vintage: currentVintage, seasonStartMonth: store.settings.seasonStartMonth,
+                seasonStartDay: store.settings.seasonStartDay) else { return nil }
+            return CurrentYieldEstimate.block(session: trip, paddock: paddock, weights: weights,
+                remaining: store.remainingYieldMultiplier(for: paddock.id, vintage: currentVintage))
+        }
+        let total: Double? = blocks.isEmpty || blocks.contains { $0.displayTonnes == nil }
+            ? nil : blocks.reduce(0) { $0 + ($1.displayTonnes ?? 0) }
+        return CurrentYieldEstimate.Trip(blocks: blocks, sampledAreaHa: blocks.reduce(0) { $0 + $1.sampledAreaHa }, totalTonnes: total)
+    }
+
     private var vintageActualRows: [YieldVintageReport.ActualRow] {
         YieldVintageReport.actualRows(
             vintage: reportVintage,
@@ -98,20 +113,12 @@ struct YieldReportsListView: View {
             if reportVintage == currentVintage {
                 Text("Estimated Yield · Vintage \(String(reportVintage))")
                     .font(.subheadline.weight(.semibold))
-                if vintageEstimateRows.isEmpty {
-                    Text("No completed Bunch Count Trip for this vintage yet. Complete a trip to see the estimated yield per block.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
+                if currentReport.blocks.isEmpty {
+                    Text("No completed Bunch Count Trip for this vintage yet.").font(.caption)
                 } else {
-                    ForEach(vintageEstimateRows) { row in
-                        estimateRowCard(row)
-                    }
-                    Text("Total estimated: \(String(format: "%.1f", vintageEstimateRows.reduce(0) { $0 + $1.displayTonnes })) t · latest completed trip per block")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    CurrentYieldEstimateSummary(estimate: currentReport, current: true)
+                    Text("Latest completed observation per block; current shared weights and vines.")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
                 // Picking already underway this vintage — shown alongside,
                 // never silently replacing the estimate.
@@ -224,88 +231,25 @@ struct YieldReportsListView: View {
         .background(Color(.secondarySystemGroupedBackground), in: .rect(cornerRadius: 10))
     }
 
+    /// Archiving is available only for a fully resolved current estimate. Never freeze a
+    /// partial total or substitute historical trip weights for missing shared masters.
     private var blockSummaries: [BlockSummary] {
-        var summaries: [BlockSummary] = []
-
-        for paddock in paddocks {
-            // Current Yield Estimate rule: the LATEST COMPLETED Bunch Count
-            // Trip for this block drives the estimate; an in-progress draft
-            // previews only while no completed trip exists.
+        guard currentReport.totalTonnes != nil else { return [] }
+        return currentReport.blocks.compactMap { block in
+            guard block.samplesRecorded > 0, let tonnes = block.displayTonnes else { return nil }
             let session = YieldVintageReport.latestCompletedSessionForBlock(
-                sessions: store.yieldSessions,
-                paddockId: paddock.id,
-                vintage: currentVintage,
+                sessions: store.yieldSessions.filter { $0.vineyardId == store.selectedVineyardId },
+                paddockId: block.paddockId, vintage: currentVintage,
                 seasonStartMonth: store.settings.seasonStartMonth,
-                seasonStartDay: store.settings.seasonStartDay
-            ) ?? BunchCountTripLogic.activeDraft(
-                sessions: store.yieldSessions,
-                vineyardId: store.selectedVineyardId
-            ).flatMap { draft in
-                draft.selectedPaddockIds.contains(paddock.id) ? draft : nil
-            }
-            guard let session else { continue }
-
-            let sites = session.sampleSites.filter { $0.paddockId == paddock.id }
-            let recorded = sites.filter { $0.isRecorded }
-
-            guard !recorded.isEmpty else {
-                summaries.append(BlockSummary(
-                    paddockId: paddock.id,
-                    paddockName: paddock.name,
-                    areaHa: paddock.areaHectares,
-                    yieldTonnes: 0,
-                    yieldPerHa: 0,
-                    samplesRecorded: 0,
-                    samplesTotal: sites.count,
-                    lastUpdated: session.createdAt
-                ))
-                continue
-            }
-
-            let avgBunches = recorded.reduce(0.0) { $0 + ($1.bunchCountEntry?.bunchesPerVine ?? 0) } / Double(recorded.count)
-            let avgBunchesRounded = (avgBunches * 100).rounded() / 100
-            let totalVines = session.vineCount(for: paddock)
-            let totalBunches = Double(totalVines) * avgBunchesRounded
-            // Damage adjustment respects the trip's applyDamage flag; the
-            // base bunch-count observation is never mutated. Damage is scoped
-            // to the trip's own vintage so an older season can't reduce it.
-            let sessionVintage = YieldVintageReport.sessionVintage(
-                session,
-                seasonStartMonth: store.settings.seasonStartMonth,
-                seasonStartDay: store.settings.seasonStartDay
-            )
-            let remainingYieldMultiplier = session.applyDamage
-                ? store.remainingYieldMultiplier(for: paddock.id, vintage: sessionVintage)
-                : 1.0
-            let yieldKg = totalBunches * session.bunchWeightKg(for: paddock.id) * remainingYieldMultiplier
-            let yieldTonnes = yieldKg / 1000.0
-
-            let latestDate = recorded
-                .compactMap { $0.bunchCountEntry?.recordedAt }
-                .max() ?? session.createdAt
-
-            summaries.append(BlockSummary(
-                paddockId: paddock.id,
-                paddockName: paddock.name,
-                areaHa: paddock.areaHectares,
-                yieldTonnes: yieldTonnes,
-                yieldPerHa: paddock.areaHectares > 0 ? yieldTonnes / paddock.areaHectares : 0,
-                samplesRecorded: recorded.count,
-                samplesTotal: sites.count,
-                lastUpdated: latestDate
-            ))
+                seasonStartDay: store.settings.seasonStartDay)
+            return BlockSummary(paddockId: block.paddockId, paddockName: block.name,
+                areaHa: block.sampledAreaHa, yieldTonnes: tonnes,
+                yieldPerHa: block.tonnesPerHa ?? 0, samplesRecorded: block.samplesRecorded,
+                samplesTotal: block.samplesTotal, lastUpdated: session?.createdAt ?? Date())
         }
-
-        return summaries
     }
 
-    private var totalYieldTonnes: Double {
-        blockSummaries.reduce(0) { $0 + $1.yieldTonnes }
-    }
-
-    private var totalArea: Double {
-        blockSummaries.reduce(0) { $0 + $1.areaHa }
-    }
+    private var totalArea: Double { currentReport.sampledAreaHa }
 
     private var filteredHistoricalRecords: [HistoricalYieldRecord] {
         var records = store.historicalYieldRecords
@@ -361,12 +305,13 @@ struct YieldReportsListView: View {
             .padding(.bottom, 32)
         }
         .background(Color(.systemGroupedBackground))
+        .modifier(YieldMasterRefresh())
         .navigationTitle("Yield Reports")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 HStack(spacing: 12) {
-                    if !blockSummaries.isEmpty {
+                    if reportVintage == currentVintage && !blockSummaries.isEmpty {
                         Button {
                             showArchiveSheet = true
                         } label: {
@@ -384,7 +329,9 @@ struct YieldReportsListView: View {
             }
         }
         .sheet(isPresented: $showArchiveSheet) {
-            ArchiveYieldSheet(blockSummaries: blockSummaries, totalYieldTonnes: totalYieldTonnes, totalArea: totalArea)
+            if let total = currentReport.totalTonnes, !blockSummaries.isEmpty {
+                ArchiveYieldSheet(blockSummaries: blockSummaries, totalYieldTonnes: total, totalArea: totalArea)
+            }
         }
         .sheet(isPresented: $showStartEstimateSheet) {
             NavigationStack {
@@ -417,19 +364,19 @@ struct YieldReportsListView: View {
                 )
                 overviewCard(
                     title: "Blocks Sampled",
-                    value: "\(blockSummaries.count)",
+                    value: "\(currentReport.blocks.filter { $0.samplesRecorded > 0 }.count)",
                     icon: "map.fill",
                     color: .purple
                 )
                 overviewCard(
                     title: "Est. Tonnes",
-                    value: String(format: "%.2f t", totalYieldTonnes),
+                    value: currentReport.totalTonnes.map { String(format: "%.2f t", $0) } ?? "Bunch weight required",
                     icon: "scalemass.fill",
                     color: .orange
                 )
                 overviewCard(
                     title: "Avg Yield/\(fmt.areaUnitAbbreviation)",
-                    value: totalArea > 0 ? fmt.formatYieldPerArea(perHectare: totalYieldTonnes / totalArea) : "—",
+                    value: currentReport.tonnesPerHa.map { fmt.formatYieldPerArea(perHectare: $0) } ?? "—",
                     icon: "square.dashed",
                     color: .teal
                 )
@@ -662,25 +609,12 @@ struct YieldReportsListView: View {
 
                     Spacer()
 
-                    let yieldT = sessionYield(session)
-                    if session.isCompleted {
-                        HStack(spacing: 4) {
-                            Image(systemName: "checkmark.seal.fill")
-                                .font(.caption2)
-                            Text(String(format: "%.2f t", yieldT))
-                                .font(.caption.weight(.bold))
-                        }
-                        .foregroundStyle(VineyardTheme.leafGreen)
-                    } else if yieldT > 0 {
-                        Text(String(format: "%.2f t", yieldT))
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(VineyardTheme.leafGreen)
-                    } else {
-                        Text("Pending")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.orange)
-                    }
+                    Text(session.isCompleted ? "Completed" : "Draft")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(session.isCompleted ? VineyardTheme.leafGreen : .orange)
                 }
+
+                CurrentYieldEstimateSummary(estimate: currentEstimate(session), detailed: false, current: isCurrent(session))
 
                 if !session.sampleSites.isEmpty {
                     let recorded = session.sampleSites.filter { $0.isRecorded }.count
@@ -872,7 +806,7 @@ struct YieldReportsListView: View {
                     Text("Yield Settings")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
-                    Text("Default bunch weights per block")
+                    Text("Shared variety masters and block overrides")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -908,33 +842,21 @@ struct YieldReportsListView: View {
         }
     }
 
-    private func sessionYield(_ session: YieldEstimationSession) -> Double {
-        let recorded = session.sampleSites.filter { $0.isRecorded }
-        guard !recorded.isEmpty else { return 0 }
+    private func currentEstimate(_ session: YieldEstimationSession) -> CurrentYieldEstimate.Trip {
+        let vintage = YieldVintageReport.sessionVintage(session,
+            seasonStartMonth: store.settings.seasonStartMonth, seasonStartDay: store.settings.seasonStartDay)
+        return CurrentYieldEstimate.trip(session: session, paddocks: store.paddocks,
+            weights: YieldMasterWeightCache.shared.weights(vineyardId: store.selectedVineyardId),
+            remaining: { store.remainingYieldMultiplier(for: $0, vintage: vintage) })
+    }
 
-        var totalYieldKg: Double = 0
-
-        let grouped = Dictionary(grouping: session.sampleSites, by: \.paddockId)
-        for (paddockId, sites) in grouped {
-            let recordedSites = sites.filter { $0.isRecorded }
-            guard !recordedSites.isEmpty else { continue }
-
-            guard let paddock = paddocks.first(where: { $0.id == paddockId }) else { continue }
-
-            let avgBunches = recordedSites.reduce(0.0) { $0 + ($1.bunchCountEntry?.bunchesPerVine ?? 0) } / Double(recordedSites.count)
-            let avgBunchesRounded = (avgBunches * 100).rounded() / 100
-            let totalVines = session.vineCount(for: paddock)
-            let totalBunches = Double(totalVines) * avgBunchesRounded
-            let sessionVintage = YieldVintageReport.sessionVintage(
-                session,
-                seasonStartMonth: store.settings.seasonStartMonth,
-                seasonStartDay: store.settings.seasonStartDay
-            )
-            let remaining = store.remainingYieldMultiplier(for: paddockId, vintage: sessionVintage)
-            totalYieldKg += totalBunches * session.bunchWeightKg(for: paddockId) * remaining
+    private func isCurrent(_ session: YieldEstimationSession) -> Bool {
+        guard session.isCompleted, session.vineyardId == store.selectedVineyardId else { return false }
+        return session.selectedPaddockIds.contains { id in
+            YieldVintageReport.latestCompletedSessionForBlock(sessions: store.yieldSessions,
+                paddockId: id, vintage: currentVintage, seasonStartMonth: store.settings.seasonStartMonth,
+                seasonStartDay: store.settings.seasonStartDay)?.id == session.id
         }
-
-        return totalYieldKg / 1000.0
     }
 }
 

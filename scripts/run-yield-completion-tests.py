@@ -28,7 +28,7 @@ def main(output, debug_build=False):
         (output / 'finished.json').write_text(json.dumps(result, indent=2))
         return build.returncode
     result = runner.run_stage('yield', app, ['*.' + name for name in [
-        'YieldCompletionPersistenceTest', 'YieldVintageReportTest', 'YieldAuthoritativeVineCountTest',
+        'YieldCompletionPersistenceTest', 'YieldVintageReportTest', 'YieldAuthoritativeVineCountTest', 'CurrentYieldMasterParityTest',
         'SeasonYieldDamageParityTest', 'PruningYieldFormulaParityTest', 'PruningYieldSettingsRevisionSyncTest',
     ]], output, app / 'yield-tests.init.gradle')
     (output / 'finished.json').write_text(json.dumps({'exit': result['exit'], 'totals': result['totals']}, indent=2))
