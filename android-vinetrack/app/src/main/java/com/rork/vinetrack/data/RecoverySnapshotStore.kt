@@ -116,7 +116,9 @@ class RecoverySnapshotStore internal constructor(
 
     fun loadResult(vineyardId: String): LoadResult {
         val raw = readRaw(key(vineyardId)) ?: return LoadResult.Missing
-        val snapshot = runCatching { json.decodeFromString(Snapshot.serializer(), raw) }.getOrNull()
+        val snapshot = runCatching {
+            decodedSnapshots.decode(raw) { json.decodeFromString(Snapshot.serializer(), it) }
+        }.getOrNull()
         return if (snapshot == null) LoadResult.Unreadable(raw) else LoadResult.Valid(snapshot)
     }
 
@@ -212,6 +214,10 @@ class RecoverySnapshotStore internal constructor(
         private val processUnprovenWrites: MutableMap<String, String> =
             java.util.Collections.synchronizedMap(mutableMapOf())
         private const val COORDINATE_WARNING = "Coordinates are evidence candidates only. Exact IDs do not prove a coordinate is genuine; compare capture provenance and reject copied stale fixes."
+        // Process-wide because capture creates a new store handle each time. This
+        // caches only decoding: every load still reads the current original bytes,
+        // and failed-commit tracking/commit proofs above remain authoritative.
+        private val decodedSnapshots = ExactBytesDecodeMemo<Snapshot>()
         private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
         private fun key(vineyardId: String): String = "snapshot_$vineyardId"
 

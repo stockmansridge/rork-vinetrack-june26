@@ -2512,7 +2512,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var pointsSinceLocalSave = 0
     private var lastLocalSaveMs = 0L
 
-    private val _ui = MutableStateFlow(AppUiState())
+    private val _ui = com.rork.vinetrack.data.SwitchMeasuredStateFlow(MutableStateFlow(AppUiState()))
     val ui: StateFlow<AppUiState> = _ui.asStateFlow()
 
     private val _auth = MutableStateFlow(AuthFormState())
@@ -6603,6 +6603,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectVineyard(id: String) {
+        val switchTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
+        try {
         // Explicit user choice: bump the epoch so any vineyard load still in
         // flight (profile default, membership refresh) can no longer overwrite
         // this selection when it lands.
@@ -6612,18 +6614,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reportClientTelemetry()
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
+        val clearTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
         _ui.update { it.copy(selectedVineyardId = id, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), tripsListKnowledge = TripsListKnowledge.Unknown, machines = emptyList(), workTasks = emptyList(), members = emptyList(), membershipLoading = true, membershipError = null, operatorCategories = emptyList(), operatorCategoriesLoading = true, operatorCategoriesError = null, vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), grapeVarieties = emptyList(), grapeVarietyReferenceLoading = true, grapeVarietyReferenceError = null, vineyardClones = emptyList(), vineyardRootstocks = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, vineyardMachineLines = emptyList(), vineyardTaskMaterials = emptyList(), tripCostAllocations = emptyList(), growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
+        com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("selection-clear", clearTiming)
         hydrateQuickActions(id)
         loadedLogoKey = null
         // Apply the cached region settings instantly so units/currency render
         // correctly on first paint, then refresh from the backend below.
-        _ui.update { it.copy(regionSettings = regionSettingsStore.load(id),
-            savedChemicals = session.userId?.let { owner -> savedChemicalCreateSync.rows(owner, id) } ?: emptyList()) }
+        val cachedSettingsTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
+        // Decode/overlay once, not inside StateFlow's retryable CAS transform.
+        // There is no suspension before publication; existing selection/account
+        // admission and fresh pending-write overlay are retained.
+        val cachedRegion = regionSettingsStore.load(id)
+        val cachedChemicals = session.userId?.let { owner -> savedChemicalCreateSync.rows(owner, id) } ?: emptyList()
+        _ui.update { it.copy(regionSettings = cachedRegion, savedChemicals = cachedChemicals) }
+        com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("cached-settings-chemicals", cachedSettingsTiming)
+        val decorationTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
         refreshSelectedVineyardLogo()
         refreshGrowthStageImages()
         refreshRegionSettings(id)
         refreshSeasonSettings(id)
+        com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("decoration-kickoff", decorationTiming)
         viewModelScope.launch { loadVineyardData(id) }
+        } finally {
+            com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("selection-call", switchTiming)
+        }
     }
 
     /**
@@ -17515,6 +17530,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun hydrateQuickActions(vineyardId: String) {
+        val stageTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
+        try {
         val user = session.userId ?: return
         if (!_ui.value.sessionPhase.isAuthenticated || _ui.value.selectedVineyardId != vineyardId) return
         val cached = domainCache.loadQuickActions(user, vineyardId, session.retentionGuard.identityEpoch.value)
@@ -17525,6 +17542,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (session.userId != user || state.selectedVineyardId != vineyardId || !state.sessionPhase.isAuthenticated) state
             else state.copy(members = cached?.members.orEmpty(), membershipLoading = cached?.members == null,
                 repairButtons = repair, growthButtons = growth)
+        }
+        } finally {
+            com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("quick-actions", stageTiming)
         }
     }
 
@@ -17588,9 +17608,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun loadVineyardData(vineyardId: String) {
         val timing = performanceCapture.begin(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.VINEYARD_REFRESH)
+        val switchTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
         try {
             loadVineyardDataBody(vineyardId)
         } finally {
+            com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("background-load-including-waits", switchTiming)
             performanceCapture.end(timing)
         }
     }
@@ -17617,8 +17639,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         hydrateQuickActions(vineyardId)
         // Preserve the first local evidence before hydration/server reads can replace
         // caches and before the successful-load reconnect pipeline drains outboxes.
+        val recoveryTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
         val preservation = com.rork.vinetrack.data.RecoverySnapshotStore
             .captureBeforeMutation(getApplication(), vineyardId)
+        com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("recovery-preservation", recoveryTiming)
         if (!preservation.isPreserved) {
             val message = "Recovery evidence couldn't be saved to this device, so vineyard refresh was stopped. " +
                 "Free up device storage, then retry."

@@ -1,5 +1,122 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Measured mobile responsiveness — 27 October 2026 — PARTIAL WARM-SWITCH IMPROVEMENT; COLD/HOME/PHYSICAL GATES OPEN
+
+This section supersedes the earlier absence of switch timing evidence, not the accepted feature behavior. No backend, Portal, customer-data, access-policy, version, signing, release configuration or release-artifact changes. No ordinary authentication bypass. The isolated fixtures use local synthetic contents and intercepted-only Android HTTP, never a real customer account. Requested accepted baseline `1c837a738bf69a018bdc9fae3ef36060b318747d` was unavailable (`not our ref` / `Not a valid commit name`); no reset/revert was attempted. The clean starting revision `6893beb87cf6ab3e6f96f0de1cfc99551d6bc23d` plus stage instrumentation is the measured baseline. These results do not retrospectively prove performance at the unavailable accepted revision.
+
+### Fixture and measurement boundaries
+
+- iOS: real `MigratedDataStore.selectVineyard`, fresh temporary injected persistence, seeds written AFTER store initialization. Per vineyard: 2,000 pins, 500 trips, 500 Work Tasks, 250 spray records, 250 Saved Chemicals, 250 maintenance records, 250 Yield sessions, 100 blocks and 50 tractors; 20 pins have 16 KiB synthetic photo data. A/B/A/B/A selections. Assertions verify counts and pin vineyard ownership. No sync sweep/network included. Buttons now use the store's injected persistence instead of shared persistence; production default injection is unchanged.
+- Android: real `AppViewModel.selectVineyard` with isolated preference/file namespace, synthetic authenticated-offline state, intercepted 503-only Ktor transport. Per vineyard: 2,000 pins, 500 trips, 500 Work Tasks, 250 spray records, 250 Saved Chemicals, 250 maintenance records, 250 Yield sessions, 100 blocks. Equipment/images not seeded. A/B/A/B/A; wait for cached collection counts and load settlement. Existing startup occurs before isolated seeding. This is a substantial switch fixture, not a Home-rendering, equipment-complete or live-network benchmark.
+- Android stage milliseconds are synchronous elapsed spans except `background-load-including-waits`, which includes suspensions and its initial synchronous recovery work. `main=true` there describes the completion thread, NOT proof its entire elapsed duration blocked UI. Publications count successful changed StateFlow CAS transitions, not retries, collection count or Compose renders. Nested span publication totals must not be added.
+- iOS timings below are the second simulator baseline capture: cold first selection / maximum across four subsequent selections. Stage maxima can belong to different selections and must not be summed. No iOS performance correction or new after-timing capture was made in this checkpoint. Two earlier successful visible captures used separate per-minute-billed iPhone simulators rather than the selected Android preview. Their submitted setup object was not in the documented launch-argument shape; the tool nevertheless reported success and visible timing evidence. Future fixture runs must explicitly pass `launchArguments: ["--keyboard-validation", "--synthetic-switch-performance"]`.
+
+### iOS — Stage | Before ms | After ms | Main thread before? | Main thread after?
+
+`—` means no remediation/after measurement, not zero or an implied improvement.
+
+| Stage | Before ms (cold / warm max) | After ms | Main thread before? | Main thread after? |
+| --- | ---: | --- | --- | --- |
+| Entry | 0.00 / 0.00 | — | Yes | Not remeasured |
+| Core records | 53.09 / 4.71 | — | Yes | Not remeasured |
+| Spray records | 4.38 / 3.82 | — | Yes | Not remeasured |
+| Legacy spray recovery | 0.61 / 0.03 | — | Yes | Not remeasured |
+| Chemical/spray reference | 10.11 / 0.39 | — | Yes | Not remeasured |
+| Yield records | 4.19 / 2.66 | — | Yes | Not remeasured |
+| Block cache | 2.23 / 0.45 | — | Yes | Not remeasured |
+| Equipment cache | 0.98 / 0.66 | — | Yes | Not remeasured |
+| Button cache | 2.16 / 1.13 | — | Yes | Not remeasured |
+| Variety canonicalization | 0.79 / 0.47 | — | Yes | Not remeasured |
+| Selection total | **82.51 / 15.47** | — | Yes | Not remeasured |
+
+The demonstrated largest iOS cold UI stage is core-record hydration, 53.09 ms. Selection remains synchronous MainActor work; the fixture has no independent background completion or Home scroll measurement. Existing speculative persistence preparation does not by itself provide safe asynchronous central-store hydration: publishing cleared writable slices before their complete load can race foreground edits/GPS/sync and overwrite existing evidence. No blanket actor/Sendable or observable-store worker move was made.
+
+### Android — Stage | Before ms | After ms | UI publications before | UI publications after
+
+Paired **third selection, A** (index2), after both vineyards were first visited. Both captures enable the same debug stage recording and preserve the same synchronous production ordering. All synchronous stages below still execute on main.
+
+| Stage | Before ms | After ms | UI publications before | UI publications after |
+| --- | ---: | ---: | ---: | ---: |
+| Selection clear | 0.790 | 0.825 | 1 | 1 |
+| First quick actions | 0.140 | 0.175 | 0 | 0 |
+| Cached settings/chemicals | **41.465** | **8.330** | 1 | 1 |
+| Decoration kickoff | 0.743 | 0.858 | 0 | 0 |
+| Repeated quick actions | 0.157 | 0.229 | 0 | 0 |
+| Recovery preservation | **202.776** | **0.147** | 0 | 0 |
+| Synchronous selection call | **247.037** | **11.603** | 3 | 3 |
+| Load lifetime, including waits and recovery | 967.488 | 724.515 | 4 | 4 |
+
+All iterations; acknowledgement is measured inside the UI call, settlement includes test/UI scheduling and is not CPU time:
+
+| Selection | Before ack ms | After ack ms | Before settled ms | After settled ms | Before load lifetime ms | After load lifetime ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0, first A | 926.818 | 932.632 | 1945.483 | 1856.820 | 1768.622 | 1667.571 |
+| 1, first B | 727.427 | 758.478 | 1533.604 | 1552.011 | 1475.697 | 1476.398 |
+| 2, repeated A | 247.046 | 11.613 | 1023.120 | 746.761 | 967.488 | 724.515 |
+| 3, repeated B | 242.115 | 9.684 | 989.557 | 734.847 | 934.938 | 714.136 |
+| 4, repeated A | 250.992 | 8.486 | 977.534 | 687.432 | 925.917 | 667.479 |
+
+- Repeated selection acknowledgement improved **95.3–96.6%**, from 242–251 ms to 8.5–11.6 ms in this fixture. This is actual reduced synchronous elapsed work, not just a deferred selection return. Publications did not decrease: the synchronous-call span remains3 and overlapping load-lifetime span4. No UI re-render reduction is claimed.
+- First-time switches are **not improved**. Cold recovery remains the largest measured blocker: before759.334/681.034 ms, after754.033/693.712 ms. Cold settings/chemicals were before156.744/42.586 ms and after170.496/61.202 ms. No causal regression attribution is inferred from one unpaired cold/JIT capture, but these after values are explicitly not a cold-speedup result. Warm recovery is now0.090–0.147 ms and warm settings/chemicals5.828–8.330 ms.
+- The <=32 ms requirement across ALL five selections still fails. Baseline fixture: **0 passed,1 failed,0 skipped**. Partial-after capture with new chemical tests: **2 passed,1 failed,0 skipped**; genuine failure `Selection blocked the UI for >32ms.` It was not disabled, relaxed or converted to a pass. Before log retained at `/tmp/vinetrack-switch-before-2026-10-27.log`; after log retained at `/tmp/vinetrack-switch-partial-after-2026-10-27.log`. The durable numerical report is this section; temporary runner artifacts are not release artifacts.
+
+### Root cause(s) found
+
+1. **Android repeated recovery JSON decoding:** an unchanged immutable snapshot was decoded again for every selection because each capture constructs a new store handle. Removing that repeat reduced the paired recovery stage202.776 →0.147 ms without changing preservation order or durability checks.
+2. **Android repeated chemical snapshot decoding:** unchanged local snapshots were decoded repeatedly, with loading/overlay evaluation inside retryable state transforms. Decode reuse and computing once before publication reduced the paired stage41.465 →8.330 ms. Pending-intent overlay and sorting still run fresh; old data is still cleared first.
+3. **Cold work remains:** iOS core decode/hydration53.09 ms; Android first snapshot collection/codec/durable preservation about0.7 s. These are measured switch-path costs. Their individual codec/read/fsync shares and connection to the six earlier commits are not yet established.
+
+### Changes made and preserved safety
+
+- Added opt-in bounded DEBUG stage probes and isolated actual-path fixtures. No customer identities or field contents are recorded. Ordinary disabled Android probe operation now avoids deep AppUiState comparisons; only explicit DEBUG captures pay that instrumentation cost.
+- Added a thread-safe, bounded exact-source-byte decode memo: recovery permits four entries/24 MiB source-string accounting, chemicals four entries/4 MiB. This bounds retained encoded sources/entry count, not measured total decoded heap. Decode runs outside the short memo lock. Every load rereads actual storage; different, missing or corrupt bytes cannot be replaced by a stale memo.
+- Chemical reuse is limited to an exact canonical local re-encoding, so legacy omitted generated rate identities retain their existing decode behavior rather than being frozen by reuse. No input rows are reused directly on save; memo values come from actual decoded bytes. Account/vineyard keys and fresh pending-create/preference overlays remain in force.
+- Recovery `commit()` proof, failed/unproven-write tracking, retained first bytes, unreadable-original refusal, first-original ordering, tombstone receipt logic, selection epoch, generation/account fences, read-only admission and error behavior were not weakened. No background snapshot capture, new async publication, hold bypass or queue rewrite was introduced.
+- Cold off-main capture was researched but not implemented blindly. It needs an original-incarnation-bound frozen raw snapshot including pin-evidence recovery files and unproven state, plus shared first-capture reservation across refresh/replay/export callers. Current helpers read sources live and do not supply that asynchronous reservation. A simple dispatcher switch can race evidence mutation/account replacement and is not an acceptable correction.
+- Existing Yield/Bunch Weights/weather/MAIT calculations and UI are unchanged; iOS Saved Chemical batching remains intact. Multi-vineyard persistence, repairs and grape canonicalization are not removed. iOS buttons honor injected persistence for fixture isolation; default production persistence remains the same.
+
+### Home scroll
+
+**Not measured or corrected in this checkpoint.** The native switch fixtures do not mount/scroll Home during a real sweep. No hitch/FPS/long-frame, Home publication, or before/after scroll result is claimed. Cache decode reuse may remove one repeated switch stall, but cannot establish Home smoothness. Independent Home-during-sync profiling and the next physical iPhone/Android check remain open.
+
+### Apple Portal Login/read-only work
+
+No Apple login, Portal or read-only safeguards were removed/changed. Earlier source inspection of commits `60cacb0300d608495293b69fd3f3860281eb4577`, `04923f6e4a0149d7bd19f7f7718789dda895f256`, `1f9f0d07c77512efe28854508fb6f7a88a96c6f8`, `91f4b3d3d502eab700e71bb5ed46e170fb84e8ed`, `3a20ec8a76b03ed4c9d8da88995c6ca388eece09`, `54d01831d20f2b2985d43e294bdab6b922099f96` remains candidate analysis only. Individual added-operation timings/counts and causal comparison against those revisions were not captured. Awaited ownership network reads are not automatically UI-thread blocking; UserDefaults writes are not proof of synchronous disk flush. No attribution to Apple login is supported by these measurements.
+
+### Final serialized validation
+
+- Android focused host: **60 tests,0 failures,0 errors,0 skipped in167.683s**. `python3 scripts/run-switch-performance-regressions.py`; exact `*.` classes: `ExactBytesDecodeMemoTest`, `RecoverySnapshotStoreTest`, `SyncRecoveryStorageTest`, `SavedChemicalCreateSyncTest`, `SavedChemicalReconciliationTest`, `RecoveryRefusalValidationTest`, `RecoveryPermitSafetyTest`, `SelectiveRecoveryReplayTest`. Output `/tmp/vinetrack-switch-regressions-e6cyb6eg`. Covers byte-change/removal/corruption after memoization, eviction, oversized/ineligible/failed decodes and existing recovery/durable-failure/original-evidence cases.
+- Partial-after instrumentation noted above: two chemical-cache checks passed; full responsiveness assertion failed. The warm timing capture preceded only a disabled-probe guard refinement; enabled capture accounting is unchanged. No cold responsiveness pass is claimed.
+- Final Android regression instrumentation: **23 passed,0 failed,0 skipped in14s**. Exact selectors: `com.rork.vinetrack.data.SavedChemicalDecodeMemoAndroidTest`, `com.rork.vinetrack.data.OfflineQuickActionsAndroidTest`, `com.rork.vinetrack.data.ReadOnlyEntitlementCacheTest`, `com.rork.vinetrack.data.YieldMasterWeightCacheAndroidTest`, `com.rork.vinetrack.data.YieldTripNavigationAndroidTest`, `com.rork.vinetrack.data.MAITCurrentObservationAndroidTest`. Chemical tests cover actual preference changes/removal/corruption, account/vineyard keys, canonical reuse and legacy generated rate identity. This passing regression selection does NOT include or supersede the failed responsiveness selection.
+- Final Android Yield host: **95/0/0/0**, output `/tmp/vinetrack-switch-final-yield-host`, existing `scripts/run-yield-completion-tests.py` selectors unchanged. Weather **52/0/0/0 in22.478s**, authority/isolation **209/0/0/0 in10.826s**, startup/offline **55/0/0/0 in10.525s**, output `/tmp/vinetrack-switch-final-weather-host`; existing `scripts/run-mait-mobile-contract.py` selectors remain exactly those documented in the preceding checkpoint. Do not sum overlapping results.
+- iOS performance/storage/isolation selection: **53 passed in153s**. Exact selectors: `VineTrackTests/VineyardSwitchPerformanceTests`, `VineTrackTests/PersistencePerformanceTests`, `VineTrackTests/PerformanceValidationTests`, `VineTrackTests/SavedChemicalBatchReconciliationTests`, `VineTrackTests/EquipmentVineyardIsolationTests`. Aggregate success verifies executed assertions, not new timing output or physical smoothness; the shared fixture retains its string report as an XCTest attachment.
+- Final expanded iOS accepted-feature selection: **192 passed in306s**. Exact16 selectors are unchanged from the preceding checkpoint's192 selection (listed immediately below in its validation section). This includes Yield/Bunch Weights, MAIT/current/supplementary weather, equipment isolation, Saved Chemical batching and Yield navigation. Managed tool exposes aggregate pass count/duration, not per-test discovery or skipped count. These overlapping runs are not245 distinct cases.
+- Final separate **iOS `runChecks` PASS**, normal simulator build; Device/Release not verified. The two pre-existing unrelated direct-storage-URL warnings remain unchanged. Final separate **Android Debug-only assembly PASS**, exit0 in**8.934s**, `python3 scripts/run-yield-completion-tests.py --debug-build --output /tmp/vinetrack-switch-final-debug`, `:app:assembleDebug`. Android generic `runChecks` was not used because it assembles Release, outside the requested Debug-only scope.
+- Shared Yield parity fixtures remain byte-identical with SHA-256 `1b6eda2b9e8efa6189501bd750c90ae0e28e08a44a20052f421e4e01b1d5b818`. Whitespace validation `git diff --check HEAD` passes. No store/release operation.
+
+### Source manifest and remaining gate
+
+Source/test/harness diff SHA-256 against starting HEAD: **`3e9dbe5951efb509baef83035b6b40b79e5205ea2fcd93744ba7278e68d4bb2f`**, computed with `git diff HEAD --binary -- ios android-vinetrack scripts`. Exact16 changed source/test/harness files (excludes this report, existing plan and Rork-managed simulator evidence):
+
+- `android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SavedChemicalDecodeMemoAndroidTest.kt`
+- `android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/VineyardSwitchPerformanceAndroidTest.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/ExactBytesDecodeMemo.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/RecoverySnapshotStore.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SavedChemicalLocalStore.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/data/VineyardSwitchPerformanceProbe.kt`
+- `android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt`
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/ExactBytesDecodeMemoTest.kt`
+- `android-vinetrack/app/src/test/java/com/rork/vinetrack/data/RecoverySnapshotStoreTest.kt`
+- `ios/VineTrack/App/SyntheticSwitchPerformanceView.swift`
+- `ios/VineTrack/App/VineyardSwitchPerformanceProbe.swift`
+- `ios/VineTrack/LegacyImported/Services/MigratedDataStore+Buttons.swift`
+- `ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift`
+- `ios/VineTrack/VineTrackApp.swift`
+- `ios/VineTrackTests/VineyardSwitchPerformanceTests.swift`
+- `scripts/run-switch-performance-regressions.py`
+
+**Performance remains OPEN:** measured Android warm switching materially improved, but cold blocking still fails, iOS has no after correction, Home-during-sync and per-commit authority costs remain unmeasured, and physical-device acceptance has not occurred. Regression/build success is not release clearance or completion of the responsiveness request.
+
 ## Mobile UX, shared Bunch Weights and weather — 27 October 2026 — AUTOMATED SOURCE GATES PASS; PERFORMANCE UNPROVEN
 
 This checkpoint supersedes the earlier read-only weight viewer and compact-history presentation, not the accepted Yield calculations or safety contracts. No backend/schema/SQL/Portal changes, customer-row reads, release/upload, signing/configuration or version/build-number changes. Versions remain iOS3.1.9/build139 and Android3.1.9/versionCode12. Metadata-only reads inspected the three existing weight function definitions; they do not establish authenticated live-service behavior.

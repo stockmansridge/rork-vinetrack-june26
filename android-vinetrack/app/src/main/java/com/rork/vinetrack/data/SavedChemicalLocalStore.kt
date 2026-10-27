@@ -17,12 +17,21 @@ class SavedChemicalLocalStore(context: Context) : SavedChemicalLocalStoring {
     )
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val serializer = ListSerializer(SavedChemical.serializer())
+    private val decodedRows = ExactBytesDecodeMemo<List<SavedChemical>>(maxSourceBytes = 4L * 1024 * 1024)
 
     private fun key(userId: String, vineyardId: String): String = "$userId|$vineyardId"
 
     override fun load(userId: String, vineyardId: String): List<SavedChemical> {
         val raw = prefs.getString(key(userId, vineyardId), null) ?: return emptyList()
-        return runCatching { json.decodeFromString(serializer, raw) }.getOrDefault(emptyList())
+        // Always reread preferences: another handle, account or reconciliation may
+        // have changed or removed them. The outbox overlay remains fresh upstream.
+        return runCatching {
+            decodedRows.decode(raw, canRetain = { rows ->
+                // Legacy rates may omit generated UI identities. Only reuse a
+                // canonical local encoding with all those identities persisted.
+                json.encodeToString(serializer, rows) == raw
+            }) { json.decodeFromString(serializer, it) }
+        }.getOrDefault(emptyList())
     }
 
     override fun save(userId: String, vineyardId: String, rows: List<SavedChemical>): Boolean =

@@ -3,7 +3,7 @@ import CoreLocation
 
 extension MigratedDataStore {
 
-    private var btnPersistence: PersistenceStore { .shared }
+    private var btnPersistence: PersistenceStore { buttonPersistence }
 
     // MARK: - Per-vineyard storage keys
 

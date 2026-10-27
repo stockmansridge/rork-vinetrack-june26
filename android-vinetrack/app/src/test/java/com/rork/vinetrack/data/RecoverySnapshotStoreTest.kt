@@ -20,6 +20,25 @@ class RecoverySnapshotStoreTest {
     private val payloadJson = Json { encodeDefaults = true }
 
     @Test
+    fun `memoized original is never returned after bytes change disappear or corrupt`() {
+        val bytes = mutableMapOf<String, String>()
+        val store = memoryStore(bytes)
+        val before = snapshot("memo-vineyard", "2026-10-27T00:00:00Z")
+        assertTrue(store.saveIfAbsent(before).isPreserved)
+        assertEquals(before, store.load("memo-vineyard"))
+        val key = bytes.keys.single()
+        val after = before.copy(snapshotAt = "2026-10-27T00:01:00Z")
+        bytes[key] = payloadJson.encodeToString(RecoverySnapshotStore.Snapshot.serializer(), after)
+        assertEquals(after, store.load("memo-vineyard"))
+        bytes[key] = "corrupt original: do not replace"
+        assertTrue(store.loadResult("memo-vineyard") is RecoverySnapshotStore.LoadResult.Unreadable)
+        assertTrue(store.saveIfAbsent(before) is RecoverySnapshotStore.SaveResult.ExistingUnreadable)
+        assertEquals("corrupt original: do not replace", bytes[key])
+        bytes.remove(key)
+        assertSame(RecoverySnapshotStore.LoadResult.Missing, store.loadResult("memo-vineyard"))
+    }
+
+    @Test
     fun `first pre-replay snapshot remains byte-identical after later replacement attempt`() {
         val bytes = mutableMapOf<String, String>()
         val store = memoryStore(bytes)

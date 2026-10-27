@@ -118,7 +118,9 @@ struct VineTrackApp: App {
             Group {
                 if isKeyboardValidationEnabled {
                     #if DEBUG
-                    if CommandLine.arguments.contains("--target-nutrient-validation") {
+                    if CommandLine.arguments.contains("--synthetic-switch-performance") {
+                        SyntheticSwitchPerformanceView()
+                    } else if CommandLine.arguments.contains("--target-nutrient-validation") {
                         TargetNutrientValidationView()
                     } else if CommandLine.arguments.contains("--yield-trip-validation") {
                         YieldTripValidationView()

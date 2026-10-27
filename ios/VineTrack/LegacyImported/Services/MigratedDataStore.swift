@@ -17,6 +17,10 @@ final class MigratedDataStore {
         return operationalWriteAuthority.admit(vineyardId: vineyard.uuidString)
     }
 
+    #if DEBUG
+    @ObservationIgnored var switchPerformanceSample: ((VineyardSwitchPerformanceProbe.Sample) -> Void)?
+    #endif
+
     // MARK: - State
 
     var vineyards: [Vineyard] = []
@@ -302,6 +306,7 @@ final class MigratedDataStore {
     let yieldRepo: YieldRepository
 
     private let persistence: PersistenceStore
+    var buttonPersistence: PersistenceStore { persistence }
     private let pinNotesDraftStore: PinNotesDraftStore
 
     // MARK: - Storage keys for collections without a dedicated repository
@@ -511,6 +516,10 @@ final class MigratedDataStore {
 
     /// Reload all per-vineyard scoped collections from disk for the currently selected vineyard.
     func reloadCurrentVineyardData() {
+        #if DEBUG
+        let switchProbe = VineyardSwitchPerformanceProbe(receive: switchPerformanceSample)
+        defer { switchProbe.finish() }
+        #endif
         let performanceSpan = PerformanceCapture.shared.begin("store selected vineyard hydration")
         defer { PerformanceCapture.shared.end(performanceSpan) }
         guard let vineyardId = selectedVineyardId else {
@@ -554,6 +563,9 @@ final class MigratedDataStore {
             return
         }
 
+        #if DEBUG
+        switchProbe.next("core-records")
+        #endif
         VineyardSelectionDiagnostics.stage("core-records", vineyardId: vineyardId)
         pins = pinRepo.load(for: vineyardId)
         trips = tripRepo.load(for: vineyardId)
@@ -570,10 +582,19 @@ final class MigratedDataStore {
         equipmentItems = equipmentItemRepo.load(for: vineyardId)
         maintenanceLogs = maintenanceLogRepo.load(for: vineyardId)
 
+        #if DEBUG
+        switchProbe.next("spray-records")
+        #endif
         VineyardSelectionDiagnostics.stage("spray-records", vineyardId: vineyardId)
         sprayRecords = sprayRepo.loadRecords(for: vineyardId)
         // Authentication may be configured after hydration; sync preflight retries this before any write.
+        #if DEBUG
+        switchProbe.next("legacy-spray-recovery")
+        #endif
         try? reconcileLegacySpraySaves()
+        #if DEBUG
+        switchProbe.next("chemical-and-spray-reference")
+        #endif
         savedChemicals = sprayRepo.loadChemicals(for: vineyardId)
         savedSprayPresets = sprayRepo.loadPresets(for: vineyardId)
         savedEquipmentOptions = sprayRepo.loadEquipmentOptions(for: vineyardId)
@@ -581,6 +602,9 @@ final class MigratedDataStore {
         savedInputs = savedInputRepo.load(for: vineyardId)
         tripCostAllocations = tripCostAllocationRepo.load(for: vineyardId)
 
+        #if DEBUG
+        switchProbe.next("yield-records")
+        #endif
         VineyardSelectionDiagnostics.stage("yield-records", vineyardId: vineyardId)
         yieldSessions = yieldRepo.loadSessions(for: vineyardId)
         damageRecords = yieldRepo.loadDamage(for: vineyardId)
@@ -591,6 +615,9 @@ final class MigratedDataStore {
 
         settings = settingsRepo.load(for: vineyardId)
 
+        #if DEBUG
+        switchProbe.next("block-cache")
+        #endif
         VineyardSelectionDiagnostics.stage("block-cache", vineyardId: vineyardId)
         let allPaddocks: [Paddock] = loadAllPaddocksFromDisk()
         paddocks = allPaddocks.filter { $0.vineyardId == vineyardId }
@@ -602,6 +629,9 @@ final class MigratedDataStore {
         // already in memory — is what makes a vineyard switch symmetric:
         // switching away drops the old slice, switching back restores it, with
         // no logout, reinstall or manual cache wipe.
+        #if DEBUG
+        switchProbe.next("equipment-cache")
+        #endif
         VineyardSelectionDiagnostics.stage("equipment-cache", vineyardId: vineyardId)
         let allTractors: [Tractor] = persistence.load(key: Keys.tractors) ?? []
         tractors = allTractors.filter { $0.vineyardId == vineyardId }
@@ -612,9 +642,15 @@ final class MigratedDataStore {
         let allFuelLogs: [TractorFuelLog] = persistence.load(key: Keys.tractorFuelLogs) ?? []
         tractorFuelLogs = allFuelLogs.filter { $0.vineyardId == vineyardId }
 
+        #if DEBUG
+        switchProbe.next("button-cache")
+        #endif
         VineyardSelectionDiagnostics.stage("button-cache", vineyardId: vineyardId)
         loadButtonsForCurrentVineyard()
 
+        #if DEBUG
+        switchProbe.next("variety-canonicalization")
+        #endif
         VineyardSelectionDiagnostics.stage("variety-canonicalization", vineyardId: vineyardId)
         // After paddocks + varieties are loaded for this vineyard, repair
         // any drift between built-in variety ids and existing block
