@@ -20,6 +20,47 @@ class MaintenanceForegroundQueueTest {
         clientId = "original-log", payloadJson = "{\"vineyardId\":\"$a\",\"itemName\":\"Original\"}",
         createdAt = 12345, updatedAt = 23456, attemptCount = attempts, lastError = "Original error", status = status)
 
+    @Test fun interruptedMaintenanceClaimRetainsOriginalIdentityAndPayloadAfterRecreation() {
+        val original = original().copy(lastError = null)
+        val disk = InMemoryPendingWriteStore(listOf(original))
+        val queue = PendingWriteRepository(disk)
+        val claim = requireNotNull(queue.claimReplay(original))
+        assertNull(queue.claimReplay(original))
+        assertEquals(claim, disk.load().single())
+        val restored = PendingWriteRepository(disk).list().single()
+        assertEquals(original.id, restored.id)
+        assertEquals(original.clientId, restored.clientId)
+        assertEquals(original.payloadJson, restored.payloadJson)
+        assertEquals(original.createdAt, restored.createdAt)
+        assertEquals(original.attemptCount, restored.attemptCount)
+        assertEquals(PendingWriteStatus.FAILED, restored.status)
+    }
+
+    @Test fun staleAcknowledgementCannotRemoveAnExplicitNewerEdit() {
+        val original = original().copy(opType = PendingOpType.UPDATE)
+        val queue = PendingWriteRepository(InMemoryPendingWriteStore(listOf(original)))
+        val claim = requireNotNull(queue.claimReplay(original))
+        assertTrue(queue.restoreClaimIfCurrent(claim))
+        val newer = queue.coalesceMaintenanceIntent(original.clientId, PendingOpType.UPDATE, a,
+            "{\"vineyardId\":\"$a\",\"itemName\":\"Newer explicit edit\"}") { }
+        assertFalse(queue.removeIfCurrent(claim))
+        assertEquals(listOf(newer), queue.list())
+    }
+
+    @Test fun failedNewIntentCommitCannotBeClaimedForTransport() {
+        val disk = object : PendingWriteStoring {
+            override fun load() = emptyList<PendingWrite>()
+            override fun save(writes: List<PendingWrite>) = false
+            override fun clear() = false
+        }
+        val queue = PendingWriteRepository(disk)
+        assertThrows(IllegalStateException::class.java) {
+            queue.coalesceMaintenanceIntent("original-log", PendingOpType.CREATE, a, "{\"vineyardId\":\"$a\"}") { }
+        }
+        assertTrue(queue.list().isEmpty())
+        assertTrue(PendingWriteRepository(disk).list().isEmpty())
+    }
+
     @Test fun failedReplacementCommitPublishesNothingAndRetainsOriginalOnRecreation() {
         val original = original(PendingWriteStatus.FAILED, 2)
         val disk = object : PendingWriteStoring {

@@ -2493,6 +2493,7 @@ data class MaintenanceLog(
     @SerialName("photo_path") val photoPath: String? = null,
     @SerialName("created_by") val createdBy: String? = null,
     @SerialName("deleted_at") val deletedAt: String? = null,
+    @SerialName("client_updated_at") val clientUpdatedAt: String? = null,
 ) {
     val totalCost: Double get() = partsCost + labourCost
     val startEpochMs: Long? get() = parseIsoToEpochMs(date)

@@ -2152,7 +2152,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * maintenance logs are top-level records. Placed after the work-task group
      * and before pin photos in every replay pipeline.
      */
-    private val maintenanceCreateSync = MaintenanceLogCreateSync(maintenanceRepo, pendingWrites)
+    private var maintenanceMutationRevision = 0L
+
+    private fun persistMaintenanceReceipt(log: MaintenanceLog): Boolean = persistMaintenanceReceipt(log.id, log.vineyardId, log)
+
+    private fun persistMaintenanceReceipt(id: String, vineyardId: String?, log: MaintenanceLog? = null): Boolean {
+        val owner = session.userId ?: return false
+        val vineyard = vineyardId ?: return false
+        val cached = domainCache.loadMaintenance(owner, vineyard).orEmpty().filterNot { it.id == id }
+        if (!domainCache.saveMaintenance(owner, vineyard, if (log == null) cached else cached + log)) return false
+        maintenanceMutationRevision++
+        return true
+    }
+
+    private val maintenanceCreateSync = MaintenanceLogCreateSync(maintenanceRepo, pendingWrites, ::persistMaintenanceReceipt)
 
     /**
      * Replay coordinator for maintenance-log UPDATE only (Android Stage K-2).
@@ -2164,7 +2177,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * stray UPDATE behind an unresolved same-log create. Placed immediately
      * after maintenance creates and before pin photos in every replay pipeline.
      */
-    private val maintenanceUpdateSync = MaintenanceLogUpdateSync(maintenanceRepo, pendingWrites)
+    private val maintenanceUpdateSync = MaintenanceLogUpdateSync(maintenanceRepo, pendingWrites, ::persistMaintenanceReceipt)
 
     /**
      * Replay coordinator for maintenance-log soft-DELETE only (Android Stage
@@ -2176,7 +2189,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * (no attempt consumed). Placed immediately after maintenance updates and
      * before pin photos in every replay pipeline.
      */
-    private val maintenanceDeleteSync = MaintenanceLogDeleteSync(maintenanceRepo, pendingWrites)
+    private val maintenanceDeleteSync = MaintenanceLogDeleteSync(maintenanceRepo, pendingWrites, { id, vineyard -> persistMaintenanceReceipt(id, vineyard) })
 
     /**
      * Replay coordinator for yield-record CREATE only (Android Stage L-1).
@@ -4133,13 +4146,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         launchReplayStage("maintenance-create") {
             maintenanceCreateSync.replayAll { log ->
                 _ui.update { st ->
-                    if (st.maintenanceLogs.any { it.id == log.id }) {
-                        st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it.id == log.id) log else it })
-                    } else {
-                        st.copy(maintenanceLogs = listOf(log) + st.maintenanceLogs)
-                    }
+                    if (st.selectedVineyardId != log.vineyardId) st
+                    else st.copy(maintenanceLogs = PendingWriteOverlay.overlayMaintenance(
+                        listOf(log) + st.maintenanceLogs.filterNot { it.id == log.id }, pendingWrites.list(), log.vineyardId))
                 }
+                replayPendingMaintenanceUpdates()
+                replayPendingMaintenanceDeletes()
             }
+            replayPendingMaintenancePhotos()
         }
     }
 
@@ -4157,8 +4171,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         launchReplayStage("maintenance-update") {
             maintenanceUpdateSync.replayAll { log ->
                 _ui.update { st ->
-                    st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it.id == log.id) log else it })
+                    if (st.selectedVineyardId != log.vineyardId) st
+                    else st.copy(maintenanceLogs = PendingWriteOverlay.overlayMaintenance(
+                        listOf(log) + st.maintenanceLogs.filterNot { it.id == log.id }, pendingWrites.list(), log.vineyardId))
                 }
+                replayPendingMaintenanceDeletes()
             }
         }
     }
@@ -14813,62 +14830,82 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             isFinalized = input.isFinalized,
             createdBy = session.userId,
         )
-        // Optimistic insert at the top — the operator sees the log straight away.
+        if (photoUri != null) {
+            // Stage original bytes before publishing the metadata intent. A URI
+            // permission alone is not durable evidence after process death.
+            viewModelScope.launch {
+                try {
+                    admission.requireWrite()
+                    val jpeg = PinPhotoImageUtil.compress(getApplication(), photoUri)
+                    admission.requireWrite()
+                    val owner = session.userId ?: throw BackendError.Unauthorized
+                    maintenancePhotoEvidence.stage(owner, vineyardId, id, jpeg)
+                    createMaintenanceLog(input, photoUri = null, scope = admission, onResult = onResult)
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (_: Exception) { onResult(false) }
+            }
+            return
+        }
+        // Write ahead on BOTH online and offline paths. A process can die at
+        // any ownership read/request boundary without losing this original save.
+        if (pendingWrites.list().any { it.entityType == PendingEntityType.MAINTENANCE_LOG && it.clientId == id && it.status in PendingWriteStatus.unresolved }) { onResult(false); return }
+        val queued = try { maintenanceCreateSync.enqueue(id, vineyardId, input, clientUpdatedAt) }
+        catch (_: Exception) { onResult(false); return }
+        maintenanceMutationRevision++
         _ui.update { it.copy(maintenanceLogs = listOf(optimistic) + it.maintenanceLogs, maintenanceError = null) }
 
         // Known-offline: queue the create marker without touching the network.
         if (!_ui.value.isOnline) {
-            try { maintenanceCreateSync.enqueue(id, vineyardId, input, clientUpdatedAt) }
-            catch (e: Exception) {
-                restoreMaintenanceOriginal(id, null, optimistic)
-                onResult(false); return
-            }
             _ui.update { it.copy(maintenanceError = "Maintenance log saved offline — will sync when connection is available.") }
             onResult(true)
             return
         }
 
         viewModelScope.launch {
+            val claim = pendingWrites.claimReplay(queued) ?: run { onResult(false); return@launch }
             _ui.update { it.copy(maintenanceBusy = true) }
             try {
                 admission.requireWrite()
                 val created = maintenanceRepo.createMaintenanceLog(vineyardId, input, id, clientUpdatedAt)
-                if (!admission.isCurrent()) { onResult(false); return@launch }
+                if (!admission.isCurrent() || !pendingWrites.isCurrent(claim)) { onResult(false); return@launch }
+                check(persistMaintenanceReceipt(created)) { "Maintenance receipt could not be saved." }
+                check(pendingWrites.removeIfCurrent(claim)) { "Maintenance acknowledgement could not be saved." }
                 // A genuine response stays acknowledged even if authority changed in flight.
                 _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it == optimistic) created else it }, maintenanceBusy = false) }
                 val writable = com.rork.vinetrack.data.OperationalWrites.canWrite(vineyardId)
-                if (writable && photoUri != null) uploadMaintenancePhoto(created, photoUri) {}
+                if (writable) replayPendingMaintenancePhotos()
                 onResult(writable)
             } catch (e: kotlinx.coroutines.CancellationException) {
+                pendingWrites.updateStatusIfCurrent(claim, PendingWriteStatus.FAILED, "Original maintenance create retained after interruption.")
                 throw e
             } catch (e: com.rork.vinetrack.data.VineyardWriteAuthority.Restricted) {
+                pendingWrites.restoreClaimIfCurrent(claim)
                 if (admission.isCurrent()) restoreMaintenanceOriginal(id, null, optimistic)
                 onResult(false)
             } catch (e: BackendError.Unauthorized) {
                 if (!admission.isCurrent()) { onResult(false); return@launch }
                 _ui.update { it.copy(maintenanceBusy = false) }; onUnauthorized("createMaintenanceLog"); onResult(false)
             } catch (e: BackendError.Server) {
-                // Validation / permission / rejection — roll the optimistic row
-                // back, surface, don't queue as retryable.
+                if (e.code in 500..599) {
+                    if (com.rork.vinetrack.data.OperationalWrites.canWrite(vineyardId)) pendingWrites.retryIfCurrent(claim, "Server error (${e.code}).")
+                    else pendingWrites.updateStatusIfCurrent(claim, PendingWriteStatus.FAILED, "Original insert retained; server outcome unknown while held.")
+                } else pendingWrites.updateStatusIfCurrent(claim, PendingWriteStatus.BLOCKED, "Maintenance insert rejected (${e.code}).")
                 if (!admission.isCurrent()) { onResult(false); return@launch }
                 restoreMaintenanceOriginal(id, null, optimistic)
                 _ui.update { it.copy(maintenanceError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
-                // Transient network failure — keep the optimistic row and queue a
-                // create marker for automatic replay rather than rolling back.
+                // Preserve possible delivery before checking any newly-arrived hold.
+                if (com.rork.vinetrack.data.OperationalWrites.canWrite(vineyardId)) pendingWrites.retryIfCurrent(claim, e.message ?: "Maintenance create response unavailable.")
+                else pendingWrites.updateStatusIfCurrent(claim, PendingWriteStatus.FAILED, "Original insert retained; delivery is unknown while changes are held.")
                 if (admitMaintenanceEdit(vineyardId, admission) == null) {
                     if (admission.isCurrent()) restoreMaintenanceOriginal(id, null, optimistic)
                     onResult(false); return@launch
                 }
-                try { maintenanceCreateSync.enqueue(id, vineyardId, input, clientUpdatedAt) }
-                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (_: Exception) {
-                    restoreMaintenanceOriginal(id, null, optimistic)
-                    onResult(false); return@launch
-                }
                 _ui.update { it.copy(maintenanceBusy = false, maintenanceError = "Maintenance log saved offline — will sync when connection is available.") }
                 onResult(true)
+            } finally {
+                pendingWrites.restoreClaimIfCurrent(claim)
             }
         }
     }
@@ -14899,60 +14936,70 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val admission = admitMaintenanceEdit(vineyardId, scope) ?: run { onResult(false); return }
         val attempted = original.applyMaintenanceInput(input)
         val clientUpdatedAt = Instant.now().toString()
-        // Optimistic edit in place — the operator sees the change straight away.
+        val queued = try { queueMaintenanceEdit(id, vineyardId, input, clientUpdatedAt) }
+        catch (_: Exception) { onResult(false); return }
+        maintenanceMutationRevision++
         _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it.id == id) it.applyMaintenanceInput(input) else it }, maintenanceError = null) }
+        // A folded, never-dispatched create must still use INSERT, not PATCH.
+        if (queued.opType == PendingOpType.CREATE) {
+            if (_ui.value.isOnline) replayPendingMaintenanceCreates()
+            onResult(true); return
+        }
 
         // Known-offline: fold into a pending create if present, else coalesce one
         // UPDATE marker. No network.
         if (!_ui.value.isOnline) {
-            try { queueMaintenanceEdit(id, vineyardId, input, clientUpdatedAt) }
-            catch (e: Exception) {
-                restoreMaintenanceOriginal(id, original, attempted)
-                onResult(false); return
-            }
             _ui.update { it.copy(maintenanceError = "Maintenance log saved offline — will sync when connection is available.") }
             onResult(true)
             return
         }
 
         viewModelScope.launch {
+            // A possibly-delivered original insert has to reconcile first.
+            if (pendingWrites.list().any { it.entityType == PendingEntityType.MAINTENANCE_LOG && it.clientId == id && it.opType == PendingOpType.CREATE && it.status in PendingWriteStatus.unresolved }) {
+                replayPendingMaintenanceCreates(); replayPendingMaintenanceUpdates()
+                onResult(true); return@launch
+            }
+            val claim = pendingWrites.claimReplay(queued) ?: run { onResult(false); return@launch }
             _ui.update { it.copy(maintenanceBusy = true) }
             try {
                 admission.requireWrite()
                 val updated = maintenanceRepo.updateMaintenanceLog(id, input, clientUpdatedAt, expectedVineyardId = vineyardId)
-                if (!admission.isCurrent()) { onResult(false); return@launch }
+                if (!admission.isCurrent() || !pendingWrites.isCurrent(claim)) { onResult(false); return@launch }
+                check(persistMaintenanceReceipt(updated)) { "Maintenance receipt could not be saved." }
+                check(pendingWrites.removeIfCurrent(claim)) { "Maintenance acknowledgement could not be saved." }
                 _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.map { if (it == attempted) updated else it }, maintenanceBusy = false) }
                 onResult(com.rork.vinetrack.data.OperationalWrites.canWrite(vineyardId))
             } catch (e: kotlinx.coroutines.CancellationException) {
+                pendingWrites.updateStatusIfCurrent(claim, PendingWriteStatus.FAILED, "Original maintenance edit retained after interruption.")
                 throw e
             } catch (e: com.rork.vinetrack.data.VineyardWriteAuthority.Restricted) {
+                pendingWrites.restoreClaimIfCurrent(claim)
                 if (admission.isCurrent()) restoreMaintenanceOriginal(id, original, attempted)
                 onResult(false)
             } catch (e: BackendError.Unauthorized) {
                 if (!admission.isCurrent()) { onResult(false); return@launch }
                 _ui.update { it.copy(maintenanceBusy = false) }; onUnauthorized("updateMaintenanceLog"); onResult(false)
             } catch (e: BackendError.Server) {
-                // Validation / permission / rejection — restore the previous list,
-                // surface, don't queue as retryable.
+                if (e.code in 500..599) {
+                    if (com.rork.vinetrack.data.OperationalWrites.canWrite(vineyardId)) pendingWrites.retryIfCurrent(claim, "Server error (${e.code}).")
+                    else pendingWrites.updateStatusIfCurrent(claim, PendingWriteStatus.FAILED, "Original edit retained; server outcome unknown while held.")
+                } else pendingWrites.updateStatusIfCurrent(claim, PendingWriteStatus.BLOCKED, "Maintenance edit rejected (${e.code}).")
                 if (!admission.isCurrent()) { onResult(false); return@launch }
                 restoreMaintenanceOriginal(id, original, attempted)
                 _ui.update { it.copy(maintenanceError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
-                // Transient network failure — keep the optimistic edit and
-                // fold/queue a marker for automatic replay rather than rolling back.
+                if (com.rork.vinetrack.data.OperationalWrites.canWrite(vineyardId)) pendingWrites.retryIfCurrent(claim, e.message ?: "Maintenance edit response unavailable.")
+                else pendingWrites.updateStatusIfCurrent(claim, PendingWriteStatus.FAILED, "Original edit retained; delivery is unknown while changes are held.")
                 if (admitMaintenanceEdit(vineyardId, admission) == null) {
                     if (admission.isCurrent()) restoreMaintenanceOriginal(id, original, attempted)
                     onResult(false); return@launch
                 }
-                try { queueMaintenanceEdit(id, vineyardId, input, clientUpdatedAt) }
-                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (_: Exception) {
-                    restoreMaintenanceOriginal(id, original, attempted)
-                    onResult(false); return@launch
-                }
                 _ui.update { it.copy(maintenanceBusy = false, maintenanceError = "Maintenance log saved offline — will sync when connection is available.") }
                 onResult(true)
+            } finally {
+                pendingWrites.restoreClaimIfCurrent(claim)
             }
         }
     }
@@ -14970,12 +15017,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         vineyardId: String?,
         input: MaintenanceLogRepository.MaintenanceInput,
         clientUpdatedAt: String,
-    ) {
-        if (maintenanceCreateSync.foldEdit(id, input, clientUpdatedAt, expectedVineyardId = vineyardId)) return
+    ): PendingWrite {
+        if (maintenanceCreateSync.foldEdit(id, input, clientUpdatedAt, expectedVineyardId = vineyardId)) {
+            return pendingWrites.list().single { it.entityType == PendingEntityType.MAINTENANCE_LOG && it.clientId == id && it.opType == PendingOpType.CREATE && it.status in PendingWriteStatus.unresolved }
+        }
         val scope = vineyardId
             ?: _ui.value.maintenanceLogs.firstOrNull { it.id == id }?.vineyardId
-            ?: return
-        maintenanceUpdateSync.enqueue(id, scope, input, clientUpdatedAt)
+            ?: throw IllegalStateException("Maintenance ownership unavailable.")
+        return maintenanceUpdateSync.enqueue(id, scope, input, clientUpdatedAt)
     }
 
     /**
@@ -15011,28 +15060,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        // Optimistic hide for a synced log.
+        val queued = try { maintenanceDeleteSync.enqueue(id, original.vineyardId) }
+        catch (_: Exception) { onResult(false); return }
+        maintenanceMutationRevision++
         _ui.update { st -> st.copy(maintenanceLogs = st.maintenanceLogs.filterNot { it.id == id }, maintenanceError = null) }
 
         // Known-offline: queue the soft-delete marker without touching the network.
         if (!_ui.value.isOnline) {
-            try { maintenanceDeleteSync.enqueue(id, original.vineyardId) }
-            catch (e: Exception) {
-                restoreMaintenanceOriginal(id, original, null)
-                onResult(false); return
-            }
             _ui.update { it.copy(maintenanceError = "Maintenance log deleted offline — will sync when connection is available.") }
             onResult(true)
             return
         }
 
         viewModelScope.launch {
+            if (pendingWrites.list().any { it.entityType == PendingEntityType.MAINTENANCE_LOG && it.clientId == id && it.opType != PendingOpType.DELETE && it.status in PendingWriteStatus.unresolved }) {
+                replayPendingMaintenanceCreates(); replayPendingMaintenanceUpdates(); replayPendingMaintenanceDeletes()
+                onResult(true); return@launch
+            }
+            val claim = pendingWrites.claimReplay(queued) ?: run { onResult(false); return@launch }
             try {
                 admission.requireWrite()
                 maintenanceRepo.softDeleteMaintenanceLog(id, expectedVineyardId = original.vineyardId)
-                if (!admission.isCurrent()) { onResult(false); return@launch }
+                if (!admission.isCurrent() || !pendingWrites.isCurrent(claim)) { onResult(false); return@launch }
+                check(persistMaintenanceReceipt(id, original.vineyardId)) { "Maintenance delete receipt could not be saved." }
+                check(pendingWrites.removeIfCurrent(claim)) { "Maintenance delete acknowledgement could not be saved." }
                 onResult(com.rork.vinetrack.data.OperationalWrites.canWrite(original.vineyardId))
             } catch (e: kotlinx.coroutines.CancellationException) {
+                pendingWrites.updateStatusIfCurrent(claim, PendingWriteStatus.FAILED, "Original maintenance delete retained after interruption.")
                 throw e
             } catch (e: com.rork.vinetrack.data.VineyardWriteAuthority.Restricted) {
                 if (admission.isCurrent()) restoreMaintenanceOriginal(id, original, null)
@@ -15041,26 +15095,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (!admission.isCurrent()) { onResult(false); return@launch }
                 onUnauthorized("deleteMaintenanceLog"); onResult(false)
             } catch (e: BackendError.Server) {
-                // Validation / permission / rejection — restore, surface, don't queue.
+                if (e.code in 500..599) {
+                    if (com.rork.vinetrack.data.OperationalWrites.canWrite(original.vineyardId)) pendingWrites.retryIfCurrent(claim, "Server error (${e.code}).")
+                    else pendingWrites.updateStatusIfCurrent(claim, PendingWriteStatus.FAILED, "Original delete retained; server outcome unknown while held.")
+                } else pendingWrites.updateStatusIfCurrent(claim, PendingWriteStatus.BLOCKED, "Maintenance delete rejected (${e.code}).")
                 if (!admission.isCurrent()) { onResult(false); return@launch }
                 restoreMaintenanceOriginal(id, original, null)
                 _ui.update { it.copy(maintenanceError = friendlyWriteError(e.code)) }
                 onResult(false)
             } catch (e: Exception) {
-                // Transient network failure — keep the optimistic hide and queue a
-                // soft-delete marker for automatic replay rather than rolling back.
+                if (com.rork.vinetrack.data.OperationalWrites.canWrite(original.vineyardId)) pendingWrites.retryIfCurrent(claim, e.message ?: "Maintenance delete response unavailable.")
+                else pendingWrites.updateStatusIfCurrent(claim, PendingWriteStatus.FAILED, "Original delete retained; delivery is unknown while changes are held.")
                 if (admitMaintenanceEdit(original.vineyardId, admission) == null) {
                     if (admission.isCurrent()) restoreMaintenanceOriginal(id, original, null)
                     onResult(false); return@launch
                 }
-                try { maintenanceDeleteSync.enqueue(id, original.vineyardId) }
-                catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                catch (_: Exception) {
-                    restoreMaintenanceOriginal(id, original, null)
-                    onResult(false); return@launch
-                }
                 _ui.update { it.copy(maintenanceError = "Maintenance log deleted offline — will sync when connection is available.") }
                 onResult(true)
+            } finally {
+                pendingWrites.restoreClaimIfCurrent(claim)
             }
         }
     }
@@ -15076,6 +15129,55 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * image. Reports a friendly error on failure without disturbing the rest of
      * the log's data.
      */
+    private val maintenancePhotoReplayLock = kotlinx.coroutines.sync.Mutex()
+
+    private suspend fun syncMaintenancePhoto(log: MaintenanceLog, account: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess): MaintenanceLog {
+        maintenancePhotoReplayLock.lock()
+        try {
+            if (!session.isAccountAccessCurrent(account)) throw BackendError.Unauthorized
+            com.rork.vinetrack.data.OperationalWrites.requireWrite(log.vineyardId)
+            var evidence = maintenancePhotoEvidence.entries(account.userId, log.vineyardId).single { it.log == log.id }
+            val path = if (evidence.deleting) {
+                if (!evidence.objectRemoved) {
+                    maintenancePhotoRepo.delete(requireNotNull(evidence.uploadedPath))
+                    evidence = maintenancePhotoEvidence.recordRemovalReceipt(evidence)
+                }
+                null
+            } else {
+                evidence.uploadedPath ?: maintenancePhotoRepo.upload(log.vineyardId, log.id, maintenancePhotoEvidence.bytes(evidence)).also {
+                    evidence = maintenancePhotoEvidence.recordReceipt(evidence, it)
+                }
+            }
+            if (!session.isAccountAccessCurrent(account)) throw BackendError.Unauthorized
+            val updated = maintenanceRepo.updatePhotoPath(log.id, path)
+            if (!session.isAccountAccessCurrent(account)) throw BackendError.Unauthorized
+            check(persistMaintenanceReceipt(updated)) { "Maintenance photo receipt could not be saved." }
+            maintenancePhotoEvidence.complete(evidence)
+            return updated
+        } finally { maintenancePhotoReplayLock.unlock() }
+    }
+
+    private fun replayPendingMaintenancePhotos() {
+        if (!_ui.value.isOnline) return
+        val account = session.accountAccess() ?: return
+        val vineyard = _ui.value.selectedVineyardId ?: return
+        launchReplayStage("maintenance-photos") {
+            if (!session.isAccountAccessCurrent(account)) return@launchReplayStage
+            val entries = runCatching { maintenancePhotoEvidence.entries(account.userId, vineyard) }.getOrElse { return@launchReplayStage }
+            for (entry in entries) {
+                if (!session.isAccountAccessCurrent(account)) return@launchReplayStage
+                if (pendingWrites.list().any { it.entityType == PendingEntityType.MAINTENANCE_LOG && it.clientId == entry.log && it.opType in setOf(PendingOpType.CREATE, PendingOpType.DELETE) && it.status in PendingWriteStatus.unresolved }) continue
+                val log = domainCache.loadMaintenance(account.userId, vineyard)?.singleOrNull { it.id == entry.log } ?: continue
+                try {
+                    val updated = syncMaintenancePhoto(log, account)
+                    _ui.update { st -> if (st.selectedVineyardId != vineyard) st else st.copy(maintenanceLogs = PendingWriteOverlay.overlayMaintenance(
+                        st.maintenanceLogs.map { if (it.id == updated.id) updated else it }, pendingWrites.list(), vineyard)) }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (_: Exception) { /* Retain original evidence/receipt for the next admitted sweep. */ }
+            }
+        }
+    }
+
     fun uploadMaintenancePhoto(log: MaintenanceLog, uri: Uri, onResult: (Boolean) -> Unit) {
         val vineyardId = log.vineyardId
         val account = session.accountAccess() ?: run { onResult(false); return }
@@ -15085,15 +15187,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (!session.isAccountAccessCurrent(account)) throw BackendError.Unauthorized
                 com.rork.vinetrack.data.OperationalWrites.requireWrite(vineyardId)
                 val jpeg = PinPhotoImageUtil.compress(getApplication(), uri)
-                var evidence = maintenancePhotoEvidence.stage(account.userId, vineyardId, log.id, jpeg)
-                val path = evidence.uploadedPath ?: maintenancePhotoRepo.upload(vineyardId, log.id, maintenancePhotoEvidence.bytes(evidence)).also {
-                    // Keep the real receipt under its original author even if authority
-                    // changes during transport; the following PATCH is separately admitted.
-                    evidence = maintenancePhotoEvidence.recordReceipt(evidence, it)
-                }
-                if (!session.isAccountAccessCurrent(account)) throw BackendError.Unauthorized
-                val updated = maintenanceRepo.updatePhotoPath(log.id, path)
-                maintenancePhotoEvidence.complete(evidence)
+                maintenancePhotoEvidence.stage(account.userId, vineyardId, log.id, jpeg)
+                val updated = syncMaintenancePhoto(log, account)
                 if (!session.isAccountAccessCurrent(account)) { onResult(false); return@launch }
                 _ui.update { st ->
                     st.copy(
@@ -15127,11 +15222,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 if (!session.isAccountAccessCurrent(account)) throw BackendError.Unauthorized
-                // A held/failed delete is not an acknowledgement. Retain the
-                // original photo reference and do not send a follow-up PATCH.
-                maintenancePhotoRepo.delete(path)
-                if (!session.isAccountAccessCurrent(account)) throw BackendError.Unauthorized
-                val updated = maintenanceRepo.updatePhotoPath(log.id, null)
+                com.rork.vinetrack.data.OperationalWrites.requireWrite(log.vineyardId)
+                maintenancePhotoEvidence.stageDelete(account.userId, log.vineyardId, log.id, path)
+                val updated = syncMaintenancePhoto(log, account)
                 if (!session.isAccountAccessCurrent(account)) { onResult(false); return@launch }
                 _ui.update { st ->
                     st.copy(
@@ -17317,18 +17410,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshMaintenanceLogs(onComplete: () -> Unit = {}) {
         val vineyardId = _ui.value.selectedVineyardId ?: run { onComplete(); return }
         val userId = session.userId
+        val account = session.accountAccess() ?: run { onComplete(); return }
+        val revision = maintenanceMutationRevision
         viewModelScope.launch {
-            val logs = try {
+            var logs = try {
                 repo.listMaintenanceLogs(vineyardId)
             } catch (e: Exception) {
                 onComplete()
                 return@launch
             }
-            if (_ui.value.selectedVineyardId != vineyardId) {
+            if (_ui.value.selectedVineyardId != vineyardId || !session.isAccountAccessCurrent(account)) {
                 onComplete()
                 return@launch
             }
-            runCatching { domainCache.saveMaintenance(userId, vineyardId, logs) }
+            if (revision == maintenanceMutationRevision) {
+                runCatching { domainCache.saveMaintenance(userId, vineyardId, logs) }
+            } else {
+                logs = domainCache.loadMaintenance(userId, vineyardId).orEmpty()
+            }
             val pendingSnapshot = pendingWrites.list()
             _ui.update { st ->
                 st.copy(maintenanceLogs = PendingWriteOverlay.overlayMaintenance(logs, pendingSnapshot, vineyardId))
@@ -17782,7 +17881,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // still shows the last known server rows as an overlay baseline.
         var maintenanceFromServer = false
         var maintenanceFromCache = false
-        val maintenanceLogs = try {
+        val maintenanceFetchRevision = maintenanceMutationRevision
+        var maintenanceLogs = try {
             repo.listMaintenanceLogs(vineyardId).also { maintenanceFromServer = true }
         } catch (e: Exception) {
             _ui.value.maintenanceLogs.ifEmpty {
@@ -17952,6 +18052,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // O-1 overlay so the cache stays a clean server snapshot (no optimistic
         // pending rows leak into it).
         if (!isCurrentLoad()) return
+        if (maintenanceFetchRevision != maintenanceMutationRevision) {
+            maintenanceLogs = domainCache.loadMaintenance(userId, vineyardId).orEmpty()
+            maintenanceFromCache = true
+            maintenanceFromServer = false
+        }
         if (maintenanceFromServer) domainCache.saveMaintenance(userId, vineyardId, maintenanceLogs)
         if (growthFromServer) domainCache.saveGrowth(userId, vineyardId, growthRecords)
         if (yieldFromServer) domainCache.saveYield(userId, vineyardId, yieldRecords)

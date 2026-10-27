@@ -1276,11 +1276,20 @@ final class MaintenanceLogSyncService {
 
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
-    var pendingUpsertCount: Int { metadata.pendingUpserts.count }
-    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
+    var pendingUpsertCount: Int {
+        let all = store?.maintenanceLogRepo.pendingIntents() ?? [:]
+        return Set(metadata.pendingUpserts.keys.filter { all[$0] == nil }).union(
+            all.filter { !$0.value.deleted && $0.value.accountId == auth?.userId }.keys).count
+    }
+    var pendingDeleteCount: Int {
+        let all = store?.maintenanceLogRepo.pendingIntents() ?? [:]
+        return Set(metadata.pendingDeletes.keys.filter { all[$0] == nil }).union(
+            all.filter { $0.value.deleted && $0.value.accountId == auth?.userId }.keys).count
+    }
     private let repository: any MaintenanceLogSyncRepositoryProtocol
     private let metadata: OperationsSyncMetadata
     private let photoStorage: MaintenancePhotoStorageService
+    private var isSyncing = false
     private var isConfigured: Bool = false
     private var eagerPushTask: Task<Void, Never>?
 
@@ -1328,6 +1337,9 @@ final class MaintenanceLogSyncService {
     }
 
     func sync(vineyardId: UUID) async {
+        guard !isSyncing else { return }
+        isSyncing = true
+        defer { isSyncing = false }
         guard SupabaseClientProvider.shared.isConfigured else {
             errorMessage = "Supabase not configured"; syncStatus = .failure("Supabase not configured"); return
         }
@@ -1347,9 +1359,13 @@ final class MaintenanceLogSyncService {
     private func push(vineyardId: UUID) async throws {
         guard let store else { return }
         let createdBy = auth?.userId
-        let dirty = metadata.pendingUpserts
+        let allIntents = store.maintenanceLogRepo.pendingIntents()
+        let intents = allIntents.filter { $0.value.accountId == createdBy && $0.value.original.vineyardId == vineyardId }
+        // Legacy markers remain readable, but cannot override the atomic journal.
+        var dirty = metadata.pendingUpserts.filter { allIntents[$0.key] == nil }
+        for (id, intent) in intents where !intent.deleted { dirty[id] = intent.timestamp }
         if !dirty.isEmpty {
-            let byId = Dictionary(store.maintenanceLogs.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
+            let byId = Dictionary(store.maintenanceLogRepo.loadAll().filter { $0.vineyardId == vineyardId }.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendMaintenanceLogUpsert] = []
             var pushed: [UUID] = []
             var photoUploadFailures: [String] = []
@@ -1379,7 +1395,11 @@ final class MaintenanceLogSyncService {
                             imageData: data
                         )
                         item.photoPath = path
-                        store.applyRemoteMaintenanceLogUpsert(item)
+                        if let intent = intents[id] {
+                            guard try store.maintenanceLogRepo.retainPhotoReceipt(id: id, token: intent.token, path: path) else { continue }
+                        } else {
+                            store.applyRemoteMaintenanceLogUpsert(item)
+                        }
                     } catch {
                         #if DEBUG
                         print("[MaintenanceLogSync] photo upload failed for \(item.id): \(error.localizedDescription)")
@@ -1408,6 +1428,11 @@ final class MaintenanceLogSyncService {
                 try await repository.upsertMany(items)
             }
             try admission.requireCurrentAccount()
+            let acknowledged = Dictionary(uniqueKeysWithValues: result.uploaded.compactMap { id -> (UUID, UUID)? in
+                guard !pendingPhotos.contains(id), let intent = intents[id] else { return nil }
+                return (id, intent.token)
+            })
+            try store.maintenanceLogRepo.acknowledge(acknowledged)
             metadata.acknowledgeMaintenanceMetadata(result.uploaded, pendingPhotos: pendingPhotos, expected: dirty)
             SyncIssueCenter.shared.notePending(entity: "Maintenance Logs", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
@@ -1417,14 +1442,21 @@ final class MaintenanceLogSyncService {
             }
         }
         let deleteAdmission = try VineyardMutationAdmission()
-        for (id, timestamp) in metadata.pendingDeletes {
+        var deletes = metadata.pendingDeletes.filter { allIntents[$0.key] == nil }
+        for (id, intent) in intents where intent.deleted { deletes[id] = intent.timestamp }
+        for (id, timestamp) in deletes {
             do {
+                if let intent = intents[id] { try deleteAdmission.requireWrite(vineyardId: intent.original.vineyardId) }
                 try await repository.softDelete(id: id)
                 try deleteAdmission.requireCurrentAccount()
+                if let intent = intents[id] { try store.maintenanceLogRepo.acknowledge([id: intent.token]) }
                 if metadata.pendingDeletes[id] == timestamp { metadata.clearDeleted([id]) }
             } catch {
                 try deleteAdmission.requireCurrentAccount()
-                if isOperationsMissingRowError(error), metadata.pendingDeletes[id] == timestamp { metadata.clearDeleted([id]) }
+                if isOperationsMissingRowError(error) {
+                    if let intent = intents[id] { try store.maintenanceLogRepo.acknowledge([id: intent.token]) }
+                    if metadata.pendingDeletes[id] == timestamp { metadata.clearDeleted([id]) }
+                }
             }
         }
     }
@@ -1438,7 +1470,7 @@ final class MaintenanceLogSyncService {
         if lastSync == nil {
             let remoteIds = Set(remote.map { $0.id })
             let local = store.maintenanceLogs.filter { $0.vineyardId == vineyardId }
-            let missing = local.filter { !remoteIds.contains($0.id) }
+            let missing = local.filter { !remoteIds.contains($0.id) && store.maintenanceLogRepo.pendingIntents()[$0.id] == nil }
             if !missing.isEmpty {
                 let now = Date()
                 let createdBy = auth?.userId
@@ -1460,7 +1492,7 @@ final class MaintenanceLogSyncService {
             try admission.requireCurrentAccount()
             // A remote metadata acknowledgement is never proof that a pending
             // local photo or a newer revision was delivered. Preserve both.
-            if metadata.pendingUpserts[item.id] != nil || metadata.pendingDeletes[item.id] != nil { continue }
+            if store.maintenanceLogRepo.pendingIntents()[item.id] != nil || metadata.pendingUpserts[item.id] != nil || metadata.pendingDeletes[item.id] != nil { continue }
             if item.deletedAt != nil {
                 if let local = store.maintenanceLogs.first(where: { $0.id == item.id }) {
                     SharedImageCache.shared.removeCachedImage(
@@ -1514,7 +1546,7 @@ final class MaintenanceLogSyncService {
             }
 
             try admission.requireCurrentAccount()
-            guard metadata.pendingUpserts[item.id] == nil, metadata.pendingDeletes[item.id] == nil else { continue }
+            guard store.maintenanceLogRepo.pendingIntents()[item.id] == nil, metadata.pendingUpserts[item.id] == nil, metadata.pendingDeletes[item.id] == nil else { continue }
             store.applyRemoteMaintenanceLogUpsert(mapped)
         }
     }

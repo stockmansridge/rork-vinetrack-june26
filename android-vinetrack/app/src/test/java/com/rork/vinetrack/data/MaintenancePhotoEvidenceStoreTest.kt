@@ -44,6 +44,37 @@ class MaintenancePhotoEvidenceStoreTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test fun photoDeleteIntentAndStorageReceiptSurviveRestartUntilReferenceAcknowledgement() {
+        val root = Files.createTempDirectory("maintenance-delete-recovery").toFile()
+        try {
+            val path = "$vineyard/maintenance/$log/photo.jpg"
+            val store = MaintenancePhotoEvidenceStore(root)
+            val original = store.stageDelete(owner, vineyard, log, path)
+            assertEquals(listOf(original), MaintenancePhotoEvidenceStore(root).entries(owner, vineyard))
+            assertThrows(IllegalStateException::class.java) { store.complete(original) }
+            val receipt = store.recordRemovalReceipt(original)
+            val restored = MaintenancePhotoEvidenceStore(root)
+            assertEquals(receipt, restored.stageDelete(owner, vineyard, log, path))
+            assertEquals(original.createdAt, receipt.createdAt)
+            assertEquals(original.revision, receipt.revision)
+            assertTrue(receipt.objectRemoved)
+            assertTrue(restored.entries("22222222-2222-4222-8222-222222222222", vineyard).isEmpty())
+            restored.complete(receipt)
+            assertTrue(restored.entries(owner, vineyard).isEmpty())
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun pendingUploadCannotBeOverwrittenByPhotoRemoval() {
+        val root = Files.createTempDirectory("maintenance-original-photo").toFile()
+        try {
+            val store = MaintenancePhotoEvidenceStore(root)
+            val original = store.stage(owner, vineyard, log, byteArrayOf(2, 4, 6))
+            assertThrows(IllegalStateException::class.java) { store.stageDelete(owner, vineyard, log, "$vineyard/maintenance/$log/photo.jpg") }
+            assertEquals(listOf(original), store.entries(owner, vineyard))
+            assertArrayEquals(byteArrayOf(2, 4, 6), store.bytes(original))
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun invalidObjectOwnershipFailsClosedWithoutPathTraversal() {
         for (path in listOf("$vineyard/maintenance/../photo.jpg", "$vineyard/maintenance/$log/photo.jpg?other=1", "/$vineyard/maintenance/$log/photo.jpg", "$vineyard/pins/$log/photo.jpg")) {
             try { MaintenanceWriteScope.objectOwner(path); fail("Malformed path admitted: $path") }

@@ -18,6 +18,8 @@ class MaintenancePhotoEvidenceStore(private val directory: File) {
         val createdAt: String,
         val revision: String,
         val uploadedPath: String? = null,
+        val deleting: Boolean = false,
+        val objectRemoved: Boolean = false,
     )
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
@@ -31,7 +33,7 @@ class MaintenancePhotoEvidenceStore(private val directory: File) {
         val metadata = File(dir, "entry.json")
         if (metadata.exists()) {
             val original = json.decodeFromString<Entry>(metadata.readText())
-            check(original.owner == owner && original.vineyard == vineyard && original.log == log)
+            check(original.owner == owner && original.vineyard == vineyard && original.log == log && !original.deleting)
             check(File(dir, "${original.revision}.jpg").isFile) { "Original maintenance evidence unavailable; retained for recovery" }
             return original
         }
@@ -40,6 +42,39 @@ class MaintenancePhotoEvidenceStore(private val directory: File) {
         atomicWrite(File(dir, "${entry.revision}.jpg"), jpeg)
         atomicWrite(metadata, json.encodeToString(entry).toByteArray(Charsets.UTF_8))
         return entry
+    }
+
+    @Synchronized fun entries(owner: String, vineyard: String): List<Entry> {
+        MaintenanceWriteScope.requireUuid(owner); MaintenanceWriteScope.requireUuid(vineyard)
+        val root = File(directory, "${owner.lowercase(java.util.Locale.ROOT)}/${vineyard.lowercase(java.util.Locale.ROOT)}")
+        return root.listFiles().orEmpty().filter { it.isDirectory }.mapNotNull { dir ->
+            val file = File(dir, "entry.json")
+            if (!file.exists()) null else json.decodeFromString<Entry>(file.readText()).also {
+                check(it.owner == owner && it.vineyard == vineyard && it.log.equals(dir.name, true))
+            }
+        }
+    }
+
+    @Synchronized fun stageDelete(owner: String, vineyard: String, log: String, path: String): Entry {
+        check(path == "${vineyard.lowercase(java.util.Locale.ROOT)}/maintenance/${log.lowercase(java.util.Locale.ROOT)}/photo.jpg")
+        val dir = folder(owner, vineyard, log)
+        val metadata = File(dir, "entry.json")
+        if (metadata.exists()) return json.decodeFromString<Entry>(metadata.readText()).also {
+            check(it.owner == owner && it.vineyard == vineyard && it.log == log && it.deleting && it.uploadedPath == path)
+        }
+        check(dir.mkdirs() || dir.isDirectory)
+        val entry = Entry(owner, vineyard, log, Instant.now().toString(), UUID.randomUUID().toString(), uploadedPath = path, deleting = true)
+        atomicWrite(metadata, json.encodeToString(entry).toByteArray(Charsets.UTF_8))
+        return entry
+    }
+
+    @Synchronized fun recordRemovalReceipt(entry: Entry): Entry {
+        check(entry.deleting && entry.uploadedPath != null)
+        val metadata = File(folder(entry.owner, entry.vineyard, entry.log), "entry.json")
+        check(json.decodeFromString<Entry>(metadata.readText()) == entry)
+        val next = entry.copy(objectRemoved = true)
+        atomicWrite(metadata, json.encodeToString(next).toByteArray(Charsets.UTF_8))
+        return next
     }
 
     @Synchronized fun bytes(entry: Entry): ByteArray = File(folder(entry.owner, entry.vineyard, entry.log), "${entry.revision}.jpg").readBytes()
@@ -57,7 +92,7 @@ class MaintenancePhotoEvidenceStore(private val directory: File) {
     @Synchronized fun complete(entry: Entry) {
         val dir = folder(entry.owner, entry.vineyard, entry.log)
         val metadata = File(dir, "entry.json")
-        check(json.decodeFromString<Entry>(metadata.readText()) == entry && entry.uploadedPath != null)
+        check(json.decodeFromString<Entry>(metadata.readText()) == entry && entry.uploadedPath != null && (!entry.deleting || entry.objectRemoved))
         check(metadata.delete())
         File(dir, "${entry.revision}.jpg").delete()
     }

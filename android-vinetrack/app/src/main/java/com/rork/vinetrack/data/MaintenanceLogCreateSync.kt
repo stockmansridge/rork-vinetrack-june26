@@ -39,6 +39,7 @@ import kotlinx.serialization.json.Json
 class MaintenanceLogCreateSync(
     private val maintenanceRepo: MaintenanceLogRepository,
     private val pending: PendingWriteRepository,
+    private val persistReceipt: (MaintenanceLog) -> Boolean = { true },
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -134,6 +135,9 @@ class MaintenanceLogCreateSync(
         if (original.id != id || (expectedVineyardId != null && original.vineyardId != expectedVineyardId)) {
             throw VineyardWriteAuthority.Restricted("WRITE_SCOPE_UNRESOLVED")
         }
+        // A failed/interrupted insert may already exist remotely. Preserve its
+        // original body; the later edit must wait as a separate PATCH.
+        if (existing.single().status != PendingWriteStatus.PENDING || existing.single().attemptCount != 0) return false
         val vineyardId = original.vineyardId
         enqueue(id, vineyardId, input, clientUpdatedAt)
         return true
@@ -191,11 +195,14 @@ class MaintenanceLogCreateSync(
                         clientUpdatedAt = payload.clientUpdatedAt,
                     )
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                    if (pending.removeIfCurrent(write)) onSynced(created)
+                    if (pending.isCurrent(write)) {
+                        check(persistReceipt(created)) { "Maintenance receipt could not be saved durably." }
+                        if (pending.removeIfCurrent(write)) onSynced(created)
+                    }
                 } catch (e: VineyardWriteAuthority.Restricted) {
                     pending.restoreClaimIfCurrent(write)
                 } catch (e: kotlinx.coroutines.CancellationException) {
-                    pending.restoreClaimIfCurrent(write)
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Maintenance sync interrupted; original insert retained.")
                     throw e
                 } catch (e: BackendError.Unauthorized) {
                     // Session expired mid-replay — retry after re-auth (bounded by the cap).
@@ -205,7 +212,8 @@ class MaintenanceLogCreateSync(
                         // Duplicate primary key — the client id is already on the
                         // server, so the log exists. Idempotent success; the
                         // optimistic row stays as-is.
-                        e.code == 409 -> pending.removeIfCurrent(write)
+                        e.code == 409 -> pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                            "Existing maintenance record must be verified before acknowledging this insert.")
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
                         else -> pending.updateStatusIfCurrent(
                             write,
@@ -225,7 +233,10 @@ class MaintenanceLogCreateSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
+        val vineyard = runCatching { json.decodeFromString(Payload.serializer(), write.payloadJson).vineyardId }.getOrNull()
+        if (vineyard != null && !OperationalWrites.canWrite(vineyard)) {
+            pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Original insert retained; delivery unknown while held.")
+        } else pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

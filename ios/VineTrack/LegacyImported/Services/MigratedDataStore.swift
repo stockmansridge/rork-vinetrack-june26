@@ -1814,7 +1814,9 @@ final class MigratedDataStore {
               admitMaintenanceMutation(vineyardId: log.vineyardId, scope: scope) else { return false }
         var slice = maintenanceLogRepo.load(for: log.vineyardId)
         slice.append(log)
-        maintenanceLogRepo.saveSlice(slice, for: log.vineyardId)
+        guard let accountId = currentUserIdProvider?() else { return false }
+        do { try maintenanceLogRepo.saveLocal(log, accountId: accountId) }
+        catch { return false }
         if selectedVineyardId == log.vineyardId { maintenanceLogs = slice }
         onMaintenanceLogChanged?(log.id)
         return true
@@ -1829,7 +1831,9 @@ final class MigratedDataStore {
         item.createdBy = original.createdBy
         if let index = slice.firstIndex(where: { $0.id == log.id }) { slice[index] = item }
         else { slice.append(item) }
-        maintenanceLogRepo.saveSlice(slice, for: original.vineyardId)
+        guard let accountId = currentUserIdProvider?() else { return false }
+        do { try maintenanceLogRepo.saveLocal(item, accountId: accountId) }
+        catch { return false }
         if selectedVineyardId == original.vineyardId { maintenanceLogs = slice }
         onMaintenanceLogChanged?(log.id)
         return true
@@ -1840,7 +1844,9 @@ final class MigratedDataStore {
         guard let original = maintenanceOriginal(logId),
               admitMaintenanceMutation(vineyardId: original.vineyardId, scope: scope) else { return false }
         let slice = maintenanceLogRepo.load(for: original.vineyardId).filter { $0.id != logId }
-        maintenanceLogRepo.saveSlice(slice, for: original.vineyardId)
+        guard let accountId = currentUserIdProvider?() else { return false }
+        do { try maintenanceLogRepo.saveLocal(original, accountId: accountId, deleted: true) }
+        catch { return false }
         if selectedVineyardId == original.vineyardId { maintenanceLogs = slice }
         onMaintenanceLogDeleted?(logId)
         return true

@@ -75,6 +75,29 @@ struct MaintenanceForegroundAdmissionTests {
         #expect(changes == 1 && store.maintenanceLogRepo.loadAll().count == 1)
     }
 
+    @Test func failedDurableCreatePublishesNeitherRowNorSuccess() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let store = MigratedDataStore(persistence: persistence)
+        let user = UUID(), vineyard = UUID()
+        let gate = VineyardWriteAuthority(defaults: UserDefaults(suiteName: UUID().uuidString)!)
+        gate.bind(userId: user)
+        store.operationalWriteAuthority = gate
+        store.currentUserIdProvider = { user }
+        store.selectedVineyardId = vineyard
+        persistence.durableSaveFailureForTesting = { key in
+            key == MaintenanceLogRepository.storageKey ? CocoaError(.fileWriteUnknown) : nil
+        }
+        var callbacks = 0
+        store.onMaintenanceLogChanged = { _ in callbacks += 1 }
+        #expect(!store.addMaintenanceLog(MaintenanceLog(vineyardId: vineyard, itemName: "Disk failure")))
+        #expect(store.maintenanceLogs.isEmpty)
+        #expect(MaintenanceLogRepository(persistence: PersistenceStore(directory: directory)).loadAll().isEmpty)
+        #expect(callbacks == 0)
+    }
+
     @Test func forgedVineyardCannotRetargetPersistedMaintenanceRow() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -190,12 +190,9 @@ class DomainCacheStore(context: Context) {
     fun loadMaintenance(vineyardId: String): List<MaintenanceLog> =
         decode(prefs.getString(keyMaintenance(vineyardId), null), maintenanceSerializer)
 
-    fun saveMaintenance(vineyardId: String, logs: List<MaintenanceLog>, syncedAt: Long) {
-        prefs.edit {
-            putString(keyMaintenance(vineyardId), encode(maintenanceSerializer, logs))
-            putLong(keyMaintenanceAt(vineyardId), syncedAt)
-        }
-    }
+    fun saveMaintenance(vineyardId: String, logs: List<MaintenanceLog>, syncedAt: Long): Boolean =
+        prefs.edit().putString(keyMaintenance(vineyardId), encode(maintenanceSerializer, logs))
+            .putLong(keyMaintenanceAt(vineyardId), syncedAt).commit()
 
     fun maintenanceSyncedAt(vineyardId: String): Long? = readTimestamp(keyMaintenanceAt(vineyardId))
 

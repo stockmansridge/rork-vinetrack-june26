@@ -44,6 +44,7 @@ import kotlinx.serialization.json.Json
 class MaintenanceLogUpdateSync(
     private val maintenanceRepo: MaintenanceLogRepository,
     private val pending: PendingWriteRepository,
+    private val persistReceipt: (MaintenanceLog) -> Boolean = { true },
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -172,11 +173,14 @@ class MaintenanceLogUpdateSync(
                         expectedVineyardId = payload.vineyardId,
                     )
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                    if (pending.removeIfCurrent(write)) onSynced(updated)
+                    if (pending.isCurrent(write)) {
+                        check(persistReceipt(updated)) { "Maintenance receipt could not be saved durably." }
+                        if (pending.removeIfCurrent(write)) onSynced(updated)
+                    }
                 } catch (e: VineyardWriteAuthority.Restricted) {
                     pending.restoreClaimIfCurrent(write)
                 } catch (e: kotlinx.coroutines.CancellationException) {
-                    pending.restoreClaimIfCurrent(write)
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Maintenance sync interrupted; original edit retained.")
                     throw e
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to sync this maintenance log edit.")
@@ -213,7 +217,10 @@ class MaintenanceLogUpdateSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
+        val vineyard = runCatching { json.decodeFromString(Payload.serializer(), write.payloadJson).vineyardId }.getOrNull()
+        if (vineyard != null && !OperationalWrites.canWrite(vineyard)) {
+            pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Original edit retained; delivery unknown while held.")
+        } else pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

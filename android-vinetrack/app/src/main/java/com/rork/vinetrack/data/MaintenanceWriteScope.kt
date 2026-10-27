@@ -61,12 +61,23 @@ internal class MaintenanceWriteScope(private val session: SessionStore) {
         return vineyard
     }
 
-    suspend fun <T> send(vineyard: String, operation: suspend () -> T): T = try {
-        admission.send(vineyard, operation)
-    } catch (error: BackendError.Server) {
-        // Structured expiry is classified by send before ordinary permission failures.
-        if (error.code == 401 || error.code == 403) throw BackendError.Unauthorized
-        throw error
+    suspend fun <T> send(vineyard: String, operation: suspend () -> T): T {
+        admission.requireVineyard(vineyard)
+        return try { operation() } catch (error: BackendError.Server) {
+            admission.requireCurrent()
+            val structuredReadOnly = runCatching {
+                val body = kotlinx.serialization.json.Json.parseToJsonElement(error.body) as? kotlinx.serialization.json.JsonObject
+                (body?.get("code") as? kotlinx.serialization.json.JsonPrimitive)?.content == "VT_READ_ONLY"
+            }.getOrDefault(false)
+            // A concurrent hold is not proof that an attempted 5xx mutation was
+            // rejected before delivery. Preserve that uncertainty for recovery.
+            if (OperationalWrites.handleServerError(error, vineyard) &&
+                (structuredReadOnly || error.code !in 500..599)) {
+                throw VineyardWriteAuthority.Restricted(OperationalWrites.authority?.heldReason(vineyard) ?: "VT_READ_ONLY")
+            }
+            if (error.code == 401 || error.code == 403) throw BackendError.Unauthorized
+            throw error
+        }
     }
 
     companion object {

@@ -146,9 +146,9 @@ class DomainCacheRepository(context: Context) {
     // MARK: - Maintenance logs by vineyard (Stage O-2 — single-entity field cache)
 
     /** Save maintenance logs from a successful online fetch, claiming the cache for [userId]. */
-    fun saveMaintenance(userId: String?, vineyardId: String, logs: List<MaintenanceLog>) {
+    fun saveMaintenance(userId: String?, vineyardId: String, logs: List<MaintenanceLog>): Boolean {
         ensureOwner(userId)
-        store.saveMaintenance(vineyardId, logs, System.currentTimeMillis())
+        return store.saveMaintenance(vineyardId, logs, System.currentTimeMillis())
     }
 
     /** Cached maintenance logs for the vineyard, or null if absent / owned by someone else. */

@@ -248,6 +248,7 @@ extension MigratedDataStore {
     // MARK: - Maintenance Logs
 
     func applyRemoteMaintenanceLogUpsert(_ log: MaintenanceLog) {
+        guard maintenanceLogRepo.pendingIntents()[log.id] == nil else { return }
         if selectedVineyardId == log.vineyardId {
             if let idx = maintenanceLogs.firstIndex(where: { $0.id == log.id }) {
                 maintenanceLogs[idx] = log
@@ -294,6 +295,7 @@ extension MigratedDataStore {
     }
 
     func applyRemoteMaintenanceLogDelete(_ id: UUID) {
+        guard maintenanceLogRepo.pendingIntents()[id] == nil else { return }
         if let vineyardId = selectedVineyardId {
             maintenanceLogs.removeAll { $0.id == id }
             maintenanceLogRepo.saveSlice(maintenanceLogs, for: vineyardId)

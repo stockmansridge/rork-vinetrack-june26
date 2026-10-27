@@ -3,6 +3,8 @@ package com.rork.vinetrack.data
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.MaintenanceLog
 import io.ktor.client.call.body
+import io.ktor.client.request.get
+import com.rork.vinetrack.data.model.applyMaintenanceInput
 import io.ktor.client.request.headers
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
@@ -149,8 +151,29 @@ class MaintenanceLogRepository(private val session: SessionStore) {
                 contentType(ContentType.Application.Json)
                 setBody(body)
             }
-            if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
-            firstRow(response)
+            if (response.status.value == 409) {
+                // A conflict is not a receipt. Read back this exact original insert
+                // under the same account and verify scope, author, version and body.
+                scope.requireCurrent()
+                val receipt = SupabaseClient.http.get(SupabaseClient.restUrl("maintenance_logs?id=eq.$recordId")) {
+                    attributes.put(SupabaseClient.accountRequestScope, scope.account)
+                    authHeaders(token)
+                }
+                scope.requireCurrent()
+                if (!receipt.status.isSuccess()) throw BackendError.Server(receipt.status.value, receipt.bodyAsText())
+                val row = receipt.body<List<MaintenanceLog>>().singleOrNull()
+                val stampMatches = row?.clientUpdatedAt?.let { runCatching { Instant.parse(it) == Instant.parse(body.clientUpdatedAt) }.getOrDefault(false) } == true
+                val dateMatches = row?.date?.let { runCatching { Instant.parse(it) == Instant.parse(input.date) }.getOrDefault(it == input.date) } == true
+                if (row == null || !row.id.equals(recordId, true) || !row.vineyardId.equals(vineyardId, true) ||
+                    row.createdBy != body.createdBy || row.deletedAt != null || !stampMatches || !dateMatches ||
+                    row.applyMaintenanceInput(input).copy(date = row.date) != row) {
+                    throw BackendError.Server(409, "Original maintenance insert receipt could not be verified.")
+                }
+                row
+            } else {
+                if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+                firstRow(response)
+            }
             }
         }
 

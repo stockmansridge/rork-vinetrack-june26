@@ -54,6 +54,7 @@ import kotlinx.serialization.json.Json
 class MaintenanceLogDeleteSync(
     private val maintenanceRepo: MaintenanceLogRepository,
     private val pending: PendingWriteRepository,
+    private val persistReceipt: (String, String?) -> Boolean = { _, _ -> true },
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -140,11 +141,14 @@ class MaintenanceLogDeleteSync(
                 try {
                     maintenanceRepo.softDeleteMaintenanceLog(payload.maintenanceLogId, expectedVineyardId = payload.vineyardId)
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                    if (pending.removeIfCurrent(write)) onDeleted(payload.maintenanceLogId)
+                    if (pending.isCurrent(write)) {
+                        check(persistReceipt(payload.maintenanceLogId, payload.vineyardId)) { "Maintenance delete receipt could not be saved durably." }
+                        if (pending.removeIfCurrent(write)) onDeleted(payload.maintenanceLogId)
+                    }
                 } catch (e: VineyardWriteAuthority.Restricted) {
                     pending.restoreClaimIfCurrent(write)
                 } catch (e: kotlinx.coroutines.CancellationException) {
-                    pending.restoreClaimIfCurrent(write)
+                    pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Maintenance sync interrupted; original delete retained.")
                     throw e
                 } catch (e: BackendError.Unauthorized) {
                     retryOrBlock(write, "Sign-in needed to delete this maintenance log.")
@@ -153,7 +157,7 @@ class MaintenanceLogDeleteSync(
                         // Already deleted / never existed server-side — the delete
                         // intent is satisfied. Idempotent success.
                         e.code == 404 -> {
-                            if (pending.removeIfCurrent(write)) onDeleted(payload.maintenanceLogId)
+                            if (pending.isCurrent(write) && persistReceipt(payload.maintenanceLogId, payload.vineyardId) && pending.removeIfCurrent(write)) onDeleted(payload.maintenanceLogId)
                         }
                         e.code in 500..599 -> retryOrBlock(write, "Server error (${e.code}).")
                         else -> pending.updateStatusIfCurrent(
@@ -187,7 +191,10 @@ class MaintenanceLogDeleteSync(
 
     /** Bump the attempt counter and either re-queue (failed) or give up (blocked). */
     private fun retryOrBlock(write: PendingWrite, error: String) {
-        pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
+        val vineyard = runCatching { json.decodeFromString(Payload.serializer(), write.payloadJson).vineyardId }.getOrNull()
+        if (vineyard != null && !OperationalWrites.canWrite(vineyard)) {
+            pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED, "Original delete retained; delivery unknown while held.")
+        } else pending.retryIfCurrent(write, error, MAX_ATTEMPTS)
     }
 
     private companion object {

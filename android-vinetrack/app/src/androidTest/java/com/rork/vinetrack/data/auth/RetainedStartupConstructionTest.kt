@@ -189,6 +189,9 @@ class RetainedStartupConstructionTest {
             try {
                 for (operation in listOf("create", "update", "delete")) {
                     gate.verified(a, com.rork.vinetrack.data.VineyardOperationalAccess(true, true), true)
+                    // Independent synthetic scenarios, not dependent edits to the same log.
+                    val queue = AppViewModel::class.java.getDeclaredField("pendingWrites").apply { isAccessible = true }.get(vm) as com.rork.vinetrack.data.PendingWriteRepository
+                    queue.clearAll()
                     val completed = CompletableDeferred<Boolean>()
                     instrumentation.runOnMainSync {
                         state.value = state.value.copy(selectedVineyardId = a, currentUserId = session.userId,
@@ -204,8 +207,190 @@ class RetainedStartupConstructionTest {
                     assertEquals(listOf(original), vm.ui.value.maintenanceLogs)
                     assertEquals(0, mutations)
                     assertFalse(vm.ui.value.maintenanceBusy)
-                    assertNull(app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).getString("pending_writes_json", null))
+                    // Save was admitted before transport; the newly-arrived hold
+                    // must retain its original write-ahead intent, not erase it.
+                    val retained = com.rork.vinetrack.data.PendingWriteStore.decodeForRecovery(app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).getString("pending_writes_json", null) ?: "[]").items
+                    assertTrue(retained.any { it.opType == operation && it.payloadJson.contains(a) })
+                    assertTrue(retained.all { it.attemptCount == 0 })
                 }
+            } finally { com.rork.vinetrack.data.SupabaseClient.installInstrumentationTransport(null); client.close() }
+        }
+    }
+
+    @Test fun maintenanceCreateIsDurableBeforeTransportAndLostResponseReplaysVerifiedOriginal() {
+        verifyLostCreateRecovery(expireDuringDelivery = false)
+    }
+
+    @Test fun maintenanceLostCreateDuringExpiryRetainsUncertainOriginalWithoutConsumingAttempts() {
+        verifyLostCreateRecovery(expireDuringDelivery = true)
+    }
+
+    @Test fun maintenanceUncertainServerErrorDuringExpiryRetainsAttemptedInsert() {
+        verifyLostCreateRecovery(expireDuringDelivery = true, serverError = true)
+    }
+
+    private fun verifyLostCreateRecovery(expireDuringDelivery: Boolean, serverError: Boolean = false) {
+        constructAndAwaitLogin { vm ->
+            val session = AppViewModel::class.java.getDeclaredField("session").apply { isAccessible = true }.get(vm) as SessionStore
+            val owner = "44444444-4444-4444-8444-444444444444"
+            val vineyard = "11111111-1111-4111-8111-111111111111"
+            session.accessToken = "synthetic-not-a-live-token"
+            session.userId = owner
+            val input = com.rork.vinetrack.data.MaintenanceLogRepository.MaintenanceInput(
+                "Synthetic maintenance", null, null, 0.0, null, "", "", 0.0, 0.0, "2026-10-27T00:00:00Z")
+            @Suppress("UNCHECKED_CAST")
+            val state = AppViewModel::class.java.getDeclaredField("_ui").apply { isAccessible = true }
+                .get(vm) as kotlinx.coroutines.flow.MutableStateFlow<com.rork.vinetrack.ui.AppUiState>
+            lateinit var scope: AppViewModel.MaintenanceEditScope
+            instrumentation.runOnMainSync {
+                state.value = state.value.copy(selectedVineyardId = vineyard, currentUserId = owner, maintenanceLogs = emptyList(), isOnline = true)
+                scope = requireNotNull(vm.captureMaintenanceEditScope(vineyard))
+            }
+            val gate = requireNotNull(com.rork.vinetrack.data.OperationalWrites.authority)
+            var serverExists = false
+            var checkedWriteAhead = false
+            var inserts = 0
+            val response = "[{\"id\":\"${scope.draftId}\",\"vineyard_id\":\"$vineyard\",\"item_name\":\"Synthetic maintenance\",\"date\":\"${input.date}\",\"created_by\":\"$owner\",\"client_updated_at\":\"${scope.draftUpdatedAt}\"}]"
+            val client = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { request ->
+                val durable = com.rork.vinetrack.data.PendingWriteStore.decodeForRecovery(app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).getString("pending_writes_json", null) ?: "[]").items.single { it.clientId == scope.draftId }
+                assertTrue(durable.payloadJson.contains(scope.draftUpdatedAt))
+                checkedWriteAhead = true
+                if (request.method == io.ktor.http.HttpMethod.Post) {
+                    inserts++
+                    if (!serverExists) {
+                        serverExists = true
+                        if (expireDuringDelivery) gate.handleServerCode("VT_READ_ONLY", vineyard)
+                        if (serverError) respond("Synthetic uncertain server failure", io.ktor.http.HttpStatusCode.ServiceUnavailable)
+                        else throw IllegalStateException("Synthetic committed insert with lost response")
+                    } else respond("duplicate primary key", io.ktor.http.HttpStatusCode.Conflict)
+                } else {
+                    respond(if (serverExists) response else "[]", io.ktor.http.HttpStatusCode.OK,
+                        io.ktor.http.headersOf("Content-Type", "application/json"))
+                }
+            }) { install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json(com.rork.vinetrack.data.SupabaseClient.json) } }
+            com.rork.vinetrack.data.SupabaseClient.installInstrumentationTransport(client)
+            try {
+                val completed = CompletableDeferred<Boolean>()
+                instrumentation.runOnMainSync { vm.createMaintenanceLog(input, scope = scope) { completed.complete(it) } }
+                val accepted = runBlocking { withTimeout(15_000) { completed.await() } }
+                assertEquals("Lost delivery may be locally accepted only while writable", !expireDuringDelivery, accepted)
+                assertTrue(checkedWriteAhead)
+                val original = com.rork.vinetrack.data.PendingWriteStore.decodeForRecovery(app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).getString("pending_writes_json", null) ?: "[]").items.single()
+                assertEquals(com.rork.vinetrack.data.model.PendingWriteStatus.FAILED, original.status)
+                assertEquals(if (expireDuringDelivery) 0 else 1, original.attemptCount)
+                if (expireDuringDelivery) {
+                    val retry = CompletableDeferred<Boolean>()
+                    instrumentation.runOnMainSync { vm.createMaintenanceLog(input, scope = scope) { retry.complete(it) } }
+                    assertFalse(runBlocking { withTimeout(15_000) { retry.await() } })
+                    assertEquals(1, inserts)
+                    gate.verified(vineyard, com.rork.vinetrack.data.VineyardOperationalAccess(true, true), true)
+                }
+                val restored = com.rork.vinetrack.data.PendingWriteRepository(app)
+                assertEquals(original.id, restored.list().single().id)
+                assertEquals(original.payloadJson, restored.list().single().payloadJson)
+                assertEquals(original.createdAt, restored.list().single().createdAt)
+                val cache = com.rork.vinetrack.data.DomainCacheRepository(app)
+                val replay = com.rork.vinetrack.data.MaintenanceLogCreateSync(com.rork.vinetrack.data.MaintenanceLogRepository(session), restored) {
+                    cache.saveMaintenance(owner, vineyard, listOf(it))
+                }
+                if (expireDuringDelivery) {
+                    assertFalse(replay.foldEdit(scope.draftId, input.copy(itemName = "Later edit"), "2026-10-27T01:00:00Z", vineyard))
+                    val deletion = com.rork.vinetrack.data.MaintenanceLogDeleteSync(com.rork.vinetrack.data.MaintenanceLogRepository(session), restored)
+                    assertTrue(runCatching { deletion.cancelLocalCreate(scope.draftId, vineyard) }.isFailure)
+                    assertEquals(original, restored.list().single())
+                }
+                var acknowledgements = 0
+                runBlocking { withTimeout(15_000) { replay.replayAll { acknowledgements++ } } }
+                assertEquals(1, acknowledgements)
+                assertTrue(restored.list().isEmpty())
+                assertEquals(scope.draftId, cache.loadMaintenance(owner, vineyard)?.single()?.id)
+                assertEquals(2, inserts)
+            } finally { com.rork.vinetrack.data.SupabaseClient.installInstrumentationTransport(null); client.close() }
+        }
+    }
+
+    @Test fun maintenanceLostUpdateReplaysOriginalBodyAndCommitsReceiptBeforeAcknowledgement() {
+        verifyLostMaintenanceMutationRecovery(delete = false)
+    }
+
+    @Test fun maintenanceLostDeleteReplaysOriginalAndCommitsRemovalBeforeAcknowledgement() {
+        verifyLostMaintenanceMutationRecovery(delete = true)
+    }
+
+    private fun verifyLostMaintenanceMutationRecovery(delete: Boolean) {
+        constructAndAwaitLogin { vm ->
+            val session = AppViewModel::class.java.getDeclaredField("session").apply { isAccessible = true }.get(vm) as SessionStore
+            val owner = "44444444-4444-4444-8444-444444444444"
+            val vineyard = "11111111-1111-4111-8111-111111111111"
+            val id = "33333333-3333-4333-8333-333333333333"
+            session.accessToken = "synthetic-not-a-live-token"
+            session.userId = owner
+            val input = com.rork.vinetrack.data.MaintenanceLogRepository.MaintenanceInput(
+                "Recovered edit", null, null, 0.0, null, "", "", 0.0, 0.0, "2026-10-27T00:00:00Z")
+            val original = com.rork.vinetrack.data.model.MaintenanceLog(id = id, vineyardId = vineyard, itemName = "Original", date = input.date)
+            @Suppress("UNCHECKED_CAST")
+            val state = AppViewModel::class.java.getDeclaredField("_ui").apply { isAccessible = true }
+                .get(vm) as kotlinx.coroutines.flow.MutableStateFlow<com.rork.vinetrack.ui.AppUiState>
+            instrumentation.runOnMainSync {
+                state.value = state.value.copy(selectedVineyardId = vineyard, currentUserId = owner, maintenanceLogs = listOf(original), isOnline = true)
+            }
+            val sentBodies = mutableListOf<String>()
+            val response = "[{\"id\":\"$id\",\"vineyard_id\":\"$vineyard\",\"item_name\":\"Recovered edit\",\"date\":\"${input.date}\"}]"
+            val client = io.ktor.client.HttpClient(io.ktor.client.engine.mock.MockEngine { request ->
+                if (request.method == io.ktor.http.HttpMethod.Get) {
+                    respond(response, io.ktor.http.HttpStatusCode.OK, io.ktor.http.headersOf("Content-Type", "application/json"))
+                } else {
+                    val durable = com.rork.vinetrack.data.PendingWriteStore.decodeForRecovery(app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).getString("pending_writes_json", null) ?: "[]").items.single()
+                    assertEquals(id, durable.clientId)
+                    assertEquals(if (delete) "delete" else "update", durable.opType)
+                    sentBodies.add((request.body as io.ktor.http.content.TextContent).text)
+                    if (sentBodies.size == 1) throw IllegalStateException("Synthetic committed mutation with lost response")
+                    respond(if (delete) "null" else response, io.ktor.http.HttpStatusCode.OK,
+                        io.ktor.http.headersOf("Content-Type", "application/json"))
+                }
+            }) { install(io.ktor.client.plugins.contentnegotiation.ContentNegotiation) { json(com.rork.vinetrack.data.SupabaseClient.json) } }
+            com.rork.vinetrack.data.SupabaseClient.installInstrumentationTransport(client)
+            try {
+                val completed = CompletableDeferred<Boolean>()
+                instrumentation.runOnMainSync {
+                    if (delete) vm.deleteMaintenanceLog(id) { completed.complete(it) }
+                    else vm.updateMaintenanceLog(id, input) { completed.complete(it) }
+                }
+                assertTrue(runBlocking { withTimeout(15_000) { completed.await() } })
+                val originalIntent = com.rork.vinetrack.data.PendingWriteStore.decodeForRecovery(app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).getString("pending_writes_json", null) ?: "[]").items.single()
+                assertEquals(com.rork.vinetrack.data.model.PendingWriteStatus.FAILED, originalIntent.status)
+                val restored = com.rork.vinetrack.data.PendingWriteRepository(app)
+                assertEquals(originalIntent, restored.list().single())
+                val cache = com.rork.vinetrack.data.DomainCacheRepository(app)
+                assertTrue(cache.saveMaintenance(owner, vineyard, listOf(original)))
+                val repo = com.rork.vinetrack.data.MaintenanceLogRepository(session)
+                var acknowledgements = 0
+                runBlocking {
+                    withTimeout(15_000) {
+                        if (delete) {
+                            com.rork.vinetrack.data.MaintenanceLogDeleteSync(repo, restored) { _, scope ->
+                                assertEquals(vineyard, scope)
+                                assertEquals(originalIntent.id, restored.list().single().id)
+                                cache.saveMaintenance(owner, vineyard, emptyList())
+                            }.replayAll {
+                                assertTrue(cache.loadMaintenance(owner, vineyard).orEmpty().isEmpty())
+                                acknowledgements++
+                            }
+                        } else {
+                            com.rork.vinetrack.data.MaintenanceLogUpdateSync(repo, restored) { row ->
+                                assertEquals(originalIntent.id, restored.list().single().id)
+                                cache.saveMaintenance(owner, vineyard, listOf(row))
+                            }.replayAll {
+                                assertEquals("Recovered edit", cache.loadMaintenance(owner, vineyard)?.single()?.itemName)
+                                acknowledgements++
+                            }
+                        }
+                    }
+                }
+                assertEquals(1, acknowledgements)
+                assertTrue(restored.list().isEmpty())
+                assertEquals(2, sentBodies.size)
+                assertEquals(sentBodies.first(), sentBodies.last())
             } finally { com.rork.vinetrack.data.SupabaseClient.installInstrumentationTransport(null); client.close() }
         }
     }
@@ -298,7 +483,11 @@ class RetainedStartupConstructionTest {
                 assertEquals(1, mutations)
                 assertEquals(listOf(nextAccountRow), vm.ui.value.maintenanceLogs)
                 assertEquals(b, session.userId)
-                assertNull(app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).getString("pending_writes_json", null))
+                // A stale account response cannot acknowledge the original outbox.
+                val retained = com.rork.vinetrack.data.PendingWriteStore.decodeForRecovery(app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).getString("pending_writes_json", null) ?: "[]").items.single()
+                assertEquals(id, retained.clientId)
+                assertTrue(retained.payloadJson.contains(a))
+                assertFalse(retained.payloadJson.contains("Next account"))
             } finally { com.rork.vinetrack.data.SupabaseClient.installInstrumentationTransport(null); client.close() }
         }
     }
