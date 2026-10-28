@@ -27,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -88,6 +89,7 @@ fun CustomiseToolsScreen(
     val haptics = LocalHapticFeedback.current
     val density = LocalDensity.current
     val layout by vm.operationalToolLayout.collectAsStateWithLifecycle()
+    val halfHeight by vm.operationalToolsHalfHeight.collectAsStateWithLifecycle()
 
     val canViewCosting = state.currentRole == "owner" || state.currentRole == "manager"
     val canUseVineyardInsights = VineyardInsightsAccess.resolve(
@@ -143,6 +145,23 @@ fun CustomiseToolsScreen(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SectionHeader("Operational Tools", onLight = true)
+                VineyardCard {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("½ height", modifier = Modifier.weight(1f), color = vine.textPrimary)
+                        Switch(
+                            checked = halfHeight,
+                            onCheckedChange = vm::setOperationalToolsHalfHeight,
+                            modifier = Modifier.semantics { contentDescription = "Half-height operational tools" },
+                        )
+                    }
+                }
+            }
+
             if (layout.hasPendingSync && layout.syncMessage != null) {
                 VineyardCard {
                     Text(

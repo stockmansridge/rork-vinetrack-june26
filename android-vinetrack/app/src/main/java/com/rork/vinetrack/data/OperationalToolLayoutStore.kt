@@ -38,6 +38,16 @@ class OperationalToolLayoutStore(
     private val _layout = MutableStateFlow(OperationalToolLayout())
     val layout: StateFlow<OperationalToolLayout> = _layout.asStateFlow()
 
+    // Device-local density; never sent to the tool-order RPCs.
+    private val _halfHeight = MutableStateFlow(false)
+    val halfHeight: StateFlow<Boolean> = _halfHeight.asStateFlow()
+
+    fun setHalfHeight(enabled: Boolean) {
+        val user = userId ?: return
+        prefs.edit { putBoolean("half_height_$user", enabled) }
+        _halfHeight.value = enabled
+    }
+
     private var userId: String? = null
     private var lastServerRefreshMs = 0L
 
@@ -49,6 +59,7 @@ class OperationalToolLayoutStore(
     fun configure(userId: String?) {
         if (userId == this.userId && _layout.value.isReady) return
         this.userId = userId
+        _halfHeight.value = userId?.let { prefs.getBoolean("half_height_$it", false) } ?: false
         lastServerRefreshMs = 0L
         if (userId == null) {
             _layout.value = OperationalToolLayout(isReady = true)
@@ -61,6 +72,7 @@ class OperationalToolLayoutStore(
     /** Clears in-memory state on sign-out; the per-user cache stays on disk. */
     fun signOut() {
         userId = null
+        _halfHeight.value = false
         lastServerRefreshMs = 0L
         _layout.value = OperationalToolLayout()
     }

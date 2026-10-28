@@ -1045,6 +1045,7 @@ private fun OperationalToolsSection(
 ) {
     val vine = LocalVineColors.current
     val layout by vm.operationalToolLayout.collectAsStateWithLifecycle()
+    val halfHeight by vm.operationalToolsHalfHeight.collectAsStateWithLifecycle()
     val canViewCosting = state.currentRole == "owner" || state.currentRole == "manager"
     val canUseVineyardInsights = VineyardInsightsAccess.resolve(
         sessionPhase = state.sessionPhase,
@@ -1102,6 +1103,7 @@ private fun OperationalToolsSection(
                         ToolCard(
                             ToolItem(def.title, def.subtitle, def.icon, def.tint) { onOpenTool(def.route) },
                             modifier = Modifier.weight(1f),
+                            halfHeight = halfHeight,
                         )
                     }
                     if (rowItems.size == 1) Spacer(Modifier.weight(1f))
@@ -1112,9 +1114,37 @@ private fun OperationalToolsSection(
 }
 
 @Composable
-private fun ToolCard(item: ToolItem, modifier: Modifier = Modifier) {
+private fun ToolCard(item: ToolItem, modifier: Modifier = Modifier, halfHeight: Boolean = false) {
     val vine = LocalVineColors.current
     val alpha = if (item.comingSoon) 0.55f else 1f
+    if (halfHeight) {
+        Row(
+            modifier = modifier
+                .heightIn(min = 69.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(vine.cardBackground)
+                .then(if (item.onClick != null) Modifier.clickable { item.onClick.invoke() } else Modifier)
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier.size(34.dp).clip(RoundedCornerShape(10.dp))
+                    .background(item.tint.copy(alpha = 0.15f * alpha)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(item.icon, contentDescription = null, tint = item.tint.copy(alpha = alpha), modifier = Modifier.size(20.dp))
+            }
+            Text(
+                item.title,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = vine.textPrimary.copy(alpha = alpha),
+                modifier = Modifier.weight(1f),
+            )
+        }
+        return
+    }
     Column(
         modifier = modifier
             .height(138.dp)

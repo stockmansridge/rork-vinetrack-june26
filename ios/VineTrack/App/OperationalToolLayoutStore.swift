@@ -22,6 +22,15 @@ final class OperationalToolLayoutStore {
     /// Message shown when the user tries to hide the last visible tool.
     static let minimumVisibleMessage = "At least one operational tool must remain visible."
 
+    /// Device-local display density, separate from the server-synced tool order.
+    private(set) var halfHeight = false
+
+    func setHalfHeight(_ enabled: Bool) {
+        guard let userId else { return }
+        halfHeight = enabled
+        defaults.set(enabled, forKey: "vinetrack.operationalTools.halfHeight.\(userId.uuidString)")
+    }
+
     private(set) var savedVisibleIds: [String] = []
     private(set) var savedHiddenIds: [String] = []
 
@@ -59,6 +68,7 @@ final class OperationalToolLayoutStore {
     func configure(userId: UUID?) {
         guard userId != self.userId else { return }
         self.userId = userId
+        halfHeight = userId.map { defaults.bool(forKey: "vinetrack.operationalTools.halfHeight.\($0.uuidString)") } ?? false
         lastServerRefresh = nil
         hasPendingSync = false
         lastSyncErrorMessage = nil
@@ -106,6 +116,7 @@ final class OperationalToolLayoutStore {
     /// so the same account restores instantly next time.
     func signOut() {
         userId = nil
+        halfHeight = false
         savedVisibleIds = []
         savedHiddenIds = []
         isReady = false

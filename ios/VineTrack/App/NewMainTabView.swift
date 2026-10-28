@@ -1199,7 +1199,8 @@ struct NewHomeTabView: View {
                                 title: tool.title,
                                 subtitle: tool.subtitle,
                                 icon: tool.icon,
-                                tint: tool.tint
+                                tint: tool.tint,
+                                halfHeight: toolLayout.halfHeight
                             )
                         }
                         .buttonStyle(.plain)
@@ -1275,7 +1276,26 @@ struct NewHomeTabView: View {
         }
     }
 
-    private func operationalTile(title: String, subtitle: String, icon: String, tint: Color) -> some View {
+    @ViewBuilder
+    private func operationalTile(title: String, subtitle: String, icon: String, tint: Color, halfHeight: Bool = false) -> some View {
+        if halfHeight {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 34, height: 34)
+                    .background(tint.opacity(0.15), in: .rect(cornerRadius: 10))
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 83, alignment: .leading)
+            .background(VineyardTheme.cardBackground, in: .rect(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(VineyardTheme.cardBorder, lineWidth: 0.5))
+        } else {
         VStack(alignment: .leading, spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12)
@@ -1307,6 +1327,7 @@ struct NewHomeTabView: View {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(VineyardTheme.cardBorder, lineWidth: 0.5)
         )
+        }
     }
 
     // MARK: Management

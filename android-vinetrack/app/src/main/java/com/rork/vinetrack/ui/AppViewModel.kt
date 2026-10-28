@@ -1465,6 +1465,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Observed by the Home grid and the Customise Tools screen. */
     val operationalToolLayout: StateFlow<OperationalToolLayout> = operationalToolLayoutStore.layout
+    val operationalToolsHalfHeight: StateFlow<Boolean> = operationalToolLayoutStore.halfHeight
+
+    fun setOperationalToolsHalfHeight(enabled: Boolean) {
+        operationalToolLayoutStore.setHalfHeight(enabled)
+    }
 
     /**
      * Vineyard Insights — member-accessible Scout/Notes, offline-first.

@@ -41,6 +41,16 @@ struct CustomiseOperationalToolsView: View {
 
     var body: some View {
         List {
+            Section {
+                Toggle("½ height", isOn: Binding(
+                    get: { layout.halfHeight },
+                    set: { layout.setHalfHeight($0) }
+                ))
+                .accessibilityLabel("Half-height operational tools")
+            } header: {
+                Text("Operational Tools")
+            }
+
             if layout.hasPendingSync {
                 Section {
                     Label(OperationalToolLayoutStore.offlineSaveMessage, systemImage: "icloud.slash")
