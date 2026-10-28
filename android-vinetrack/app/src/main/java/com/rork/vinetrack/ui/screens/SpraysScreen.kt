@@ -194,6 +194,7 @@ fun SpraysScreen(
     initialOpenCalculator: Boolean = false,
     initialCalculatorPrefillId: String? = null,
     onCalculatorConsumed: () -> Unit = {},
+    initialCompletedSprays: Boolean = false,
 ) {
     var selectedId by remember { mutableStateOf<String?>(null) }
     var creating by remember { mutableStateOf(false) }
@@ -255,6 +256,7 @@ fun SpraysScreen(
                 onAdd = { if (com.rork.vinetrack.data.model.canManageManualSprays(state.currentRole)) creating = true },
                 onAddTemplate = { if (state.canManageSprayProgram && state.selectedVineyardId != null) creatingTemplate = true },
                 programCreationRevision = programCreationRevision,
+                initialCompletedSprays = initialCompletedSprays,
                 onOpenCalculator = { calculatorPrefillId = null; calculating = true },
                 onPlanFromProgram = { step -> if (SprayProgramLanding.canPlanSpray(step.operationType)) { calculatorPrefillId = step.id; calculating = true } },
             )
@@ -345,14 +347,15 @@ private fun SprayListView(
     programCreationRevision: Int,
     onOpenCalculator: () -> Unit,
     onPlanFromProgram: (SprayRecord) -> Unit,
+    initialCompletedSprays: Boolean = false,
 ) {
     val vine = LocalVineColors.current
     val context = LocalContext.current
     val exportScope = rememberCoroutineScope()
     // The two halves of the Spray Program. Opens on Program — the vineyard's
     // master program is the primary landing view, exactly as on iOS.
-    var tab by rememberSaveable { mutableStateOf(SprayProgramTabChoice.PROGRAM) }
-    var filter by remember { mutableStateOf(SprayFilter.ALL) }
+    var tab by rememberSaveable { mutableStateOf(if (initialCompletedSprays) SprayProgramTabChoice.SPRAYS else SprayProgramTabChoice.PROGRAM) }
+    var filter by remember { mutableStateOf(if (initialCompletedSprays) SprayFilter.COMPLETED else SprayFilter.ALL) }
     var addMenu by remember { mutableStateOf(false) }
     var showChemicalSearch by remember { mutableStateOf(false) }
     var showProgramHelp by remember { mutableStateOf(false) }

@@ -1662,6 +1662,10 @@ private struct HomeVintageSummarySection: View {
         let vintagePins = store.pins.filter { window.contains($0.timestamp) }
         let vintageTrips = store.trips.filter { window.contains($0.startTime) }
         let vintageSprayRecords = store.sprayRecords.filter { window.contains($0.date) }
+        let completedSprays = SprayProgramProgression.completed(
+            records: store.sprayRecords, trips: store.trips,
+            vineyardId: store.selectedVineyardId, window: window
+        )
         let currentBlockIds = Set(store.paddocks.map(\.id))
         let workedBlockIds = Set(vintagePins.compactMap(\.paddockId))
             .union(vintageTrips.flatMap { $0.paddockIds.isEmpty ? [$0.paddockId].compactMap { $0 } : $0.paddockIds })
@@ -1681,10 +1685,10 @@ private struct HomeVintageSummarySection: View {
             VineyardCard {
                 VStack(spacing: 10) {
                     NavigationLink {
-                        PinsView(initialViewMode: .summary)
+                        PinsView(initialViewMode: .list, initialCompletionFilter: .both)
                     } label: {
                         HStack(spacing: 12) {
-                            summaryRow("Pins", value: vintagePins.count, icon: "mappin.circle.fill", tint: .red)
+                            summaryRow("Pins Placed", value: vintagePins.count, icon: "mappin.circle.fill", tint: .red)
                             Image(systemName: "chevron.right")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.tertiary)
@@ -1693,15 +1697,38 @@ private struct HomeVintageSummarySection: View {
                     }
                     .buttonStyle(.plain)
                     Divider()
-                    summaryRow("Trips", value: vintageTrips.count, icon: "map.fill", tint: .blue)
+                    summaryLink("Pins Completed", value: vintagePins.filter(\.isCompleted).count, icon: "checkmark.circle.fill", tint: VineyardTheme.leafGreen) {
+                        PinsView(initialViewMode: .list, initialCompletionFilter: .done)
+                    }
                     Divider()
-                    summaryRow("Spray records", value: vintageSprayRecords.count, icon: "sprinkler.and.droplets.fill", tint: .purple)
+                    summaryLink("Trips", value: vintageTrips.count, icon: "map.fill", tint: .blue) {
+                        TripView(historyOnly: true)
+                    }
                     Divider()
-                    summaryRow("\(fmt.blockTermPluralCapitalised) worked", value: workedBlockIds.count, icon: "square.grid.2x2.fill", tint: VineyardTheme.leafGreen)
+                    summaryLink("Sprays", value: completedSprays.count, icon: "sprinkler.and.droplets.fill", tint: .purple) {
+                        SprayProgramView(initialCompletedSprays: true)
+                    }
+                    Divider()
+                    summaryLink("\(fmt.blockTermPluralCapitalised) worked", value: workedBlockIds.count, icon: "square.grid.2x2.fill", tint: VineyardTheme.leafGreen) {
+                        BlocksHubView()
+                    }
                 }
             }
             .padding(.horizontal)
         }
+    }
+
+    private func summaryLink<Destination: View>(_ label: String, value: Int, icon: String, tint: Color, @ViewBuilder destination: () -> Destination) -> some View {
+        NavigationLink(destination: destination) {
+            HStack(spacing: 12) {
+                summaryRow(label, value: value, icon: icon, tint: tint)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func summaryRow(_ label: String, value: Int, icon: String, tint: Color) -> some View {

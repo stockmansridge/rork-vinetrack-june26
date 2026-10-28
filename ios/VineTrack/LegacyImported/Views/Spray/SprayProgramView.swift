@@ -86,6 +86,11 @@ struct SprayProgramView: View {
     @Environment(SprayJobTemplateService.self) private var portalTemplates
     @Environment(\.accessControl) private var accessControl
 
+    init(initialCompletedSprays: Bool = false) {
+        _tab = State(initialValue: initialCompletedSprays ? .sprays : .program)
+        _spraysStatus = State(initialValue: initialCompletedSprays ? .completed : .all)
+    }
+
     // Navigation
     /// Opens on Program: the master spray program is the primary landing view.
     @State private var tab: SprayProgramTab = .program

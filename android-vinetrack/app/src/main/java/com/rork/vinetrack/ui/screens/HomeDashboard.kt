@@ -262,7 +262,7 @@ private fun DashboardContent(
                 ManagementSection(onOpenTool = onOpenTool)
             }
 
-            RecentSection(state)
+            RecentSection(state, onOpenTool)
 
             Spacer(Modifier.height(24.dp))
         }
@@ -1211,7 +1211,7 @@ private class HomeSummaryInput(val state: AppUiState) {
 }
 
 private data class HomeVintageCounts(
-    val input: HomeSummaryInput, val pins: Int, val trips: Int, val sprays: Int, val blocks: Int,
+    val input: HomeSummaryInput, val pins: Int, val completedPins: Int, val trips: Int, val sprays: Int, val blocks: Int,
 )
 
 /**
@@ -1219,7 +1219,7 @@ private data class HomeVintageCounts(
  * the selected vineyard's shared season boundary and timezone.
  */
 @Composable
-private fun RecentSection(state: AppUiState) {
+private fun RecentSection(state: AppUiState, onOpenTool: (ToolRoute) -> Unit) {
     val vine = LocalVineColors.current
     val preparationTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
     val vintage = state.currentSeasonVintage
@@ -1239,7 +1239,10 @@ private fun RecentSection(state: AppUiState) {
                     tripBlockIds = trips.flatMap { it.effectivePaddockIds },
                     sprayBlockIds = sprays.flatMap { it.applicationBlocks?.map { block -> block.blockId } ?: it.blockIds.orEmpty() },
                 )
-                HomeVintageCounts(input, pins.size, trips.size, sprays.size, blocks.size)
+                val completedSprays = com.rork.vinetrack.data.spray.SprayProgramProgression.completed(
+                    source.sprayRecords, source.trips, source.selectedVineyardId, window, source.seasonZone,
+                )
+                HomeVintageCounts(input, pins.size, pins.count { it.isCompleted }, trips.size, completedSprays.size, blocks.size)
             } finally { com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("home-vintage-derivation-worker", stage) }
         }
     }
@@ -1248,9 +1251,10 @@ private fun RecentSection(state: AppUiState) {
     val counts = prepared?.takeIf { it.input == input }
     com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("home-vintage-derivation", preparationTiming)
     val rows = listOf(
-        Triple("Pins", counts?.pins, Icons.Filled.LocationOn) to VineColors.Orange,
+        Triple("Pins Placed", counts?.pins, Icons.Filled.LocationOn) to VineColors.Orange,
+        Triple("Pins Completed", counts?.completedPins, Icons.Filled.CheckCircle) to VineColors.LeafGreen,
         Triple("Trips", counts?.trips, Icons.Filled.Map) to VineColors.Info,
-        Triple("Spray records", counts?.sprays, Icons.Filled.Science) to VineColors.Indigo,
+        Triple("Sprays", counts?.sprays, Icons.Filled.Science) to VineColors.Indigo,
         Triple("Blocks worked", counts?.blocks, Icons.Filled.Grass) to VineColors.LeafGreen,
     )
     Column(
@@ -1262,7 +1266,15 @@ private fun RecentSection(state: AppUiState) {
             rows.forEachIndexed { index, (data, tint) ->
                 val (label, value, icon) = data
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onOpenTool(when (index) {
+                            0 -> ToolRoute.PinsPlaced
+                            1 -> ToolRoute.PinsCompleted
+                            2 -> ToolRoute.TripList
+                            3 -> ToolRoute.CompletedSprays
+                            else -> ToolRoute.Blocks
+                        })
+                    }.padding(vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -1274,6 +1286,7 @@ private fun RecentSection(state: AppUiState) {
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
+                    Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = vine.textSecondary, modifier = Modifier.size(16.dp))
                 }
                 if (index < rows.lastIndex) {
                     Box(modifier = Modifier.fillMaxWidth().height(0.5.dp).background(vine.cardBorder))

@@ -521,6 +521,26 @@ private fun ToolHost(
     onOpenTool: (ToolRoute) -> Unit,
 ) {
     when (route) {
+        ToolRoute.PinsPlaced, ToolRoute.PinsCompleted -> {
+            var summaryPinView by rememberSaveable { mutableStateOf(PinsViewMode.List) }
+            PinsScreen(
+                vm, state, modifier, onBack,
+                initialStatusFilter = if (route == ToolRoute.PinsCompleted) true else null,
+                viewMode = summaryPinView,
+                onViewModeChange = { summaryPinView = it },
+                onOpenLauncher = onOpenLauncher,
+            )
+        }
+        ToolRoute.TripList -> {
+            var summaryTripId by rememberSaveable { mutableStateOf<String?>(null) }
+            TripsScreen(vm, state, modifier,
+                selectedTripId = summaryTripId,
+                onSelectedTripIdChange = { summaryTripId = it },
+                onGoHome = onBack,
+            )
+        }
+        ToolRoute.CompletedSprays -> SpraysScreen(vm, state, modifier, onBack,
+            onOpenTrip = onOpenTrip, initialCompletedSprays = true)
         ToolRoute.Pins -> PinsScreen(
             vm, state, modifier, onBack,
             initialMode = pinMode,

@@ -13,6 +13,7 @@ nonisolated enum TripTypeFilter: String, CaseIterable, Sendable {
 }
 
 struct TripView: View {
+    var historyOnly = false
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(TripTrackingService.self) private var tracking
@@ -32,11 +33,11 @@ struct TripView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let active = tracking.activeTrip {
+                if let active = tracking.activeTrip, !historyOnly {
                     ActiveTripView(trip: active)
-                } else if store.deviceActiveTripId != nil && !store.isDeviceTripOwner {
+                } else if !historyOnly && store.deviceActiveTripId != nil && !store.isDeviceTripOwner {
                     ContentUnavailableView("Trip already in progress", systemImage: "tractor", description: Text("This device already has an active trip. Sign back in as the operator who started it, or finish that trip before starting another."))
-                } else if let owned = store.deviceOwnedTrip, owned.vineyardId != store.selectedVineyardId {
+                } else if let owned = store.deviceOwnedTrip, !historyOnly, owned.vineyardId != store.selectedVineyardId {
                     VStack(spacing: 16) {
                         ContentUnavailableView("Trip already in progress", systemImage: "tractor", description: Text("You already have an active trip in \(store.vineyards.first(where: { $0.id == owned.vineyardId })?.name ?? "another vineyard"). Finish or return to that trip before starting another."))
                         Button("Return to Trip") {
@@ -52,7 +53,7 @@ struct TripView: View {
                     tripHistoryList
                 }
             }
-            .navigationTitle(tracking.activeTrip != nil ? "Active Trip" : "Trips")
+            .navigationTitle(!historyOnly && tracking.activeTrip != nil ? "Active Trip" : "Trips")
             .navigationBarTitleDisplayMode(tracking.activeTrip != nil ? .inline : .large)
             .background(Color(.systemGroupedBackground))
             .toolbar {

@@ -177,6 +177,7 @@ fun PinsScreen(
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
     initialMode: String? = null,
+    initialStatusFilter: Boolean? = false,
     /**
      * Map / List / Stats, owned by the saved work context so the operator's
      * chosen view survives rotation, Activity recreation and process death.
@@ -213,7 +214,7 @@ fun PinsScreen(
     }
     // null = All statuses; true = Completed; false = Open. Defaults to Open
     // ("Not done"), mirroring the iOS shared completion filter.
-    var statusFilter by remember { mutableStateOf<Boolean?>(false) }
+    var statusFilter by remember { mutableStateOf(initialStatusFilter) }
     // Advanced filters (iOS PinFilterSheet parity): specific issue/growth names
     // and blocks, chosen from the Filters sheet opened by the bar's button.
     var selectedNames by remember { mutableStateOf<Set<String>>(emptySet()) }

@@ -18,8 +18,9 @@ struct PinsView: View {
     /// switching between Map / List / Summary.
     @State private var listSort: PinsListSortOption = .newest
 
-    init(initialViewMode: PinsViewMode = .map) {
+    init(initialViewMode: PinsViewMode = .map, initialCompletionFilter: PinCompletionFilter = .notDone) {
         _viewMode = State(initialValue: initialViewMode)
+        _completionFilter = State(initialValue: initialCompletionFilter)
     }
 
     /// One source of truth for the six mutually exclusive top-level type chips.

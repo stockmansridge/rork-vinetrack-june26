@@ -75,6 +75,10 @@ enum class ToolRoute(
     val tint: Color,
     val group: ToolGroup,
 ) {
+    PinsPlaced("Pins Placed", "All placed pins", Icons.Filled.LocationOn, VineColors.Orange, ToolGroup.Records),
+    PinsCompleted("Pins Completed", "Completed pins", Icons.Filled.LocationOn, VineColors.LeafGreen, ToolGroup.Records),
+    TripList("Trips", "Trip list", Icons.Filled.DirectionsCar, VineColors.Info, ToolGroup.Records),
+    CompletedSprays("Completed Sprays", "Completed applications", Icons.Filled.WaterDrop, VineColors.Info, ToolGroup.Records),
     Pins("Pins", "Map markers & issues", Icons.Filled.LocationOn, VineColors.Orange, ToolGroup.Vineyard),
     Blocks("Blocks", "Paddocks & rows", Icons.Filled.Grass, VineColors.LeafGreen, ToolGroup.Vineyard),
     Growth("Growth Stage Records", "Phenology records", Icons.Filled.Spa, VineColors.LeafGreen, ToolGroup.Vineyard),

@@ -62,6 +62,7 @@ fun MoreScreen(
             ToolGroup.entries.forEach { group ->
                 val tools = ToolRoute.entries.filter { tool ->
                     tool.group == group &&
+                        tool !in setOf(ToolRoute.PinsPlaced, ToolRoute.PinsCompleted, ToolRoute.TripList, ToolRoute.CompletedSprays) &&
                         tool != ToolRoute.RolesPermissions &&
                         tool != ToolRoute.SprayManagement &&
                         // Reached from the Operational Tools grid itself.
