@@ -438,6 +438,7 @@ fun GuidedBlockerBanner(
     blocker: SprayGuidedBlocker,
     modifier: Modifier = Modifier,
     onFix: (() -> Unit)? = null,
+    canopySelection: com.rork.vinetrack.data.spray.SprayCanopySelection? = null,
 ) {
     Column(
         modifier = modifier
@@ -447,13 +448,13 @@ fun GuidedBlockerBanner(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
-            text = blocker.title,
+            text = if (blocker == SprayGuidedBlocker.CanopyConfirmationRequired) canopySelection?.confirmationTitle ?: blocker.title else blocker.title,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
             color = Color(0xFFE65100),
         )
         Text(
-            text = blocker.message,
+            text = if (blocker == SprayGuidedBlocker.CanopyConfirmationRequired) canopySelection?.confirmationMessage ?: blocker.message else blocker.message,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

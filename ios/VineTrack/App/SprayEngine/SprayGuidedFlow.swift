@@ -111,7 +111,7 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
         case .growthStageRequired: return "Choose growth stage or Not Set"
         case .equipmentRequired: return "Select spray unit"
         case .equipmentConfirmationRequired: return "Confirm equipment"
-        case .canopyConfirmationRequired: return "Select canopy type, size and density"
+        case .canopyConfirmationRequired: return "Confirm canopy"
         case .sprayVolumeChoiceRequired: return "Choose your spray volume"
         case .manualTotalWaterRequired: return "Enter total spray water"
         case .carrierRateRequired: return "Enter application rate"

@@ -17,21 +17,17 @@ struct SprayPlanningCardsView: View {
         VStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Spraying workflow").font(.headline)
-                if configuration == nil && method == .byArea {
-                    Label("Supported legacy spray", systemImage: "checkmark.circle")
-                    Text("Use the existing Tank Mixing → Trip workflow. Selected blocks are calculation context, not confirmed actual coverage.")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("By Area Single Row/Over-Row uses this same draft and existing Tank Mixing → Trip. Pass/controller setup is retained in record notes. Only Full Tanks and proposed pass selection need the unavailable planning contract; edit those choices here without re-entering the mix.")
-                        .font(.caption).foregroundStyle(.orange)
-                }
+                Text(configuration == nil
+                     ? "No pass configuration recorded. Continue with the normal Tank Mixing → Trip workflow."
+                     : "Continue with Tank Mixing → Trip using the selected pass configuration.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Text("Sprayer configuration").font(.subheadline)
                 Picker("Sprayer configuration", selection: $configuration) {
-                    if configuration == nil { Text("Legacy").tag(SprayPassConfiguration?.none) }
+                    Text("Not Set").tag(SprayPassConfiguration?.none)
                     ForEach(SprayPassConfiguration.allCases, id: \.self) { pass in
                         Text(pass.title).tag(Optional(pass))
                     }
-                }.pickerStyle(.segmented)
+                }.pickerStyle(.segmented).accessibilityIdentifier("spray.passConfiguration")
                 if let configuration {
                     SprayPassIllustration(configuration: configuration)
                     Text(configuration == .standardPass
@@ -39,7 +35,7 @@ struct SprayPlanningCardsView: View {
                          : "Both sides of two complete vine rows per pass.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text("Choose the configuration for this application. Historical configuration is not assumed.")
+                    Text("You can continue without recording a pass configuration.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let rowSpacingMetres {
@@ -73,7 +69,7 @@ struct SprayPlanningCardsView: View {
                     Text("Planned area only. Actual block and row coverage is recorded during the Trip; no partial-block allocation is assumed.")
                         .font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text("Use selected block area and the spray-volume decision below.").font(.caption).foregroundStyle(.secondary)
+                    Text("Calculate the spray using the selected block area.").font(.caption).foregroundStyle(.secondary)
                 }
                 if let resolution {
                     LabeledContent("Planned area", value: region.formatArea(hectares: resolution.plannedAreaHa))

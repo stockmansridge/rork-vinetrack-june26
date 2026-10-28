@@ -6,8 +6,8 @@ import kotlinx.serialization.json.Json
 object LegacySpraySetup {
     const val MARKER = "\n[VineTrack sprayer setup v1]\n"
     const val END = "\n[/VineTrack sprayer setup]"
-    const val FULL_TANK_MESSAGE = "Only Full Tanks requires persisted tank intent, target-area/calibrated-rate specification and frozen planning outputs unavailable in receipt v1. Choose By Area in this draft to continue; your other inputs stay unchanged."
-    const val WORK_MESSAGE = "Proposed pass selection requires the new planning contract. Deselect proposed passes in Select Work Area to use this draft with existing tracking; blocks, equipment and mix are retained."
+    const val FULL_TANK_MESSAGE = "Full-tank planning cannot currently start a spray. Choose By Area to continue."
+    const val WORK_MESSAGE = "Proposed passes cannot currently start a spray. Deselect them in Select Work Area to continue; your blocks, equipment and mix stay unchanged."
     private val json = Json { ignoreUnknownKeys = false; encodeDefaults = true; explicitNulls = true }
 
     fun blocker(intent: SprayPlanningIntent?, resolution: SprayPlanningResolution?, cleared: Boolean = false): String? {

@@ -50,12 +50,15 @@ struct BackendSettingsView: View {
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = SettingsRenderProbe.rootBodies += 1
+        #endif
         NavigationStack {
             Form {
                 if isSearchActive {
                     searchResultsSection
                 } else {
-                accountSection
+                BackendSettingsAccountSection()
                 vineyardSection
                 operationsSection
                 if let vineyard = store.selectedVineyard {
@@ -515,59 +518,6 @@ struct BackendSettingsView: View {
 
     // MARK: - Sections
 
-    private var accountSection: some View {
-        Section {
-            NavigationLink {
-                EditDisplayNameView()
-            } label: {
-                SettingsRow(
-                    title: "Name",
-                    subtitle: auth.userName ?? "—",
-                    symbol: "person.crop.circle.fill",
-                    color: .gray
-                )
-            }
-            HStack(spacing: 12) {
-                SettingsIconTile(symbol: "envelope.fill", color: .blue)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Email")
-                        .font(.subheadline.weight(.medium))
-                    Text(auth.userEmail ?? "—")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            NavigationLink {
-                BiometricSettingsView()
-            } label: {
-                SettingsRow(
-                    title: "Face ID / Touch ID",
-                    subtitle: biometricSubtitle,
-                    symbol: biometricSymbol,
-                    color: VineyardTheme.leafGreen
-                )
-            }
-        } header: {
-            SettingsSectionHeader(title: "Account", symbol: "person.fill", color: .gray)
-        }
-    }
-
-    private var biometricSubtitle: String {
-        if !(biometric.deviceSupportsBiometrics || biometric.deviceSupportsAnyAuth) {
-            return "Not available on this device"
-        }
-        return biometric.isEnabled ? "\(biometric.displayName) sign-in enabled" : "Sign in faster with \(biometric.displayName)"
-    }
-
-    private var biometricSymbol: String {
-        switch biometric.biometry {
-        case .faceID: return "faceid"
-        case .touchID: return "touchid"
-        case .opticID: return "opticid"
-        case .none: return "lock.shield.fill"
-        }
-    }
-
     private var vineyardSection: some View {
         Section {
             if let vineyard = store.selectedVineyard {
@@ -657,20 +607,8 @@ struct BackendSettingsView: View {
 
     @ViewBuilder
     private func vineyardThumbnail(_ vineyard: Vineyard) -> some View {
-        if let data = vineyard.logoData, let image = UIImage(data: data) {
-            Image(uiImage: image)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 40, height: 40)
-                .clipShape(.rect(cornerRadius: 8))
-        } else {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(VineyardTheme.leafGreen.gradient)
-                    .frame(width: 40, height: 40)
-                GrapeLeafIcon(size: 20, color: .white)
-            }
-        }
+        SettingsVineyardThumbnail(data: vineyard.logoData)
+            .id(vineyard.id)
     }
 
     private var operationsSection: some View {

@@ -59,6 +59,15 @@ nonisolated struct SprayCanopySelection: Sendable, Hashable, Codable {
     /// cannot produce a rate, because the table is indexed by all three.
     var isConfirmed: Bool { type != nil && isSizeAndDensityConfirmed }
 
+    // Presentation only: selected control positions are not yet confirmation.
+    var selectedValues: String { [type?.rawValue, size.rawValue, density.rawValue].compactMap { $0 }.joined(separator: " · ") }
+    var confirmationTitle: String { type == nil ? "Choose canopy type" : "Confirm canopy" }
+    var confirmationMessage: String {
+        type == nil ? "Choose the canopy type for this spray."
+            : "You selected \(selectedValues). Confirm this canopy to calculate the recommended spray volume."
+    }
+    var confirmationButton: String { "Confirm Canopy — \(selectedValues)" }
+
     /// The controls' opening position. Deliberately NOT an answer.
     ///
     /// Medium / Low is retained as the starting position because it is the

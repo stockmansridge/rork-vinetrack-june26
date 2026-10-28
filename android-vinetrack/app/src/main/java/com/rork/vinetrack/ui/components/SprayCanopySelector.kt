@@ -205,7 +205,7 @@ fun SprayCanopySelector(
             ),
         ) {
             Text(
-                if (isConfirmed) "Canopy confirmed" else "Confirm Canopy",
+                if (isConfirmed) "Canopy confirmed" else selection.confirmationButton,
                 textAlign = TextAlign.Center,
                 fontWeight = FontWeight.SemiBold,
             )

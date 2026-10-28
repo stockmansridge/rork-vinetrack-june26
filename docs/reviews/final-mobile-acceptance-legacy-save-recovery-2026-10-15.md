@@ -1,5 +1,95 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Mobile operator UX parity — 28 October 2026 — FOCUSED AUTOMATION PASS; PHYSICAL ACCEPTANCE OPEN
+
+Scope compared against `f4951e3a2ae91d3ade2b980cc0612152c50aa653` plus the 29-file working patch below. This supersedes the preceding Android-only UI scope. No Portal, Supabase schema, arithmetic, CF policy, tank splitting, Trip execution, permissions, release versions, signing configuration or upload changes. Existing Android Home hydration/performance repairs remain intact. Normal builds are validation, not signed-candidate preparation or v3.1.9 acceptance.
+
+### Before-platform differences and confirmed header cause
+
+- iOS's plain Button header included a Spacer and padding but no explicit rectangular hit shape; Android already uses a full-width clickable Surface. The iOS label now fills its width and defines a Rectangle content shape **inside the Button label**, not around the section body. Android's header implementation is unchanged.
+- The first attempted iOS reproduction used a nonexistent text-field label, so its failure is **not valid causal evidence**. After correcting the selector to the actual field, temporarily restoring the original header hit region produced **0 passed / 1 failed** on an empty-padding tap. Restoring the rectangular label fixed it. Final expanded coverage opens/closes from blank padding, badge, title/summary and right-hand affordance coordinates, then edits the body without collapsing it. This establishes the reproduced hit-region defect, not every possible device/touch/gesture failure.
+- iOS previously exposed an unset pass as a conditional “Legacy” segment, disappearing after a choice; Android omitted the unset choice and described it as supported legacy spray. Both now always present **Not Set | Single Row | Over-Row**, mapped to nil/null, existing standard pass and existing over-row respectively.
+- Both already separate section expansion from completion after a one-time seed. This is retained. Deliberate Continue actions now name their destinations. iOS waits for the expansion animation's logical completion before a single guarded scroll; Android scrolls its LazyColumn to the destination step on an explicit open-state change. No field completion auto-collapses or moves a section.
+
+### Final operator flow
+
+- By Area says **“Calculate the spray using the selected block area.”** Full-tank guidance says **“Full-tank planning cannot currently start a spray. Choose By Area to continue.”** Compatible input remains in the same draft; operational restrictions and calculations are untouched.
+- Missing type says **Choose canopy type**. A selected but unconfirmed canopy says **Confirm canopy**, describes the actual values and offers e.g. **Confirm Canopy — VSP · Medium · Low**. Selecting type/size/density still does not itself confirm.
+- Confirmation keeps Canopy open and brings **Spray at the recommended volume?** into view, with recommended/custom choices. Custom input appears on selection. Valid carrier and Products respectively offer **Continue to Products →** and **Continue to Review →**.
+- Final iOS rendered regression round-trips all three pass choices, finishes at Not Set, follows both Continue actions and opens Tank Mixing with Start Trip enabled. It does **not** start the Trip. Android rendered tests exercise production pass/full-tank/canopy/header controls; full authenticated calculator-to-Mixing navigation is not proven there.
+
+### Work Task assignment presentation
+
+Both editors now resolve exact-vineyard profile-enriched members and external resources, preferring nonblank full name, display name, then email for members. Scoped picker selections and restored human draft labels are retained in a device-local **presentation-only** directory keyed by original account, vineyard, member-versus-external kind and assignee ID. Missing/inactive roster rows do not erase a previously resolved name; offline reopen uses that retained label. The cache never supplies membership/access or labour authority and never changes assignment IDs.
+
+Known generated UUID/8-hex labels are rejected. An unresolved member displays **Assigned vineyard member**; an unresolved external resource displays **Assigned external resource**; no assignment displays Unassigned in the existing UI. Directory fetch results are fenced against account/session incarnation, selected vineyard/generation and the current assignment. Choosing a different assignment cancels/obsoletes the previous lookup. The existing no-labour-charges note is retained. Android's unrelated general member-name model remains unchanged; the shared assignment picker uses the safe human-name resolver.
+
+Eight isolated resolver/persistence scenarios execute on **each platform**: assigned member, another member/nonblank profile fallback, external resource, unassigned, historical generated label rejection, persisted offline reopen, account/vineyard/kind isolation, and missing/inactive historical name retention. These are production name-resolution/cache tests, **not** eight authenticated rendered task-editor journeys, actual app process-death tests or live profile-RLS/network validation.
+
+### iOS Settings measurement and bounded correction
+
+Mounted the actual Settings Form with isolated storage, a synthetic 3000×3000 JPEG and eight separate sync/account publications. Before correction: initial root bodies=1, initial UIImage constructions=1; unrelated Pin sync-status changes caused **0** root invalidations; account-name changes caused **8** root invalidations and **9** total logo constructions. Measured UIImage construction total was **10.907875ms**. This is construction cost, not full pixel decode, frame pacing or proof of the owner's physical scroll jank. The strengthened expectation failed **0 passed / 1 failed** with these values.
+
+The account rows are now a real child observation boundary. The vineyard thumbnail is content-keyed/view-lifetime cached and downsampled with ImageIO to at most120px on a detached utility task, with cancellation and exact-data checks before presentation; changing vineyard identity discards the preceding thumbnail. No Settings redesign, sync suppression, collection rewrite or Android Settings change.
+
+Final mounted assertions pass: eight sync publications cause0 root invalidations; eight account-name publications cause0 root invalidations; the initial thumbnail prepares exactly once. New logo bytes trigger a second preparation; switching vineyard triggers a third. A separate test verifies3000×1500 becomes120×60 and invalid bytes return nil. Actual idle/sync finger scrolling, admin-row scrolling, image-remount frame cost and handset frame pacing remain unmeasured. Do not attribute the original jank to sync invalidation: this local experiment demonstrated the opposite for that publication.
+
+### Executed validation, intermediate results and limits
+
+- Final iOS managed `swiftTest`: **109 passed in158s**. Exact selectors: `VineTrackTests/WorkTaskAssignmentNamesTests`, `VineTrackTests/SettingsScrollingPerformanceTests`, `VineTrackUITests/MobileSprayUXParityUITests`, `VineTrackTests/SprayGuidedFlowTests`, `VineTrackTests/SprayCalculationContractTests`, `VineTrackTests/SprayPlanningIntentTests`, `VineTrackTests/SprayCanopyCarrierRoutingTests`. Managed output does not expose a skipped count or passing-test discovery list; aggregate109 is reported as returned. Includes three authored UI tests, two Settings tests, eight assignment tests and the selected existing flow/arithmetic regressions.
+- Intermediate iOS focused run106 passed. Expanded UI run then returned **2 passed / 1 failed**: ambiguous/off-screen “Not Set” button hittability. Added a stable accessibility identifier to the existing segmented control and narrowed the test to that control; isolated Not Set journey passed **1 in185s**. Final109 above includes that corrected test. These overlapping runs are not additive. The corrected failing-before header reproduction and Settings regression are described above; the original wrong-field-selector failure is not hidden or counted as proof.
+- Android managed `androidTest`, exact selectors `com.rork.vinetrack.data.WorkTaskAssignmentNamesAndroidTest` and `com.rork.vinetrack.data.MobileSprayUXParityAndroidTest`: **11 passed / 0 failed / 0 skipped in18s**. Eight assignment seams and three rendered production-control tests. No live customer data, auth bypass or Trip execution.
+- Android host command `python3 scripts/run-mobile-spray-ux-regressions.py`: **108 tests / 0 failures / 0 errors / 0 skipped**. Exact selectors `SprayGuidedFlowTest`, `SprayGuidedWorkflowParityTest`, `SprayCanopyParityTest`, `SprayPlanningIntentTest`, `SprayMVPDefectTest`. `RetentionReviewTest.kt` is compiled only as an existing helper dependency, not selected. XML/log/result artifacts: `/tmp/vinetrack-mobile-spray-ux-faeivjmw`; runner retains artifacts outside the project.
+- Final normal `runChecks(appPath: "ios")`: **checks passed, simulator build succeeded**. Device build not verified. Final normal `runChecks(appPath: "android-vinetrack")`: **checks passed, build succeeded**. Existing two direct-storage URL notices per platform are nonblocking and unchanged. No new release/version/signing/upload work.
+- Interactive Android run was **blocked at sign-in** without an authenticated fixture; no credentials, bypass or customer changes used. Interactive iOS run used a **separate billed iPhone simulator**, not the Android preview. It visibly selected Not Set and followed both Continue actions to Review, but returned **problem/not pass** because the no-save restriction stopped it at “Create Spray Job & View Tank Mix.” Its Start Trip criterion was unverified. The authored isolated iOS UI test separately proves Mixing admission; do not override the interactive verdict. Both interactive runs incurred their own separate simulator use. Neither interactive run checked the latest final app version; retain them only as historical observations, not current-build verification. Final-source evidence is limited to the authored tests and normal builds reported above. No unchanged interactive rerun was performed merely to refresh this status.
+- Working-tree whitespace validation `git diff --check HEAD` passes. No manual staging/commit/push. The final managed commit is not exposed during the turn; hashes below identify tested source. Only report/plan bookkeeping follows final builds.
+
+### Exact changed-source SHA-256 manifest
+
+23 production files,5 test files,1 bounded runner; paths relative to project root. This report and the existing plan are separate bookkeeping. Managed history/skill/simulator state is not application source and was not manually edited.
+
+```text
+8a611f7f40c69ec41cefbcb840916341c1ae34e40315419c4b26c7759d08fa63  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/MobileSprayUXParityAndroidTest.kt
+fd739d1e7e3f8fdabbdbf291ebc9564229a37adc4ffe89de0c3f8e60ec0bd1ae  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/WorkTaskAssignmentNamesAndroidTest.kt
+076f03930e7a5c728b469486d2a8e103754cc0f97cf935d6c2e24d0f4a6e2635  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/WorkTaskAssignmentNames.kt
+5961810fb7ee17a9a859ac2ccf9a9fadd1a7447939a625829116d721fa12661a  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/spray/LegacySpraySetup.kt
+d016368d89c900549385375e5ef87a4087e2ef8bc35010b0116428e9070f15d4  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/spray/SprayCanopySelection.kt
+e452c6d2f2544fbf2291d0f55c7ec67cd5b7739dec673ce0c171bd61d6c92393  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt
+2583cb5f59d7cd147234fad73b3e0e764420b48601e3d821da3fdda68d0095d2  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/PruningResourcePicker.kt
+d783789cc6ed28e59491aef53ab611f86606ec2391ffe0f17dd50571baf584ca  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayCanopySelector.kt
+05596b4ff89f16a3bc6a487b29fa9e0d130b60019b3f66a89062ec4d003ddf3b  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayGuidedComponents.kt
+52e5dc5a65385ba171ce0bfb0f8892c8e5535681cd4b81d842895d319f56abb0  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayPlanningCards.kt
+14dce2a6636221c0f1a3cd9f65c6f7df3020b11f2a14a9312d97b8b512742367  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt
+f4ce5a645986d27c43cad869c66af02b97c64984df5f224134d092a6fd58f2f1  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt
+7fbb3ce8df6d0702974efcd32439f69aafbd4a0ca3a85a617db2b2e8ad3f0ed4  ios/VineTrack/App/BackendSettingsPresentation.swift
+ebd3ce9b7fb4d82b04f56c130b7bc45affefd92bfcf50da2822ea77fcf8eefb8  ios/VineTrack/App/BackendSettingsView.swift
+6f844521c77d53ef343092d647666128fbde6098e23a4467b37be5c8667ad0e4  ios/VineTrack/App/SettingsRenderProbe.swift
+9edd2ab46085ebdb489ce46d86d2ea33cdd6b446b971e3a82ea04d3310ab8e1e  ios/VineTrack/App/SprayCalculatorView.swift
+fa7754495d6f3905b9e15a484e2aac4feb2f6e38218efe99a5e20fb6a44d7153  ios/VineTrack/App/SprayCanopyControls.swift
+7dd60b26a1f166b447ad160bdc2492a4b8ce422c4089a0a52049f99d1aa33bf1  ios/VineTrack/App/SprayEngine/LegacySpraySetup.swift
+5833c036ebd612cccae6a9edac695b2be75389c9c867eb978094124a573fe83b  ios/VineTrack/App/SprayEngine/SprayCanopySelection.swift
+06ae79fc33aba12b0dc592710dfe667ac4e1190fda9ff945a5f4dbc4da348a71  ios/VineTrack/App/SprayEngine/SprayGuidedFlow.swift
+2bb905256372d593aa6bdfca97d6c7a0cfbf18985f076a298e48c928f9bad967  ios/VineTrack/App/SprayGuidedComponents.swift
+5715528dcca2b37c0a1f64844d4d8989378a1587ba5fbf8fc7185e38c4f18bd9  ios/VineTrack/App/SprayPlanningCardsView.swift
+d421cf0601625d4d2c3a6f15fc9f7ca285877fc4c77667f7ee1059f3984eb82a  ios/VineTrack/App/WorkTaskAssignmentNames.swift
+1bef7bf093c904a5ee57186369f8975549202edbf40d83cd8744284b60c93716  ios/VineTrack/LegacyImported/Views/Pruning/PruningResourcePickerView.swift
+086212e392474b59b2ad5b87c2fe9ee7b95336710ba8b2ee046ec9a1a63f569e  ios/VineTrack/LegacyImported/Views/Tasks/AddEditWorkTaskView.swift
+15f50135f3b90f160f50d7e4bb1e368b3adb0cc6ce3d4a20c4a0b3852a6a9fe5  ios/VineTrackTests/SettingsScrollingPerformanceTests.swift
+1693f93e6ef0382afa2791fd7a1b2035f963638a8019312283a05fd3c7700a38  ios/VineTrackTests/WorkTaskAssignmentNamesTests.swift
+48b94c2f6fdc85bf0d7965122208c547a6bb07e6001b7beda42368984f873ef0  ios/VineTrackUITests/MobileSprayUXParityUITests.swift
+53de02c789274f572d0d4d519aeb8e75697e537b462f542562ddfea754576fd0  scripts/run-mobile-spray-ux-regressions.py
+```
+
+### Short physical acceptance checklist — OPEN, both phones
+
+1. Retain installed data; record device/OS/build/region/text size. Tap header badge/title/summary/blank space/Edit/chevron once; body edits never collapse. Check rapid deliberate section changes and destination heading visibility.
+2. Round-trip Not Set→Single Row→Over-Row→Not Set. Use Not Set + By Area through canopy, both Continue actions and Tank Mixing; inspect Start availability without executing an operational Trip unless separately authorised. Full Tanks stays blocked with plain By Area guidance and retained compatible entries.
+3. Missing type vs unconfirmed selected values is clear. Confirm canopy, see the rate question immediately, choose custom and see input immediately; edits do not navigate away.
+4. Reopen tasks assigned to self/another member/external/unassigned/historical/inactive assignee; resolve once online, reopen offline, then switch vineyards/accounts. Names stay correctly scoped, unresolved labels contain no identifiers and no labour charges appear.
+5. iOS Settings: finger-scroll idle and during real sync, before/after a large logo change, vineyard switch and admin-row availability change; verify account values update, logo does not stale/flash from another vineyard and rows/scroll position remain usable. Android Settings unchanged.
+
+No physical handset, live authenticated directory journey or actual Settings frame-pacing acceptance was completed. These are remaining acceptance steps, not a reason to reinterpret green automated checks as release approval.
+
 ## Urgent Android Home hydration repair — 28 October 2026 — AUTOMATED PASS; PHYSICAL ACCEPTANCE OPEN
 
 Android only, compared against starting HEAD `c95042132ae3cd538be7eccabc2d4b2738073426`. Signed-candidate preparation remains paused. This checkpoint does **not** accept v3.1.9 or prove that the owner's retained-data handset manifestation is repaired. No project runtime logs were available. iOS, Portal/backend/schema, versions/signing, Spray calculations, access enforcement, offline write admission, active Trip recovery, GPS and Quick Actions remain unchanged. Existing Home summary routes/calculations and device-local tool order/hidden/half-height behaviour are retained.

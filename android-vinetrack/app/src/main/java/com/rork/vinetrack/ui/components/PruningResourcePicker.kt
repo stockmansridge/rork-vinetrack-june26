@@ -61,8 +61,9 @@ fun PruningResourcePicker(
                 onQuickAdd?.let { add -> TextButton(onClick = add) { Text("Add Crew / External Contractor") } }
                 Text("Internal resources", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 12.dp))
             }
-            items(members.filter { it.vineyardId == vineyardId && it.name.contains(search, ignoreCase = true) }, key = { "member-${it.userId}" }) { member ->
-                TextButton(onClick = { choose(null, member.userId, member.name) }, modifier = Modifier.fillMaxWidth()) { Text(member.name) }
+            items(members.filter { it.vineyardId == vineyardId && (com.rork.vinetrack.data.WorkTaskAssignmentNames.memberName(it) ?: "Assigned vineyard member").contains(search, ignoreCase = true) }, key = { "member-${it.userId}" }) { member ->
+                val name = com.rork.vinetrack.data.WorkTaskAssignmentNames.memberName(member) ?: "Assigned vineyard member"
+                TextButton(onClick = { choose(null, member.userId, name) }, modifier = Modifier.fillMaxWidth()) { Text(name) }
             }
             item { Text("Crew / External contractors", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(vertical = 12.dp)) }
             items(resources.filter { com.rork.vinetrack.data.model.WorkTaskPlanning.canSelect(it, vineyardId) && it.name.contains(search, ignoreCase = true) }, key = { "resource-${it.id}" }) { resource ->

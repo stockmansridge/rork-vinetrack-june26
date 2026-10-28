@@ -167,6 +167,8 @@ struct SprayCalculatorView: View {
     @State private var productAreaBasis: [UUID: SprayProductRateBasis] = [:]
     /// The section the operator has explicitly opened. `nil` follows the flow's
     /// own `activeStep`, so the screen advances by itself as decisions are made.
+    @State private var scrollRequest: SprayGuidedStep?
+    @State private var stepNavigationGeneration = 0
     @State private var openedStep: SprayGuidedStep?
     /// Whether the initial section has been opened. Guards a one-time seed, so
     /// a redraw cannot re-open a section the operator deliberately closed.
@@ -892,11 +894,21 @@ struct SprayCalculatorView: View {
         openedStep = flow.activeStep
     }
 
-    private func toggle(_ step: SprayGuidedStep) {
-        withAnimation(.spring(duration: 0.3)) {
-            // Tapping the open section closes it. Nothing reopens on its own.
-            openedStep = openedStep == step ? nil : step
+    private func showStep(_ step: SprayGuidedStep?) {
+        stepNavigationGeneration += 1
+        let generation = stepNavigationGeneration
+        scrollRequest = nil
+        withAnimation(.spring(duration: 0.3), completionCriteria: .logicallyComplete) {
+            openedStep = step
+        } completion: {
+            // Anchor once, after expansion layout, and never follow an obsolete tap.
+            guard stepNavigationGeneration == generation, openedStep == step else { return }
+            scrollRequest = step
         }
+    }
+
+    private func toggle(_ step: SprayGuidedStep) {
+        showStep(openedStep == step ? nil : step)
     }
 
     @ViewBuilder
@@ -925,8 +937,8 @@ struct SprayCalculatorView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                ScrollViewReader { proxy in
+            ScrollViewReader { proxy in
+                ScrollView {
                     VStack(spacing: 12) {
                         #if DEBUG
                         if CommandLine.arguments.contains("--spray-regional-validation") {
@@ -956,6 +968,11 @@ struct SprayCalculatorView: View {
                         }
                         guidedCard(.carrier, 6, summary: carrierSummary) {
                             carrierVolumeSection
+                            if flow.isComplete(.carrier) {
+                                Button("Continue to Products →") { showStep(.products) }
+                                    .buttonStyle(.borderedProminent)
+                                    .accessibilityIdentifier("spray.continue.products")
+                            }
                         }
                         guidedCard(.products, 7, summary: productsSummary) {
                             chemicalLinesSection
@@ -1007,6 +1024,14 @@ struct SprayCalculatorView: View {
                     // including the Products step's own "Continue" button.
                     // Collapsing (`nil`) deliberately leaves the scroll
                     // position alone: nothing new needs reading.
+                    .onChange(of: canopy.isConfirmed) { wasConfirmed, confirmed in
+                        guard !wasConfirmed, confirmed, planningMethod == .byArea else { return }
+                        Task { @MainActor in
+                            await Task.yield()
+                            guard canopy.isConfirmed, openedStep == .carrier else { return }
+                            withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo("spray.volumeQuestion", anchor: .center) }
+                        }
+                    }
                     .onChange(of: isCustomRateFocused) { _, focused in
                         if focused {
                             Task { @MainActor in
@@ -1016,7 +1041,7 @@ struct SprayCalculatorView: View {
                             }
                         }
                     }
-                    .onChange(of: openedStep) { _, step in
+                    .onChange(of: scrollRequest) { _, step in
                         guard let step else { return }
                         withAnimation(.spring(duration: 0.3)) {
                             proxy.scrollTo(step, anchor: .top)
@@ -2794,9 +2819,9 @@ struct SprayCalculatorView: View {
             // second chemical, or changing a rate, leaves the operator exactly
             // where they were.
             Button {
-                withAnimation(.spring(duration: 0.3)) { openedStep = .review }
+                showStep(.review)
             } label: {
-                Text("Continue")
+                Text("Continue to Review →")
                     .font(.subheadline.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: 44)
@@ -3377,10 +3402,6 @@ struct SprayCalculatorView: View {
                     .font(.caption).foregroundStyle(.orange)
             }
             if operationType == .foliarSpray {
-                if guidedInputs.planningIntent != nil {
-                    Text("By Area can start here. Single Row/Over-Row and controller settings are retained in the record's sprayer setup note; physical rates and tank quantities remain unchanged. For Only Full Tanks, choose By Area below to modify this same draft.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
                 SprayPlanningCardsView(configuration: passConfigurationBinding, method: $planningMethod,
                     specification: $fullTankSpecification, tankText: planningBinding($planningTankText),
                     areaText: planningBinding($planningAreaText), rateText: planningBinding($planningRateText), region: planningRegion,
@@ -3474,7 +3495,7 @@ struct SprayCalculatorView: View {
             }
 
             if let blocker = flow.blocker(for: .carrier) {
-                GuidedBlockerBanner(blocker: blocker) { openBlockDetails(for: blocker) }
+                GuidedBlockerBanner(blocker: blocker, onFix: { openBlockDetails(for: blocker) }, canopySelection: canopy)
             }
         }
     }
@@ -3511,7 +3532,7 @@ struct SprayCalculatorView: View {
             }
             if let decision, let recommendation = decision.recommendation {
                 recommendedVolumePanel(recommendation)
-                if planningMethod == .byArea { sprayVolumeChoiceControls(decision) }
+                if planningMethod == .byArea { sprayVolumeChoiceControls(decision).id("spray.volumeQuestion") }
                 if decision.isResolved && planningMethod == .byArea {
                     concentrationFactorPanel(decision)
                 }
@@ -4002,7 +4023,7 @@ struct SprayCalculatorView: View {
                         }
                         Text("Local draft — not server saved. CF is not label approval.").font(.caption).foregroundStyle(.secondary)
                         if let blocker = calculatorOperationalBlocker { Text(blocker).font(.caption).foregroundStyle(.orange) }
-                        Button("Edit this draft's carrier settings") { openedStep = .carrier }
+                        Button("Edit this draft's carrier settings") { showStep(.carrier) }
                     }
                 }
             }

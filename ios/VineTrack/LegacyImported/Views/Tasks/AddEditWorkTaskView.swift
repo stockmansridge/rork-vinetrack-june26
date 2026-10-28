@@ -697,7 +697,9 @@ struct AddEditWorkTaskView: View {
             .sheet(isPresented: $showAssignment) {
                 if let vineyardID = store.selectedVineyardId {
                     PruningResourcePickerView(vineyardId: vineyardID, selectedName: assignmentName, onSelect: { external, user, name in
-                        assignedTo = user; assignedExternalID = external; assignmentName = name; planningChanged = true
+                        assignedTo = user; assignedExternalID = external
+                        assignmentName = WorkTaskAssignmentNames.shared.resolve(account: editorAuthor, vineyard: editorVineyard, member: user, external: external, label: name)
+                        planningChanged = true
                     }, allowsManualName: false)
                 }
             }
@@ -718,6 +720,7 @@ struct AddEditWorkTaskView: View {
                     }
                 }
             }
+            .task(id: assignmentLookupKey) { await resolveAssignmentName() }
             .sheet(isPresented: $showCompletion) {
                 if let task = currentTask {
                     WorkTaskCompletionSheet(task: task, timeZone: tz) { selected in
@@ -1188,10 +1191,35 @@ struct AddEditWorkTaskView: View {
         } catch { draftMessage = "Draft could not be saved to this device. Keep this form open and retry." }
     }
 
+    private var assignmentLookupKey: String {
+        "\(loadedPlanning)-\(auth.userId?.uuidString ?? "")-\(auth.completedSignOutSequence)-\(store.vineyardSelectionGeneration)-\(assignedTo?.uuidString ?? "")-\(assignedExternalID?.uuidString ?? "")"
+    }
+
+    private func resolveAssignmentName() async {
+        guard loadedPlanning, let account = editorAuthor, account == auth.userId,
+              let vineyard = editorVineyard, vineyard == store.selectedVineyardId,
+              existingTask == nil || existingTask?.vineyardId == vineyard else { return }
+        let member = assignedTo, external = assignedExternalID
+        let generation = store.vineyardSelectionGeneration
+        let signOut = auth.completedSignOutSequence
+        let label: String?
+        if let member {
+            let rows = try? await SupabaseTeamRepository().listMembers(vineyardId: vineyard)
+            label = rows?.first(where: { $0.vineyardId == vineyard && $0.userId == member }).flatMap(WorkTaskAssignmentNames.memberName)
+        } else if let external {
+            let rows = try? await SupabaseExternalResourceRepository().list(vineyardId: vineyard)
+            label = rows?.first(where: { $0.vineyardId == vineyard && $0.id == external })?.name
+        } else { label = nil }
+        guard !Task.isCancelled, account == auth.userId, vineyard == store.selectedVineyardId,
+              generation == store.vineyardSelectionGeneration, signOut == auth.completedSignOutSequence,
+              member == assignedTo, external == assignedExternalID else { return }
+        assignmentName = WorkTaskAssignmentNames.shared.resolve(account: account, vineyard: vineyard, member: member, external: external, label: label)
+    }
+
     private func loadPlanningDraft() {
         assignedTo = existingTask?.assignedTo
         assignedExternalID = existingTask?.assignedExternalResourceId
-        assignmentName = assignedTo.map { "Vineyard member (\($0.uuidString.prefix(8)))" } ?? assignedExternalID.map { "External resource (\($0.uuidString.prefix(8))) · historical selection retained" } ?? ""
+        assignmentName = WorkTaskAssignmentNames.shared.resolve(account: editorAuthor, vineyard: editorVineyard, member: assignedTo, external: assignedExternalID)
         scheduleBasis = existingTask?.scheduleBasis ?? "date"
         targetStage = existingTask?.targetELStage
         usesRange = existingTask?.endDate != nil && existingTask?.isFinalized == false
@@ -1204,7 +1232,8 @@ struct AddEditWorkTaskView: View {
             resumedPlanningDraft = true
             planningBaselineJSON = draft.baselineJSON
             creationID = draft.creationID ?? creationID
-            assignedTo = draft.assignedTo; assignedExternalID = draft.externalID; assignmentName = draft.assignmentName
+            assignedTo = draft.assignedTo; assignedExternalID = draft.externalID
+            assignmentName = WorkTaskAssignmentNames.shared.resolve(account: editorAuthor, vineyard: editorVineyard, member: assignedTo, external: assignedExternalID, label: draft.assignmentName)
             scheduleBasis = draft.scheduleBasis; targetStage = draft.targetStage; date = draft.date
             usesRange = draft.endDate != nil; rangeEnd = draft.endDate ?? draft.date
             taskType = draft.taskType; selectedBlockIds = draft.blockIDs; durationText = draft.durationText; notes = draft.notes; resources = draft.resources

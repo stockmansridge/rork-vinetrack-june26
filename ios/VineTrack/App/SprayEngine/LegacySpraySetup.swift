@@ -4,8 +4,8 @@ import Foundation
 nonisolated enum LegacySpraySetup {
     static let marker = "\n[VineTrack sprayer setup v1]\n"
     static let end = "\n[/VineTrack sprayer setup]"
-    static let fullTankMessage = "Only Full Tanks requires persisted tank intent, target-area/calibrated-rate specification and frozen planning outputs unavailable in receipt v1. Choose By Area in this draft to continue; your other inputs stay unchanged."
-    static let workMessage = "Proposed pass selection requires the new planning contract. Deselect proposed passes in Select Work Area to use this draft with existing tracking; blocks, equipment and mix are retained."
+    static let fullTankMessage = "Full-tank planning cannot currently start a spray. Choose By Area to continue."
+    static let workMessage = "Proposed passes cannot currently start a spray. Deselect them in Select Work Area to continue; your blocks, equipment and mix stay unchanged."
 
     static func blocker(intent: SprayPlanningIntent?, resolution: SprayPlanningResolution?, cleared: Bool = false) -> String? {
         guard intent != nil || resolution != nil || cleared else { return nil }

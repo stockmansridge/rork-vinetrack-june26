@@ -15,6 +15,13 @@ data class SprayCanopySelection(
     /** A complete answer needs a training system and a deliberately accepted size/density pair. */
     val isConfirmed: Boolean get() = isValid && isSizeAndDensityConfirmed
 
+    // Presentation only; default control positions never imply confirmation.
+    val selectedValues: String get() = listOfNotNull(type?.label, size.label, density.label).joinToString(" · ")
+    val confirmationTitle: String get() = if (type == null) "Choose canopy type" else "Confirm canopy"
+    val confirmationMessage: String get() = if (type == null) "Choose the canopy type for this spray."
+        else "You selected $selectedValues. Confirm this canopy to calculate the recommended spray volume."
+    val confirmationButton: String get() = "Confirm Canopy — $selectedValues"
+
     /** Material changes require explicit confirmation; reselecting retains it. */
     fun chooseType(value: SprayCalculator.CanopyType?): SprayCanopySelection =
         copy(type = value, isSizeAndDensityConfirmed = isSizeAndDensityConfirmed && value == type)

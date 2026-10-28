@@ -32,8 +32,8 @@ struct PruningResourcePickerView: View {
                     if allowsManualName { Button("Other / manual name") { choose(nil, nil, selectedName) } }
                 }
                 Section("Internal resources") {
-                    ForEach(members.filter { $0.vineyardId == vineyardId && matches($0.fullName ?? $0.displayName ?? $0.email ?? "Vineyard member") }, id: \.userId) { member in
-                        let name = member.fullName ?? member.displayName ?? member.email ?? "Vineyard member"
+                    ForEach(members.filter { $0.vineyardId == vineyardId && matches(WorkTaskAssignmentNames.memberName($0) ?? "Assigned vineyard member") }, id: \.userId) { member in
+                        let name = WorkTaskAssignmentNames.memberName(member) ?? "Assigned vineyard member"
                         Button(name) { choose(nil, member.userId, name) }
                     }
                 }

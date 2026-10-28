@@ -62,8 +62,11 @@ struct GuidedStepCard<Content: View>: View {
                     }
                 }
                 .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("spray.header.\(step.rawValue)")
             .disabled(isLocked)
 
             if isExpanded && !isLocked {
@@ -108,13 +111,14 @@ struct GuidedStepCard<Content: View>: View {
 struct GuidedBlockerBanner: View {
     let blocker: SprayGuidedBlocker
     var onFix: (() -> Void)?
+    var canopySelection: SprayCanopySelection? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(blocker.title, systemImage: "exclamationmark.triangle.fill")
+            Label(blocker == .canopyConfirmationRequired ? (canopySelection?.confirmationTitle ?? blocker.title) : blocker.title, systemImage: "exclamationmark.triangle.fill")
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.orange)
-            Text(blocker.message)
+            Text(blocker == .canopyConfirmationRequired ? (canopySelection?.confirmationMessage ?? blocker.message) : blocker.message)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

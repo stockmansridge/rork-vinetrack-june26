@@ -29,7 +29,7 @@ import com.rork.vinetrack.data.spray.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SprayPlanningCards(
-    configuration: SprayPassConfiguration?, onConfiguration: (SprayPassConfiguration) -> Unit,
+    configuration: SprayPassConfiguration?, onConfiguration: (SprayPassConfiguration?) -> Unit,
     method: SprayPlanningMethod, onMethod: (SprayPlanningMethod) -> Unit,
     specification: SprayFullTankSpecification, onSpecification: (SprayFullTankSpecification) -> Unit,
     tankText: String, onTank: (String) -> Unit, areaText: String, onArea: (String) -> Unit,
@@ -41,14 +41,15 @@ fun SprayPlanningCards(
         Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Spraying workflow", fontWeight = FontWeight.SemiBold)
-                Text(if (configuration == null && method == SprayPlanningMethod.BY_AREA)
-                    "Supported legacy spray: Tank Mixing → Trip. Free Drive records actual coverage; selected blocks are calculation context, not confirmed travel passes."
-                    else "By Area Single Row/Over-Row uses this same draft and existing Tank Mixing → Trip. Pass/controller setup is retained in record notes. Only Full Tanks and proposed pass selection need the unavailable planning contract; edit those choices here without re-entering the mix.", style = MaterialTheme.typography.bodySmall)
+                Text(if (configuration == null)
+                    "No pass configuration recorded. Continue with the normal Tank Mixing → Trip workflow."
+                    else "Continue with Tank Mixing → Trip using the selected pass configuration.", style = MaterialTheme.typography.bodySmall)
                 Text("Sprayer configuration", fontWeight = FontWeight.Medium)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    SprayPassConfiguration.entries.forEachIndexed { index, pass ->
+                    val choices = listOf<SprayPassConfiguration?>(null) + SprayPassConfiguration.entries
+                    choices.forEachIndexed { index, pass ->
                         SegmentedButton(selected = configuration == pass, onClick = { onConfiguration(pass) },
-                            shape = SegmentedButtonDefaults.itemShape(index, 2)) { Text(pass.title) }
+                            shape = SegmentedButtonDefaults.itemShape(index, choices.size)) { Text(pass?.title ?: "Not Set") }
                     }
                 }
                 if (configuration != null) {
@@ -56,7 +57,7 @@ fun SprayPlanningCards(
                     Text(if (configuration == SprayPassConfiguration.STANDARD_PASS)
                         "Sprays the facing sides of two adjacent vine rows. Each pass covers one complete-row equivalent."
                         else "Both sides of two complete vine rows per pass.", style = MaterialTheme.typography.bodySmall)
-                } else Text("Choose the configuration. Historical configuration is not assumed.", style = MaterialTheme.typography.bodySmall)
+                } else Text("You can continue without recording a pass configuration.", style = MaterialTheme.typography.bodySmall)
                 rowSpacingMetres?.let { Text("Vineyard row spacing: ${region.formatLength(it)}") }
                 resolution?.effectiveWorkingWidthMetres?.let { Text("Effective working width: ${region.formatLength(it)}") }
                 resolution?.controllerLitresPer100mTravel?.let { Text("Controller application: ${region.formatVolumePer100Length(it)}") }
@@ -84,7 +85,7 @@ fun SprayPlanningCards(
                         PlanningField("Planned area (${region.areaUnitAbbreviation})", areaText, onArea)
                     else PlanningField("Calibrated rate ($rateUnit)", rateText, onRate)
                     Text("Planned area only. Actual block/row coverage is recorded during the Trip; no partial-block allocation is assumed.", style = MaterialTheme.typography.bodySmall)
-                } else Text("Use selected block area and the spray-volume decision below.", style = MaterialTheme.typography.bodySmall)
+                } else Text("Calculate the spray using the selected block area.", style = MaterialTheme.typography.bodySmall)
                 if (resolution != null) {
                     Text("Planned area: ${region.formatArea(resolution.plannedAreaHa)}")
                     Text("Intended water: ${region.formatVolume(resolution.intendedLitres)}")

@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -874,6 +875,11 @@ fun SprayCalculatorScreen(
         hasSeededOpenedStep = seeded.hasSeededOpenedStep
     }
     val expandedStep = openedStep
+    val stepListState = rememberLazyListState()
+    var focusVolumeQuestion by remember { mutableStateOf(false) }
+    LaunchedEffect(expandedStep) {
+        expandedStep?.let { step -> stepListState.animateScrollToItem(step.ordinal) }
+    }
     val toggleStep: (SprayGuidedStep) -> Unit = { step ->
         val updated = SpraySectionNavigationState(
             openedStep = SprayGuidedStep.entries.firstOrNull { it.raw == openedStepRaw },
@@ -1418,6 +1424,7 @@ fun SprayCalculatorScreen(
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding).imePadding(),
+            state = stepListState,
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -1822,9 +1829,6 @@ fun SprayCalculatorScreen(
                     onToggle = { toggleStep(SprayGuidedStep.CARRIER) },
                 ) {
                 if (operationType == "Foliar Spray") {
-                    if (passConfiguration != null || planningMethod == SprayPlanningMethod.FULL_TANK) {
-                        Text("By Area can start here. Single Row/Over-Row and controller settings are retained in the record's sprayer setup note; physical rates and tank quantities remain unchanged. For Only Full Tanks, choose By Area below to modify this same draft.", style = MaterialTheme.typography.bodySmall)
-                    }
                     SprayPlanningCards(configuration = passConfiguration, onConfiguration = { changeRateDisplay(effectiveEntryBasis, it) },
                         method = planningMethod, onMethod = { planningMethod = it; result = null },
                         specification = fullTankSpecification, onSpecification = { fullTankSpecification = it; result = null },
@@ -1898,6 +1902,7 @@ fun SprayCalculatorScreen(
                         },
                         onConfirm = {
                             canopySelection = canopySelection.confirm()
+                            focusVolumeQuestion = true
                             result = null
                         },
                     )
@@ -1931,7 +1936,15 @@ fun SprayCalculatorScreen(
                                 modifier = Modifier.fillMaxWidth())
                         }
                         if (planningMethod == SprayPlanningMethod.BY_AREA) {
-                        Text("Spray at the recommended volume?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                        val volumeQuestion = remember { BringIntoViewRequester() }
+                        LaunchedEffect(focusVolumeQuestion) {
+                            if (focusVolumeQuestion) {
+                                volumeQuestion.bringIntoView()
+                                focusVolumeQuestion = false
+                            }
+                        }
+                        Text("Spray at the recommended volume?", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary,
+                            modifier = Modifier.bringIntoViewRequester(volumeQuestion))
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             val choices = listOf(
                                 SprayVolumeChoice.USE_RECOMMENDED to "Use recommended rate",
@@ -2173,7 +2186,13 @@ fun SprayCalculatorScreen(
                     GuidedBlockerBanner(
                         blocker = blocker,
                         onFix = { openedStepRaw = SprayGuidedStep.BLOCKS.raw },
+                        canopySelection = canopySelection,
                     )
+                }
+                if (guidedFlow.isComplete(SprayGuidedStep.CARRIER)) {
+                    Button(onClick = { openedStepRaw = SprayGuidedStep.PRODUCTS.raw }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Continue to Products →")
+                    }
                 }
                 }
             }
@@ -2295,7 +2314,7 @@ fun SprayCalculatorScreen(
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
                     ) {
-                        Text("Continue", fontWeight = FontWeight.SemiBold)
+                        Text("Continue to Review →", fontWeight = FontWeight.SemiBold)
                     }
                 }
                 }

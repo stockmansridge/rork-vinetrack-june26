@@ -302,7 +302,7 @@ struct SprayCanopyControls: View {
         Button {
             selection.confirm()
         } label: {
-            Text(selection.isConfirmed ? "Canopy confirmed" : "Confirm Canopy — \(selection.type?.rawValue ?? "") · \(selection.size.rawValue) · \(selection.density.rawValue)")
+            Text(selection.isConfirmed ? "Canopy confirmed" : selection.confirmationButton)
                 .font(.caption.weight(.semibold))
                 .frame(maxWidth: .infinity)
                 .frame(minHeight: 44)

@@ -1197,6 +1197,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var performanceAuthorizationEpoch: Long = 0L
     private val planningDrafts = com.rork.vinetrack.data.WorkTaskPlanningDraftStore(app)
     private val externalResources = com.rork.vinetrack.data.ExternalResourceRepository(session)
+    private val assignmentNames = com.rork.vinetrack.data.WorkTaskAssignmentNames(app.getSharedPreferences("work-task-assignment-names", android.content.Context.MODE_PRIVATE))
+
+    fun taskAssignmentName(account: String?, vineyard: String?, member: String?, external: String?, label: String? = null): String {
+        if (account != session.userId || vineyard != _ui.value.selectedVineyardId) return if (member != null) "Assigned vineyard member" else if (external != null) "Assigned external resource" else ""
+        return assignmentNames.resolve(account, vineyard, member, external, label)
+    }
+
+    suspend fun refreshTaskAssignmentName(account: String?, vineyard: String?, member: String?, external: String?): String? {
+        if (account == null || vineyard == null || session.userId != account || _ui.value.selectedVineyardId != vineyard) return null
+        val epoch = session.retentionGuard.identityEpoch.value
+        val selection = vineyardSelectionEpoch
+        val label = if (member != null) {
+            val row = runCatching { repo.listTeamMembers(vineyard) }.getOrNull()?.firstOrNull { it.vineyardId == vineyard && it.userId == member }
+            row?.let(com.rork.vinetrack.data.WorkTaskAssignmentNames::memberName)
+        } else if (external != null) {
+            runCatching { externalResources.list(vineyard) }.getOrNull()?.firstOrNull { it.vineyardId == vineyard && it.id == external }?.name
+        } else null
+        if (session.userId != account || _ui.value.selectedVineyardId != vineyard || epoch != session.retentionGuard.identityEpoch.value || selection != vineyardSelectionEpoch) return null
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        return assignmentNames.resolve(account, vineyard, member, external, label)
+    }
 
     fun loadWorkTaskPlanningDraft(taskId: String?): com.rork.vinetrack.data.model.WorkTaskPlanningDraft? {
         val author = session.userId ?: return null

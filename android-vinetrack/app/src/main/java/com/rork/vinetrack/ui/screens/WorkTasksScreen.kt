@@ -1462,7 +1462,7 @@ private fun WorkTaskSheet(
 
     var assignedTo by remember(existing?.id) { mutableStateOf(existing?.assignedTo) }
     var externalId by remember(existing?.id) { mutableStateOf(existing?.assignedExternalResourceId) }
-    var assignmentName by remember(existing?.id) { mutableStateOf(existing?.assignedTo?.let { "Vineyard member (${it.take(8)})" } ?: existing?.assignedExternalResourceId?.let { "External resource (${it.take(8)}) · historical selection retained" } ?: "") }
+    var assignmentName by remember(existing?.id) { mutableStateOf(vm.taskAssignmentName(editorAuthor, editorVineyard, existing?.assignedTo, existing?.assignedExternalResourceId)) }
     var scheduleBasis by remember(existing?.id) { mutableStateOf(existing?.scheduleBasis ?: "date") }
     var targetStage by remember(existing?.id) { mutableStateOf(existing?.targetELStage) }
     var endDate by remember(existing?.id) { mutableStateOf(if (existing?.isFinalized == false) existing.endDate else null) }
@@ -1481,7 +1481,8 @@ private fun WorkTaskSheet(
                 resumedPlanningDraft = true
                 planningBaselineJson = draft.baselineJson
                 creationId = draft.creationId ?: creationId
-                assignedTo = draft.assignedTo; externalId = draft.externalId; assignmentName = draft.assignmentName
+                assignedTo = draft.assignedTo; externalId = draft.externalId
+                assignmentName = vm.taskAssignmentName(editorAuthor, editorVineyard, assignedTo, externalId, draft.assignmentName)
                 scheduleBasis = draft.scheduleBasis; targetStage = draft.targetStage; workDateIso = draft.date; endDate = draft.endDate
                 taskType = draft.taskType; selectedBlockIds = draft.blockIds; hoursText = draft.durationText; notes = draft.notes
                 runCatching { Instant.parse(draft.date).atZone(state.seasonZone).toLocalDate() }.getOrNull()?.let { workDay = it }
@@ -1492,6 +1493,17 @@ private fun WorkTaskSheet(
         if (!resumedPlanningDraft && existing != null) {
             try { planningBaselineJson = vm.loadWorkTaskPlanningBaseline(existing) }
             catch (_: Exception) { draftMessage = "Online selection unavailable. Refresh the task before editing; local draft remains available." }
+        }
+    }
+
+    LaunchedEffect(assignedTo, externalId, state.currentUserId, state.selectedVineyardId, state.members) {
+        if (state.currentUserId != editorAuthor || state.selectedVineyardId != editorVineyard || (existing != null && existing.vineyardId != editorVineyard)) return@LaunchedEffect
+        val member = assignedTo; val external = externalId
+        val known = state.members.firstOrNull { it.vineyardId == editorVineyard && it.userId == member }
+            ?.let(com.rork.vinetrack.data.WorkTaskAssignmentNames::memberName)
+        assignmentName = vm.taskAssignmentName(editorAuthor, editorVineyard, member, external, known ?: assignmentName)
+        vm.refreshTaskAssignmentName(editorAuthor, editorVineyard, member, external)?.let { resolved ->
+            if (assignedTo == member && externalId == external) assignmentName = resolved
         }
     }
 
@@ -1507,13 +1519,13 @@ private fun WorkTaskSheet(
 
     if (showAssignment) state.selectedVineyardId?.let { vineyard ->
         com.rork.vinetrack.ui.components.PruningResourcePicker(vineyard, state.members, assignmentName, vm::listExternalResources,
-            onSelect = { external, user, name -> externalId = external; assignedTo = user; assignmentName = name; planningChanged = true },
+            onSelect = { external, user, name -> externalId = external; assignedTo = user; assignmentName = vm.taskAssignmentName(editorAuthor, editorVineyard, user, external, name); planningChanged = true },
             onDismiss = { showAssignment = false }, allowsManualName = false,
             onQuickAdd = if (state.currentRole in listOf("owner", "manager")) ({ showQuickAdd = true }) else null)
     }
     if (showQuickAdd) state.selectedVineyardId?.let { vineyard ->
         com.rork.vinetrack.ui.components.ExternalResourceEditor(vm, vineyard, onSaved = { resource ->
-            if (resource.isActive) { externalId = resource.id; assignedTo = null; assignmentName = resource.name; planningChanged = true; showAssignment = false }
+            if (resource.isActive) { externalId = resource.id; assignedTo = null; assignmentName = vm.taskAssignmentName(editorAuthor, editorVineyard, null, resource.id, resource.name); planningChanged = true; showAssignment = false }
             showQuickAdd = false
         }, onDismiss = { showQuickAdd = false })
     }
