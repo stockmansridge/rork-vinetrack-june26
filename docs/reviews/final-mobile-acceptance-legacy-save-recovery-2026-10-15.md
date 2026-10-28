@@ -1,5 +1,44 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Android Home sync chip — 28 October 2026 — FOCUSED AUTOMATION AND BUILD PASS
+
+Android-only presentation/navigation patch against starting HEAD `b39ba18e8df59dd50b14bb92284f83474a1ddec7`. The owner reports the hydration repair at `89fa755df577dd29281e38043dc680299e6b7754` physically looks correct. This records that limited owner observation, not execution of all older physical checklists. No iOS, backend, release/version/signing/upload or operational-write changes.
+
+### Changes and precedence
+
+- Removed only the `SyncStatusCard(...)` invocation from Home. The existing private card declaration remains unrendered; Sync Status itself and every existing `AppUiState` field remain intact. Home tools, summaries, notices, setup decision and hydration code are unchanged.
+- Header now shows a compact, always-tappable status chip. Its only action routes to existing `ToolRoute.SyncStatus`; it cannot call refresh. Green check = **Synced**, blue spinner = **Syncing**, neutral cloud-off = **Offline**, orange = **N waiting / N held / Not synced**, red = **Needs attention / Sync error**. Vineyard name retains its existing weighted/ellipsized layout and separate switch target.
+- Pure presentation precedence: offline first; online vineyard load, explicit retry or current-scope in-progress queue/photo next; unreadable evidence or blocked work next; entitlement-held or dependency-held work next; genuine failed writes/photos next; remaining waiting work next; online cached fallback next (**Sync error**); unknown/unselected data next (**Not synced**); only fully known fresh core datasets with no preceding issue become **Synced**. Counts combine scoped queued writes and separate attachments, as distinct pending operations, not unique records. Cached knowledge alone never becomes a green success, including saved machine/rig knowledge without the aggregate cache flag. No timestamp is inferred or added to Home.
+- `AppViewModel` adds a read-only adapter and read-only references to existing queue observables, not another persisted state/sync engine. It checks current account and selected vineyard, uses existing recovery ownership resolution **without preservation/quarantine**, and reuses the existing dependency display mapper. Pin/trip ID-only ownership may resolve from current loaded records; unresolved/conflicting ownership is not guessed or counted for a vineyard. Attachments filter by vineyard, and chemical labels additionally by current owner. Read-evidence errors remain account-wide attention signals. Existing Sync Status retains its original whole-outbox diagnostics/counts; it is not converted to a filtered queue editor.
+- Existing queues are observed for status-only changes as well as count changes, so a photo beginning upload need not change its count to invalidate the chip. No admission/write/replay methods execute from chip derivation. Held presentation uses already-published per-vineyard read-only access and existing dependency labels; it does not establish or clear holds.
+- Sync Status retains per-area refresh, Retry all and saved-data/timestamp details. Source inspection found no explicit global-refresh control there, so **Refresh all** is added in its app bar using existing `vm.refresh()`, disabled offline or during vineyard refresh. No automatic refresh occurs on navigation or render.
+
+### Executed focused validation
+
+- Final host command: `python scripts/run-home-sync-regressions.py` → **39 tests, 0 failures, 0 errors, 0 skipped**, 208.391s. Exact classes: `com.rork.vinetrack.ui.HomeSyncStatusTest` (7), `com.rork.vinetrack.data.FieldCacheHydrationTest` (8), `com.rork.vinetrack.data.OperationalToolLayoutTest` (15), `com.rork.vinetrack.data.CacheFirstValidationTest` (9). Latest XML/command/case evidence: `/tmp/vinetrack-home-sync-q5ribwb1/finished.json` and its `home-sync/` folder. Two preceding host runs also passed39/0/0/0; do not add overlapping totals.
+- Final `androidTest` selectors: `com.rork.vinetrack.ui.HomeSyncChipAndroidTest`, `com.rork.vinetrack.data.HomeHydrationAndroidTest` → **12 passed, 0 failed, 0 skipped in15s**. Production header is rendered/tapped in all seven principal labels, including syncing/offline; all callbacks are exactly `ToolRoute.SyncStatus`. Rendered A → B → A switch controls remain separate from chip actions. Production global refresh action executes once when enabled and is disabled offline/refreshing. Existing production-ViewModel hydration scenarios run alongside the new synthetic queue-switch test; it checks current-vineyard waiting versus blocked status, immediate loading, blocks/machine/rig knowledge, no previous cache timestamp, unchanged queued rows, no state mutation within the UI-thread derivation, and rejection of mismatched account/vineyard snapshots.
+- First emulator selection returned **10 passed / 1 failed / 0 skipped**: the new read-only test compared the entire live state outside the main thread, allowing unrelated asynchronous publications between snapshot and assertion. This was a test race, not evidence that chip derivation mutated hydration. Comparison was moved to one main-thread turn. After adding explicit Refresh all coverage, the next selection passed12/0/0 in19s. Final source also observes existing raw queue status transitions and passed12/0/0 in15s. No unchanged automatic retry.
+- Final normal `runChecks(appPath: android-vinetrack)` → **PASS / build succeeded**. Only the existing two unrelated direct-storage URL notices remain. This normal build is not a store release or upload.
+- Final `git diff --check HEAD` → PASS. No iOS working diff. `FieldCacheHydration.kt`, `DomainCacheRepository.kt` and `OperationalToolLayoutStore.kt` have no diff against accepted hydration commit `89fa755df577dd29281e38043dc680299e6b7754`. The ViewModel working diff only adds presentation accessors/adapter; selection/load/cache/pending-write observers and recovery functions are unchanged. No 32ms/16ms assertion was changed; performance suites were not rerun in this presentation-only pass.
+
+### Remaining acceptance limits
+
+Synthetic intercepted transport and emulator Compose/queue/hydration checks are not authenticated customer-data or physical-device tests. Actual Stockmans Ridge → JH Testing → Stockmans Ridge, force-close/cached reopen, live connectivity loss/reconnect, real pending/held/error detail journeys and handset spacing remain unexecuted by the assistant. No latest-source simulatorUse run or signed-candidate clearance is claimed. Retain the owner's stated hydration appearance acceptance separately.
+
+### Exact source/test/runner manifest (SHA-256)
+
+```text
+8ebb4982547741ed057ad39ffe6f746ef1b9760929f586c6c45704f689a7e424  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt
+c57b908b69b6dd46ae6f1c0bfb008cbe23b4d78bbb084d00eca313bf2e964d70  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/HomeSyncStatus.kt
+514909b8cc3eeee9942f06f1cc5c59ad852ce69bf64065781eeae9fdab259d39  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/HomeDashboard.kt
+12ba6cea8191cb03fbf3ce7b326a40f7a289bdf13fabb4359e7430bff30ef47d  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SyncStatusScreen.kt
+2db343f6c1e7edfb22407b82beb9dec708160b7e7d66a301dbe068a57ed90f4e  android-vinetrack/app/src/test/java/com/rork/vinetrack/ui/HomeSyncStatusTest.kt
+374c4aee16cc3fe9895b9bd9b9ec1b0aa3f71a69f8da6281ece32d524715b3f9  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/ui/HomeSyncChipAndroidTest.kt
+3a0567272ac48081680d396a27087f5aa03566a941504292d0e12879d811800a  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/HomeHydrationAndroidTest.kt
+a917d4f1ca3240165a33035b82e4f53dab06f9513beaf68fd0f58e77a4f0d693  scripts/run-home-sync-regressions.py
+```
+
+
 ## Mobile operator UX parity — 28 October 2026 — FOCUSED AUTOMATION PASS; PHYSICAL ACCEPTANCE OPEN
 
 Scope compared against `f4951e3a2ae91d3ade2b980cc0612152c50aa653` plus the 29-file working patch below. This supersedes the preceding Android-only UI scope. No Portal, Supabase schema, arithmetic, CF policy, tank splitting, Trip execution, permissions, release versions, signing configuration or upload changes. Existing Android Home hydration/performance repairs remain intact. Normal builds are validation, not signed-candidate preparation or v3.1.9 acceptance.

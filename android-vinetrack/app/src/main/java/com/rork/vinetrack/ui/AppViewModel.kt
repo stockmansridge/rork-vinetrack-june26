@@ -2846,6 +2846,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // Existing observable queues, exposed read-only so status-only transitions (e.g. a
+    // photo beginning upload without a count change) also invalidate Home presentation.
+    internal val homePendingWrites get() = pendingWrites.writes
+    internal val homePendingPhotos get() = pendingPhotos.attachments
+    internal val homePendingLabels get() = chemicalLabelPhotos.attachments
+
+    /** Read-only Home presentation over existing stores; never publishes or changes queue state. */
+    internal fun homeSyncStatus(state: AppUiState): HomeSyncStatus {
+        val account = session.accountAccess()
+        if (account == null || state.currentUserId != session.userId ||
+            state.selectedVineyardId != _ui.value.selectedVineyardId) {
+            return HomeSyncStatus("Not synced", HomeSyncTone.Waiting)
+        }
+        var result = HomeSyncStatus("Not synced", HomeSyncTone.Waiting)
+        session.withAccountAccess(account) {
+            val writes = pendingWrites.list()
+            val ids = homeSyncWriteIds(state, writes)
+            val scoped = writes.filter { it.id in ids }
+            val starts = scoped.filter { it.entityType == PendingEntityType.TRIP_START }.mapTo(mutableSetOf()) { it.clientId }
+            val changes = scoped.filter { it.entityType in setOf(PendingEntityType.TRIP_GPS,
+                PendingEntityType.TRIP_ROW, PendingEntityType.TRIP_TANK, PendingEntityType.TRIP_METADATA) }
+                .mapTo(mutableSetOf()) { it.clientId }
+            val photos = pendingPhotos.list().filter { it.vineyardId == state.selectedVineyardId && it.status in PendingPhotoStatus.unresolved }
+                .map { it.status } + chemicalLabelPhotos.attachments.value.filter {
+                    it.ownerId == session.userId && it.vineyardId == state.selectedVineyardId
+                }.map { it.status }
+            result = homeSyncStatus(state, scoped.map { it.toSyncItem(starts, changes) }, photos,
+                evidenceNeedsAttention = pendingWrites.readIssue.value != null || pinEvidenceReadIssue.value != null,
+                writesHeld = state.selectedVineyardId?.let { vineyard ->
+                    state.accessMatrix?.operationalAccessByVineyard?.get(vineyard)?.isTrialExpiredReadOnly
+                } == true)
+        }
+        return result
+    }
+
     /**
      * Mirror the local outbox count into [AppUiState.pendingSyncCount]. Read-only:
      * observing the count never triggers a replay, retry, or any write.

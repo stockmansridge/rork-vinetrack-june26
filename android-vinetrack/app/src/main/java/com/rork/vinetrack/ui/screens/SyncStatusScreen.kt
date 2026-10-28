@@ -48,6 +48,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
@@ -82,6 +83,13 @@ import kotlin.coroutines.resume
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+
+@Composable
+internal fun SyncStatusRefreshAction(online: Boolean, refreshing: Boolean, onRefresh: () -> Unit) {
+    TextButton(onClick = onRefresh, enabled = online && !refreshing) {
+        Text(if (refreshing) "Refreshing…" else "Refresh all")
+    }
+}
 
 /**
  * Read-only field-reliability surface. Reports live connection status and the
@@ -159,6 +167,9 @@ fun SyncStatusScreen(
             TopAppBar(
                 title = { Text("Sync Status") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
+                actions = {
+                    SyncStatusRefreshAction(online, state.isLoadingVineyardData, vm::refresh)
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
         },

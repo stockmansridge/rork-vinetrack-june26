@@ -117,6 +117,11 @@ import com.rork.vinetrack.data.model.UnifiedPinContract
 import com.rork.vinetrack.data.model.Vineyard
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.HomeSyncStatus
+import com.rork.vinetrack.ui.HomeSyncTone
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.rork.vinetrack.ui.components.HelpSheet
 import com.rork.vinetrack.ui.components.OverviewStat
 import com.rork.vinetrack.ui.components.QuickActionsHelp
@@ -200,6 +205,14 @@ private fun DashboardContent(
 ) {
     val context = LocalContext.current
     val wizardEnabled = remember { com.rork.vinetrack.data.SetupWizardStore(context).isEnabled() }
+    val outboxIssue by vm.pendingSyncReadIssue.collectAsStateWithLifecycle()
+    val evidenceIssue by vm.pinEvidenceReadIssue.collectAsStateWithLifecycle()
+    val pendingWrites by vm.homePendingWrites.collectAsStateWithLifecycle()
+    val pendingPhotos by vm.homePendingPhotos.collectAsStateWithLifecycle()
+    val pendingLabels by vm.homePendingLabels.collectAsStateWithLifecycle()
+    val syncStatus = remember(state, pendingWrites, pendingPhotos, pendingLabels, outboxIssue, evidenceIssue) {
+        vm.homeSyncStatus(state)
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         // Vineyard gradient backdrop
         Box(
@@ -223,8 +236,8 @@ private fun DashboardContent(
                 vineyard = state.selectedVineyard,
                 logo = state.selectedVineyardLogo,
                 vineyards = state.vineyards,
-                syncing = state.isLoadingVineyardData,
-                onRefresh = { vm.refresh() },
+                syncStatus = syncStatus,
+                onOpenTool = onOpenTool,
                 onSelectVineyard = { vm.selectVineyard(it) },
             )
 
@@ -237,8 +250,6 @@ private fun DashboardContent(
             if (canChangeSettings && wizardEnabled && shouldShowSetupWizard(state)) {
                 SetupWizardCard(state = state, onClick = onOpenSetupWizard)
             }
-
-            SyncStatusCard(state, onClick = { onOpenTool(ToolRoute.SyncStatus) })
 
             AppNoticesBanner(state = state, onDismiss = { vm.dismissNotice(it) })
 
@@ -270,12 +281,12 @@ private fun DashboardContent(
 }
 
 @Composable
-private fun HeaderRow(
+internal fun HeaderRow(
     vineyard: Vineyard?,
     logo: android.graphics.Bitmap?,
     vineyards: List<Vineyard>,
-    syncing: Boolean,
-    onRefresh: () -> Unit,
+    syncStatus: HomeSyncStatus,
+    onOpenTool: (ToolRoute) -> Unit,
     onSelectVineyard: (String) -> Unit,
 ) {
     // The switcher is only interactive when the user belongs to more than one
@@ -382,33 +393,43 @@ private fun HeaderRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        SyncStatusChip(syncing = syncing, onRefresh = onRefresh)
+        SyncStatusChip(status = syncStatus, onClick = { onOpenTool(ToolRoute.SyncStatus) })
     }
 }
 
-/** Compact iOS-style status chip: shows a spinner while syncing, otherwise a tappable Refresh pill. */
+/** Always opens details, including during syncing/offline. No refresh action lives on Home. */
 @Composable
-private fun SyncStatusChip(syncing: Boolean, onRefresh: () -> Unit) {
+private fun SyncStatusChip(status: HomeSyncStatus, onClick: () -> Unit) {
+    val tint = when (status.tone) {
+        HomeSyncTone.Synced -> Color(0xFFB8E6C4)
+        HomeSyncTone.Syncing -> Color(0xFFB6DBFF)
+        HomeSyncTone.Offline -> Color(0xFFE1E5E3)
+        HomeSyncTone.Waiting -> Color(0xFFFFD09B)
+        HomeSyncTone.Attention -> Color(0xFFFFB5B0)
+    }
     Row(
         modifier = Modifier
             .clip(CircleShape)
             .background(Color.White.copy(alpha = 0.16f))
-            .clickable(enabled = !syncing) { onRefresh() }
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .semantics { contentDescription = "Sync Status: ${status.label}" }
+            .clickable(role = Role.Button, onClickLabel = "Open Sync Status", onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (syncing) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(14.dp),
-                strokeWidth = 2.dp,
-                color = Color.White,
-            )
-            Text("Syncing", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        if (status.tone == HomeSyncTone.Syncing) {
+            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = tint)
         } else {
-            Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = Color.White, modifier = Modifier.size(15.dp))
-            Text("Refresh", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            val icon = when (status.tone) {
+                HomeSyncTone.Synced -> Icons.Filled.Check
+                HomeSyncTone.Offline -> Icons.Filled.CloudOff
+                HomeSyncTone.Attention -> Icons.Filled.Error
+                else -> Icons.Filled.Sync
+            }
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(15.dp))
         }
+        Text(status.label, color = tint, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

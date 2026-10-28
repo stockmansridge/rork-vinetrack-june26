@@ -126,6 +126,44 @@ class HomeHydrationAndroidTest {
         names.toList().forEach { base.deleteSharedPreferences(prefix + it) }
         root.deleteRecursively()
     }
+    @Test fun homeSyncPresentationUsesCurrentVineyardQueuesWithoutMutatingHydrationOrWrites() {
+        online = true
+        val pending = AppViewModel::class.java.getDeclaredField("pendingWrites").let {
+            it.isAccessible = true; it.get(vm) as PendingWriteRepository
+        }
+        val savedA = pending.enqueue("presentation_probe", "create", "{\"vineyard_id\":\"$a\"}", "saved-a")
+        val savedB = pending.enqueue("presentation_probe", "create", "{\"vineyard_id\":\"$b\"}", "saved-b")
+        pending.updateStatus(savedB.id, PendingWriteStatus.BLOCKED, "Synthetic needs attention")
+        val original = pending.list()
+        onMain { state().value = state().value.copy(isOnline = true) }
+        for (v in listOf(a, b, a)) {
+            onMain {
+                vm.selectVineyard(v)
+                assertEquals("Syncing", vm.homeSyncStatus(vm.ui.value).label)
+                assertNull(vm.ui.value.cachedFieldDataLastSyncedAt)
+            }
+            awaitSettled(v)
+            val current = vm.ui.value
+            assertEquals(if (v == a) "1 waiting" else "Needs attention", vm.homeSyncStatus(current).label)
+            assertEquals(if (v == a) 8 else 3, current.paddocks.size)
+            assertEquals(HomeReadKnowledge.Fresh, current.machinesKnowledge)
+            assertEquals(HomeReadKnowledge.Fresh, current.sprayEquipmentKnowledge)
+            assertFalse(current.isUsingCachedFieldData)
+            assertNull(current.cachedFieldDataLastSyncedAt)
+            assertEquals(original, pending.list())
+            onMain {
+                val beforePresentation = vm.ui.value
+                vm.homeSyncStatus(beforePresentation)
+                assertEquals(beforePresentation, vm.ui.value)
+            }
+        }
+        val oldAccount = vm.ui.value.copy(currentUserId = "different-user")
+        assertEquals("Not synced", vm.homeSyncStatus(oldAccount).label)
+        val oldVineyard = vm.ui.value.copy(selectedVineyardId = b)
+        assertEquals("Not synced", vm.homeSyncStatus(oldVineyard).label)
+        assertEquals("pending", savedA.status)
+    }
+
     @Test fun unknownDataMustNotPromptForSetup() {
         assertFalse("Unloaded setup is unknown, not missing", wizard(vm.ui.value))
     }
