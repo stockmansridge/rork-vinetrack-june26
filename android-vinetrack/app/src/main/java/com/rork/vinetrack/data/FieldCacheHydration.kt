@@ -18,7 +18,11 @@ internal class FieldCacheHydration private constructor(
     val growth: List<GrowthStageRecord>?,
     val paddocks: List<Paddock>?,
     val paddocksSyncedAt: Long?,
+    val machines: List<VineyardMachine>?,
+    val sprayEquipment: List<SprayEquipment>?,
 ) {
+    fun syncedAt(dataset: String): Long? = source["${dataset}_at_$vineyardId"] as? Long
+
     /** Exact source comparison includes owner, raw bytes and timestamps; no clock-based guess. */
     fun matches(userId: String, vineyardId: String, current: Map<String, Any?>): Boolean =
         this.userId == userId && this.vineyardId == vineyardId && source == selectSource(vineyardId, current)
@@ -26,7 +30,7 @@ internal class FieldCacheHydration private constructor(
     companion object {
         private val json = Json { ignoreUnknownKeys = true }
         private const val OWNER = "cache_owner_user_id"
-        private val datasets = listOf("pins", "trips", "spray", "worktask", "growth", "paddocks")
+        private val datasets = listOf("pins", "trips", "spray", "worktask", "growth", "paddocks", "machines", "spray_equipment")
 
         private fun selectSource(vineyardId: String, preferences: Map<String, Any?>): Map<String, Any?> =
             buildMap {
@@ -53,7 +57,9 @@ internal class FieldCacheHydration private constructor(
                 decode("pins", Pin.serializer()), decode("trips", Trip.serializer()),
                 decode("spray", SprayRecord.serializer()), decode("worktask", WorkTask.serializer()),
                 decode("growth", GrowthStageRecord.serializer()), decode("paddocks", Paddock.serializer()),
-                source["paddocks_at_$vineyardId"] as? Long)
+                source["paddocks_at_$vineyardId"] as? Long,
+                decode("machines", VineyardMachine.serializer())?.filter { it.vineyardId.equals(vineyardId, true) },
+                decode("spray_equipment", SprayEquipment.serializer())?.filter { it.vineyardId.equals(vineyardId, true) })
         }
     }
 }

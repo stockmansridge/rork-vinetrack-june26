@@ -109,6 +109,16 @@ class DomainCacheRepository(context: Context) {
         return store.loadOperatorCategories(vineyardId)
     }
 
+    internal fun saveMachines(userId: String, vineyardId: String, rows: List<com.rork.vinetrack.data.model.VineyardMachine>) {
+        if (!ownerMatches(userId)) return
+        store.saveMachines(vineyardId, rows.filter { it.vineyardId.equals(vineyardId, true) }, System.currentTimeMillis())
+    }
+
+    internal fun saveSprayEquipment(userId: String, vineyardId: String, rows: List<com.rork.vinetrack.data.model.SprayEquipment>) {
+        if (!ownerMatches(userId)) return
+        store.saveSprayEquipment(vineyardId, rows.filter { it.vineyardId.equals(vineyardId, true) }, System.currentTimeMillis())
+    }
+
     // MARK: - Paddocks by vineyard
 
     /** Save paddocks from a successful online fetch, claiming the cache for [userId]. */

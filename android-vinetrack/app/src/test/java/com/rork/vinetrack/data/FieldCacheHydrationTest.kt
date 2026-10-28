@@ -82,6 +82,41 @@ class FieldCacheHydrationTest {
         assertEquals(1, pending.size)
     }
 
+    @Test fun setupReferencesRemainOwnerVineyardAndExactSourceScoped() {
+        val preferences = source().apply {
+            this["machines_A"] = json.encodeToString(ListSerializer(VineyardMachine.serializer()), listOf(
+                VineyardMachine("tractor-A", "A"), VineyardMachine("foreign", "B")))
+            this["machines_at_A"] = 2L
+            this["spray_equipment_A"] = json.encodeToString(ListSerializer(SprayEquipment.serializer()), listOf(
+                SprayEquipment("rig-A", "A"), SprayEquipment("foreign", "B")))
+            this["spray_equipment_at_A"] = 3L
+        }
+        val snapshot = requireNotNull(FieldCacheHydration.prepare("user", "A", preferences))
+        assertEquals(listOf("tractor-A"), snapshot.machines!!.map { it.id })
+        assertEquals(listOf("rig-A"), snapshot.sprayEquipment!!.map { it.id })
+        assertEquals(2L, snapshot.syncedAt("machines"))
+        assertEquals(3L, snapshot.syncedAt("spray_equipment"))
+        assertNull(FieldCacheHydration.prepare("other", "A", preferences))
+        assertNull(FieldCacheHydration.prepare("user", "B", preferences)!!.machines)
+        for (key in listOf("machines_A", "machines_at_A", "spray_equipment_A", "spray_equipment_at_A")) {
+            assertFalse(snapshot.matches("user", "A", preferences.toMutableMap().apply { this[key] = "changed" }))
+        }
+    }
+
+    @Test fun failedSetupCacheIsUnknownWhileExplicitEmptyIsRetainedAsCachedOnly() {
+        val preferences = source().apply {
+            this["machines_A"] = "[]"; this["machines_at_A"] = 1L
+            this["spray_equipment_A"] = "broken"; this["spray_equipment_at_A"] = 1L
+        }
+        val snapshot = requireNotNull(FieldCacheHydration.prepare("user", "A", preferences))
+        assertEquals(emptyList<VineyardMachine>(), snapshot.machines)
+        assertNull(snapshot.sprayEquipment)
+        assertFalse(HomeReadKnowledge.Unknown.isKnown)
+        assertTrue(HomeReadKnowledge.Cached.isKnown)
+        assertNotEquals(HomeReadKnowledge.Fresh, HomeReadKnowledge.Cached)
+        assertNull(FieldCacheHydration.prepare("user", "A", preferences.apply { remove("machines_at_A") })!!.machines)
+    }
+
     @Test fun pairedSmallMediumAndLargeDecodeAndPublicationSizing() = runBlocking {
         for (scale in listOf(1, 10, 100)) {
             val source = mutableMapOf<String, Any?>("cache_owner_user_id" to "user")

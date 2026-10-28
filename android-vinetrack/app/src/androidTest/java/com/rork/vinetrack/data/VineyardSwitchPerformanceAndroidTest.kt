@@ -86,6 +86,8 @@ class VineyardSwitchPerformanceAndroidTest {
             "work_tasks" to json.encodeToString(ListSerializer(WorkTask.serializer()), List(500) { WorkTask("task-$it", v, date = timestamp) }),
             "spray_records" to json.encodeToString(ListSerializer(SprayRecord.serializer()), List(250) { SprayRecord("spray-$it", v, date = timestamp) }),
             "paddocks" to json.encodeToString(ListSerializer(Paddock.serializer()), List(100) { Paddock("block-$it", v, "Synthetic $it") }),
+            "vineyard_machines" to json.encodeToString(ListSerializer(VineyardMachine.serializer()), listOf(VineyardMachine("tractor-$v", v, machineType = "tractor"))),
+            "spray_equipment" to json.encodeToString(ListSerializer(SprayEquipment.serializer()), listOf(SprayEquipment("rig-$v", v))),
         ) }
         val remoteRequests = java.util.concurrent.atomic.AtomicInteger()
         client = HttpClient(MockEngine { request ->
@@ -109,6 +111,8 @@ class VineyardSwitchPerformanceAndroidTest {
         val cache = DomainCacheRepository(app)
         for (v in listOf(a, b)) {
             cache.savePaddocks(owner, v, List(100) { Paddock("block-$it", v, "Synthetic $it") })
+            cache.saveMachines(owner, v, listOf(VineyardMachine("tractor-$v", v, machineType = "tractor")))
+            cache.saveSprayEquipment(owner, v, listOf(SprayEquipment("rig-$v", v)))
             cache.savePins(owner, v, List(2_000) { Pin("pin-$it", v, title = "Synthetic", createdAt = if (mountHome) timestamp else null) })
             cache.saveTrips(owner, v, List(500) { Trip("trip-$it", v, startTime = timestamp, endTime = timestamp) })
             cache.saveWorkTasks(owner, v, List(500) { WorkTask("task-$it", v, date = timestamp) })
@@ -146,6 +150,18 @@ class VineyardSwitchPerformanceAndroidTest {
                     s.maintenanceLogs.size == 250 && s.yieldSessions.size == 250 && !s.isLoadingVineyardData
             }
             assertTrue(vm.ui.value.pins.all { it.vineyardId == v })
+            assertTrue(vm.operationalToolLayout.value.isReady)
+            assertEquals(v, vm.ui.value.machines.single().vineyardId)
+            assertEquals(v, vm.ui.value.sprayEquipment.single().vineyardId)
+            assertEquals(if (mountHome) HomeReadKnowledge.Fresh else HomeReadKnowledge.Cached, vm.ui.value.blocksKnowledge)
+            assertEquals(if (mountHome) HomeReadKnowledge.Fresh else HomeReadKnowledge.Cached, vm.ui.value.machinesKnowledge)
+            assertEquals(if (mountHome) HomeReadKnowledge.Fresh else HomeReadKnowledge.Cached, vm.ui.value.sprayEquipmentKnowledge)
+            assertTrue(vm.ui.value.pinsKnowledge.isKnown)
+            assertTrue(vm.ui.value.spraysKnowledge.isKnown)
+            assertTrue(vm.ui.value.isUsingCachedFieldData) // Remaining synthetic lists deliberately fail.
+            val prompt = Class.forName("com.rork.vinetrack.ui.screens.HomeDashboardKt")
+                .getDeclaredMethod("shouldShowSetupWizard", AppUiState::class.java).let { it.isAccessible = true; it.invoke(null, vm.ui.value) as Boolean }
+            assertFalse(prompt)
             val settled = (SystemClock.elapsedRealtimeNanos() - started) / 1_000_000.0
             report.append("switch=$i ackMs=${acknowledgement.last()} settledMs=$settled\n")
             VineyardSwitchPerformanceProbe.stop().forEach {
@@ -157,7 +173,7 @@ class VineyardSwitchPerformanceAndroidTest {
         instrumentation.sendStatus(2, Bundle().apply { putString("stream", report.toString()) })
         println(report)
         if (mountHome) {
-            assertEquals("All five large remote collections must be requested on every selection", 25, remoteRequests.get())
+            assertEquals("All seven remote collections must be requested on every selection", 35, remoteRequests.get())
             assertTrue("Remote response did not reach Home.\n$report", vm.ui.value.pins.all { it.title == "Remote synthetic" })
             assertTrue("Mounted Home must actually compute its summary.\n$report", mainDerivations.isNotEmpty())
             assertTrue("Home derivation exceeded a 16ms UI-thread budget during real application.\n$report",

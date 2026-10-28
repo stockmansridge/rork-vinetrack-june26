@@ -1,5 +1,67 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Urgent Android Home hydration repair — 28 October 2026 — AUTOMATED PASS; PHYSICAL ACCEPTANCE OPEN
+
+Android only, compared against starting HEAD `c95042132ae3cd538be7eccabc2d4b2738073426`. Signed-candidate preparation remains paused. This checkpoint does **not** accept v3.1.9 or prove that the owner's retained-data handset manifestation is repaired. No project runtime logs were available. iOS, Portal/backend/schema, versions/signing, Spray calculations, access enforcement, offline write admission, active Trip recovery, GPS and Quick Actions remain unchanged. Existing Home summary routes/calculations and device-local tool order/hidden/half-height behaviour are retained.
+
+### Confirmed source causes and performance attribution
+
+- Tool configuration depended on a successful online vineyard-list path. Failed initial transport could hydrate field data without making the signed-in user's tools ready. Configuration now starts from authenticated identity before that read, and selection also ensures readiness.
+- Selection cleared collections without clearing the prior vineyard's cached banner/timestamp. Selection now immediately invalidates that presentation and read knowledge.
+- Setup inferred missing configuration from empty/unloaded lists; machine/rig failure could fall back to just-cleared UI lists. Persisted, exact-owner/vineyard setup-reference snapshots now hydrate with field data, with explicit Unknown/Cached/Fresh read provenance. Only fresh confirmed absence prompts for missing setup. An unconfirmed setup screen explains uncertainty instead of presenting missing-step actions.
+- Home treated unknown blocks as zero. Unknown overview values now show `—`; vintage summary counts are gated by their required datasets. Genuine fresh empty responses still display zero. Current-vineyard fallback datasets determine the saved-data banner/timestamp; fresh recovery clears stale presentation.
+- All four defects, including selection clearing, **predate** performance commits `ec48c6c3b0605b01ff8545c44ee074a16f6ffe54` (parent `1c837a738`) and `b3b3b260049240617519685d7c04a6279f64926c` (parent `ec48c6c3`). Parent comparisons do not support blaming these defects on those commits. The later performance pass added loading acknowledgement and moved cache hydration behind recovery preservation; this changes when an existing unknown/empty window is visible, not its underlying semantics. Rolling back accepted performance work would not repair these causes. Exact customer-device causal attribution is unverified without retained-data runtime evidence.
+- A separate reproduced crash during test recovery was `FieldSaveBusy` in tool remote-layout cache application while recovery preservation held storage admission. Best-effort refresh now catches fetch **and application/cache-write** failure, rethrows cancellation, and resets current-user refresh throttling. It does not weaken storage admission or recovery preservation.
+
+The new read knowledge is display provenance, not write/access/Trip-recovery authority. Cache hydration retains original-account/selection-generation fences, exact raw-source/owner/timestamp checks, original-list checks and authoritative pending-write overlays. Cache dataset scope now includes machines and spray equipment; successful current-server reads save only owner-matched, vineyard-filtered reference rows.
+
+### Validation and intermediate evidence
+
+- Initial production-seam reproductions `unknownDataMustNotPromptForSetup` and `selectionImmediatelyInvalidatesPreviousCachedPresentation`: **0 passed, 2 failed, 0 skipped**, including `Unloaded setup is unknown, not missing`.
+- Intermediate combined instrumentation: **infra-failed; 3 passed, 3 failed before crash**. Fixture errors were expecting polygon-derived area from `savedAreaHa` and omitting local access entitlement for cached bootstrap. Fixtures now use synthetic polygons and a current synthetic session creation time; no customer/backend trial dates changed. The tools-refresh contention crash above required the bounded production repair, not fixture suppression.
+- An initial host-run compile failed before tests because `AuthRetentionGateTest` references `ReviewWriteDisk`. `RetentionReviewTest.kt` is now included **only as a compiled fixture dependency**, not as an executed test selector. Initial artifacts: `/tmp/vinetrack-home-hydration-8vnfkjnx`.
+- Final host command `python3 scripts/run-home-hydration-regressions.py`: **122 passed, 0 failures, 0 errors, 0 skipped**. Exact selectors/counts: `FieldCacheHydrationTest` 8; `OperationalToolLayoutTest` 15; `OfflineQuickActionsTest` 6; `CacheFirstValidationTest` 9; `ActiveVineyardRestorationTest` 12; `VineyardCachePerformanceTest` 10; `AuthRetentionGateTest` 6; `VineyardWriteAuthorityTest` 17; `ReadOnlyEntitlementContractTest` 16; `FieldIsolationFoundationTest` 23. Final XML/log/structured result artifacts: `/tmp/vinetrack-home-hydration-eh93i83u` (result at `home-hydration/result.json`). No wider host suite selected.
+- Final managed `androidTest`, exact selectors `com.rork.vinetrack.data.HomeHydrationAndroidTest` and `com.rork.vinetrack.data.VineyardSwitchPerformanceAndroidTest`: **10 passed, 0 failed, 0 skipped in 38s**. This final run includes the strengthened A→B→A→B fixture: B has fresh confirmed missing rig setup, A is configured, and delayed A responses must not override final B. Earlier green 10/0/0 is historical, not an additional disjoint total.
+- Eight Home tests cover configured online summary (8 blocks, 6.1 ha, 22,080 vines), failed list→cached bootstrap/tools→Refresh recovery, transient machine/rig failure without cache, repeated switches/late response, no-cache unknown→fresh, tool preferences/recreated store/account isolation, immediate cached presentation invalidation, and unknown setup suppression. Real AppViewModel/local stores run against intercepted synthetic HTTP, not customer records or a live service. Two added host cache tests distinguish unknown/corrupt from explicit cached empty and verify exact owner/vineyard/raw-byte/timestamp scoping.
+- Both existing switch-performance tests retain **32ms selection acknowledgement** and **16ms mounted Home derivation** limits. Extended setup-reference/ownership/tools/provenance assertions remain green. Expected collection requests intentionally increase 25→35 for seven rather than five collections over five switches; no latency threshold was weakened. Managed success reports no stage timings, so none are invented here. The local instrumentation log retained an older failed run and is not evidence for final-run timing.
+- Final normal `runChecks(appPath: "android-vinetrack")`: **checks passed; Android build succeeded**. Two pre-existing direct-storage asset-URL notices remain nonblocking and untouched. No separate signed candidate, version change or store upload was prepared. After the final instrumentation run only removal of a trailing blank line in its source and this report/plan bookkeeping occurred; no behaviour changed.
+- Working-tree diff whitespace check against starting HEAD passes. iOS and all inspected Gradle/catalog/settings configuration are byte-unchanged against that baseline. An earlier cached-index whitespace check still saw the staged pre-cleanup blank line; working-tree source below contains the cleanup. No manual git staging/commit/push performed.
+
+### Exact repair manifest and source SHA-256
+
+Production (8), tests (3) and bounded runner (1), relative to project root:
+
+```text
+ef30d27bfafa50474e10233a427725f1313fd9fe7b5c407c91917e01198fdeec  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/DomainCacheRepository.kt
+254b8f7cd9e343c6aa8261a1107d62e7cc5255e90a88263f605773cd5242ff18  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/DomainCacheStore.kt
+148d5eb75e8c2c8770155c5ddad742272bd8eb6fdb5a637b6f713cd1554640db  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/FieldCacheHydration.kt
+437d183f4ec9e269f31dcc1c39b5b9e3a70aac0d6e1066b87dbf4bec9441cdc2  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/HomeReadKnowledge.kt
+c54a75d179dfa9d605d33f0cca436f9dd4604ea88103c143618f250c9bd41d83  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/OperationalToolLayoutStore.kt
+892c6e1023c004098a7692ef4f32e9c520b279976b06e572132453882ec739f1  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt
+5782f19e6b8d39963d0571f4a0120126f3654a7626e40b0c6532db4b6293af87  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/HomeDashboard.kt
+57331262855b83699ef5882d0dbec5ac674e60244e5d47dbf88d1288c421abc9  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SetupWizardScreen.kt
+2df274938961ff3dff135e0ff5d455779c6164997a9a70d49b7f16b301071f7c  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/HomeHydrationAndroidTest.kt
+326157ffaaf7ce4e589276c7268ee8f71b790acdae5933d80765b72a312fc272  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/VineyardSwitchPerformanceAndroidTest.kt
+5635ac8ca8c9caa644ebd3921db0bcabb5b20fa7511ad31038fffcae9edd5ce4  android-vinetrack/app/src/test/java/com/rork/vinetrack/data/FieldCacheHydrationTest.kt
+324e7b45b8d00c40d6469b6eec28b10a5daebfbe2b38d3793d1b6a8a4882e101  scripts/run-home-hydration-regressions.py
+```
+
+Bookkeeping only: this report (`docs/reviews/final-mobile-acceptance-legacy-save-recovery-2026-10-15.md`) and existing plan (`.rork/plans/android-live-trip-safe-automatic-complet_1791964262830.plan.md`). No other source/configuration files belong to this repair.
+
+### Retained-data physical Android acceptance — still OPEN
+
+Do not clear installed data to bypass the reported problem. Automation above exercises synthetic state/transport, local store recreation and mounted derivation; it does not establish complete app process death/relaunch, rendered scrolling/input, real account/network behaviour or this retained-data handset fix.
+
+- [ ] Cold launch with retained data: configured Stockmans Ridge displays actual blocks/area/vines and tools, without a false tractor/rig setup prompt.
+- [ ] Failed initial vineyard-list transport: cached Home and saved tools remain usable; Refresh recovers fresh values without restart and clears saved-data presentation when appropriate.
+- [ ] Transient machine/rig read failures: retain correctly scoped cached references when available; without cache show unconfirmed state, not factual missing setup.
+- [ ] No-cache loading: show unknown rather than zero; a fresh actual empty response may show zero and genuinely missing setup.
+- [ ] A→B→A→B with different setup and summaries: correct final vineyard, no stale late-response collections, setup prompt, cached banner or timestamp. Verify JH Testing actual data independently rather than accepting zeros.
+- [ ] Verify current-vineyard saved-data banner/time under partial failure and full fresh recovery alongside Sync status; do not treat an up-to-date unrelated dataset as proof every Home read succeeded.
+- [ ] Verify custom tool order, hidden tools and ½-height ON/OFF across switches and retained-data restart; check actual tile rendering and scrolling.
+
+Stop at automated repair/build PASS pending these checks. **v3.1.9 is not physically accepted; signed-candidate preparation remains paused.**
+
 ## Final targeted iOS Yield sync scheduling — 27 October 2026 — STRICT HOME 16ms GATE PASS; STOP FOR HANDSET ACCEPTANCE
 
 This supersedes the preceding frozen-Yield29.094ms Home failure as the current automated status. Only Yield remote-row scheduling was unfrozen by the owner. No Yield feature/calculation, master-weight rule, no-150/current resolver, variety key, mixed-variety calculation, base/damage tonnes, sampled-area value, current-trip selection, completion/replay, historical evidence, Bunch Weight management or presentation changed. Home summary derivation, access enforcement, prepared vineyard selection/loading overlay, Android/shared source, Weather/MAIT, backend/Portal, versions, signing and release configuration are unchanged.

@@ -87,9 +87,9 @@ class OperationalToolLayoutStore(
         if (!force && now - lastServerRefreshMs < REFRESH_THROTTLE_MS) return
         lastServerRefreshMs = now
         scope.launch {
-            runCatching { repository.fetch() }
-                .onSuccess { remote ->
-                    if (userId != user) return@onSuccess
+            runCatching {
+                val remote = repository.fetch()
+                if (userId == user) {
                     if (_layout.value.hasPendingSync) {
                         // A local change never reached the server — push it
                         // instead of letting a stale server copy win.
@@ -98,7 +98,12 @@ class OperationalToolLayoutStore(
                         applyRemote(remote, user)
                     }
                 }
-                .onFailure { lastServerRefreshMs = 0L }
+            }.onFailure {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                // Recovery preservation can temporarily own local storage. A
+                // best-effort remote layout cache write must not crash Home.
+                if (userId == user) lastServerRefreshMs = 0L
+            }
         }
     }
 

@@ -873,6 +873,11 @@ data class AppUiState(
      * offline mode and never grants permissions; the server stays authoritative
      * once online. Cleared when a fresh online load succeeds.
      */
+    val blocksKnowledge: com.rork.vinetrack.data.HomeReadKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
+    val machinesKnowledge: com.rork.vinetrack.data.HomeReadKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
+    val sprayEquipmentKnowledge: com.rork.vinetrack.data.HomeReadKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
+    val pinsKnowledge: com.rork.vinetrack.data.HomeReadKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
+    val spraysKnowledge: com.rork.vinetrack.data.HomeReadKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
     val isUsingCachedFieldData: Boolean = false,
     /** Epoch millis the currently-shown cached field data was last saved online. */
     val cachedFieldDataLastSyncedAt: Long? = null,
@@ -6297,6 +6302,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun loadVineyards() {
+        // Identity, not successful membership transport, makes local tools ready.
+        if (_ui.value.sessionPhase.isAuthenticated) operationalToolLayoutStore.configure(session.userId)
         // Read-only recovery boundary after auth admission, before publishing Main.
         pinEvidenceStore.loadForRecovery()
         val epoch = vineyardSelectionEpoch
@@ -6350,9 +6357,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Post-auth telemetry heartbeat (SQL 154). Best-effort — never
             // blocks the sign-in / bootstrap flow.
             reportClientTelemetry()
-            // Apply this user's cached Operational Tools layout immediately and
-            // refresh it in the background (SQL 159). Never blocks bootstrap.
-            operationalToolLayoutStore.configure(session.userId)
             // Access gate (iOS parity): only evaluated once the user genuinely
             // has a vineyard — the no-vineyard onboarding always comes first.
             val hasAccess = if (selected == null) true else resolveVineTrackAccess()
@@ -6379,9 +6383,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     defaultVineyardId = defaultId,
                     // Apply cached region settings instantly for the restored vineyard.
                     regionSettings = if (selected != null) regionSettingsStore.load(selected) else RegionSettings.defaults,
-                    // Fresh online list — we're no longer on cached field data.
-                    isUsingCachedFieldData = false,
-                    cachedFieldDataLastSyncedAt = null,
+                    // Vineyard-list freshness does not establish field-list freshness.
                     route = when {
                         selected == null -> AppRoute.NoVineyards
                         !hasAccess -> AppRoute.Paywall
@@ -6505,8 +6507,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     savedChemicalCreateSync.rows(owner, vineyard) } } ?: emptyList(),
                 defaultVineyardId = defaultId,
                 currentUserId = userId,
-                isUsingCachedFieldData = true,
-                cachedFieldDataLastSyncedAt = hydration.syncedAt,
+                // Field freshness is established by this vineyard's scoped load, not membership cache.
+                isUsingCachedFieldData = false,
+                cachedFieldDataLastSyncedAt = null,
                 route = when {
                     selected == null -> AppRoute.NoVineyards
                     !offlineAccess -> AppRoute.Paywall
@@ -6616,12 +6619,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // this selection when it lands.
         vineyardSelectionEpoch += 1
         session.selectedVineyardId = id
+        if (_ui.value.sessionPhase.isAuthenticated) operationalToolLayoutStore.configure(session.userId)
         // Vineyard changed — material telemetry change, report it (throttled).
         reportClientTelemetry()
         // Clear the previous vineyard's data so the UI doesn't briefly show
         // stale blocks/pins while the new vineyard loads.
         val clearTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
-        _ui.update { it.copy(selectedVineyardId = id, isLoadingVineyardData = true, selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), tripsListKnowledge = TripsListKnowledge.Unknown, machines = emptyList(), workTasks = emptyList(), members = emptyList(), membershipLoading = true, membershipError = null, operatorCategories = emptyList(), operatorCategoriesLoading = true, operatorCategoriesError = null, vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), grapeVarieties = emptyList(), grapeVarietyReferenceLoading = true, grapeVarietyReferenceError = null, vineyardClones = emptyList(), vineyardRootstocks = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, vineyardMachineLines = emptyList(), vineyardTaskMaterials = emptyList(), tripCostAllocations = emptyList(), growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
+        _ui.update { it.copy(selectedVineyardId = id, isLoadingVineyardData = true,
+            blocksKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
+            machinesKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
+            sprayEquipmentKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
+            pinsKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
+            spraysKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
+            isUsingCachedFieldData = false, cachedFieldDataLastSyncedAt = null,
+            selectedVineyardLogo = null, paddocks = emptyList(), pins = emptyList(), trips = emptyList(), tripsListKnowledge = TripsListKnowledge.Unknown, machines = emptyList(), workTasks = emptyList(), members = emptyList(), membershipLoading = true, membershipError = null, operatorCategories = emptyList(), operatorCategoriesLoading = true, operatorCategoriesError = null, vineyardTripFunctions = emptyList(), sprayRecords = emptyList(), sprayJobTemplates = emptyList(), sprayEquipment = emptyList(), savedChemicals = emptyList(), savedInputs = emptyList(), savedSprayPresets = emptyList(), maintenanceLogs = emptyList(), growthRecords = emptyList(), fuelLogs = emptyList(), fuelPurchases = emptyList(), equipmentItems = emptyList(), repairButtons = emptyList(), growthButtons = emptyList(), grapeVarieties = emptyList(), grapeVarietyReferenceLoading = true, grapeVarietyReferenceError = null, vineyardClones = emptyList(), vineyardRootstocks = emptyList(), yieldRecords = emptyList(), pickingRecords = emptyList(), pruningYieldSettings = emptyList(), damageRecords = emptyList(), yieldSessions = emptyList(), grapeAllocations = emptyList(), grapePurchasers = emptyList(), grapeAllocationFinancialAccess = false, workTaskPaddocks = emptyList(), vineyardLabourLines = null, vineyardMachineLines = emptyList(), vineyardTaskMaterials = emptyList(), tripCostAllocations = emptyList(), growthStageImages = emptyList(), seasonYieldOverview = null, seasonYieldVintage = null, seasonYieldError = null) }
         com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("selection-clear", clearTiming)
         loadedLogoKey = null
         // Cached decoding belongs to the fenced load below, not the tap handler.
@@ -17549,9 +17560,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private data class PreparedVineyardSnapshot(
         val pins: List<Pin>?, val trips: List<Trip>?, val spray: List<SprayRecord>?,
         val tasks: List<WorkTask>?, val growth: List<GrowthStageRecord>?, val paddocks: List<Paddock>?,
+        val machines: List<VineyardMachine>?, val sprayEquipment: List<SprayEquipment>?,
     ) {
         val hasData: Boolean get() = pins != null || trips != null || spray != null ||
-            tasks != null || growth != null || paddocks != null
+            tasks != null || growth != null || paddocks != null || machines != null || sprayEquipment != null
     }
 
     /** Publish only owner-scoped display snapshots; access and Trip authority stay unchanged. */
@@ -17586,6 +17598,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     growth = prepared.growth?.let { PendingWriteOverlay.overlayGrowth(it, pending, vineyardId) },
                     paddocks = prepared.paddocks?.filter { it.vineyardId.equals(vineyardId, true) }
                         ?.let { PendingWriteOverlay.overlayPaddocks(it, pending, vineyardId) },
+                    machines = prepared.machines,
+                    sprayEquipment = prepared.sprayEquipment,
                 )
             } finally { com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("cached-overlay-preparation-worker", stage) }
         }
@@ -17596,6 +17610,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             state.trips === original.trips && state.sprayRecords === original.sprayRecords &&
             state.workTasks === original.workTasks && state.growthRecords === original.growthRecords &&
             state.tripsListKnowledge == original.tripsListKnowledge &&
+            state.machines === original.machines && state.sprayEquipment === original.sprayEquipment &&
             domainCache.isFieldHydrationCurrent(userId, vineyardId, prepared) && pendingWrites.list() == pending
         val finalValidation = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
         val stillCurrent = sourcesCurrent(_ui.value)
@@ -17612,7 +17627,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { state ->
             if (!sourcesCurrent(state)) state else state.copy(
                 paddocks = cachedPaddocks ?: state.paddocks,
-                cachedFieldDataLastSyncedAt = if (cachedPaddocks != null) prepared.paddocksSyncedAt else state.cachedFieldDataLastSyncedAt,
+                machines = snapshot.machines ?: state.machines,
+                sprayEquipment = snapshot.sprayEquipment ?: state.sprayEquipment,
+                blocksKnowledge = if (cachedPaddocks != null) com.rork.vinetrack.data.HomeReadKnowledge.Cached else state.blocksKnowledge,
+                machinesKnowledge = if (snapshot.machines != null) com.rork.vinetrack.data.HomeReadKnowledge.Cached else state.machinesKnowledge,
+                sprayEquipmentKnowledge = if (snapshot.sprayEquipment != null) com.rork.vinetrack.data.HomeReadKnowledge.Cached else state.sprayEquipmentKnowledge,
+                pinsKnowledge = if (cachedPins != null) com.rork.vinetrack.data.HomeReadKnowledge.Cached else state.pinsKnowledge,
+                spraysKnowledge = if (cachedSpray != null) com.rork.vinetrack.data.HomeReadKnowledge.Cached else state.spraysKnowledge,
+                cachedFieldDataLastSyncedAt = listOf("paddocks", "pins", "trips", "spray", "worktask", "growth", "machines", "spray_equipment")
+                    .mapNotNull { prepared.syncedAt(it) }.minOrNull(),
                 pins = cachedPins ?: state.pins,
                 // Historical cache cannot activate a Trip or establish completion.
                 // Keep current local rows; active snapshot restoration stays in its
@@ -17773,11 +17796,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.TRIPS_READ) { repo.listTrips(vineyardId) }.also { tripsFromServer = true }
         } catch (e: BackendError) {
             tripError = e.message
+            tripsFromCache = isCurrentLoad() && _ui.value.tripsListKnowledge != TripsListKnowledge.Unknown
             _ui.value.trips.ifEmpty {
                 currentCachedFields()?.trips?.also { tripsFromCache = true } ?: emptyList()
             }
         } catch (e: Exception) {
             tripError = "Couldn't load trips. Check your connection."
+            tripsFromCache = isCurrentLoad() && _ui.value.tripsListKnowledge != TripsListKnowledge.Unknown
             _ui.value.trips.ifEmpty {
                 currentCachedFields()?.trips?.also { tripsFromCache = true } ?: emptyList()
             }
@@ -17795,11 +17820,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Equipment + work tasks are reference lists used by the trip forms.
         // They're non-critical, so failures fall back to the existing list
         // (or empty) without surfacing an error.
+        var machinesFromServer = false
+        var machinesFromCache = false
         val machines = try {
-            repo.listMachines(vineyardId)
+            repo.listMachines(vineyardId).filter { it.vineyardId.equals(vineyardId, true) }
+                .also { machinesFromServer = true }
         } catch (e: Exception) {
-            _ui.value.machines
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            currentCachedFields()?.machines?.also { machinesFromCache = true }
+                ?: _ui.value.takeIf { isCurrentLoad() && it.machinesKnowledge.isKnown }
+                    ?.machines?.also { machinesFromCache = true }.orEmpty()
         }
+        if (!isCurrentLoad()) return
+        if (machinesFromServer) domainCache.saveMachines(userId, vineyardId, machines)
         // Work-task headers are now an operational cached list (Stage P-3); soft-
         // fail to existing, then to the server-snapshot cache so an offline
         // restart still shows the last known headers as an overlay baseline.
@@ -17808,6 +17841,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val workTasks = try {
             timedPerformanceRead(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.WORK_TASKS_READ) { repo.listWorkTasks(vineyardId) }.also { workTasksFromServer = true }
         } catch (e: Exception) {
+            workTasksFromCache = isCurrentLoad() && (_ui.value.workTasks.isNotEmpty() || hydratedSnapshot?.tasks != null)
             _ui.value.workTasks.ifEmpty {
                 currentCachedFields()?.tasks?.also { workTasksFromCache = true } ?: emptyList()
             }
@@ -17890,6 +17924,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val sprayRecords = try {
             repo.listSprayRecords(vineyardId).also { sprayFromServer = true }
         } catch (e: Exception) {
+            sprayFromCache = isCurrentLoad() && _ui.value.spraysKnowledge.isKnown
             _ui.value.sprayRecords.ifEmpty {
                 currentCachedFields()?.spray?.also { sprayFromCache = true } ?: emptyList()
             }
@@ -17920,11 +17955,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         // Spray equipment is an optional reference list backing the spray form
         // picker; soft-fail to the existing list (or empty).
+        var sprayEquipmentFromServer = false
+        var sprayEquipmentFromCache = false
         val sprayEquipment = try {
-            repo.listSprayEquipment(vineyardId)
+            repo.listSprayEquipment(vineyardId).filter { it.vineyardId.equals(vineyardId, true) }
+                .also { sprayEquipmentFromServer = true }
         } catch (e: Exception) {
-            _ui.value.sprayEquipment
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            currentCachedFields()?.sprayEquipment?.also { sprayEquipmentFromCache = true }
+                ?: _ui.value.takeIf { isCurrentLoad() && it.sprayEquipmentKnowledge.isKnown }
+                    ?.sprayEquipment?.also { sprayEquipmentFromCache = true }.orEmpty()
         }
+        if (!isCurrentLoad()) return
+        if (sprayEquipmentFromServer) domainCache.saveSprayEquipment(userId, vineyardId, sprayEquipment)
         // Saved chemicals back the spray-form chemical picker + costing prefill;
         // optional reference list, soft-fail to the existing list (or empty).
         val savedChemicals = try {
@@ -17967,6 +18010,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val growthRecords = try {
             repo.listGrowthStageRecords(vineyardId).also { growthFromServer = true }
         } catch (e: Exception) {
+            growthFromCache = isCurrentLoad() && (_ui.value.growthRecords.isNotEmpty() || hydratedSnapshot?.growth != null)
             _ui.value.growthRecords.ifEmpty {
                 currentCachedFields()?.growth?.also { growthFromCache = true } ?: emptyList()
             }
@@ -18193,8 +18237,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             pins, pinEvidence?.pins.orEmpty() + _ui.value.pins, latestPending, vineyardId,
         )
         if (pinsFromServer) domainCache.savePins(userId, vineyardId, protectedPins.cacheRows)
+        fun knowledge(fresh: Boolean, cached: Boolean) = when {
+            fresh -> com.rork.vinetrack.data.HomeReadKnowledge.Fresh
+            cached -> com.rork.vinetrack.data.HomeReadKnowledge.Cached
+            else -> com.rork.vinetrack.data.HomeReadKnowledge.Unknown
+        }
         _ui.update {
-            it.copy(
+            if (!isCurrentLoad()) it else it.copy(
+                blocksKnowledge = knowledge(paddocksFromServer, paddocksFromCache),
+                machinesKnowledge = knowledge(machinesFromServer, machinesFromCache),
+                sprayEquipmentKnowledge = knowledge(sprayEquipmentFromServer, sprayEquipmentFromCache),
+                pinsKnowledge = knowledge(pinsFromServer, pinsFromCache || it.pinsKnowledge.isKnown),
+                spraysKnowledge = knowledge(sprayFromServer, sprayFromCache || it.spraysKnowledge.isKnown),
                 paddocks = PendingWriteOverlay.overlayPaddocks(paddocks, latestPending, vineyardId),
                 pins = protectedPins.rows,
                 trips = trips,
@@ -18257,31 +18311,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // Showing saved field data when either launch-critical list came
                 // from the cache; cleared once a fresh server read replaces it.
                 isUsingCachedFieldData = if (paddocksFromServer && pinsFromServer) {
-                    maintenanceFromCache || growthFromCache || yieldFromCache ||
+                    machinesFromCache || sprayEquipmentFromCache ||
+                        maintenanceFromCache || growthFromCache || yieldFromCache ||
                         fuelFromCache || sprayFromCache || workTasksFromCache || tripsFromCache
                 } else {
-                    paddocksFromCache || pinsFromCache ||
-                    maintenanceFromCache || growthFromCache || yieldFromCache ||
+                    paddocksFromCache || pinsFromCache || machinesFromCache || sprayEquipmentFromCache ||
                         maintenanceFromCache || growthFromCache || yieldFromCache ||
                         fuelFromCache || sprayFromCache || workTasksFromCache || tripsFromCache
                 },
                 cachedFieldDataLastSyncedAt = if (
-                    paddocksFromCache || pinsFromCache ||
+                    paddocksFromCache || pinsFromCache || machinesFromCache || sprayEquipmentFromCache ||
                     maintenanceFromCache || growthFromCache || yieldFromCache ||
                     fuelFromCache || sprayFromCache || workTasksFromCache || tripsFromCache
                 ) {
-                    it.cachedFieldDataLastSyncedAt
-                        ?: domainCache.pinsSyncedAt(userId, vineyardId)
-                        ?: domainCache.paddocksSyncedAt(userId, vineyardId)
-                        ?: domainCache.maintenanceSyncedAt(userId, vineyardId)
-                        ?: domainCache.growthSyncedAt(userId, vineyardId)
-                        ?: domainCache.yieldSyncedAt(userId, vineyardId)
-                        ?: domainCache.fuelSyncedAt(userId, vineyardId)
-                        ?: domainCache.spraySyncedAt(userId, vineyardId)
-                        ?: domainCache.workTasksSyncedAt(userId, vineyardId)
-                        ?: domainCache.tripsSyncedAt(userId, vineyardId)
+                    listOfNotNull(
+                        if (paddocksFromCache) pinEvidence?.syncedAt("paddocks") else null,
+                        if (pinsFromCache) pinEvidence?.syncedAt("pins") else null,
+                        if (machinesFromCache) pinEvidence?.syncedAt("machines") else null,
+                        if (sprayEquipmentFromCache) pinEvidence?.syncedAt("spray_equipment") else null,
+                        if (tripsFromCache) pinEvidence?.syncedAt("trips") else null,
+                        if (sprayFromCache) pinEvidence?.syncedAt("spray") else null,
+                        if (workTasksFromCache) pinEvidence?.syncedAt("worktask") else null,
+                        if (growthFromCache) pinEvidence?.syncedAt("growth") else null,
+                        if (maintenanceFromCache) domainCache.maintenanceSyncedAt(userId, vineyardId) else null,
+                        if (yieldFromCache) domainCache.yieldSyncedAt(userId, vineyardId) else null,
+                        if (fuelFromCache) domainCache.fuelSyncedAt(userId, vineyardId) else null,
+                    ).minOrNull()
                 } else {
-                    it.cachedFieldDataLastSyncedAt
+                    null
                 },
             )
         }

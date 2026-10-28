@@ -154,6 +154,21 @@ class DomainCacheStore(context: Context) {
         }
     }
 
+    /** Display-only setup references; saved only after a successful scoped server read. */
+    internal fun saveMachines(vineyardId: String, rows: List<com.rork.vinetrack.data.model.VineyardMachine>, syncedAt: Long) {
+        prefs.edit {
+            putString("machines_$vineyardId", json.encodeToString(ListSerializer(com.rork.vinetrack.data.model.VineyardMachine.serializer()), rows))
+            putLong("machines_at_$vineyardId", syncedAt)
+        }
+    }
+
+    internal fun saveSprayEquipment(vineyardId: String, rows: List<com.rork.vinetrack.data.model.SprayEquipment>, syncedAt: Long) {
+        prefs.edit {
+            putString("spray_equipment_$vineyardId", json.encodeToString(ListSerializer(com.rork.vinetrack.data.model.SprayEquipment.serializer()), rows))
+            putLong("spray_equipment_at_$vineyardId", syncedAt)
+        }
+    }
+
     // MARK: - Paddocks by vineyard
 
     fun loadPaddocks(vineyardId: String): List<Paddock> =

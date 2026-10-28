@@ -132,6 +132,10 @@ private fun WizardSteps(
     val hasTractor = state.machines.any { it.machineType == "tractor" }
     val hasRig = state.sprayEquipment.isNotEmpty()
     val isAllComplete = hasBlock && hasTractor && hasRig
+    val fresh = com.rork.vinetrack.data.HomeReadKnowledge.Fresh
+    val setupConfirmed = (hasBlock || state.blocksKnowledge == fresh) &&
+        (hasTractor || state.machinesKnowledge == fresh) &&
+        (hasRig || state.sprayEquipmentKnowledge == fresh)
 
     val totalSteps = 3
     // Jump to the first incomplete step whenever completion state changes.
@@ -175,6 +179,12 @@ private fun WizardSteps(
                 .padding(horizontal = 16.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
+            if (!setupConfirmed) {
+                Text(
+                    if (state.isLoadingVineyardData) "Checking vineyard setup…" else "Vineyard setup couldn't be confirmed. Refresh Home to retry. Your saved setup has not been removed.",
+                    color = vine.textSecondary,
+                )
+            } else {
             ProgressIndicator(
                 step = step,
                 totalSteps = totalSteps,
@@ -243,6 +253,7 @@ private fun WizardSteps(
                 )
             }
 
+            }
             ToggleCard(
                 enabled = wizardEnabled,
                 isAllComplete = isAllComplete,

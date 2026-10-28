@@ -664,17 +664,19 @@ private fun NoticeCard(
  * tractor and one spray rig configured.
  */
 private fun shouldShowSetupWizard(state: AppUiState): Boolean {
-    val hasBlock = state.paddocks.isNotEmpty()
-    val hasTractor = state.machines.isNotEmpty()
-    val hasRig = state.sprayEquipment.isNotEmpty()
-    return !(hasBlock && hasTractor && hasRig)
+    if (!state.blocksKnowledge.isKnown || !state.machinesKnowledge.isKnown || !state.sprayEquipmentKnowledge.isKnown) return false
+    // Only a confirmed fresh empty list proves setup is missing.
+    val fresh = com.rork.vinetrack.data.HomeReadKnowledge.Fresh
+    return (state.blocksKnowledge == fresh && state.paddocks.isEmpty()) ||
+        (state.machinesKnowledge == fresh && state.machines.isEmpty()) ||
+        (state.sprayEquipmentKnowledge == fresh && state.sprayEquipment.isEmpty())
 }
 
 private fun setupWizardSubtitle(state: AppUiState): String {
     val remaining = buildList {
-        if (state.paddocks.isEmpty()) add("block")
-        if (state.machines.isEmpty()) add("tractor")
-        if (state.sprayEquipment.isEmpty()) add("spray rig")
+        if (state.blocksKnowledge == com.rork.vinetrack.data.HomeReadKnowledge.Fresh && state.paddocks.isEmpty()) add("block")
+        if (state.machinesKnowledge == com.rork.vinetrack.data.HomeReadKnowledge.Fresh && state.machines.isEmpty()) add("tractor")
+        if (state.sprayEquipmentKnowledge == com.rork.vinetrack.data.HomeReadKnowledge.Fresh && state.sprayEquipment.isEmpty()) add("spray rig")
     }
     if (remaining.isEmpty()) return "All set — tap to review"
     return "Add a " + remaining.joinToString(", ") + " to get started"
@@ -1002,18 +1004,18 @@ private fun OverviewSection(state: AppUiState, onOpenMap: () -> Unit) {
                         fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
                         color = LocalVineColors.current.textPrimary,
                     )
-                    Text("View map & summary", fontSize = 12.sp, color = LocalVineColors.current.textSecondary)
+                    Text(if (state.blocksKnowledge.isKnown) "View map & summary" else if (state.isLoadingVineyardData) "Loading vineyard data…" else "Vineyard data unavailable — refresh to retry", fontSize = 12.sp, color = LocalVineColors.current.textSecondary)
                 }
                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = LocalVineColors.current.textSecondary)
             }
             Spacer(Modifier.height(14.dp))
             Row(modifier = Modifier.fillMaxWidth()) {
-                OverviewStat("${state.paddocks.size}", "Blocks", Icons.Filled.Grass, VineColors.LeafGreen, Modifier.weight(1f))
+                OverviewStat(if (state.blocksKnowledge.isKnown) "${state.paddocks.size}" else "—", "Blocks", Icons.Filled.Grass, VineColors.LeafGreen, Modifier.weight(1f))
                 OverviewStat(
-                    fmt.formatAreaHeadline(totalHectares),
+                    if (state.blocksKnowledge.isKnown) fmt.formatAreaHeadline(totalHectares) else "—",
                     fmt.areaUnitName, Icons.Filled.Map, VineColors.Orange, Modifier.weight(1f),
                 )
-                OverviewStat(formattedCount(totalVines), "Vines", painterResource(R.drawable.grape_vine_leaf), VineColors.DarkGreen, Modifier.weight(1f))
+                OverviewStat(if (state.blocksKnowledge.isKnown) formattedCount(totalVines) else "—", "Vines", painterResource(R.drawable.grape_vine_leaf), VineColors.DarkGreen, Modifier.weight(1f))
             }
         }
     }
@@ -1251,11 +1253,11 @@ private fun RecentSection(state: AppUiState, onOpenTool: (ToolRoute) -> Unit) {
     val counts = prepared?.takeIf { it.input == input }
     com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("home-vintage-derivation", preparationTiming)
     val rows = listOf(
-        Triple("Pins Placed", counts?.pins, Icons.Filled.LocationOn) to VineColors.Orange,
-        Triple("Pins Completed", counts?.completedPins, Icons.Filled.CheckCircle) to VineColors.LeafGreen,
-        Triple("Trips", counts?.trips, Icons.Filled.Map) to VineColors.Info,
-        Triple("Sprays", counts?.sprays, Icons.Filled.Science) to VineColors.Indigo,
-        Triple("Blocks worked", counts?.blocks, Icons.Filled.Grass) to VineColors.LeafGreen,
+        Triple("Pins Placed", counts?.pins?.takeIf { state.pinsKnowledge.isKnown }, Icons.Filled.LocationOn) to VineColors.Orange,
+        Triple("Pins Completed", counts?.completedPins?.takeIf { state.pinsKnowledge.isKnown }, Icons.Filled.CheckCircle) to VineColors.LeafGreen,
+        Triple("Trips", counts?.trips?.takeIf { state.tripsListKnowledge != com.rork.vinetrack.ui.main.TripsListKnowledge.Unknown }, Icons.Filled.Map) to VineColors.Info,
+        Triple("Sprays", counts?.sprays?.takeIf { state.spraysKnowledge.isKnown && state.tripsListKnowledge != com.rork.vinetrack.ui.main.TripsListKnowledge.Unknown }, Icons.Filled.Science) to VineColors.Indigo,
+        Triple("Blocks worked", counts?.blocks?.takeIf { state.blocksKnowledge.isKnown && state.pinsKnowledge.isKnown && state.spraysKnowledge.isKnown && state.tripsListKnowledge != com.rork.vinetrack.ui.main.TripsListKnowledge.Unknown }, Icons.Filled.Grass) to VineColors.LeafGreen,
     )
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
