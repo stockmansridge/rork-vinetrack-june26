@@ -89,6 +89,9 @@ fun SprayCanopySelector(
         }
 
         val type = selection.type
+        if (!isConfirmed) {
+            Text(selection.confirmationMessage, style = MaterialTheme.typography.bodySmall, color = vine.textSecondary)
+        }
         Text(
             "Canopy Size",
             fontSize = 13.sp,

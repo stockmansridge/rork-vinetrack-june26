@@ -25,6 +25,7 @@ struct SprayCalculatorView: View {
     // Selection
     @State private var sprayName: String = ""
     @State private var operationType: OperationType = .foliarSpray
+    @State private var isApplicationResolved = false
     @State private var selectedPaddockIds: Set<UUID> = []
     @State private var selectedEquipmentId: UUID?
     @State private var selectedTractorId: UUID?
@@ -233,6 +234,7 @@ struct SprayCalculatorView: View {
             }()
             _sprayName = State(initialValue: prefilledName)
             _operationType = State(initialValue: r.operationType)
+            _isApplicationResolved = State(initialValue: true)
             _notes = State(initialValue: r.notes)
             _numberOfFansJets = State(initialValue: r.numberOfFansJets)
             if let firstTank = r.tanks.first, firstTank.sprayRatePerHa > 0 {
@@ -246,6 +248,7 @@ struct SprayCalculatorView: View {
     /// Seeds only local editing state for the actual calculator UI regression.
     static func keyboardRegression(blockID: UUID, equipmentID: UUID? = nil, chemicalID: UUID? = nil) -> SprayCalculatorView {
         var view = SprayCalculatorView()
+        view._isApplicationResolved = State(initialValue: true)
         view._operationType = State(initialValue: .spreader)
         view._selectedPaddockIds = State(initialValue: [blockID])
         view._sprayTargets = State(initialValue: [.nutritionBiostimulant])
@@ -282,6 +285,15 @@ struct SprayCalculatorView: View {
             view._customSprayerRateText = State(initialValue: "600")
             view._chemicalLines = State(initialValue: [ChemicalLine(chemicalId: chemicalID, selectedRateId: UUID(), basis: .per100Litres, overrideRate: 100)])
             view._openedStep = State(initialValue: .review)
+        }
+        if CommandLine.arguments.contains("--spray-phase1-validation") {
+            // Seed only earlier prerequisites. Application and canopy remain new, unanswered decisions.
+            view._isApplicationResolved = State(initialValue: false)
+            view._openedStep = State(initialValue: .application)
+            view._planningMethod = State(initialValue: .byArea)
+            view._canopy = State(initialValue: .unconfirmed)
+            view._sprayVolumeChoice = State(initialValue: .undecided)
+            view._customSprayerRateText = State(initialValue: "")
         }
         return view
     }
@@ -709,6 +721,7 @@ struct SprayCalculatorView: View {
         var inputs = SprayGuidedInputs()
         inputs.sprayName = sprayName
         inputs.operationType = operationType
+        inputs.isApplicationResolved = isApplicationResolved
         inputs.blocks = selectedPaddocks.map { SprayBlockInput.from(paddock: $0) }
         inputs.targets = sprayTargets
         inputs.customTargets = customSprayTargets
@@ -946,9 +959,20 @@ struct SprayCalculatorView: View {
                                 .accessibilityIdentifier("spray.regional.prerequisites")
                         }
                         #endif
+                        #if DEBUG
+                        if CommandLine.arguments.contains("--spray-phase1-validation") {
+                            Text("application=\(flow.isComplete(.application)) canopy=\(canopy.isConfirmed) carrier=\(flow.blocker(for: .carrier)?.title ?? "none") products=\(flow.isUnlocked(.products))")
+                                .accessibilityIdentifier("spray.phase1.live")
+                        }
+                        #endif
                         guidedCard(.application, 1, summary: applicationSummary) {
                             sprayNameSection
                             operationTypeSection
+                            if flow.isComplete(.application) {
+                                Button("Continue to Blocks →") { showStep(.blocks) }
+                                    .buttonStyle(.borderedProminent)
+                                    .accessibilityIdentifier("spray.continue.blocks")
+                            }
                         }
                         guidedCard(.blocks, 2, summary: blocksSummary) {
                             paddockSelection
@@ -1410,6 +1434,7 @@ struct SprayCalculatorView: View {
                 ForEach(OperationType.allCases, id: \.self) { type in
                     Button {
                         operationType = type
+                        isApplicationResolved = true // Includes choosing the already displayed Foliar value.
                     } label: {
                         HStack {
                             Image(systemName: type.iconName)
@@ -1449,6 +1474,11 @@ struct SprayCalculatorView: View {
                 .clipShape(.rect(cornerRadius: 12))
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("spray.operation")
+            if !isApplicationResolved {
+                Text("Choose the operation type for this application, even if Foliar Spray is already displayed.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -3494,8 +3524,9 @@ struct SprayCalculatorView: View {
                 waterRateSection
             }
 
-            if let blocker = flow.blocker(for: .carrier) {
+            if let blocker = flow.blocker(for: .carrier), blocker != .canopyConfirmationRequired {
                 GuidedBlockerBanner(blocker: blocker, onFix: { openBlockDetails(for: blocker) }, canopySelection: canopy)
+                    .accessibilityIdentifier("spray.carrier.blocker")
             }
         }
     }

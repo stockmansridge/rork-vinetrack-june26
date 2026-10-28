@@ -181,6 +181,10 @@ struct SprayCanopyControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             canopyTypeSection
+            if !selection.isConfirmed {
+                Text(selection.confirmationMessage)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
 
             if let type = selection.type {
                 canopySizeSection(type: type)
@@ -311,5 +315,6 @@ struct SprayCanopyControls: View {
                 .clipShape(.rect(cornerRadius: 8))
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("spray.confirm.canopy")
     }
 }

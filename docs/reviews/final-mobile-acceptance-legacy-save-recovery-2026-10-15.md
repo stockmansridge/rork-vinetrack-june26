@@ -1,5 +1,64 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Spray Calculator Phase 1 — 28 October 2026 — FOCUSED AUTOMATION AND BUILDS PASS
+
+Phase 1 only: new One-off Application gating and live canopy → Carrier → Products progression. Starting/source-parent HEAD is `429ccdd21588249d82ddb3d31f74450a48d579c4`. Both supplied references, `4948681b018c39f1b02a9337b11cea60c4ac3fba` and `457758d441d5005d23f057048e72648aa6de5550`, exist and were inspected. The first is not an ancestor of starting HEAD; it was not used to reset the tree. Native differences from that reference before this repair were only the already-absent generated `ios/VineTrack/Config.swift`; no restoration was attempted. Newer Home/hydration work and managed history were preserved.
+
+### Root causes and bounded changes
+
+- Both guided engines treated Application as complete unconditionally because an operation enum already had a default. A displayed Foliar default was therefore incorrectly accepted as the operator's answer. The actual new calculator now starts with a transient unresolved Application decision; Blocks remains locked until the operator selects an operation, including selecting Foliar without switching away first. Continue to Blocks explicitly opens Blocks. Selecting the operation itself does not collapse Application. The flag shares the lifetime of the editing state, not a new persisted record/recovery format.
+- Existing record prefills resolve Application from the supplied operation. Compatibility engine callers retain resolved defaults. No operation serialization or Program logic was changed. Banded/Spreader target, basis and band-width decisions remain the existing controls and engine requirements.
+- No failed canopy binding was established. iOS still calls `selection.confirm()` on the production binding; Android still confirms its production remembered canopy selection. These actions were retained. The calculator was displaying an extra orange canopy blocker below the real confirmation action; both calculators now suppress that duplicate only, retain specific guidance by the controls and allow the step header to summarize the outstanding action.
+- iOS downstream guidance previously fell through to generic legacy carrier-rate guidance for an unanswered custom rate or missing conversion geometry. It now reports **Enter sprayer output** or **Matching row spacing required**, using existing positive-rate validation and existing actual-volume conversions. No rate is copied into a legacy field, and no calculation formula, CF policy, product rate, treated area, tank or full-tank planner changed.
+- Changed production files are the two calculator views, two canopy-control presentations and two guided-flow engines. Five test/runner files are included below. No backend/schema, customer records, authentication/billing, permissions, Trip/GPS, persistence/replay, routing, Step 6 redesign, configuration relocation, performance or release/version/signing/upload changes.
+
+### Observed production-calculator progression
+
+- iOS actual calculator UI: new Application body visible; Blocks disabled; no Continue button until the existing Foliar value is deliberately selected. Application remains open after selection; Continue to Blocks opens Blocks.
+- iOS actual bound state before confirmation: `application=true canopy=false carrier=Confirm canopy products=false`. One real confirmation action remains. After its tap: `canopy=true carrier=Choose your spray volume products=false`, and **RECOMMENDED SPRAY VOLUME — CF 1.00** renders. Choosing recommended produces `canopy=true carrier=none products=true`. Custom with no output reports **Enter sprayer output**, Products stays locked; entering `600` produces `carrier=none products=true`. Continue to Products opens the real **Add Chemical** control. These are assertions against the mounted calculator's production flow, not a separately configured canopy component.
+- iOS uses the existing isolated local calculator harness with a DEBUG-only Phase 1 launch argument and read-only live-state label. It seeds block/target/growth/equipment prerequisites, but leaves Application, canopy and volume unanswered. It does not establish an authenticated full prerequisite-entry journey.
+- Android mounts the actual `SprayCalculatorScreen` with an isolated real ViewModel, separate preferences/files and intercepted transport returning synthetic 503; no customer records or successful live network fallback. Both journeys use production controls for displayed Foliar selection, Blocks, target, Not Set growth, equipment selection/confirmation, VSP canopy confirmation and volume. Before confirmation the rate question cannot unlock Products; after confirmation the recommendation and rate question render. Recommended, or custom `600` following the empty-output blocker, makes Continue to Products available and opens the actual **Add Chemical** body. No configured-canopy fixture or replacement confirmation control is used.
+- Both mounted journeys leave Carrier open for volume entry after canopy confirmation. Source keeps explicit operator-owned expansion; no new automatic collapse was added. Host tests also verify canopy edits reinstate the confirmation blocker.
+
+### Final focused validation (separate, non-additive runs)
+
+- iOS host `swiftTest(appPath: ios, onlyTesting: [VineTrackTests/SprayGuidedFlowTests, VineTrackTests/SprayBandedGroundCarrierTests])` → **38 passed in196s**, current unchanged iOS source. Tool did not return a skipped count. Includes deliberate Application state, unconfirmed/confirmed canopy, invalid and valid custom rates, recommendation, conversion geometry and existing Banded/ground-carrier regression coverage.
+- iOS UI `VineTrackUITests/MobileSprayUXParityUITests/testNewOneOffRecommendedCarrierUnlocksProducts` and `.../testNewOneOffCustomCarrierUnlocksProducts` → **2 passed in177s**, final unchanged iOS UI/production source. These exercise the live production binding and flow described above, not the preceding configured-canopy UI fixture. Latest host run overwrote the managed Swift log; the earlier tool result remains in managed conversation history.
+- Android host `python scripts/run-spray-phase1-regressions.py` → **38 tests, 0 failures, 0 errors, 0 skipped**, 24.811s. Exactly `com.rork.vinetrack.data.SprayGuidedFlowTest` (32) and `com.rork.vinetrack.data.SprayBandedGroundCarrierTest` (6). Current XML/case/command evidence: `/tmp/vinetrack-spray-phase1-lqi5ofhk/finished.json` and its `spray-phase1/` directory. Earlier green `/tmp/vinetrack-spray-phase1-kigne4yr` is overlapping evidence, not additional tests.
+- Android instrumentation `androidTest(appPath: android-vinetrack, onlyTesting: [com.rork.vinetrack.data.SprayPhase1CalculatorAndroidTest])` → **2 passed, 0 failed, 0 skipped in25s**, after aligning the transient decision flag's lifetime with the existing remembered operation. Both methods `newOneOffRecommendedCarrierUnlocksProducts` and `newOneOffCustomCarrierUnlocksProducts` pass. The preceding23s green run is overlapping, not an additional total. Latest managed log: `/tmp/rork-android-test-android-vinetrack.log`.
+- Separate normal builds: `runChecks(appPath: ios)` → **PASS / simulator build succeeded**; `runChecks(appPath: android-vinetrack)` → **PASS / build succeeded**. Both retain their two existing unrelated direct-storage URL notices. iOS device/Release build was not verified. These are not store delivery or release acceptance.
+- Final `git diff --check HEAD` → PASS. Only the11 source/test/runner paths below differ in native/script scope from starting HEAD, plus this existing report, the approved plan and preexisting managed history. Accepted Home/hydration changes are not modified by this patch.
+
+### Intermediate failures retained
+
+- Swift initial test compile failed on newly referenced nonexistent `SprayVolumeHelp.rowSpacingRequired` and `SprayVolumeDecision.hasComparableRates`; corrected to literal guidance and existing actual-rate properties before successful validation.
+- A mixed Swift selection returned39 passed /2 failed: authored UI assertions incorrectly treated the legitimate header summary **Confirm canopy** as the removed duplicate warning. Assertions were narrowed to the Carrier blocker identifier. Next UI-only run returned0 passed /2 failed on the recommendation title selector, corrected to the actual uppercase title. Final UI selection then passed2/2. The mixed39 is not claimed as the final focused host count or summed with it; an old requested method selector was not proven to execute.
+- Android first host attempt failed compilation because the new blocker exclusion lacked a `SprayGuidedBlocker` import; added it, then38 green. Failed artifacts: `/tmp/vinetrack-spray-phase1-4hxs_0a6/spray-phase1/gradle.log`.
+- First Android managed test invocation used the incorrect `testClasses` field instead of `onlyTesting` and ended **infra-failed after600s**,0 passed/0 failed/0 skipped. No completed tests or trustworthy narrow-selection evidence came from that attempt. Investigation recovered the historical supported selector and verified Android test Kotlin compilation locally before the corrected focused invocation; no unchanged blind retry.
+- Four subsequent correctly selected Android runs each returned0 passed /2 failed while authoring the actual-screen selectors: (1) sole equipment is already selected, so **Select equipment** is absent; (2) the unit name matches both header and summary; (3) the lazy-list header is not necessarily composed, so exactly one **Confirm canopy** summary cannot be assumed; (4) custom numeric input has Default IME action, and Android's actual button text is **  Add Chemical** with leading spaces and needs scrolling into composition. Corrected test selectors/scrolling and removed the unsupported IME action; no production workaround was introduced for those test failures. Final selected2/2 is green.
+
+### Remaining physical acceptance and revision limitation
+
+No physical iPhone/Android, authenticated Program/template/repeated-job, actual connectivity, customer-data or field-operator acceptance was performed. Local synthetic fixtures establish these mounted state transitions, not v3.1.9 acceptance, full workflow acceptance or release clearance. Operator heading/scroll feel and genuine prefills remain handset checks. Stop after Phase 1; no next-phase redesign is included.
+
+Rork manages source commits automatically. At report preparation `git rev-parse HEAD` still returns the source parent `429ccdd21588249d82ddb3d31f74450a48d579c4`; that is **not** a repair commit. A new commit ID cannot truthfully be supplied before managed saving completes, and no manual commit or push was performed. The exact11-file SHA-256 manifest below identifies the tested source independently; managed history was not edited, deleted or excluded by the assistant.
+
+### Exact Phase 1 source/test/runner manifest (SHA-256)
+
+```text
+cec6a3b3d97391ec153e3c966fa7b80a80208681d0af314b34c003c7cd711117  android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayPhase1CalculatorAndroidTest.kt
+6322a334352f2a30da43ed09c7c4d3da667f1f02d1e14729a7822064f0db28ec  android-vinetrack/app/src/main/java/com/rork/vinetrack/data/spray/SprayGuidedFlow.kt
+c3655a9df8a213b8544aa91f6b628cd6193285cae3a1f190a437c01a51fa76e2  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayCanopySelector.kt
+a566c7dd76f9caf93324abd5e04ff3c32d1fd0d465437339ab123a757de810b3  android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt
+894b776dd995840210418d79b0ea1bce45235a2956e40183fca97b64f221a317  android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayGuidedFlowTest.kt
+cef7805d40c99f25ce4cc22d15347b574625c218d29cf528590e56d9f92a8768  ios/VineTrack/App/SprayCalculatorView.swift
+fc2db55712fcb313924e80821dbfb9a8aa3336709401f4335c609d519d401980  ios/VineTrack/App/SprayCanopyControls.swift
+6abc17c937c8dffd0cb628cc2df57e8ec34f1b1e84ce581d9f2be1eb541c8a48  ios/VineTrack/App/SprayEngine/SprayGuidedFlow.swift
+b259bbe8b9d31ecb898c51faf0d559f78c89729bfdd2182a276d926c468175de  ios/VineTrackTests/SprayGuidedFlowTests.swift
+135cb7e41dba87c936e350cd43cd0bca27a394a55b87577f5af341923ebb8dbf  ios/VineTrackUITests/MobileSprayUXParityUITests.swift
+4710feb202db2d7816938c3d0bb37ff824c017cd8588e3feb4b04260dd747821  scripts/run-spray-phase1-regressions.py
+```
+
 ## Android Home sync chip — 28 October 2026 — FOCUSED AUTOMATION AND BUILD PASS
 
 Android-only presentation/navigation patch against starting HEAD `b39ba18e8df59dd50b14bb92284f83474a1ddec7`. The owner reports the hydration repair at `89fa755df577dd29281e38043dc680299e6b7754` physically looks correct. This records that limited owner observation, not execution of all older physical checklists. No iOS, backend, release/version/signing/upload or operational-write changes.

@@ -52,6 +52,11 @@ sealed interface SprayGuidedBlocker {
         override val needsBlockEditor: Boolean get() = true
     }
 
+    data object ApplicationDecisionRequired : SprayGuidedBlocker {
+        override val title: String get() = "Choose an operation type"
+        override val message: String get() = "Choose Foliar Spray, Banded Spray or Spreader for this application."
+    }
+
     data object NoTargetSelected : SprayGuidedBlocker {
         override val title: String get() = "Choose a target"
         override val message: String get() = "Select what this spray is targeting."
@@ -177,6 +182,8 @@ sealed interface SprayGuidedBlocker {
 data class SprayGuidedInputs(
     val sprayName: String = "",
     val operationType: SprayOperationType = SprayOperationType.FOLIAR_SPRAY,
+    /** Session-only. Compatibility callers supply an operation; the new calculator starts unresolved. */
+    val isApplicationResolved: Boolean = true,
     /** Canonical geometry inputs for the selected blocks. */
     val blocks: List<SprayBlockInput> = emptyList(),
     val targets: Set<SprayTarget> = emptySet(),
@@ -587,8 +594,7 @@ data class SprayGuidedFlow(
 
     /** The blocker for a given step, or null when that step is satisfied. */
     fun blocker(step: SprayGuidedStep): SprayGuidedBlocker? = when (step) {
-        // An operation type is always selected.
-        SprayGuidedStep.APPLICATION -> null
+        SprayGuidedStep.APPLICATION -> if (inputs.isApplicationResolved) null else SprayGuidedBlocker.ApplicationDecisionRequired
 
         SprayGuidedStep.BLOCKS -> when {
             inputs.blocks.isEmpty() -> SprayGuidedBlocker.NoBlocksSelected

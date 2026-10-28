@@ -45,6 +45,53 @@ import org.junit.Test
  */
 class SprayGuidedFlowTest {
 
+    @Test fun newApplicationRequiresDeliberateDecisionIncludingSameFoliarDefault() {
+        var inputs = SprayGuidedInputs(isApplicationResolved = false)
+        var flow = SprayGuidedFlow(inputs)
+        assertEquals(SprayGuidedStep.APPLICATION, flow.activeStep)
+        assertEquals(SprayGuidedBlocker.ApplicationDecisionRequired, flow.blocker(SprayGuidedStep.APPLICATION))
+        assertFalse(flow.isUnlocked(SprayGuidedStep.BLOCKS))
+        inputs = inputs.copy(isApplicationResolved = true)
+        flow = SprayGuidedFlow(inputs)
+        assertTrue(flow.isComplete(SprayGuidedStep.APPLICATION))
+        assertTrue(flow.isUnlocked(SprayGuidedStep.BLOCKS))
+        assertEquals(SprayGuidedStep.BLOCKS, flow.activeStep)
+        for (type in listOf(SprayOperationType.BANDED_SPRAY, SprayOperationType.SPREADER)) {
+            assertTrue(SprayGuidedFlow(inputs.copy(operationType = type)).isComplete(SprayGuidedStep.APPLICATION))
+        }
+    }
+
+    @Test fun liveCanopyAdvancesThroughChoiceCustomRateAndProductsWithoutLegacyCopy() {
+        var selection = SprayCanopySelection.unconfirmed
+        var inputs = completeInputs().copy(canopy = selection, isCanopyConfirmed = false,
+            sprayVolumeChoice = SprayVolumeChoice.UNDECIDED, litresPerHectare = null)
+        assertEquals(SprayGuidedBlocker.CanopyConfirmationRequired, SprayGuidedFlow(inputs).blocker(SprayGuidedStep.CARRIER))
+        selection = selection.chooseType(SprayCalculator.CanopyType.VSP)
+        inputs = inputs.copy(canopy = selection)
+        assertEquals(SprayGuidedBlocker.CanopyConfirmationRequired, SprayGuidedFlow(inputs).blocker(SprayGuidedStep.CARRIER))
+        selection = selection.confirm()
+        inputs = inputs.copy(canopy = selection, isCanopyConfirmed = selection.isConfirmed)
+        var flow = SprayGuidedFlow(inputs)
+        assertNotNull(flow.volumeDecision?.recommendation)
+        assertEquals(SprayGuidedBlocker.SprayVolumeChoiceRequired, flow.blocker(SprayGuidedStep.CARRIER))
+        assertFalse(flow.isUnlocked(SprayGuidedStep.PRODUCTS))
+        inputs = inputs.copy(sprayVolumeChoice = SprayVolumeChoice.USE_CUSTOM_SPRAYER_RATE)
+        for (rate in listOf(null, 0.0, -1.0)) {
+            assertEquals(SprayGuidedBlocker.CustomSprayerRateRequired,
+                SprayGuidedFlow(inputs.copy(customSprayerRate = rate)).blocker(SprayGuidedStep.CARRIER))
+        }
+        inputs = inputs.copy(customSprayerRate = 600.0)
+        flow = SprayGuidedFlow(inputs)
+        assertNull(flow.blocker(SprayGuidedStep.CARRIER))
+        assertTrue(flow.isUnlocked(SprayGuidedStep.PRODUCTS))
+        flow = SprayGuidedFlow(inputs.copy(sprayVolumeChoice = SprayVolumeChoice.USE_RECOMMENDED))
+        assertTrue(flow.isUnlocked(SprayGuidedStep.PRODUCTS))
+        assertTrue(flow.plan.carrier.totalLitres > 0)
+        selection = selection.chooseSize(SprayCalculator.CanopySize.SMALL)
+        assertEquals(SprayGuidedBlocker.CanopyConfirmationRequired,
+            SprayGuidedFlow(inputs.copy(canopy = selection, isCanopyConfirmed = selection.isConfirmed)).blocker(SprayGuidedStep.CARRIER))
+    }
+
     private val tolerance = 0.0001
 
     // region Fixtures

@@ -61,6 +61,9 @@ nonisolated enum SprayGuidedStep: String, Sendable, CaseIterable, Identifiable, 
 /// Why a step cannot be completed yet. Each case names the ONE thing to fix, so
 /// the UI never has to invent guidance.
 nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
+    case applicationDecisionRequired
+    case customSprayerRateRequired
+    case carrierConversionRequired
     case noBlocksSelected
     /// Canonical geometry is incomplete for a calculation that needs row metres.
     case blockSetupRequired(message: String, blockIds: [String])
@@ -101,6 +104,9 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
 
     var title: String {
         switch self {
+        case .applicationDecisionRequired: return "Choose an operation type"
+        case .customSprayerRateRequired: return "Enter sprayer output"
+        case .carrierConversionRequired: return "Matching row spacing required"
         case .noBlocksSelected: return "Select blocks"
         case .blockSetupRequired: return "Block setup required"
         case .noTargetSelected: return "Choose a target"
@@ -127,6 +133,12 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
 
     var message: String {
         switch self {
+        case .applicationDecisionRequired:
+            return "Choose Foliar Spray, Banded Spray or Spreader for this application."
+        case .customSprayerRateRequired:
+            return "Enter a positive calibrated sprayer rate to continue to Products."
+        case .carrierConversionRequired:
+            return "Complete matching row spacing for the selected blocks to convert the spray volume."
         case .noBlocksSelected:
             return "Select at least one block to calculate this spray."
         case let .blockSetupRequired(message, _):
@@ -177,7 +189,7 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
     /// True when the operator has to leave the calculator and fix block setup.
     var needsBlockEditor: Bool {
         switch self {
-        case .blockSetupRequired, .treatedAreaUnavailable, .carrierNotCalculable,
+        case .blockSetupRequired, .treatedAreaUnavailable, .carrierNotCalculable, .carrierConversionRequired,
              .treatedAreaBasisUnavailable:
             return true
         default: return false
@@ -190,6 +202,9 @@ nonisolated enum SprayGuidedBlocker: Sendable, Hashable {
 nonisolated struct SprayGuidedInputs: Sendable {
     var sprayName: String = ""
     var operationType: OperationType = .foliarSpray
+    /// Compatibility callers supply an operation; the new calculator explicitly starts unresolved.
+    /// Session-only guided state, never part of the persisted operation or plan format.
+    var isApplicationResolved: Bool = true
 
     /// Canonical geometry inputs for the selected blocks.
     var blocks: [SprayBlockInput] = []
@@ -693,7 +708,7 @@ nonisolated struct SprayGuidedFlow: Sendable {
     func blocker(for step: SprayGuidedStep) -> SprayGuidedBlocker? {
         switch step {
         case .application:
-            return nil // An operation type is always selected.
+            return inputs.isApplicationResolved ? nil : .applicationDecisionRequired
 
         case .blocks:
             guard hasBlocks else { return .noBlocksSelected }
@@ -753,8 +768,14 @@ nonisolated struct SprayGuidedFlow: Sendable {
             // locked. The fix is to stop asking twice — NOT to copy the value
             // into the old fields, which would put the same decision in two
             // places and invite them to disagree.
-            if let decision = volumeDecision, decision.isResolved {
-                return isCarrierResolved ? nil : .carrierNotCalculable
+            if let decision = volumeDecision, requiresCanopyConfirmation {
+                if inputs.sprayVolumeChoice == .useCustomSprayerRate,
+                   Self.positive(inputs.customSprayerRate) == nil { return .customSprayerRateRequired }
+                if effectiveCarrierBasis == .litresPerHectare && decision.actualLitresPerHectare == nil
+                    || effectiveCarrierBasis == .litresPer100Metres && decision.actualLitresPer100Metres == nil {
+                    return .carrierConversionRequired
+                }
+                if decision.isResolved { return isCarrierResolved ? nil : .carrierNotCalculable }
             }
             switch effectiveCarrierBasis {
             case .litresPerHectare:

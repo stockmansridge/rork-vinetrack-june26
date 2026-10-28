@@ -17,6 +17,66 @@ import Testing
 /// moving between platforms meets identical decisions and identical numbers.
 struct SprayGuidedFlowTests {
 
+    @Test("New One-off requires a deliberate application, including the displayed Foliar default")
+    func newApplicationDecision() {
+        var inputs = SprayGuidedInputs()
+        inputs.isApplicationResolved = false
+        var flow = SprayGuidedFlow(inputs: inputs)
+        #expect(flow.activeStep == .application)
+        #expect(flow.blocker(for: .application) == .applicationDecisionRequired)
+        #expect(!flow.isUnlocked(.blocks))
+        inputs.isApplicationResolved = true // Same Foliar value, no switch away/back.
+        flow = SprayGuidedFlow(inputs: inputs)
+        #expect(flow.isComplete(.application))
+        #expect(flow.isUnlocked(.blocks))
+        #expect(flow.activeStep == .blocks)
+        for type in [OperationType.bandedSpray, .spreader] {
+            inputs.operationType = type
+            #expect(SprayGuidedFlow(inputs: inputs).isComplete(.application))
+        }
+    }
+
+    @Test("Live canopy advances Carrier through choice, custom rate and Products without legacy rate copying")
+    func liveCanopyCarrierProgression() {
+        var inputs = completeInputs()
+        inputs.canopy = .unconfirmed
+        inputs.isCanopyConfirmed = false
+        inputs.litresPerHectare = nil
+        #expect(SprayGuidedFlow(inputs: inputs).blocker(for: .carrier) == .canopyConfirmationRequired)
+        inputs.canopy?.choose(type: .vsp)
+        #expect(SprayGuidedFlow(inputs: inputs).blocker(for: .carrier) == .canopyConfirmationRequired)
+        inputs.canopy?.confirm()
+        var flow = SprayGuidedFlow(inputs: inputs)
+        #expect(flow.isCanopyAnswered)
+        #expect(flow.volumeDecision?.recommendation != nil)
+        #expect(flow.blocker(for: .carrier) == .sprayVolumeChoiceRequired)
+        #expect(!flow.isUnlocked(.products))
+        inputs.sprayVolumeChoice = .useCustomSprayerRate
+        for rate in [Double?.none, 0, -1] {
+            inputs.customSprayerRate = rate
+            #expect(SprayGuidedFlow(inputs: inputs).blocker(for: .carrier) == .customSprayerRateRequired)
+        }
+        inputs.customSprayerRate = 600
+        flow = SprayGuidedFlow(inputs: inputs)
+        #expect(flow.blocker(for: .carrier) == nil)
+        #expect(flow.isUnlocked(.products))
+        inputs.sprayVolumeChoice = .useRecommended
+        flow = SprayGuidedFlow(inputs: inputs)
+        #expect(flow.isUnlocked(.products))
+        #expect(flow.plan.totalCarrierLitres > 0)
+        inputs.canopy?.choose(size: .small)
+        #expect(SprayGuidedFlow(inputs: inputs).blocker(for: .carrier) == .canopyConfirmationRequired)
+    }
+
+    @Test("Confirmed canopy with missing conversion names geometry, not canopy or ground rate")
+    func confirmedCanopyConversionBlocker() {
+        var inputs = completeInputs()
+        inputs.blocks = [block(rowSpacing: nil)]
+        inputs.canopy = .prefilled(size: .medium, density: .low)
+        inputs.sprayVolumeChoice = .useRecommended
+        #expect(SprayGuidedFlow(inputs: inputs).blocker(for: .carrier) == .carrierConversionRequired)
+    }
+
     private let tolerance = 0.0001
 
     // MARK: - Fixtures

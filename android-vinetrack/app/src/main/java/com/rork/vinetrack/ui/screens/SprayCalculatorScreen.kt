@@ -170,6 +170,7 @@ import com.rork.vinetrack.data.spray.SprayControllerRateEntry
 import com.rork.vinetrack.data.spray.SprayPassConfiguration
 import com.rork.vinetrack.data.spray.SprayPlanningMethod
 import com.rork.vinetrack.data.spray.SprayFullTankSpecification
+import com.rork.vinetrack.data.spray.SprayGuidedBlocker
 import com.rork.vinetrack.data.spray.SprayGuidedFlow
 import com.rork.vinetrack.data.spray.SprayGuidedInputs
 import com.rork.vinetrack.data.spray.SprayGuidedStep
@@ -492,6 +493,7 @@ fun SprayCalculatorScreen(
 
     var sprayName by remember { mutableStateOf("") }
     var operationType by remember { mutableStateOf(sprayOperationTypes.first()) }
+    var isApplicationResolved by remember { mutableStateOf(false) }
     val selectedPaddockIds = remember { mutableStateListOf<String>() }
 
     // Growth stage (informational selection, matching iOS — not persisted).
@@ -804,6 +806,7 @@ fun SprayCalculatorScreen(
      */
     val guidedInputs = SprayGuidedInputs(
             sprayName = sprayName,
+            isApplicationResolved = isApplicationResolved,
             operationType = SprayOperationType.from(operationType)
                 ?: SprayOperationType.FOLIAR_SPRAY,
             blocks = selectedPaddocks.map { SprayBlockInput.from(it) },
@@ -982,7 +985,10 @@ fun SprayCalculatorScreen(
         prefillApplied = true
         val base = r.sprayReference.orEmpty()
         sprayName = if (r.isTemplate) base else if (base.isNotBlank()) "$base (Copy)" else ""
-        r.operationType?.takeIf { it in sprayOperationTypes }?.let { operationType = it }
+        r.operationType?.takeIf { it in sprayOperationTypes }?.let {
+            operationType = it
+            isApplicationResolved = true
+        }
         if (!canopySelection.isConfirmed) {
             (r.programCalculatorInputs?.canopy ?: r.prefillCanopy)?.let { canopySelection = it.copy(isSizeAndDensityConfirmed = false) }
         }
@@ -1470,6 +1476,7 @@ fun SprayCalculatorScreen(
                             DropdownMenuItem(
                                 text = { Text(op) },
                                 onClick = {
+                                    isApplicationResolved = true // Also resolves a tap on the displayed default.
                                     if (op != operationType) {
                                         operationType = op
                                         // Changing the application invalidates the
@@ -1496,6 +1503,14 @@ fun SprayCalculatorScreen(
                             )
                         }
                     }
+                }
+                if (isApplicationResolved) {
+                    Button(onClick = { openedStepRaw = SprayGuidedStep.BLOCKS.raw }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Continue to Blocks →")
+                    }
+                } else {
+                    Text("Choose the operation type for this application, even if Foliar Spray is already displayed.",
+                        style = MaterialTheme.typography.bodySmall, color = vine.textSecondary)
                 }
                 }
             }
@@ -2182,7 +2197,7 @@ fun SprayCalculatorScreen(
                     }
                 }
 
-                guidedFlow.blocker(SprayGuidedStep.CARRIER)?.let { blocker ->
+                guidedFlow.blocker(SprayGuidedStep.CARRIER)?.takeUnless { it == SprayGuidedBlocker.CanopyConfirmationRequired }?.let { blocker ->
                     GuidedBlockerBanner(
                         blocker = blocker,
                         onFix = { openedStepRaw = SprayGuidedStep.BLOCKS.raw },
