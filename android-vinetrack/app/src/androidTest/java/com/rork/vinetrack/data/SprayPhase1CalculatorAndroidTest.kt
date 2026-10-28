@@ -47,35 +47,79 @@ class SprayPhase1CalculatorAndroidTest {
 
     @Test fun newOneOffRecommendedCarrierUnlocksProducts() = runCalculator(custom = false)
     @Test fun newOneOffCustomCarrierUnlocksProducts() = runCalculator(custom = true)
+    @Test fun bandedContinuesToReview() = runCalculator(custom = false, operation = "Banded Spray")
+    @Test fun spreaderContinuesToReview() = runCalculator(custom = false, operation = "Spreader")
+    @Test fun editingBlocksRetainsAnswersAndLocksDownstream() = runCalculator(custom = false, editBlocks = true)
+    @Test fun programPrefillRetainsAnsweredSteps() = runCalculator(custom = false, prefilled = true)
+
+    private fun checkPrefill() {
+        if (compose.onAllNodesWithText("Spray name (optional)").fetchSemanticsNodes().isEmpty()) click("Application")
+        val name = hasSetTextAction() and hasText("Synthetic program")
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(name)
+        compose.onNode(name).assertExists()
+        click("Continue to Blocks →")
+        click("Continue to Target →")
+        compose.onNode(hasText("Target") and hasText("Powdery Mildew", substring = true) and hasClickAction()).assertExists()
+        click("Full Canopy") // Head target was not supplied by this historical prefill.
+        click("Continue to Growth Stage →")
+        click("Continue to Equipment →")
+        compose.onNode(hasText("Synthetic 1000 L unit") and hasText("1000.0 L tank") and hasClickAction()).assertExists()
+    }
 
     private fun click(text: String) {
         val matcher = hasText(text) and hasClickAction()
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(matcher)
-        compose.onNode(matcher).performClick()
+        compose.onNode(matcher).assertIsEnabled().performClick()
         compose.waitForIdle()
+        if (text.startsWith("Continue to ")) {
+            val title = text.removePrefix("Continue to ").removeSuffix(" →")
+            // The expanded Growth Stage body also has a selector with this title;
+            // the first matching clickable node is the existing card header.
+            compose.onAllNodes(hasText(if (title == "Spray Volume") "Canopy & Spray Volume" else title) and hasClickAction()).onFirst().assertIsDisplayed()
+        }
     }
 
-    private fun runCalculator(custom: Boolean) {
-        openCalculator()
+    private fun runCalculator(custom: Boolean, operation: String = "Foliar Spray", editBlocks: Boolean = false, prefilled: Boolean = false) {
+        openCalculator(prefilled)
+        if (prefilled) checkPrefill() else {
         compose.onNodeWithText("Spray name (optional)").assertExists() // Application starts expanded.
         compose.onNode(hasText("Blocks") and hasClickAction()).assertIsNotEnabled()
-        compose.onNodeWithText("Continue to Blocks →").assertDoesNotExist()
+        compose.onNodeWithText("Continue to Blocks →").assertIsNotEnabled()
         compose.onNodeWithText("Operation type").performClick()
-        compose.onNode(hasText("Foliar Spray") and hasAnyAncestor(isPopup())).performClick()
+        compose.onNode(hasText(operation) and hasAnyAncestor(isPopup())).performClick()
         compose.onNodeWithText("Spray name (optional)").assertExists() // No auto-collapse.
         click("Continue to Blocks →")
         compose.onNodeWithText("Spray name (optional)").assertDoesNotExist()
+        compose.onNodeWithText("Continue to Target →").assertIsNotEnabled()
         click("Select All")
-        click("Target")
+        click("Continue to Target →")
         click("Powdery Mildew")
-        click("Full Canopy")
-        val stageHeader = hasText("Growth Stage") and hasText("4") and hasClickAction()
-        compose.onNode(hasScrollToIndexAction()).performScrollToNode(stageHeader)
-        compose.onNode(stageHeader).performClick()
+        if (operation == "Banded Spray") {
+            click("Undervine")
+            val width = hasSetTextAction() and hasText("Band width", substring = true)
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(width)
+            compose.onNode(width).performTextInput("0.8")
+        } else if (operation == "Foliar Spray") click("Full Canopy")
+        click("Continue to Growth Stage →")
         val stageBody = hasText("Growth Stage") and hasClickAction() and !hasText("4")
         compose.onNode(stageBody).performClick()
         click("Not Set")
-        click("Equipment")
+        click("Continue to Equipment →")
+        }
+        if (editBlocks) {
+            click("Blocks")
+            click("Deselect All")
+            compose.onNodeWithText("Continue to Target →").assertIsNotEnabled()
+            val equipment = hasText("Equipment") and hasText("5") and hasClickAction()
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(equipment)
+            compose.onNode(equipment).assertIsNotEnabled()
+            click("Select All")
+            click("Continue to Target →")
+            compose.onNode(hasText("Powdery Mildew") and hasClickAction()).assertExists()
+            click("Continue to Growth Stage →")
+            compose.onNode(hasText("Target") and hasText("Powdery Mildew", substring = true) and hasClickAction()).assertExists()
+            click("Continue to Equipment →")
+        }
         // Production auto-selects a sole unit; open its summary, then explicitly select it.
         val unitSummary = hasText("Synthetic 1000 L unit") and hasText("1000.0 L tank") and hasClickAction()
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(unitSummary)
@@ -83,34 +127,49 @@ class SprayPhase1CalculatorAndroidTest {
         // The header, summary and expanded option contain the name: select the last (option) row.
         compose.onAllNodes(hasText("Synthetic 1000 L unit") and hasClickAction()).onLast().performClick()
         click("  Confirm equipment")
-        click("Canopy & Spray Volume")
+        click("Continue to Spray Volume →")
+        if (operation == "Banded Spray") {
+            compose.onNodeWithText("Canopy Type").assertDoesNotExist()
+            val rate = hasSetTextAction() and hasText("Application rate (", substring = true)
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(rate)
+            compose.onNode(rate).performTextInput("200")
+        } else if (operation == "Spreader") {
+            compose.onNodeWithText("Canopy Type").assertDoesNotExist()
+            // Spreader retains its existing carrier inputs, with no canopy decision.
+        } else {
         click("VSP")
         compose.onAllNodesWithText("Confirm Canopy — VSP · Medium · Low").assertCountEquals(1)
         // A composed header may name the blocker, but there must be no separate warning panel.
         val duplicateCanopyWarning = hasText("Confirm canopy") and !hasAnyAncestor(hasClickAction()) and !hasClickAction()
         compose.onAllNodes(duplicateCanopyWarning).assertCountEquals(0)
-        compose.onNodeWithText("Continue to Products →").assertDoesNotExist()
+        compose.onNodeWithText("Continue to Products →").assertIsNotEnabled()
         click("Confirm Canopy — VSP · Medium · Low")
         compose.onNodeWithText("RECOMMENDED SPRAY VOLUME — CF 1.00").assertExists()
         compose.onNodeWithText("Spray at the recommended volume?").assertExists()
         compose.onAllNodesWithText("Confirm canopy").assertCountEquals(0)
-        compose.onNodeWithText("Continue to Products →").assertDoesNotExist()
+        compose.onNodeWithText("Continue to Products →").assertIsNotEnabled()
         click(if (custom) "Set my own rate" else "Use recommended rate")
         if (custom) {
             compose.onNodeWithText("Enter sprayer output").assertExists()
-            compose.onNodeWithText("Continue to Products →").assertDoesNotExist()
+            compose.onNodeWithText("Continue to Products →").assertIsNotEnabled()
             val rate = hasSetTextAction() and hasText("Custom sprayer rate", substring = true)
             compose.onNode(hasScrollToIndexAction()).performScrollToNode(rate)
             compose.onNode(rate).performTextInput("600")
             compose.waitForIdle()
         }
+        }
         click("Continue to Products →")
         val addChemical = hasText("  Add Chemical") and hasClickAction()
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(addChemical)
         compose.onNode(addChemical).assertIsDisplayed()
+        compose.onNode(addChemical).performClick()
+        compose.onNode(hasText("Synthetic product") and hasClickAction()).performClick()
+        if (operation == "Banded Spray") click("Treated Band Area")
+        click("Continue to Review →")
+        compose.onNode(hasText("Review") and hasClickAction()).assertIsDisplayed()
     }
 
-    private fun openCalculator() {
+    private fun openCalculator(prefilled: Boolean = false) {
         val base = InstrumentationRegistry.getInstrumentation().targetContext
         val prefix = "spray_phase1_${UUID.randomUUID()}_"
         namespace = prefix
@@ -138,10 +197,15 @@ class SprayPhase1CalculatorAndroidTest {
                 CoordinatePoint(-35.002, 149.002), CoordinatePoint(-35.002, 149.0)),
             rows = listOf(PaddockRow(number = 1, startPoint = CoordinatePoint(-35.0, 149.0), endPoint = CoordinatePoint(-35.001, 149.0))))
         val state = AppUiState(selectedVineyardId = vineyard, currentUserId = UUID.randomUUID().toString(), isOnline = false,
-            paddocks = listOf(block), sprayEquipment = listOf(SprayEquipment(UUID.randomUUID().toString(), vineyard, "Synthetic 1000 L unit", 1000.0)))
+            paddocks = listOf(block), sprayEquipment = listOf(SprayEquipment(UUID.randomUUID().toString(), vineyard, "Synthetic 1000 L unit", 1000.0)),
+            savedChemicals = listOf(SavedChemical(UUID.randomUUID().toString(), vineyard, name = "Synthetic product", rates = listOf(ChemicalRate(label = "Synthetic rate", value = 1.0)))))
+        val prefill = if (prefilled) SprayRecord(UUID.randomUUID().toString(), vineyard,
+            sprayReference = "Synthetic program", isTemplate = true, operationType = "Foliar Spray",
+            sprayEquipmentId = state.sprayEquipment.single().id, targets = listOf("powdery_mildew"), templateGrowthStageCode = "EL12") else null
         compose.setContent {
             CompositionLocalProvider(LocalRegionFormatter provides RegionFormatter(RegionCountry.Australia.recommendedPreset)) {
-                MaterialTheme { SprayCalculatorScreen(vm, state) }
+                MaterialTheme { SprayCalculatorScreen(vm, state, prefillJobRecord = prefill,
+                    prefillPaddockIds = if (prefilled) listOf(block.id) else emptyList()) }
             }
         }
         compose.waitForIdle()

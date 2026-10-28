@@ -295,6 +295,16 @@ struct SprayCalculatorView: View {
             view._sprayVolumeChoice = State(initialValue: .undecided)
             view._customSprayerRateText = State(initialValue: "")
         }
+        if CommandLine.arguments.contains("--spray-phase2-validation") {
+            // Empty editing state, real calculator controls; local fixture data comes from the harness.
+            if CommandLine.arguments.contains("--spray-phase2-prefill") {
+                let record = SprayRecord(sprayReference: "Synthetic program", sprayEquipmentId: equipmentID,
+                                         isTemplate: true, operationType: .foliarSpray)
+                return SprayCalculatorView(prefillRecord: record, prefillPaddockIds: [blockID],
+                    prefillProgram: SprayProgramPrefill(growthStageCode: "EL12", targets: [.powderyMildew], equipmentId: equipmentID))
+            }
+            return SprayCalculatorView()
+        }
         return view
     }
     #endif
@@ -908,10 +918,11 @@ struct SprayCalculatorView: View {
     }
 
     private func showStep(_ step: SprayGuidedStep?) {
+        guard step.map({ flow.isUnlocked($0) }) ?? true else { return }
         stepNavigationGeneration += 1
         let generation = stepNavigationGeneration
         scrollRequest = nil
-        withAnimation(.spring(duration: 0.3), completionCriteria: .logicallyComplete) {
+        withAnimation(.easeInOut(duration: 0.2), completionCriteria: .logicallyComplete) {
             openedStep = step
         } completion: {
             // Anchor once, after expansion layout, and never follow an obsolete tap.
@@ -939,11 +950,40 @@ struct SprayCalculatorView: View {
             isExpanded: expandedStep == step,
             summary: summary,
             onToggle: { toggle(step) },
-            content: content
+            content: {
+                content()
+                continueAction(after: step)
+            }
         )
         // Addressable so opening a step can bring THIS card's header to the
         // top of the screen. See the scroll anchoring in `body`.
         .id(step)
+    }
+
+    @ViewBuilder
+    private func continueAction(after step: SprayGuidedStep) -> some View {
+        if let index = SprayGuidedStep.allCases.firstIndex(of: step),
+           index + 1 < SprayGuidedStep.allCases.count {
+            let next = SprayGuidedStep.allCases[index + 1]
+            let enabled = flow.isComplete(step) && flow.isUnlocked(next)
+            Button {
+                guard flow.isComplete(step), flow.isUnlocked(next) else { return }
+                showStep(next)
+            } label: {
+                Text("Continue to \(next == .carrier ? "Spray Volume" : next.title) →")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(VineyardTheme.olive)
+            .disabled(!enabled)
+            .accessibilityIdentifier("spray.continue.\(next.rawValue)")
+            // Other requirements already have field-adjacent guidance; do not repeat it.
+            if let blocker = flow.blocker(for: step),
+               step == .growthStage || step == .equipment || (step == .products && blocker == .noProductsAdded) || (step == .blocks && blocker == .noBlocksSelected) {
+                Text(blocker.message).font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 
     // MARK: - Body
@@ -968,11 +1008,6 @@ struct SprayCalculatorView: View {
                         guidedCard(.application, 1, summary: applicationSummary) {
                             sprayNameSection
                             operationTypeSection
-                            if flow.isComplete(.application) {
-                                Button("Continue to Blocks →") { showStep(.blocks) }
-                                    .buttonStyle(.borderedProminent)
-                                    .accessibilityIdentifier("spray.continue.blocks")
-                            }
                         }
                         guidedCard(.blocks, 2, summary: blocksSummary) {
                             paddockSelection
@@ -992,11 +1027,6 @@ struct SprayCalculatorView: View {
                         }
                         guidedCard(.carrier, 6, summary: carrierSummary) {
                             carrierVolumeSection
-                            if flow.isComplete(.carrier) {
-                                Button("Continue to Products →") { showStep(.products) }
-                                    .buttonStyle(.borderedProminent)
-                                    .accessibilityIdentifier("spray.continue.products")
-                            }
                         }
                         guidedCard(.products, 7, summary: productsSummary) {
                             chemicalLinesSection
@@ -1067,7 +1097,7 @@ struct SprayCalculatorView: View {
                     }
                     .onChange(of: scrollRequest) { _, step in
                         guard let step else { return }
-                        withAnimation(.spring(duration: 0.3)) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
                             proxy.scrollTo(step, anchor: .top)
                         }
                     }
@@ -1533,6 +1563,7 @@ struct SprayCalculatorView: View {
                 )
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("spray.blocks.selector")
 
             if !selectedPaddockIds.isEmpty {
                 HStack(spacing: 0) {
@@ -1708,6 +1739,7 @@ struct SprayCalculatorView: View {
                 )
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("spray.growth.selector")
             .accessibilityHint(paddocksMissing ? "Select blocks first to choose a growth stage" : "Opens growth stage selector")
 
             if isGrowthStageExpanded && !paddocksMissing {
@@ -1914,6 +1946,7 @@ struct SprayCalculatorView: View {
                 )
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("spray.equipment.selector")
 
             if isEquipmentExpanded {
                 VStack(spacing: 0) {
@@ -2848,24 +2881,7 @@ struct SprayCalculatorView: View {
             // button is the only thing that moves the screen forward. Adding a
             // second chemical, or changing a rate, leaves the operator exactly
             // where they were.
-            Button {
-                showStep(.review)
-            } label: {
-                Text("Continue to Review →")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: 44)
-                    .background(
-                        flow.isComplete(.products)
-                            ? VineyardTheme.olive
-                            : Color.secondary.opacity(0.25)
-                    )
-                    .foregroundStyle(flow.isComplete(.products) ? Color.white : Color.secondary)
-                    .clipShape(.rect(cornerRadius: 10))
-            }
-            .buttonStyle(.plain)
-            .disabled(!flow.isComplete(.products))
-            .padding(.top, 4)
+            // The guided card supplies the shared Continue action.
         }
     }
 
@@ -3373,6 +3389,7 @@ struct SprayCalculatorView: View {
                         .font(.subheadline.weight(.semibold))
                     HStack(spacing: 8) {
                         TextField("0.80", text: carrierBinding("band", $bandWidthText, forward: region.lengthValue, inverse: region.lengthToCanonical))
+                            .accessibilityIdentifier("spray.bandWidth")
                             .keyboardType(.decimalPad)
                             .font(.body.weight(.medium))
                             .padding(.horizontal, 12)
@@ -3780,6 +3797,7 @@ struct SprayCalculatorView: View {
                     .font(.subheadline.weight(.semibold))
                 HStack(spacing: 8) {
                     TextField("200", text: carrierBinding("areaRate", $sprayRateText, forward: region.volumePerAreaValue, inverse: region.volumePerAreaToCanonical))
+                        .accessibilityIdentifier("spray.groundRate")
                         .keyboardType(.decimalPad)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 10)

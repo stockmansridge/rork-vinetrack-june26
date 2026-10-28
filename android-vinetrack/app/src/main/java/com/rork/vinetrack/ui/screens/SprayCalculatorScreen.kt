@@ -1504,11 +1504,10 @@ fun SprayCalculatorScreen(
                         }
                     }
                 }
-                if (isApplicationResolved) {
-                    Button(onClick = { openedStepRaw = SprayGuidedStep.BLOCKS.raw }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Continue to Blocks →")
-                    }
-                } else {
+                GuidedContinueAction(guidedFlow, SprayGuidedStep.APPLICATION, SprayGuidedStep.BLOCKS, "Blocks") {
+                    openedStepRaw = SprayGuidedStep.BLOCKS.raw
+                }
+                if (!isApplicationResolved) {
                     Text("Choose the operation type for this application, even if Foliar Spray is already displayed.",
                         style = MaterialTheme.typography.bodySmall, color = vine.textSecondary)
                 }
@@ -1544,6 +1543,9 @@ fun SprayCalculatorScreen(
                         result = null
                     },
                 )
+                GuidedContinueAction(guidedFlow, SprayGuidedStep.BLOCKS, SprayGuidedStep.TARGET, "Target", showRequirement = true) {
+                    openedStepRaw = SprayGuidedStep.TARGET.raw
+                }
                 }
             }
 
@@ -1677,6 +1679,9 @@ fun SprayCalculatorScreen(
                         }
                     }
 
+                    GuidedContinueAction(guidedFlow, SprayGuidedStep.TARGET, SprayGuidedStep.GROWTH_STAGE, "Growth Stage") {
+                        openedStepRaw = SprayGuidedStep.GROWTH_STAGE.raw
+                    }
                     guidedFlow.blocker(SprayGuidedStep.TARGET)?.let { blocker ->
                         GuidedBlockerBanner(
                             blocker = blocker,
@@ -1731,6 +1736,9 @@ fun SprayCalculatorScreen(
                     },
                     perBlockDecisions = perBlockStageDecisions,
                 )
+                GuidedContinueAction(guidedFlow, SprayGuidedStep.GROWTH_STAGE, SprayGuidedStep.EQUIPMENT, "Equipment", showRequirement = true) {
+                    openedStepRaw = SprayGuidedStep.EQUIPMENT.raw
+                }
                 }
             }
 
@@ -1823,6 +1831,9 @@ fun SprayCalculatorScreen(
                                 .confirmedSignature
                         },
                     )
+                    GuidedContinueAction(guidedFlow, SprayGuidedStep.EQUIPMENT, SprayGuidedStep.CARRIER, "Spray Volume") {
+                        openedStepRaw = SprayGuidedStep.CARRIER.raw
+                    }
                     guidedFlow.blocker(SprayGuidedStep.EQUIPMENT)?.let { blocker ->
                         GuidedBlockerBanner(blocker = blocker)
                     }
@@ -2204,10 +2215,8 @@ fun SprayCalculatorScreen(
                         canopySelection = canopySelection,
                     )
                 }
-                if (guidedFlow.isComplete(SprayGuidedStep.CARRIER)) {
-                    Button(onClick = { openedStepRaw = SprayGuidedStep.PRODUCTS.raw }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Continue to Products →")
-                    }
+                GuidedContinueAction(guidedFlow, SprayGuidedStep.CARRIER, SprayGuidedStep.PRODUCTS, "Products") {
+                    openedStepRaw = SprayGuidedStep.PRODUCTS.raw
                 }
                 }
             }
@@ -2323,13 +2332,8 @@ fun SprayCalculatorScreen(
                             color = vine.textSecondary,
                         )
                     }
-                    Button(
-                        onClick = { openedStepRaw = SprayGuidedStep.REVIEW.raw },
-                        enabled = guidedFlow.isComplete(SprayGuidedStep.PRODUCTS),
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
-                    ) {
-                        Text("Continue to Review →", fontWeight = FontWeight.SemiBold)
+                    GuidedContinueAction(guidedFlow, SprayGuidedStep.PRODUCTS, SprayGuidedStep.REVIEW, "Review") {
+                        openedStepRaw = SprayGuidedStep.REVIEW.raw
                     }
                 }
                 }
@@ -3284,6 +3288,29 @@ private fun GrowthStageRadioRow(
             Text(code, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.width(44.dp))
         }
         Text(label, fontSize = 13.sp, color = vine.textPrimary, maxLines = 2, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
+private fun GuidedContinueAction(
+    flow: SprayGuidedFlow,
+    step: SprayGuidedStep,
+    next: SprayGuidedStep,
+    nextTitle: String,
+    showRequirement: Boolean = false,
+    onContinue: () -> Unit,
+) {
+    val enabled = flow.isComplete(step) && flow.isUnlocked(next)
+    Button(
+        onClick = { if (flow.isComplete(step) && flow.isUnlocked(next)) onContinue() },
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth(),
+        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
+    ) { Text("Continue to $nextTitle →", fontWeight = FontWeight.SemiBold) }
+    if (showRequirement) {
+        flow.blocker(step)?.let { blocker ->
+            Text(blocker.message, style = MaterialTheme.typography.bodySmall, color = LocalVineColors.current.textSecondary)
+        }
     }
 }
 

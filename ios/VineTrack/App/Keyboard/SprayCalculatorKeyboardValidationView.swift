@@ -18,7 +18,10 @@ struct SprayCalculatorKeyboardValidationView: View {
                 PaddockRow(number: 2, startPoint: CoordinatePoint(latitude: -35, longitude: 149.00003), endPoint: CoordinatePoint(latitude: -35.001, longitude: 149.00003))
             ], rowWidth: 2.8)]
             store.sprayEquipment = [SprayEquipmentItem(vineyardId: vineyard, name: "Synthetic 1000 L unit", tankCapacityLitres: 1000)]
-            if CommandLine.arguments.contains("--spray-direct-start-validation") {
+            if CommandLine.arguments.contains("--spray-phase2-validation") {
+                store.savedChemicals = [SavedChemical(vineyardId: vineyard, name: "Synthetic product", unit: .grams,
+                    rates: [ChemicalRate(label: "Synthetic rate", value: 1)])]
+            } else if CommandLine.arguments.contains("--spray-direct-start-validation") {
                 store.savedChemicals = [SavedChemical(vineyardId: vineyard, name: "Synthetic valid product", unit: .grams)]
             }
         } else {

@@ -1,6 +1,142 @@
 import XCTest
 
 final class MobileSprayUXParityUITests: XCTestCase {
+    @MainActor func testPhase2RecommendedToReview() { runGuidedJourney() }
+    @MainActor func testPhase2CustomToReview() { runGuidedJourney(custom: true) }
+    @MainActor func testPhase2BandedToReview() { runGuidedJourney(operation: "Banded Spray") }
+    @MainActor func testPhase2SpreaderToReview() { runGuidedJourney(operation: "Spreader") }
+    @MainActor func testPhase2EditBlocks() { runGuidedJourney(editBlocks: true) }
+    @MainActor func testPhase2ProgramPrefill() { runGuidedJourney(prefilled: true) }
+
+    @MainActor private func reach(_ element: XCUIElement, in app: XCUIApplication, down: Bool = false) {
+        let scroll = app.scrollViews.firstMatch
+        for _ in 0..<16 where !element.isHittable {
+            if down { scroll.swipeDown() } else { scroll.swipeUp() }
+        }
+        XCTAssertTrue(element.isHittable, element.description)
+    }
+
+    @MainActor private func advance(_ next: String, in app: XCUIApplication) {
+        let action = app.buttons["spray.continue.\(next)"]
+        reach(action, in: app)
+        XCTAssertTrue(action.isEnabled, app.staticTexts["spray.regional.prerequisites"].label)
+        action.tap()
+        let header = app.buttons["spray.header.\(next)"]
+        XCTAssertTrue(header.waitForExistence(timeout: 5), "Missing next heading: \(next)")
+        XCTAssertTrue(header.isHittable, "Continue must expose the next heading without a manual scroll")
+        XCTAssertTrue(app.scrollViews.firstMatch.frame.contains(header.frame), "The whole next heading must be visible")
+    }
+
+    @MainActor private func chooseBlocks(_ all: Bool, in app: XCUIApplication) {
+        let selector = app.buttons["spray.blocks.selector"]
+        reach(selector, in: app); selector.tap()
+        let choice = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", all ? "Select All" : "Deselect All")).firstMatch
+        XCTAssertTrue(choice.waitForExistence(timeout: 5), "Block picker must offer the deliberate selection action"); choice.tap()
+        app.buttons["Done"].tap()
+    }
+
+    @MainActor private func runGuidedJourney(operation: String = "Foliar Spray", custom: Bool = false, editBlocks: Bool = false, prefilled: Bool = false) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--keyboard-validation", "--spray-calculator-keyboard-validation", "--spray-regional-validation", "--spray-phase2-validation"]
+        if prefilled { app.launchArguments.append("--spray-phase2-prefill") }
+        app.launch()
+        let open = app.buttons["Open Spray Calculator"]
+        XCTAssertTrue(open.waitForExistence(timeout: 8), "Fixture must show Open Spray Calculator"); open.tap()
+        let name = app.textFields["e.g. Downy Mildew Spray #3"]
+        if prefilled {
+            let header = app.buttons["spray.header.application"]
+            XCTAssertTrue(header.waitForExistence(timeout: 8))
+            if !name.exists { reach(header, in: app, down: true); header.tap() }
+            XCTAssertEqual(name.value as? String, "Synthetic program")
+        } else {
+            XCTAssertTrue(name.waitForExistence(timeout: 8), "New Application must be expanded")
+            XCTAssertFalse(app.buttons["spray.header.blocks"].isEnabled)
+            XCTAssertFalse(app.buttons["spray.continue.blocks"].isEnabled)
+            app.buttons["spray.operation"].tap()
+            app.buttons[operation].tap()
+            XCTAssertTrue(name.exists, "Choosing an answer must keep Application open")
+        }
+        advance("blocks", in: app)
+        if !prefilled {
+            XCTAssertFalse(app.buttons["spray.continue.target"].isEnabled)
+            chooseBlocks(true, in: app)
+        }
+        advance("target", in: app)
+        if !prefilled { let target = app.buttons["Powdery Mildew"]; reach(target, in: app); target.tap() }
+        if operation == "Banded Spray" {
+            let target = app.buttons["Undervine"]; reach(target, in: app); target.tap()
+            let width = app.textFields["spray.bandWidth"]
+            reach(width, in: app); width.tap(); width.typeText("0.8")
+            app.buttons["keyboard.dismiss"].tap()
+        } else if operation == "Foliar Spray" {
+            let target = app.buttons["Full Canopy"]; reach(target, in: app); target.tap()
+        }
+        advance("growthStage", in: app)
+        XCTAssertTrue(app.buttons["spray.header.target"].label.contains("Powdery"), "Supplied or chosen target must remain resolved")
+        if !prefilled {
+            let selector = app.buttons["spray.growth.selector"]
+            reach(selector, in: app); selector.tap()
+            let notSet = app.buttons["Not Set"].firstMatch
+            reach(notSet, in: app); notSet.tap()
+            reach(selector, in: app, down: true); selector.tap()
+        }
+        advance("equipment", in: app)
+        if editBlocks {
+            let blocks = app.buttons["spray.header.blocks"]
+            reach(blocks, in: app, down: true); blocks.tap()
+            chooseBlocks(false, in: app)
+            XCTAssertFalse(app.buttons["spray.continue.target"].isEnabled)
+            XCTAssertFalse(app.buttons["spray.header.equipment"].isEnabled)
+            chooseBlocks(true, in: app)
+            advance("target", in: app)
+            advance("growthStage", in: app)
+            XCTAssertTrue(app.buttons["spray.header.target"].label.contains("Powdery"))
+            advance("equipment", in: app)
+        }
+        let equipment = app.buttons["spray.equipment.selector"]
+        reach(equipment, in: app); equipment.tap()
+        let unit = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Synthetic 1000 L unit")).allElementsBoundByIndex.last!
+        reach(unit, in: app); unit.tap()
+        reach(equipment, in: app, down: true); equipment.tap()
+        let confirmEquipment = app.buttons["Confirm Equipment"]
+        reach(confirmEquipment, in: app); confirmEquipment.tap()
+        advance("carrier", in: app)
+        if operation == "Foliar Spray" {
+            let vsp = app.buttons["VSP"]; reach(vsp, in: app); vsp.tap()
+            let confirm = app.buttons["spray.confirm.canopy"]
+            reach(confirm, in: app); confirm.tap()
+            let choice = app.buttons[custom ? "Set my own rate" : "Use recommended rate"]
+            reach(choice, in: app); choice.tap()
+            if custom {
+                let rate = app.textFields["spray.customRate"]
+                reach(rate, in: app); rate.tap(); rate.typeText("600")
+                app.buttons["keyboard.dismiss"].tap()
+            }
+        } else if operation == "Banded Spray" {
+            XCTAssertFalse(app.buttons["VSP"].exists)
+            let rate = app.textFields["spray.groundRate"]
+            reach(rate, in: app); rate.tap(); rate.typeText("200")
+            app.buttons["keyboard.dismiss"].tap()
+        } else {
+            let manual = app.segmentedControls.buttons["Manual"]
+            reach(manual, in: app); manual.tap()
+            let water = app.textFields["spray.manualWater"]
+            reach(water, in: app); water.tap(); water.typeText("400")
+            app.buttons["keyboard.dismiss"].tap()
+            XCTAssertFalse(app.buttons["spray.confirm.canopy"].exists, "Spreader manual water must not require canopy confirmation")
+        }
+        advance("products", in: app)
+        let add = app.buttons["Add Chemical"]; reach(add, in: app); add.tap()
+        let product = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Synthetic product")).firstMatch
+        XCTAssertTrue(product.waitForExistence(timeout: 5), "Synthetic product must be offered in the production picker"); product.tap()
+        if operation == "Banded Spray" {
+            let basis = app.buttons["Treated Band Area"]; reach(basis, in: app); basis.tap()
+        }
+        advance("review", in: app)
+        XCTAssertTrue(app.buttons["spray.reviewTankMix"].exists, "Keep the existing Review handoff")
+    }
+
     @MainActor func testNewOneOffRecommendedCarrierUnlocksProducts() {
         runNewOneOffCarrier(custom: false)
     }
@@ -14,12 +150,12 @@ final class MobileSprayUXParityUITests: XCTestCase {
         app.launchArguments = ["--keyboard-validation", "--spray-calculator-keyboard-validation", "--spray-regional-validation", "--spray-phase1-validation"]
         app.launch()
         let open = app.buttons["Open Spray Calculator"]
-        XCTAssertTrue(open.waitForExistence(timeout: 8)); open.tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 8), "Fixture must show Open Spray Calculator"); open.tap()
         let scroll = app.scrollViews.firstMatch
         let name = app.textFields["e.g. Downy Mildew Spray #3"]
         XCTAssertTrue(name.waitForExistence(timeout: 8), "New Application must start expanded")
         XCTAssertFalse(app.buttons["spray.header.blocks"].isEnabled)
-        XCTAssertFalse(app.buttons["spray.continue.blocks"].exists)
+        XCTAssertFalse(app.buttons["spray.continue.blocks"].isEnabled)
         let live = app.staticTexts["spray.phase1.live"]
         XCTAssertTrue(live.label.contains("application=false"))
         app.buttons["spray.operation"].tap()
@@ -67,7 +203,7 @@ final class MobileSprayUXParityUITests: XCTestCase {
         app.launchArguments = ["--keyboard-validation", "--spray-calculator-keyboard-validation"]
         app.launch()
         let open = app.buttons["Open Spray Calculator"]
-        XCTAssertTrue(open.waitForExistence(timeout: 8)); open.tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 8), "Fixture must show Open Spray Calculator"); open.tap()
         let header = app.buttons["spray.header.application"]
         XCTAssertTrue(header.waitForExistence(timeout: 8))
         let name = app.textFields["e.g. Downy Mildew Spray #3"]
@@ -88,7 +224,7 @@ final class MobileSprayUXParityUITests: XCTestCase {
         app.launchArguments = ["--keyboard-validation", "--spray-calculator-keyboard-validation", "--spray-regional-validation", "--spray-direct-start-validation"]
         app.launch()
         let open = app.buttons["Open Spray Calculator"]
-        XCTAssertTrue(open.waitForExistence(timeout: 8)); open.tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 8), "Fixture must show Open Spray Calculator"); open.tap()
         let scroll = app.scrollViews.firstMatch
         let carrier = app.buttons["spray.header.carrier"]
         for _ in 0..<12 where !carrier.isHittable { scroll.swipeDown() }
@@ -119,7 +255,7 @@ final class MobileSprayUXParityUITests: XCTestCase {
         app.launchArguments = ["--keyboard-validation", "--spray-calculator-keyboard-validation", "--spray-regional-validation"]
         app.launch()
         let open = app.buttons["Open Spray Calculator"]
-        XCTAssertTrue(open.waitForExistence(timeout: 8)); open.tap()
+        XCTAssertTrue(open.waitForExistence(timeout: 8), "Fixture must show Open Spray Calculator"); open.tap()
         let scroll = app.scrollViews.firstMatch
         app.buttons["By Area"].tap()
         let vsp = app.buttons["VSP"]
