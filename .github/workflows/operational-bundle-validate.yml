@@ -1,0 +1,116 @@
+name: Operational bundle native validation
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/operational-bundle-validate.yml'
+      - 'scripts/repairs/**'
+permissions:
+  contents: read
+concurrency:
+  group: operational-bundle-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  apply-reviewed-source:
+    if: github.event.pull_request.number == 22 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/sync-compatibility-318-319-20261030'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      tested_sha: ${{ steps.apply.outputs.tested_sha }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Apply only exact before-hash source changes
+        id: apply
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/repairs/apply_operational_bundle.py
+          python3 -m unittest discover -s scripts/tests -p 'test_sync_inventory.py' -v
+          python3 scripts/audit_sync_inventory.py --verify-inventory --output "$RUNNER_TEMP/sync-inventory.json"
+          git add -- ios/VineTrack ios/VineTrackTests android-vinetrack/app/src docs/sync/sync-compatibility-register.json
+          if ! git diff --cached --quiet; then
+            git -c user.name='VineTrack repair automation' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix(spray-sync): apply reviewed operational bundle with rate confirmation and safe sync references'
+            # Normal fast-forward push only. Concurrent edits fail rather than being overwritten.
+            git push origin HEAD:refs/heads/fix/sync-compatibility-318-319-20261030
+          fi
+          echo "tested_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git rev-parse HEAD
+  android-focused:
+    needs: apply-reviewed-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.apply-reviewed-source.outputs.tested_sha }}
+          persist-credentials: false
+      - name: Use installed Java 17 and Android SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+          chmod +x android-vinetrack/gradlew
+      - name: Compile app and run only focused spray, auth and bundle tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p review-evidence
+          git rev-parse HEAD > review-evidence/commit.txt
+          python3 scripts/run-spray-phase1-regressions.py SprayOperationalBundleTest SessionRefreshAdmissionTest SprayGuidedFlowTest SprayBandedGroundCarrierTest SprayGuidedWorkflowParityTest SprayPlanningIntentTest 2>&1 | tee review-evidence/android-summary.log
+      - name: Retain compiler output and test XML
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p review-evidence
+          find /tmp -maxdepth 1 -type d -name 'vinetrack-spray-phase1-*' -exec cp -r '{}' review-evidence/ \;
+          test ! -d android-vinetrack/app/build/test-results || cp -r android-vinetrack/app/build/test-results review-evidence/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: operational-bundle-android-${{ needs.apply-reviewed-source.outputs.tested_sha }}
+          path: review-evidence/
+          retention-days: 3
+  ios-focused:
+    needs: apply-reviewed-source
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.apply-reviewed-source.outputs.tested_sha }}
+          persist-credentials: false
+      - name: Discover available iPhone simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p review-evidence
+          git rev-parse HEAD > review-evidence/commit.txt
+          xcodebuild -version | tee review-evidence/xcode-version.txt
+          xcodebuild -list -project ios/VineTrack.xcodeproj -json > review-evidence/project.json
+          xcrun simctl list devices available -j > review-evidence/devices.json
+          python3 - <<'PY'
+          import json, os
+          project = json.load(open('review-evidence/project.json'))
+          assert 'VineTrack' in project['project']['schemes'], 'Expected native scheme missing'
+          groups = json.load(open('review-evidence/devices.json'))['devices']
+          phones = [d for runtime, devices in sorted(groups.items(), reverse=True) if 'iOS' in runtime for d in devices if d.get('isAvailable') and d['name'].startswith('iPhone')]
+          assert phones, 'No available iPhone simulator'
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write('VT_SIMULATOR=' + phones[0]['udid'] + '\n')
+          PY
+      - name: Compile and test focused native iOS paths without signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild test -project ios/VineTrack.xcodeproj -scheme VineTrack -destination "platform=iOS Simulator,id=$VT_SIMULATOR" -parallel-testing-enabled NO -jobs 2 -resultBundlePath review-evidence/SprayBundle.xcresult CODE_SIGNING_ALLOWED=NO -only-testing:VineTrackTests/SprayOperationalBundleTests -only-testing:VineTrackTests/SprayGuidedFlowTests -only-testing:VineTrackTests/SprayGuidedWorkflowParityTests -only-testing:VineTrackTests/SprayPlanningIntentTests 2>&1 | tee review-evidence/ios-build.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: operational-bundle-ios-${{ needs.apply-reviewed-source.outputs.tested_sha }}
+          path: review-evidence/
+          retention-days: 3
