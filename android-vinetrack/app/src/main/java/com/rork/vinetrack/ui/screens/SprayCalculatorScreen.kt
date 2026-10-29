@@ -648,6 +648,13 @@ fun SprayCalculatorScreen(
         SprayCalculator.CanopyDensity.LOW,
     )
     val isGroundSpray = operationType == SprayOperationType.BANDED_SPRAY.raw
+    // Preserve legacy gross-area assumptions on an existing, non-template
+    // spray that has no recorded per-product basis. New banded jobs use the
+    // treated hectares already established in Target.
+    val bandedProductDefault = if (
+        prefillRecordId != null &&
+        state.sprayRecords.any { it.id == prefillRecordId && !it.isTemplate }
+    ) SprayProductRateBasis.WHOLE_BLOCK_AREA else SprayProductRateBasis.TREATED_AREA
     val legacyRecommendedRate = if (isGroundSpray) {
         null
     } else {
@@ -744,7 +751,7 @@ fun SprayCalculatorScreen(
         } else {
             // New banded sprays default chemical per-ha rates to treated hectares;
             // explicit product choices and restored historical bases still win.
-            productAreaBasis[line.uid] ?: if (isGroundSpray) SprayProductRateBasis.TREATED_AREA
+            productAreaBasis[line.uid] ?: if (isGroundSpray) bandedProductDefault
             else SprayProductRateBasis.WHOLE_BLOCK_AREA
         }
         // The LINE's rate unit, never the product's inventory unit: the
@@ -764,7 +771,8 @@ fun SprayCalculatorScreen(
             // an unconfirmed default, and the flow blocks on it rather than
             // freezing a guess into a compliance record.
             isAreaBasisExplicit = line.basis == SprayCalculator.RateBasis.PER_100L ||
-                isGroundSpray || productAreaBasis[line.uid] != null,
+                (isGroundSpray && bandedProductDefault == SprayProductRateBasis.TREATED_AREA) ||
+                productAreaBasis[line.uid] != null,
         )
     }
 
@@ -1231,7 +1239,7 @@ fun SprayCalculatorScreen(
             SprayCalculatorInputBuilder.Product(
                 chemicalId = line.chemicalId,
                 basis = if (line.basis == SprayCalculator.RateBasis.PER_100L) SprayProductRateBasis.PER_100_LITRES
-                    else productAreaBasis[line.uid] ?: if (isGroundSpray) SprayProductRateBasis.TREATED_AREA
+                    else productAreaBasis[line.uid] ?: if (isGroundSpray) bandedProductDefault
                         else SprayProductRateBasis.WHOLE_BLOCK_AREA,
                 appliedRate = if (chem != null) effectiveRateDisplay(chem, line) else 0.0,
                 unit = if (chem != null) lineRateUnit(chem, line) else "",
@@ -2276,13 +2284,15 @@ fun SprayCalculatorScreen(
                             line.basis != SprayCalculator.RateBasis.PER_100L
                         ) {
                             GuidedProductBasisPicker(
-                                selected = productAreaBasis[line.uid] ?: SprayProductRateBasis.TREATED_AREA,
+                                selected = productAreaBasis[line.uid] ?: bandedProductDefault,
                                 accent = VineColors.Olive,
                             ) { basis ->
                                 productAreaBasis[line.uid] = basis
                                 result = null
                             }
-                            if (productAreaBasis[line.uid] == null) {
+                            if (productAreaBasis[line.uid] == null &&
+                                bandedProductDefault == SprayProductRateBasis.TREATED_AREA
+                            ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text("Using treated band from Target", fontSize = 11.sp,
                                         color = vine.textSecondary)
