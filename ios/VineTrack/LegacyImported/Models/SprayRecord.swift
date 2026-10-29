@@ -56,6 +56,10 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
     var hasRecordedEventDate: Bool
     /// Local-only provenance: a compatibility UUID must never become a server Trip link.
     var hasRecordedTripLink: Bool
+    /// Local-only evidence: an unlinked, exact server snapshot was verified and
+    /// attached to this saved Trip. Never permit a normal remote pull to erase
+    /// it before the server accepts the conditional trip_id repair.
+    var recoveredFromServerOrphan: Bool = false
     var canonicalTripId: UUID? { hasRecordedTripLink ? tripId : nil }
     /// A newly calculated recipe starts without a Trip. Assigning just tripId
     /// leaves hasRecordedTripLink=false and silently sends NULL to Supabase.
@@ -96,11 +100,13 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         manualEntryId: UUID? = nil,
         syncVersion: Int? = nil,
         hasRecordedEventDate: Bool = true,
-        hasRecordedTripLink: Bool? = nil
+        hasRecordedTripLink: Bool? = nil,
+        recoveredFromServerOrphan: Bool = false
     ) {
         self.id = id
         self.tripId = tripId ?? UUID()
         self.hasRecordedTripLink = hasRecordedTripLink ?? (tripId != nil)
+        self.recoveredFromServerOrphan = recoveredFromServerOrphan
         self.vineyardId = vineyardId
         self.date = date
         self.startTime = startTime
@@ -138,7 +144,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         case machineId, tractorId, sprayEquipmentId, isTemplate, operationType
         case applicationGeometry
         case sprayJobId
-        case entrySource, manualEntryId, syncVersion, hasRecordedEventDate, hasRecordedTripLink
+        case entrySource, manualEntryId, syncVersion, hasRecordedEventDate, hasRecordedTripLink, recoveredFromServerOrphan
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -181,6 +187,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         hasRecordedEventDate = try container.decodeIfPresent(Bool.self, forKey: .hasRecordedEventDate) ?? true
         // Preserve pre-existing cached links; server reconciliation supplies authoritative provenance.
         hasRecordedTripLink = try container.decodeIfPresent(Bool.self, forKey: .hasRecordedTripLink) ?? true
+        recoveredFromServerOrphan = try container.decodeIfPresent(Bool.self, forKey: .recoveredFromServerOrphan) ?? false
     }
 }
 
