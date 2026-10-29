@@ -8,6 +8,44 @@ import Observation
 /// canonical source. The legacy pin-based growth observations remain
 /// unchanged and continue to be written by the existing iOS flow; this
 /// service simply duplicates them into the new table via `pinId`.
+/// Recognise ONLY the old pin mirror generated before a remote identity was known.
+/// This is a read/acknowledgement decision, never a remote overwrite or a 23505 bypass.
+nonisolated enum GrowthStageMirrorReplay {
+    static func isUnmodifiedBackfill(
+        _ local: GrowthStageRecord,
+        of server: BackendGrowthStageRecord
+    ) -> Bool {
+        guard let pin = local.pinId, server.pinId == pin,
+              server.id != local.id,
+              server.vineyardId == local.vineyardId,
+              server.deletedAt == nil,
+              server.stageCode == local.stageCode,
+              server.paddockId == local.paddockId,
+              server.rowNumber == local.rowNumber,
+              server.side == local.side,
+              let serverObserved = server.observedAt,
+              abs(local.observedAt.timeIntervalSince(serverObserved)) <= 30,
+              local.createdAt == local.observedAt,
+              local.updatedAt == local.observedAt,
+              sameCoordinate(local.latitude, server.latitude),
+              sameCoordinate(local.longitude, server.longitude),
+              Set(local.photoPaths).isSubset(of: Set(server.photoPaths ?? [])) else {
+            return false
+        }
+        if let author = local.createdBy, let serverAuthor = server.createdBy,
+           author != serverAuthor { return false }
+        return true
+    }
+
+    private static func sameCoordinate(_ a: Double?, _ b: Double?) -> Bool {
+        switch (a, b) {
+        case (nil, nil): return true
+        case let (a?, b?): return a.isFinite && b.isFinite && abs(a - b) < 0.00001
+        default: return false
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class GrowthStageRecordSyncService {
@@ -391,8 +429,71 @@ final class GrowthStageRecordSyncService {
         } catch { return [] }
     }
 
+    /// Reconcile legacy offline mirrors before they enter the one-by-one 23505
+    /// retry splitter. The generated ID is not the canonical server identity.
+    /// Genuine changed/offline observations remain queued for explicit review.
+    private func reconcileQueuedLegacyMirrors(vineyardId: UUID) async throws -> Set<UUID> {
+        let candidates = records.filter {
+            $0.vineyardId == vineyardId && $0.pinId != nil
+                && metadata.pendingUpserts[$0.id] != nil
+                && metadata.pendingDeletes[$0.id] == nil
+                && !deletionStore.growthRecordIds.contains($0.id)
+        }
+        guard !candidates.isEmpty else { return [] }
+        let pinIDs = Set(candidates.compactMap(\.pinId))
+        let remote = try await repository.fetchActiveRecordsForPins(pinIDs, vineyardId: vineyardId)
+        // A suspended lookup is not permission to edit/acknowledge a retired account.
+        guard writeAuthority.canWrite(vineyardId: vineyardId.uuidString) else {
+            return Set(candidates.map(\.id))
+        }
+        var remoteByPin: [UUID: [BackendGrowthStageRecord]] = [:]
+        for record in remote where record.vineyardId == vineyardId && record.deletedAt == nil {
+            if let pin = record.pinId { remoteByPin[pin, default: []].append(record) }
+        }
+        var next = records
+        var acknowledged: [UUID] = []
+        var held: Set<UUID> = []
+        for candidate in candidates {
+            guard let pin = candidate.pinId, let matches = remoteByPin[pin] else { continue }
+            // Ambiguous positive evidence is never enough to acknowledge anything.
+            guard matches.count == 1, let canonical = matches.first else {
+                held.insert(candidate.id)
+                continue
+            }
+            if canonical.id == candidate.id { continue } // A normal record update.
+            guard pendingPhotos[candidate.id] == nil,
+                  !deletionStore.pinIds.contains(pin),
+                  GrowthStageMirrorReplay.isUnmodifiedBackfill(candidate, of: canonical) else {
+                held.insert(candidate.id)
+                continue
+            }
+            if let existing = next.first(where: { $0.id == canonical.id }),
+               (existing.vineyardId != vineyardId || existing.pinId != pin) {
+                held.insert(candidate.id)
+                continue
+            }
+            // The original pin remains stored. Its source data is never deleted.
+            // Preserve any newer canonical local edits, otherwise load the server row.
+            next.removeAll { $0.id == candidate.id }
+            if !next.contains(where: { $0.id == canonical.id }) {
+                next.append(canonical.toGrowthStageRecord())
+            }
+            acknowledged.append(candidate.id)
+        }
+        if !acknowledged.isEmpty {
+            // Durability FIRST. A disk failure leaves the outbox and evidence intact.
+            try persistence.saveOrThrow(next, key: persistenceKey)
+            records = next
+            metadata.clearDirty(acknowledged)
+            metadata.clearUnknownOutcome(acknowledged)
+            SyncIssueCenter.shared.clearIssues(acknowledged)
+        }
+        return held
+    }
+
     func pushQueuedGrowthRecords(vineyardId: UUID) async throws {
         guard writeAuthority.canWrite(vineyardId: vineyardId.uuidString) else { return }
+        let heldConflicts = try await reconcileQueuedLegacyMirrors(vineyardId: vineyardId)
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
@@ -407,6 +508,7 @@ final class GrowthStageRecordSyncService {
                 // upload and used to sit in the queue forever.
                 guard let record = byId[recordId] else { orphans.append(recordId); continue }
                 guard record.vineyardId == vineyardId,
+                      !heldConflicts.contains(recordId),
                       !deletionStore.growthRecordIds.contains(recordId),
                       record.pinId.map({ confirmed.contains($0) && !deletionStore.pinIds.contains($0) }) ?? true else { continue }
                 payloads.append(BackendGrowthStageRecord.upsert(
