@@ -1,0 +1,62 @@
+name: Sync bundle source review
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ios/**'
+      - 'android-vinetrack/**'
+      - 'scripts/audit_sync_inventory.py'
+      - 'scripts/tests/test_sync_inventory.py'
+      - 'docs/sync/**'
+      - '.github/workflows/sync-bundle-review.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-bundle-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  source-review:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'fix/sync-compatibility-318-319-20261030'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Inventory parser regression tests
+        run: python3 -m unittest discover -s scripts/tests -p 'test_sync_inventory.py' -v
+      - name: Verify registered sync surfaces
+        run: python3 scripts/audit_sync_inventory.py --verify-inventory --output review-evidence/sync-inventory.json
+      - name: Retain source-only review evidence
+        if: always()
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess, zipfile
+          root = Path('.')
+          out = root / 'review-evidence'
+          out.mkdir(exist_ok=True)
+          (out / 'commit.txt').write_text(subprocess.check_output(['git','rev-parse','HEAD'], text=True))
+          roots = {'ios', 'android-vinetrack', 'scripts', 'docs', 'sql', 'supabase'}
+          extensions = {'.swift','.kt','.kts','.java','.xml','.toml','.json','.md','.sql','.py','.sh','.pbxproj','.plist','.xcconfig','.yml','.yaml'}
+          excluded = {'Config.swift','Config.kt','local.properties','google-services.json','GoogleService-Info.plist'}
+          with zipfile.ZipFile(out / 'review-source.zip','w',zipfile.ZIP_DEFLATED) as archive:
+              for name in subprocess.check_output(['git','ls-files'], text=True).splitlines():
+                  path = Path(name)
+                  if not path.parts or path.parts[0] not in roots or path.suffix not in extensions:
+                      continue
+                  if path.name in excluded or any(p.startswith('.') for p in path.parts) or not path.is_file():
+                      continue
+                  archive.write(path, name)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sync-bundle-review-${{ github.event.pull_request.head.sha }}
+          path: review-evidence/
+          retention-days: 1
+          if-no-files-found: error
