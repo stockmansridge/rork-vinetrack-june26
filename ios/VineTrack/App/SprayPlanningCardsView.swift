@@ -139,6 +139,6 @@ private struct SprayPassIllustration: View {
                     p.closeSubpath()
                 }, with: .color(.cyan))
             }
-        }.frame(height: 106).accessibilityLabel(configuration == .standardPass ? "Single Row sprayer, arrows pointing left and right toward adjacent vine-row faces" : "Over-row boom with four spray heads treating both sides of two rows")
+        }.frame(height: 106).accessibilityLabel(configuration == .standardPass ? "Single Row sprayer, arrows pointing left and right toward adjacent vine-row faces" : "Two Row aisle sprayer with four heads treating both sides of two adjacent vine rows")
     }
 }
