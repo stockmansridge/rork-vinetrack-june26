@@ -125,7 +125,7 @@ struct TripDetailView: View {
                     if isRecoveringSavedSpray {
                         ProgressView("Checking original saved actions…")
                     }
-                    Text("Uses this trip's existing 116-path plan and saved identifiers. Never starts a replacement trip.")
+                    Text("Uses this trip's existing \(currentTrip.rowSequence.count)-path plan and saved identifiers. Never starts a replacement trip.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
