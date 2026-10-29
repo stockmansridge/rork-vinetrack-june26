@@ -4,10 +4,12 @@ import SwiftUI
 struct SprayTripStartConfirmationSheet: View {
     let machineName: String
     let latestEngineHours: Double?
+    let tanks: [SprayTank]
     let onStart: (Double?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var startEngineHoursText: String = ""
+    @State private var confirmedActualRates = false
 
     private var parsedStartEngineHours: Double? {
         let normalized = startEngineHoursText
@@ -31,9 +33,13 @@ struct SprayTripStartConfirmationSheet: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                } footer: {
-                    Text("Enter the meter reading now. Leave blank to calculate fuel from pause-aware trip duration.")
+                } header: {
+                    HStack {
+                        Text("Engine hours")
+                        FieldInfoButton(title: "Engine hours", message: "Enter the meter reading now. Leave blank to calculate fuel from pause-aware trip duration.")
+                    }
                 }
+                Section { SprayActualRateConfirmation(tanks: tanks, confirmed: $confirmedActualRates) }
             }
             .navigationTitle("Start Trip")
             .navigationBarTitleDisplayMode(.inline)
@@ -44,6 +50,8 @@ struct SprayTripStartConfirmationSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Start Trip") { onStart(parsedStartEngineHours) }
                         .fontWeight(.semibold)
+                        .disabled(!confirmedActualRates || !SprayStartRateReview.isReviewable(tanks) ||
+                            (!startEngineHoursText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && parsedStartEngineHours == nil))
                 }
             }
         }

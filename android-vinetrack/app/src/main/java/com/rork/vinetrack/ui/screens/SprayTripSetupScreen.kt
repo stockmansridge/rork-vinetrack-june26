@@ -201,12 +201,15 @@ fun SprayTripSetupScreen(
     pendingStartTripId?.let { tripId ->
         val trip = state.trips.firstOrNull { it.id == tripId }
         if (trip != null) {
+            val reviewedTanks = state.sprayRecords.firstOrNull { it.id == startingRecordId && it.tripId == trip.id }?.tanks.orEmpty()
             SprayTripStartConfirmation(
+                tanks = reviewedTanks,
+                scopeKey = "${state.currentUserId}|${state.selectedVineyardId}|$tripId|$startingRecordId",
                 machineName = sprayTripMachineName(trip, state.machines),
                 latestEngineHours = latestSprayTripEngineHours(trip, state.machines, state.fuelLogs),
                 onDismiss = { pendingStartTripId = null; startingRecordId = null },
                 onStart = { startHours ->
-                    vm.startSprayJob(tripId, startHours) { ok ->
+                    vm.startSprayJob(tripId, startHours, com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(reviewedTanks)) { ok ->
                         pendingStartTripId = null
                         startingRecordId = null
                         showProgramPicker = false

@@ -1340,15 +1340,22 @@ fun SprayCalculatorScreen(
         }
     }
 
-    fun startJobNow(startEngineHours: Double?) {
+    fun startJobNow(startEngineHours: Double?, reviewedInput: SprayRecordRepository.SprayInput) {
         calculatorOperationalBlocker?.let { errorMessage = it; return }
         val r = runCalculation() ?: return
+        val currentInput = buildInput()
+        if (com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(currentInput.tanks) !=
+            com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(reviewedInput.tanks) ||
+            currentInput.applicationGeometry != reviewedInput.applicationGeometry) {
+            errorMessage = "The mix changed. Reopen Start and confirm the updated actual rates."
+            return
+        }
         if (saving) return
         saving = true
         val firstPaddock = selectedPaddocks.firstOrNull()
         val paddockNames = selectedPaddocks.joinToString(", ") { it.name }
         vm.startSprayJobNow(
-            input = buildInput(),
+            input = reviewedInput,
             paddockId = firstPaddock?.id,
             paddockIds = selectedPaddocks.map { it.id },
             paddockName = paddockNames,
@@ -1415,6 +1422,7 @@ fun SprayCalculatorScreen(
             modifier = modifier,
         )
         if (showOperationalStartConfirmation) {
+            val reviewedInput = buildInput()
             val machine = state.machines.firstOrNull { it.id == tractorId || it.legacyTractorId == tractorId }
             val latestHours = state.fuelLogs.asSequence()
                 .filter { log ->
@@ -1426,10 +1434,12 @@ fun SprayCalculatorScreen(
             SprayTripStartConfirmation(
                 machineName = selectedTractor?.displayName ?: "Not selected",
                 latestEngineHours = latestHours,
+                tanks = reviewedInput.tanks,
+                scopeKey = "${state.currentUserId}|${state.selectedVineyardId}|new-spray",
                 onDismiss = { showOperationalStartConfirmation = false },
                 onStart = { hours ->
                     showOperationalStartConfirmation = false
-                    startJobNow(hours)
+                    startJobNow(hours, reviewedInput)
                 },
             )
         }
@@ -1788,6 +1798,13 @@ fun SprayCalculatorScreen(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Spray Unit", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    state.equipmentSyncError?.let { Text(it, fontSize = 12.sp, color = VineColors.Warning) }
+                    if (!state.sprayEquipmentKnowledge.isKnown && state.sprayEquipment.isEmpty()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Spray units have not loaded.", modifier = Modifier.weight(1f), color = vine.textSecondary)
+                            TextButton(onClick = { vm.refresh() }) { Text("Retry") }
+                        }
+                    }
                     EquipmentSummaryCard(
                         equipmentName = selectedEquipment?.displayName,
                         tankCapacity = selectedEquipment?.tankCapacityLitres,
@@ -4701,15 +4718,10 @@ private fun SprayTankMixReview(
             }
 
             item {
-                Text(
-                    "Weather data will be captured automatically at the start, every hour during the spray, and when the trip ends.",
-                    fontSize = 12.sp,
-                    color = vine.textSecondary,
-                    modifier = Modifier.fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(VineColors.Indigo.copy(alpha = 0.08f))
-                        .padding(12.dp),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Automatic weather capture", modifier = Modifier.weight(1f), color = vine.textSecondary)
+                    SprayInfoHelp("Weather capture", "Weather data is captured separately at the start, during the spray and when the Trip ends. Unavailable weather is recorded honestly and does not prevent a valid Trip from starting.")
+                }
             }
 
             errorMessage?.let { msg ->

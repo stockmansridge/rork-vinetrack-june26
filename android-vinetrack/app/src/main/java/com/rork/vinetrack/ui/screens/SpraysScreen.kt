@@ -1741,13 +1741,15 @@ private fun SprayDetailView(
         val trip = resolveSprayTrip(record, state.trips)
         if (trip != null) {
             SprayTripStartConfirmation(
+                tanks = record.tanks.orEmpty(),
+                scopeKey = "${state.currentUserId}|${state.selectedVineyardId}|${trip.id}|${record.id}",
                 machineName = sprayTripMachineName(trip, state.machines),
                 latestEngineHours = latestSprayTripEngineHours(trip, state.machines, state.fuelLogs),
                 onDismiss = { showStartConfirmation = false },
                 onStart = { startHours ->
                     showStartConfirmation = false
                     starting = true
-                    vm.startSprayJob(trip.id, startHours) { ok ->
+                    vm.startSprayJob(trip.id, startHours, com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(record.tanks.orEmpty())) { ok ->
                         starting = false
                         Toast.makeText(context, if (ok) "Spray job started — tracking your trip." else state.sprayError ?: "Couldn't start the spray job.", Toast.LENGTH_SHORT).show()
                         if (ok) onJobStarted?.invoke(trip.id)

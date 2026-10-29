@@ -203,7 +203,7 @@ object SupabaseClient {
     }
 
     private fun HttpRequestBuilder.replaceBearerToken(token: String) {
-        headers.remove(HttpHeaders.Authorization,)
+        headers.remove(HttpHeaders.Authorization)
         headers.append(HttpHeaders.Authorization, "Bearer $token")
     }
 

@@ -346,7 +346,10 @@ nonisolated enum SprayApplicationPlanner {
     /// Arithmetic preserved EXACTLY from the existing `SprayCalculator` so tank
     /// counts and per-tank volumes on current jobs cannot shift.
     static func tankSplit(totalLitres: Double, tankCapacityLitres: Double) -> SprayTankSplit {
-        guard totalLitres > 0, tankCapacityLitres > 0 else {
+        guard totalLitres.isFinite, tankCapacityLitres.isFinite,
+              totalLitres > 0, tankCapacityLitres > 0,
+              (totalLitres / tankCapacityLitres).isFinite,
+              ceil(totalLitres / tankCapacityLitres) <= 10_000 else {
             return SprayTankSplit(tankCapacityLitres: tankCapacityLitres, fullTankCount: 0, lastTankLitres: 0)
         }
         let numberOfTanks = Int(ceil(totalLitres / tankCapacityLitres))

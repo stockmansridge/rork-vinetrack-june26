@@ -874,6 +874,7 @@ data class AppUiState(
      * once online. Cleared when a fresh online load succeeds.
      */
     val blocksKnowledge: com.rork.vinetrack.data.HomeReadKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
+    val equipmentSyncError: String? = null,
     val machinesKnowledge: com.rork.vinetrack.data.HomeReadKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
     val sprayEquipmentKnowledge: com.rork.vinetrack.data.HomeReadKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
     val pinsKnowledge: com.rork.vinetrack.data.HomeReadKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
@@ -6683,6 +6684,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val clearTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
         _ui.update { it.copy(selectedVineyardId = id, isLoadingVineyardData = true,
             blocksKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
+            equipmentSyncError = null,
             machinesKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
             sprayEquipmentKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
             pinsKnowledge = com.rork.vinetrack.data.HomeReadKnowledge.Unknown,
@@ -12025,6 +12027,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun startSprayJob(
         tripId: String,
         startEngineHours: Double? = null,
+        reviewedRateEvidence: List<String>? = null,
         onResult: (Boolean) -> Unit,
     ) {
         if (runCatching { legacySpraySaves.blocks(tripId) }.getOrDefault(true)) {
@@ -12054,6 +12057,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (!canStartDeviceTrip { message -> _ui.update { it.copy(sprayError = message) } }) {
             onResult(false); return
+        }
+        if (reviewedRateEvidence != null) {
+            val currentRecipe = _ui.value.sprayRecords.firstOrNull {
+                it.tripId == tripId && it.vineyardId == existing.vineyardId && !it.isTemplate && it.endTime == null
+            }
+            if (currentRecipe == null || com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(currentRecipe.tanks.orEmpty()) != reviewedRateEvidence) {
+                _ui.update { it.copy(sprayError = "The saved mix changed. Reopen it to confirm the actual rates.") }
+                onResult(false); return
+            }
         }
         if (existing.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY) {
             activateQualifiedSpray(existing, startEngineHours, onResult)
@@ -17712,7 +17724,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return prepared
     }
 
+    private val vineyardReadGate = com.rork.vinetrack.data.ScopedSyncReadGate()
+
     private suspend fun loadVineyardData(vineyardId: String) {
+        val owner = session.userId ?: return
+        if (_ui.value.selectedVineyardId != vineyardId) return
+        val lease = vineyardReadGate.acquire(com.rork.vinetrack.data.ScopedSyncReadGate.Scope(
+            owner, session.retentionGuard.identityEpoch.value, vineyardId, vineyardSelectionEpoch,
+        )) ?: return
         val timing = performanceCapture.begin(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.VINEYARD_REFRESH)
         val switchTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
         try {
@@ -17720,6 +17739,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } finally {
             com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("background-load-including-waits", switchTiming)
             performanceCapture.end(timing)
+            vineyardReadGate.release(lease)
         }
     }
 
@@ -17805,6 +17825,56 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 isCurrentLoad() && domainCache.isFieldHydrationCurrent(userId, vineyardId, it)
             }
         }
+        var equipmentReadFailed = false
+        // Trip-ready references are published before any historical workload.
+        var machinesFromServer = false
+        var machinesFromCache = false
+        val machines = try {
+            repo.listMachines(vineyardId)
+                .also { machinesFromServer = true }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException && e !is kotlinx.coroutines.TimeoutCancellationException) throw e
+            equipmentReadFailed = true
+            if (e is BackendError.Unauthorized) handleUnauthorized("equipmentRefresh")
+            currentCachedFields()?.machines?.also { machinesFromCache = true }
+                ?: _ui.value.takeIf { isCurrentLoad() && it.machinesKnowledge.isKnown }
+                    ?.machines?.also { machinesFromCache = true }.orEmpty()
+        }
+        if (!isCurrentLoad()) return
+        if (machinesFromServer) domainCache.saveMachines(userId, vineyardId, machines)
+        // Spray equipment is an optional reference list backing the spray form
+        // picker; soft-fail to the existing list (or empty).
+        var sprayEquipmentFromServer = false
+        var sprayEquipmentFromCache = false
+        val sprayEquipment = try {
+            repo.listSprayEquipment(vineyardId)
+                .also { sprayEquipmentFromServer = true }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException && e !is kotlinx.coroutines.TimeoutCancellationException) throw e
+            equipmentReadFailed = true
+            if (e is BackendError.Unauthorized) handleUnauthorized("equipmentRefresh")
+            currentCachedFields()?.sprayEquipment?.also { sprayEquipmentFromCache = true }
+                ?: _ui.value.takeIf { isCurrentLoad() && it.sprayEquipmentKnowledge.isKnown }
+                    ?.sprayEquipment?.also { sprayEquipmentFromCache = true }.orEmpty()
+        }
+        if (!isCurrentLoad()) return
+        if (sprayEquipmentFromServer) domainCache.saveSprayEquipment(userId, vineyardId, sprayEquipment)
+        // A failed read never changes known cached data into a known-empty list.
+        if (!isCurrentLoad()) return
+        _ui.update { state -> if (!isCurrentLoad()) state else state.copy(
+            machines = machines, sprayEquipment = sprayEquipment,
+            machinesKnowledge = when {
+                machinesFromServer -> com.rork.vinetrack.data.HomeReadKnowledge.Fresh
+                machinesFromCache -> com.rork.vinetrack.data.HomeReadKnowledge.Cached
+                else -> com.rork.vinetrack.data.HomeReadKnowledge.Unknown
+            },
+            sprayEquipmentKnowledge = when {
+                sprayEquipmentFromServer -> com.rork.vinetrack.data.HomeReadKnowledge.Fresh
+                sprayEquipmentFromCache -> com.rork.vinetrack.data.HomeReadKnowledge.Cached
+                else -> com.rork.vinetrack.data.HomeReadKnowledge.Unknown
+            },
+            equipmentSyncError = if (equipmentReadFailed) "Equipment refresh failed. Saved items are retained; check Sync Status." else null,
+        ) }
         var paddockError: String? = null
         var pinError: String? = null
         var paddocksFromServer = false
@@ -17873,22 +17943,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // in-progress trip survives process death / offline launch / silent
         // autosave failure. Local-only — no replay, no server writes.
         val trips = restoreActiveTrip(userId, vineyardId, loadedTrips, tripsFromServer)
-        // Equipment + work tasks are reference lists used by the trip forms.
-        // They're non-critical, so failures fall back to the existing list
-        // (or empty) without surfacing an error.
-        var machinesFromServer = false
-        var machinesFromCache = false
-        val machines = try {
-            repo.listMachines(vineyardId).filter { it.vineyardId.equals(vineyardId, true) }
-                .also { machinesFromServer = true }
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            currentCachedFields()?.machines?.also { machinesFromCache = true }
-                ?: _ui.value.takeIf { isCurrentLoad() && it.machinesKnowledge.isKnown }
-                    ?.machines?.also { machinesFromCache = true }.orEmpty()
-        }
-        if (!isCurrentLoad()) return
-        if (machinesFromServer) domainCache.saveMachines(userId, vineyardId, machines)
         // Work-task headers are now an operational cached list (Stage P-3); soft-
         // fail to existing, then to the server-snapshot cache so an offline
         // restart still shows the last known headers as an overlay baseline.
@@ -18009,21 +18063,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 domainCache.loadSprayTargets(userId, vineyardId) ?: emptyList()
             }
         }
-        // Spray equipment is an optional reference list backing the spray form
-        // picker; soft-fail to the existing list (or empty).
-        var sprayEquipmentFromServer = false
-        var sprayEquipmentFromCache = false
-        val sprayEquipment = try {
-            repo.listSprayEquipment(vineyardId).filter { it.vineyardId.equals(vineyardId, true) }
-                .also { sprayEquipmentFromServer = true }
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            currentCachedFields()?.sprayEquipment?.also { sprayEquipmentFromCache = true }
-                ?: _ui.value.takeIf { isCurrentLoad() && it.sprayEquipmentKnowledge.isKnown }
-                    ?.sprayEquipment?.also { sprayEquipmentFromCache = true }.orEmpty()
-        }
-        if (!isCurrentLoad()) return
-        if (sprayEquipmentFromServer) domainCache.saveSprayEquipment(userId, vineyardId, sprayEquipment)
         // Saved chemicals back the spray-form chemical picker + costing prefill;
         // optional reference list, soft-fail to the existing list (or empty).
         val savedChemicals = try {
@@ -18301,8 +18340,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update {
             if (!isCurrentLoad()) it else it.copy(
                 blocksKnowledge = knowledge(paddocksFromServer, paddocksFromCache),
-                machinesKnowledge = knowledge(machinesFromServer, machinesFromCache),
-                sprayEquipmentKnowledge = knowledge(sprayEquipmentFromServer, sprayEquipmentFromCache),
                 pinsKnowledge = knowledge(pinsFromServer, pinsFromCache || it.pinsKnowledge.isKnown),
                 spraysKnowledge = knowledge(sprayFromServer, sprayFromCache || it.spraysKnowledge.isKnown),
                 paddocks = PendingWriteOverlay.overlayPaddocks(paddocks, latestPending, vineyardId),
@@ -18317,7 +18354,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     tripsFromCache || trips.isNotEmpty() -> TripsListKnowledge.Cached
                     else -> TripsListKnowledge.Unknown
                 },
-                machines = machines,
                 workTasks = PendingWriteOverlay.overlayWorkTaskHeaders(workTasks, latestPending, vineyardId),
                 workTaskPaddocks = PendingWriteOverlay.overlayWorkTaskPaddocks(
                     workTaskPaddocks,
@@ -18335,7 +18371,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 sprayRecords = PendingWriteOverlay.overlaySpray(sprayRecords, latestPending, vineyardId),
                 sprayJobTemplates = com.rork.vinetrack.data.spray.SprayProgramLanding.refreshedTemplates(sprayJobTemplates, it.sprayJobTemplates, sprayProgramFetchRevision, sprayProgramMutationRevision),
                 sprayTargetLibrary = sprayTargetLibrary,
-                sprayEquipment = sprayEquipment,
                 savedChemicals = savedChemicals,
                 savedInputs = savedInputs,
                 savedSprayPresets = savedSprayPresets,
