@@ -1860,19 +1860,40 @@ final class MigratedDataStore {
                 attempt.record.vineyardId == scope.vineyard
             }
         guard matches.count == 1, let attempt = matches.first else { return false }
+        // The older occurrence save assigned tripId without updating its
+        // independent hasRecordedTripLink bit. The WAL proves the exact pair,
+        // so restore the already-existing relationship, not a new identity.
+        var restored = attempt.record
+        restored.linkToOperationalTrip(tripId)
         if let current = sprayRecords.first(where: {
             $0.id == attempt.record.id || $0.tripId == tripId
         }) {
-            // Never overwrite a changed record; an existing different recipe
-            // must be investigated and reconciled, not silently replaced.
-            return current.id == attempt.record.id && current.tripId == tripId
+            // Never overwrite different or already-completed material. Only
+            // repair this original record's missing link-provenance bit.
+            guard current.id == attempt.record.id, current.tripId == tripId,
+                  current.vineyardId == scope.vineyard,
+                  current.endTime == nil, !current.isTemplate,
+                  current.tanks == attempt.record.tanks,
+                  current.applicationGeometry == attempt.record.applicationGeometry,
+                  !current.hasRecordedTripLink || current.canonicalTripId == tripId else {
+                return false
+            }
+            if current.hasRecordedTripLink { return true }
+            try operationalWriteAuthority.requireWrite(vineyardId: scope.vineyard.uuidString)
+            var next = sprayRecords
+            guard let index = next.firstIndex(where: { $0.id == current.id }) else { return false }
+            next[index].linkToOperationalTrip(tripId)
+            try sprayRepo.saveRecordsSliceOrThrow(next, for: scope.vineyard)
+            sprayRecords = next
+            onSprayRecordChanged?(current.id)
+            return true
         }
         try operationalWriteAuthority.requireWrite(vineyardId: scope.vineyard.uuidString)
         var next = sprayRecords
-        next.append(attempt.record)
+        next.append(restored)
         try sprayRepo.saveRecordsSliceOrThrow(next, for: scope.vineyard)
         sprayRecords = next
-        onSprayRecordChanged?(attempt.record.id)
+        onSprayRecordChanged?(restored.id)
         return true
     }
 
