@@ -167,7 +167,7 @@ struct TripDetailView: View {
                             .font(.caption)
                             .foregroundStyle(.orange)
                     } else {
-                        Text("Uses this trip's existing \(currentTrip.rowSequence.count)-path plan and saved identifiers.")
+                        Text("\(currentTrip.rowSequence.count) paths · Original saved trip")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -621,7 +621,7 @@ struct TripDetailView: View {
                     candidates, original: original, actorId: actor
                 ) else {
                     savedSprayRecoveryError =
-                        "No unique matching original spray was found. The queued 116-path trip is retained. Do not delete it or create a replacement; the local receipt and server records need a detailed review."
+                        "No unique original spray was found. The queued trip is retained. Keep the local receipt and ask for record reconciliation before attempting a new spray."
                     isRecoveringSavedSpray = false
                     return
                 }
@@ -683,7 +683,7 @@ struct TripDetailView: View {
                 }
             } catch {
                 isRecoveringSavedSpray = false
-                savedSprayRecoveryError = "The saved spray could not be safely linked. Original tank details and 116 paths remain unchanged. \(error.localizedDescription)"
+                savedSprayRecoveryError = "The saved spray could not be safely linked. Its original tanks and planned paths are retained. \(error.localizedDescription)"
             }
         }
     }
