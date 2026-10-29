@@ -2043,6 +2043,13 @@ final class MigratedDataStore {
     func applyRemoteSprayRecordUpsert(_ record: SprayRecord) {
         if selectedVineyardId == record.vineyardId {
             if let idx = sprayRecords.firstIndex(where: { $0.id == record.id }) {
+                let existing = sprayRecords[idx]
+                if existing.recoveredFromServerOrphan &&
+                   existing.canonicalTripId != record.canonicalTripId {
+                    // An unlinked or conflicting remote pull cannot delete
+                    // the confirmed local recovery identity and tank mix.
+                    return
+                }
                 sprayRecords[idx] = record
             } else {
                 sprayRecords.append(record)
