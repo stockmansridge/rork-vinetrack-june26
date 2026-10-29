@@ -56,7 +56,24 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
     var hasRecordedEventDate: Bool
     /// Local-only provenance: a compatibility UUID must never become a server Trip link.
     var hasRecordedTripLink: Bool
+    /// Explicit operational/WAL evidence, unlike a legacy cached compatibility UUID.
+    var hasVerifiedSavedTripLink: Bool = false
+    /// Local-only evidence: an unlinked, exact server snapshot was verified and
+    /// attached to this saved Trip. Never permit a normal remote pull to erase
+    /// it before the server accepts the conditional trip_id repair.
+    var recoveredFromServerOrphan: Bool = false
+    /// Durable receipt phase; ordinary sync cannot write a reviewed orphan before this.
+    var recoveredOrphanLinkAccepted: Bool = false
+    var pendingOrphanLink: Bool { recoveredFromServerOrphan && !recoveredOrphanLinkAccepted }
     var canonicalTripId: UUID? { hasRecordedTripLink ? tripId : nil }
+    /// A newly calculated recipe starts without a Trip. Assigning just tripId
+    /// leaves hasRecordedTripLink=false and silently sends NULL to Supabase.
+    /// Set both fields together ONLY when an operational Trip really exists.
+    mutating func linkToOperationalTrip(_ id: UUID) {
+        tripId = id
+        hasRecordedTripLink = true
+        hasVerifiedSavedTripLink = true
+    }
     var isManualEntry: Bool { entrySource == "manual" }
 
     init(
@@ -89,11 +106,13 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         manualEntryId: UUID? = nil,
         syncVersion: Int? = nil,
         hasRecordedEventDate: Bool = true,
-        hasRecordedTripLink: Bool? = nil
+        hasRecordedTripLink: Bool? = nil,
+        recoveredFromServerOrphan: Bool = false
     ) {
         self.id = id
         self.tripId = tripId ?? UUID()
         self.hasRecordedTripLink = hasRecordedTripLink ?? (tripId != nil)
+        self.recoveredFromServerOrphan = recoveredFromServerOrphan
         self.vineyardId = vineyardId
         self.date = date
         self.startTime = startTime
@@ -131,7 +150,7 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         case machineId, tractorId, sprayEquipmentId, isTemplate, operationType
         case applicationGeometry
         case sprayJobId
-        case entrySource, manualEntryId, syncVersion, hasRecordedEventDate, hasRecordedTripLink
+        case entrySource, manualEntryId, syncVersion, hasRecordedEventDate, hasRecordedTripLink, recoveredFromServerOrphan, recoveredOrphanLinkAccepted, hasVerifiedSavedTripLink
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -174,6 +193,9 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
         hasRecordedEventDate = try container.decodeIfPresent(Bool.self, forKey: .hasRecordedEventDate) ?? true
         // Preserve pre-existing cached links; server reconciliation supplies authoritative provenance.
         hasRecordedTripLink = try container.decodeIfPresent(Bool.self, forKey: .hasRecordedTripLink) ?? true
+        recoveredFromServerOrphan = try container.decodeIfPresent(Bool.self, forKey: .recoveredFromServerOrphan) ?? false
+        recoveredOrphanLinkAccepted = try container.decodeIfPresent(Bool.self, forKey: .recoveredOrphanLinkAccepted) ?? false
+        hasVerifiedSavedTripLink = try container.decodeIfPresent(Bool.self, forKey: .hasVerifiedSavedTripLink) ?? false
     }
 }
 

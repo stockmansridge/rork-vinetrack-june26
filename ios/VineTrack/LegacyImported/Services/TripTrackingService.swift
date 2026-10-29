@@ -432,7 +432,7 @@ final class TripTrackingService {
                 if let hours = trip.startEngineHours { start["startEngineHours"] = .number(hours) }
                 try journal.activate(.object(start))
                 if isSpray, var record = sprayRecord {
-                    record.tripId = trip.id
+                    record.linkToOperationalTrip(trip.id)
                     try store.saveSprayForLater(record: record, trip: inactive)
                 } else { try store.savePlannedTripOrThrow(inactive) }
                 finishPlannedActivation(trip, owner: owner, onStarted: onStarted)
@@ -440,7 +440,7 @@ final class TripTrackingService {
             return
         }
         if isSpray, var record = sprayRecord {
-            record.tripId = trip.id
+            record.linkToOperationalTrip(trip.id)
             var inactive = trip
             inactive.isActive = false
             do {
@@ -518,28 +518,72 @@ final class TripTrackingService {
         Task { @MainActor in
             do {
                 var ready = intended
+                let recipes = store.sprayRecords.filter {
+                    $0.canonicalTripId == intended.id && $0.vineyardId == intended.vineyardId &&
+                    !$0.isTemplate && $0.endTime == nil
+                }
+                let isSpray = intended.tripFunction == TripFunction.spraying.rawValue
+                guard !isSpray || recipes.count == 1 else { throw TripOccurrenceCoverage.Failure.reconciliation }
+                let frozenRecipe = recipes.first
                 let journal = try occurrenceJournal(for: intended)
                 guard let state = try journal.load(), state.heldReason == nil,
                       state.pending.contains(where: { $0.rpc == "activate_trip_occurrences_v1" }) || state.serverActive == true else {
                     throw TripOccurrenceCoverage.Failure.reconciliation
                 }
                 ready = try intended.withOccurrenceProjection(state.projected)
+                // Server-orphan restoration is never an offline-only start:
+                // the original parent AND its exact spray link need accepted
+                // server receipts before GPS recording can begin.
+                if store.sprayRecords.contains(where: {
+                    $0.canonicalTripId == intended.id && $0.recoveredFromServerOrphan
+                }) && !NetworkMonitor.shared.isOnline {
+                    throw TripOccurrenceCoverage.Failure.reconciliation
+                }
                 if NetworkMonitor.shared.isOnline {
                     let repo = SupabaseTripSyncRepository()
                     try await repo.upsertTrip(BackendTrip.upsert(from: intended, createdBy: owner, clientUpdatedAt: intended.startTime))
-                    let rows = try await repo.fetchAllTrips(vineyardId: intended.vineyardId)
-                    guard let remote = rows.first(where: { $0.id == intended.id }), let accepted = try journal.load(),
+                    let fetched = try await repo.fetchTripForOccurrenceStart(
+                        tripId: intended.id, vineyardId: intended.vineyardId)
+                    guard let remote = fetched, let accepted = try journal.load(),
                           accepted.creationConfirmed != false, accepted.serverActive == true, accepted.pending.isEmpty,
                           accepted.heldReason == nil, remote.occurrenceCoverage == accepted.acknowledged,
                           remote.isActive == true else { throw TripOccurrenceCoverage.Failure.reconciliation }
                     ready = remote.toTrip()
+                    // Parent create+activate receipts have been accepted. Only
+                    // NOW may the original spray's missing server trip_id be
+                    // linked, with an exact, compare-and-set record update.
+                    guard let original = store.trips.first(where: { $0.id == intended.id }),
+                          original.vineyardId == intended.vineyardId,
+                          authService?.userId == owner,
+                          store.selectedVineyardId == intended.vineyardId else {
+                        throw TripOccurrenceCoverage.Failure.scopeConflict
+                    }
+                    if let source = frozenRecipe {
+                        guard store.sprayRecords.first(where: { $0.id == source.id }) == source else {
+                            throw TripOccurrenceCoverage.Failure.reconciliation
+                        }
+                        try await SupabaseSprayRecordSyncRepository()
+                            .linkVerifiedOrphanAfterParentAcceptance(
+                                local: source, originalTrip: original, actorId: owner
+                            )
+                        guard authService?.userId == owner,
+                              store.selectedVineyardId == intended.vineyardId,
+                              store.trips.first(where: { $0.id == original.id }) == original,
+                              store.sprayRecords.first(where: { $0.id == source.id }) == source else {
+                            throw TripOccurrenceCoverage.Failure.scopeConflict
+                        }
+                        if source.pendingOrphanLink { try store.acceptRecoveredOrphanLink(source) }
+                    }
                 }
+                try store.operationalWriteAuthority.requireWrite(vineyardId: intended.vineyardId.uuidString)
                 guard authService?.userId == owner, store.selectedVineyardId == intended.vineyardId,
                       store.deviceActiveTripId == nil || store.deviceActiveTripId == intended.id else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                 if let index = store.sprayRecords.firstIndex(where: { $0.tripId == ready.id && !$0.isTemplate && $0.endTime == nil }) {
                     var record = store.sprayRecords[index]
-                    record.startTime = ready.startTime; record.date = ready.startTime
-                    guard store.updateSprayRecord(record) else { throw TripOccurrenceCoverage.Failure.storage }
+                    if !record.recoveredFromServerOrphan {
+                        record.startTime = ready.startTime; record.date = ready.startTime
+                        guard store.updateSprayRecord(record) else { throw TripOccurrenceCoverage.Failure.storage }
+                    } // Original recovered timestamps remain historical matching evidence.
                 }
                 try store.updateTripOrThrow(ready)
                 store.claimDeviceTrip(ready.id)
@@ -595,6 +639,10 @@ final class TripTrackingService {
         }
 
         let recipe = store.sprayRecords[recordIndex]
+        if recipe.recoveredFromServerOrphan && !NetworkMonitor.shared.isOnline {
+            errorMessage = "Connect to the internet to verify this original recovered spray and Trip link before starting."
+            onStarted(false); return
+        }
         if let blocker = recipe.operationalPlanningBlocker ?? SprayStartRecipeValidation.blocker(recipe.tanks) {
             errorMessage = blocker
             onStarted(false); return

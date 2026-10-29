@@ -147,8 +147,9 @@ final class SprayRecordSyncService {
             var pushedIds: [UUID] = []
             for (recordId, ts) in dirty {
                 guard var record = byId[recordId], record.vineyardId == vineyardId else { continue }
+                if record.pendingOrphanLink { continue }
                 try store.requireLegacySpraySyncAdmission(record: recordId)
-                if acceptedIds.contains(recordId), serverById[recordId] == nil {
+                if (acceptedIds.contains(recordId) || record.recoveredFromServerOrphan), serverById[recordId] == nil {
                     metadata.markUpsertsFailed([recordId])
                     continue // Acceptance does not authorize recreating a now-absent original.
                 }
@@ -181,6 +182,7 @@ final class SprayRecordSyncService {
         let deletes = metadata.pendingDeletes
         var deleteFailures: [String] = []
         for (recordId, _) in deletes {
+            if store.sprayRecords.contains(where: { $0.id == recordId && $0.recoveredFromServerOrphan }) { continue }
             if try store.isLegacySpraySyncHeld(record: recordId) { continue }
             do {
                 try await repository.softDeleteSprayRecord(id: recordId)
@@ -230,7 +232,8 @@ final class SprayRecordSyncService {
         if remote.isEmpty, lastSync == nil {
             let acceptedOriginalIds = Set(try store.acceptedLegacySprayPairs(vineyard: vineyardId).map { $0.record.id })
             let localForVineyard = try store.sprayRecords.filter {
-                guard $0.vineyardId == vineyardId, !acceptedOriginalIds.contains($0.id) else { return false }
+                guard $0.vineyardId == vineyardId, !$0.recoveredFromServerOrphan,
+                      !acceptedOriginalIds.contains($0.id) else { return false }
                 return try !store.isLegacySpraySyncHeld(record: $0.id)
             }
             if !localForVineyard.isEmpty {
@@ -250,6 +253,11 @@ final class SprayRecordSyncService {
     }
 
     private func applyRemote(_ backendRecord: BackendSprayRecord, vineyardId: UUID, store: MigratedDataStore) {
+        if let local = store.sprayRecords.first(where: { $0.id == backendRecord.id }),
+           local.pendingOrphanLink || (local.recoveredFromServerOrphan &&
+            (backendRecord.tripId != local.canonicalTripId || backendRecord.deletedAt != nil)) {
+            return // Keep both reviewed evidence and dirty intent until exact acceptance.
+        }
         guard (try? store.isLegacySpraySyncHeld(record: backendRecord.id)) == false else {
             metadata.markUpsertsFailed([backendRecord.id]); return
         }

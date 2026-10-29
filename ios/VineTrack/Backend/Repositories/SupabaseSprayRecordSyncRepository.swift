@@ -1,6 +1,97 @@
 import Foundation
 import Supabase
 
+/// Structural evidence for linking an existing unlinked server spray to its
+/// EXACT saved occurrence trip. No matching by names or area alone.
+nonisolated enum VerifiedOrphanSprayRecovery {
+    struct Evidence: Sendable {
+        let vineyardId: UUID
+        let tripId: UUID?
+        let createdBy: UUID?
+        let startTime: Date?
+        let date: Date?
+        let blockIds: Set<UUID>
+        let tankCount: Int
+        let tanksValid: Bool
+        let isTemplate: Bool
+        let endTime: Date?
+        let deletedAt: Date?
+    }
+
+    static func evidence(_ record: BackendSprayRecord) -> Evidence {
+        Evidence(
+            vineyardId: record.vineyardId,
+            tripId: record.tripId,
+            createdBy: record.createdBy,
+            startTime: record.startTime,
+            date: record.date,
+            blockIds: Set(record.blockIds ?? []),
+            tankCount: record.tanks?.count ?? 0,
+            // Identification needs a real frozen tank mix, not a verdict on
+            // chemical label compliance. Full start admission rechecks rates
+            // AFTER the user reviews the recovered original details.
+            tanksValid: record.tanks.map { tanks in
+                !tanks.isEmpty && tanks.allSatisfy {
+                    $0.waterVolume.isFinite && $0.waterVolume > 0 && !$0.chemicals.isEmpty
+                }
+            } ?? false,
+            isTemplate: record.isTemplate ?? false,
+            endTime: record.endTime,
+            deletedAt: record.deletedAt
+        )
+    }
+
+    static func matches(_ candidate: Evidence, original: Trip, actorId: UUID) -> Bool {
+        guard original.coverageBasis == .occurrence,
+              original.tripFunction == TripFunction.spraying.rawValue,
+              !original.rowSequence.isEmpty,
+              !original.isActive, original.endTime == nil,
+              original.pathPoints.isEmpty, original.totalDistance == 0,
+              original.completedPaths.isEmpty, original.skippedPaths.isEmpty,
+              original.tankSessions.isEmpty,
+              let document = TripOccurrenceCoverage.read(original.occurrenceCoverage),
+              document.activeOrder.count == original.rowSequence.count,
+              document.count("done") == 0, document.count("skipped") == 0,
+              candidate.tripId == nil, candidate.createdBy == actorId,
+              candidate.vineyardId == original.vineyardId,
+              !candidate.isTemplate, candidate.endTime == nil, candidate.deletedAt == nil,
+              candidate.tankCount > 0, candidate.tanksValid,
+              (original.totalTanks == 0 || candidate.tankCount == original.totalTanks),
+              let started = candidate.startTime,
+              abs(started.timeIntervalSince(original.startTime)) <= 60,
+              candidate.date.map({ abs($0.timeIntervalSince(started)) <= 60 }) ?? true else {
+            return false
+        }
+        let occurrenceBlocks = Set(document.items.compactMap { UUID(uuidString: $0.blockId) })
+        let tripBlocks = Set(original.paddockIds + (original.paddockId.map { [$0] } ?? []))
+        return !occurrenceBlocks.isEmpty
+            && occurrenceBlocks == tripBlocks
+            && candidate.blockIds == occurrenceBlocks
+    }
+
+    static func validLinkedReceipt(_ remote: BackendSprayRecord, local: SprayRecord,
+                                   original: Trip, actorId: UUID) -> Bool {
+        guard remote.id == local.id, remote.tripId == original.id,
+              remote.vineyardId == local.vineyardId, remote.createdBy == actorId,
+              remote.tanks == local.tanks, remote.deletedAt == nil,
+              remote.endTime == nil, remote.isTemplate != true else { return false }
+        // An already-linked ordinary spray is not an orphan discovery. Keep
+        // existing starts compatible with historical rows lacking block_ids.
+        if !local.recoveredFromServerOrphan { return true }
+        let e = evidence(remote)
+        let unlinked = Evidence(vineyardId: e.vineyardId, tripId: nil, createdBy: e.createdBy,
+            startTime: e.startTime, date: e.date, blockIds: e.blockIds,
+            tankCount: e.tankCount, tanksValid: e.tanksValid, isTemplate: e.isTemplate,
+            endTime: e.endTime, deletedAt: e.deletedAt)
+        return matches(unlinked, original: original, actorId: actorId)
+    }
+
+    static func unique(_ candidates: [BackendSprayRecord], original: Trip, actorId: UUID) -> BackendSprayRecord? {
+        let matched = candidates.filter { matches(evidence($0), original: original, actorId: actorId) }
+        return matched.count == 1 ? matched[0] : nil
+    }
+}
+
 final class SupabaseSprayRecordSyncRepository: SprayRecordSyncRepositoryProtocol {
     private let provider: SupabaseClientProvider
 
@@ -30,6 +121,132 @@ final class SupabaseSprayRecordSyncRepository: SprayRecordSyncRepositoryProtocol
 
     func fetchAllSprayRecords(vineyardId: UUID) async throws -> [BackendSprayRecord] {
         try await fetchSprayRecords(vineyardId: vineyardId, since: nil)
+    }
+
+    /// Read-only recovery search; capped, vineyard/actor scoped and limited to
+    /// the saved trip's original minute. A full or ambiguous result fails closed.
+    func fetchQueuedOrphanCandidates(
+        vineyardId: UUID, createdBy actorId: UUID, originalStart: Date
+    ) async throws -> [BackendSprayRecord] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        guard provider.client.auth.currentUser?.id == actorId else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
+        let start = originalStart.addingTimeInterval(-60).ISO8601Format(.init(includingFractionalSeconds: true))
+        let end = originalStart.addingTimeInterval(60).ISO8601Format(.init(includingFractionalSeconds: true))
+        let rows: [BackendSprayRecord] = try await provider.client.from("spray_records")
+            .select()
+            .eq("vineyard_id", value: vineyardId.uuidString)
+            .eq("created_by", value: actorId.uuidString)
+            .is("trip_id", value: nil)
+            .is("deleted_at", value: nil)
+            .eq("is_template", value: false)
+            .gte("start_time", value: start)
+            .lte("start_time", value: end)
+            .limit(25)
+            .execute().value
+        guard provider.client.auth.currentUser?.id == actorId else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
+        guard rows.count < 25 else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        return rows
+    }
+
+    /// The trip creation/activation RPC must already have accepted the original
+    /// parent. Ordinary spray form upserts intentionally cannot change trip_id.
+    /// This single-column CAS is the only repair for an exact orphan link.
+    /// Zero remote rows is valid for a genuinely new spray (its normal sync is
+    /// still pending), but NEVER for a recipe recovered from a server orphan.
+    func linkVerifiedOrphanAfterParentAcceptance(
+        local: SprayRecord, originalTrip: Trip, actorId: UUID
+    ) async throws {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        guard provider.client.auth.currentUser?.id == actorId else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
+        guard local.canonicalTripId == originalTrip.id,
+              local.vineyardId == originalTrip.vineyardId else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: originalTrip.vineyardId.uuidString)
+        let existing: [BackendSprayRecord] = try await provider.client.from("spray_records")
+            .select()
+            .eq("id", value: local.id.uuidString)
+            .eq("vineyard_id", value: originalTrip.vineyardId.uuidString)
+            .limit(2)
+            .execute().value
+        guard provider.client.auth.currentUser?.id == actorId else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
+        if existing.isEmpty && !local.recoveredFromServerOrphan {
+            // A newly created spray has not been uploaded yet. But a saved job
+            // from earlier today may already have an unlinked ORIGINAL server
+            // recipe under a different ID. Never manufacture a duplicate.
+            if Date().timeIntervalSince(originalTrip.startTime) > 300 {
+                let candidates = try await fetchQueuedOrphanCandidates(
+                    vineyardId: originalTrip.vineyardId,
+                    createdBy: actorId, originalStart: originalTrip.startTime
+                )
+                guard !candidates.contains(where: {
+                    VerifiedOrphanSprayRecovery.matches(
+                        VerifiedOrphanSprayRecovery.evidence($0),
+                        original: originalTrip, actorId: actorId
+                    )
+                }) else {
+                    throw TripOccurrenceCoverage.Failure.reconciliation
+                }
+            }
+            return
+        }
+        guard existing.count == 1, let remote = existing.first,
+              remote.createdBy == actorId,
+              remote.tanks == local.tanks,
+              remote.deletedAt == nil, remote.endTime == nil else {
+            throw TripOccurrenceCoverage.Failure.reconciliation
+        }
+        if remote.tripId == originalTrip.id {
+            guard VerifiedOrphanSprayRecovery.validLinkedReceipt(remote, local: local,
+                original: originalTrip, actorId: actorId) else {
+                throw TripOccurrenceCoverage.Failure.reconciliation
+            }
+            return
+        }
+        guard VerifiedOrphanSprayRecovery.matches(
+            VerifiedOrphanSprayRecovery.evidence(remote), original: originalTrip, actorId: actorId
+        ), let version = remote.syncVersion else {
+            throw TripOccurrenceCoverage.Failure.reconciliation
+        }
+        guard provider.client.auth.currentUser?.id == actorId else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: originalTrip.vineyardId.uuidString)
+        let update: [BackendSprayRecord] = try await provider.client.from("spray_records")
+            .update(["trip_id": originalTrip.id.uuidString.lowercased()])
+            .eq("id", value: local.id.uuidString)
+            .eq("vineyard_id", value: originalTrip.vineyardId.uuidString)
+            .eq("created_by", value: actorId.uuidString)
+            .eq("sync_version", value: version)
+            .is("trip_id", value: nil)
+            .select()
+            .execute().value
+        guard provider.client.auth.currentUser?.id == actorId else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
+        if update.count == 1, VerifiedOrphanSprayRecovery.validLinkedReceipt(update[0],
+            local: local, original: originalTrip, actorId: actorId) { return }
+        // Another writer might have installed the same link meanwhile; accept
+        // only the identical confirmed result. No overwrite or second attempt.
+        let reread: [BackendSprayRecord] = try await provider.client.from("spray_records")
+            .select()
+            .eq("id", value: local.id.uuidString)
+            .eq("vineyard_id", value: originalTrip.vineyardId.uuidString)
+            .limit(2)
+            .execute().value
+        guard provider.client.auth.currentUser?.id == actorId,
+              reread.count == 1, VerifiedOrphanSprayRecovery.validLinkedReceipt(reread[0],
+                local: local, original: originalTrip, actorId: actorId) else {
+            throw TripOccurrenceCoverage.Failure.reconciliation
+        }
     }
 
     func upsertSprayRecord(_ record: BackendSprayRecordUpsert) async throws {

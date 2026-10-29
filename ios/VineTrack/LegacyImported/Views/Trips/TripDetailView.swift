@@ -26,6 +26,9 @@ struct TripDetailView: View {
     @State private var showOriginalStartHelp = false
     @State private var isRecoveringSavedSpray = false
     @State private var savedSprayRecoveryError: String?
+    @State private var verifiedOrphanCandidate: BackendSprayRecord?
+    @State private var showRecoveredTankMix = false
+    @State private var recoveredMixReviewed = false
     @State private var showDeleteConfirmation: Bool = false
     @State private var position: MapCameraPosition = .automatic
     @State private var isExporting: Bool = false
@@ -139,17 +142,31 @@ struct TripDetailView: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("How to start a queued spray")
                     }
-                    if !accessControl.canCreateOperationalRecords {
-                        Text("Read-only access — subscription required.")
+                    if let candidate = verifiedOrphanCandidate {
+                        Text("Saved spray found · \(candidate.tanks?.count ?? 0) tanks")
+                            .font(.subheadline.weight(.medium))
+                        Button("Review saved tank mix") {
+                            showRecoveredTankMix = true
+                        }
+                        .accessibilityIdentifier("trip.reviewRecoveredSprayMix")
+                        Button("Confirm saved mix & Start Trip") {
+                            confirmRecoveredOrphanAndStart()
+                        }
+                        .disabled(!recoveredMixReviewed || isRecoveringSavedSpray ||
+                                  !accessControl.canCreateOperationalRecords)
+                        .accessibilityIdentifier("trip.confirmRecoveredOrphanSpray")
+                        Text("Check product labels and rates before spraying.")
                             .font(.caption)
                             .foregroundStyle(.orange)
+                    } else if !accessControl.canCreateOperationalRecords {
+                        Text("Read-only access — subscription required.").font(.caption).foregroundStyle(.orange)
+                    } else if isRecoveringSavedSpray {
+                        ProgressView("Locating original spray…")
+                    } else {
+                        Text("\(currentTrip.rowSequence.count) paths · Original saved trip")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    if isRecoveringSavedSpray {
-                        ProgressView("Checking original saved actions…")
-                    }
-                    Text("Uses this trip's existing \(currentTrip.rowSequence.count)-path plan and saved identifiers. Never starts a replacement trip.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             } else if currentTrip.isActive && tracking.activeTrip?.id == currentTrip.id {
                 Section {
@@ -443,6 +460,46 @@ struct TripDetailView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showRecoveredTankMix) {
+            NavigationStack {
+                List {
+                    Section {
+                        Text("Recorded evidence only — not label approval.")
+                            .foregroundStyle(.orange)
+                        Text("Spotlight Plus: verify the recorded per-100 L versus per-ha basis against the product label before spraying. SPRAY.SEED and all quantities are unchanged.")
+                            .font(.caption)
+                    }
+                    ForEach(verifiedOrphanCandidate?.tanks ?? []) { tank in
+                        Section("Saved Tank \(tank.tankNumber)") {
+                            LabeledContent("Recorded water", value: "\(tank.waterVolume.description) L")
+                            LabeledContent("Recorded spray rate", value: "\(tank.sprayRatePerHa.description) L/ha")
+                            ForEach(tank.chemicals) { chemical in
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(chemical.name).font(.headline)
+                                    Text("Saved amount: \(chemical.volumePerTank.description) \(chemical.unit.baseLabel)")
+                                    Text("Saved rate/100 L: \(chemical.ratePer100L.description) \(chemical.unit.baseLabel)/100 L")
+                                    Text("Saved rate/ha: \(chemical.ratePerHa.description) \(chemical.unit.baseLabel)/ha")
+                                    Text("Saved unit: \(chemical.unit.rawValue) · Basis: \(chemical.rateBasis?.rawValue ?? "Not recorded")")
+                                }.font(.caption)
+                            }
+                        }
+                    }
+                    Section {
+                        Button("I have reviewed the saved tanks") {
+                            recoveredMixReviewed = verifiedOrphanCandidate != nil
+                            showRecoveredTankMix = false
+                        }
+                        .accessibilityIdentifier("trip.acknowledgeRecoveredMixReview")
+                    }
+                }
+                .navigationTitle("Review Saved Tank Mix")
+                .toolbar { ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showRecoveredTankMix = false }
+                } }
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
         .sheet(isPresented: $showEditCostingLinks) {
             TripCostingLinksEditSheet(
                 trip: currentTrip,
@@ -471,7 +528,7 @@ struct TripDetailView: View {
             Text("Start Trip checks the original saved recipe and occurrence operations, then activates the same trip and planned paths. If verification fails, your queued trip remains retained; no replacement trip is made.")
         }
         .confirmationDialog("Start Original Saved Spray?", isPresented: $showSavedSprayStartConfirmation) {
-            Button("Recover and Start Original Trip") { recoverAndStartOriginalSpray() }
+            Button("Locate Original Spray") { recoverAndStartOriginalSpray() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Checks the saved spray recipe and occurrence journal before activation. If recovery cannot be verified, the original data remains queued.")
@@ -532,41 +589,133 @@ struct TripDetailView: View {
         }
     }
 
-    /// Rehydrate and activate only the exact saved pair through its journal.
+    /// Recover exact on-device WAL first. If that record is absent, make one
+    /// scoped READ of original unlinked server spray records. Never silently
+    /// select a product rate or start from a guessed tank mix.
     private func recoverAndStartOriginalSpray() {
         guard mayRecoverSavedOccurrenceSpray, !isRecoveringSavedSpray else { return }
         guard accessControl.canCreateOperationalRecords else {
-            savedSprayRecoveryError = "Read-only access: an active subscription is required to start this saved spray."
+            savedSprayRecoveryError = "Read-only access: a subscription is required to start this spray."
+            return
+        }
+        if verifiedOrphanCandidate != nil {
+            showRecoveredTankMix = true
             return
         }
         savedSprayRecoveryError = nil
         isRecoveringSavedSpray = true
-        do {
-            try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
-            _ = try store.restoreQueuedOccurrenceSprayRecordIfRetained(tripId: trip.id)
-            guard let original = store.trips.first(where: { $0.id == trip.id }),
-                  store.selectedVineyardId == original.vineyardId,
-                  SavedOccurrenceSprayStartEligibility.mayStart(original),
-                  store.sprayRecords.contains(where: {
-                      $0.tripId == original.id && $0.vineyardId == original.vineyardId
-                          && !$0.isTemplate && $0.endTime == nil
-                  }) else {
-                savedSprayRecoveryError = "The original spray recipe is not available in this device's Chemical/Spray Store. Its queued trip has not been altered. Do not delete or create another spray; recover the original saved evidence before starting."
-                isRecoveringSavedSpray = false
-                return
-            }
-            tracking.activateSavedTrip(original) { success in
-                isRecoveringSavedSpray = false
-                if success {
-                    dismiss()
-                } else {
-                    savedSprayRecoveryError = tracking.errorMessage ??
-                        "The original occurrence journal could not be verified. Your saved trip is retained."
+        Task { @MainActor in
+            do {
+                try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
+                _ = try store.restoreQueuedOccurrenceSprayRecordIfRetained(tripId: trip.id)
+                guard let original = store.trips.first(where: { $0.id == trip.id }),
+                      original.vineyardId == store.selectedVineyardId,
+                      SavedOccurrenceSprayStartEligibility.mayStart(original) else {
+                    throw TripOccurrenceCoverage.Failure.scopeConflict
                 }
+                if store.sprayRecords.contains(where: {
+                    $0.canonicalTripId == original.id && $0.vineyardId == original.vineyardId
+                        && !$0.isTemplate && $0.endTime == nil
+                }) {
+                    tracking.activateSavedTrip(original) { started in
+                        isRecoveringSavedSpray = false
+                        if started { dismiss() }
+                        else {
+                            savedSprayRecoveryError = tracking.errorMessage ??
+                                "The original operation was not accepted. The saved trip is retained."
+                        }
+                    }
+                    return
+                }
+
+                guard network.isOnline, let actor = store.currentUserIdProvider?() else {
+                    savedSprayRecoveryError = "Connect to locate the original spray. Your queued trip is retained."
+                    isRecoveringSavedSpray = false
+                    return
+                }
+                let candidates = try await SupabaseSprayRecordSyncRepository()
+                    .fetchQueuedOrphanCandidates(
+                        vineyardId: original.vineyardId,
+                        createdBy: actor, originalStart: original.startTime
+                    )
+                guard store.currentUserIdProvider?() == actor,
+                      store.selectedVineyardId == original.vineyardId,
+                      store.trips.first(where: { $0.id == original.id }) == original else {
+                    throw TripOccurrenceCoverage.Failure.scopeConflict
+                }
+                guard let matched = VerifiedOrphanSprayRecovery.unique(
+                    candidates, original: original, actorId: actor
+                ) else {
+                    savedSprayRecoveryError =
+                        "No unique original spray found. Trip retained; reconciliation required."
+                    isRecoveringSavedSpray = false
+                    return
+                }
+                verifiedOrphanCandidate = matched
+                recoveredMixReviewed = false
+                isRecoveringSavedSpray = false
+                showRecoveredTankMix = true
+            } catch {
+                isRecoveringSavedSpray = false
+                savedSprayRecoveryError = "Recovery held. Original trip and mix retained."
             }
-        } catch {
-            isRecoveringSavedSpray = false
-            savedSprayRecoveryError = "The original saved spray could not be reconciled. Nothing was deleted or replaced. \(error.localizedDescription)"
+        }
+    }
+
+    /// A missing local recipe is never imported or started until the operator
+    /// has opened the original server tank mix and explicitly confirms it.
+    private func confirmRecoveredOrphanAndStart() {
+        guard let selected = verifiedOrphanCandidate, recoveredMixReviewed,
+              mayRecoverSavedOccurrenceSpray, !isRecoveringSavedSpray,
+              accessControl.canCreateOperationalRecords else { return }
+        savedSprayRecoveryError = nil
+        isRecoveringSavedSpray = true
+        Task { @MainActor in
+            do {
+                guard network.isOnline, let actor = store.currentUserIdProvider?(),
+                      let original = store.trips.first(where: { $0.id == trip.id }),
+                      original.vineyardId == store.selectedVineyardId,
+                      SavedOccurrenceSprayStartEligibility.mayStart(original) else {
+                    throw TripOccurrenceCoverage.Failure.scopeConflict
+                }
+                // Re-read to avoid importing an orphan changed after the review.
+                let fresh = try await SupabaseSprayRecordSyncRepository()
+                    .fetchQueuedOrphanCandidates(
+                        vineyardId: original.vineyardId,
+                        createdBy: actor, originalStart: original.startTime
+                    )
+                guard store.currentUserIdProvider?() == actor,
+                      store.selectedVineyardId == original.vineyardId,
+                      store.trips.first(where: { $0.id == original.id }) == original,
+                      let matched = VerifiedOrphanSprayRecovery.unique(
+                          fresh, original: original, actorId: actor
+                      ), matched.id == selected.id, matched.tanks == selected.tanks,
+                      matched.syncVersion == selected.syncVersion,
+                      matched.updatedAt == selected.updatedAt else {
+                    throw TripOccurrenceCoverage.Failure.reconciliation
+                }
+                var reviewed = selected.toSprayRecord()
+                var refreshed = matched.toSprayRecord()
+                reviewed.linkToOperationalTrip(original.id)
+                refreshed.linkToOperationalTrip(original.id)
+                guard reviewed == refreshed else { throw TripOccurrenceCoverage.Failure.reconciliation }
+                _ = try store.installVerifiedServerOrphanForSavedTrip(
+                    matched, tripId: original.id, actorId: actor
+                )
+                tracking.activateSavedTrip(original) { started in
+                    isRecoveringSavedSpray = false
+                    if started {
+                        verifiedOrphanCandidate = nil
+                        dismiss()
+                    } else {
+                        savedSprayRecoveryError = tracking.errorMessage ??
+                            "The original occurrence still requires reconciliation. Saved evidence was retained."
+                    }
+                }
+            } catch {
+                isRecoveringSavedSpray = false
+                savedSprayRecoveryError = "Link not verified. Original tanks and planned paths retained."
+            }
         }
     }
 

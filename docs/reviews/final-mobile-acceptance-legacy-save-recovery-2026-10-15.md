@@ -1,5 +1,57 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## PR #18 verified original server spray — 29 October 2026 — 135 TESTS GREEN; SIMULATOR PASS; SIGNED RELEASE184 UPLOADED; APPLE PROCESSING PENDING
+
+### Source provenance and bounded reconciliation
+
+- Starting managed HEAD/source parent **`8a0fea46e61e39f438a5186473c7388504bfbe76`**. Public branch `hotfix/ios-verified-orphan-spray-recovery-20261029` and PR #18 head independently verified before and after integration at **`d6dc03b4082f4cd55453ec862702801323bb8e35`**; base `5edff60f755376b124f7d42922b990c1f844209e`, 24 commits, seven changed files. PR remains open/unmerged.
+- Reviewed all seven PR-changed files before compiling. Applied their exact-context source deltas atop the newer workspace using retained `scripts/reconcile-vinetrack-pr18.py`, not an older branch checkout or ancestry merge. No manual commit/push/reset/cherry-pick. The external SHA is reviewed provenance, not a claim that the final native source is byte-identical to it.
+- Newer calculator (#11), initial subscription verification (#17), prior original-occurrence/WAL/receipt protections and access enforcement retained. Native changes confined to eight iOS files: the seven reviewed PR files plus directly related `SprayRecordSyncService.swift` safety correction. Android, SQL/migrations, calculator and release project settings untouched; no live customer records read or changed during validation.
+
+### Recovery and additional corrections beyond the PR
+
+- Atomic operational-trip link updates provenance and payload together. Discovery requires the authenticated owner, vineyard, absolute timestamp difference under60seconds, exact block set and valid original saved tanks. Refuses ambiguous matches and active/completed/progressed trips. No replacement spray/trip or new occurrence/operation identities.
+- Locate Original Spray → Review Saved Tank Mix → explicit “I have reviewed the saved tanks” → Confirm Saved Mix & Start Trip. Dismissing the review is not acknowledgement. Re-fetch and compare the full normalized snapshot before installation. Concise mutually exclusive guidance; longer explanation behind information control.
+- Review displays both tanks and raw recorded quantities/base units, both rate fields and recorded rate basis. Spotlight Plus per100L versus perha warning is explicit; SPRAY.SEED and every saved amount remain unchanged. No conversions/recalculation and **no label-compliance approval**.
+- Added durable recovered-orphan provenance and exact-link acceptance receipt. Pending repairs hold ordinary spray upsert/delete/bootstrap so no generic sync bypass or recreation of a missing original server row is possible. Stale unlinked/same-link/deleted snapshots cannot discard recovered local evidence, including the off-selected-vineyard disk slice.
+- Retain original queued trip/time through parent activation and interrupted link acceptance, including remote trip pulls/deletes and restart. Fetch exact accepted parent, not a capped vineyard list. Persist exact conditional spray-link receipt before publishing Active Trip/GPS. Recheck actor/scope/unchanged recipe across asynchronous work; recovered historical dates are not reset to activation time.
+- Linked receipts validate owner/vineyard/tanks/nondeleted/unfinished state; recovered records still require strict original evidence. Ordinary historically linked starts remain compatible with absent block IDs; this does not loosen orphan discovery. Explicit `hasVerifiedSavedTripLink` distinguishes operational/WAL evidence from legacy cached nonnil UUIDs, retaining legitimate unlinked-spray completion behavior.
+- Preserve richer local tanks, chemicals, equipment, calculation snapshots, WAL/journal and queued intents. No forced WAL rewrite/deletion or receipt fabrication. New provenance fields decode false for old caches.
+
+### Executed validation and failures
+
+- New active/completed matcher assertions reproduced the PR defect: **0 passed/1 failed** before correction. Intermediate recovery/journal selection **48 passed in138s**.
+- Broad focused run **134 passed/1 failed**: existing `SprayProgramRound2Tests/unlinkedCompletionThenPersistedOrdinaryEditKeepsNullTrip()` caught overbroad link preservation. Corrected production provenance logic; did not weaken the legitimate-null regression. Subsequent run **135 passed in86s**; final unchanged-source run **135 passed in56s**. Aggregate results supplied no skipped count.
+- Final selectors, each under `VineTrackTests/`: `SprayOccurrenceRecoveryHotfixTests`, `TripOccurrenceJournalTests`, `SpraySaveForLaterTests`, `LegacySprayPairReceiptTests`, `SprayTripStartAdmissionTests`, `SpraySavedJobActivationIntegrationTests`, `StartTankCommitCoordinatorTests`, `TankSessionLifecycleTests`, `TankMixPresentationTests`, `SprayProgramRound2Tests`.
+- Includes all five PR18 methods: `testOperationalTripLinkUpdatesProvenanceAndServerPayloadTogether`, `testVerifiedOrphanRequiresSameOwnerVineyardMinuteBlocksAndValidTanks`, `testStaleServerSnapshotCannotClearVerifiedRecoveredTripLink`, `testExactOrphanServerSnapshotRestoresOriginalTwoTankMixWithoutNewTrip`, `testOriginalWalRepairsFalseTripLinkWithoutChangingFrozenRecipeOrTrip`.
+- Expanded synthetic fixture: **116 planned paths, eight blocks, two tanks**, Spotlight Plus/SPRAY.SEED, owner/vineyard/read-only refusal, disk reload, interrupted active-parent pull/delete, stale same-link retention, edit/delete hold, ordinary sync no insert/write/delete, dirty-intent retention, durable exact-link receipt and deleted-receipt refusal. These are production-code/transport-probe regressions, not authenticated original-customer acceptance.
+- Exactly **one separate iOS `runChecks` PASS: simulator build succeeded**. No interactive simulator navigation or physical-device checks. Historical unrelated six-journey UI failure remains open and was not rerun. No Android or unrelated suites. Two unchanged storage-asset notices out of scope. `git diff --check HEAD` PASS.
+
+### Signed delivery checkpoint
+
+- Existing app confirmed (`created:false`): ASC **6761143377**, bundle **`app.rork.nt0v48tayl7v8noxcfe74`**, team **`8Y879855VK`**, version **3.1.9**. Existing distribution certificate ready; capabilities synchronized with no changes.
+- Apple build183 now independently **VALID**, not expired, nonexempt encryption false; beta detail **IN_BETA_TESTING**, relationship to existing `Internal Testing` group **`1a8d95a6-44ec-47ac-8754-47a0a283582e`** confirmed. This supersedes the pending183 checkpoint below; it is not proof of a handset install.
+- Exact all-state build184 lookup returned no build; upload lookup for3.1.9/184/IOS returned zero records. Select next available **184**, explicitly overriding historical local139 in the managed signed Release pipeline, same app/team/version. Managed signed production Release build/upload **SUCCEEDED on the first attempt** as **3.1.9 (184)**. Submission **`571b4442-1af7-4547-9270-88ebc0fadb2e`**, `currentBuildStep:complete`, no error, correct `appPath:ios`/`framework:swift`/bundle/team/version/build. Publish status reports pinned archive source `supplied-snapshot`, Xcode27.1. This is the signed Release/IPA pipeline, not the earlier simulator artifact; no local IPA download/independent binary inspection. No public review/release.
+- Independent Apple upload receipt **`31ee7e54-c9be-4c4a-a788-6b58cbd7f1d4`**, version3.1.9/build184/IOS, uploaded **2026-10-29T06:41:06Z** (returned `2026-10-28T23:41:06-07:00`). Bounded50s wait returned **pending**, discovery phase, upload **PROCESSING**, not yet visible as a build. Exit7 is pending, not a failed build. Stopped processing polls after this result; no duplicate upload.
+- **Still unconfirmed for184:** terminal Apple VALID state, exact build/internal-group relationship and install availability. Automatic managed TestFlight invite handling retained; existing all-build Internal Testing group is not by itself proof for184. Resume on next user message without rebuilding/uploading: `asc builds wait --app 6761143377 --build-number 184 --version 3.1.9 --platform IOS --fail-on-invalid --poll-interval 10s --report-pending --timeout 50s`. After VALID, inspect beta detail and existing group relationship. Original-iPhone acceptance below remains open.
+
+### Eight-file source/test SHA256 manifest before signed delivery
+
+```text
+cd2303ad819bd3d7e0c51407820f903e2c308ba3082e55ecca37a0ffae75c14b ios/VineTrack/App/SprayProgram/SprayCompletionResolver.swift
+b2fcaae09e090b46f27be08050d5a63aab4f5d21ec2014ade6c4c808014656e5 ios/VineTrack/Backend/Repositories/SupabaseSprayRecordSyncRepository.swift
+d204df582cc450eb3ac3c86287020787b0b45950e20fb8887e7f3adc8038450b ios/VineTrack/Backend/Sync/SprayRecordSyncService.swift
+7cb988d37a9a4977453406ec2d2de5d1e52c11960498eb930b4477e655b7356c ios/VineTrack/LegacyImported/Models/SprayRecord.swift
+85d175e88ea54873ff5d6389889cfdf6392fb2a5c76d1d2a2511184d31038892 ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift
+093134c361597a9e7ee10cc9b4af8c6cbff357b5961591911e11b87ca94e3c62 ios/VineTrack/LegacyImported/Services/TripTrackingService.swift
+f62a0b4c16b9085d998948c45f5f9a6969c38fc833f78f2d9acf9a80cb7cb9f1 ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift
+29eef17edd58cc3d4522ae242c94ec47ac0055282dcc64f0730027670d8e926a ios/VineTrackTests/SprayOccurrenceRecoveryHotfixTests.swift
+```
+
+### Original iPhone acceptance remains open
+
+Install in place over the retained existing install, **never uninstall, clear data or delete/recreate the trip**. Same account/vineyard: open **29 October2026, 1:07pm**, verify **Queued,116planned/0completed/eightblocks**. Start Trip → Locate Original Spray → Review Saved Tank Mix; check both original tanks, unchanged quantities/chemicals/equipment/snapshots, Spotlight Plus basis warning and SPRAY.SEED. Explicitly acknowledge review and Confirm Saved Mix & Start Trip. Confirm the same original trip/spray/occurrence/operation IDs, exact accepted parent/link receipts, Active Trip, retained offline evidence and real GPS. On any mismatch/ambiguity/receipt failure, stop and retain evidence; do not create a replacement. Synthetic tests and signed builds cannot close this physical/live-data requirement.
+
 ## PR #15 original queued spray / TestFlight checkpoint — 29 October 2026 — 182 TESTS GREEN; SIGNED BUILD183 UPLOADED; APPLE PROCESSING PENDING
 
 ### Verified source and reconciliation
