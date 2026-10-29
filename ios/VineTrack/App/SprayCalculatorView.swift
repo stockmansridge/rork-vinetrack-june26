@@ -2826,7 +2826,7 @@ struct SprayCalculatorView: View {
 
                     if asksAreaBasis && line.basis == .perHectare {
                         GuidedProductBasisPicker(
-                            selected: productAreaBasis[line.id] ?? .wholeBlockArea
+                            selected: productAreaBasis[line.id]
                         ) { basis in
                             withAnimation(.snappy(duration: 0.2)) {
                                 productAreaBasis[line.id] = basis
@@ -2852,7 +2852,8 @@ struct SprayCalculatorView: View {
                         findings: check.findings(forProductId: line.id.uuidString)
                     )
                 }
-                .padding(.bottom, 4)
+                .padding(.bottom, 14)
+                .padding(.horizontal, 2)
             }
 
             Button {
@@ -4836,6 +4837,14 @@ struct CalcChemicalLineCard: View {
     @State private var showsRateSheet: Bool = false
     @State private var cachedRateChemical: SavedChemical?
     @State private var cachedRates: [SpraySelectableRate] = []
+    // Edit the rate as a single basis/unit/amount decision. Never reinterpret
+    // a previously selected per-ha number as a per-100-L number.
+    @State private var editingLabelRate = false
+    @State private var previousLabelLine: ChemicalLine?
+    @State private var labelRateBasis: ChemicalRateBasis = .per100Litres
+    @State private var labelRateUnit: String = "mL"
+    @State private var labelRateAmount = ""
+    @State private var checkedProductLabel = false
 
     /// The CONFIRMED rate governing this line's basis, from `default_rates`.
     private var confirmedResolution: ChemicalSprayRateHandoff.Resolution? {
@@ -5009,23 +5018,11 @@ struct CalcChemicalLineCard: View {
                 )
             }
 
-            Text("What this product rate is measured against. Your water volume "
-                 + "basis is chosen in Carrier / Spray Volume and is not changed by this.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
-
+            SprayFieldHelp(title: "Product label rate basis",
+                message: "Per 100 L means product per 100 litres of spray water; Per ha means product per hectare. This is separate from the water application basis. Use Enter rate from product label when VineTrack has no suitable recognised rate.")
             if !hasGenuinePer100LVineyardRate {
-                Text("This label states no per-100 L grapevine rate.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if !hasGenuinePerHectareVineyardRate {
-                Text("This label states no per-hectare grapevine rate.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text("No verified Per 100 L grapevine rate is recorded in VineTrack.")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 14)
@@ -5244,6 +5241,33 @@ struct CalcChemicalLineCard: View {
                 Divider().padding(.leading, 14)
                 rateBasisControl
             }
+            if let chem = selectedChemical {
+                Divider().padding(.leading, 14)
+                if editingLabelRate {
+                    operatorLabelRateEditor(chemical: chem)
+                } else {
+                    Button {
+                        previousLabelLine = line
+                        labelRateBasis = line.basis
+                        labelRateUnit = line.operationalRateUnit ?? (chem.unit == .litres ? "L" : chem.unit == .kilograms ? "kg" : chem.unit == .grams ? "g" : "mL")
+                        labelRateAmount = ""
+                        checkedProductLabel = false
+                        line.selectedRateId = UUID()
+                        line.overrideRate = nil
+                        line.operationalRateSource = nil
+                        line.operationalRateUnit = nil
+                        line.applicationRateDraft = nil
+                        editingLabelRate = true
+                    } label: {
+                        Label(line.operationalRateSource == .operatorPlanning ? "Change operator-entered rate" : "Enter rate from product label", systemImage: "square.and.pencil")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .padding(.horizontal, 14)
+                    .accessibilityIdentifier("spray.product.enterLabelRate")
+                }
+            }
 
             Divider().padding(.leading, 14)
 
@@ -5341,11 +5365,12 @@ struct CalcChemicalLineCard: View {
                         if let warning = OperationalRateResolver.warning(rate, chemical: chem) { Text(warning).font(.caption).foregroundStyle(.orange).padding(.horizontal, 14) }
                     }
                 }
-                overrideRateRow(chem: chem)
+                if !editingLabelRate { overrideRateRow(chem: chem) }
             }
         }
         .background(Color(.secondarySystemGroupedBackground))
-        .clipShape(.rect(cornerRadius: 10))
+        .clipShape(.rect(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(VineyardTheme.olive.opacity(0.24), lineWidth: 1))
         .sheet(isPresented: $showsRateSheet) {
             SprayLabelRateSelectionView(rates: rateSheetOptions, selectedID: line.selectedRateId) { rate in
                 line.selectedRateId = rate.id
@@ -5361,6 +5386,8 @@ struct CalcChemicalLineCard: View {
         .onChange(of: selectedChemical) { _, chemical in
             cachedRateChemical = chemical
             cachedRates = chemical.map { SprayRegisteredUseRates.vineyardRates(for: $0) } ?? []
+            editingLabelRate = false
+            previousLabelLine = nil
         }
         .onChange(of: line.overrideRate) { _, _ in
             if !isRateFocused { syncOverrideText() }
@@ -5377,6 +5404,73 @@ struct CalcChemicalLineCard: View {
                 line.overrideRate = nil
             }
         }
+    }
+
+    /// Operator-entered rates are per-spray evidence, not verified catalogue rates.
+    private func operatorLabelRateEditor(chemical: SavedChemical) -> some View {
+        let value = SprayEditingNumber.completeValue(labelRateAmount)
+        let units = ["mL", "L", "g", "kg"].filter {
+            VineyardPreferredRate(amount: 1, unit: $0, basis: labelRateBasis)
+                .chemicalUnit.isDimensionallyCompatible(with: chemical.unit)
+        }
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Product label rate — operator entered")
+                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 8) {
+                ForEach([ChemicalRateBasis.per100Litres, .perHectare], id: \.self) { basis in
+                    Button(basis == .per100Litres ? "Per 100 L" : "Per ha") {
+                        labelRateBasis = basis
+                        labelRateAmount = ""
+                        checkedProductLabel = false
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(labelRateBasis == basis ? VineyardTheme.olive : .secondary)
+                    .accessibilityIdentifier(basis == .per100Litres ? "spray.product.manualPer100L" : "spray.product.manualPerHa")
+                }
+            }
+            HStack {
+                TextField("Product amount", text: $labelRateAmount)
+                    .keyboardType(.decimalPad)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("spray.product.manualAmount")
+                Picker("Product unit", selection: $labelRateUnit) {
+                    ForEach(units, id: \.self) { unit in Text(unit).tag(unit) }
+                }
+                .accessibilityIdentifier("spray.product.manualUnit")
+            }
+            Toggle("I checked this product, crop, target and rate against the applicable label", isOn: $checkedProductLabel)
+                .font(.caption)
+            Text("Operator-entered for this spray; not verified or approved by the VineTrack catalogue.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Button("Cancel") {
+                    if let previousLabelLine { line = previousLabelLine }
+                    previousLabelLine = nil
+                    editingLabelRate = false
+                }
+                .buttonStyle(.bordered)
+                Button("Use this rate") {
+                    guard let value, value.isFinite, value > 0, checkedProductLabel,
+                          units.contains(labelRateUnit) else { return }
+                    let rate = VineyardPreferredRate(amount: value, unit: labelRateUnit, basis: labelRateBasis)
+                    line.basis = labelRateBasis
+                    line.selectedRateId = UUID()
+                    line.operationalRateSource = .operatorPlanning
+                    line.operationalRateUnit = labelRateUnit
+                    line.overrideRate = rate.chemicalUnit.toBase(value)
+                    line.applicationRateDraft = labelRateAmount
+                    previousLabelLine = nil
+                    editingLabelRate = false
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(value == nil || (value ?? 0) <= 0 || !checkedProductLabel || !units.contains(labelRateUnit))
+                .accessibilityIdentifier("spray.product.commitManualRate")
+            }
+        }
+        .padding(14)
+        .background(VineyardTheme.olive.opacity(0.06))
+        .clipShape(.rect(cornerRadius: 10))
+        .padding(.horizontal, 14)
     }
 
     /// The applied label rate the operator is using.
