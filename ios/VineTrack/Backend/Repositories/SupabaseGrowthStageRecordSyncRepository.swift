@@ -28,6 +28,28 @@ final class SupabaseGrowthStageRecordSyncRepository: GrowthStageRecordSyncReposi
         }
     }
 
+    /// Positive vineyard/pin lookup: at most 80 unique active rows per chunk.
+    /// Never infer absence from a capped vineyard-wide list.
+    func fetchActiveRecordsForPins(_ pinIds: Set<UUID>, vineyardId: UUID) async throws -> [BackendGrowthStageRecord] {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        guard !pinIds.isEmpty else { return [] }
+        let values = pinIds.map(\.uuidString).sorted()
+        var found: [BackendGrowthStageRecord] = []
+        for start in stride(from: 0, to: values.count, by: 80) {
+            let chunk = Array(values[start..<min(start + 80, values.count)])
+            let rows: [BackendGrowthStageRecord] = try await provider.client
+                .from("growth_stage_records").select()
+                .eq("vineyard_id", value: vineyardId.uuidString)
+                .in("pin_id", values: chunk)
+                .is("deleted_at", value: nil)
+                .execute().value
+            found.append(contentsOf: rows.filter {
+                $0.vineyardId == vineyardId && $0.deletedAt == nil && $0.pinId.map(pinIds.contains) == true
+            })
+        }
+        return found
+    }
+
     func upsertGrowthStageRecord(_ record: BackendGrowthStageRecordUpsert) async throws {
         try await upsertGrowthStageRecords([record])
     }

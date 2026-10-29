@@ -127,7 +127,7 @@ struct TripDetailView: View {
                 Section {
                     HStack(spacing: 12) {
                         Button {
-                            showSavedSprayStartConfirmation = true
+                            recoverAndStartOriginalSpray()
                         } label: {
                             Label("Start Trip", systemImage: "play.fill")
                                 .font(.headline)
@@ -155,7 +155,7 @@ struct TripDetailView: View {
                         .disabled(!recoveredMixReviewed || isRecoveringSavedSpray ||
                                   !accessControl.canCreateOperationalRecords)
                         .accessibilityIdentifier("trip.confirmRecoveredOrphanSpray")
-                        Text("Check product labels and rates before spraying.")
+                        Text("Application is blocked until the original quantities, units and applicable label rates can be verified. Reviewing alone does not clear this hold.")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     } else if !accessControl.canCreateOperationalRecords {
@@ -166,6 +166,14 @@ struct TripDetailView: View {
                         Text("\(currentTrip.rowSequence.count) paths · Original saved trip")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                }
+                if let diagnostic = tracking.lastSprayStartDiagnostic {
+                    Section {
+                        DisclosureGroup("Start diagnostics") {
+                            Text(diagnostic).font(.caption.monospaced()).textSelection(.enabled)
+                            ShareLink("Share diagnostics", item: diagnostic)
+                        }
                     }
                 }
             } else if currentTrip.isActive && tracking.activeTrip?.id == currentTrip.id {
@@ -464,7 +472,7 @@ struct TripDetailView: View {
             NavigationStack {
                 List {
                     Section {
-                        Text("Recorded evidence only — not label approval.")
+                        Text("Application blocked — quantity and label-rate verification required.")
                             .foregroundStyle(.orange)
                         Text("Spotlight Plus: verify the recorded per-100 L versus per-ha basis against the product label before spraying. SPRAY.SEED and all quantities are unchanged.")
                             .font(.caption)
@@ -477,6 +485,7 @@ struct TripDetailView: View {
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(chemical.name).font(.headline)
                                     Text("Saved amount: \(chemical.volumePerTank.description) \(chemical.unit.baseLabel)")
+                                    Text("Display equivalent: \(chemical.unit.fromBase(chemical.volumePerTank).description) \(chemical.unit.rawValue) — original unchanged")
                                     Text("Saved rate/100 L: \(chemical.ratePer100L.description) \(chemical.unit.baseLabel)/100 L")
                                     Text("Saved rate/ha: \(chemical.ratePerHa.description) \(chemical.unit.baseLabel)/ha")
                                     Text("Saved unit: \(chemical.unit.rawValue) · Basis: \(chemical.rateBasis?.rawValue ?? "Not recorded")")
@@ -657,7 +666,8 @@ struct TripDetailView: View {
                 showRecoveredTankMix = true
             } catch {
                 isRecoveringSavedSpray = false
-                savedSprayRecoveryError = "Recovery held. Original trip and mix retained."
+                tracking.recordSprayStartFailure(error, stage: "locateOriginalSpray", tripId: trip.id)
+                savedSprayRecoveryError = "Recovery held: \(error.localizedDescription) Original trip and mix retained. See Start diagnostics."
             }
         }
     }
@@ -714,7 +724,8 @@ struct TripDetailView: View {
                 }
             } catch {
                 isRecoveringSavedSpray = false
-                savedSprayRecoveryError = "Link not verified. Original tanks and planned paths retained."
+                tracking.recordSprayStartFailure(error, stage: "confirmOriginalSpray", tripId: trip.id)
+                savedSprayRecoveryError = "Link not verified: \(error.localizedDescription) Original tanks and paths retained. See Start diagnostics."
             }
         }
     }

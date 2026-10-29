@@ -64,6 +64,12 @@ final class TripTrackingService {
     var diagAutoCompleteLastPath: Double?
     var diagAutoCompleteLastFiredAt: Date?
     var diagDuplicateCheckResult: String?
+    private(set) var lastSprayStartDiagnostic: String?
+
+    func recordSprayStartFailure(_ error: Error, stage: String, tripId: UUID) {
+        let detail = BackendErrorDiagnostics.classify(error, endpoint: stage)
+        lastSprayStartDiagnostic = "stage=\(stage) trip=\(tripId) code=\(detail.reasonCode)\n\(detail.technicalDetail)"
+    }
     var diagDuplicateRadiusMeters: Double?
 
     // Free-drive diagnostics (only populated when the active trip is in
@@ -525,6 +531,10 @@ final class TripTrackingService {
                 let isSpray = intended.tripFunction == TripFunction.spraying.rawValue
                 guard !isSpray || recipes.count == 1 else { throw TripOccurrenceCoverage.Failure.reconciliation }
                 let frozenRecipe = recipes.first
+                if let source = frozenRecipe, let blocker = RecoveredSprayApplicationSafety.blocker(source) {
+                    lastSprayStartDiagnostic = RecoveredSprayApplicationSafety.diagnostic(source)
+                    throw SprayPlanningAdmissionError(message: blocker)
+                }
                 let journal = try occurrenceJournal(for: intended)
                 guard let state = try journal.load(), state.heldReason == nil,
                       state.pending.contains(where: { $0.rpc == "activate_trip_occurrences_v1" }) || state.serverActive == true else {
@@ -592,7 +602,10 @@ final class TripTrackingService {
                 beginTracking()
                 onStarted(true)
             } catch {
-                errorMessage = "Occurrence activation pending or held. \(error.localizedDescription) Saved identities were retained."
+                if lastSprayStartDiagnostic?.hasPrefix(RecoveredSprayApplicationSafety.reasonCode) != true {
+                    recordSprayStartFailure(error, stage: "finishPlannedActivation", tripId: intended.id)
+                }
+                errorMessage = "Occurrence activation held: \(error.localizedDescription) Saved identities were retained."
                 onStarted(false)
             }
         }
@@ -639,6 +652,12 @@ final class TripTrackingService {
         }
 
         let recipe = store.sprayRecords[recordIndex]
+        lastSprayStartDiagnostic = nil
+        if let blocker = RecoveredSprayApplicationSafety.blocker(recipe) {
+            lastSprayStartDiagnostic = RecoveredSprayApplicationSafety.diagnostic(recipe)
+            errorMessage = blocker
+            onStarted(false); return
+        }
         if recipe.recoveredFromServerOrphan && !NetworkMonitor.shared.isOnline {
             errorMessage = "Connect to the internet to verify this original recovered spray and Trip link before starting."
             onStarted(false); return
@@ -695,6 +714,10 @@ final class TripTrackingService {
                             expectedCoverage: savedTrip.occurrenceCoverage ?? .null)
                     }
                 }
+                guard store.sprayRecords.first(where: { $0.id == recipe.id }) == recipe,
+                      store.trips.first(where: { $0.id == savedTrip.id }) == savedTrip else {
+                    throw TripOccurrenceCoverage.Failure.reconciliation
+                }
                 guard let state = try journal.load(), state.heldReason == nil,
                       try TripOccurrenceCoverage.requireDocument(state.acknowledged).planRevision == d.planRevision,
                       try TripOccurrenceCoverage.requireDocument(state.acknowledged).planId == d.planId else { throw TripOccurrenceCoverage.Failure.reconciliation }
@@ -714,6 +737,7 @@ final class TripTrackingService {
                 }
             } catch {
                 isLegacySprayStartPending = false
+                recordSprayStartFailure(error, stage: "activateSavedTrip", tripId: savedTrip.id)
                 errorMessage = error.localizedDescription
                 onStarted(false)
             }
@@ -1366,6 +1390,13 @@ final class TripTrackingService {
     /// Explicit legacy fallback. It creates no fabricated actual-use record.
     func startTankWithoutRecordedMix(expectedTripId: UUID) {
         guard admitTripChange(activeTrip) else { return }
+        if let trip = activeTrip,
+           let record = TankMixPresentation.linkedRecord(for: trip.id, in: store?.sprayRecords ?? []),
+           let blocker = RecoveredSprayApplicationSafety.blocker(record) {
+            errorMessage = blocker
+            lastSprayStartDiagnostic = RecoveredSprayApplicationSafety.diagnostic(record)
+            return
+        }
         guard let trip = reconciledActiveTankTrip(), trip.id == expectedTripId else { return }
         if let record = TankMixPresentation.linkedRecord(for: trip.id, in: store?.sprayRecords ?? []),
            let blocker = record.operationalPlanningBlocker {

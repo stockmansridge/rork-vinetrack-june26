@@ -1,6 +1,61 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
-## PR #18 verified original server spray — 29 October 2026 — 135 TESTS GREEN; SIMULATOR PASS; SIGNED RELEASE184 UPLOADED; APPLE PROCESSING PENDING
+## PR #19 Growth pin conflicts / original spray safety — 29 October 2026 — SIMULATOR PASS; FINAL TEST EXECUTION BLOCKED; NO UPLOAD
+
+### Provenance and delivery boundary
+
+- Starting/current managed source parent at final inspection: `c8beaa42ba13161116facaafb211cf44037c0333`; this is not the integration commit. Public latest main verified at `1cece99e3ced076da7d96d39fbe4d2434dafcc34`. Exact archive comparison found only local `ios/VineTrack/Config.swift` differed among upstream Swift files; retained local configuration. PR18 recovery was already present, not replaced with an older checkout.
+- Draft PR #19 branch `hotfix/ios-growth-pin-conflict-20261029`, head `2cf9544780578da7ac64394d8ff44cd495393046`, base main above: open, draft, unmerged; all four changed files reviewed and adapted atop current source. No GitHub merge, checkout/reset, manual commit or push. Final source differs intentionally from the draft through additional preservation/safety guards.
+- Existing Apple build **3.1.9 (184)** independently confirmed **VALID**, not expired, **IN_BETA_TESTING**, linked to existing Internal Testing group `1a8d95a6-44ec-47ac-8754-47a0a283582e`. Build `31ee7e54-c9be-4c4a-a788-6b58cbd7f1d4`, app6761143377, bundle `app.rork.nt0v48tayl7v8noxcfe74`, team8Y879855VK. This supersedes the pending184 checkpoint below. **No new upload or signed Release validation this scope;184 predates these changes.**
+- Eleven iOS source/test files changed; Android, SQL/schema/backend, chemical originals, calculator, prices, configuration, release version/signing/project settings untouched. No live customer records inspected or modified.
+
+### Conflict resolution and preservation
+
+- Root cause: generated mirror UUID conflicts with an existing active row for the same pin (`uq_growth_stage_records_pin_id_active`,23505). Production positive lookup is explicitly vineyard/pin scoped in80-pin chunks, never capped vineyard-wide absence inference.
+- Alias only a uniquely owned, provably unchanged historical mirror. Match observation/stage, notes, photos, timestamps, owner and historical variety/operator/block/row/side/location evidence. Preserve the full original snapshot and canonical alias durably under `vinetrack_growth_mirror_identity_evidence_v1` before canonical collection/metadata acknowledgement. Corrupt archive load fails closed.
+- Edited, ambiguous, unknown-owner or dirty/deleted/photo-pending canonical collisions remain queued and held without remote upsert/delete. Exact persistent permanently-rejected snapshots suppress repeat uploads across restart; deliberate changes can retry. Pull does not consume unsent upserts/photos/unknown outcomes. Old upload acknowledgement cannot clear a newer edit.
+- Protect edits/deletes/photos during lookup, account incarnation/authority/selection changes across pull, photo upload/reference/acknowledgement, upsert and linked delete. A scope-invalid upsert aborts later phases rather than switching accounts mid-operation. Ordinary independent failures may still allow unrelated photo/delete work.
+- Fix final-review photo deadlock: a new or same-ID observation with a pending photo may upsert before attachment sync; different-ID alias with pending photo remains held. Trips already run before Growth on Home, and Growth failures do not gate Trip operations. Terminal retained-observation message is attention/failure, never false success or endless syncing.
+
+### Original spray and chemical hold
+
+- Start Trip directly enters recovery/review; expose classified start-stage/code/technical diagnostics for sharing. Saved review shows unchanged raw mL/g and exact L/kg equivalents; per100L and perha remain separate recorded fields/bases, never substituted.
+- `RECOVERED_MIX_QUANTITY_LABEL_UNVERIFIED` blocks recovered orphan mix application before activation/journal side effects and before a new tank operation. Reviewed identity/link receipt is not label/quantity approval. No authoritative exact-recipe quantity/applicable-label verification contract is available, so do not silently authorize application.
+- Final-review correction also blocks interrupted tank recovery when an actual is already durable but the operation is not established. Retain that actual, source trip and frozen journal byte-equivalent; do not erase evidence or rewrite originals to force a start.
+- Preserve original29October1:07pm trip,116planned/0completed/eightblocks, two saved tanks, SPRAY.SEED/Spotlight Plus, original trip/spray/occurrence/operation IDs, equipment/snapshots, WAL and occurrence journal. Synthetic fixtures are not proof of those customer records or chemical correctness.
+
+### Executed tests, intermediate failures and build
+
+- Draft edit-during-lookup reproduction: **0 passed/1 assertion failure**, `GrowthStageMirrorReplayTests/editDuringLookupMustSurviveAndStayQueued()`, original ID disappeared after a newer note. Corrected production race; no weakening of preservation assertions.
+- Intermediate selection: **25 passed in147s** (Growth mirror, recovered spray safety, tank commit). Expanded focused selection: **194 passed in145s** before final-review corrections. Includes six PR19 matcher regressions and synthetic230 canonical aliases with zero remote writes, full archive/restart, edited/ambiguous conflicts, account roundtrip, disk failures, Trip independence and original recovery/receipt/tank regressions.
+- After final-review photo/scope/partial-tank corrections, **31 passed in94s** for `VineTrackTests/GrowthStageMirrorReplayTests` and `VineTrackTests/StartTankCommitCoordinatorTests`. This covers the new pending-photo upsert, pull/photo account-roundtrip and partial-actual recovery hold. Aggregate tool supplied no skipped count.
+- Added one further combined scope-change regression for aborting later phases and retaining delete acknowledgements, plus an explicit post-reconciliation scope check. **Final expanded run reported0 passed/0 failed**: log confirms `Test Build Succeeded`,52.824567s, then ends at `Syncing test products to simulator...`. No compiler error or assertion result. Warnings are not the stopping cause. Test execution is **unknown/incomplete**, not a regression pass. No unchanged automatic retry. Latest combined scope/deletion regression is compiled but unexecuted; earlier194/31 results are intermediate, not final-source acceptance.
+- Final requested selectors, each under `VineTrackTests/`: `GrowthStageMirrorReplayTests`, `RecoveredSprayApplicationSafetyTests`, `MobileRequestSyncSafeguardTests`, `LinkedPinGrowthDeletionWorkflowTests`, `PinPhotoWorkflowTests`, `GrowthStageVarietyParityTests`, `SyncQueueRegressionTests`, `SyncStatusTimestampTests`, `SprayOccurrenceRecoveryHotfixTests`, `TripOccurrenceJournalTests`, `SpraySaveForLaterTests`, `LegacySprayPairReceiptTests`, `SprayTripStartAdmissionTests`, `SpraySavedJobActivationIntegrationTests`, `StartTankCommitCoordinatorTests`, `TankSessionLifecycleTests`, `TankMixPresentationTests`, `SprayProgramRound2Tests`.
+- Exactly **one separate final `runChecks({appPath:"ios"})` PASS**, simulator build succeeded. No device/Release build validation, interactive simulator navigation, physical-device/GPS or live-server acceptance. Existing unrelated UI failure remains open/not rerun. Two unchanged storage-asset notices out of scope. Whitespace validation passes including managed staged changes.
+
+### Final source SHA256 manifest
+
+```text
+2494a82c06d5c444c7a6a10ffff5397b29f9eb2b85dc8c4e41342a1ece803dd5 ios/VineTrack/Backend/Repositories/GrowthStageRecordSyncRepositoryProtocol.swift
+de430ac8ec1734405a39db1d731a5a547b783a27c6c295761a14940f8c853e21 ios/VineTrack/Backend/Repositories/SupabaseGrowthStageRecordSyncRepository.swift
+4fa045de0871e1b08142fc1a4352569ca5083f3903325e64ba6decd475c1b85f ios/VineTrack/Backend/Sync/GrowthStageMirrorReplay.swift
+26b0b879ba01fe82141a210bc8c5971b91637c1b1eb775a39f7f5cc62a6b76fa ios/VineTrack/Backend/Sync/GrowthStageRecordSyncService.swift
+d05f59346ca3f66ca0c364744f7518db41f885391e21f5ef2f7bd69dee2150a9 ios/VineTrackTests/GrowthStageMirrorReplayTests.swift
+a2ef2bddc1548063fcba8808f942e7bb5083b8445ce01169a2c0c1ac7b16aa66 ios/VineTrack/LegacyImported/Services/RecoveredSprayApplicationSafety.swift
+5f4c2cccbee3d68cdb6b0399c6ae1770d50990cf7fd23951860647dfc3269006 ios/VineTrackTests/RecoveredSprayApplicationSafetyTests.swift
+2a9419a0aed2397dd54632d330cdd15fdd12c7bf75045b3e673c40a9b005c951 ios/VineTrack/LegacyImported/Services/TripTrackingService.swift
+8cfc64ab3729a3eed26b7c8d77feebd06b32d2dfedec1c318536849b16a2983c ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift
+721d8e26bc308fa3cc2668c0a88180b925f070bf0fcd702aab022ff07f873143 ios/VineTrack/LegacyImported/Services/StartTankCommitCoordinator.swift
+0681436f0c57c577b7ac9cdafd96dce191d7e7de352bfb727524148d0fe8005c ios/VineTrackTests/StartTankCommitCoordinatorTests.swift
+```
+
+### Acceptance still required
+
+- Rerun the final expanded test selection only with explicit authorization after the transfer failure; do not call the source fully green yet.
+- Actual230 conflicts must each meet positive evidence rules; the synthetic230 pass does not establish all actual230 qualify. Preserve nonqualifying observations for review.
+- On the original iPhone only, retain installation/storage and inspect original queued trip, both saved tanks, IDs, WAL/journal and actual link receipts. **Do not apply chemicals while exact original quantities, units and applicable label directions are unverified.** This supersedes historical start instructions below. Application remains intentionally held; live receipt recovery and GPS acceptance remain open.
+
+## PR #18 verified original server spray — 29 October 2026 — HISTORICAL135 TESTS GREEN; SIMULATOR PASS; RELEASE184 NOW CONFIRMED VALID/INTERNAL
 
 ### Source provenance and bounded reconciliation
 
@@ -33,7 +88,7 @@
 - Apple build183 now independently **VALID**, not expired, nonexempt encryption false; beta detail **IN_BETA_TESTING**, relationship to existing `Internal Testing` group **`1a8d95a6-44ec-47ac-8754-47a0a283582e`** confirmed. This supersedes the pending183 checkpoint below; it is not proof of a handset install.
 - Exact all-state build184 lookup returned no build; upload lookup for3.1.9/184/IOS returned zero records. Select next available **184**, explicitly overriding historical local139 in the managed signed Release pipeline, same app/team/version. Managed signed production Release build/upload **SUCCEEDED on the first attempt** as **3.1.9 (184)**. Submission **`571b4442-1af7-4547-9270-88ebc0fadb2e`**, `currentBuildStep:complete`, no error, correct `appPath:ios`/`framework:swift`/bundle/team/version/build. Publish status reports pinned archive source `supplied-snapshot`, Xcode27.1. This is the signed Release/IPA pipeline, not the earlier simulator artifact; no local IPA download/independent binary inspection. No public review/release.
 - Independent Apple upload receipt **`31ee7e54-c9be-4c4a-a788-6b58cbd7f1d4`**, version3.1.9/build184/IOS, uploaded **2026-10-29T06:41:06Z** (returned `2026-10-28T23:41:06-07:00`). Bounded50s wait returned **pending**, discovery phase, upload **PROCESSING**, not yet visible as a build. Exit7 is pending, not a failed build. Stopped processing polls after this result; no duplicate upload.
-- **Still unconfirmed for184:** terminal Apple VALID state, exact build/internal-group relationship and install availability. Automatic managed TestFlight invite handling retained; existing all-build Internal Testing group is not by itself proof for184. Resume on next user message without rebuilding/uploading: `asc builds wait --app 6761143377 --build-number 184 --version 3.1.9 --platform IOS --fail-on-invalid --poll-interval 10s --report-pending --timeout 50s`. After VALID, inspect beta detail and existing group relationship. Original-iPhone acceptance below remains open.
+- **Superseded by PR19 checkpoint above:**184 is now independently VALID, not expired, IN_BETA_TESTING and linked to the existing Internal Testing group. No duplicate upload. Original-iPhone install/acceptance remains open;184 does not include PR19/current safety changes.
 
 ### Eight-file source/test SHA256 manifest before signed delivery
 

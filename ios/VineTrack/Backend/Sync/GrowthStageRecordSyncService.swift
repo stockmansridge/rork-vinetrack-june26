@@ -45,6 +45,12 @@ final class GrowthStageRecordSyncService {
     private var isConfigured: Bool = false
     private var eagerPushTask: Task<Void, Never>?
     private var isSyncInFlight: Bool = false
+    private var isPushInFlight = false
+    private let mirrorEvidenceKey = "vinetrack_growth_mirror_identity_evidence_v1"
+    nonisolated struct MirrorIdentityEvidence: Codable, Sendable {
+        let original: GrowthStageRecord
+        let canonicalId: UUID
+    }
     private let acknowledgedPinIds: ((UUID) async throws -> Set<UUID>)?
 
     /// Debounced eager-push. Multiple quick edits coalesce into a single sync.
@@ -350,6 +356,23 @@ final class GrowthStageRecordSyncService {
         }
     }
 
+    /// Invalidates every suspended phase, including same-account/selection round trips.
+    private func currentScopeCheck() -> () -> Bool {
+        let authority = writeAuthority
+        let generation = authority.accountGeneration
+        let storeCheck = store?.remoteApplicationCurrentCheck()
+        return { [weak self] in
+            guard let self else { return false }
+            return self.writeAuthority === authority && authority.accountGeneration == generation && (storeCheck?() ?? true)
+        }
+    }
+
+    private func requireCurrentScope(_ isCurrent: () -> Bool) throws {
+        guard isCurrent(), !Task.isCancelled else {
+            throw VineyardWriteAuthority.Restricted(reason: "GROWTH_SYNC_SCOPE_CHANGED")
+        }
+    }
+
     // MARK: - Public sync entry points
 
     func syncForSelectedVineyard() async {
@@ -369,12 +392,22 @@ final class GrowthStageRecordSyncService {
         defer { isSyncInFlight = false }
         syncStatus = .syncing
         errorMessage = nil
+        let isCurrent = currentScopeCheck()
         do {
             try await pushLocal(vineyardId: vineyardId)
+            try requireCurrentScope(isCurrent)
             try await pullRemote(vineyardId: vineyardId)
+            try requireCurrentScope(isCurrent)
             metadata.setLastSync(Date(), for: vineyardId)
             lastSyncDate = Date()
-            syncStatus = .success
+            let remaining = records.filter { $0.vineyardId == vineyardId && metadata.pendingUpserts[$0.id] != nil }.count
+            if remaining > 0 {
+                let message = "Sync finished · \(remaining) Growth Stage observations retained, awaiting pin confirmation or conflict review. Trips sync independently."
+                errorMessage = message
+                syncStatus = .failure(message)
+            } else {
+                syncStatus = .success
+            }
         } catch {
             errorMessage = error.localizedDescription
             syncStatus = .failure(error.localizedDescription)
@@ -391,22 +424,113 @@ final class GrowthStageRecordSyncService {
         } catch { return [] }
     }
 
+    private func reconcileQueuedLegacyMirrors(vineyardId: UUID) async throws -> Set<UUID> {
+        let candidates = records.filter {
+            $0.vineyardId == vineyardId && $0.pinId != nil && metadata.pendingUpserts[$0.id] != nil &&
+            metadata.pendingDeletes[$0.id] == nil && !deletionStore.growthRecordIds.contains($0.id)
+        }
+        guard !candidates.isEmpty else { return [] }
+        let authority = writeAuthority
+        let generation = authority.accountGeneration
+        let actor = store?.currentUserIdProvider?()
+        let selection = store?.selectedVineyardId
+        let isCurrent = store?.remoteApplicationCurrentCheck()
+        let queued = metadata.pendingUpserts
+        let remote = try await repository.fetchActiveRecordsForPins(Set(candidates.compactMap(\.pinId)), vineyardId: vineyardId)
+        guard authority.accountGeneration == generation, store?.currentUserIdProvider?() == actor,
+              store?.selectedVineyardId == selection, isCurrent?() ?? true,
+              authority.canWrite(vineyardId: vineyardId.uuidString) else {
+            throw VineyardWriteAuthority.Restricted(reason: "GROWTH_RECONCILIATION_SCOPE_CHANGED")
+        }
+        let remoteByPin = Dictionary(grouping: remote.filter { $0.vineyardId == vineyardId && $0.deletedAt == nil && $0.pinId != nil }, by: { $0.pinId! })
+        var next = records
+        var acknowledged: [UUID] = []
+        var evidence: [UUID: MirrorIdentityEvidence]
+        switch persistence.loadOutcome(key: mirrorEvidenceKey) as PersistenceStore.LoadOutcome<[UUID: MirrorIdentityEvidence]> {
+        case .missing: evidence = [:]
+        case .decoded(let retained): evidence = retained
+        case .failed(let error): throw error
+        }
+        var held: Set<UUID> = []
+        for candidate in candidates {
+            // The lookup may suspend across edits, attachments, deletes or account changes.
+            guard records.first(where: { $0.id == candidate.id }) == candidate,
+                  metadata.pendingUpserts[candidate.id] == queued[candidate.id],
+                  metadata.pendingDeletes[candidate.id] == nil,
+                  !deletionStore.growthRecordIds.contains(candidate.id) else {
+                held.insert(candidate.id); continue
+            }
+            guard let pin = candidate.pinId, let matches = remoteByPin[pin] else { continue }
+            guard matches.count == 1, let canonical = matches.first else { held.insert(candidate.id); continue }
+            if canonical.id == candidate.id { continue }
+            guard pendingPhotos[candidate.id] == nil, !deletionStore.pinIds.contains(pin),
+                  GrowthStageMirrorReplay.isUnmodifiedBackfill(candidate, of: canonical) else {
+                held.insert(candidate.id); continue
+            }
+            if metadata.pendingDeletes[canonical.id] != nil || deletionStore.growthRecordIds.contains(canonical.id) ||
+                metadata.pendingUpserts[canonical.id] != nil || pendingPhotos[canonical.id] != nil ||
+                metadata.isUnknownOutcome(canonical.id) { held.insert(candidate.id); continue }
+            if let existing = next.first(where: { $0.id == canonical.id }),
+               existing != canonical.toGrowthStageRecord() { held.insert(candidate.id); continue }
+            // Keep the complete historical mirror, including original identity, owner,
+            // notes, photos and timestamps. Only the visible duplicate is aliased.
+            if let retained = evidence[candidate.id], retained.original != candidate || retained.canonicalId != canonical.id {
+                held.insert(candidate.id); continue
+            }
+            evidence[candidate.id] = .init(original: candidate, canonicalId: canonical.id)
+            next.removeAll { $0.id == candidate.id }
+            if !next.contains(where: { $0.id == canonical.id }) { next.append(canonical.toGrowthStageRecord()) }
+            acknowledged.append(candidate.id)
+        }
+        for id in held {
+            SyncIssueCenter.shared.recordFailure(id: id, entity: "Growth Stages",
+                detail: .init(kind: .permanent, reasonCode: "GROWTH_PIN_IDENTITY_REVIEW",
+                    friendlyMessage: "Original observation retained; pin identity conflict needs review.",
+                    technicalDetail: "Positive pin lookup did not prove an unchanged, uniquely owned mirror. No overwrite/delete performed."),
+                queuedAt: metadata.pendingUpserts[id], payloadKeys: [], vineyardId: vineyardId)
+        }
+        if !acknowledged.isEmpty {
+            try persistence.saveOrThrow(evidence, key: mirrorEvidenceKey)
+            try persistence.saveOrThrow(next, key: persistenceKey)
+            records = next
+            metadata.clearDirty(acknowledged)
+            metadata.clearUnknownOutcome(acknowledged)
+            SyncIssueCenter.shared.clearIssues(acknowledged)
+        }
+        return held
+    }
+
     func pushQueuedGrowthRecords(vineyardId: UUID) async throws {
-        guard writeAuthority.canWrite(vineyardId: vineyardId.uuidString) else { return }
+        guard !isPushInFlight, writeAuthority.canWrite(vineyardId: vineyardId.uuidString) else { return }
+        isPushInFlight = true
+        defer { isPushInFlight = false }
+        let generation = writeAuthority.accountGeneration
+        let actor = store?.currentUserIdProvider?()
+        let isCurrent = currentScopeCheck()
+        let heldConflicts = try await reconcileQueuedLegacyMirrors(vineyardId: vineyardId)
+        try requireCurrentScope(isCurrent)
         let createdBy = auth?.userId
         let dirty = metadata.pendingUpserts
         if !dirty.isEmpty {
-            let byId = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendGrowthStageRecordUpsert] = []
             var pushedIds: [UUID] = []
             var orphans: [UUID] = []
             let linkedIds = Set(records.filter { dirty[$0.id] != nil && $0.vineyardId == vineyardId }.compactMap { $0.pinId })
             let confirmed: Set<UUID> = linkedIds.isEmpty ? [] : await confirmedPins(linkedIds, vineyardId: vineyardId)
+            try requireCurrentScope(isCurrent)
+            guard writeAuthority.accountGeneration == generation, store?.currentUserIdProvider?() == actor else {
+                throw VineyardWriteAuthority.Restricted(reason: "GROWTH_PUSH_SCOPE_CHANGED")
+            }
+            let byId = Dictionary(records.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             for (recordId, ts) in dirty {
                 // Reclaim queue entries with no local record — they can never
                 // upload and used to sit in the queue forever.
                 guard let record = byId[recordId] else { orphans.append(recordId); continue }
                 guard record.vineyardId == vineyardId,
+                      !heldConflicts.contains(recordId),
+                      metadata.pendingUpserts[recordId] == ts,
+                      metadata.permanentSnapshot(recordId) != record,
+                      metadata.pendingDeletes[recordId] == nil,
                       !deletionStore.growthRecordIds.contains(recordId),
                       record.pinId.map({ confirmed.contains($0) && !deletionStore.pinIds.contains($0) }) ?? true else { continue }
                 payloads.append(BackendGrowthStageRecord.upsert(
@@ -429,6 +553,10 @@ final class GrowthStageRecordSyncService {
                 vineyardId: vineyardId,
                 authority: writeAuthority
             ) { payloads in
+                try requireCurrentScope(isCurrent)
+                guard writeAuthority.accountGeneration == generation, store?.currentUserIdProvider?() == actor else {
+                    throw VineyardWriteAuthority.Restricted(reason: "GROWTH_SEND_SCOPE_CHANGED")
+                }
                 try writeAuthority.requireWrite(vineyardId: vineyardId.uuidString)
                 let originalUnknown = metadata.unknownOutcomeUpserts
                 let sendingIds = payloads.map(\.id)
@@ -442,8 +570,19 @@ final class GrowthStageRecordSyncService {
                     throw error
                 }
             }
-            metadata.clearDirty(result.uploaded)
-            metadata.clearUnknownOutcome(result.uploaded)
+            try requireCurrentScope(isCurrent)
+            guard writeAuthority.accountGeneration == generation, store?.currentUserIdProvider?() == actor else {
+                throw VineyardWriteAuthority.Restricted(reason: "GROWTH_ACK_SCOPE_CHANGED")
+            }
+            // An old upload acknowledgement cannot consume an edit made in flight.
+            let unchanged = result.uploaded.filter { id in
+                metadata.pendingUpserts[id] == dirty[id] && records.first(where: { $0.id == id }) == byId[id]
+            }
+            for id in result.permanent {
+                if let snapshot = byId[id] { try metadata.holdPermanent(snapshot) }
+            }
+            metadata.clearDirty(unchanged)
+            metadata.clearUnknownOutcome(unchanged)
             SyncIssueCenter.shared.notePending(entity: "Growth Stages", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }
@@ -451,11 +590,16 @@ final class GrowthStageRecordSyncService {
     }
 
     private func pushLocal(vineyardId: UUID) async throws {
-        try await pushQueuedGrowthRecords(vineyardId: vineyardId)
+        let isCurrent = currentScopeCheck()
+        var independentUpsertError: Error?
+        do { try await pushQueuedGrowthRecords(vineyardId: vineyardId) }
+        catch { try requireCurrentScope(isCurrent); independentUpsertError = error }
+        try requireCurrentScope(isCurrent)
         // Attachment failures must not prevent independent linked deletions.
         var independentPhotoError: Error?
         do { try await pushPendingPhotos(vineyardId: vineyardId) }
-        catch { independentPhotoError = error }
+        catch { try requireCurrentScope(isCurrent); independentPhotoError = error }
+        try requireCurrentScope(isCurrent)
 
         let targets = deletionStore.targets.values.filter { $0.vineyardId == vineyardId }
         var firstDeletionError: Error?
@@ -463,6 +607,7 @@ final class GrowthStageRecordSyncService {
             guard writeAuthority.canWrite(vineyardId: target.vineyardId.uuidString) else { continue }
             do {
                 try await deletePersistedTarget(target)
+                try requireCurrentScope(isCurrent)
                 if target.pinId != nil {
                     try deletionStore.markConfirmed(target.id)
                 } else {
@@ -473,6 +618,7 @@ final class GrowthStageRecordSyncService {
                     metadata.clearUnknownOutcome([growthId])
                 }
             } catch {
+                try requireCurrentScope(isCurrent)
                 if error is VineyardWriteAuthority.Restricted { continue }
                 if Self.isPermissionError(error) {
                     if let growth = target.growthSnapshot, !records.contains(where: { $0.id == growth.id }) {
@@ -493,28 +639,35 @@ final class GrowthStageRecordSyncService {
         }
         if let firstDeletionError { throw firstDeletionError }
         if let independentPhotoError { throw independentPhotoError }
+        if let independentUpsertError { throw independentUpsertError }
     }
 
     func deletePersistedTarget(_ target: PendingLinkedPinGrowthDeletion) async throws {
+        let isCurrent = currentScopeCheck()
         try writeAuthority.requireWrite(vineyardId: target.vineyardId.uuidString)
         if let pinId = target.pinId, let growthId = target.growthRecordId {
             do {
                 try await pinRepository.softDeletePin(id: pinId)
+                try requireCurrentScope(isCurrent)
                 return
             } catch where Self.isMissingRowError(error) {
+                try requireCurrentScope(isCurrent)
                 try writeAuthority.requireWrite(vineyardId: target.vineyardId.uuidString)
                 try await repository.softDeleteGrowthStageRecord(id: growthId)
+                try requireCurrentScope(isCurrent)
                 return
             }
         }
         if let growthId = target.growthRecordId {
             do { try await repository.softDeleteGrowthStageRecord(id: growthId) }
-            catch where Self.isMissingRowError(error) { return }
+            catch where Self.isMissingRowError(error) { try requireCurrentScope(isCurrent); return }
+            try requireCurrentScope(isCurrent)
             return
         }
         if let pinId = target.pinId {
             do { try await pinRepository.softDeletePin(id: pinId) }
-            catch where Self.isMissingRowError(error) { return }
+            catch where Self.isMissingRowError(error) { try requireCurrentScope(isCurrent); return }
+            try requireCurrentScope(isCurrent)
         }
     }
 
@@ -538,11 +691,13 @@ final class GrowthStageRecordSyncService {
     }
 
     func pushPendingPhotos(vineyardId: UUID) async throws {
+        let isCurrent = currentScopeCheck()
         let candidates = pendingPhotos.values
             .filter { $0.vineyardId == vineyardId }
             .sorted { $0.capturedAt < $1.capturedAt }
         var firstFailure: Error?
         for snapshot in candidates {
+            try requireCurrentScope(isCurrent)
             guard writeAuthority.canWrite(vineyardId: snapshot.vineyardId.uuidString),
                   metadata.pendingDeletes[snapshot.recordId] == nil,
                   metadata.pendingUpserts[snapshot.recordId] == nil,
@@ -567,6 +722,7 @@ final class GrowthStageRecordSyncService {
                             imageData: work.imageData
                         )
                     }
+                    try requireCurrentScope(isCurrent)
                     guard metadata.pendingDeletes[work.recordId] == nil,
                           pendingPhotos[work.recordId]?.revision == work.revision else { continue }
                     work.uploadedPath = path
@@ -591,6 +747,7 @@ final class GrowthStageRecordSyncService {
                         vineyardId: work.vineyardId,
                         path: path
                     )
+                    try requireCurrentScope(isCurrent)
                     guard metadata.pendingDeletes[work.recordId] == nil,
                           pendingPhotos[work.recordId]?.revision == work.revision else { continue }
                 }
@@ -600,6 +757,7 @@ final class GrowthStageRecordSyncService {
                     vineyardId: work.vineyardId,
                     photoPaths: photoPaths
                 )
+                try requireCurrentScope(isCurrent)
                 guard metadata.pendingDeletes[work.recordId] == nil,
                       pendingPhotos[work.recordId]?.revision == work.revision,
                       let currentIndex = records.firstIndex(where: { $0.id == work.recordId }) else { continue }
@@ -627,10 +785,12 @@ final class GrowthStageRecordSyncService {
                 try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
                 persist()
             } catch AttachmentReferenceWriteError.recordDeleted {
+                try requireCurrentScope(isCurrent)
                 guard pendingPhotos[snapshot.recordId]?.revision == snapshot.revision else { continue }
                 pendingPhotos.removeValue(forKey: snapshot.recordId)
                 try persistence.saveOrThrow(pendingPhotos, key: pendingPhotosKey)
             } catch {
+                try requireCurrentScope(isCurrent)
                 if error is VineyardWriteAuthority.Restricted { continue }
                 if firstFailure == nil { firstFailure = error }
             }
@@ -651,8 +811,10 @@ final class GrowthStageRecordSyncService {
     // MARK: - Pull
 
     func pullRemote(vineyardId: UUID) async throws {
+        let isCurrent = currentScopeCheck()
         let lastSync = metadata.lastSync(for: vineyardId)
         let remote = try await repository.fetchGrowthStageRecords(vineyardId: vineyardId, since: lastSync)
+        try requireCurrentScope(isCurrent)
 
         // Initial sync: push everything local if remote is empty.
         if remote.isEmpty, lastSync == nil {
@@ -665,6 +827,7 @@ final class GrowthStageRecordSyncService {
                     metadata.markDirty(record.id, at: now)
                 }
                 try await pushQueuedGrowthRecords(vineyardId: vineyardId)
+                try requireCurrentScope(isCurrent)
             }
             return
         }
@@ -676,6 +839,9 @@ final class GrowthStageRecordSyncService {
     }
 
     private func apply(_ backend: BackendGrowthStageRecord, vineyardId: UUID) {
+        guard backend.vineyardId == vineyardId else { return }
+        // Remote timestamps/deletions never acknowledge unsent local evidence.
+        if metadata.pendingUpserts[backend.id] != nil || pendingPhotos[backend.id] != nil || metadata.isUnknownOutcome(backend.id) { return }
         if metadata.pendingDeletes[backend.id] != nil || deletionStore.growthRecordIds.contains(backend.id) { return }
 
         if backend.deletedAt != nil {
@@ -719,11 +885,19 @@ final class GrowthStageRecordSyncMetadata {
         var pendingUpserts: [UUID: Date] = [:]
         var pendingDeletes: [UUID: Date] = [:]
         var unknownOutcomeUpserts: Set<UUID>?
+        var permanentSnapshots: [UUID: GrowthStageRecord]?
     }
 
     init(persistence: PersistenceStore = .shared) {
         self.persistence = persistence
         self.state = persistence.load(key: key) ?? State()
+    }
+
+    func permanentSnapshot(_ id: UUID) -> GrowthStageRecord? { state.permanentSnapshots?[id] }
+    func holdPermanent(_ record: GrowthStageRecord) throws {
+        if state.permanentSnapshots == nil { state.permanentSnapshots = [:] }
+        state.permanentSnapshots?[record.id] = record
+        try persistence.saveOrThrow(state, key: key)
     }
 
     var pendingUpserts: [UUID: Date] { state.pendingUpserts }
@@ -776,7 +950,10 @@ final class GrowthStageRecordSyncMetadata {
 
     func clearDirty(_ ids: [UUID]) {
         guard !ids.isEmpty else { return }
-        for id in ids { state.pendingUpserts.removeValue(forKey: id) }
+        for id in ids {
+            state.pendingUpserts.removeValue(forKey: id)
+            state.permanentSnapshots?.removeValue(forKey: id)
+        }
         save()
     }
 

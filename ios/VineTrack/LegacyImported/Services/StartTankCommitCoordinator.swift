@@ -34,6 +34,10 @@ final class StartTankCommitCoordinator {
 
     func commit(sourceTrip: Trip, updatedTrip: Trip, actual: SprayTankActual, store: MigratedDataStore) throws {
         try store.operationalWriteAuthority.requireWrite(vineyardId: updatedTrip.vineyardId.uuidString)
+        if let record = store.sprayRecords.first(where: { $0.id == actual.sprayRecordId && $0.tripId == sourceTrip.id }),
+           let blocker = RecoveredSprayApplicationSafety.blocker(record) {
+            throw SprayPlanningAdmissionError(message: blocker)
+        }
         guard persistence.load(key: Self.persistenceKey) as Journal? == nil else {
             throw SprayTankActualValidationError.localSaveFailed
         }
@@ -101,8 +105,12 @@ final class StartTankCommitCoordinator {
         let actualIsDurable = actualStore.records.contains { $0.id == journal.actualRecordId && $0.tripId == journal.actual.tripId && $0.tankSessionId == journal.tankSessionId }
         let operationIsDurable = Self.operationIsEstablished(in: current, intended: journal.updatedTrip,
             tankSessionId: journal.tankSessionId, tankNumber: journal.tankNumber)
+        let record = store.sprayRecords.first { $0.id == journal.actual.sprayRecordId && $0.tripId == current.id && $0.vineyardId == current.vineyardId }
+        // A durable actual is evidence, not permission to establish a new application.
+        if !operationIsDurable, let blocker = record.flatMap({ RecoveredSprayApplicationSafety.blocker($0) }) {
+            throw SprayPlanningAdmissionError(message: blocker)
+        }
         if !actualIsDurable && !operationIsDurable {
-            let record = store.sprayRecords.first { $0.id == journal.actual.sprayRecordId && $0.tripId == current.id && $0.vineyardId == current.vineyardId }
             if let blocker = record?.operationalPlanningBlocker {
                 throw SprayPlanningAdmissionError(message: blocker)
             }

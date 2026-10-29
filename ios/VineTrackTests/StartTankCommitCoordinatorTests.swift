@@ -77,6 +77,38 @@ final class StartTankCommitCoordinatorTests: XCTestCase {
         XCTAssertEqual(retained?.state, original?.state)
     }
 
+    func testRecoveredUnverifiedMixCannotCreateTankJournalOrActual() throws {
+        let (directory, persistence, store, actualStore, source, updated, actual) = try makeHarness()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var record = SprayRecord(id: actual.sprayRecordId, tripId: source.id, vineyardId: source.vineyardId)
+        record.recoveredFromServerOrphan = true; record.recoveredOrphanLinkAccepted = true
+        store.sprayRecords = [record]
+        let coordinator = StartTankCommitCoordinator(persistence: persistence, actualStore: actualStore)
+        XCTAssertThrowsError(try coordinator.commit(sourceTrip: source, updatedTrip: updated, actual: actual, store: store))
+        XCTAssertNil(persistence.load(key: StartTankCommitCoordinator.persistenceKey) as StartTankCommitCoordinator.Journal?)
+        XCTAssertTrue(actualStore.records.isEmpty)
+        XCTAssertEqual(store.trips, [source]); XCTAssertEqual(store.sprayRecords, [record])
+    }
+
+    func testRecoveredUnverifiedMixCannotResumeAfterActualWithoutEstablishedOperation() throws {
+        let (directory, persistence, store, actualStore, source, updated, actual) = try makeHarness()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let interrupted = StartTankCommitCoordinator(persistence: persistence, actualStore: actualStore, failurePoint: .afterActual)
+        XCTAssertThrowsError(try interrupted.commit(sourceTrip: source, updatedTrip: updated, actual: actual, store: store))
+        let frozen: StartTankCommitCoordinator.Journal = try XCTUnwrap(persistence.load(key: StartTankCommitCoordinator.persistenceKey))
+        var record = SprayRecord(id: actual.sprayRecordId, tripId: source.id, vineyardId: source.vineyardId)
+        record.recoveredFromServerOrphan = true; record.recoveredOrphanLinkAccepted = true
+        store.sprayRecords = [record]
+        let recovery = StartTankCommitCoordinator(persistence: persistence, actualStore: actualStore)
+        XCTAssertFalse(recovery.recover(store: store))
+        XCTAssertFalse(recovery.resume(sourceTrip: source, tankNumber: 1, store: store))
+        let retained: StartTankCommitCoordinator.Journal = try XCTUnwrap(persistence.load(key: StartTankCommitCoordinator.persistenceKey))
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        XCTAssertEqual(try encoder.encode(frozen), try encoder.encode(retained))
+        XCTAssertEqual(actualStore.records, [actual])
+        XCTAssertEqual(store.trips, [source]); XCTAssertEqual(store.sprayRecords, [record])
+    }
+
     func testSameScreenRetryResumesFrozenJournal() throws {
         let (directory, persistence, store, actualStore, source, updated, actual) = try makeHarness()
         defer { try? FileManager.default.removeItem(at: directory) }
