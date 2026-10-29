@@ -1906,6 +1906,11 @@ final class MigratedDataStore {
         let remote = source.toSprayRecord()
         var recovered: SprayRecord
         if let existing = sprayRecords.first(where: { $0.id == source.id }) {
+            if existing.canonicalTripId == tripId,
+               existing.recoveredFromServerOrphan,
+               existing.tanks == remote.tanks {
+                return existing // retry without changing the accepted local evidence
+            }
             guard existing.vineyardId == vineyard,
                   !existing.hasRecordedTripLink,
                   existing.endTime == nil, !existing.isTemplate,
