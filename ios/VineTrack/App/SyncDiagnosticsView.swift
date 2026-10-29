@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// Sync diagnostics for confirming multi-device sync status in the field
 /// without needing Xcode or Supabase logs. Read-only — does not change sync logic.
@@ -9,6 +10,7 @@ struct SyncDiagnosticsView: View {
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(PinSyncService.self) private var pinSync
     @Environment(TripSyncService.self) private var tripSync
+    @Environment(TripTrackingService.self) private var tracking
     @Environment(SprayRecordSyncService.self) private var sprayRecordSync
     @Environment(SavedSprayPresetSyncService.self) private var savedSprayPresetSync
     @Environment(SavedChemicalSyncService.self) private var savedChemicalSync
@@ -25,6 +27,11 @@ struct SyncDiagnosticsView: View {
     @Environment(SyncStatusCenter.self) private var syncStatusCenter
 
     @State private var copyConfirmation: String?
+    @State private var confirmRecoveryExport = false
+    @State private var preparingRecoveryExport = false
+    @State private var showRecoveryExporter = false
+    @State private var recoveryDocument: RetainedRecoveryEvidenceDocument?
+    @State private var recoveryExportMessage: String?
     @State private var isForceRepullingPaddocks: Bool = false
     @State private var lastPaddockForceRefresh: PaddockSyncService.ForceRefreshResult?
     @State private var lastPaddockForceRefreshAt: Date?
@@ -68,6 +75,19 @@ struct SyncDiagnosticsView: View {
         }
         .navigationTitle("Sync Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("Export sensitive retained evidence?", isPresented: $confirmRecoveryExport, titleVisibility: .visible) {
+            Button("Prepare read-only export") { prepareRecoveryExport() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Includes raw saved trips, tanks, journals, upload metadata, retained receipts and embedded pending photographs, potentially from other accounts or vineyards on this phone. Share privately only. This does not sync, repair, acknowledge or approve anything.")
+        }
+        .fileExporter(isPresented: $showRecoveryExporter, document: recoveryDocument, contentType: .json, defaultFilename: "VineTrack-Retained-Recovery-\(UUID().uuidString)") { result in
+            switch result {
+            case .success: recoveryExportMessage = "Evidence copy saved. Original records were not changed by export."
+            case .failure: recoveryExportMessage = "Export was cancelled or could not be saved. Original records were not changed by export."
+            }
+            recoveryDocument = nil
+        }
     }
 
     // MARK: - Sections
@@ -282,6 +302,15 @@ struct SyncDiagnosticsView: View {
             } label: {
                 Label("Copy sync diagnostics", systemImage: "doc.on.doc")
             }
+            Button {
+                confirmRecoveryExport = true
+            } label: {
+                Label(preparingRecoveryExport ? "Preparing evidence…" : "Export retained recovery evidence", systemImage: "square.and.arrow.up")
+            }
+            .disabled(preparingRecoveryExport || showRecoveryExporter || !auth.isSignedIn)
+            if let recoveryExportMessage { Text(recoveryExportMessage).font(.footnote) }
+            Text("Read-only file copy. Includes sensitive operational history; no sync or recovery is run.")
+                .font(.caption).foregroundStyle(.secondary)
             if let copyConfirmation {
                 Text(copyConfirmation)
                     .font(.footnote)
@@ -1206,6 +1235,38 @@ struct SyncDiagnosticsView: View {
     }
 
     // MARK: - Actions
+
+    private func prepareRecoveryExport() {
+        guard !preparingRecoveryExport, let owner = auth.userId else { return }
+        preparingRecoveryExport = true
+        recoveryExportMessage = nil
+        let vineyard = store.selectedVineyardId?.uuidString ?? "none"
+        let text = diagnosticsText() + "\n\n" + SyncIssueCenter.shared.diagnosticsText()
+            + "\n\nLast retained Trip Start diagnostic:\n" + (tracking.lastSprayStartDiagnostic ?? "Not retained in this process; no start was attempted by export.")
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        Task {
+            do {
+                let data = try await Task.detached(priority: .utility) {
+                    let manager = FileManager.default
+                    let documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+                    let support = try manager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+                    return try RetainedRecoveryDiagnosticExport.capture(documents: documents, applicationSupport: support,
+                        ownerId: owner.uuidString, vineyardId: vineyard, version: version, build: build, diagnostics: text)
+                }.value
+                guard auth.userId == owner else {
+                    recoveryExportMessage = "Account changed. Export was not presented."
+                    preparingRecoveryExport = false
+                    return
+                }
+                recoveryDocument = RetainedRecoveryEvidenceDocument(data: data)
+                showRecoveryExporter = true
+            } catch {
+                recoveryExportMessage = "Could not prepare the evidence copy. No repair, sync or original-data write was performed."
+            }
+            preparingRecoveryExport = false
+        }
+    }
 
     private func copyDiagnostics() {
         let text = diagnosticsText()

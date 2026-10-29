@@ -26,8 +26,10 @@ final class LegacySpraySaveRecovery {
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             scope = try c.decode(Scope.self, forKey: .scope)
-            record = try JSONDecoder().decode(SprayRecord.self, from: c.decode(Data.self, forKey: .recordBytes))
-            trip = try JSONDecoder().decode(Trip.self, from: c.decode(Data.self, forKey: .tripBytes))
+            record = try RecoveryDecodeEvidence.decode(SprayRecord.self, from: c.decode(Data.self, forKey: .recordBytes),
+                source: "local_legacy_wal", operation: "LegacySpraySaveRecovery.Attempt.recordBytes")
+            trip = try RecoveryDecodeEvidence.decode(Trip.self, from: c.decode(Data.self, forKey: .tripBytes),
+                source: "local_legacy_wal", operation: "LegacySpraySaveRecovery.Attempt.tripBytes")
             localComplete = try c.decode(Bool.self, forKey: .localComplete)
             rpc = try c.decodeIfPresent(LegacySprayPairReceipt.Request.self, forKey: .rpc)
             rpcClaimed = try c.decodeIfPresent(Bool.self, forKey: .rpcClaimed) ?? false
@@ -156,7 +158,8 @@ final class LegacySpraySaveRecovery {
                 guard isCurrent() else { throw failure }
                 let data = try await transport("save_legacy_spray_pair_v1", body)
                 guard isCurrent() else { throw failure }
-                let receipt = try JSONDecoder().decode(LegacySprayPairReceipt.Receipt.self, from: data)
+                let receipt = try RecoveryDecodeEvidence.decode(LegacySprayPairReceipt.Receipt.self, from: data,
+                    source: "supabase_response", operation: "rpc.save_legacy_spray_pair_v1")
                 try receipt.validate(item)
                 item.candidate = receipt
                 try replace(item)
@@ -164,7 +167,8 @@ final class LegacySpraySaveRecovery {
             guard isCurrent() else { throw failure }
             let data = try await transport("recover_legacy_spray_pair_v1", body)
             guard isCurrent() else { throw failure }
-            let receipt = try JSONDecoder().decode(LegacySprayPairReceipt.Receipt.self, from: data)
+            let receipt = try RecoveryDecodeEvidence.decode(LegacySprayPairReceipt.Receipt.self, from: data,
+                source: "supabase_response", operation: "rpc.recover_legacy_spray_pair_v1")
             try receipt.validate(item)
             if let candidate = item.candidate { guard candidate == receipt else { throw failure } }
             // The recovery RPC compares actor, exact JSONB bodies, identities and server hash.

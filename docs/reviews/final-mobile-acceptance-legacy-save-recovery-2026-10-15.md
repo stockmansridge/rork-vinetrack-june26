@@ -1,5 +1,48 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Original iPhone retained-evidence export — 29 October 2026 — 147 TESTS PASS; ORIGINAL INCIDENT UNPROVEN; NO UPLOAD
+
+### Provenance and production evidence
+
+- Current managed source parent `21c82de4ffd1134691b74f3f4b11a0da71f46a3d`; public main independently verified at `a0db9aa9050c86e33cf0f67640594ae37ef8522b`. Downloaded exact public archive outside project; recursive source comparison differs only in generated `ios/VineTrack/Config.swift` (preserved). Unit and UI test directories match. No checkout/reset, merge, manual commit/push or upstream replacement.
+- User reports original iPhone has v185. This is user-supplied installation evidence, not independent Apple processing verification. Source project build counters are not delivery evidence. No store command, version/signing change or upload this scope.
+- Read-only Supabase `fetchProjectLogs`: latest60 entries matching `/trips`, occurrence RPC and legacy pair routes are Trip GET/HEAD/OPTIONS with HTTP200 on29October. This does not identify a device, provide response bodies, establish successful client decoding, prove complete RPC absence, or establish the original Trip's server presence. No migration or customer-data writes.
+- Actual failure operation/path and original-device bytes are still missing. Strict `[BackendTrip]` decoding means a malformed nested field can fail a complete response; `TankSession.id` versus historical `tank_session_id` compatibility remains a code-contract hypothesis only. No speculative lossy decoder/default/skip was added.
+
+### Read-only export and exact future decode evidence
+
+- Existing inspected v185 UI supports Settings → Sync Diagnostics → Copy sync diagnostics and original Trip → Start diagnostics → Share diagnostics, if a prior start diagnostic exists. It does **not** expose a full retained-store export; report/PDF/CSV exports are not forensic substitutes. No file-sharing build setting was found. Do not claim the newly added action is already on the original phone.
+- New Settings → Sync Diagnostics → Export retained recovery evidence requires explicit sensitive-data confirmation, then prepares a JSON document off the main actor for the system file exporter. Copies raw `Data` as base64 plus SHA256, relative path, per-file capture/status and bundle start/end/version/build. No source decoding/re-encoding, repair, normalization, replay, sync, acknowledgement, source directory creation, or recipe approval.
+- Explicit allowlist covers Trip/spray/planned tanks, actual tank envelope, start-tank commit, legacy save WAL including original embedded bytes/candidate/verified receipts, occurrence and planning journal trees, Trip/Growth/other queue metadata and pending-photo evidence. Includes malformed records and raw retained receipt evidence; no live server reads or fabricated receipts. Full journal history retained. Missing files remain `missing`, not empty success. Read/enumeration/verification errors and concurrent changes are marked; cross-file capture is explicitly sequential, not atomic.
+- Excludes Keychain, auth/session stores, whole preferences, HTTP cache and separate media files. Raw allowlisted archives **can include embedded pending photographs**, GPS, operator/chemical data and records from other accounts/vineyards retained on this phone; confirmation and manifest disclose this. Share privately. This is not a complete operational backup or complete payload export of every unrelated queued entity.
+- `RecoveryDecodeEvidence` writes separate append-only diagnostic files, not original operational stores. Captures only failure category, source, operation, coding path, missing key/expected type and time, never response body, free-form debug description or credentials. Instrumented local persistence, occurrence snapshot, embedded legacy WAL Trip/spray, legacy pair receipt responses, Trip fetch/exact lookup/all-accessible fetch, occurrence PATCH/RPC decoding. Errors are rethrown unchanged; no receipt, queue or checkpoint clearing. Earlier paths/bodies cannot be recreated retroactively.
+- Export embeds current Sync diagnostics, the read-only issue-center report and already-retained Start diagnostic; it does not create a Start attempt. Account change prevents presenting the prepared document. No original iPhone data has been accessed from this sandbox.
+
+### Validation and remaining gate
+
+- Initial selected run:0 executed, compile failed because `UniformTypeIdentifiers` import was missing in the new view; fixed.
+- Next selected run:65 passed/1 failed. Raw-preservation regression found a journal relative-path mismatch; replaced string-offset path derivation with canonical path-component validation. No preservation assertion weakened.
+- Focused rerun:5 export tests passed in84s. Covers exact malformed Trip/spray/WAL/journal/queue/receipt bytes and hashes, unchanged source bytes/modification dates/file tree, missing directories not created, auth-store omission, symlink rejection, exact missing-key/index/source decoding evidence and omission of free-form secret-bearing debug text.
+- Final broader run:147 passed in27s. Selectors under `VineTrackTests/`: `RetainedRecoveryDiagnosticExportTests`, `TripOccurrenceJournalTests`, `LegacySprayPairReceiptTests`, `SpraySaveForLaterTests`, `RecoveredSprayApplicationSafetyTests`, `GrowthStageMirrorReplayTests`, `StartTankCommitCoordinatorTests`, `SprayOccurrenceRecoveryHotfixTests`, `SprayTripStartAdmissionTests`, `SpraySavedJobActivationIntegrationTests`, `TankSessionLifecycleTests`, `TankMixPresentationTests`, `MobileRequestSyncSafeguardTests`. Aggregate supplies no skipped count. This is not the entire previous18-selector final selection.
+- Simulator checks/build passed. Final review corrected a privacy disclosure: embedded pending photographs are included, despite separate media files being excluded. Final separate `runChecks({appPath:"ios"})` after that wording change also passed. Existing two unrelated asset-URL notices remain unchanged. No physical/device/Release acceptance, native UI/file-picker interaction, actual offline/restart recovery, original-trip/server receipt or GPS acceptance is claimed.
+- User selected **authorized vineyard manager using documented label directions** as approval authority. Exact product/basis/water/recalculated amounts and authoritative auditable approval contract remain required. Original wrong-basis values stay untouched and the chemical hold stays active. No local review checkbox or identity/link receipt substitutes for chemical approval.
+- **No TestFlight upload until production root causes are identified and tested and actual recovery evidence satisfies the gate.** Pending: original-device diagnostic text/screenshots, actual failing contract reproduction, approved corrected-recipe workflow, full online/offline/duplicate/interruption/navigation acceptance. The new export cannot be retrofitted to installed v185 without a separately authorized delivery; collect existing diagnostics first, not another speculative release.
+
+### Final iOS source/test SHA256 manifest
+
+```text
+ea4800f8f6ca3f8af5ce0a1b5f3245d182197295a715279de86298888376124d ios/VineTrack/Backend/Sync/RecoveryDecodeEvidence.swift
+ac19e3bebbffa383b06cbf55662fbc1ebf9ca8ca3def6f2b0715c5656a3afa97 ios/VineTrack/Backend/Sync/RetainedRecoveryDiagnosticExport.swift
+31d37e17139b12685797f226067f87abf86a073a09ea03a39c21c78e94aeed39 ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift
+0f6aadb77531a819efb1ce40db187fef3a85655bea561f6b0b1de8c589f90617 ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift
+b317ba797a2eb826444cc7ab9e5e6a0afe51c2d595a445fe91a2afe8d89c1a42 ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift
+e522109850d76378ac555ab61d6625853700f39232b1e8fba1acdc9a6623b348 ios/VineTrack/LegacyImported/Services/LegacySpraySaveRecovery.swift
+5f6e103b4ddb40f7396c21b7fa63a0353d152ad14e5208c48384b929ba11f7ff ios/VineTrack/App/SyncDiagnosticsView.swift
+54d61dfb5b7ffa5bf462cd77b77434421e2e9f8db04365836d84581cba752f2d ios/VineTrackTests/RetainedRecoveryDiagnosticExportTests.swift
+```
+
+`git diff --check HEAD` passed. Android, SQL/schema, original operational data, approval holds and release configuration unchanged; `.rork/history` changes are managed state and were not edited by this work.
+
 ## PR #19 Growth pin conflicts / original spray safety — 29 October 2026 — SIMULATOR PASS; FINAL TEST EXECUTION BLOCKED; NO UPLOAD
 
 ### Provenance and delivery boundary

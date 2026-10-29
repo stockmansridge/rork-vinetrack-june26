@@ -9,6 +9,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     }
 
     func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip] {
+        do {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         let query = provider.client
             .from("trips")
@@ -26,6 +27,10 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
                 .execute()
                 .value
         }
+        } catch {
+            RecoveryDecodeEvidence.record(error, source: "supabase_response", operation: "trips.fetchTrips")
+            throw error
+        }
     }
 
     func fetchAllTrips(vineyardId: UUID) async throws -> [BackendTrip] {
@@ -34,6 +39,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
 
     /// Exact scoped lookup: a capped vineyard list cannot establish absence.
     func fetchTripForOccurrenceStart(tripId: UUID, vineyardId: UUID) async throws -> BackendTrip? {
+        do {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         guard let owner = provider.client.auth.currentUser?.id else { throw CancellationError() }
         let rows: [BackendTrip] = try await provider.client.from("trips").select()
@@ -43,6 +49,10 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             throw TripOccurrenceCoverage.Failure.scopeConflict
         }
         return rows.first
+        } catch {
+            RecoveryDecodeEvidence.record(error, source: "supabase_response", operation: "trips.fetchTripForOccurrenceStart")
+            throw error
+        }
     }
 
     private func requireTripWrite(_ id: UUID) async throws -> UUID {
@@ -181,7 +191,12 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             }
             throw TripOccurrenceCoverage.Failure.reconciliation
         }
-        let rows = try JSONDecoder().decode([TripOccurrenceCoverage.JSON].self, from: data)
+        let rows: [TripOccurrenceCoverage.JSON]
+        do { rows = try JSONDecoder().decode([TripOccurrenceCoverage.JSON].self, from: data) }
+        catch {
+            RecoveryDecodeEvidence.record(error, source: "supabase_response", operation: "trips.patchNonAuthorityFields")
+            throw error
+        }
         guard rows.count == 1, rows.first?[occurrence: "id"]?.occurrenceString?.lowercased() == trip.id.uuidString.lowercased() else {
             throw TripOccurrenceCoverage.Failure.reconciliation
         }
@@ -218,7 +233,11 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             let range = text.range(of: "OCCURRENCE_[A-Z_]+", options: .regularExpression)
             throw OccurrenceRPCFailure(code: range.map { String(text[$0]) } ?? "OCCURRENCE_SYNC_UNAVAILABLE")
         }
-        return try JSONDecoder().decode(TripOccurrenceCoverage.JSON.self, from: data)
+        do { return try JSONDecoder().decode(TripOccurrenceCoverage.JSON.self, from: data) }
+        catch {
+            RecoveryDecodeEvidence.record(error, source: "supabase_response", operation: "rpc.\(rpc)")
+            throw error
+        }
     }
 
     private struct OccurrenceRPCFailure: Error, LocalizedError {
@@ -227,6 +246,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     }
 
     func fetchAllAccessibleTrips() async throws -> [BackendTrip] {
+        do {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
         return try await provider.client
             .from("trips")
@@ -236,6 +256,10 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             .limit(10_000)
             .execute()
             .value
+        } catch {
+            RecoveryDecodeEvidence.record(error, source: "supabase_response", operation: "trips.fetchAllAccessibleTrips")
+            throw error
+        }
     }
 
     func updateTripVineyardAssignment(id: UUID, vineyardId: UUID, paddockId: UUID?) async throws {

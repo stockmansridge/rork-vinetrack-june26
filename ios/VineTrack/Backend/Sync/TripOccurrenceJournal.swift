@@ -63,7 +63,12 @@ import Foundation
     }
     func load() throws -> Snapshot? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        let state = try JSONDecoder().decode(Snapshot.self, from: Data(contentsOf: fileURL))
+        let state: Snapshot
+        do { state = try JSONDecoder().decode(Snapshot.self, from: Data(contentsOf: fileURL)) }
+        catch {
+            RecoveryDecodeEvidence.record(error, source: "local_occurrence_journal", operation: "TripOccurrenceJournal.load")
+            throw error
+        }
         guard state.scope == scope else { throw Failure.scopeConflict }
         _ = try TripOccurrenceCoverage.requireDocument(state.acknowledged)
         for op in state.pending { _ = try TripOccurrenceCoverage.requireDocument(op.after) }

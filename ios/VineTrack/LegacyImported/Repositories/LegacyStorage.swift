@@ -193,6 +193,7 @@ final class PersistenceStore {
             #if DEBUG
             print("[PersistenceStore] load FAILED for key '\(key)': \(error)")
             #endif
+            RecoveryDecodeEvidence.record(error, source: "local_archive", operation: "PersistenceStore.loadOutcome.\(key)")
             onDecodeFailure?(key, error)
             return .failed(error)
         }
