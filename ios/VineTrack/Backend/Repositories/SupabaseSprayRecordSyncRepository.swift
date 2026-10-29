@@ -101,6 +101,9 @@ final class SupabaseSprayRecordSyncRepository: SprayRecordSyncRepositoryProtocol
         vineyardId: UUID, createdBy actorId: UUID, originalStart: Date
     ) async throws -> [BackendSprayRecord] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        guard provider.client.auth.currentUser?.id == actorId else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
         let start = originalStart.addingTimeInterval(-60).ISO8601Format(.init(includingFractionalSeconds: true))
         let end = originalStart.addingTimeInterval(60).ISO8601Format(.init(includingFractionalSeconds: true))
         let rows: [BackendSprayRecord] = try await provider.client.from("spray_records")
@@ -114,6 +117,9 @@ final class SupabaseSprayRecordSyncRepository: SprayRecordSyncRepositoryProtocol
             .lte("start_time", value: end)
             .limit(25)
             .execute().value
+        guard provider.client.auth.currentUser?.id == actorId else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
         guard rows.count < 25 else { throw TripOccurrenceCoverage.Failure.reconciliation }
         return rows
     }
@@ -127,6 +133,9 @@ final class SupabaseSprayRecordSyncRepository: SprayRecordSyncRepositoryProtocol
         local: SprayRecord, originalTrip: Trip, actorId: UUID
     ) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        guard provider.client.auth.currentUser?.id == actorId else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
         guard local.canonicalTripId == originalTrip.id,
               local.vineyardId == originalTrip.vineyardId else {
             throw TripOccurrenceCoverage.Failure.scopeConflict
@@ -138,6 +147,9 @@ final class SupabaseSprayRecordSyncRepository: SprayRecordSyncRepositoryProtocol
             .eq("vineyard_id", value: originalTrip.vineyardId.uuidString)
             .limit(2)
             .execute().value
+        guard provider.client.auth.currentUser?.id == actorId else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
         if existing.isEmpty && !local.recoveredFromServerOrphan { return }
         guard existing.count == 1, let remote = existing.first,
               remote.createdBy == actorId,
@@ -160,6 +172,9 @@ final class SupabaseSprayRecordSyncRepository: SprayRecordSyncRepositoryProtocol
             .is("trip_id", value: nil)
             .select()
             .execute().value
+        guard provider.client.auth.currentUser?.id == actorId else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
         if update.count == 1, update[0].tripId == originalTrip.id,
            update[0].tanks == local.tanks { return }
         // Another writer might have installed the same link meanwhile; accept
