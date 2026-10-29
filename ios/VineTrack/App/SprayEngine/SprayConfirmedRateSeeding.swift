@@ -95,6 +95,17 @@ nonisolated enum SprayConfirmedRateSeeding {
         }
 
         guard let confirmed = ChemicalSprayRateHandoff.resolution(chemical.defaultRates) else {
+            // Approved V3 may carry both distinct label bases, neither of which
+            // is a vineyard preference. A water-volume configuration does not
+            // authorize choosing a chemical dose basis on the operator's behalf.
+            if chemical.chemicalV3ReviewStatusSnapshot == "approved",
+               chemical.chemicalV3RevisionId != nil,
+               let options = chemical.chemicalV3LabelRates,
+               Set(options.validOptions.compactMap(\\.sprayBasis)).count > 1 {
+                line.selectedRateId = UUID()
+                line.basis = fallbackBasis
+                return
+            }
             let selection = SprayRegisteredUseRates.defaultSelection(for: chemical, preferring: order)
             line.selectedRateId = selection?.id ?? UUID()
             line.basis = selection?.basis ?? fallbackBasis
