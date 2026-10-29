@@ -1846,7 +1846,12 @@ final class MigratedDataStore {
 
         let matches = try LegacySpraySaveRecovery(persistence: persistence)
             .attempts().filter { attempt in
-                attempt.scope == scope && attempt.localComplete &&
+                // A TestFlight update can rotate the sign-in session token.
+                // The immutable WAL remains owned by the same authenticated
+                // ACTOR and vineyard; do not require the old session ID.
+                attempt.scope.actor == scope.actor &&
+                attempt.scope.vineyard == scope.vineyard &&
+                attempt.localComplete &&
                 attempt.trip.id == tripId && attempt.trip.coverageBasis == .occurrence &&
                 attempt.record.tripId == tripId &&
                 attempt.trip.occurrenceCoverage == existingTrip.occurrenceCoverage &&
