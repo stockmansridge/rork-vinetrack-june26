@@ -5365,6 +5365,7 @@ struct CalcChemicalLineCard: View {
                 Text("Chemical").font(.caption).foregroundStyle(.secondary)
                 Button {
                     onChooseChemical()
+                } label: {
                     HStack(spacing: 8) {
                         Text(selectedChemical?.name ?? "Select chemical")
                             .font(.subheadline.weight(.medium))
