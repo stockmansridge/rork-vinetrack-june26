@@ -2850,7 +2850,6 @@ struct SprayCalculatorView: View {
                     CalcChemicalLineCard(
                         line: $line,
                         chemicals: store.savedChemicals,
-                        preferredRateBases: preferredRateBases,
                         onInspect: { openChemicalInspector(for: line) },
                         onChooseChemical: { editingChemicalLineTarget = ChemicalLinePickerTarget(id: line.id) }
                     ) {
@@ -4892,10 +4891,6 @@ struct SprayCalculatorView: View {
 struct CalcChemicalLineCard: View {
     @Binding var line: ChemicalLine
     let chemicals: [SavedChemical]
-    /// The vineyard workflow's label rate-basis preference, strongest first.
-    /// Passed in rather than re-derived: one rule, decided once, so swapping a
-    /// product here seeds the same basis the rest of the screen would.
-    let preferredRateBases: [ChemicalRateBasis]
     /// Opens the existing Chemical Store record for THIS line's product, as a
     /// sheet over the calculator, so the operator can inspect, correct or
     /// re-verify it without leaving the spray they are composing.
