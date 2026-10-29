@@ -667,8 +667,9 @@ struct SprayCalculatorView: View {
             // in Target. Apply the label per-ha rate to that treated area by
             // default; an explicit per-product Whole Block choice still wins.
             // Never revise the area basis of a historical saved spray.
+            let newSpray = prefillRecord == nil || prefillRecord?.isTemplate == true
             let chosenAreaBasis = productAreaBasis[line.id] ??
-                (flow.requiresBandWidth && line.basis == .perHectare ? .treatedArea : nil)
+                (newSpray && flow.requiresBandWidth && line.basis == .perHectare ? .treatedArea : nil)
             let basis: SprayProductRateBasis = {
                 switch line.basis {
                 case .per100Litres:
@@ -1425,14 +1426,20 @@ struct SprayCalculatorView: View {
                 // Reopen through the same confirmed-default handoff as a newly
                 // selected product, so amount + unit + per-100-L basis remain
                 // one contract across save and reopen.
-                lines.append(
-                    SprayConfirmedRateSeeding.plannedLine(
-                        for: saved,
-                        program: r.isTemplate ? OperationalRateResolver.rateFromProgram(chem) : nil,
-                        preferring: preferredOrder,
-                        fallbackBasis: preferredBasis
-                    )
+                let planned = SprayConfirmedRateSeeding.plannedLine(
+                    for: saved,
+                    program: r.isTemplate ? OperationalRateResolver.rateFromProgram(chem) : nil,
+                    preferring: preferredOrder,
+                    fallbackBasis: preferredBasis
                 )
+                lines.append(planned)
+                // A saved spray's frozen product-specific area basis is an
+                // actual recorded decision, not a new Target default. Retain
+                // it even when a historical spray is reopened or copied.
+                if !r.isTemplate, let originalBasis = chem.rateBasis,
+                   originalBasis.isAreaBased {
+                    productAreaBasis[planned.id] = originalBasis
+                }
             }
             chemicalLines = lines
             unresolvedPrefillProducts = unresolved
@@ -2835,13 +2842,15 @@ struct SprayCalculatorView: View {
 
                     if asksAreaBasis && line.basis == .perHectare {
                         GuidedProductBasisPicker(
-                            selected: productAreaBasis[line.id] ?? .treatedArea
+                            selected: productAreaBasis[line.id] ??
+                                ((prefillRecord == nil || prefillRecord?.isTemplate == true) ? .treatedArea : .wholeBlockArea)
                         ) { basis in
                             withAnimation(.snappy(duration: 0.2)) {
                                 productAreaBasis[line.id] = basis
                             }
                         }
-                        if productAreaBasis[line.id] == nil {
+                        if productAreaBasis[line.id] == nil,
+                           prefillRecord == nil || prefillRecord?.isTemplate == true {
                             HStack(spacing: 5) {
                                 Text("Using treated band from Target")
                                     .font(.caption2)
