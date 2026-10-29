@@ -25,7 +25,12 @@ nonisolated enum GrowthStageMirrorReplay {
               local.updatedBy == nil || local.updatedBy == author,
               local.variety == nil || local.variety == server.variety,
               local.varietyId == nil || local.varietyId == server.varietyId,
-              local.recordedByName == nil || local.recordedByName == server.recordedByName,
+              // The historical mirror populates this display name from the
+              // *currently signed-in user* when the original Pin lacks one.
+              // This is not authorship evidence. The immutable createdBy UUID
+              // must match above; preserve the entire original mirror in the
+              // reconciliation evidence archive before adopting the canonical
+              // server display name. All real edits remain blocked by timestamps.
               server.createdAt != nil, server.updatedAt != nil else { return false }
         return true
     }
