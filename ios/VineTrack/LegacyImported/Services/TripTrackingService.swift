@@ -563,15 +563,15 @@ final class TripTrackingService {
         at activationTime: Date = Date(),
         onStarted: @escaping (Bool) -> Void = { _ in }
     ) {
-        guard let store else { return }
+        guard let store else { onStarted(false); return }
         guard admitTripChange(store.trips.first(where: { $0.id == savedTrip.id })) else { onStarted(false); return }
         guard store.selectedVineyardId != nil else {
             errorMessage = "No vineyard selected."
-            return
+            onStarted(false); return
         }
         if store.deviceActiveTripId != nil {
             errorMessage = deviceTripConflictMessage(in: store)
-            return
+            onStarted(false); return
         }
         guard !savedTrip.isActive,
               savedTrip.endTime == nil,
@@ -584,7 +584,7 @@ final class TripTrackingService {
                   $0.tripId == savedTrip.id && !$0.isTemplate && $0.endTime == nil
               }) else {
             errorMessage = "Only a Not Started spray job can be activated."
-            return
+            onStarted(false); return
         }
 
         let recipe = store.sprayRecords[recordIndex]
