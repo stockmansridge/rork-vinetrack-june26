@@ -12,6 +12,7 @@ struct SprayPlanningCardsView: View {
     var rateUnit: String? = nil
     var rowSpacingMetres: Double? = nil
     let resolution: SprayPlanningResolution?
+    var showsFullTankOption: Bool = true
 
     var body: some View {
         VStack(spacing: 14) {
@@ -52,9 +53,14 @@ struct SprayPlanningCardsView: View {
                     Text("Plan spray volume").font(.headline)
                     SprayFieldHelp(title: "Water planning", message: "By Area calculates carrier water from selected blocks. Only Full Tanks is a legacy planning option that cannot currently start a spray and should not be selected for a new One-off application.")
                 }
-                Picker("Planning method", selection: $method) {
-                    ForEach(SprayPlanningMethod.allCases, id: \.self) { Text($0.title).tag($0) }
-                }.pickerStyle(.segmented)
+                if showsFullTankOption {
+                    Picker("Planning method", selection: $method) {
+                        ForEach(SprayPlanningMethod.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }.pickerStyle(.segmented)
+                } else {
+                    Text("By Area · selected blocks")
+                        .font(.subheadline.weight(.medium))
+                }
                 if method == .fullTank {
                     field("Intended tank volume (\(region.volumeUnitAbbreviation))", text: $tankText, id: "spray.planning.tank")
                     Picker("Specify Only Full Tanks", selection: $specification) {
