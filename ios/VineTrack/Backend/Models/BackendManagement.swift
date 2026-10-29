@@ -69,6 +69,8 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
     let entrySource: String?
     var chemicalV3RevisionId: UUID? = nil
     var chemicalV3ProductId: UUID? = nil
+    var chemicalV3ReviewStatusSnapshot: String? = nil
+    var chemicalV3LabelRates: ChemicalV3LabelRateOptions? = nil
     let createdAt: Date?
     let updatedAt: Date?
     let deletedAt: Date?
@@ -135,6 +137,7 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         case entrySource = "entry_source"
         case chemicalV3RevisionId = "chemical_v3_revision_id"
         case chemicalV3ProductId = "chemical_v3_product_id"
+        case chemicalV3ReviewStatusSnapshot = "chemical_v3_review_status_snapshot"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case deletedAt = "deleted_at"
@@ -186,6 +189,10 @@ nonisolated struct BackendSavedChemical: Codable, Sendable, Identifiable {
         self.entrySource = try? c.decodeIfPresent(String.self, forKey: .entrySource)
         self.chemicalV3RevisionId = try? c.decodeIfPresent(UUID.self, forKey: .chemicalV3RevisionId)
         self.chemicalV3ProductId = try? c.decodeIfPresent(UUID.self, forKey: .chemicalV3ProductId)
+        self.chemicalV3ReviewStatusSnapshot = try? c.decodeIfPresent(String.self, forKey: .chemicalV3ReviewStatusSnapshot)
+        // V3 stores rate OPTIONS as an object; legacy [ChemicalRate] decoding above
+        // intentionally does not reinterpret these as a scalar list.
+        self.chemicalV3LabelRates = try? c.decodeIfPresent(ChemicalV3LabelRateOptions.self, forKey: .rates)
         // Chemical Intelligence columns were added in sql/194. Every one is
         // read with `try?` so a backend without the migration — or a payload
         // written by a newer build — degrades to nil instead of failing the
@@ -576,6 +583,8 @@ extension BackendSavedChemical {
         saved.vineyardPreferredRate = vineyardPreferredRate
         saved.chemicalV3RevisionId = chemicalV3RevisionId
         saved.chemicalV3ProductId = chemicalV3ProductId
+        saved.chemicalV3ReviewStatusSnapshot = chemicalV3ReviewStatusSnapshot
+        saved.chemicalV3LabelRates = chemicalV3LabelRates
         saved.backendActivityGroupScheme = activityGroupScheme
         saved.backendActivityGroups = activityGroups ?? []
         return saved
