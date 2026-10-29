@@ -30,6 +30,23 @@ import Foundation
     @Test func changedPhoto() { var (l, r) = pair(); l.photoPaths = ["local/photo.jpg"]; #expect(!GrowthStageMirrorReplay.isUnmodifiedBackfill(l, of: r)) }
     @Test func changedVineyard() { var (l, r) = pair(); l.vineyardId = UUID(); #expect(!GrowthStageMirrorReplay.isUnmodifiedBackfill(l, of: r)) }
 
+    @Test func historicalDisplayNameFallbackIsNotIdentityButAuthorUUIDRemainsRequired() {
+        let (local, canonical) = pair()
+        var fallback = local
+        fallback.recordedByName = "Signed-in operator fallback"
+        // A historical backfill can fabricate the display name from the
+        // current session, even when the canonical record has no name.
+        // The original fallback is retained in mirror evidence on alias.
+        #expect(GrowthStageMirrorReplay.isUnmodifiedBackfill(fallback, of: canonical))
+        fallback.createdBy = UUID()
+        #expect(!GrowthStageMirrorReplay.isUnmodifiedBackfill(fallback, of: canonical))
+        fallback = local
+        fallback.updatedAt.addTimeInterval(2)
+        fallback.recordedByName = "Edited by operator"
+        #expect(!GrowthStageMirrorReplay.isUnmodifiedBackfill(fallback, of: canonical))
+    }
+
+
     @Test func delayedHistoricalFieldCaptureIsRecognisedOnlyWithIndependentSaveTimeProof() {
         let (local, original) = pair()
         func remote(observedLag: TimeInterval, savedLag: TimeInterval) -> BackendGrowthStageRecord {
