@@ -80,6 +80,7 @@ struct TripDetailView: View {
             return record.sprayReference
         }
         let dateStr = trip.startTime.formattedTZ(date: .abbreviated, time: .omitted, in: tz)
+        if trip.tripFunction == TripFunction.spraying.rawValue { return "Spray Trip \(dateStr)" }
         return "Maintenance Trip \(dateStr)"
     }
 
@@ -396,7 +397,9 @@ struct TripDetailView: View {
                     .disabled(isExporting)
                 }
             }
-            if accessControl.canDeleteOperationalRecords && !trip.isActive {
+            // An unacknowledged occurrence plan is durable recovery evidence,
+            // not a disposable historical trip. Do not offer destructive delete.
+            if accessControl.canDeleteOperationalRecords && !trip.isActive && !mayRecoverSavedOccurrenceSpray {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) {
                         showDeleteConfirmation = true
