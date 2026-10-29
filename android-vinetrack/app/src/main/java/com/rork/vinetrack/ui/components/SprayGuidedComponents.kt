@@ -231,7 +231,7 @@ fun GuidedReviewGroup(
  */
 @Composable
 fun GuidedProductBasisPicker(
-    selected: SprayProductRateBasis,
+    selected: SprayProductRateBasis?,
     accent: Color,
     modifier: Modifier = Modifier,
     onSelect: (SprayProductRateBasis) -> Unit,
@@ -241,7 +241,7 @@ fun GuidedProductBasisPicker(
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
-            text = "Apply this product rate to:",
+            text = "Chemical dose applies to:",
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
