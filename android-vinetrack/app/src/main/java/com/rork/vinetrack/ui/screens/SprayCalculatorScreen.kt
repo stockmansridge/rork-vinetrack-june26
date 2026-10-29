@@ -2283,11 +2283,14 @@ fun SprayCalculatorScreen(
                                 result = null
                             }
                             if (productAreaBasis[line.uid] == null) {
-                                Text(
-                                    "Treated band assumed from Target; change if this label uses whole-block hectares.",
-                                    fontSize = 11.sp,
-                                    color = vine.textSecondary,
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Using treated band from Target", fontSize = 11.sp,
+                                        color = vine.textSecondary)
+                                    SprayInfoHelp(
+                                        "Product application area",
+                                        "For a new banded spray, a per-hectare chemical rate uses the treated hectares chosen in Target. Choose Whole Block only when the applicable label calls for gross hectares. The carrier-water setting is independent."
+                                    )
+                                }
                             }
                         }
 
