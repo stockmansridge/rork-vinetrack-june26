@@ -432,7 +432,7 @@ final class TripTrackingService {
                 if let hours = trip.startEngineHours { start["startEngineHours"] = .number(hours) }
                 try journal.activate(.object(start))
                 if isSpray, var record = sprayRecord {
-                    record.tripId = trip.id
+                    record.linkToOperationalTrip(trip.id)
                     try store.saveSprayForLater(record: record, trip: inactive)
                 } else { try store.savePlannedTripOrThrow(inactive) }
                 finishPlannedActivation(trip, owner: owner, onStarted: onStarted)
@@ -440,7 +440,7 @@ final class TripTrackingService {
             return
         }
         if isSpray, var record = sprayRecord {
-            record.tripId = trip.id
+            record.linkToOperationalTrip(trip.id)
             var inactive = trip
             inactive.isActive = false
             do {
