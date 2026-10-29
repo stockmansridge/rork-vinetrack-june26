@@ -71,6 +71,24 @@ struct SprayLineChemicalPicker: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField("Search chemicals", text: $query)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .accessibilityIdentifier("spray.selectChemical.search")
+                        if !query.isEmpty {
+                            Button {
+                                query = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .accessibilityLabel("Clear chemical search")
+                        }
+                    }
+                }
                 // Creating comes FIRST, above the store, because "the product
                 // isn't in my list" is discovered at the top of a search that
                 // found nothing useful — not after scrolling a long store to
@@ -132,7 +150,6 @@ struct SprayLineChemicalPicker: View {
                     Text("Type the product name on the record instead. The application is kept in full, but its chemistry cannot be assessed for resistance until the product is added to your Chemical Store.")
                 }
             }
-            .searchable(text: $query, prompt: "Search your Chemical Store")
             .navigationTitle("Select Chemical")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
