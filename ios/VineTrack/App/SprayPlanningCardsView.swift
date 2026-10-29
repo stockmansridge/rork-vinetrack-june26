@@ -16,12 +16,13 @@ struct SprayPlanningCardsView: View {
     var body: some View {
         VStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Spraying workflow").font(.headline)
-                Text(configuration == nil
-                     ? "No pass configuration recorded. Continue with the normal Tank Mixing → Trip workflow."
-                     : "Continue with Tank Mixing → Trip using the selected pass configuration.")
+                HStack(spacing: 4) {
+                    Text("Sprayer pass setup").font(.headline)
+                    SprayFieldHelp(title: "Optional pass setup",
+                        message: "Single Row covers the facing sides of two adjacent vine rows. 2 Row covers both sides of two complete vine rows from an aisle pass. Leaving it unset retains normal Tank Mixing and Trip. These choices do not select a true over-row machine route.")
+                }
+                Text(configuration == nil ? "Normal Tank Mixing → Trip" : "\(configuration!.title) pass selected")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("Sprayer configuration").font(.subheadline)
                 Picker("Sprayer configuration", selection: $configuration) {
                     Text("Not Set").tag(SprayPassConfiguration?.none)
                     ForEach(SprayPassConfiguration.allCases, id: \.self) { pass in
@@ -30,12 +31,7 @@ struct SprayPlanningCardsView: View {
                 }.pickerStyle(.segmented).accessibilityIdentifier("spray.passConfiguration")
                 if let configuration {
                     SprayPassIllustration(configuration: configuration)
-                    Text(configuration == .standardPass
-                         ? "Sprays the facing sides of two adjacent vine rows. Each pass covers one complete-row equivalent."
-                         : "Both sides of two complete vine rows per pass.")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Text("You can continue without recording a pass configuration.")
+                    Text(configuration == .standardPass ? "1 row equivalent per pass" : "2 row equivalents per pass")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if let rowSpacingMetres {
@@ -47,12 +43,15 @@ struct SprayPlanningCardsView: View {
                 if let travel = resolution?.controllerLitresPer100mTravel {
                     LabeledContent("Controller application", value: region.formatVolumePer100Length(travel))
                 }
-                Text("Physical vineyard row spacing stays unchanged. Controller travel and physical vine-row rates are different measures.")
-                    .font(.caption).foregroundStyle(.secondary)
+                SprayFieldHelp(title: "Controller rates",
+                    message: "Physical vineyard row spacing stays unchanged. Controller travel, row equivalents and actual vine-row spray rates are different measures. VineTrack calculates the controller figure using the selected setup.")
             }.padding(14).background(Color(.secondarySystemGroupedBackground)).clipShape(.rect(cornerRadius: 14))
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("Plan spray volume").font(.headline)
+                HStack(spacing: 4) {
+                    Text("Plan spray volume").font(.headline)
+                    SprayFieldHelp(title: "Water planning", message: "By Area calculates carrier water from selected blocks. Only Full Tanks is a legacy planning option that cannot currently start a spray and should not be selected for a new One-off application.")
+                }
                 Picker("Planning method", selection: $method) {
                     ForEach(SprayPlanningMethod.allCases, id: \.self) { Text($0.title).tag($0) }
                 }.pickerStyle(.segmented)
@@ -66,8 +65,8 @@ struct SprayPlanningCardsView: View {
                     } else {
                         field("Calibrated rate (\(rateUnit ?? region.volumePerAreaUnit))", text: $rateText, id: "spray.planning.rate")
                     }
-                    Text("Planned area only. Actual block and row coverage is recorded during the Trip; no partial-block allocation is assumed.")
-                        .font(.caption).foregroundStyle(.secondary)
+                    SprayFieldHelp(title: "Full Tank planning",
+                        message: "Planned area is not proof of actual treated rows or blocks. True coverage is recorded during the Trip. This legacy planning mode cannot currently start a spray.")
                 } else {
                     Text("Calculate the spray using the selected block area.").font(.caption).foregroundStyle(.secondary)
                 }
