@@ -9,16 +9,32 @@ struct CatalogueSearchView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var model: CatalogueSearchModel = CatalogueSearchModel()
     @State private var photo: PhotosPickerItem?
+    @State private var showingCamera = false
+    @State private var isAdding = false
+    @State private var selectedResultVisible = false
     private var country: String { ChemicalRegistration.normaliseCountry(store.selectedVineyard?.country ?? "") }
     var body: some View {
         NavigationStack {
+            ScrollViewReader { reader in
             List {
                 Section {
                     TextField("Product name or registration number", text: $model.query)
                         .submitLabel(.search).onSubmit { Task { await model.search(country: country) } }
-                    Button("Search") { Task { await model.search(country: country) } }.disabled(model.busy || model.query.isEmpty || model.context != nil)
-                    PhotosPicker(selection: $photo, matching: .images) { Label("Search by Photo", systemImage: "camera") }
-                        .disabled(model.busy || model.context != nil)
+                    Button { Task { await model.search(country: country) } } label: {
+                        Label("Search Chemicals", systemImage: "magnifyingglass").frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.busy || model.query.isEmpty || model.context != nil)
+                    Button { showingCamera = true } label: {
+                        Label("Take Photo of Label", systemImage: "camera").frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.busy || model.context != nil)
+                    PhotosPicker(selection: $photo, matching: .images) {
+                        Label("Choose Existing Photo", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.busy || model.context != nil)
                 }
                 if let context = model.context {
                     Section("Finding your product") {
@@ -32,7 +48,15 @@ struct CatalogueSearchView: View {
                 if !model.matches.isEmpty {
                     Section("Matches in the VineTrack catalogue") {
                         ForEach(model.matches) { match in
-                            Button { Task { await model.select(match) } } label: {
+                            Button {
+                                selectedResultVisible = true
+                                Task {
+                                    await model.select(match)
+                                    if model.result != nil {
+                                        withAnimation(.easeInOut(duration: 0.2)) { reader.scrollTo("catalogue.selected.review", anchor: .top) }
+                                    } else { selectedResultVisible = false }
+                                }
+                            } label: {
                                 HStack {
                                     CatalogueLabelView(path: match.text("front_label_image_path"), labelURL: match.text("manufacturer_label_url"))
                                     VStack(alignment: .leading) {
@@ -41,7 +65,7 @@ struct CatalogueSearchView: View {
                                         Text("VineTrack catalogue").font(.caption)
                                     }
                                 }
-                            }.buttonStyle(.plain).disabled(model.context != nil)
+                            }.buttonStyle(.plain).disabled(model.context != nil || model.busy)
                         }
                     }
                     Section {
@@ -67,19 +91,34 @@ struct CatalogueSearchView: View {
                         }
                         rates(result, key: "per_hectare", title: "Per hectare")
                         rates(result, key: "per_100_litres", title: "Per 100 L")
-                        Button("Add to Vineyard") {
-                            guard let vineyard = store.selectedVineyardId else { return }
+                        Button {
+                            guard let vineyard = store.selectedVineyardId, !isAdding else { return }
+                            isAdding = true
                             Task {
+                                defer { isAdding = false }
                                 do { let saved = try await model.add(vineyard: vineyard, store: store); onSaved(saved); dismiss() }
                                 catch { model.error = "Unable to add this result. Check permissions and try again." }
                             }
-                        }.disabled(model.busy)
+                        } label: {
+                            Text(isAdding ? "Adding to Vineyard…" : "Add to Vineyard")
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.busy || isAdding)
                     }
+                    .id("catalogue.selected.review")
                 }
                 if model.busy { ProgressView() }
+                if selectedResultVisible && model.busy { Text("Opening selected product…").foregroundStyle(.secondary) }
                 if let error = model.error { Text(error).foregroundStyle(.secondary) }
             }
             .navigationTitle("Chemical Search")
+            .sheet(isPresented: $showingCamera) {
+                CameraImagePicker { data in
+                    guard let data, let vineyard = store.selectedVineyardId else { return }
+                    Task { await model.discover(vineyard: vineyard, country: country, photo: data) }
+                }
+            }
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
             .task {
                 model.query = prefillQuery
@@ -93,6 +132,7 @@ struct CatalogueSearchView: View {
                           let vineyard = store.selectedVineyardId else { model.error = "Unable to read this photo. Please choose another image."; return }
                     await model.discover(vineyard: vineyard, country: country, photo: jpeg)
                 }
+            }
             }
         }
     }
