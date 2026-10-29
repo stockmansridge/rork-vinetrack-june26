@@ -58,8 +58,8 @@ class SprayPlanningAndroidTest {
         }
         compose.onNodeWithText("Single Row").assertIsNotSelected()
         compose.onNodeWithText(SprayPlanningOperationalGate.MIGRATION_MESSAGE).assertDoesNotExist()
-        compose.onNodeWithText("Over-Row").performClick().assertIsSelected()
-        compose.onNodeWithContentDescription("Over-row boom with four heads treating both sides of two rows").assertExists()
+        compose.onNodeWithText("2 Row").performClick().assertIsSelected()
+        compose.onNodeWithContentDescription("Two Row aisle sprayer treating both sides of two adjacent vine rows").assertExists()
         compose.onNodeWithText("Only Full Tanks").performScrollTo().performClick().assertIsSelected()
         compose.onNodeWithText("Intended tank volume (L)").performScrollTo().performTextInput("1500")
         compose.onNodeWithText("Planned area (ha)").performScrollTo().performTextInput("3")

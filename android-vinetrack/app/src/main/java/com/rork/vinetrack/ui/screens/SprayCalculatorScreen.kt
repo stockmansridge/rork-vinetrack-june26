@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Gesture
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LocalFlorist
 import androidx.compose.material.icons.filled.LowPriority
@@ -160,6 +161,7 @@ import com.rork.vinetrack.data.spray.SprayCarrierBasis
 import com.rork.vinetrack.data.spray.SprayCarrierAreaBasis
 import com.rork.vinetrack.data.spray.SprayVolumeChoice
 import com.rork.vinetrack.data.spray.SprayVolumeHelp
+import com.rork.vinetrack.ui.components.SprayInfoHelp
 import com.rork.vinetrack.ui.components.SprayPlanningCards
 import com.rork.vinetrack.ui.components.SprayConcentrationWarning
 import com.rork.vinetrack.ui.components.SprayLabelRateSheet
@@ -646,6 +648,13 @@ fun SprayCalculatorScreen(
         SprayCalculator.CanopyDensity.LOW,
     )
     val isGroundSpray = operationType == SprayOperationType.BANDED_SPRAY.raw
+    // Preserve legacy gross-area assumptions on an existing, non-template
+    // spray that has no recorded per-product basis. New banded jobs use the
+    // treated hectares already established in Target.
+    val bandedProductDefault = if (
+        prefillRecordId != null &&
+        state.sprayRecords.any { it.id == prefillRecordId && !it.isTemplate }
+    ) SprayProductRateBasis.WHOLE_BLOCK_AREA else SprayProductRateBasis.TREATED_AREA
     val legacyRecommendedRate = if (isGroundSpray) {
         null
     } else {
@@ -740,8 +749,10 @@ fun SprayCalculatorScreen(
         val basis = if (line.basis == SprayCalculator.RateBasis.PER_100L) {
             SprayProductRateBasis.PER_100_LITRES
         } else {
-            // Legacy `per_hectare` means WHOLE BLOCK — never treated area.
-            productAreaBasis[line.uid] ?: SprayProductRateBasis.WHOLE_BLOCK_AREA
+            // New banded sprays default chemical per-ha rates to treated hectares;
+            // explicit product choices and restored historical bases still win.
+            productAreaBasis[line.uid] ?: if (isGroundSpray) bandedProductDefault
+            else SprayProductRateBasis.WHOLE_BLOCK_AREA
         }
         // The LINE's rate unit, never the product's inventory unit: the
         // engine costs and reports in whatever unit it is handed, so passing
@@ -760,6 +771,7 @@ fun SprayCalculatorScreen(
             // an unconfirmed default, and the flow blocks on it rather than
             // freezing a guess into a compliance record.
             isAreaBasisExplicit = line.basis == SprayCalculator.RateBasis.PER_100L ||
+                (isGroundSpray && bandedProductDefault == SprayProductRateBasis.TREATED_AREA) ||
                 productAreaBasis[line.uid] != null,
         )
     }
@@ -987,7 +999,7 @@ fun SprayCalculatorScreen(
         sprayName = if (r.isTemplate) base else if (base.isNotBlank()) "$base (Copy)" else ""
         r.operationType?.takeIf { it in sprayOperationTypes }?.let {
             operationType = it
-            isApplicationResolved = true
+            isApplicationResolved = false // A Program prefill must not skip Step 1 confirmation.
         }
         if (!canopySelection.isConfirmed) {
             (r.programCalculatorInputs?.canopy ?: r.prefillCanopy)?.let { canopySelection = it.copy(isSizeAndDensityConfirmed = false) }
@@ -1227,7 +1239,8 @@ fun SprayCalculatorScreen(
             SprayCalculatorInputBuilder.Product(
                 chemicalId = line.chemicalId,
                 basis = if (line.basis == SprayCalculator.RateBasis.PER_100L) SprayProductRateBasis.PER_100_LITRES
-                    else productAreaBasis[line.uid] ?: SprayProductRateBasis.WHOLE_BLOCK_AREA,
+                    else productAreaBasis[line.uid] ?: if (isGroundSpray) bandedProductDefault
+                        else SprayProductRateBasis.WHOLE_BLOCK_AREA,
                 appliedRate = if (chem != null) effectiveRateDisplay(chem, line) else 0.0,
                 unit = if (chem != null) lineRateUnit(chem, line) else "",
                 isOverride = chemicalEditorValue(line.overrideText) != null,
@@ -1862,10 +1875,15 @@ fun SprayCalculatorScreen(
                         areaText = planningAreaText, onArea = { planningAreaText = it; result = null },
                         rateText = planningRateText, onRate = { planningRateText = it; result = null },
                         region = fmt, rateUnit = carrierFormat.carrierBasisLabel(customSprayerBasis), rowSpacingMetres = resolvedRowSpacing,
-                        resolution = guidedFlow.planningResolution)
+                        resolution = guidedFlow.planningResolution,
+                        showsFullTankOption = prefillRecord != null || planningMethod == SprayPlanningMethod.FULL_TANK)
                 }
                 if (guidedFlow.requiresBandWidth) {
-                    Text("Rate applies to", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Water application applies to", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                        SprayInfoHelp("Water application area",
+                            "This choice calculates SPRAY WATER. Treated Area counts the sprayed band; Whole Block uses gross hectares. It does not decide how each chemical product is dosed.")
+                    }
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                         SprayCarrierAreaBasis.entries.forEachIndexed { index, basis ->
                             SegmentedButton(
@@ -2266,19 +2284,23 @@ fun SprayCalculatorScreen(
                             line.basis != SprayCalculator.RateBasis.PER_100L
                         ) {
                             GuidedProductBasisPicker(
-                                selected = productAreaBasis[line.uid]
-                                    ?: SprayProductRateBasis.WHOLE_BLOCK_AREA,
+                                selected = productAreaBasis[line.uid] ?: bandedProductDefault,
                                 accent = VineColors.Olive,
                             ) { basis ->
                                 productAreaBasis[line.uid] = basis
                                 result = null
                             }
-                            if (productAreaBasis[line.uid] == null) {
-                                Text(
-                                    "Choose an area basis for this product before continuing.",
-                                    fontSize = 11.sp,
-                                    color = VineColors.Warning,
-                                )
+                            if (productAreaBasis[line.uid] == null &&
+                                bandedProductDefault == SprayProductRateBasis.TREATED_AREA
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("Using treated band from Target", fontSize = 11.sp,
+                                        color = vine.textSecondary)
+                                    SprayInfoHelp(
+                                        "Product application area",
+                                        "For a new banded spray, a per-hectare chemical rate uses the treated hectares chosen in Target. Choose Whole Block only when the applicable label calls for gross hectares. The carrier-water setting is independent."
+                                    )
+                                }
                             }
                         }
 
@@ -2296,6 +2318,9 @@ fun SprayCalculatorScreen(
                         // Renders nothing today — a fabricated "no issues" verdict
                         // would be worse than silence.
                         ResistanceCheckSlot(guidedFlow.isResistanceCheckApplicable)
+                    }
+                    if (idx < chemLines.lastIndex) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     }
                 }
 
@@ -3458,6 +3483,17 @@ internal fun CalcChemicalLineCard(
     val invalidDraft = isOverridden && chemicalEditorValue(line.overrideText) == null
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    var editingLabelRate by remember(line.uid) { mutableStateOf(false) }
+    var draftBasis by remember(line.uid) { mutableStateOf(SprayCalculator.RateBasis.PER_100L) }
+    var draftUnit by remember(line.uid) { mutableStateOf("mL") }
+    var draftAmount by remember(line.uid) { mutableStateOf("") }
+    var checkedLabel by remember(line.uid) { mutableStateOf(false) }
+    LaunchedEffect(chem?.id) {
+        // Never retain an unfinished label rate when the operator changes product.
+        editingLabelRate = false
+        checkedLabel = false
+        draftAmount = ""
+    }
     // The rate's OWN unit. Displaying the product's inventory unit beside a
     // confirmed 560 g/ha default prints "560 Kg/ha" - the same number with a
     // thousandfold different meaning.
@@ -3486,7 +3522,12 @@ internal fun CalcChemicalLineCard(
                 modifier = Modifier.semantics { contentDescription = "chemicalEvidenceReview" })
         }
         line.operationalSource?.let { source ->
-            Text(if (source == com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.PROGRAM_STEP) "Program Step rate" else "Preferred vineyard rate — vineyard-defined", style = MaterialTheme.typography.bodySmall)
+            Text(when (source) {
+                com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.PROGRAM_STEP -> "Program Step rate"
+                com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.VINEYARD_PREFERRED -> "Preferred vineyard rate"
+                com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.CONFIRMED_DEFAULT -> "Confirmed catalogue/default rate"
+                com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.OPERATOR_PLANNING -> "Operator-entered for this spray"
+            }, style = MaterialTheme.typography.bodySmall)
             if (chem != null) line.rateAmount?.let { amount ->
                 val preferred = com.rork.vinetrack.data.chemical.VineyardPreferredRate(amount, line.rateUnit.orEmpty(), if (line.basis == SprayCalculator.RateBasis.PER_100L) "per_100_litres" else "per_hectare")
                 com.rork.vinetrack.data.chemical.OperationalRateResolver.warning(preferred, chem)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
@@ -3503,16 +3544,6 @@ internal fun CalcChemicalLineCard(
                 modifier = Modifier.weight(1f),
                 maxLines = 1,
             )
-            normalizedUrl(chem?.labelUrl)?.let { url ->
-                IconButton(onClick = { uriHandler.openUri(url) }, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Filled.Description, contentDescription = "Open chemical label", tint = VineColors.Olive, modifier = Modifier.size(18.dp))
-                }
-            }
-            normalizedUrl(chem?.productUrl)?.let { url ->
-                IconButton(onClick = { uriHandler.openUri(url) }, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Filled.Language, contentDescription = "Open product page", tint = vine.textSecondary, modifier = Modifier.size(18.dp))
-                }
-            }
             // Basis chip
             Text(
                 if (line.basis == SprayCalculator.RateBasis.PER_100L) "Per 100L" else "Per Ha",
@@ -3526,6 +3557,31 @@ internal fun CalcChemicalLineCard(
             )
             IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
                 Icon(Icons.Filled.Cancel, contentDescription = "Remove chemical", tint = vine.textSecondary, modifier = Modifier.size(20.dp))
+            }
+        }
+        // Text-labelled actions are on their own row so long product names
+        // are not squeezed by two ambiguous 32dp icons.
+        if (normalizedUrl(chem?.labelUrl) != null || normalizedUrl(chem?.productUrl) != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                normalizedUrl(chem?.labelUrl)?.let { url ->
+                    OutlinedButton(onClick = { uriHandler.openUri(url) }) { Text("Label") }
+                }
+                normalizedUrl(chem?.productUrl)?.let { url ->
+                    OutlinedButton(onClick = { uriHandler.openUri(url) }) { Text("Product Page") }
+                }
+            }
+        }
+        if (chem != null) {
+            val catalogue = chem.chemicalV3RevisionId != null
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Icon(if (catalogue) Icons.Filled.CheckCircle else Icons.Filled.Home,
+                    contentDescription = null, tint = if (catalogue) Color(0xFF85B830) else Color(0xFF2F7FD8),
+                    modifier = Modifier.size(15.dp))
+                Text(if (catalogue) "VineTrack catalogue" else "Vineyard product",
+                    fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                    color = if (catalogue) Color(0xFF56801A) else Color(0xFF1F5FA8))
+                // Source is not verification; the established intelligence row
+                // remains responsible for verified/unverified status.
             }
         }
 
@@ -3590,6 +3646,14 @@ internal fun CalcChemicalLineCard(
                         text = {
                             Column {
                                 Text(saved.displayName, fontSize = 13.sp)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    val catalogue = saved.chemicalV3RevisionId != null
+                                    Icon(if (catalogue) Icons.Filled.CheckCircle else Icons.Filled.Home,
+                                        contentDescription = null,
+                                        tint = if (catalogue) Color(0xFF85B830) else Color(0xFF2F7FD8),
+                                        modifier = Modifier.size(14.dp))
+                                    Text(if (catalogue) "VineTrack catalogue" else "Vineyard product", fontSize = 11.sp)
+                                }
                                 // Actives, derived group and trust state (sql/194).
                                 // Never blocks selection: an unverified product is
                                 // still a real product the operator is spraying.
@@ -3613,12 +3677,77 @@ internal fun CalcChemicalLineCard(
 
         if (chem != null) {
             Spacer8()
-            Text("Label rate basis", fontSize = 11.sp, color = vine.textSecondary)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Product rate basis", fontSize = 11.sp, color = vine.textSecondary)
+                SprayInfoHelp("Product rate basis",
+                    "Per 100 L is chemical per 100 litres of spray water. Per ha is chemical per hectare. These are not interchangeable with the WATER rate chosen in Spray Volume. If no suitable catalogue rate is recorded, use Enter rate from product label.")
+            }
             SuggestedRateBasisRow(chem, line, onChanged)
+            if (editingLabelRate) {
+                val stockUnit = ChemicalLabelRateNormalizer.canonicalBareUnit(chem.unit)
+                val units = when (stockUnit) {
+                    "mL", "L" -> listOf("mL", "L")
+                    "g", "kg" -> listOf("g", "kg")
+                    else -> emptyList()
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Product label rate", fontWeight = FontWeight.SemiBold)
+                        SprayInfoHelp("Operator-entered product rate",
+                            "This is an operator-entered rate for the current spray, not a VineTrack verified catalogue rate. Check the exact product, crop, intended use, basis and unit against its label.")
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(SprayCalculator.RateBasis.PER_100L to "Per 100 L", SprayCalculator.RateBasis.PER_HECTARE to "Per ha").forEach { (basis, title) ->
+                            OutlinedButton(onClick = { draftBasis = basis; draftAmount = ""; checkedLabel = false }) {
+                                Text(if (draftBasis == basis) "✓ $title" else title)
+                            }
+                        }
+                    }
+                    OutlinedTextField(value = draftAmount, onValueChange = { draftAmount = it }, label = { Text("Product amount") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        units.forEach { unit -> OutlinedButton(onClick = { draftUnit = unit }) { Text(if (draftUnit == unit) "✓ $unit" else unit) } }
+                    }
+                    if (units.isEmpty()) {
+                        Text("Product unit needs review in Chemical Store before this rate can be calculated.", color = VineColors.Warning)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = checkedLabel, onCheckedChange = { checkedLabel = it })
+                        Text("I checked the applicable label", modifier = Modifier.weight(1f), fontSize = 12.sp)
+                    }
+                    Row {
+                        OutlinedButton(onClick = { editingLabelRate = false }) { Text("Cancel") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = {
+                            val amount = chemicalEditorValue(draftAmount) ?: return@Button
+                            line.selectedRateId = null
+                            line.basis = draftBasis
+                            line.rateUnit = draftUnit
+                            line.rateAmount = amount
+                            line.overrideText = ""
+                            line.operationalSource = com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.OPERATOR_PLANNING
+                            editingLabelRate = false
+                            onChanged()
+                        }, enabled = checkedLabel && chemicalEditorValue(draftAmount) != null && draftUnit in units) { Text("Use this rate") }
+                    }
+                }
+            } else {
+                OutlinedButton(onClick = {
+                    draftBasis = line.basis
+                    val stock = ChemicalLabelRateNormalizer.canonicalBareUnit(chem.unit)
+                    draftUnit = line.rateUnit?.takeIf { it in listOf("mL", "L", "g", "kg") }
+                        ?: when (stock) { "mL", "L" -> "mL"; "g", "kg" -> "g"; else -> "" }
+                    draftAmount = ""
+                    checkedLabel = false
+                    editingLabelRate = true
+                }, modifier = Modifier.fillMaxWidth()) { Text("Enter rate from product label") }
+            }
 
             Spacer8()
-            Text("Rate", fontSize = 11.sp, color = vine.textSecondary)
-            SuggestedRegisteredRatePickerRow(chem, line, onChanged)
+            if (!editingLabelRate) {
+                Text("Rate", fontSize = 11.sp, color = vine.textSecondary)
+                SuggestedRegisteredRatePickerRow(chem, line, onChanged)
+            }
 
             val contextRange = selectedRate?.labelRangeText
                 ?: confirmedRange?.let { SprayConfirmedRateSeeding.rangeDisplay(it) }
@@ -3635,7 +3764,7 @@ internal fun CalcChemicalLineCard(
 
             Spacer8()
             // Override rate
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!editingLabelRate) Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     if (line.operationalSource != null) "Applied operational rate" else "Applied label rate",
                     fontSize = 11.sp,
@@ -3661,7 +3790,7 @@ internal fun CalcChemicalLineCard(
                     }
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!editingLabelRate) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = line.overrideText,
                     onValueChange = { line.overrideText = it; onChanged() },

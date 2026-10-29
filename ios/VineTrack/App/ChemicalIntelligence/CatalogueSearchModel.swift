@@ -45,8 +45,9 @@ final class CatalogueSearchModel {
         } catch { self.error = "Catalogue search is unavailable. Try again." }
     }
     func select(_ match: CatalogueWire) async {
-        guard context == nil, let id = match.text("revision_id") else { return }
-        busy = true; error = nil
+        guard context == nil, !busy, let id = match.text("revision_id") else { return }
+        // Never show the previous selected chemical if this revision fails.
+        busy = true; error = nil; result = nil
         defer { busy = false }
         do { result = try await repository.revision(id) }
         catch { self.error = "Unable to load this result. Try again." }

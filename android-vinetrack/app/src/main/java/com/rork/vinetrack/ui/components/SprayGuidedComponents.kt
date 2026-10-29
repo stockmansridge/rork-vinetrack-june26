@@ -19,11 +19,19 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -37,6 +45,23 @@ import com.rork.vinetrack.data.spray.SprayGuidedStep
 import com.rork.vinetrack.data.spray.SprayProductLineResult
 import com.rork.vinetrack.data.spray.SprayProductRateBasis
 import java.text.DecimalFormat
+
+/** General guidance is opt-in. Never conceal actionable errors or safety warnings here. */
+@Composable
+fun SprayInfoHelp(title: String, message: String) {
+    var open by remember { mutableStateOf(false) }
+    IconButton(onClick = { open = true }, modifier = Modifier.size(44.dp)) {
+        Icon(Icons.Filled.Info, contentDescription = "Information: $title", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            title = { Text(title) },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = { open = false }) { Text("Done") } },
+        )
+    }
+}
 
 /**
  * A progressively-disclosed section of the guided Spray Calculator — the Compose
@@ -231,7 +256,7 @@ fun GuidedReviewGroup(
  */
 @Composable
 fun GuidedProductBasisPicker(
-    selected: SprayProductRateBasis,
+    selected: SprayProductRateBasis?,
     accent: Color,
     modifier: Modifier = Modifier,
     onSelect: (SprayProductRateBasis) -> Unit,
@@ -240,12 +265,18 @@ fun GuidedProductBasisPicker(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            text = "Apply this product rate to:",
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Chemical dose applies to",
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            SprayInfoHelp(
+                title = "Product dose area",
+                message = "Only hectare-rated products on banded sprays need this decision. Whole block uses gross hectares; Treated Band uses the area receiving spray. It is separate from the water-volume area basis.",
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             SprayProductRateBasis.areaChoices.forEach { basis ->
                 GuidedChip(

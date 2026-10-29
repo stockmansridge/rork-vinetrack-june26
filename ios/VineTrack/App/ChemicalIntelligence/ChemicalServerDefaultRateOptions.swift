@@ -313,3 +313,108 @@ nonisolated struct ChemicalServerDefaultRateOptions: Codable, Sendable, Hashable
         ChemicalDefaultRateBasis.allCases.allSatisfy { validOptions($0).isEmpty }
     }
 }
+
+ 
+/// Chemical V3's *approved catalogue* rates from saved_chemicals.rates.
+///
+/// V3 writes a two-basis JSON object, not the legacy [ChemicalRate] array and
+/// not sql/214's vineyard-selected default_rates. Preserve each option as a
+/// RANGE when the label prints a band. Only an approved saved V3 revision may
+/// expose these options as catalogue rates in the spray calculator.
+nonisolated struct ChemicalV3LabelRateOption: Codable, Sendable, Hashable {
+    let optionId: UUID?
+    let basis: String
+    let unit: String
+    let value: Double?
+    let minValue: Double?
+    let maxValue: Double?
+    let needsReview: Bool
+    let condition: String?
+
+    enum CodingKeys: String, CodingKey {
+        case optionId = "option_id"
+        case basis, unit, value, condition
+        case minValue = "min_value"
+        case maxValue = "max_value"
+        case needsReview = "needs_review"
+    }
+
+    init(
+        optionId: UUID? = nil, basis: String, unit: String,
+        value: Double? = nil, minValue: Double? = nil, maxValue: Double? = nil,
+        needsReview: Bool = false, condition: String? = nil
+    ) {
+        self.optionId = optionId
+        self.basis = basis
+        self.unit = unit
+        self.value = value
+        self.minValue = minValue
+        self.maxValue = maxValue
+        self.needsReview = needsReview
+        self.condition = condition
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        optionId = try? c.decodeIfPresent(UUID.self, forKey: .optionId)
+        basis = (try? c.decode(String.self, forKey: .basis)) ?? ""
+        unit = (try? c.decode(String.self, forKey: .unit)) ?? ""
+        value = try? c.decodeIfPresent(Double.self, forKey: .value)
+        minValue = try? c.decodeIfPresent(Double.self, forKey: .minValue)
+        maxValue = try? c.decodeIfPresent(Double.self, forKey: .maxValue)
+        needsReview = (try? c.decodeIfPresent(Bool.self, forKey: .needsReview)) ?? false
+        condition = try? c.decodeIfPresent(String.self, forKey: .condition)
+    }
+
+    var productUnit: String? {
+        // V3 options specify "mL/100 L" or "L/ha"; strip ONLY the rate
+        // denominator, never convert one application basis into another.
+        ChemicalDefaultRateValidity.canonicalUnit(
+            unit.components(separatedBy: "/").first
+        )
+    }
+
+    var sprayBasis: ChemicalRateBasis? {
+        switch basis {
+        case "per_hectare": return .perHectare
+        case "per_100_litres": return .per100Litres
+        default: return nil
+        }
+    }
+
+    var isUsable: Bool {
+        guard !needsReview, sprayBasis != nil, productUnit != nil else { return false }
+        if let value {
+            return minValue == nil && maxValue == nil && value.isFinite && value > 0
+        }
+        guard let minValue, let maxValue else { return false }
+        return minValue.isFinite && maxValue.isFinite && minValue > 0 && maxValue >= minValue
+    }
+}
+
+nonisolated struct ChemicalV3LabelRateOptions: Codable, Sendable, Hashable {
+    let perHectare: [ChemicalV3LabelRateOption]
+    let per100Litres: [ChemicalV3LabelRateOption]
+
+    enum CodingKeys: String, CodingKey {
+        case perHectare = "per_hectare"
+        case per100Litres = "per_100_litres"
+    }
+
+    init(perHectare: [ChemicalV3LabelRateOption] = [],
+         per100Litres: [ChemicalV3LabelRateOption] = []) {
+        self.perHectare = perHectare
+        self.per100Litres = per100Litres
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        perHectare = (try? c.decodeIfPresent([ChemicalV3LabelRateOption].self, forKey: .perHectare)) ?? []
+        per100Litres = (try? c.decodeIfPresent([ChemicalV3LabelRateOption].self, forKey: .per100Litres)) ?? []
+    }
+
+    var validOptions: [ChemicalV3LabelRateOption] {
+        perHectare.filter { $0.isUsable && $0.sprayBasis == .perHectare }
+        + per100Litres.filter { $0.isUsable && $0.sprayBasis == .per100Litres }
+    }
+}

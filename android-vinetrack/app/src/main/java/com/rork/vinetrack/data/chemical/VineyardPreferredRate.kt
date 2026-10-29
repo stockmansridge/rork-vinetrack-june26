@@ -21,12 +21,13 @@ data class VineyardPreferredRate(
 
 /** The same explicit priority as iOS. Null preserves the existing registered-choice workflow. */
 object OperationalRateResolver {
-    enum class Source { PROGRAM_STEP, VINEYARD_PREFERRED, CONFIRMED_DEFAULT }
+    enum class Source { PROGRAM_STEP, VINEYARD_PREFERRED, CONFIRMED_DEFAULT, OPERATOR_PLANNING }
     data class Selection(val rate: VineyardPreferredRate, val source: Source) {
         fun sourceText(vineyard: String): String = when (source) {
             Source.PROGRAM_STEP -> "Program Step rate"
             Source.VINEYARD_PREFERRED -> "$vineyard preferred rate"
             Source.CONFIRMED_DEFAULT -> "Confirmed/default rate"
+            Source.OPERATOR_PLANNING -> "Operator-entered rate"
         }
     }
     fun rateFromProgram(product: com.rork.vinetrack.data.model.SprayChemical): VineyardPreferredRate? {
