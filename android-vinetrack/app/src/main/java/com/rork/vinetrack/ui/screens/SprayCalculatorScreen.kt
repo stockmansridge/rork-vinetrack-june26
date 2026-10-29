@@ -989,7 +989,7 @@ fun SprayCalculatorScreen(
         sprayName = if (r.isTemplate) base else if (base.isNotBlank()) "$base (Copy)" else ""
         r.operationType?.takeIf { it in sprayOperationTypes }?.let {
             operationType = it
-            isApplicationResolved = true
+            isApplicationResolved = false // A Program prefill must not skip Step 1 confirmation.
         }
         if (!canopySelection.isConfirmed) {
             (r.programCalculatorInputs?.canopy ?: r.prefillCanopy)?.let { canopySelection = it.copy(isSizeAndDensityConfirmed = false) }
