@@ -7,12 +7,15 @@ struct TripDetailView: View {
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(NetworkMonitor.self) private var network
     @Environment(TripSyncService.self) private var tripSync
+    @Environment(TripTrackingService.self) private var tracking
     @Environment(\.dismiss) private var dismiss
     @State private var showSummary: Bool = false
     @State private var showDeleteConfirmation: Bool = false
     @State private var position: MapCameraPosition = .automatic
     @State private var isExporting: Bool = false
     @State private var sprayExportError: String?
+    @State private var occurrenceRecoveryError: String?
+    @State private var isRecoveringOriginalSpray = false
     @State private var displayTrailSegments: [TrailSegment] = []
     @State private var showRowCompletion: Bool = false
     @State private var showPathMap: Bool = false
@@ -68,6 +71,42 @@ struct TripDetailView: View {
         return "Maintenance Trip \(dateStr)"
     }
 
+    /// A queued occurrence spray is a saved trip, not disposable history.
+    private var isQueuedOccurrenceSpray: Bool {
+        let saved = currentTrip
+        return saved.coverageBasis == .occurrence && !saved.isActive && saved.endTime == nil &&
+            SprayReportPayloadV1.isSprayTrip(saved, linkedRecord: sprayRecord)
+    }
+
+    @MainActor private func recoverAndStartOriginalSpray() {
+        guard !isRecoveringOriginalSpray else { return }
+        isRecoveringOriginalSpray = true
+        do {
+            // Recover a torn local paired save first, preserving original IDs.
+            try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
+        } catch {
+            occurrenceRecoveryError = "Original spray data is retained but cannot be read: \(error.localizedDescription)"
+            isRecoveringOriginalSpray = false
+            return
+        }
+        guard store.sprayRecords.contains(where: {
+            $0.tripId == trip.id && !$0.isTemplate && $0.endTime == nil
+        }) else {
+            occurrenceRecoveryError = "The original spray recipe is not on this device yet. Keep this trip and its app data; do not create a replacement."
+            isRecoveringOriginalSpray = false
+            return
+        }
+        tracking.activateSavedTrip(currentTrip) { started in
+            isRecoveringOriginalSpray = false
+            if started {
+                dismiss()
+            } else {
+                occurrenceRecoveryError = tracking.errorMessage ??
+                    "Original spray activation is still held. The saved trip and operations were retained."
+            }
+        }
+    }
+
     var body: some View {
         List {
             Section {
@@ -94,6 +133,25 @@ struct TripDetailView: View {
                     }
                 }
                 .padding(.vertical, 4)
+            }
+
+            if isQueuedOccurrenceSpray {
+                Section("Queued Spray — Recovery") {
+                    Button {
+                        recoverAndStartOriginalSpray()
+                    } label: {
+                        HStack(spacing: 10) {
+                            if isRecoveringOriginalSpray { ProgressView() }
+                            Label("Recover & Start Original Spray", systemImage: "arrow.clockwise.circle.fill")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                    }
+                    .disabled(isRecoveringOriginalSpray)
+                    .accessibilityIdentifier("trip.recoverOriginalOccurrenceSpray")
+                    Text("Uses the saved trip, spray recipe and original planned paths. Does not create a new trip.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Trip Summary") {
@@ -355,7 +413,7 @@ struct TripDetailView: View {
                     .disabled(isExporting)
                 }
             }
-            if accessControl.canDeleteOperationalRecords && !trip.isActive {
+            if accessControl.canDeleteOperationalRecords && !trip.isActive && !isQueuedOccurrenceSpray {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) {
                         showDeleteConfirmation = true
@@ -388,6 +446,14 @@ struct TripDetailView: View {
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        .alert("Queued Spray Recovery", isPresented: Binding(
+            get: { occurrenceRecoveryError != nil },
+            set: { if !$0 { occurrenceRecoveryError = nil } }
+        )) {
+            Button("OK", role: .cancel) { occurrenceRecoveryError = nil }
+        } message: {
+            Text(occurrenceRecoveryError ?? "")
         }
         .alert("Spray Report Unavailable", isPresented: Binding(
             get: { sprayExportError != nil },
