@@ -273,6 +273,7 @@ nonisolated enum SprayRegisteredUseRates {
     /// is nothing to scope by, and hiding them would silently empty the picker
     /// for every pre-Chemical-Intelligence product.
     static func vineyardRates(for chemical: SavedChemical) -> [SpraySelectableRate] {
+        if let catalogue = approvedV3Rates(for: chemical) { return catalogue }
         // A record that states ANY structured rate is answered only from its
         // structured rates. Falling back to the legacy array here would let a
         // product whose only structured rates are tobacco's offer a stale
@@ -341,6 +342,7 @@ nonisolated enum SprayRegisteredUseRates {
     /// see that the label says "refer to the approved label" rather than be
     /// shown an empty picker and left to guess.
     static func rates(for chemical: SavedChemical) -> [SpraySelectableRate] {
+        if let catalogue = approvedV3Rates(for: chemical) { return catalogue }
         let structured = structuredRates(for: chemical)
         return structured.isEmpty ? legacyRates(for: chemical) : structured
     }
@@ -710,6 +712,60 @@ nonisolated enum SprayRegisteredUseRates {
         default:
             return nil
         }
+    }
+
+
+    /// Approved V3 rate options belong to the same vineyard product identity.
+    /// The legacy registered_uses may still contain an old fixed 2.4 L/ha
+    /// extraction; it must not hide the two newer reviewed V3 label ranges.
+    /// Never treat a mere V3 identifier or an unapproved snapshot as approval.
+    private static func approvedV3Rates(for chemical: SavedChemical) -> [SpraySelectableRate]? {
+        guard chemical.chemicalV3RevisionId != nil,
+              chemical.chemicalV3ReviewStatusSnapshot == "approved",
+              let options = chemical.chemicalV3LabelRates else { return nil }
+        let valid = options.validOptions
+        // An approved V3 product with missing/invalid options stays unresolved.
+        // Do not silently revive obsolete structured or legacy rates.
+        var entries: [SpraySelectableRate] = []
+        for option in valid {
+            guard let basis = option.sprayBasis, let unit = option.productUnit else { continue }
+            let displaySuffix = basis == .perHectare ? "/ha" : "/100 L"
+            let raw = option.optionId?.uuidString ??
+                "\(basis.rawValue)|\(unit)|\(option.value ?? 0)|\(option.minValue ?? 0)|\(option.maxValue ?? 0)"
+            let id = stableIdentifier("approved-v3|\(chemical.chemicalV3RevisionId!)|\(raw)")
+            let condition = option.condition?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let value = option.value,
+               let base = baseValue(value, labelUnit: unit, chemical: chemical) {
+                let text = "\(SprayRateFormatter.format(value)) \(unit)\(displaySuffix)"
+                entries.append(SpraySelectableRate(id: id, origin: .registeredUse,
+                    crop: "Grapevines", targetRaw: nil, label: "",
+                    basis: basis, seed: .value(base), displayText: text,
+                    labelUnit: unit, condition: condition))
+            } else if let minimum = option.minValue, let maximum = option.maxValue,
+                      let lo = baseValue(minimum, labelUnit: unit, chemical: chemical),
+                      let hi = baseValue(maximum, labelUnit: unit, chemical: chemical), hi >= lo {
+                let text = "\(SprayRateFormatter.format(minimum))–\(SprayRateFormatter.format(maximum)) \(unit)\(displaySuffix)"
+                let band = SpraySelectableRate(id: id, origin: .registeredUse,
+                    crop: "Grapevines", targetRaw: nil, label: "",
+                    basis: basis, seed: .range(minimum: lo, maximum: hi),
+                    displayText: text, labelUnit: unit, labelRange: lo...hi,
+                    labelRangeText: text, condition: condition)
+                entries.append(band)
+                // Neutral quick choices; never seed a point without a tap.
+                for point in presetPoints(minimum: lo, maximum: hi) {
+                    let shown = displayValue(point.value, labelUnit: unit, chemical: chemical)
+                    guard let shown else { continue }
+                    entries.append(SpraySelectableRate(
+                        id: stableIdentifier("approved-v3-preset|\(id)|\(point.preset.rawValue)"),
+                        origin: .registeredUse, crop: "Grapevines", targetRaw: nil,
+                        label: "", basis: basis, seed: .value(point.value),
+                        displayText: "\(SprayRateFormatter.format(shown)) \(unit)\(displaySuffix)",
+                        labelUnit: unit, labelRange: lo...hi, labelRangeText: text,
+                        preset: point.preset, condition: condition))
+                }
+            }
+        }
+        return entries
     }
 
     // MARK: - Legacy fallback
