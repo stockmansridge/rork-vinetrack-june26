@@ -4410,11 +4410,16 @@ struct SprayCalculatorView: View {
         guard let index = chemicalLines.firstIndex(where: { $0.id == selection.lineId }),
               chemicalLines[index].chemicalId != selection.chemical.id else { return }
         var updated = chemicalLines[index]
+        // Read the fallback BEFORE the inout mutation. Accessing updated.basis
+        // in the same argument list as &updated overlaps Swift's exclusive
+        // mutable access and can trap when choosing a different chemical.
+        let originalBasis = updated.basis
+        let rateBases = preferredRateBases
         SprayConfirmedRateSeeding.seed(
             &updated,
             from: selection.chemical,
-            preferring: preferredRateBases,
-            fallbackBasis: updated.basis
+            preferring: rateBases,
+            fallbackBasis: originalBasis
         )
         chemicalLines[index] = updated
         // A previous product's whole-block/treated-band override never carries.
