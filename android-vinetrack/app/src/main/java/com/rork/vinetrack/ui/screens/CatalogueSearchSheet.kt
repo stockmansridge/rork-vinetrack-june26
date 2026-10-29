@@ -3,6 +3,10 @@ package com.rork.vinetrack.ui.screens
 import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import com.rork.vinetrack.ui.components.rememberPhotoCaptureCoordinator
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -38,6 +42,22 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
     var photoError by remember { mutableStateOf<String?>(null) }
     val vineyard = state.selectedVineyardId ?: return
     val country = ChemicalRegistration.normaliseCountry(state.selectedVineyard?.country.orEmpty())
+    val scrollState = rememberScrollState()
+    val capture = rememberPhotoCaptureCoordinator(
+        onPhoto = { uri, _ ->
+            if (uri != null) scope.launch {
+                val bytes = runCatching { context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }?.let { bitmap ->
+                    ByteArrayOutputStream().use { out -> bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out); out.toByteArray() }
+                } }.getOrNull()
+                if (bytes != null) model.discover(vineyard, country, bytes)
+                else photoError = "Unable to read the camera image. Choose another photo."
+            }
+        },
+    )
+    var added by remember { mutableStateOf(false) }
+    LaunchedEffect(search.result?.id) {
+        if (search.result != null) scrollState.animateScrollTo(scrollState.maxValue)
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch {
             val bytes = runCatching { context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }?.let { bitmap ->
@@ -49,13 +69,15 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
     }
     LaunchedEffect(vineyard) { model.restore(vineyard); if (prefillQuery.isNotBlank() && model.state.value.context == null) model.query(prefillQuery) }
     ModalBottomSheet(onDismissRequest = onDismiss, modifier = modifier, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(Modifier.fillMaxWidth().verticalScroll(scrollState).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Chemical Search", style = MaterialTheme.typography.headlineSmall)
             OutlinedTextField(value = search.query, onValueChange = model::query, label = { Text("Product name or registration number") }, modifier = Modifier.fillMaxWidth())
-            Row {
-                Button(onClick = { model.search(country) }, enabled = !search.busy && search.query.isNotBlank() && search.context == null) { Text("Search") }
-                TextButton(onClick = { picker.launch("image/*") }, enabled = !search.busy && search.context == null) { Text("Search by Photo") }
-            }
+            Button(onClick = { model.search(country) }, enabled = !search.busy && search.query.isNotBlank() && search.context == null,
+                modifier = Modifier.fillMaxWidth()) { Text("Search Chemicals") }
+            OutlinedButton(onClick = capture.takePhoto, enabled = !search.busy && search.context == null,
+                modifier = Modifier.fillMaxWidth()) { Text("Take Photo of Label") }
+            OutlinedButton(onClick = { picker.launch("image/*") }, enabled = !search.busy && search.context == null,
+                modifier = Modifier.fillMaxWidth()) { Text("Choose Existing Photo") }
             if (search.context != null) {
                 Text("Finding your product", style = MaterialTheme.typography.titleMedium)
                 LinearProgressIndicator(progress = { ((search.job?.number("progress_percent") ?: 0.0) / 100).toFloat() }, modifier = Modifier.fillMaxWidth())
@@ -85,7 +107,8 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
                 Button(onClick = { model.discover(vineyard, country) }, enabled = !search.busy && search.context == null) { Text("Find this product") }
             }
             search.result?.let { result ->
-                Text(result.badge, style = MaterialTheme.typography.titleMedium)
+                Text("Selected product — review and add", style = MaterialTheme.typography.titleMedium)
+                Text(result.badge, style = MaterialTheme.typography.titleSmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CatalogueLabel(result.text("front_label_image_path"), result.text("manufacturer_label_url"))
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -99,7 +122,8 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
                     val rates = result.rateRows(key)
                     if (rates.isNotEmpty()) { Text(title, style = MaterialTheme.typography.titleSmall); rates.forEach { Text(it.rateText) } }
                 }
-                Button(onClick = { model.add(vineyard) { saved -> vm.acceptCatalogueChemical(saved); onSaved(saved); onDismiss() } }, enabled = !search.busy) { Text("Add to Vineyard") }
+                Button(onClick = { if (!added) { added = true; model.add(vineyard) { saved -> vm.acceptCatalogueChemical(saved); onSaved(saved); onDismiss() } } }, enabled = !search.busy && !added,
+                    modifier = Modifier.fillMaxWidth()) { Text(if (added) "Adding…" else "Add to Vineyard") }
             }
             if (search.busy) CircularProgressIndicator()
             search.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
