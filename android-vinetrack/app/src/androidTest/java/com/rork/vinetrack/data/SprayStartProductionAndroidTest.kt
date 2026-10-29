@@ -287,6 +287,9 @@ class SprayStartProductionAndroidTest {
             compose.onNodeWithText("Start engine hours (optional)").performTextInput(hours)
             tick()
         }
+        compose.onNode(hasText("Start Trip") and hasClickAction()).assertIsNotEnabled()
+        compose.onNodeWithText("I confirm these actual chemical rates", substring = false).performScrollTo().performClick()
+        compose.onNode(hasText("Start Trip") and hasClickAction()).assertIsEnabled()
         // Exercise the production Button's accessibility action, not an IME-obscured screen coordinate.
         compose.onNode(hasText("Start Trip") and hasClickAction()).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         tick()

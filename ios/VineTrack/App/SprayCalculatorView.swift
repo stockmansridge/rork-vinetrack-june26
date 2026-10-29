@@ -1456,10 +1456,12 @@ struct SprayCalculatorView: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Spray Name", icon: "tag")
             if prefillRecord?.isTemplate == true {
-                Text("Source: Spray Program — review canopy conditions; all values remain editable.")
-                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text("Source: Spray Program").font(.caption).foregroundStyle(.secondary)
+                    FieldInfoButton(title: "Spray Program", message: "Review current canopy conditions. Program values are editable for this application; calculations use the selected blocks' verified geometry.")
+                }
                 if let spacing = prefillProgram?.calculatorInputs?.rowSpacingMetres {
-                    Text("Program row spacing: \(guidedFormat.metres(spacing, decimals: 2)). Calculation uses the selected blocks' verified geometry.")
+                    Text("Program row spacing: \(guidedFormat.metres(spacing, decimals: 2))")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -2158,6 +2160,7 @@ struct SprayCalculatorView: View {
         title: String,
         icon: String,
         tint: Color,
+        help: String? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -2169,13 +2172,14 @@ struct SprayCalculatorView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
+                if let help { FieldInfoButton(title: title, message: help) }
             }
             content()
         }
     }
 
     private var mixTractorSection: some View {
-        mixSectionContainer(title: "Tractor", icon: "car.fill", tint: .indigo) {
+        mixSectionContainer(title: "Tractor", icon: "car.fill", tint: .indigo, help: "A tractor is optional. Select one for fuel-cost estimates, or leave it Not Set. Add or edit tractors in Equipment.") {
             VStack(spacing: 10) {
                 Menu {
                     Button {
@@ -2230,19 +2234,8 @@ struct SprayCalculatorView: View {
                 .buttonStyle(.plain)
                 .disabled(availableTractors.isEmpty)
 
-                if availableTractors.isEmpty {
-                    Text("Add tractors in Equipment to enable fuel cost estimates.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
-                } else if selectedTractorId == nil {
-                    Text("Optional — select a tractor so fuel cost can be estimated.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
-                }
+                // Editing equipment in final review must not create a dead end.
+                if !isEquipmentConfirmed { equipmentConfirmation }
             }
         }
     }
@@ -2311,7 +2304,7 @@ struct SprayCalculatorView: View {
                 mixStartPathSection
                 mixProposedSequenceSection
             } else if trackingPatternChoice == .freeDrive {
-                mixSectionContainer(title: "Free Drive", icon: "scribble.variable", tint: .teal) {
+                mixSectionContainer(title: "Free Drive", icon: "scribble.variable", tint: .teal, help: "Free Drive records distance, pins and Trip history without a planned row sequence. Row coverage is recorded only when the active tracking mode can genuinely establish it; a plan alone never proves treatment.") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
                             Image(systemName: "info.circle.fill")
@@ -2319,9 +2312,6 @@ struct SprayCalculatorView: View {
                             Text("No planned row sequence")
                                 .font(.subheadline.weight(.semibold))
                         }
-                        Text("Drive freely — the app detects the row/path you are in from GPS, ticks it off when covered, and keeps recording distance, pins and trip history.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -2345,17 +2335,8 @@ struct SprayCalculatorView: View {
     /// Start Path + Sequence Direction card, identical layout to
     /// `StartTripSheet.directionSection` so Maintenance and Spray match.
     private var mixStartPathSection: some View {
-        mixSectionContainer(title: "Start Path & Direction", icon: "arrow.up.arrow.down", tint: .blue) {
+        mixSectionContainer(title: "Start Path & Direction", icon: "arrow.up.arrow.down", tint: .blue, help: rowGuidanceHelperText) {
             VStack(spacing: 10) {
-                HStack(spacing: 6) {
-                    Image(systemName: "info.circle")
-                        .font(.caption2)
-                    Text(rowGuidanceHelperText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    Spacer()
-                }
 
                 Menu {
                     ForEach(qualifiedCandidates) { path in
@@ -3909,9 +3890,6 @@ struct SprayCalculatorView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
-                Text("The whole job's water — what you'll actually mix. Product rates are dosed against this total.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
             .padding(12)
             .background(Color(.secondarySystemGroupedBackground))
@@ -4115,7 +4093,7 @@ struct SprayCalculatorView: View {
                 }
             }
             if let intent = guidedInputs.planningIntent {
-                GuidedReviewGroup(title: "Selected Physical Work") {
+                GuidedReviewGroup(title: "Selected Physical Work", help: SprayWorkAreaSelection.routeAdmissionMessage) {
                     VStack(alignment: .leading, spacing: 8) {
                         Button("Select Work Area") { showingWorkArea = true }
                             .disabled(intent.configuration == nil)
@@ -4128,15 +4106,14 @@ struct SprayCalculatorView: View {
                             }
                         }
                         Text("Known selected treatment area: not certified").font(.caption)
-                        Text(SprayWorkAreaSelection.routeAdmissionMessage).font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 .sheet(isPresented: $showingWorkArea) {
                     SprayWorkAreaSelectionView(choices: SprayWorkAreaSelection.choices(plannedCandidates),
                         configuration: intent.configuration ?? .standardPass, selected: $selectedPhysicalWork)
                 }
-                GuidedReviewGroup(title: "Actual Spray Coverage") {
-                    Text("Not recorded by this plan. Only genuine tracked and recorded operations establish coverage.").font(.caption).foregroundStyle(.secondary)
+                GuidedReviewGroup(title: "Actual Spray Coverage", help: "Only genuine tracked and recorded operations establish spray coverage. Selecting a planned area is not a record of completed treatment.") {
+                    Text("Not yet recorded").font(.caption).foregroundStyle(.secondary)
                 }
             }
             SprayConcentrationWarningView(products: SprayPlanningOperationalGate.warningProducts(

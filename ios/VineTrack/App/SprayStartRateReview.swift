@@ -6,13 +6,31 @@ import SwiftUI
 /// A review binds to the actual recipe, not catalogue hints or regenerated line UUIDs.
 nonisolated enum SprayStartRateReview {
     static func evidence(_ tanks: [SprayTank]) -> [String] {
-        ["tanks", String(tanks.count)] + tanks.flatMap { tank in
-            ["tank", String(tank.chemicals.count), String(tank.rowApplications.count), String(tank.tankNumber), String(tank.waterVolume), String(tank.sprayRatePerHa), String(tank.concentrationFactor)] +
-            tank.chemicals.flatMap { product in
-                [product.savedChemicalId?.uuidString ?? "", product.name, product.unit.rawValue,
-                 product.reportedRateBasis.rawValue, String(product.ratePerHa), String(product.ratePer100L), String(product.volumePerTank), product.quantityBasis ?? "base"]
-            } + tank.rowApplications.flatMap { [String($0.startRow), String($0.endRow)] }
+        var result: [String] = ["tanks", String(tanks.count)]
+        for tank in tanks {
+            result.append("tank")
+            result.append(String(tank.chemicals.count))
+            result.append(String(tank.rowApplications.count))
+            result.append(String(tank.tankNumber))
+            result.append(String(tank.waterVolume))
+            result.append(String(tank.sprayRatePerHa))
+            result.append(String(tank.concentrationFactor))
+            for product in tank.chemicals {
+                result.append(product.savedChemicalId?.uuidString ?? "")
+                result.append(product.name)
+                result.append(product.unit.rawValue)
+                result.append(product.reportedRateBasis.rawValue)
+                result.append(String(product.ratePerHa))
+                result.append(String(product.ratePer100L))
+                result.append(String(product.volumePerTank))
+                result.append(product.quantityBasis ?? "base")
+            }
+            for application in tank.rowApplications {
+                result.append(String(application.startRow))
+                result.append(String(application.endRow))
+            }
         }
+        return result
     }
 
     static func actualRate(_ chemical: SprayChemical, waterLitres: Double) -> Double? {

@@ -26,7 +26,14 @@ final class SprayEditingAcceptanceUITests: XCTestCase {
         let start = app.buttons["spray.startTrip"]
         for _ in 0..<12 where !start.isHittable { app.scrollViews.firstMatch.swipeUp() }
         XCTAssertTrue(start.waitForExistence(timeout: 8))
-        XCTAssertTrue(start.isEnabled, "Valid dilute-rate mix must remain startable without acknowledging CF")
+        XCTAssertTrue(start.waitForExistence(timeout: 5))
+        XCTAssertFalse(start.isEnabled, "Actual rate confirmation is required, not warning acknowledgement")
+        let rateConfirmation = app.switches["spray.confirmActualRates"]
+        for _ in 0..<12 where !rateConfirmation.isHittable { app.scrollViews.firstMatch.swipeDown() }
+        XCTAssertTrue(rateConfirmation.waitForExistence(timeout: 5))
+        rateConfirmation.tap()
+        for _ in 0..<12 where !start.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(start.isEnabled, "Confirmed valid mix starts without acknowledging advisory warnings")
         let warnings = app.buttons.matching(identifier: "spray.concentrationWarning")
         guard let warning = warnings.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
             XCTFail("Optional orange CF warning must be visible beside enabled Start in Mixing: \(app.debugDescription)")

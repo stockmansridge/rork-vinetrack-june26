@@ -29,6 +29,9 @@ struct TripDetailView: View {
     @State private var verifiedOrphanCandidate: BackendSprayRecord?
     @State private var showRecoveredTankMix = false
     @State private var recoveredMixReviewed = false
+    @State private var pendingRateReviewTrip: Trip?
+    @State private var pendingRateReviewRecipe: SprayRecord?
+    @State private var pendingRateReviewOwner: UUID?
     @State private var showDeleteConfirmation: Bool = false
     @State private var position: MapCameraPosition = .automatic
     @State private var isExporting: Bool = false
@@ -509,6 +512,23 @@ struct TripDetailView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(item: $pendingRateReviewTrip, onDismiss: {
+            pendingRateReviewRecipe = nil
+            pendingRateReviewOwner = nil
+        }) { original in
+            SprayTripStartConfirmationSheet(
+                machineName: original.tractorId.flatMap { id in
+                    store.currentTractors.first(where: { $0.id == id })?.displayName
+                } ?? pendingRateReviewRecipe?.tractor ?? "Not Set",
+                latestEngineHours: original.tractorId.flatMap { id in
+                    store.currentTractorFuelLogs.filter { $0.tractorId == id && $0.engineHours?.isFinite == true }
+                        .max(by: { $0.fillDateTime < $1.fillDateTime })?.engineHours
+                },
+                tanks: pendingRateReviewRecipe?.tanks ?? []
+            ) { hours in
+                activateRateReviewedOriginal(original, startEngineHours: hours)
+            }
+        }
         .sheet(isPresented: $showEditCostingLinks) {
             TripCostingLinksEditSheet(
                 trip: currentTrip,
@@ -622,18 +642,11 @@ struct TripDetailView: View {
                       SavedOccurrenceSprayStartEligibility.mayStart(original) else {
                     throw TripOccurrenceCoverage.Failure.scopeConflict
                 }
-                if store.sprayRecords.contains(where: {
+                if let recipe = store.sprayRecords.first(where: {
                     $0.canonicalTripId == original.id && $0.vineyardId == original.vineyardId
                         && !$0.isTemplate && $0.endTime == nil
                 }) {
-                    tracking.activateSavedTrip(original) { started in
-                        isRecoveringSavedSpray = false
-                        if started { dismiss() }
-                        else {
-                            savedSprayRecoveryError = tracking.errorMessage ??
-                                "The original operation was not accepted. The saved trip is retained."
-                        }
-                    }
+                    prepareOriginalRateReview(original, recipe: recipe)
                     return
                 }
 
@@ -712,21 +725,57 @@ struct TripDetailView: View {
                 _ = try store.installVerifiedServerOrphanForSavedTrip(
                     matched, tripId: original.id, actorId: actor
                 )
-                tracking.activateSavedTrip(original) { started in
-                    isRecoveringSavedSpray = false
-                    if started {
-                        verifiedOrphanCandidate = nil
-                        dismiss()
-                    } else {
-                        savedSprayRecoveryError = tracking.errorMessage ??
-                            "The original occurrence still requires reconciliation. Saved evidence was retained."
-                    }
+                guard let installed = store.sprayRecords.first(where: { $0.id == matched.id }) else {
+                    throw TripOccurrenceCoverage.Failure.reconciliation
                 }
+                prepareOriginalRateReview(original, recipe: installed)
             } catch {
                 isRecoveringSavedSpray = false
                 tracking.recordSprayStartFailure(error, stage: "confirmOriginalSpray", tripId: trip.id)
                 savedSprayRecoveryError = "Link not verified: \(error.localizedDescription) Original tanks and paths retained. See Start diagnostics."
             }
+        }
+    }
+
+    /// All saved-start routes use the same final rate confirmation. Recovering a
+    /// link or opening a tank display is not consent to the actual chemical rates.
+    private func prepareOriginalRateReview(_ original: Trip, recipe: SprayRecord) {
+        isRecoveringSavedSpray = false
+        if let blocker = RecoveredSprayApplicationSafety.blocker(recipe)
+            ?? recipe.operationalPlanningBlocker ?? SprayStartRecipeValidation.blocker(recipe.tanks) {
+            savedSprayRecoveryError = blocker
+            return
+        }
+        guard let owner = store.currentUserIdProvider?(),
+              store.selectedVineyardId == original.vineyardId else {
+            savedSprayRecoveryError = "The account or vineyard changed. Reopen the original spray."
+            return
+        }
+        pendingRateReviewOwner = owner
+        pendingRateReviewRecipe = recipe
+        pendingRateReviewTrip = original
+    }
+
+    private func activateRateReviewedOriginal(_ original: Trip, startEngineHours: Double?) {
+        guard let owner = pendingRateReviewOwner,
+              store.currentUserIdProvider?() == owner,
+              store.selectedVineyardId == original.vineyardId,
+              store.trips.first(where: { $0.id == original.id }) == original,
+              let reviewed = pendingRateReviewRecipe,
+              let current = store.sprayRecords.first(where: { $0.id == reviewed.id }),
+              current.canonicalTripId == original.id,
+              current.hasSameRecipeEvidence(as: reviewed),
+              accessControl.canCreateOperationalRecords else {
+            pendingRateReviewTrip = nil
+            savedSprayRecoveryError = "The saved spray changed. Reopen it to confirm its actual rates."
+            return
+        }
+        pendingRateReviewTrip = nil
+        isRecoveringSavedSpray = true
+        tracking.activateSavedTrip(original, startEngineHours: startEngineHours) { started in
+            isRecoveringSavedSpray = false
+            if started { verifiedOrphanCandidate = nil; dismiss() }
+            else { savedSprayRecoveryError = tracking.errorMessage ?? "The original Trip is retained; start was not confirmed." }
         }
     }
 

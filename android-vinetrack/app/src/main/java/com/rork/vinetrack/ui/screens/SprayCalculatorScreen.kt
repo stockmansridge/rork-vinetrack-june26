@@ -1486,9 +1486,12 @@ fun SprayCalculatorScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (prefillRecord?.isTemplate == true) {
-                    Text("Source: Spray Program — review canopy conditions; all values remain editable.", fontSize = 12.sp, color = vine.textSecondary)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Source: Spray Program", fontSize = 12.sp, color = vine.textSecondary)
+                        SprayInfoHelp("Spray Program", "Review current canopy conditions. Program values are editable for this application; calculations use the selected blocks' verified geometry.")
+                    }
                     prefillRecord.programCalculatorInputs?.rowSpacingMetres?.let { spacing ->
-                        Text("Program row spacing: ${fmt.lengthValue(spacing)} ${fmt.lengthUnitAbbreviation}. Calculation uses the selected blocks' verified geometry.", fontSize = 12.sp, color = vine.textSecondary)
+                        Text("Program row spacing: ${fmt.lengthValue(spacing)} ${fmt.lengthUnitAbbreviation}", fontSize = 12.sp, color = vine.textSecondary)
                     }
                 }
                 var menu by remember { mutableStateOf(false) }
@@ -1977,14 +1980,17 @@ fun SprayCalculatorScreen(
                 }
 
                 if (guidedFlow.effectiveCarrierBasis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Total spray water", fontWeight = FontWeight.SemiBold)
+                        SprayInfoHelp("Total spray water", "Enter the total water you will mix. Manual water does not establish a dilute canopy reference or label approval; product rate validation still applies.")
+                    }
                     OutlinedTextField(value = manualTotalLitresText, onValueChange = { manualTotalLitresText = it; result = null },
                         label = { Text("Total spray water (${fmt.volumeUnitAbbreviation})") }, singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
-                    Text("Enter a positive total water volume. Manual water does not establish a dilute canopy reference or label approval; product rate validation still applies.", style = MaterialTheme.typography.bodySmall)
                 } else if (operationType == "Foliar Spray") {
                     val decision = guidedFlow.volumeDecision
                     decision?.recommendation?.let { recommendation ->
-                        GuidedCalculatedPanel(title = "Recommended spray volume — CF 1.00", accent = VineColors.LeafGreen) {
+                        GuidedCalculatedPanel(title = "Recommended spray volume — CF 1.00", accent = VineColors.LeafGreen, help = SprayVolumeHelp.RECOMMENDED_VOLUME) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 GuidedCalculatedRow(label = fmt.volumePer100LengthUnit, value = carrierFormat.litresPer100m(recommendation.diluteLitresPer100Metres), accent = VineColors.LeafGreen, emphasis = true)
                                 GuidedCalculatedRow(
@@ -1993,7 +1999,6 @@ fun SprayCalculatorScreen(
                                     accent = VineColors.LeafGreen,
                                     caption = if (recommendation.diluteLitresPerHectare == null) SprayVolumeHelp.ROW_SPACING_REQUIRED else null,
                                 )
-                                Text(SprayVolumeHelp.RECOMMENDED_VOLUME, fontSize = 12.sp, color = vine.textSecondary)
                             }
                         }
                         if (prefillRecord?.programCalculatorInputs?.diluteLitresPer100m != null) {
@@ -2427,7 +2432,7 @@ fun SprayCalculatorScreen(
 
                     guidedFlow.inputs.planningIntent?.let { intent ->
                         val workChoices = SprayWorkAreaSelection.choices(plannedCandidates)
-                        GuidedReviewGroup(title = "Selected Physical Work", accent = VineColors.Olive) {
+                        GuidedReviewGroup(title = "Selected Physical Work", accent = VineColors.Olive, help = SprayWorkAreaSelection.ROUTE_MESSAGE) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(onClick = { showingWorkArea = true }, enabled = intent.configuration != null) { Text("Select Work Area") }
                                 Text(if (selectedPhysicalWork.isEmpty()) "Work area not selected — an admitted unbound save will not create an executable Trip."
@@ -2438,11 +2443,10 @@ fun SprayCalculatorScreen(
                                         Text("Retained selection is stale or unavailable. Re-select explicitly.", color = VineColors.Warning)
                                 }
                                 Text("Known selected treatment area: not certified", style = MaterialTheme.typography.bodySmall)
-                                Text(SprayWorkAreaSelection.ROUTE_MESSAGE, style = MaterialTheme.typography.bodySmall)
                             }
                         }
-                        GuidedReviewGroup(title = "Actual Spray Coverage", accent = VineColors.Olive) {
-                            Text("Not recorded by this plan. Only genuine tracked and recorded operations establish coverage.", style = MaterialTheme.typography.bodySmall)
+                        GuidedReviewGroup(title = "Actual Spray Coverage", accent = VineColors.Olive, help = "Only genuine tracked and recorded operations establish spray coverage. Selecting a planned area is not a record of completed treatment.") {
+                            Text("Not yet recorded", style = MaterialTheme.typography.bodySmall)
                         }
                         if (showingWorkArea) SprayWorkAreaSelectionSheet(workChoices, intent.configuration ?: SprayPassConfiguration.STANDARD_PASS,
                             selectedPhysicalWork.toList(), onChange = { selectedPhysicalWork.clear(); selectedPhysicalWork.addAll(it) }, onDismiss = { showingWorkArea = false })
