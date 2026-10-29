@@ -57,6 +57,13 @@ nonisolated struct SprayRecord: Codable, Identifiable, Sendable, Hashable {
     /// Local-only provenance: a compatibility UUID must never become a server Trip link.
     var hasRecordedTripLink: Bool
     var canonicalTripId: UUID? { hasRecordedTripLink ? tripId : nil }
+    /// A newly calculated recipe starts without a Trip. Assigning just tripId
+    /// leaves hasRecordedTripLink=false and silently sends NULL to Supabase.
+    /// Set both fields together ONLY when an operational Trip really exists.
+    mutating func linkToOperationalTrip(_ id: UUID) {
+        tripId = id
+        hasRecordedTripLink = true
+    }
     var isManualEntry: Bool { entrySource == "manual" }
 
     init(
