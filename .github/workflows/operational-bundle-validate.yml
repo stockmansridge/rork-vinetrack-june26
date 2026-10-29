@@ -23,7 +23,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - name: Apply only exact before-hash source changes
+      - name: Apply exact reviewed correction and verify inventory
         id: apply
         shell: bash
         run: |
@@ -31,9 +31,9 @@ jobs:
           python3 scripts/repairs/apply_operational_bundle.py
           python3 -m unittest discover -s scripts/tests -p 'test_sync_inventory.py' -v
           python3 scripts/audit_sync_inventory.py --verify-inventory --output "$RUNNER_TEMP/sync-inventory.json"
-          git add -- ios/VineTrack ios/VineTrackTests android-vinetrack/app/src docs/sync/sync-compatibility-register.json
+          git add -- ios/VineTrack ios/VineTrackTests ios/VineTrackUITests android-vinetrack/app/src docs/sync/sync-compatibility-register.json
           if ! git diff --cached --quiet; then
-            git -c user.name='VineTrack repair automation' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix(spray-sync): apply reviewed operational bundle with rate confirmation and safe sync references'
+            git -c user.name='VineTrack repair automation' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix(spray-sync): close recovered-start confirmation bypass and native validation findings'
             git push origin HEAD:refs/heads/fix/sync-compatibility-318-319-20261030
           fi
           echo "tested_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -61,14 +61,13 @@ jobs:
           path = Path('android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt')
           if not path.exists():
               path.write_text('package com.rork.vinetrack\nobject Config { val allValues: Map<String, String> = mapOf("EXPO_PUBLIC_SUPABASE_URL" to "http://127.0.0.1:9", "EXPO_PUBLIC_SUPABASE_ANON_KEY" to "ci-test-only-invalid-key") }\n')
-          # This untracked file is never committed, signed, or distributed.
-      - name: Compile app and run only focused spray, auth and bundle tests
+      - name: Compile production app and run focused spray and sync tests
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p review-evidence
           git rev-parse HEAD > review-evidence/commit.txt
-          python3 scripts/run-spray-phase1-regressions.py SprayOperationalBundleTest SessionRefreshAdmissionTest SprayGuidedFlowTest SprayBandedGroundCarrierTest SprayGuidedWorkflowParityTest SprayPlanningIntentTest 2>&1 | tee review-evidence/android-summary.log
+          python3 scripts/run-spray-phase1-regressions.py SprayOperationalBundleTest SessionRefreshAdmissionTest SprayGuidedFlowTest SprayBandedGroundCarrierTest SprayGuidedWorkflowParityTest SprayPlanningIntentTest SprayStartOutcomeTest SprayMultiBlockTripTest SprayMVPDefectTest 2>&1 | tee review-evidence/android-summary.log
       - name: Retain compiler output and test XML
         if: always()
         shell: bash
@@ -95,10 +94,8 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          roots = list(Path('ios/VineTrack').rglob('Config.swift'))
-          if not roots:
+          if not list(Path('ios/VineTrack').rglob('Config.swift')):
               Path('ios/VineTrack/Config.swift').write_text('enum Config { static let allValues: [String: String] = ["EXPO_PUBLIC_SUPABASE_URL": "http://127.0.0.1:9", "EXPO_PUBLIC_SUPABASE_ANON_KEY": "ci-test-only-invalid-key"] }\n')
-          # This untracked file is never committed, signed, or distributed.
       - name: Discover available iPhone simulator
         shell: bash
         run: |
@@ -122,7 +119,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          xcodebuild test -project ios/VineTrack.xcodeproj -scheme VineTrack -destination "platform=iOS Simulator,id=$VT_SIMULATOR" -parallel-testing-enabled NO -jobs 2 -resultBundlePath review-evidence/SprayBundle.xcresult CODE_SIGNING_ALLOWED=NO -only-testing:VineTrackTests/SprayOperationalBundleTests -only-testing:VineTrackTests/SprayGuidedFlowTests -only-testing:VineTrackTests/SprayGuidedWorkflowParityTests -only-testing:VineTrackTests/SprayPlanningIntentTests 2>&1 | tee review-evidence/ios-build.log
+          xcodebuild test -project ios/VineTrack.xcodeproj -scheme VineTrack -destination "platform=iOS Simulator,id=$VT_SIMULATOR" -parallel-testing-enabled NO -jobs 2 -resultBundlePath review-evidence/SprayBundle.xcresult CODE_SIGNING_ALLOWED=NO -only-testing:VineTrackTests/SprayOperationalBundleTests -only-testing:VineTrackTests/SprayGuidedFlowTests -only-testing:VineTrackTests/SprayGuidedWorkflowParityTests -only-testing:VineTrackTests/SprayPlanningIntentTests -only-testing:VineTrackTests/SprayBandedGroundCarrierTests -only-testing:VineTrackTests/SprayTripStartAdmissionTests -only-testing:VineTrackTests/SprayStartPresentationTests -only-testing:VineTrackTests/SprayMultiBlockTripTests -only-testing:VineTrackTests/SpraySaveForLaterTests -only-testing:VineTrackUITests/SprayEditingAcceptanceUITests/testConfiguredByAreaReviewReachesEnabledStartInSameCalculator 2>&1 | tee review-evidence/ios-build.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

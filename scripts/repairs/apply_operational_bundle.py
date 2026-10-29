@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Apply the reviewed source edits only when every before/after hash agrees.
-No network, database, dependency installation, signing, or release operations.
-The patch document is data; its contents are never executed as instructions.
+"""Apply the second, checksum-verified correction to the existing repair branch.
+Every before image is from 6416e00; all prior source changes are already committed.
+No fuzzy patching, remote writes, database calls, or release operations occur here.
 """
 from pathlib import Path
 import base64
@@ -11,8 +11,8 @@ import json
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-EXPECTED = '46858d3f388899e4df4d8d5c428f4b88545e7c064f8939a9a0249888588d76b3'
-BUNDLE = ROOT / 'scripts/repairs/operational-bundle.json.gz.b64'
+EXPECTED = 'd4ef9b46bf712d98c5c91eecace9d9f1f167cb4fc53da66248b4c23bac475270'
+BUNDLE = ROOT / 'scripts/repairs/operational-followup.json.gz.b64'
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
@@ -26,10 +26,9 @@ def main():
     for entry in bundle['files']:
         name = entry['path']
         relative = Path(name)
-        if relative.is_absolute() or '..' in relative.parts or not (
-            name.startswith(('ios/VineTrack/', 'ios/VineTrackTests/', 'android-vinetrack/app/src/'))
-            or name == 'docs/sync/sync-compatibility-register.json'
-        ):
+        if relative.is_absolute() or '..' in relative.parts or not name.startswith((
+            'ios/VineTrack/', 'ios/VineTrackTests/', 'ios/VineTrackUITests/', 'android-vinetrack/app/src/'
+        )):
             raise ValueError('Path outside reviewed source scope: ' + name)
         path = ROOT / relative
         if path.is_symlink():
@@ -50,14 +49,13 @@ def main():
         if sha(new) != entry['after']:
             raise ValueError('Reconstructed source checksum mismatch: ' + name)
         prepared.append((path, new))
-    # Validate ALL files before changing any file. No fuzzy patching.
     for path, new in prepared:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(new)
     for entry in bundle['files']:
         if sha((ROOT / entry['path']).read_bytes()) != entry['after']:
             raise ValueError('Final verification failed: ' + entry['path'])
-    print(f'Applied {len(prepared)} reviewed source files; {len(bundle["files"])} verified.')
+    print(f'Applied {len(prepared)} reviewed files; {len(bundle["files"])} verified.')
     return 0
 
 if __name__ == '__main__':
