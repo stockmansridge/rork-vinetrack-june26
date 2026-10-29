@@ -82,6 +82,10 @@ nonisolated enum SprayConfirmedRateSeeding {
         fallbackBasis: ChemicalRateBasis
     ) {
         line.chemicalId = chemical.id
+        // A typed draft belongs to the previous product just as its applied rate does.
+        // Never carry that amount across a chemical switch, even if the new label
+        // happens to use the same dose basis.
+        line.applicationRateDraft = nil
         line.overrideRate = nil
         line.operationalRateSource = nil
         line.operationalRateUnit = nil
