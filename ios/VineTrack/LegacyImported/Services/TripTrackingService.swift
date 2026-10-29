@@ -594,14 +594,20 @@ final class TripTrackingService {
             errorMessage = blocker
             onStarted(false); return
         }
-        do {
-            guard try !store.isLegacySpraySyncHeld(record: recipe.id, trip: savedTrip.id) else {
-                errorMessage = "This saved spray is awaiting its original paired acceptance. Sync/recover that job before starting."
+        // Occurrence trips have their own durable create/activate receipts. A
+        // legacy paired-create hold is not authority for this trip type; doing
+        // this check first prevented the original saved occurrence trip from
+        // ever reaching its recovery path.
+        if savedTrip.coverageBasis == .legacy {
+            do {
+                guard try !store.isLegacySpraySyncHeld(record: recipe.id, trip: savedTrip.id) else {
+                    errorMessage = "This saved spray is awaiting its original paired acceptance. Sync/recover that job before starting."
+                    onStarted(false); return
+                }
+            } catch {
+                errorMessage = "Saved spray acceptance needs recovery; original evidence retained."
                 onStarted(false); return
             }
-        } catch {
-            errorMessage = "Saved spray acceptance needs recovery; original evidence retained."
-            onStarted(false); return
         }
         if savedTrip.coverageBasis != .legacy {
             Task { @MainActor in
