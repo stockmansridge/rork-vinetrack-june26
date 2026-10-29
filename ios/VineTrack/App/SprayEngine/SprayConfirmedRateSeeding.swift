@@ -101,7 +101,7 @@ nonisolated enum SprayConfirmedRateSeeding {
             if chemical.chemicalV3ReviewStatusSnapshot == "approved",
                chemical.chemicalV3RevisionId != nil,
                let options = chemical.chemicalV3LabelRates,
-               Set(options.validOptions.compactMap(\\.sprayBasis)).count > 1 {
+               Set(options.validOptions.compactMap { $0.sprayBasis }).count > 1 {
                 line.selectedRateId = UUID()
                 line.basis = fallbackBasis
                 return
