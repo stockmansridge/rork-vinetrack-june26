@@ -2070,6 +2070,12 @@ final class MigratedDataStore {
 
     /// Apply a spray record deletion that originated from a remote sync pull.
     func applyRemoteSprayRecordDelete(_ recordId: UUID) {
+        // A remote soft-delete racing the confirmed orphan repair must not
+        // erase the only locally preserved original chemical/tank evidence.
+        // The later server-link check will fail closed and require review.
+        if sprayRecords.contains(where: { $0.id == recordId && $0.recoveredFromServerOrphan }) {
+            return
+        }
         if let vineyardId = selectedVineyardId {
             sprayRecords.removeAll { $0.id == recordId }
             sprayRepo.saveRecordsSlice(sprayRecords, for: vineyardId)
