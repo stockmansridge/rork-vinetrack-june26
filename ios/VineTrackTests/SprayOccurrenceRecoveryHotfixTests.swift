@@ -447,4 +447,47 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
     }
 
 
+    @MainActor func testOriginalWalRepairsLegacyMissingTripLinkProvenanceWithoutChangingTanks() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let persistence = PersistenceStore(directory: dir)
+        let store = MigratedDataStore(persistence: persistence)
+        let owner = UUID(), vineyard = UUID(), block = UUID()
+        store.selectedVineyardId = vineyard
+        store.currentUserIdProvider = { owner }
+        store.legacySprayScopeProvider = {
+            .init(actor: owner, session: owner, vineyard: vineyard)
+        }
+        let plan = try TripOccurrencePlanner.commit([
+            .init(vineyardId: vineyard, blockId: block, blockName: "A",
+                  label: 1.5, rows: [])
+        ], vineyardId: vineyard)
+        let trip = Trip(vineyardId: vineyard, paddockId: block, paddockName: "A",
+            paddockIds: [block], isActive: false, rowSequence: [1.5],
+            occurrenceCoverage: plan)
+        var oldRecipe = SprayRecord(tripId: trip.id, vineyardId: vineyard,
+            notes: "Legacy trip ID with false provenance")
+        oldRecipe.hasRecordedTripLink = false // the original reported defect
+        try store.saveSprayForLater(record: oldRecipe, trip: trip)
+        let walBefore = try LegacySpraySaveRecovery(persistence: persistence).attempts()
+        XCTAssertFalse(try XCTUnwrap(store.sprayRecords.first).hasRecordedTripLink)
+
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let access = VineyardWriteAuthority(defaults: defaults)
+        access.bind(userId: owner)
+        access.verified(vineyardId: vineyard.uuidString,
+            access: VineyardOperationalAccess(legacyCanEnter: true, canWrite: true),
+            explicitlyWritable: true)
+        store.operationalWriteAuthority = access
+        XCTAssertTrue(try store.restoreQueuedOccurrenceSprayRecordIfRetained(tripId: trip.id))
+        let fixed = try XCTUnwrap(store.sprayRecords.first)
+        XCTAssertTrue(fixed.hasRecordedTripLink)
+        XCTAssertEqual(fixed.canonicalTripId, trip.id)
+        XCTAssertEqual(fixed.tanks, oldRecipe.tanks)
+        XCTAssertEqual(store.trips, [trip])
+        XCTAssertEqual(try LegacySpraySaveRecovery(persistence: persistence).attempts(), walBefore)
+    }
+
+
 }
