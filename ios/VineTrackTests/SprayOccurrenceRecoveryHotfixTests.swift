@@ -182,4 +182,63 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
         XCTAssertEqual(store.trips, [trip])
     }
 
+    @MainActor func testOnlyNeverStartedOriginalSprayOffersStartTrip() throws {
+        let owner = UUID(), vineyard = UUID(), block = UUID()
+        let raw = try TripOccurrencePlanner.commit([
+            .init(vineyardId: vineyard, blockId: block,
+                  blockName: "Synthetic", label: 1.5, rows: [])
+        ], vineyardId: vineyard)
+        var original = Trip(vineyardId: vineyard,
+            paddockId: block, paddockName: "Synthetic",
+            paddockIds: [block], isActive: false,
+            rowSequence: [1.5], occurrenceCoverage: raw)
+        original.operatorUserId = owner
+        original.tripFunction = TripFunction.spraying.rawValue
+        // The UI must offer Start even if the recipe list has not hydrated.
+        // The actual action separately restores and validates the original WAL.
+        XCTAssertTrue(SavedOccurrenceSprayStartEligibility.mayStart(original))
+
+        var active = original
+        active.isActive = true
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(active))
+        var ended = original
+        ended.endTime = Date()
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(ended))
+        var travelled = original
+        travelled.totalDistance = 10
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(travelled))
+        var completed = original
+        completed.completedPaths = [1.5]
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(completed))
+        var skipped = original
+        skipped.skippedPaths = [1.5]
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(skipped))
+        var noRoute = original
+        noRoute.rowSequence = []
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(noRoute))
+        var notSpray = original
+        notSpray.tripFunction = nil
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(notSpray))
+    }
+
+    @MainActor func testSavedTripMissingFromLocalStoreStillCompletesStartCallback() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: dir))
+        let vineyard = UUID()
+        store.selectedVineyardId = vineyard
+        let trip = Trip(vineyardId: vineyard, paddockName: "Synthetic", isActive: false)
+        let tracking = TripTrackingService()
+        tracking.configure(store: store, locationService: LocationService())
+        var callbackCount = 0
+        tracking.activateSavedTrip(trip) { started in
+            callbackCount += 1
+            XCTAssertFalse(started)
+        }
+        XCTAssertEqual(callbackCount, 1, "No early-return denial may strand the Start button spinner")
+        XCTAssertNil(store.deviceActiveTripId)
+        XCTAssertTrue(store.trips.isEmpty)
+    }
+
 }
