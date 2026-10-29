@@ -533,6 +533,29 @@ final class TripTrackingService {
                           accepted.heldReason == nil, remote.occurrenceCoverage == accepted.acknowledged,
                           remote.isActive == true else { throw TripOccurrenceCoverage.Failure.reconciliation }
                     ready = remote.toTrip()
+                    // Parent create+activate receipts have been accepted. Only
+                    // NOW may the original spray's missing server trip_id be
+                    // linked, with an exact, compare-and-set record update.
+                    guard let original = store.trips.first(where: { $0.id == intended.id }),
+                          original.vineyardId == intended.vineyardId,
+                          authService?.userId == owner,
+                          store.selectedVineyardId == intended.vineyardId else {
+                        throw TripOccurrenceCoverage.Failure.scopeConflict
+                    }
+                    if let source = store.sprayRecords.first(where: {
+                        $0.canonicalTripId == intended.id && $0.vineyardId == intended.vineyardId
+                            && !$0.isTemplate && $0.endTime == nil
+                    }) {
+                        try await SupabaseSprayRecordSyncRepository()
+                            .linkVerifiedOrphanAfterParentAcceptance(
+                                local: source, originalTrip: original, actorId: owner
+                            )
+                        guard authService?.userId == owner,
+                              store.selectedVineyardId == intended.vineyardId,
+                              store.trips.first(where: { $0.id == original.id }) == original else {
+                            throw TripOccurrenceCoverage.Failure.scopeConflict
+                        }
+                    }
                 }
                 guard authService?.userId == owner, store.selectedVineyardId == intended.vineyardId,
                       store.deviceActiveTripId == nil || store.deviceActiveTripId == intended.id else { throw TripOccurrenceCoverage.Failure.scopeConflict }
