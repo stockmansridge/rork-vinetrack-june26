@@ -2076,6 +2076,15 @@ final class MigratedDataStore {
                     // the confirmed local recovery identity and tank mix.
                     return
                 }
+                if existing.canonicalTripId != nil && record.canonicalTripId == nil &&
+                   existing.vineyardId == record.vineyardId &&
+                   existing.tanks == record.tanks &&
+                   existing.endTime == nil && record.endTime == nil {
+                    // The original local WAL may prove a Trip ID that predates
+                    // a server spray upload made without link provenance. Keep
+                    // that link until verified single-field server recovery.
+                    return
+                }
                 sprayRecords[idx] = record
             } else {
                 sprayRecords.append(record)
