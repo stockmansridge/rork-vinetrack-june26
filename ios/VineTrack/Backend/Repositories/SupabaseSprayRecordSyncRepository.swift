@@ -157,7 +157,26 @@ final class SupabaseSprayRecordSyncRepository: SprayRecordSyncRepositoryProtocol
         guard provider.client.auth.currentUser?.id == actorId else {
             throw TripOccurrenceCoverage.Failure.scopeConflict
         }
-        if existing.isEmpty && !local.recoveredFromServerOrphan { return }
+        if existing.isEmpty && !local.recoveredFromServerOrphan {
+            // A newly created spray has not been uploaded yet. But a saved job
+            // from earlier today may already have an unlinked ORIGINAL server
+            // recipe under a different ID. Never manufacture a duplicate.
+            if Date().timeIntervalSince(originalTrip.startTime) > 300 {
+                let candidates = try await fetchQueuedOrphanCandidates(
+                    vineyardId: originalTrip.vineyardId,
+                    createdBy: actorId, originalStart: originalTrip.startTime
+                )
+                guard !candidates.contains(where: {
+                    VerifiedOrphanSprayRecovery.matches(
+                        VerifiedOrphanSprayRecovery.evidence($0),
+                        original: originalTrip, actorId: actorId
+                    )
+                }) else {
+                    throw TripOccurrenceCoverage.Failure.reconciliation
+                }
+            }
+            return
+        }
         guard existing.count == 1, let remote = existing.first,
               remote.createdBy == actorId,
               remote.tanks == local.tanks,
