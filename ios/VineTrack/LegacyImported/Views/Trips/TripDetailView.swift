@@ -235,7 +235,7 @@ struct TripDetailView: View {
                 if let title = trip.tripTitle, !title.isEmpty {
                     statRow("Title", value: title, icon: "text.cursor")
                 }
-                if isQueuedOccurrenceSpray {
+                if canStartOriginalQueuedSpray {
                     statRow("Status", value: "Not started", icon: "clock")
                 } else {
                     statRow("Duration", value: formatDuration(trip.activeDuration), icon: "clock")
@@ -389,7 +389,7 @@ struct TripDetailView: View {
                 }
             }
 
-            if accessControl.canViewCosting && !isQueuedOccurrenceSpray {
+            if accessControl.canViewCosting && !canStartOriginalQueuedSpray {
                 Section {
                     DisclosureGroup(isExpanded: $showCostSection) {
                         tripCostBody
