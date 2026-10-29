@@ -3465,6 +3465,12 @@ internal fun CalcChemicalLineCard(
     var draftUnit by remember(line.uid) { mutableStateOf("mL") }
     var draftAmount by remember(line.uid) { mutableStateOf("") }
     var checkedLabel by remember(line.uid) { mutableStateOf(false) }
+    LaunchedEffect(chem?.id) {
+        // Never retain an unfinished label rate when the operator changes product.
+        editingLabelRate = false
+        checkedLabel = false
+        draftAmount = ""
+    }
     // The rate's OWN unit. Displaying the product's inventory unit beside a
     // confirmed 560 g/ha default prints "560 Kg/ha" - the same number with a
     // thousandfold different meaning.
@@ -3653,7 +3659,12 @@ internal fun CalcChemicalLineCard(
             }
             SuggestedRateBasisRow(chem, line, onChanged)
             if (editingLabelRate) {
-                val units = if (chem.unit.equals("L", true) || chem.unit.equals("mL", true)) listOf("mL", "L") else listOf("g", "kg")
+                val stockUnit = ChemicalLabelRateNormalizer.canonicalBareUnit(chem.unit)
+                val units = when (stockUnit) {
+                    "mL", "L" -> listOf("mL", "L")
+                    "g", "kg" -> listOf("g", "kg")
+                    else -> emptyList()
+                }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Product label rate", fontWeight = FontWeight.SemiBold)
@@ -3671,6 +3682,9 @@ internal fun CalcChemicalLineCard(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         units.forEach { unit -> OutlinedButton(onClick = { draftUnit = unit }) { Text(if (draftUnit == unit) "✓ $unit" else unit) } }
+                    }
+                    if (units.isEmpty()) {
+                        Text("Product unit needs review in Chemical Store before this rate can be calculated.", color = VineColors.Warning)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = checkedLabel, onCheckedChange = { checkedLabel = it })
@@ -3695,7 +3709,9 @@ internal fun CalcChemicalLineCard(
             } else {
                 OutlinedButton(onClick = {
                     draftBasis = line.basis
-                    draftUnit = line.rateUnit?.takeIf { it in listOf("mL", "L", "g", "kg") } ?: if (chem.unit.equals("L", true)) "mL" else "g"
+                    val stock = ChemicalLabelRateNormalizer.canonicalBareUnit(chem.unit)
+                    draftUnit = line.rateUnit?.takeIf { it in listOf("mL", "L", "g", "kg") }
+                        ?: when (stock) { "mL", "L" -> "mL"; "g", "kg" -> "g"; else -> "" }
                     draftAmount = ""
                     checkedLabel = false
                     editingLabelRate = true
@@ -3703,8 +3719,10 @@ internal fun CalcChemicalLineCard(
             }
 
             Spacer8()
-            Text("Rate", fontSize = 11.sp, color = vine.textSecondary)
-            SuggestedRegisteredRatePickerRow(chem, line, onChanged)
+            if (!editingLabelRate) {
+                Text("Rate", fontSize = 11.sp, color = vine.textSecondary)
+                SuggestedRegisteredRatePickerRow(chem, line, onChanged)
+            }
 
             val contextRange = selectedRate?.labelRangeText
                 ?: confirmedRange?.let { SprayConfirmedRateSeeding.rangeDisplay(it) }
