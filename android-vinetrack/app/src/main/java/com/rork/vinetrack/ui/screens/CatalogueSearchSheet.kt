@@ -26,6 +26,8 @@ import com.rork.vinetrack.data.model.SavedChemical
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,10 +56,17 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
                 }.getOrNull()
                 if (bytes != null && receipt.admitted { }) {
                     model.discover(vineyard, country, bytes)
-                    // Only mark camera acquisition complete once the discovery
-                    // request/context is durably accepted for this vineyard.
-                    if (model.state.value.context?.vineyardId == vineyard &&
-                        model.state.value.context?.inputKind == "photo") receipt.persisted()
+                    // Discovery launches asynchronously; wait for its durable
+                    // vineyard-scoped job receipt, not the immediate call return.
+                    val committed = withTimeoutOrNull(30_000) {
+                        model.state.first { snapshot ->
+                            snapshot.context?.vineyardId == vineyard &&
+                                snapshot.context?.inputKind == "photo" && snapshot.context.photoPath != null
+                        }
+                    } != null
+                    if (committed) {
+                        if (!receipt.persisted()) photoError = "The search started, but camera evidence needs recovery."
+                    } else photoError = "Photo discovery is unfinished. The original capture has been retained."
                 } else photoError = "Camera evidence is retained or unavailable. Try again after checking your account."
             }
         },
