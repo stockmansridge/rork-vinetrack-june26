@@ -27,7 +27,14 @@ nonisolated enum VerifiedOrphanSprayRecovery {
             date: record.date,
             blockIds: Set(record.blockIds ?? []),
             tankCount: record.tanks?.count ?? 0,
-            tanksValid: record.tanks.map { SprayStartRecipeValidation.blocker($0) == nil } ?? false,
+            // Identification needs a real frozen tank mix, not a verdict on
+            // chemical label compliance. Full start admission rechecks rates
+            // AFTER the user reviews the recovered original details.
+            tanksValid: record.tanks.map { tanks in
+                !tanks.isEmpty && tanks.allSatisfy {
+                    $0.waterVolume.isFinite && $0.waterVolume > 0 && !$0.chemicals.isEmpty
+                }
+            } ?? false,
             isTemplate: record.isTemplate ?? false,
             endTime: record.endTime,
             deletedAt: record.deletedAt
