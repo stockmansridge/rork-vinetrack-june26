@@ -2266,8 +2266,7 @@ fun SprayCalculatorScreen(
                             line.basis != SprayCalculator.RateBasis.PER_100L
                         ) {
                             GuidedProductBasisPicker(
-                                selected = productAreaBasis[line.uid]
-                                    ?: SprayProductRateBasis.WHOLE_BLOCK_AREA,
+                                selected = productAreaBasis[line.uid],
                                 accent = VineColors.Olive,
                             ) { basis ->
                                 productAreaBasis[line.uid] = basis
@@ -3458,6 +3457,11 @@ internal fun CalcChemicalLineCard(
     val invalidDraft = isOverridden && chemicalEditorValue(line.overrideText) == null
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
+    var editingLabelRate by remember(line.uid) { mutableStateOf(false) }
+    var draftBasis by remember(line.uid) { mutableStateOf(SprayCalculator.RateBasis.PER_100L) }
+    var draftUnit by remember(line.uid) { mutableStateOf("mL") }
+    var draftAmount by remember(line.uid) { mutableStateOf("") }
+    var checkedLabel by remember(line.uid) { mutableStateOf(false) }
     // The rate's OWN unit. Displaying the product's inventory unit beside a
     // confirmed 560 g/ha default prints "560 Kg/ha" - the same number with a
     // thousandfold different meaning.
@@ -3615,6 +3619,52 @@ internal fun CalcChemicalLineCard(
             Spacer8()
             Text("Label rate basis", fontSize = 11.sp, color = vine.textSecondary)
             SuggestedRateBasisRow(chem, line, onChanged)
+            if (editingLabelRate) {
+                val units = if (chem.unit.equals("L", true) || chem.unit.equals("mL", true)) listOf("mL", "L") else listOf("g", "kg")
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Product label rate — operator entered", fontWeight = FontWeight.SemiBold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(SprayCalculator.RateBasis.PER_100L to "Per 100 L", SprayCalculator.RateBasis.PER_HECTARE to "Per ha").forEach { (basis, title) ->
+                            OutlinedButton(onClick = { draftBasis = basis; draftAmount = ""; checkedLabel = false }) {
+                                Text(if (draftBasis == basis) "✓ $title" else title)
+                            }
+                        }
+                    }
+                    OutlinedTextField(value = draftAmount, onValueChange = { draftAmount = it }, label = { Text("Product amount") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        units.forEach { unit -> OutlinedButton(onClick = { draftUnit = unit }) { Text(if (draftUnit == unit) "✓ $unit" else unit) } }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = checkedLabel, onCheckedChange = { checkedLabel = it })
+                        Text("I checked the product, crop, target and rate against the applicable label", modifier = Modifier.weight(1f), fontSize = 12.sp)
+                    }
+                    Text("Operator-entered for this spray; not catalogue-verified.", fontSize = 12.sp, color = vine.textSecondary)
+                    Row {
+                        OutlinedButton(onClick = { editingLabelRate = false }) { Text("Cancel") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = {
+                            val amount = chemicalEditorValue(draftAmount) ?: return@Button
+                            line.selectedRateId = null
+                            line.basis = draftBasis
+                            line.rateUnit = draftUnit
+                            line.rateAmount = amount
+                            line.overrideText = ""
+                            line.operationalSource = com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.OPERATOR_PLANNING
+                            editingLabelRate = false
+                            onChanged()
+                        }, enabled = checkedLabel && chemicalEditorValue(draftAmount) != null && draftUnit in units) { Text("Use this rate") }
+                    }
+                }
+            } else {
+                OutlinedButton(onClick = {
+                    draftBasis = line.basis
+                    draftUnit = line.rateUnit?.takeIf { it in listOf("mL", "L", "g", "kg") } ?: if (chem.unit.equals("L", true)) "mL" else "g"
+                    draftAmount = ""
+                    checkedLabel = false
+                    editingLabelRate = true
+                }, modifier = Modifier.fillMaxWidth()) { Text("Enter rate from product label") }
+            }
 
             Spacer8()
             Text("Rate", fontSize = 11.sp, color = vine.textSecondary)
@@ -3635,7 +3685,7 @@ internal fun CalcChemicalLineCard(
 
             Spacer8()
             // Override rate
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!editingLabelRate) Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     if (line.operationalSource != null) "Applied operational rate" else "Applied label rate",
                     fontSize = 11.sp,
@@ -3661,7 +3711,7 @@ internal fun CalcChemicalLineCard(
                     }
                 }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!editingLabelRate) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = line.overrideText,
                     onValueChange = { line.overrideText = it; onChanged() },
