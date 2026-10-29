@@ -1826,6 +1826,48 @@ final class MigratedDataStore {
         }
     }
 
+    /// A prior queued occurrence start can retain its original spray recipe in
+    /// the exact local paired-save WAL even when the separately stored spray
+    /// list has not hydrated it. Recover ONLY an existing, unfinished matching
+    /// trip's missing recipe. Never mint a new trip, modify coverage or replace
+    /// a conflicting record; the occurrence journal still owns activation.
+    @discardableResult
+    func restoreQueuedOccurrenceSprayRecordIfRetained(tripId: UUID) throws -> Bool {
+        guard let scope = legacySprayScopeProvider?(),
+              selectedVineyardId == scope.vineyard,
+              let existingTrip = trips.first(where: { $0.id == tripId }),
+              existingTrip.vineyardId == scope.vineyard,
+              existingTrip.coverageBasis == .occurrence,
+              !existingTrip.isActive, existingTrip.endTime == nil,
+              existingTrip.pathPoints.isEmpty, existingTrip.tankSessions.isEmpty,
+              existingTrip.completedPaths.isEmpty, existingTrip.skippedPaths.isEmpty else {
+            return false
+        }
+
+        let matches = try LegacySpraySaveRecovery(persistence: persistence)
+            .attempts().filter { attempt in
+                attempt.scope == scope && attempt.localComplete &&
+                attempt.trip.id == tripId && attempt.trip.coverageBasis == .occurrence &&
+                attempt.record.tripId == tripId &&
+                attempt.trip.occurrenceCoverage == existingTrip.occurrenceCoverage &&
+                attempt.record.vineyardId == scope.vineyard
+            }
+        guard matches.count == 1, let attempt = matches.first else { return false }
+        if let current = sprayRecords.first(where: {
+            $0.id == attempt.record.id || $0.tripId == tripId
+        }) {
+            // Never overwrite a changed record; an existing different recipe
+            // must be investigated and reconciled, not silently replaced.
+            return current.id == attempt.record.id && current.tripId == tripId
+        }
+        var next = sprayRecords
+        next.append(attempt.record)
+        try sprayRepo.saveRecordsSliceOrThrow(next, for: scope.vineyard)
+        sprayRecords = next
+        onSprayRecordChanged?(attempt.record.id)
+        return true
+    }
+
     var legacySprayReceiptNotice: String? {
         guard let items = try? LegacySpraySaveRecovery(persistence: persistence).attempts() else { return "Legacy receipt evidence could not be decoded; synchronization remains held." }
         let journal = LegacySpraySaveRecovery(persistence: persistence)
