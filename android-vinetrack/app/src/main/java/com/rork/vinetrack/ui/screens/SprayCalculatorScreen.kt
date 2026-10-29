@@ -1864,7 +1864,8 @@ fun SprayCalculatorScreen(
                         areaText = planningAreaText, onArea = { planningAreaText = it; result = null },
                         rateText = planningRateText, onRate = { planningRateText = it; result = null },
                         region = fmt, rateUnit = carrierFormat.carrierBasisLabel(customSprayerBasis), rowSpacingMetres = resolvedRowSpacing,
-                        resolution = guidedFlow.planningResolution)
+                        resolution = guidedFlow.planningResolution,
+                        showsFullTankOption = prefillRecord != null || planningMethod == SprayPlanningMethod.FULL_TANK)
                 }
                 if (guidedFlow.requiresBandWidth) {
                     Text("Rate applies to", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
