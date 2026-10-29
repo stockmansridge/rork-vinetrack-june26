@@ -22,7 +22,7 @@ struct SprayPlanningCardsView: View {
                     SprayFieldHelp(title: "Optional pass setup",
                         message: "Single Row covers the facing sides of two adjacent vine rows. 2 Row covers both sides of two complete vine rows from an aisle pass. Leaving it unset retains normal Tank Mixing and Trip. These choices do not select a true over-row machine route.")
                 }
-                Text(configuration == nil ? "Normal Tank Mixing → Trip" : "\(configuration!.title) pass selected")
+                Text(configuration.map { "\($0.title) pass selected" } ?? "Normal Tank Mixing → Trip")
                     .font(.caption).foregroundStyle(.secondary)
                 Picker("Sprayer configuration", selection: $configuration) {
                     Text("Not Set").tag(SprayPassConfiguration?.none)
