@@ -358,6 +358,8 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
         store.sprayRecords = [local]
         store.applyRemoteSprayRecordUpsert(remote)
         XCTAssertEqual(store.sprayRecords, [local])
+        store.applyRemoteSprayRecordDelete(id)
+        XCTAssertEqual(store.sprayRecords, [local], "Remote deletion may not discard unique local recovery evidence")
         // Once the remote has accepted the SAME link, ordinary projection is safe.
         local.recoveredFromServerOrphan = false
         XCTAssertEqual(local.canonicalTripId, tripId)
