@@ -3328,11 +3328,11 @@ struct SprayCalculatorView: View {
     private var targetSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("What are you targeting?")
-                    .font(.subheadline.weight(.semibold))
-                Text("Select every pest, disease or purpose this spray addresses.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text("What are you targeting?")
+                        .font(.subheadline.weight(.semibold))
+                    SprayFieldHelp(title: "Spray targets", message: "Select each pest, disease or purpose this application addresses. The target must match the chemical label directions.")
+                }
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                     ForEach(SprayTarget.presentationOrder) { target in
                         GuidedChip(
@@ -3401,9 +3401,7 @@ struct SprayCalculatorView: View {
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.secondary)
                     }
-                    Text("Total sprayed width per row, both sides combined.")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    SprayFieldHelp(title: "Treated band width", message: "Enter the combined sprayed width per vine row, counting both sides. This width is entered once in Target and used to calculate treated hectares.")
 
                     // Gross and treated BOTH come from the plan the moment a
                     // band width exists. The View computes neither.
@@ -4997,9 +4995,13 @@ struct CalcChemicalLineCard: View {
     private var rateBasisControl: some View {
         let current = selectedOfferedRate?.basis ?? line.basis
         VStack(alignment: .leading, spacing: 8) {
-            Text("Rate basis")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                Text("Product rate basis")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                SprayFieldHelp(title: "Product label rate basis",
+                    message: "Per 100 L is chemical per 100 litres of spray water; Per ha is chemical per hectare. This is different from the water application basis. When no recognised rate exists, select Enter rate from product label.")
+            }
 
             HStack(spacing: 8) {
                 basisOption(
@@ -5018,12 +5020,6 @@ struct CalcChemicalLineCard: View {
                 )
             }
 
-            SprayFieldHelp(title: "Product label rate basis",
-                message: "Per 100 L means product per 100 litres of spray water; Per ha means product per hectare. This is separate from the water application basis. Use Enter rate from product label when VineTrack has no suitable recognised rate.")
-            if !hasGenuinePer100LVineyardRate {
-                Text("No verified Per 100 L grapevine rate is recorded in VineTrack.")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -5414,8 +5410,12 @@ struct CalcChemicalLineCard: View {
                 .chemicalUnit.isDimensionallyCompatible(with: chemical.unit)
         }
         return VStack(alignment: .leading, spacing: 10) {
-            Text("Product label rate — operator entered")
-                .font(.subheadline.weight(.semibold))
+            HStack(spacing: 4) {
+                Text("Product label rate")
+                    .font(.subheadline.weight(.semibold))
+                SprayFieldHelp(title: "Operator-entered rate",
+                    message: "This rate is entered for this spray only, and does not change the registered chemical catalogue. Confirm the exact product, crop, application purpose, basis and unit against the applicable label before proceeding.")
+            }
             HStack(spacing: 8) {
                 ForEach([ChemicalRateBasis.per100Litres, .perHectare], id: \.self) { basis in
                     Button(basis == .per100Litres ? "Per 100 L" : "Per ha") {
@@ -5438,10 +5438,8 @@ struct CalcChemicalLineCard: View {
                 }
                 .accessibilityIdentifier("spray.product.manualUnit")
             }
-            Toggle("I checked this product, crop, target and rate against the applicable label", isOn: $checkedProductLabel)
+            Toggle("I checked the applicable label", isOn: $checkedProductLabel)
                 .font(.caption)
-            Text("Operator-entered for this spray; not verified or approved by the VineTrack catalogue.")
-                .font(.caption).foregroundStyle(.secondary)
             HStack(spacing: 10) {
                 Button("Cancel") {
                     if let previousLabelLine { line = previousLabelLine }
