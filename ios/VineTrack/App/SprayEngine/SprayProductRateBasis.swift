@@ -62,6 +62,24 @@ nonisolated enum SprayProductRateBasis: String, Sendable, Codable, CaseIterable 
     /// as a Whole Block / Treated Band choice.
     static var areaChoices: [SprayProductRateBasis] { [.wholeBlockArea, .treatedArea] }
 
+    /// The operator has already chosen the spray geometry and water application
+    /// area in the earlier guided steps. For a NEW per-hectare product on a
+    /// banded pass, inherit that decision instead of demanding it again.
+    /// An explicitly different per-product choice always wins (labels can
+    /// distinguish gross-vs-treated hectares). Historic saved rates never use
+    /// this helper and therefore retain their recorded area basis.
+    static func forCurrentApplication(
+        isBanded: Bool,
+        carrierAreaBasis: SprayCarrierAreaBasis,
+        explicitProductChoice: SprayProductRateBasis?
+    ) -> SprayProductRateBasis {
+        if let explicitProductChoice, explicitProductChoice.isAreaBased {
+            return explicitProductChoice
+        }
+        guard isBanded else { return .wholeBlockArea }
+        return carrierAreaBasis == .treatedArea ? .treatedArea : .wholeBlockArea
+    }
+
     /// Whether this basis measures against an area (used for reporting labels).
     var isAreaBased: Bool { self == .wholeBlockArea || self == .treatedArea }
 
