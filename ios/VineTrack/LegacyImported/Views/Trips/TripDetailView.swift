@@ -522,7 +522,7 @@ struct TripDetailView: View {
         .alert("Starting a saved spray", isPresented: $showOriginalStartHelp) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Start Trip checks the original saved recipe and occurrence operations, then activates the same trip and 116-path plan. If verification fails, your queued trip remains unchanged; no replacement trip is made.")
+            Text("Start Trip checks the original saved recipe and occurrence operations, then activates the same trip and planned paths. If verification fails, your queued trip remains unchanged; no replacement trip is made.")
         }
         .alert("Queued Spray Recovery", isPresented: Binding(
             get: { occurrenceRecoveryError != nil },
