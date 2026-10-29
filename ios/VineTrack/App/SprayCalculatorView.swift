@@ -4936,7 +4936,7 @@ struct CalcChemicalLineCard: View {
     }
 
     /// 100 m is recommended only where the label supports it.
-    private var recommendsHundredMetres: Bool { hasGenuinePer100LVineyardRate }
+    private var recommendsHundredMetres: Bool { false }
 
     /// Move the line onto a basis by selecting a rate that genuinely states it.
     ///
@@ -4998,7 +4998,7 @@ struct CalcChemicalLineCard: View {
     /// this control never restricts the carrier workflow.
     @ViewBuilder
     private var rateBasisControl: some View {
-        let current = selectedOfferedRate?.basis ?? line.basis
+        let current: ChemicalRateBasis? = selectedOfferedRate?.basis ?? (line.overrideRate != nil ? line.basis : nil)
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 4) {
                 Text("Product rate basis")
@@ -5021,7 +5021,7 @@ struct CalcChemicalLineCard: View {
                     title: "Per ha",
                     isCurrent: current == .perHectare,
                     isAvailable: hasGenuinePerHectareVineyardRate,
-                    isRecommended: !recommendsHundredMetres && hasGenuinePerHectareVineyardRate
+                    isRecommended: false
                 )
             }
 
