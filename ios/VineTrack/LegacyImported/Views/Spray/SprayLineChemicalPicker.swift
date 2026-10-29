@@ -186,6 +186,14 @@ struct SprayLineChemicalPicker: View {
                         .lineLimit(2)
                 }
                 HStack(spacing: 6) {
+                    HStack(spacing: 4) {
+                        Image(systemName: chemical.chemicalV3RevisionId == nil ? "house.fill" : "checkmark.seal.fill")
+                        Text(chemical.chemicalV3RevisionId == nil ? "Vineyard product" : "VineTrack catalogue")
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(chemical.chemicalV3RevisionId == nil ? Color(red: 0.12, green: 0.37, blue: 0.66) : Color(red: 0.38, green: 0.56, blue: 0.12))
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .overlay(Capsule().strokeBorder(chemical.chemicalV3RevisionId == nil ? Color(red: 0.18, green: 0.50, blue: 0.85) : Color(red: 0.52, green: 0.72, blue: 0.19), lineWidth: 1.5))
                     ChemicalVerificationBadge(status: chemical.verificationStatus, chemical: chemical)
                     let codes = chemical.activityGroupCodes
                     if !codes.isEmpty {
