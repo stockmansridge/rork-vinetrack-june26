@@ -8,7 +8,7 @@ import CoreLocation
 nonisolated enum TankSessionDateParser {
     static func parse(_ raw: String) -> Date? {
         let legacyUTC = raw.range(
-            of: #"^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?$"#,
+            of: #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?$"#,
             options: .regularExpression
         ) != nil
         let canonical = legacyUTC ? raw + "Z" : raw
