@@ -7,12 +7,16 @@ struct TripDetailView: View {
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(NetworkMonitor.self) private var network
     @Environment(TripSyncService.self) private var tripSync
+    @Environment(SprayRecordSyncService.self) private var sprayRecordSync
+    @Environment(TripTrackingService.self) private var tracking
     @Environment(\.dismiss) private var dismiss
     @State private var showSummary: Bool = false
     @State private var showDeleteConfirmation: Bool = false
     @State private var position: MapCameraPosition = .automatic
     @State private var isExporting: Bool = false
     @State private var sprayExportError: String?
+    @State private var savedSprayRecoveryError: String?
+    @State private var isRecoveringSavedSpray = false
     @State private var displayTrailSegments: [TrailSegment] = []
     @State private var showRowCompletion: Bool = false
     @State private var showPathMap: Bool = false
@@ -40,6 +44,18 @@ struct TripDetailView: View {
         store.trips.first(where: { $0.id == trip.id }) ?? trip
     }
 
+    /// A never-started spray is not a completed historical trip. Only its
+    /// original saved ID may be recovered; no new Trip is created here.
+    private var isUnstartedSpray: Bool {
+        let value = currentTrip
+        let spray = value.tripFunction == TripFunction.spraying.rawValue
+            || sprayRecord != nil || value.totalTanks > 0
+        return spray && !value.isActive && value.endTime == nil
+            && value.totalDistance == 0 && value.pathPoints.isEmpty
+            && value.completedPaths.isEmpty && value.skippedPaths.isEmpty
+            && value.tankSessions.isEmpty && !value.rowSequence.isEmpty
+    }
+
     private var pinsForTrip: [VinePin] {
         store.pins.filter { $0.tripId == trip.id }
     }
@@ -65,6 +81,9 @@ struct TripDetailView: View {
             return record.sprayReference
         }
         let dateStr = trip.startTime.formattedTZ(date: .abbreviated, time: .omitted, in: tz)
+        if trip.tripFunction == TripFunction.spraying.rawValue {
+            return "Spraying · \(dateStr)"
+        }
         return "Maintenance Trip \(dateStr)"
     }
 
@@ -96,6 +115,37 @@ struct TripDetailView: View {
                 .padding(.vertical, 4)
             }
 
+            if isUnstartedSpray {
+                Section("Saved spray recovery") {
+                    Text("This spray has not started. Its original planned paths are retained. Recover this trip rather than creating another.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Button {
+                        recoverOriginalSpray()
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isRecoveringSavedSpray {
+                                ProgressView()
+                            } else {
+                                Image(systemName: "arrow.clockwise.circle.fill")
+                            }
+                            Text("Recover / Start Spray Trip")
+                                .font(.headline)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isRecoveringSavedSpray || !accessControl.canCreateOperationalRecords)
+                    .accessibilityIdentifier("trip.recoverSavedSpray")
+                    if !accessControl.canCreateOperationalRecords {
+                        Text("Active write access is required to start this saved spray.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+
             Section("Trip Summary") {
                 if let raw = trip.tripFunction, !raw.isEmpty {
                     if let function = TripFunction(rawValue: raw) {
@@ -109,7 +159,11 @@ struct TripDetailView: View {
                 if let title = trip.tripTitle, !title.isEmpty {
                     statRow("Title", value: title, icon: "text.cursor")
                 }
-                statRow("Duration", value: formatDuration(trip.activeDuration), icon: "clock")
+                if isUnstartedSpray {
+                    statRow("Status", value: "Not started", icon: "clock")
+                } else {
+                    statRow("Duration", value: formatDuration(trip.activeDuration), icon: "clock")
+                }
                 statRow("Distance", value: formatDistance(trip.totalDistance), icon: "point.topleft.down.to.point.bottomright.curvepath")
                 if !trip.paddockName.isEmpty {
                     statRow("Block", value: trip.paddockName, icon: "leaf")
@@ -259,7 +313,7 @@ struct TripDetailView: View {
                 }
             }
 
-            if accessControl.canViewCosting {
+            if accessControl.canViewCosting && !isUnstartedSpray {
                 Section {
                     DisclosureGroup(isExpanded: $showCostSection) {
                         tripCostBody
@@ -355,7 +409,7 @@ struct TripDetailView: View {
                     .disabled(isExporting)
                 }
             }
-            if accessControl.canDeleteOperationalRecords && !trip.isActive {
+            if accessControl.canDeleteOperationalRecords && !trip.isActive && !isUnstartedSpray {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) {
                         showDeleteConfirmation = true
@@ -396,6 +450,14 @@ struct TripDetailView: View {
             Button("OK", role: .cancel) { sprayExportError = nil }
         } message: {
             Text(sprayExportError ?? "")
+        }
+        .alert("Saved Spray Recovery", isPresented: Binding(
+            get: { savedSprayRecoveryError != nil },
+            set: { if !$0 { savedSprayRecoveryError = nil } }
+        )) {
+            Button("OK", role: .cancel) { savedSprayRecoveryError = nil }
+        } message: {
+            Text(savedSprayRecoveryError ?? "")
         }
         .alert("Delete Trip", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
@@ -448,6 +510,34 @@ struct TripDetailView: View {
     /// Build the bucketed display trail once for this historical trip. Mirrors
     /// the live `ActiveTripView` renderer but without the 1s timer — pathPoints
     /// are static here, so we recompute only on appear or if the array changes.
+    /// Retry only the original linked spray. If the recipe is missing, first
+    /// run the existing local-first spray sync; do not fabricate tank contents,
+    /// remint occurrence IDs, or silently start a fresh job.
+    private func recoverOriginalSpray() {
+        guard !isRecoveringSavedSpray, isUnstartedSpray else { return }
+        isRecoveringSavedSpray = true
+        savedSprayRecoveryError = nil
+        Task { @MainActor in
+            if sprayRecord == nil {
+                await sprayRecordSync.syncSprayRecordsForSelectedVineyard()
+            }
+            guard sprayRecord != nil else {
+                savedSprayRecoveryError = "The linked spray recipe / tank mix is not available on this device. Sync did not restore it. The queued trip and its planned paths have not been changed. Do not create or delete trips; the original spray record requires recovery."
+                isRecoveringSavedSpray = false
+                return
+            }
+            tracking.activateSavedTrip(currentTrip) { started in
+                isRecoveringSavedSpray = false
+                if started {
+                    dismiss() // The Trips screen then presents its active trip.
+                } else {
+                    savedSprayRecoveryError = tracking.errorMessage
+                        ?? "The original trip could not be activated. Its saved records were retained."
+                }
+            }
+        }
+    }
+
     // MARK: - Trip Cost
 
     private var resolvedOperatorCategory: OperatorCategory? {
