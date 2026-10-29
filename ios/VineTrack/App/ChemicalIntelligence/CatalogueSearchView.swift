@@ -62,7 +62,9 @@ struct CatalogueSearchView: View {
                                     VStack(alignment: .leading) {
                                         Text(match.text("product_name") ?? "Product")
                                         Text(CatalogueWire.compactManufacturer(match.text("manufacturer") ?? "")).font(.caption).foregroundStyle(.secondary)
-                                        Text("VineTrack catalogue").font(.caption)
+                                        Label("VineTrack catalogue", systemImage: "checkmark.seal.fill")
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(Color(red: 0.38, green: 0.56, blue: 0.12))
                                     }
                                 }
                             }.buttonStyle(.plain).disabled(model.context != nil || model.busy)
