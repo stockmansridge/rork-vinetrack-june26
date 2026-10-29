@@ -23,6 +23,7 @@ nonisolated enum GrowthStageMirrorReplay {
               server.paddockId == local.paddockId,
               server.rowNumber == local.rowNumber,
               server.side == local.side,
+              server.notes == local.notes,
               let serverObserved = server.observedAt,
               abs(local.observedAt.timeIntervalSince(serverObserved)) <= 30,
               local.createdAt == local.observedAt,
