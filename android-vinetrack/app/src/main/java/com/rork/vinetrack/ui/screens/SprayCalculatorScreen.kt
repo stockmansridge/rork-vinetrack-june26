@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Gesture
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LocalFlorist
 import androidx.compose.material.icons.filled.LowPriority
@@ -3538,6 +3539,19 @@ internal fun CalcChemicalLineCard(
                 Icon(Icons.Filled.Cancel, contentDescription = "Remove chemical", tint = vine.textSecondary, modifier = Modifier.size(20.dp))
             }
         }
+        if (chem != null) {
+            val catalogue = chem.chemicalV3RevisionId != null
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Icon(if (catalogue) Icons.Filled.CheckCircle else Icons.Filled.Home,
+                    contentDescription = null, tint = if (catalogue) Color(0xFF85B830) else Color(0xFF2F7FD8),
+                    modifier = Modifier.size(15.dp))
+                Text(if (catalogue) "VineTrack catalogue" else "Vineyard product",
+                    fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                    color = if (catalogue) Color(0xFF56801A) else Color(0xFF1F5FA8))
+                // Source is not verification; the established intelligence row
+                // remains responsible for verified/unverified status.
+            }
+        }
 
         Spacer8()
 
@@ -3600,6 +3614,14 @@ internal fun CalcChemicalLineCard(
                         text = {
                             Column {
                                 Text(saved.displayName, fontSize = 13.sp)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    val catalogue = saved.chemicalV3RevisionId != null
+                                    Icon(if (catalogue) Icons.Filled.CheckCircle else Icons.Filled.Home,
+                                        contentDescription = null,
+                                        tint = if (catalogue) Color(0xFF85B830) else Color(0xFF2F7FD8),
+                                        modifier = Modifier.size(14.dp))
+                                    Text(if (catalogue) "VineTrack catalogue" else "Vineyard product", fontSize = 11.sp)
+                                }
                                 // Actives, derived group and trust state (sql/194).
                                 // Never blocks selection: an unverified product is
                                 // still a real product the operator is spraying.
