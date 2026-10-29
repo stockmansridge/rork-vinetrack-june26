@@ -25,8 +25,16 @@ import SwiftUI
 struct SprayLineChemicalPicker: View {
     /// The product currently bound to the line, so it can be shown as selected.
     let selectedId: UUID?
+    /// Existing spray lines must stay bound to an actual saved chemical.
+    let allowsUnresolved: Bool
     /// Called with the chosen product, or `nil` for an explicit manual entry.
     let onSelect: (SavedChemical?) -> Void
+
+    init(selectedId: UUID?, allowsUnresolved: Bool = true, onSelect: @escaping (SavedChemical?) -> Void) {
+        self.selectedId = selectedId
+        self.allowsUnresolved = allowsUnresolved
+        self.onSelect = onSelect
+    }
 
     @Environment(MigratedDataStore.self) private var store
     @Environment(SystemAdminService.self) private var systemAdmin
@@ -35,11 +43,29 @@ struct SprayLineChemicalPicker: View {
 
     @State private var query: String = ""
     @State private var isCreatingChemical: Bool = false
+    @State private var selectionCommitted: Bool = false
+    @State private var pendingCreatedChemical: SavedChemical?
 
     /// Creating a product writes to the vineyard-shared Chemical Store, so it
     /// carries the same permission that store already enforces. Nothing is
     /// widened here.
     private var canCreateChemical: Bool { accessControl?.canManageSetup ?? false }
+
+    /// Single owner of the picker dismissal. The parent calculator commits its
+    /// chosen chemical only after the picker closes, avoiding simultaneous
+    /// mutation of SwiftUI's active Products line and its presentation.
+    private func finishSelection(_ chemical: SavedChemical?) {
+        guard !selectionCommitted else { return }
+        selectionCommitted = true
+        onSelect(chemical)
+        dismiss()
+    }
+
+    /// The inner Add Chemical sheet must close before the outer picker closes.
+    private func finishCreatedChemical(_ chemical: SavedChemical) {
+        pendingCreatedChemical = chemical
+        isCreatingChemical = false
+    }
 
     /// The vineyard's jurisdiction, for marking foreign-registered products.
     /// Display only — selection stays possible; the mark prevents a foreign
@@ -123,8 +149,7 @@ struct SprayLineChemicalPicker: View {
                     Section {
                         ForEach(candidates) { chemical in
                             Button {
-                                onSelect(chemical)
-                                dismiss()
+                                finishSelection(chemical)
                             } label: {
                                 row(chemical)
                             }
@@ -136,18 +161,18 @@ struct SprayLineChemicalPicker: View {
                     }
                 }
 
-                Section {
-                    Button {
-                        onSelect(nil)
-                        dismiss()
-                    } label: {
-                        Label("Product not in Chemical Store", systemImage: "square.and.pencil")
+                if allowsUnresolved {
+                    Section {
+                        Button {
+                            finishSelection(nil)
+                        } label: {
+                            Label("Product not in Chemical Store", systemImage: "square.and.pencil")
+                        }
+                    } footer: {
+                        // Manual spray-record entry can remain unresolved, but
+                        // a calculator product line needs a real product ID.
+                        Text("Type the product name on the record instead. The application is kept in full, but its chemistry cannot be assessed for resistance until the product is added to your Chemical Store.")
                     }
-                } footer: {
-                    // Not a warning, a statement. Recording the spray matters
-                    // more than knowing its chemistry, but the operator should
-                    // know what they are trading away.
-                    Text("Type the product name on the record instead. The application is kept in full, but its chemistry cannot be assessed for resistance until the product is added to your Chemical Store.")
                 }
             }
             .navigationTitle("Select Chemical")
@@ -157,7 +182,11 @@ struct SprayLineChemicalPicker: View {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .sheet(isPresented: $isCreatingChemical) {
+            .sheet(isPresented: $isCreatingChemical, onDismiss: {
+                guard let created = pendingCreatedChemical else { return }
+                pendingCreatedChemical = nil
+                finishSelection(created)
+            }) {
                 // THE existing Add Chemical flow, not a copy of it: search the
                 // register, review what was found in the Chemical Store editor,
                 // save. Seeded with whatever the operator already typed here, so
@@ -170,20 +199,17 @@ struct SprayLineChemicalPicker: View {
                     ChemicalSearchV2View(
                         prefillQuery: query.trimmingCharacters(in: .whitespacesAndNewlines),
                         onOpenExisting: { existing in
-                            onSelect(existing)
-                            dismiss()
+                            finishCreatedChemical(existing)
                         },
                         onSaved: { created in
-                            onSelect(created)
-                            dismiss()
+                            finishCreatedChemical(created)
                         }
                     )
                 } else {
                     ChemicalMatchFlowView(
                         prefillQuery: query.trimmingCharacters(in: .whitespacesAndNewlines)
                     ) { created in
-                        onSelect(created)
-                        dismiss()
+                        finishCreatedChemical(created)
                     }
                 }
             }
