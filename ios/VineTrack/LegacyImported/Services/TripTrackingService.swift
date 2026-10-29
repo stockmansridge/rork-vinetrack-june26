@@ -563,15 +563,15 @@ final class TripTrackingService {
         at activationTime: Date = Date(),
         onStarted: @escaping (Bool) -> Void = { _ in }
     ) {
-        guard let store else { return }
+        guard let store else { onStarted(false); return }
         guard admitTripChange(store.trips.first(where: { $0.id == savedTrip.id })) else { onStarted(false); return }
         guard store.selectedVineyardId != nil else {
             errorMessage = "No vineyard selected."
-            return
+            onStarted(false); return
         }
         if store.deviceActiveTripId != nil {
             errorMessage = deviceTripConflictMessage(in: store)
-            return
+            onStarted(false); return
         }
         guard !savedTrip.isActive,
               savedTrip.endTime == nil,
@@ -579,12 +579,15 @@ final class TripTrackingService {
               savedTrip.totalDistance == 0,
               savedTrip.completedPaths.isEmpty,
               savedTrip.skippedPaths.isEmpty,
-              savedTrip.tankSessions.isEmpty,
-              let recordIndex = store.sprayRecords.firstIndex(where: {
-                  $0.tripId == savedTrip.id && !$0.isTemplate && $0.endTime == nil
-              }) else {
+              savedTrip.tankSessions.isEmpty else {
             errorMessage = "Only a Not Started spray job can be activated."
-            return
+            onStarted(false); return
+        }
+        guard let recordIndex = store.sprayRecords.firstIndex(where: {
+            $0.tripId == savedTrip.id && !$0.isTemplate && $0.endTime == nil
+        }) else {
+            errorMessage = "The original spray recipe is not available on this device. Sync/recover its linked spray record before starting. Do not recreate the trip."
+            onStarted(false); return
         }
 
         let recipe = store.sprayRecords[recordIndex]
@@ -681,7 +684,7 @@ final class TripTrackingService {
                 ))
             } catch {
                 errorMessage = "Couldn't save the Trip start on this device. Free up storage and retry."
-                return
+                onStarted(false); return
             }
         }
         // Persist both linked operational records before GPS or sync callbacks
@@ -689,9 +692,14 @@ final class TripTrackingService {
         // snapshots are deliberately untouched.
         guard store.updateSprayRecord(record) else {
             errorMessage = record.operationalPlanningBlocker ?? "Couldn't save the spray start. Keep this screen open and retry."
-            return
+            onStarted(false); return
         }
-        store.updateTrip(activated)
+        do {
+            try store.updateTripOrThrow(activated)
+        } catch {
+            errorMessage = "Couldn't durably activate this saved trip. The original spray remains in the list for recovery."
+            onStarted(false); return
+        }
         store.claimDeviceTrip(activated.id)
         errorMessage = nil
         beginSprayWeatherCapture(for: activated)
