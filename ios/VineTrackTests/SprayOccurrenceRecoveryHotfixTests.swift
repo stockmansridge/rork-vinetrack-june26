@@ -133,9 +133,9 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
             paddockIds: [block], isActive: false, rowSequence: [1.5],
             occurrenceCoverage: coverage)
         let record = SprayRecord(tripId: trip.id, vineyardId: vineyard,
-            notes: "Original frozen tank recipe",
             tanks: [SprayTank(tankNumber: 1, waterVolume: 420,
-                chemicals: [SprayChemical(name: "Synthetic", ratePer100L: 100)])])
+                chemicals: [SprayChemical(name: "Synthetic", ratePer100L: 100)])],
+            notes: "Original frozen tank recipe")
         try store.saveSprayForLater(record: record, trip: trip)
         let original = try LegacySpraySaveRecovery(persistence: persistence).attempts()
         XCTAssertEqual(original.count, 1)
