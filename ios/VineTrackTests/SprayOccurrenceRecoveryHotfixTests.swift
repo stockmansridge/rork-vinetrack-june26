@@ -360,6 +360,17 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
         XCTAssertEqual(store.sprayRecords, [local])
         store.applyRemoteSprayRecordDelete(id)
         XCTAssertEqual(store.sprayRecords, [local], "Remote deletion may not discard unique local recovery evidence")
+        // The original *local WAL* route also repairs its tripId provenance,
+        // but its remote orphan may still carry NULL while activation replays.
+        // A normal push/pull must not undo that repaired relationship.
+        var walLinked = local
+        walLinked.recoveredFromServerOrphan = false
+        let walMerged = SprayCompletionResolver.preservingServerCompletion(local: walLinked, server: remote)
+        XCTAssertEqual(walMerged.canonicalTripId, tripId)
+        XCTAssertEqual(walMerged.tanks, [tank])
+        store.sprayRecords = [walLinked]
+        store.applyRemoteSprayRecordUpsert(remote)
+        XCTAssertEqual(store.sprayRecords, [walLinked])
         // Once the remote has accepted the SAME link, ordinary projection is safe.
         local.recoveredFromServerOrphan = false
         XCTAssertEqual(local.canonicalTripId, tripId)
