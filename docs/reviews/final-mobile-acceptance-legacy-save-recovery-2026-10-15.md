@@ -1,5 +1,61 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Emergency iOS Spray Trip recovery — 29 October 2026 — SOURCE READY FOR CONTROLLED TESTFLIGHT VALIDATION; ORIGINAL DEVICE TRIP UNVERIFIED
+
+### Review and integration
+
+- Reviewed public GitHub PR #12, `https://github.com/stockmansridge/rork-vinetrack-june26/pull/12`, head `7060f992a90e1225eaa2eb42700ad626923f3fe7`, base `97545e13c3b0bef31acc4131a1cac6b395d20105`. GitHub reports open/draft, one commit/one changed file, +12/-6. Its description correctly distinguishes the saved-trip gate fix from unresolved occurrence starts. The PR text calls the method `activateSavedSprayTrip`; the actual diff/current method is `activateSavedTrip`.
+- Current local source parent: `025123219e8c5855ec37251e3be9d0cf7f76dd98`. Applied the reviewed hunk semantically to the existing service, not a branch/file replacement, pull, reset, cherry-pick or GitHub merge. No manual commit/push. This is workspace integration; the GitHub PR was not marked merged. The later managed-save hotfix revision is not available during this turn; hashes below identify final tested source.
+- The PR gate is now conditional on legacy coverage. Saved occurrence trips reach the existing scoped journal/recovery/activation path instead of demanding a legacy paired-create receipt they cannot obtain. Unsupported coverage still fails in the existing occurrence-document validator, not numeric fallback.
+
+### Additional concrete blockers found and bounded repairs
+
+- `LegacySpraySaveRecovery.prepare` retains occurrence saves as a local recipe/trip WAL, but the legacy RPC explicitly rejects occurrence coverage. Their WAL consequently has no legacy RPC/receipt and remains `isHeld`. The same unconditional legacy `contains` gate was used by Trip/Spray sync writers and pulls, so PR #12 alone would leave those records filtered out even after dedicated activation became reachable.
+- Added `requiresLegacyReceipt`: only a locally complete occurrence pair with no legacy request, claim or receipt may leave the legacy gate, and only when its owner/vineyard/trip-scoped occurrence journal contains the exact original creation coverage and entire original create-trip metadata. Missing, malformed or mismatched evidence remains held. Nothing is relabelled as a verified legacy receipt or parent acknowledgement. Trip/Spray sync still uses existing occurrence replay and parent checks; no numeric full-snapshot fallback was added.
+- The local WAL, exact recipe, trip and occurrence operations remain unchanged. A held occurrence journal stays held and cannot operate, even when correctly routed away from the irrelevant legacy gate. Shared legacy notice/count/sweep queries use the same evidence check; accepted-legacy lists explicitly remain legacy-only. Legacy RPC preparation/replay, journal schema and backend contracts are unchanged.
+- New planned starts previously scanned older occurrence trips using a helper that initializes missing journals with `creationConfirmed = false`, then immediately treated that newly fabricated state as unresolved. The scan is now read-only with respect to journal documents. Existing uncertain creation evidence still blocks duplicate starts; the message names the earlier block/date so it can be recovered rather than recreated. No pre-existing journal is removed, auto-confirmed or repaired from a snapshot.
+
+### Focused validation and intermediate evidence
+
+Final `swiftTest(appPath: ios)` selection (not full app suite):
+
+```text
+VineTrackTests/SprayOccurrenceRecoveryHotfixTests
+VineTrackTests/TripOccurrenceJournalTests
+VineTrackTests/SpraySaveForLaterTests
+VineTrackTests/LegacySprayPairReceiptTests
+VineTrackTests/SprayTripStartAdmissionTests
+VineTrackTests/SpraySavedJobActivationIntegrationTests
+```
+
+- Final result: **67 passed in36s**. The runner reports an aggregate and does not provide a skipped count. Latest test log: `/tmp/rork-swift-test-ios.log` (temporary, overwritten by future runs).
+- New saved-occurrence regression invokes the real `activateSavedTrip`, preserving original trip/recipe and inactive device state. Deliberately absent authentication must produce the dedicated branch's scope error, not the legacy receipt error. Initial fixture attempts returned0/1 because the synthetic tank lacked a product, then lacked quantity; those are fixture failures, not reproduction evidence. After correcting those inputs, **0 passed /1 failed** specifically on the unconditional legacy receipt error, reproducing PR #12 before repair. Final selection passes after repair.
+- New WAL/sync-admission regression uses the real repository creation preparation and real durable journals: missing parent held; exact parent routes away from legacy sync; mismatched metadata held; legacy RPC sends zero; occurrence hold/pending IDs and original local WAL/records unchanged; no invented legacy acceptance. This validates the gate used by production sync, not a live authenticated Trip/Spray sync session.
+- New-start preflight regression confirms historical missing journals remain absent and a real unconfirmed create still blocks with unchanged IDs/state. Existing journal tests retain full local offline creation/activation/recreation, scope validation, conflict/hold, per-operation ordering and duplicate-ack protections.
+- Added exact create-plus-activation recovery transcript coverage: emulate both responses lost, recreate the journal, validate original actor/request/result receipts, drain only those original operations, repeat recovery idempotently and reject another activation. Transcript is synthetic, not observed server RPC traffic.
+- First combined selection: **64 passed /3 failed**, all in existing saved-activation tests whose tank fixtures contained no products and were correctly rejected by the existing recipe-start validator. Added explicit synthetic positive product rates/quantities to those three test inputs only; no assertion, production validator or GPS behaviour change. Final same bounded selection67 green retains actual saved activation/persistence and existing three-block GPS/pin/auto-path assertions.
+- Separate normal `runChecks(appPath: ios)` → **PASS, simulator build succeeded**. Only one normal build was requested/run. Two pre-existing unrelated direct-storage image URL notices remain. No signed-device/Release build, TestFlight delivery or UI/device acceptance performed.
+- `git diff --check HEAD` PASS. Native changes are exactly three recovery services and three test files. Verified no diff in Android, Spray Calculator or iOS project/release settings. No Supabase/schema/server/customer-data operations. Runtime preview-log search supplied no matching original-device occurrence failure; it cannot diagnose that handset's saved journal.
+
+### Readiness and remaining blockers
+
+**Ready to prepare a controlled TestFlight validation build from the current integrated source**, based on focused automated execution and simulator compilation. This is not an isolated historical 3.1.8 branch rollback: newer workspace work remains intact, and no version, signing or release setting was changed. Release/device signing validation and delivery remain separate; no TestFlight build has been uploaded.
+
+The original 29 October2026,1:07pm trip has not been read, mutated or verified on the original device. Its actual trip ID, scoped journal, pending create/activate IDs and server receipts were not available here. A retained unconfirmed earlier create, absent original create evidence, genuine RPC rejection/coverage mismatch, existing journal hold, account/entitlement mismatch or missing server activation evidence will still block safely; the hotfix does not clear any such condition. A journal previously initialized from a snapshot by the old scan is retained and still requires authentic recovery; it is not silently converted into a new create operation. Therefore the exact cause of that trip's initial start error remains unverified even though the three source-level blockers above are addressed.
+
+Device verification: keep the original installation/data, sign in as the original operator in the original vineyard, open the existing saved trip and attempt its recovery/start once with connectivity. Confirm the same trip/recipe/occurrence identities, one activation and no duplicate trip. If still blocked, retain the displayed message and obtain that original trip's scoped recovery diagnostics before further changes. Do not delete/recreate the trip, reinstall/clear app data or start a replacement job. No claim that the incident trip is fixed or production-release accepted.
+
+### Final native source/test manifest (SHA-256)
+
+```text
+787a4929669ec4e08cc557cc73932afe271cb0c6bb66234e7a12b0e492266343  ios/VineTrack/LegacyImported/Services/TripTrackingService.swift
+72adcf16d7de021ba3add0fe1759d894579fd74a60c09cdbc7dff775abbb7a0a  ios/VineTrack/LegacyImported/Services/LegacySpraySaveRecovery.swift
+c16f86e6de696b37d6062f8e7ae9722851ed7d052ceb50e319283563bc7dc159  ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift
+8826c961ae216f83b189ea57bd68eec42df9cb431c1cb7f110274da1a4175d0f  ios/VineTrackTests/SprayOccurrenceRecoveryHotfixTests.swift
+1049a2bc36fc74c95dbb4bdc9bd2335f4d66d72e67ce42ffcec527452fa2585d  ios/VineTrackTests/TripOccurrenceJournalTests.swift
+b22558adff3d225900550af406659a3f7b3717ae2d131da8be47a2e617ce261d  ios/VineTrackTests/SprayMultiBlockTripTests.swift
+```
+
 ## Spray Calculator Phase 2A — 28 October 2026 — FOCUSED AUTOMATION AND BUILDS PASS; PHYSICAL ACCEPTANCE OPEN
 
 Phase 2A only: explicit progression through the existing eight calculator cards on iOS and Android. Source-parent HEAD is `e9a69791c7d623442038a8a17b6015315b76fd3e` (the managed Phase 1 repair commit). Supplied baseline `524afcccff7480e2a80e34678b6a784a78af23e9` was inspected without resetting the working tree: native differences before this phase were only the already-absent generated `ios/VineTrack/Config.swift`. It was not restored. Newer work, Phase 1 and managed history are preserved.

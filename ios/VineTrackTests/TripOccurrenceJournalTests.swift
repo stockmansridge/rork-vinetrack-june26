@@ -296,6 +296,41 @@ final class TripOccurrenceJournalTests: XCTestCase {
         row["actorId"] = .string("99999999-9999-4999-8999-999999999999"); response["receipts"] = .array([.object(row)])
         XCTAssertThrowsError(try j.recover(.object(response))); XCTAssertEqual(try j.load()?.pending,[op])
     }
+    @MainActor func testLostCreateAndActivationResponsesRecoverExactReceiptsWithoutDuplicateOperations() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let journal = try TripOccurrenceJournal(scope: scope, directory: dir)
+        let metadata: TripOccurrenceCoverage.JSON = .object(["id": .string(scope.tripId), "vineyard_id": .string(scope.vineyardId), "is_active": .bool(false)])
+        let create = try journal.prepareCreation(trip: metadata, coverage: fixture())
+        let start: TripOccurrenceCoverage.JSON = .object(["startTime": .string("2026-10-29T02:07:00Z")])
+        let activation = try journal.activate(start)
+        XCTAssertThrowsError(try journal.activate(start))
+        let reopened = try TripOccurrenceJournal(scope: scope, directory: dir)
+        let response: TripOccurrenceCoverage.JSON = .object([
+            "contract": .string("vinetrack.occurrence-recovery"), "schemaVersion": .number(1),
+            "tripId": .string(scope.tripId), "vineyardId": .string(scope.vineyardId),
+            "coverage": activation.after, "isActive": .bool(true), "reversibleOperations": .array([]),
+            "receipts": .array([
+                .object(["operationId": .string(create.id), "actorId": .string(scope.ownerId),
+                    "request": .object(["kind": .string("create"), "trip": metadata, "coverage": create.after]), "result": ack(create)]),
+                .object(["operationId": .string(activation.id), "actorId": .string(scope.ownerId),
+                    "request": .object(["kind": .string("activate"), "tripId": .string(scope.tripId),
+                        "expectedRevision": activation.params[occurrence: "p_expected_revision"]!,
+                        "expectedPlanRevision": activation.params[occurrence: "p_expected_plan_revision"]!, "start": start]), "result": ack(activation)])
+            ])
+        ])
+        try reopened.recover(response)
+        let recovered = try XCTUnwrap(reopened.load())
+        XCTAssertTrue(recovered.pending.isEmpty)
+        XCTAssertEqual(recovered.creationConfirmed, true); XCTAssertEqual(recovered.serverActive, true)
+        XCTAssertEqual(recovered.history.map(\.id), [create.id, activation.id])
+        XCTAssertEqual(recovered.acknowledged, activation.after)
+        XCTAssertTrue(reopened.canOperate(recovered))
+        try reopened.recover(response)
+        XCTAssertEqual(try reopened.load(), recovered)
+        XCTAssertThrowsError(try reopened.activate(start))
+        XCTAssertEqual(try reopened.load(), recovered)
+    }
+
     @MainActor func testCreationActivationNeedExactDurableAcknowledgement() throws {
         let dir=directory(); defer { try? FileManager.default.removeItem(at:dir) }; let j=try TripOccurrenceJournal(scope:scope,directory:dir)
         let metadata: TripOccurrenceCoverage.JSON = .object(["id":.string(scope.tripId),"vineyard_id":.string(scope.vineyardId),"is_active":.bool(false),"trip_title":.string("Keep this"),"seeding_details":.object(["note":.string("retain")])])

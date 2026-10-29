@@ -422,9 +422,7 @@ final class TripTrackingService {
                 guard plannedCandidates.allSatisfy({ resolvedIds.contains($0.blockId) }),
                       resolvedIds.allSatisfy({ block in plannedCandidates.contains { $0.blockId == block } }) else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                 // A retained uncertain start must be recovered, never replaced with newly minted IDs.
-                for saved in store.trips where saved.coverageBasis == .occurrence {
-                    if try occurrenceJournal(for: saved).load()?.creationConfirmed == false { throw TripOccurrenceCoverage.Failure.reconciliation }
-                }
+                try requireResolvedOccurrenceStarts()
                 trip.occurrenceCoverage = try TripOccurrencePlanner.commit(plannedCandidates, vineyardId: vineyardId)
                 var inactive = trip; inactive.isActive = false
                 let repository = SupabaseTripSyncRepository()
@@ -594,14 +592,18 @@ final class TripTrackingService {
             errorMessage = blocker
             onStarted(false); return
         }
-        do {
-            guard try !store.isLegacySpraySyncHeld(record: recipe.id, trip: savedTrip.id) else {
-                errorMessage = "This saved spray is awaiting its original paired acceptance. Sync/recover that job before starting."
+        // PR #12: occurrence saves recover through their own durable lifecycle journal,
+        // not the unrelated legacy paired-create receipt contract.
+        if savedTrip.coverageBasis == .legacy {
+            do {
+                guard try !store.isLegacySpraySyncHeld(record: recipe.id, trip: savedTrip.id) else {
+                    errorMessage = "This saved spray is awaiting its original paired acceptance. Sync/recover that job before starting."
+                    onStarted(false); return
+                }
+            } catch {
+                errorMessage = "Saved spray acceptance needs recovery; original evidence retained."
                 onStarted(false); return
             }
-        } catch {
-            errorMessage = "Saved spray acceptance needs recovery; original evidence retained."
-            onStarted(false); return
         }
         if savedTrip.coverageBasis != .legacy {
             Task { @MainActor in
@@ -2272,6 +2274,17 @@ final class TripTrackingService {
             diagLockConfidence = 0
         }
         recomputeAutoRealignSuggestion()
+    }
+
+    /// A duplicate-start check is read-only: examining a remote historical trip must
+    /// not manufacture an unresolved local journal and then block every new start.
+    func requireResolvedOccurrenceStarts() throws {
+        guard let store else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+        for saved in store.trips where saved.coverageBasis == .occurrence {
+            if try occurrenceJournal(for: saved, initializeIfMissing: false).load()?.creationConfirmed == false {
+                throw SprayPlanningAdmissionError(message: "An earlier planned trip (\(saved.paddockName), \(saved.startTime.formatted(date: .abbreviated, time: .shortened))) needs occurrence recovery. Its original saved actions are retained; recover that trip before starting another.")
+            }
+        }
     }
 
     private func occurrenceJournal(for trip: Trip, initializeIfMissing: Bool = true) throws -> TripOccurrenceJournal {

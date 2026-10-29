@@ -1828,16 +1828,17 @@ final class MigratedDataStore {
 
     var legacySprayReceiptNotice: String? {
         guard let items = try? LegacySpraySaveRecovery(persistence: persistence).attempts() else { return "Legacy receipt evidence could not be decoded; synchronization remains held." }
-        return items.first { $0.scope.vineyard == selectedVineyardId && $0.isHeld && $0.receiptBlocker != nil }?.receiptBlocker
+        let journal = LegacySpraySaveRecovery(persistence: persistence)
+        return items.first { $0.scope.vineyard == selectedVineyardId && $0.receiptBlocker != nil && ((try? journal.requiresLegacyReceipt($0)) ?? true) }?.receiptBlocker
     }
 
     func acceptedLegacySprayPairs(vineyard: UUID) throws -> [LegacySpraySaveRecovery.Attempt] {
-        try LegacySpraySaveRecovery(persistence: persistence).attempts().filter { !$0.isHeld && $0.scope.vineyard == vineyard }
+        try LegacySpraySaveRecovery(persistence: persistence).attempts().filter { $0.trip.coverageBasis == .legacy && !$0.isHeld && $0.scope.vineyard == vineyard }
     }
 
     func unchangedAcceptedLegacySprays() throws -> [LegacySpraySaveRecovery.Attempt] {
         try LegacySpraySaveRecovery(persistence: persistence).attempts().filter { item in
-            !item.isHeld && item.scope.vineyard == selectedVineyardId &&
+            item.trip.coverageBasis == .legacy && !item.isHeld && item.scope.vineyard == selectedVineyardId &&
                 trips.first(where: { $0.id == item.trip.id }).map { (try? LegacySpraySaveRecovery.sameProjection($0, item.trip)) == true } == true &&
                 sprayRecords.first(where: { $0.id == item.record.id }).map { (try? LegacySpraySaveRecovery.sameProjection($0, item.record)) == true } == true
         }
@@ -1860,11 +1861,19 @@ final class MigratedDataStore {
     }
 
     func legacySprayHeldCount(vineyard: UUID) throws -> Int {
-        try LegacySpraySaveRecovery(persistence: persistence).attempts().filter { $0.scope.vineyard == vineyard && $0.isHeld }.count
+        let journal = LegacySpraySaveRecovery(persistence: persistence)
+        return try journal.attempts().filter { item in
+            guard item.scope.vineyard == vineyard else { return false }
+            return try journal.requiresLegacyReceipt(item)
+        }.count
     }
 
     func requireLegacySpraySweepCompletion(vineyard: UUID) throws {
-        if try LegacySpraySaveRecovery(persistence: persistence).attempts().contains(where: { $0.scope.vineyard == vineyard && $0.isHeld }) {
+        let journal = LegacySpraySaveRecovery(persistence: persistence)
+        if try journal.attempts().contains(where: { item in
+            guard item.scope.vineyard == vineyard else { return false }
+            return try journal.requiresLegacyReceipt(item)
+        }) {
             throw SprayPlanningAdmissionError(message: "Legacy creation evidence remains held on this device pending verified paired-create recovery.")
         }
     }

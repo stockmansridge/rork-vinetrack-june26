@@ -90,7 +90,10 @@ final class LegacySpraySaveRecovery {
             return
         }
         // Local completion is not remote acceptance. A new session cannot bypass retained creation evidence.
-        guard !items.contains(where: { $0.scope.actor == scope.actor && $0.scope.vineyard == scope.vineyard && $0.isHeld }) else { throw failure }
+        guard try !items.contains(where: { item in
+            guard item.scope.actor == scope.actor, item.scope.vineyard == scope.vineyard else { return false }
+            return try requiresLegacyReceipt(item)
+        }) else { throw failure }
         var attempt = Attempt(scope: scope, record: record, trip: trip)
         do { attempt.rpc = try LegacySprayPairReceipt.prepare(scope: scope, record: record, trip: trip) }
         catch { attempt.receiptBlocker = "Legacy receipt v1 does not admit this payload. Original local evidence is retained, not stripped or sent." }
@@ -109,8 +112,32 @@ final class LegacySpraySaveRecovery {
         }
         return pending.map { items[$0] }
     }
+    /// An occurrence save uses this WAL only for the local recipe/trip pair. Release
+    /// its *legacy* transport gate only when the exact original create intent is
+    /// already durable in its scoped occurrence journal. That journal still owns
+    /// all conflicts, activation, receipts and duplicate prevention. Never migrate,
+    /// clear, re-create or transmit the retained WAL through the legacy RPC.
+    func requiresLegacyReceipt(_ item: Attempt) throws -> Bool {
+        guard item.isHeld else { return false }
+        guard item.localComplete, item.trip.coverageBasis == .occurrence,
+              item.rpc == nil, !item.rpcClaimed, item.candidate == nil, item.verified == nil else { return true }
+        let scope = TripOccurrenceJournal.Scope(ownerId: item.scope.actor.uuidString.lowercased(),
+            vineyardId: item.scope.vineyard.uuidString.lowercased(), tripId: item.trip.id.uuidString.lowercased())
+        let journal = try TripOccurrenceJournal(scope: scope)
+        guard let state = try journal.load(),
+              let create = state.history.first(where: { $0.rpc == "create_trip_with_occurrences_v1" }),
+              create.params[occurrence: "p_coverage"] == item.trip.occurrenceCoverage else { return true }
+        let payload = BackendTrip.upsert(from: item.trip, createdBy: item.scope.actor, clientUpdatedAt: item.trip.startTime)
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        var metadata = try JSONDecoder().decode([String: TripOccurrenceCoverage.JSON].self, from: encoder.encode(payload))
+        metadata.removeValue(forKey: "occurrence_coverage")
+        return create.params[occurrence: "p_trip"] != .object(metadata)
+    }
     func contains(record: UUID? = nil, trip: UUID? = nil) throws -> Bool {
-        try attempts().contains { $0.isHeld && ($0.record.id == record || $0.trip.id == trip) }
+        try attempts().contains { item in
+            guard item.record.id == record || item.trip.id == trip else { return false }
+            return try requiresLegacyReceipt(item)
+        }
     }
     /// One caller serializes replay at the owning store; every send follows a durable claim.
     private var isReplaying: Bool = false

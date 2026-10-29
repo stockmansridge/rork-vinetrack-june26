@@ -291,7 +291,8 @@ final class SpraySavedJobActivationIntegrationTests: XCTestCase {
             currentRowNumber: 0.5, nextRowNumber: 68.5, isActive: false,
             trackingPattern: .everySecondRow, rowSequence: [0.5, 68.5, 108.5], totalTanks: 1
         )
-        let tanks = [SprayTank(tankNumber: 1, waterVolume: 2_000, sprayRatePerHa: 500)]
+        let tanks = [SprayTank(tankNumber: 1, waterVolume: 2_000, sprayRatePerHa: 500,
+            chemicals: [SprayChemical(name: "Synthetic product", volumePerTank: 2_000, ratePerHa: 500)])]
         let record = SprayRecord(
             tripId: trip.id, vineyardId: vineyardId, date: plannedAt,
             startTime: plannedAt, sprayReference: "Saved plan", tanks: tanks
@@ -342,7 +343,8 @@ final class SpraySavedJobActivationIntegrationTests: XCTestCase {
         )
         let record = SprayRecord(
             tripId: trip.id, vineyardId: vineyardId, date: Date(), startTime: Date(),
-            sprayReference: "Three blocks", tanks: [SprayTank(tankNumber: 1, waterVolume: 1_000)]
+            sprayReference: "Three blocks", tanks: [SprayTank(tankNumber: 1, waterVolume: 1_000,
+                chemicals: [SprayChemical(name: "Synthetic product", volumePerTank: 1_000, ratePerHa: 500)])]
         )
         store.addInactiveTrip(trip)
         store.addSprayRecord(record)
@@ -399,7 +401,8 @@ final class SpraySavedJobActivationIntegrationTests: XCTestCase {
             vineyardId: vineyardId,
             endTime: nil,
             sprayReference: "Auto Path three blocks",
-            tanks: [SprayTank(tankNumber: 1, waterVolume: 1_000, sprayRatePerHa: 500)],
+            tanks: [SprayTank(tankNumber: 1, waterVolume: 1_000, sprayRatePerHa: 500,
+                chemicals: [SprayChemical(name: "Synthetic product", volumePerTank: 1_000, ratePerHa: 500)])],
             isTemplate: false
         )
         store.addInactiveTrip(planned)
