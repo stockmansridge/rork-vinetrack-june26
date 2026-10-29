@@ -3452,7 +3452,8 @@ struct SprayCalculatorView: View {
                     specification: $fullTankSpecification, tankText: planningBinding($planningTankText),
                     areaText: planningBinding($planningAreaText), rateText: planningBinding($planningRateText), region: planningRegion,
                     rateUnit: customSprayerInputBasis == .litresPer100Metres ? planningRegion.volumePer100LengthUnit : planningRegion.volumePerAreaUnit,
-                    rowSpacingMetres: resolvedRowSpacingMetres, resolution: flow.planningResolution)
+                    rowSpacingMetres: resolvedRowSpacingMetres, resolution: flow.planningResolution,
+                    showsFullTankOption: prefillRecord != nil || planningMethod == .fullTank)
                 if planningRegion.settings != region.settings {
                     Text("Incomplete planning entries are retained in their original units. Complete or clear them before the new regional units can be displayed.")
                         .font(.caption).foregroundStyle(.orange)
