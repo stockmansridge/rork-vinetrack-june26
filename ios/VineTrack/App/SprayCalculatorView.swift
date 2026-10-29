@@ -2842,10 +2842,16 @@ struct SprayCalculatorView: View {
                             }
                         }
                         if productAreaBasis[line.id] == nil {
-                            Text("Treated band assumed from Target; change if this label specifies whole-block hectares.")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            HStack(spacing: 5) {
+                                Text("Using treated band from Target")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                SprayFieldHelp(
+                                    title: "Product application area",
+                                    message: "For a new banded spray, a per-hectare chemical rate uses the treated band hectares selected in Target. Change this product to Whole Block only when the applicable label rate requires gross block area. The carrier-water setting is independent."
+                                )
+                            }
                         }
                     }
 
