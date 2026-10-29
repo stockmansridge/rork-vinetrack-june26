@@ -223,12 +223,21 @@ nonisolated enum SprayLabelRangeCheck {
     ) -> String? {
         guard let applied = appliedBaseValue,
               applied.isFinite,
-              let rate,
-              let range = rate.labelRange,
-              let rangeText = rate.labelRangeText,
-              !range.contains(applied)
-        else { return nil }
-        return "Outside the registered label range of \(rangeText)."
+              applied > 0,
+              let rate else { return nil }
+        if let range = rate.labelRange, let rangeText = rate.labelRangeText,
+           !range.contains(applied) {
+            return "Outside the registered label range of \(rangeText)."
+        }
+        // A FIXED grapevine label rate is not an open-ended band. Keep an
+        // explicit warning beside an operator's different applied dose; never
+        // display the changed number as though the manufacturer specified it.
+        if rate.labelRange == nil, !rate.isRangePreset,
+           let fixed = rate.seed.seedableValue,
+           abs(applied - fixed) > max(0.000_001, abs(fixed) * 0.000_001) {
+            return "Entered rate differs from the selected label rate (\(rate.displayText)). Check the applicable label before spraying."
+        }
+        return nil
     }
 }
 
