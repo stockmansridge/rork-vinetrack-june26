@@ -3495,8 +3495,12 @@ struct SprayCalculatorView: View {
                     .pickerStyle(.segmented)
                 }
                 if flow.requiresBandWidth && flow.effectiveCarrierBasis == .litresPerHectare {
-                    Text("Rate applies to:")
-                        .font(.caption.weight(.semibold))
+                    HStack(spacing: 4) {
+                        Text("Water application applies to")
+                            .font(.caption.weight(.semibold))
+                        SprayFieldHelp(title: "Water application area",
+                            message: "Choose the area used to calculate SPRAY WATER volume. Treated area uses only the sprayed band; whole block uses gross hectares. This does not choose how any individual chemical is dosed.")
+                    }
                     Picker("Rate applies to", selection: $carrierAreaBasis) {
                         Text("Treated area").tag(SprayCarrierAreaBasis.treatedArea)
                         Text("Whole block area").tag(SprayCarrierAreaBasis.wholeBlockArea)
