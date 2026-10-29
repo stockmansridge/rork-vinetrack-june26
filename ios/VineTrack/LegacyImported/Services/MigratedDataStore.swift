@@ -1876,6 +1876,62 @@ final class MigratedDataStore {
         return true
     }
 
+    /// Last-resort restoration of an exact, uniquely matched server orphan.
+    /// This runs ONLY after the operator has viewed the recovered tank mix and
+    /// explicitly confirmed the original saved trip. No new Trip or tank is
+    /// manufactured; a conflicting local spray record is never overwritten.
+    @discardableResult
+    func installVerifiedServerOrphanForSavedTrip(
+        _ source: BackendSprayRecord, tripId: UUID, actorId: UUID
+    ) throws -> SprayRecord {
+        guard currentUserIdProvider?() == actorId,
+              let vineyard = selectedVineyardId,
+              let original = trips.first(where: { $0.id == tripId }),
+              original.vineyardId == vineyard,
+              source.vineyardId == vineyard,
+              !original.isActive, original.endTime == nil,
+              original.pathPoints.isEmpty, original.totalDistance == 0,
+              original.completedPaths.isEmpty, original.skippedPaths.isEmpty,
+              original.tankSessions.isEmpty,
+              VerifiedOrphanSprayRecovery.matches(
+                  VerifiedOrphanSprayRecovery.evidence(source),
+                  original: original, actorId: actorId
+              ) else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
+        try operationalWriteAuthority.requireWrite(vineyardId: vineyard.uuidString)
+        guard !sprayRecords.contains(where: {
+            $0.canonicalTripId == tripId && $0.id != source.id
+        }) else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        let remote = source.toSprayRecord()
+        var recovered: SprayRecord
+        if let existing = sprayRecords.first(where: { $0.id == source.id }) {
+            guard existing.vineyardId == vineyard,
+                  !existing.hasRecordedTripLink,
+                  existing.endTime == nil, !existing.isTemplate,
+                  existing.tanks == remote.tanks,
+                  existing.applicationGeometry == remote.applicationGeometry,
+                  abs(existing.startTime.timeIntervalSince(remote.startTime)) <= 1 else {
+                throw TripOccurrenceCoverage.Failure.reconciliation
+            }
+            recovered = existing // preserve richer local snapshots, never replace
+        } else {
+            recovered = remote // exact original server record, no invented fields
+        }
+        recovered.linkToOperationalTrip(tripId)
+        recovered.recoveredFromServerOrphan = true
+        var next = sprayRecords
+        if let index = next.firstIndex(where: { $0.id == recovered.id }) {
+            next[index] = recovered
+        } else {
+            next.append(recovered)
+        }
+        try sprayRepo.saveRecordsSliceOrThrow(next, for: vineyard)
+        sprayRecords = next
+        onSprayRecordChanged?(recovered.id)
+        return recovered
+    }
+
     var legacySprayReceiptNotice: String? {
         guard let items = try? LegacySpraySaveRecovery(persistence: persistence).attempts() else { return "Legacy receipt evidence could not be decoded; synchronization remains held." }
         let journal = LegacySpraySaveRecovery(persistence: persistence)
