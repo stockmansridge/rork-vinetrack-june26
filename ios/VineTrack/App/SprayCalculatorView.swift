@@ -663,13 +663,19 @@ struct SprayCalculatorView: View {
             let hasInvalidStoredRate = SprayRegisteredUseRates.productUnitReviewMessage(chemical) != nil
                 || (line.operationalRateSource == nil && SprayRegisteredUseRates.hasInvalidStructuredRates(chemical))
             let rate = hasInvalidStoredRate ? 0 : (line.overrideRate ?? seededRate ?? legacyScalarRate ?? 0)
-            let chosenAreaBasis = productAreaBasis[line.id]
+            // For NEW banded spray plans the operator already chose a treated band
+            // in Target. Apply the label per-ha rate to that treated area by
+            // default; an explicit per-product Whole Block choice still wins.
+            // Never revise the area basis of a historical saved spray.
+            let chosenAreaBasis = productAreaBasis[line.id] ??
+                (flow.requiresBandWidth && line.basis == .perHectare ? .treatedArea : nil)
             let basis: SprayProductRateBasis = {
                 switch line.basis {
                 case .per100Litres:
                     return .per100Litres
                 case .perHectare:
-                    // Legacy `per_hectare` means WHOLE BLOCK — never treated area.
+                    // Historical per-hectare projections remain whole-block on reload;
+                    // only a NEW banded plan takes the treated-area default.
                     return chosenAreaBasis ?? .wholeBlockArea
                 }
             }()
@@ -709,10 +715,8 @@ struct SprayCalculatorView: View {
                 basis: basis,
                 rate: rate,
                 costPerUnit: seasonPrices?.prices.first { $0.savedChemicalId == chemical.id }?.price(for: line.operationalRateUnit.map { VineyardPreferredRate(amount: 1, unit: $0, basis: line.basis).chemicalUnit } ?? chemical.unit),
-                // Whole block is what the screen SHOWS until the operator
-                // chooses, but on a banded pass it is not yet a decision. The
-                // flag keeps that distinction so the flow can insist on an
-                // answer instead of persisting an unconfirmed default.
+                // Banded Target supplies the treated-area choice unless the operator
+                // explicitly overrides this chemical to Whole Block.
                 isAreaBasisExplicit: chosenAreaBasis != nil,
                 labelRate: labelRate,
                 // TOTALS are the operator's stock unit's business — 0.53 Kg,
@@ -2823,19 +2827,25 @@ struct SprayCalculatorView: View {
                     ) {
                         chemicalLines.removeAll { $0.id == line.id }
                     }
+                    .onChange(of: line.chemicalId) { _, _ in
+                        // A different product must not inherit the previous
+                        // product's manually overridden gross/treated basis.
+                        productAreaBasis[line.id] = nil
+                    }
 
                     if asksAreaBasis && line.basis == .perHectare {
                         GuidedProductBasisPicker(
-                            selected: productAreaBasis[line.id]
+                            selected: productAreaBasis[line.id] ?? .treatedArea
                         ) { basis in
                             withAnimation(.snappy(duration: 0.2)) {
                                 productAreaBasis[line.id] = basis
                             }
                         }
                         if productAreaBasis[line.id] == nil {
-                            Text("Choose an area basis for this product before continuing.")
+                            Text("Treated band assumed from Target; change if this label specifies whole-block hectares.")
                                 .font(.caption2)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
                         }
                     }
 
@@ -2854,6 +2864,10 @@ struct SprayCalculatorView: View {
                 }
                 .padding(.bottom, 14)
                 .padding(.horizontal, 2)
+
+                if line.id != chemicalLines.last?.id {
+                    Divider().padding(.horizontal, 8).padding(.vertical, 5)
+                }
             }
 
             Button {
@@ -5207,11 +5221,13 @@ struct CalcChemicalLineCard: View {
                         Button {
                             openURL(url)
                         } label: {
-                            Image(systemName: "doc.text.magnifyingglass")
-                                .font(.subheadline)
+                            Text("Label")
+                                .font(.caption.weight(.semibold))
                                 .foregroundStyle(VineyardTheme.olive)
-                                .frame(width: 44, height: 44)
-                                .contentShape(Rectangle())
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 36)
+                                .background(VineyardTheme.olive.opacity(0.1))
+                                .clipShape(.rect(cornerRadius: 8))
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Open chemical label")
@@ -5221,11 +5237,13 @@ struct CalcChemicalLineCard: View {
                         Button {
                             openURL(url)
                         } label: {
-                            Image(systemName: "globe")
-                                .font(.subheadline)
+                            Text("Product Page")
+                                .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
-                                .frame(width: 44, height: 44)
-                                .contentShape(Rectangle())
+                                .padding(.horizontal, 12)
+                                .frame(minHeight: 36)
+                                .background(Color(.tertiarySystemGroupedBackground))
+                                .clipShape(.rect(cornerRadius: 8))
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Open product page (not the official label)")
