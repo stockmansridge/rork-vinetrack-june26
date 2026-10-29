@@ -9,7 +9,13 @@ nonisolated enum GrowthStageMirrorReplay {
               server.paddockId == local.paddockId, server.rowNumber == local.rowNumber,
               server.side == local.side, server.notes == local.notes,
               let serverObserved = server.observedAt,
-              abs(local.observedAt.timeIntervalSince(serverObserved)) <= 30,
+              let serverCreated = server.createdAt,
+              // Historical Pins can be saved up to two minutes after field capture.
+              // The extended window is admissible ONLY if the canonical record
+              // was actually created alongside the Pin (not during a later backfill).
+              (abs(local.observedAt.timeIntervalSince(serverObserved)) <= 30 ||
+               (abs(local.createdAt.timeIntervalSince(serverCreated)) <= 3 &&
+                abs(local.observedAt.timeIntervalSince(serverObserved)) <= 120)),
               local.createdAt == local.observedAt, local.updatedAt == local.observedAt,
               sameCoordinate(local.latitude, server.latitude),
               sameCoordinate(local.longitude, server.longitude),
@@ -19,7 +25,12 @@ nonisolated enum GrowthStageMirrorReplay {
               local.updatedBy == nil || local.updatedBy == author,
               local.variety == nil || local.variety == server.variety,
               local.varietyId == nil || local.varietyId == server.varietyId,
-              local.recordedByName == nil || local.recordedByName == server.recordedByName,
+              // The historical mirror populates this display name from the
+              // *currently signed-in user* when the original Pin lacks one.
+              // This is not authorship evidence. The immutable createdBy UUID
+              // must match above; preserve the entire original mirror in the
+              // reconciliation evidence archive before adopting the canonical
+              // server display name. All real edits remain blocked by timestamps.
               server.createdAt != nil, server.updatedAt != nil else { return false }
         return true
     }

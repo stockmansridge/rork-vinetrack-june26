@@ -30,6 +30,71 @@ import Foundation
     @Test func changedPhoto() { var (l, r) = pair(); l.photoPaths = ["local/photo.jpg"]; #expect(!GrowthStageMirrorReplay.isUnmodifiedBackfill(l, of: r)) }
     @Test func changedVineyard() { var (l, r) = pair(); l.vineyardId = UUID(); #expect(!GrowthStageMirrorReplay.isUnmodifiedBackfill(l, of: r)) }
 
+    @Test func historicalDisplayNameFallbackIsNotIdentityButAuthorUUIDRemainsRequired() {
+        let (local, canonical) = pair()
+        var fallback = local
+        fallback.recordedByName = "Signed-in operator fallback"
+        // A historical backfill can fabricate the display name from the
+        // current session, even when the canonical record has no name.
+        // The original fallback is retained in mirror evidence on alias.
+        #expect(GrowthStageMirrorReplay.isUnmodifiedBackfill(fallback, of: canonical))
+        fallback.createdBy = UUID()
+        #expect(!GrowthStageMirrorReplay.isUnmodifiedBackfill(fallback, of: canonical))
+        fallback = local
+        fallback.updatedAt.addTimeInterval(2)
+        fallback.recordedByName = "Edited by operator"
+        #expect(!GrowthStageMirrorReplay.isUnmodifiedBackfill(fallback, of: canonical))
+    }
+
+
+    @Test func delayedHistoricalFieldCaptureIsRecognisedOnlyWithIndependentSaveTimeProof() {
+        let (local, original) = pair()
+        func remote(observedLag: TimeInterval, savedLag: TimeInterval) -> BackendGrowthStageRecord {
+            BackendGrowthStageRecord(id: original.id, vineyardId: original.vineyardId,
+                paddockId: original.paddockId, pinId: original.pinId, stageCode: original.stageCode,
+                stageLabel: original.stageLabel, variety: original.variety, varietyId: original.varietyId,
+                observedAt: local.observedAt.addingTimeInterval(-observedLag), latitude: original.latitude,
+                longitude: original.longitude, rowNumber: original.rowNumber, side: original.side,
+                notes: original.notes, photoPaths: original.photoPaths,
+                recordedByName: original.recordedByName, createdBy: original.createdBy,
+                updatedBy: original.updatedBy, createdAt: local.createdAt.addingTimeInterval(savedLag),
+                updatedAt: original.updatedAt, clientUpdatedAt: nil, syncVersion: 1, deletedAt: nil)
+        }
+        #expect(GrowthStageMirrorReplay.isUnmodifiedBackfill(local, of: remote(observedLag: 98, savedLag: 0.4)))
+        #expect(!GrowthStageMirrorReplay.isUnmodifiedBackfill(local, of: remote(observedLag: 121, savedLag: 0.4)))
+        #expect(!GrowthStageMirrorReplay.isUnmodifiedBackfill(local, of: remote(observedLag: 98, savedLag: 4)))
+    }
+
+    @Test func cleanStaleCanonicalCacheIsUpdatedWithoutDroppingMirrorEvidence() async throws {
+        let (local, remote) = pair(), storage = try disk()
+        var oldCachedCanonical = remote.toGrowthStageRecord()
+        oldCachedCanonical.notes = "older remote version"
+        oldCachedCanonical.updatedAt.addTimeInterval(-100)
+        storage.save([local, oldCachedCanonical], key: "vinetrack_growth_stage_records")
+        let metadata = GrowthStageRecordSyncMetadata(persistence: storage)
+        metadata.markDirty(local.id, at: Date())
+        let updatedRemote = BackendGrowthStageRecord(
+            id: remote.id, vineyardId: remote.vineyardId, paddockId: remote.paddockId,
+            pinId: remote.pinId, stageCode: remote.stageCode, stageLabel: remote.stageLabel,
+            variety: remote.variety, varietyId: remote.varietyId, observedAt: remote.observedAt,
+            latitude: remote.latitude, longitude: remote.longitude, rowNumber: remote.rowNumber,
+            side: remote.side, notes: remote.notes, photoPaths: remote.photoPaths,
+            recordedByName: remote.recordedByName, createdBy: remote.createdBy, updatedBy: remote.updatedBy,
+            createdAt: remote.createdAt, updatedAt: local.updatedAt.addingTimeInterval(1),
+            clientUpdatedAt: nil, syncVersion: 2, deletedAt: nil)
+        let repo = MirrorReplayRepository(rows: [updatedRemote])
+        let service = GrowthStageRecordSyncService(repository: repo, metadata: metadata, persistence: storage)
+        try await service.pushQueuedGrowthRecords(vineyardId: local.vineyardId)
+        #expect(service.pendingUpsertCount == 0)
+        #expect(service.records.map(\.id) == [updatedRemote.id])
+        #expect(service.records.first?.notes == remote.notes)
+        let archive: [UUID: GrowthStageRecordSyncService.MirrorIdentityEvidence] =
+            storage.load(key: "vinetrack_growth_mirror_identity_evidence_v1") ?? [:]
+        #expect(archive[local.id]?.original == local)
+        #expect(repo.uploaded.isEmpty)
+    }
+
+
     @Test func synthetic230MirrorsReconcileWithoutRemoteWritesAndRetainOriginalEvidenceAcrossRestart() async throws {
         let (sample, _) = pair(), storage = try disk()
         let locals = (0..<230).map { _ in GrowthStageRecord(vineyardId: sample.vineyardId, paddockId: sample.paddockId,

@@ -1,6 +1,25 @@
 import Foundation
 import CoreLocation
 
+/// Historical tank-session JSON omitted its UTC suffix. The server's
+/// original Trip start_time was checked against these values: they are
+/// UTC, not vineyard-local wall times. Keep the raw server JSON unchanged.
+/// Only exact ISO-8601 zone-less tank dates receive the legacy UTC suffix.
+nonisolated enum TankSessionDateParser {
+    static func parse(_ raw: String) -> Date? {
+        let legacyUTC = raw.range(
+            of: #"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?$"#,
+            options: .regularExpression
+        ) != nil
+        let canonical = legacyUTC ? raw + "Z" : raw
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: canonical) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: canonical)
+    }
+}
+
 nonisolated struct TankSession: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
     var tankNumber: Int
@@ -64,11 +83,7 @@ nonisolated struct TankSession: Codable, Identifiable, Sendable, Hashable {
             func parse<K: CodingKey>(_ container: KeyedDecodingContainer<K>, _ k: K) throws -> Date? {
                 guard container.contains(k), try !container.decodeNil(forKey: k) else { return nil }
                 if let text = try? container.decode(String.self, forKey: k) {
-                    let formatter = ISO8601DateFormatter()
-                    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                    if let result = formatter.date(from: text) { return result }
-                    formatter.formatOptions = [.withInternetDateTime]
-                    guard let result = formatter.date(from: text) else {
+                    guard let result = TankSessionDateParser.parse(text) else {
                         throw DecodingError.dataCorruptedError(forKey: k, in: container, debugDescription: "Invalid tank-session date")
                     }
                     return result
