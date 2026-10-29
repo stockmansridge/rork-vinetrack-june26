@@ -5404,8 +5404,18 @@ struct CalcChemicalLineCard: View {
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(VineyardTheme.olive.opacity(0.24), lineWidth: 1))
         .sheet(isPresented: $showsRateSheet) {
             SprayLabelRateSelectionView(rates: rateSheetOptions, selectedID: line.selectedRateId) { rate in
+                // The operator is selecting a NEW label rate. Do not keep the
+                // previous rate's manual dose or its unit under another
+                // denominator; otherwise the screen says 300 mL/100 L while
+                // silently still calculating 140 mL/100 L.
                 line.selectedRateId = rate.id
                 if let basis = rate.basis { line.basis = basis }
+                line.overrideRate = nil
+                line.applicationRateDraft = nil
+                line.operationalRateSource = nil
+                line.operationalRateUnit = nil
+                overrideText = ""
+                rangeRejection = nil
             }
         }
         .onAppear {
