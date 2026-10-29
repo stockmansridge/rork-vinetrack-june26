@@ -1,6 +1,18 @@
 import SwiftUI
 import MapKit
 
+/// Only the never-started original occurrence may be activated in place.
+enum SavedOccurrenceSprayStartEligibility {
+    static func mayStart(_ trip: Trip) -> Bool {
+        trip.coverageBasis == .occurrence
+            && trip.tripFunction == TripFunction.spraying.rawValue
+            && !trip.isActive && trip.endTime == nil
+            && trip.pathPoints.isEmpty && trip.totalDistance == 0
+            && trip.completedPaths.isEmpty && trip.skippedPaths.isEmpty
+            && trip.tankSessions.isEmpty && !trip.rowSequence.isEmpty
+    }
+}
+
 struct TripDetailView: View {
     let trip: Trip
     @Environment(MigratedDataStore.self) private var store
@@ -11,6 +23,7 @@ struct TripDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showSummary: Bool = false
     @State private var showSavedSprayStartConfirmation = false
+    @State private var showOriginalStartHelp = false
     @State private var isRecoveringSavedSpray = false
     @State private var savedSprayRecoveryError: String?
     @State private var showDeleteConfirmation: Bool = false
@@ -47,11 +60,7 @@ struct TripDetailView: View {
     /// Recover the original plan only; never mint a substitute trip.
     private var mayRecoverSavedOccurrenceSpray: Bool {
         let item = currentTrip
-        return item.coverageBasis == .occurrence && !item.isActive && item.endTime == nil
-            && item.tripFunction == TripFunction.spraying.rawValue
-            && item.pathPoints.isEmpty && item.totalDistance == 0
-            && item.completedPaths.isEmpty && item.skippedPaths.isEmpty
-            && item.tankSessions.isEmpty
+        return SavedOccurrenceSprayStartEligibility.mayStart(item)
     }
 
     private var pinsForTrip: [VinePin] {
@@ -113,15 +122,28 @@ struct TripDetailView: View {
 
             if mayRecoverSavedOccurrenceSpray {
                 Section {
-                    Button {
-                        showSavedSprayStartConfirmation = true
-                    } label: {
-                        Label("Recover & Start This Spray Trip", systemImage: "arrow.clockwise.circle.fill")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity, alignment: .center)
+                    HStack(spacing: 12) {
+                        Button {
+                            showSavedSprayStartConfirmation = true
+                        } label: {
+                            Label("Start Trip", systemImage: "play.fill")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isRecoveringSavedSpray || !accessControl.canCreateOperationalRecords)
+                        .accessibilityIdentifier("trip.startOriginalQueuedSpray")
+                        Button { showOriginalStartHelp = true } label: {
+                            Image(systemName: "info.circle").font(.title3)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("How to start a queued spray")
                     }
-                    .disabled(isRecoveringSavedSpray)
-                    .accessibilityIdentifier("trip.recoverSavedOccurrenceSpray")
+                    if !accessControl.canCreateOperationalRecords {
+                        Text("Read-only access — subscription required.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                     if isRecoveringSavedSpray {
                         ProgressView("Checking original saved actions…")
                     }
@@ -150,7 +172,11 @@ struct TripDetailView: View {
                 if let title = trip.tripTitle, !title.isEmpty {
                     statRow("Title", value: title, icon: "text.cursor")
                 }
-                statRow("Duration", value: formatDuration(trip.activeDuration), icon: "clock")
+                if mayRecoverSavedOccurrenceSpray {
+                    statRow("Status", value: "Not started", icon: "clock")
+                } else {
+                    statRow("Duration", value: formatDuration(trip.activeDuration), icon: "clock")
+                }
                 statRow("Distance", value: formatDistance(trip.totalDistance), icon: "point.topleft.down.to.point.bottomright.curvepath")
                 if !trip.paddockName.isEmpty {
                     statRow("Block", value: trip.paddockName, icon: "leaf")
@@ -300,7 +326,7 @@ struct TripDetailView: View {
                 }
             }
 
-            if accessControl.canViewCosting {
+            if accessControl.canViewCosting && !mayRecoverSavedOccurrenceSpray {
                 Section {
                     DisclosureGroup(isExpanded: $showCostSection) {
                         tripCostBody
@@ -439,6 +465,11 @@ struct TripDetailView: View {
         } message: {
             Text(sprayExportError ?? "")
         }
+        .alert("Starting a saved spray", isPresented: $showOriginalStartHelp) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Start Trip checks the original saved recipe and occurrence operations, then activates the same trip and planned paths. If verification fails, your queued trip remains retained; no replacement trip is made.")
+        }
         .confirmationDialog("Start Original Saved Spray?", isPresented: $showSavedSprayStartConfirmation) {
             Button("Recover and Start Original Trip") { recoverAndStartOriginalSpray() }
             Button("Cancel", role: .cancel) {}
@@ -504,12 +535,21 @@ struct TripDetailView: View {
     /// Rehydrate and activate only the exact saved pair through its journal.
     private func recoverAndStartOriginalSpray() {
         guard mayRecoverSavedOccurrenceSpray, !isRecoveringSavedSpray else { return }
+        guard accessControl.canCreateOperationalRecords else {
+            savedSprayRecoveryError = "Read-only access: an active subscription is required to start this saved spray."
+            return
+        }
+        savedSprayRecoveryError = nil
         isRecoveringSavedSpray = true
         do {
-            try store.reconcileLegacySpraySaves()
+            try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
+            _ = try store.restoreQueuedOccurrenceSprayRecordIfRetained(tripId: trip.id)
             guard let original = store.trips.first(where: { $0.id == trip.id }),
+                  store.selectedVineyardId == original.vineyardId,
+                  SavedOccurrenceSprayStartEligibility.mayStart(original),
                   store.sprayRecords.contains(where: {
-                      $0.tripId == original.id && !$0.isTemplate && $0.endTime == nil
+                      $0.tripId == original.id && $0.vineyardId == original.vineyardId
+                          && !$0.isTemplate && $0.endTime == nil
                   }) else {
                 savedSprayRecoveryError = "The original spray recipe is not available in this device's Chemical/Spray Store. Its queued trip has not been altered. Do not delete or create another spray; recover the original saved evidence before starting."
                 isRecoveringSavedSpray = false

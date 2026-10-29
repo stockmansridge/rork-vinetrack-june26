@@ -7,6 +7,8 @@ struct SubscriptionPaywallView: View {
     @Environment(NewBackendAuthService.self) private var auth
     @Environment(\.dismiss) private var dismiss
 
+    @State private var checkingExistingAccess = true
+
     let allowDismiss: Bool
 
     init(allowDismiss: Bool = false) {
@@ -16,18 +18,30 @@ struct SubscriptionPaywallView: View {
     var body: some View {
         ZStack {
             VineyardTheme.appBackground.ignoresSafeArea()
-            if let offering = subscription.currentOffering {
+            if checkingExistingAccess {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Checking existing access…")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            } else if let offering = subscription.currentOffering {
                 paywallContent(offering)
             } else {
                 fallbackView
             }
         }
         .task {
-            await subscription.refreshOfferings()
-            // A user can land here moments after a portal purchase or a new
-            // Billing Grant — re-check the shared entitlement so a valid
-            // Supabase grant dismisses the paywall without a purchase.
-            await entitlementGate.refresh()
+            // On a new TestFlight build, RevenueCat may initially expose a
+            // stale customer-info snapshot. Verify current receipts AND the
+            // server grant before presenting products. This does not purchase
+            // or silently restore anything on behalf of the operator.
+            await subscription.refreshCustomerInfo()
+            await entitlementGate.refresh(force: true)
+            checkingExistingAccess = false
+            if !entitlementGate.hasAccess {
+                await subscription.refreshOfferings()
+            }
         }
         .toolbar {
             if !allowDismiss {

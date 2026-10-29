@@ -1,5 +1,54 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## PR #15 original queued spray / TestFlight checkpoint — 29 October 2026 — 182 TESTS GREEN; SIGNED BUILD183 UPLOADED; APPLE PROCESSING PENDING
+
+### Verified source and reconciliation
+
+- Starting managed main HEAD: `d595dad4364129f1f95f749237f02e0abc0d111f`, containing the preceding #11/#16/#17 integration. No checkout, reset, cherry-pick, manual commit, push or GitHub merge.
+- Public hotfix branch `hotfix/ios-occurrence-retry-and-access-20261029` and PR #15 head both verified before and after integration as **`94db356c9379a26264b0239bf7c90544f90064d9`**. PR remains open/unmerged; base `12dcb10e4724852c21af5f840be293d3a390a882`, 17 commits. Required head commit repairs a historical title string; its full source archive was downloaded at that exact SHA, tree `ebca955c3b02adf2e02539377958845670396f7a`. Its correct title string was already present in newer local source.
+- This is a source-delta integration atop newer managed main, **not a Git ancestry merge or byte-identical branch checkout**. The retained helper `scripts/reconcile-vinetrack-pr15.py` validated/applied five exact-context file deltas atomically after review. Tracking and Trip Details overlapped #12/#16 and were reconciled manually, retaining newer failure callbacks, receipt gates and historical duplicate-scan protections.
+- Start Trip plus help and original-plan confirmation for eligible never-started occurrence sprays; Not started status replaces misleading elapsed duration. Queued deletion remains protected; no original identity or queued evidence is removed. Existing active-trip navigation and Spray Trip title retained.
+- Missing recipe restoration uses only the immutable completed local WAL with exact actor, vineyard, trip and coverage. Session rotation is allowed only for the same actor. Different linked recipes are never overwritten. Write authority is checked before durable restoration, and publication follows disk save.
+- Retry clears only the held flag of the original exact create/activate pair after authenticated, exact trip-ID/vineyard lookup establishes absence. The PR's capped vineyard-list absence inference was replaced with a scoped exact query; existing remote trips still require normal receipt recovery. History entries, operation IDs, original start metadata, acknowledged coverage and pending requests are retained. Added authority/history/body checks fail closed. Concurrent saved starts are blocked through completion; stale local trip snapshots and cross-vineyard recipes are rejected.
+- PR paywall entry rechecks existing current customer info and forces the existing combined server gate before showing products. Preserved the newer #17 initial force-current fetch, checking route and stale-identity fences unchanged. No new subscription products, purchase/restore automation or permission bypass.
+- The PR's SQL276 ownership/membership migration delta is **excluded** per scope; no SQL, backend, schema, customer records, Android or calculator files changed. Source comments describing deployment are not independent proof of the live backend.
+
+### Executed focused validation
+
+- First recovery/journal selection: **42 passed, 1 failed**. The new disk-reload assertion used fractional-second fixture dates against the existing whole-second cache codec. Corrected only the fixture to whole-second event dates; no persistence codec or production timestamp change.
+- Final requested focused `swiftTest`: **182 passed in 229s**; aggregate tool returned no skipped count. Selectors (each prefixed `VineTrackTests/`): `SprayOccurrenceRecoveryHotfixTests`, `TripOccurrenceJournalTests`, `SpraySaveForLaterTests`, `LegacySprayPairReceiptTests`, `SprayTripStartAdmissionTests`, `SpraySavedJobActivationIntegrationTests`, `StartTankCommitCoordinatorTests`, `TankSessionLifecycleTests`, `TankMixPresentationTests`, `SubscriptionInitialVerificationTests`, `EntitlementDecisionTests`, `EntitlementAccessRegressionTests`, `ReadOnlyEntitlementContractTests`.
+- Extended restoration fixture asserts **116 frozen planned paths**, original coverage/recipe/tank IDs, unchanged WAL, actor mismatch refusal, same-actor session rotation, read-only refusal and subsequent authorised restoration, repeated restoration without duplicates, plus disk reload. Other imported tests cover different-recipe refusal, original never-started eligibility, missing-store callback completion, same original held requests and mismatched coverage retention. Concurrent recovery taps are rejected. These are synthetic production-code tests, **not original-handset or authenticated-server recovery**.
+- Separate final `runChecks({appPath: "ios"})`: **PASS, simulator build succeeded**. No Android build/tests or unrelated calculator/UI suites. Two existing asset URL notices unchanged. `git diff --check HEAD` PASS before release.
+- Previous six-journey calculator UI runner failure remains historical/open; not retried or converted to a pass. No simulator navigation, live customer entitlement/purchase, physical GPS or original-iPhone checks performed in this scope.
+
+### Release preparation and remaining delivery
+
+- Existing Apple app confirmed: ASC `6761143377`, bundle `app.rork.nt0v48tayl7v8noxcfe74`, team `8Y879855VK`, marketing version **3.1.9**. Existing distribution certificate ready; capabilities synchronized with **no changes**. `ensureApp` found the existing app (`created: false`).
+- Apple latest uploads showed **182 VALID**. Exact all-processing-state lookup for **3.1.9 (183)** returned no build. Request **183** explicitly via managed signing/upload; project file's historical139 is not evidence of the requested IPA version. Retain existing signing and bundle identity; final binary version must be confirmed by release/Apple results.
+- Existing `Internal Testing` group `1a8d95a6-44ec-47ac-8754-47a0a283582e` has access to all builds. No replacement group or new testers created. Managed signed Release build/upload **SUCCEEDED** on the first attempt as **3.1.9 (183)**, same bundle/team. `submitBuild` returned `status: ok`, submission **`f6143a90-2d51-4e63-a636-d3869f5fced0`**, build183 uploaded to App Store Connect. This is the supported signed Release/IPA pipeline, not the earlier simulator build. No separate local IPA download or binary inspection was performed.
+- Persisted publish status verified selected `appPath: ios`, `framework: swift`, `currentBuildStep: complete`, correct app/version/bundle/build183, no error, archive source `supplied-snapshot`, Xcode27.1. The managed submission identifies the pinned compiled/uploaded snapshot; local parent remains `d595dad…` plus the eight-file manifest rather than falsely claiming the external hotfix commit is a local ancestor.
+- Independent Apple receipt: upload **`17077250-d5e8-483e-82d8-e0d964636bd1`**, **3.1.9 (183), IOS**, uploaded **2026-10-29T05:15:19Z** (Apple returned `2026-10-28T22:15:19-07:00`), state **PROCESSING**. Initial exact build lookup was empty while Apple's upload record was being discovered. A bounded50s wait confirmed processing; after the interrupted connection was resumed, one further bounded50s check still reported `pending`, phase `discovery`, upload PROCESSING/not yet visible as a build. Neither pending exit7 is a build failure. No duplicate build/upload or processing polls after the final pending result.
+- **Not yet confirmed:** terminal Apple VALID processing, TestFlight install availability or final build-to-internal-group relationship. Backend automatic invite handling is retained; the existing all-build internal group is configured but this alone is not availability proof. No public App Store submission, review request or store release.
+- Next-message resume command: `asc builds wait --app 6761143377 --build-number 183 --version 3.1.9 --platform IOS --fail-on-invalid --poll-interval 10s --report-pending --timeout 50s`. After VALID, inspect the build's beta detail/group relationship before claiming internal availability; do not upload again.
+- Before native release, recursive local iOS source digest: `bfecb0ab40a9efbd9e6ccd42a8283ca7ba62cb308181d0ba38fe6cdd74b7c43d` (sorted iOS paths plus bytes; excludes build/cache directories). Managed publish will pin its own source snapshot; current HEAD remains the source parent, not a commit of this turn's changes.
+
+### Eight-file native/test SHA256 manifest before release
+
+```text
+c02f9192f4a4c17470a3e5afdc0e6daad083ca7f30d21d160288d4c7312ade16 ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift
+00a58e1a0e9e6b13a6b92f5e097b0c6ba80ffa1d751ca814d1725f0aa08dd049 ios/VineTrack/Backend/Subscription/PaywallView.swift
+628ed8281aff658c676c58313b7ec3d5e44b18e879f78453ba01db0767ff43e2 ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift
+c57d282fe536ee60628881f661275d77198efdc4d946763133fb60500d2bab10 ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift
+902da3bad22095e959e1006d9cf47c4b701577d1bf5ad493ac582ed568a3a0d0 ios/VineTrack/LegacyImported/Services/TripTrackingService.swift
+974b989ab8dea54d9e7067856603d49a3a197ab338842d9bde5e3801afea3f90 ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift
+2cc0abc1bcbe87675f9d341331d7e206d0218c5607e8af39f4bad7efee836ffe ios/VineTrackTests/SprayOccurrenceRecoveryHotfixTests.swift
+39a5ecb34a0c401f0992d5493f9a6574f6aeeede66807e54850b1ff7815e3407 ios/VineTrackTests/TripOccurrenceJournalTests.swift
+```
+
+### Original iPhone acceptance remains mandatory
+
+Install the TestFlight update **over build182**, never uninstall, clear storage, delete or recreate the original spray. On the same account/vineyard, open the **29 October 2026, 1:07 pm** original queued spray; verify **116 planned, zero completed, 0m**, Start Trip/help and retained tank recipe. Start once while online, then confirm the same trip/recipe/occurrence IDs and server-confirmed original operations, Active Trip and tank availability. If held, preserve the error/evidence; never bypass receipts or start a replacement. Only the original handset can establish that these particular saved records survived and recovered.
+
 ## Latest main / PR #11, #16, #17 reconciliation — 29 October 2026 — BUILDS AND FOCUSED LOGIC GREEN; iOS UI RUN INCOMPLETE; ORIGINAL HANDSET RECOVERY OPEN
 
 ### Exact provenance and integration method

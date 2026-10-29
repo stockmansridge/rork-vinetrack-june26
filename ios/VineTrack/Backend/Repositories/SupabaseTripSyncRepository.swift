@@ -32,6 +32,19 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         try await fetchTrips(vineyardId: vineyardId, since: nil)
     }
 
+    /// Exact scoped lookup: a capped vineyard list cannot establish absence.
+    func fetchTripForOccurrenceStart(tripId: UUID, vineyardId: UUID) async throws -> BackendTrip? {
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        guard let owner = provider.client.auth.currentUser?.id else { throw CancellationError() }
+        let rows: [BackendTrip] = try await provider.client.from("trips").select()
+            .eq("vineyard_id", value: vineyardId.uuidString)
+            .eq("id", value: tripId.uuidString).limit(2).execute().value
+        guard provider.client.auth.currentUser?.id == owner, rows.count <= 1 else {
+            throw TripOccurrenceCoverage.Failure.scopeConflict
+        }
+        return rows.first
+    }
+
     private func requireTripWrite(_ id: UUID) async throws -> UUID {
         guard let owner = provider.client.auth.currentUser?.id else { throw CancellationError() }
         struct Row: Decodable { let vineyard_id: UUID }

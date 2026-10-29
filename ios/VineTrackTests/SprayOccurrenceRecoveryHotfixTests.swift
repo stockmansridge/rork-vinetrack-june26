@@ -125,6 +125,9 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
             XCTAssertFalse(started)
             completed.fulfill()
         }
+        var duplicateCallbacks: [Bool] = []
+        tracking.activateSavedTrip(trip) { duplicateCallbacks.append($0) }
+        XCTAssertEqual(duplicateCallbacks, [false], "A second tap must not start a concurrent recovery")
         await fulfillment(of: [completed], timeout: 3)
         // No auth is supplied: reaching this scope error proves the occurrence branch ran.
         XCTAssertEqual(tracking.errorMessage, TripOccurrenceCoverage.Failure.scopeConflict.localizedDescription)
@@ -132,4 +135,160 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
         XCTAssertEqual(store.sprayRecords, [record])
         XCTAssertNil(store.deviceActiveTripId)
     }
+    @MainActor func testQueuedOccurrenceRestoresMissingTankRecipeFromOriginalCompletedWAL() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let store = MigratedDataStore(persistence: persistence)
+        let owner = UUID(), vineyard = UUID(), block = UUID()
+        store.selectedVineyardId = vineyard
+        store.currentUserIdProvider = { owner }
+        store.legacySprayScopeProvider = {
+            LegacySpraySaveRecovery.Scope(actor: owner, session: owner, vineyard: vineyard)
+        }
+        let labels = (0..<116).map { Double($0) + 0.5 }
+        let coverage = try TripOccurrencePlanner.commit(labels.map {
+            .init(vineyardId: vineyard, blockId: block, blockName: "Queued",
+                  label: $0, rows: [])
+        }, vineyardId: vineyard)
+        let trip = Trip(vineyardId: vineyard, paddockId: block, paddockName: "Queued",
+            paddockIds: [block], isActive: false, rowSequence: labels,
+            occurrenceCoverage: coverage)
+        // The existing spray-list codec stores dates to whole seconds.
+        let eventDate = Date(timeIntervalSince1970: 1_793_239_620)
+        let record = SprayRecord(tripId: trip.id, vineyardId: vineyard,
+            date: eventDate, startTime: eventDate,
+            tanks: [SprayTank(tankNumber: 1, waterVolume: 420,
+                chemicals: [SprayChemical(name: "Synthetic", ratePer100L: 100)])],
+            notes: "Original frozen tank recipe")
+        try store.saveSprayForLater(record: record, trip: trip)
+        let original = try LegacySpraySaveRecovery(persistence: persistence).attempts()
+        XCTAssertEqual(original.count, 1)
+        XCTAssertTrue(original[0].localComplete)
+        // Simulate a newer local cache whose spray-list file lost the row
+        // while the immutable paired-save WAL and trip are still present.
+        try store.sprayRepo.saveRecordsSliceOrThrow([], for: vineyard)
+        store.sprayRecords = []
+        // Same actor after a TestFlight update, but a different login session.
+        let newSession = UUID()
+        store.legacySprayScopeProvider = {
+            .init(actor: owner, session: newSession, vineyard: vineyard)
+        }
+        let foreignOwner = UUID()
+        store.currentUserIdProvider = { foreignOwner }
+        XCTAssertFalse(try store.restoreQueuedOccurrenceSprayRecordIfRetained(tripId: trip.id))
+        XCTAssertTrue(store.sprayRecords.isEmpty)
+        store.currentUserIdProvider = { owner }
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let authority = VineyardWriteAuthority(defaults: defaults)
+        authority.bind(userId: owner)
+        _ = authority.handleServerCode("VT_READ_ONLY", vineyardId: vineyard.uuidString)
+        store.operationalWriteAuthority = authority
+        XCTAssertThrowsError(try store.restoreQueuedOccurrenceSprayRecordIfRetained(tripId: trip.id))
+        XCTAssertTrue(store.sprayRecords.isEmpty)
+        XCTAssertEqual(try LegacySpraySaveRecovery(persistence: persistence).attempts(), original)
+        authority.verified(vineyardId: vineyard.uuidString,
+            access: VineyardOperationalAccess(legacyCanEnter: true, canWrite: true), explicitlyWritable: true)
+        XCTAssertTrue(try store.restoreQueuedOccurrenceSprayRecordIfRetained(tripId: trip.id))
+        XCTAssertEqual(store.trips.first?.rowSequence.count, 116)
+        XCTAssertEqual(store.trips.first?.occurrenceCoverage, coverage)
+        XCTAssertEqual(store.sprayRecords, [record])
+        XCTAssertEqual(store.trips, [trip])
+        XCTAssertEqual(try LegacySpraySaveRecovery(persistence: persistence).attempts(), original)
+        XCTAssertTrue(try store.restoreQueuedOccurrenceSprayRecordIfRetained(tripId: trip.id))
+        XCTAssertEqual(store.sprayRecords, [record])
+        XCTAssertEqual(SprayRepository(persistence: persistence).loadRecords(for: vineyard), [record])
+    }
+
+    @MainActor func testQueuedOccurrenceNeverOverwritesDifferentLinkedSprayRecipe() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: directory))
+        let owner = UUID(), vineyard = UUID(), block = UUID()
+        store.selectedVineyardId = vineyard
+        store.currentUserIdProvider = { owner }
+        store.legacySprayScopeProvider = {
+            LegacySpraySaveRecovery.Scope(actor: owner, session: owner, vineyard: vineyard)
+        }
+        let coverage = try TripOccurrencePlanner.commit([
+            .init(vineyardId: vineyard, blockId: block, blockName: "Queued",
+                  label: 1.5, rows: [])
+        ], vineyardId: vineyard)
+        let trip = Trip(vineyardId: vineyard, paddockId: block, paddockName: "Queued",
+            paddockIds: [block], isActive: false, rowSequence: [1.5],
+            occurrenceCoverage: coverage)
+        let original = SprayRecord(tripId: trip.id, vineyardId: vineyard,
+            notes: "Original")
+        try store.saveSprayForLater(record: original, trip: trip)
+        let different = SprayRecord(tripId: trip.id, vineyardId: vineyard,
+            notes: "Different linked recipe")
+        store.sprayRecords = [different]
+        XCTAssertFalse(try store.restoreQueuedOccurrenceSprayRecordIfRetained(tripId: trip.id))
+        XCTAssertEqual(store.sprayRecords, [different])
+        XCTAssertEqual(store.trips, [trip])
+    }
+
+    @MainActor func testOnlyNeverStartedOriginalSprayOffersStartTrip() throws {
+        let owner = UUID(), vineyard = UUID(), block = UUID()
+        let raw = try TripOccurrencePlanner.commit([
+            .init(vineyardId: vineyard, blockId: block,
+                  blockName: "Synthetic", label: 1.5, rows: [])
+        ], vineyardId: vineyard)
+        var original = Trip(vineyardId: vineyard,
+            paddockId: block, paddockName: "Synthetic",
+            paddockIds: [block], isActive: false,
+            rowSequence: [1.5], occurrenceCoverage: raw)
+        original.operatorUserId = owner
+        original.tripFunction = TripFunction.spraying.rawValue
+        // The UI must offer Start even if the recipe list has not hydrated.
+        // The actual action separately restores and validates the original WAL.
+        XCTAssertTrue(SavedOccurrenceSprayStartEligibility.mayStart(original))
+
+        var active = original
+        active.isActive = true
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(active))
+        var ended = original
+        ended.endTime = Date()
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(ended))
+        var travelled = original
+        travelled.totalDistance = 10
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(travelled))
+        var completed = original
+        completed.completedPaths = [1.5]
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(completed))
+        var skipped = original
+        skipped.skippedPaths = [1.5]
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(skipped))
+        var noRoute = original
+        noRoute.rowSequence = []
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(noRoute))
+        var notSpray = original
+        notSpray.tripFunction = nil
+        XCTAssertFalse(SavedOccurrenceSprayStartEligibility.mayStart(notSpray))
+    }
+
+    @MainActor func testSavedTripMissingFromLocalStoreStillCompletesStartCallback() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: dir))
+        let vineyard = UUID()
+        store.selectedVineyardId = vineyard
+        let trip = Trip(vineyardId: vineyard, paddockName: "Synthetic", isActive: false)
+        let tracking = TripTrackingService()
+        tracking.configure(store: store, locationService: LocationService())
+        var callbackCount = 0
+        tracking.activateSavedTrip(trip) { started in
+            callbackCount += 1
+            XCTAssertFalse(started)
+        }
+        XCTAssertEqual(callbackCount, 1, "No early-return denial may strand the Start button spinner")
+        XCTAssertNil(store.deviceActiveTripId)
+        XCTAssertTrue(store.trips.isEmpty)
+    }
+
 }

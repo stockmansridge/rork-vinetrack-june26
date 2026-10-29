@@ -564,7 +564,13 @@ final class TripTrackingService {
         onStarted: @escaping (Bool) -> Void = { _ in }
     ) {
         guard let store else { onStarted(false); return }
-        guard admitTripChange(store.trips.first(where: { $0.id == savedTrip.id })) else { onStarted(false); return }
+        guard !isLegacySprayStartPending else {
+            errorMessage = "A trip start is already being verified. Wait for it to finish."
+            onStarted(false); return
+        }
+        guard let current = store.trips.first(where: { $0.id == savedTrip.id }),
+              current == savedTrip,
+              admitTripChange(current) else { onStarted(false); return }
         guard store.selectedVineyardId != nil else {
             errorMessage = "No vineyard selected."
             onStarted(false); return
@@ -581,7 +587,8 @@ final class TripTrackingService {
               savedTrip.skippedPaths.isEmpty,
               savedTrip.tankSessions.isEmpty,
               let recordIndex = store.sprayRecords.firstIndex(where: {
-                  $0.tripId == savedTrip.id && !$0.isTemplate && $0.endTime == nil
+                  $0.tripId == savedTrip.id && $0.vineyardId == savedTrip.vineyardId
+                      && !$0.isTemplate && $0.endTime == nil
               }) else {
             errorMessage = "Only a Not Started spray job can be activated."
             onStarted(false); return
@@ -606,6 +613,7 @@ final class TripTrackingService {
             }
         }
         if savedTrip.coverageBasis != .legacy {
+            isLegacySprayStartPending = true
             Task { @MainActor in
             do {
                 guard let owner = authService?.userId else { throw TripOccurrenceCoverage.Failure.scopeConflict }
@@ -616,11 +624,27 @@ final class TripTrackingService {
                 let journal = try TripOccurrenceJournal(scope: .init(ownerId: owner.uuidString.lowercased(),
                     vineyardId: savedTrip.vineyardId.uuidString.lowercased(), tripId: savedTrip.id.uuidString.lowercased()))
                 if NetworkMonitor.shared.isOnline {
+                    let repo = SupabaseTripSyncRepository()
+                    let remote = try await repo.fetchTripForOccurrenceStart(
+                        tripId: savedTrip.id, vineyardId: savedTrip.vineyardId)
+                    guard authService?.userId == owner,
+                          store.selectedVineyardId == savedTrip.vineyardId,
+                          store.trips.first(where: { $0.id == savedTrip.id }) == savedTrip else {
+                        throw TripOccurrenceCoverage.Failure.scopeConflict
+                    }
+                    try store.operationalWriteAuthority.requireWrite(vineyardId: savedTrip.vineyardId.uuidString)
                     let retained = try journal.load()
-                    if retained?.creationConfirmed != false || retained?.pending.contains(where: { $0.rpc == "create_trip_with_occurrences_v1" }) != true {
-                        let recovery = try await SupabaseTripSyncRepository().fetchOccurrenceRecovery(tripId: savedTrip.id, operationIds: retained?.pending.map(\.id) ?? [])
-                        guard authService?.userId == owner else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                    if remote != nil {
+                        let recovery = try await repo.fetchOccurrenceRecovery(
+                            tripId: savedTrip.id, operationIds: retained?.pending.map(\.id) ?? [])
+                        guard authService?.userId == owner,
+                              store.selectedVineyardId == savedTrip.vineyardId else {
+                            throw TripOccurrenceCoverage.Failure.scopeConflict
+                        }
                         try journal.recover(recovery)
+                    } else if retained?.heldReason != nil {
+                        try journal.releaseHeldOriginalCreationAfterVerifiedServerAbsence(
+                            expectedCoverage: savedTrip.occurrenceCoverage ?? .null)
                     }
                 }
                 guard let state = try journal.load(), state.heldReason == nil,
@@ -636,8 +660,15 @@ final class TripTrackingService {
                       let date = ISO8601DateFormatter().date(from: time) else { throw TripOccurrenceCoverage.Failure.missing }
                 var active = savedTrip; active.isActive = true; active.startTime = date
                 if case .number(let hours) = op.params[occurrence: "p_start"]?[occurrence: "startEngineHours"] { active.startEngineHours = hours }
-                finishPlannedActivation(active, owner: owner, onStarted: onStarted)
-            } catch { errorMessage = error.localizedDescription; onStarted(false) }
+                finishPlannedActivation(active, owner: owner) { started in
+                    self.isLegacySprayStartPending = false
+                    onStarted(started)
+                }
+            } catch {
+                isLegacySprayStartPending = false
+                errorMessage = error.localizedDescription
+                onStarted(false)
+            }
             }
             return
         }
