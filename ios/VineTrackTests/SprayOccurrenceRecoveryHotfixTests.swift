@@ -364,4 +364,87 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
     }
 
 
+    @MainActor func testExactOrphanServerSnapshotRestoresOriginalTwoTankMixWithoutNewTrip() throws {
+        let owner = UUID(), vineyard = UUID(), a = UUID(), b = UUID()
+        let event = Date(timeIntervalSince1970: 1_793_239_620)
+        let plan = try TripOccurrencePlanner.commit([
+            .init(vineyardId: vineyard, blockId: a, blockName: "A", label: 1.5, rows: []),
+            .init(vineyardId: vineyard, blockId: b, blockName: "B", label: 2.5, rows: [])
+        ], vineyardId: vineyard)
+        let original = Trip(vineyardId: vineyard, paddockId: a, paddockName: "Original",
+            paddockIds: [a,b], startTime: event, isActive: false,
+            rowSequence: [1.5,2.5], totalTanks: 2,
+            tripFunction: TripFunction.spraying.rawValue, occurrenceCoverage: plan)
+        let tanks = [
+            SprayTank(tankNumber: 1, waterVolume: 600, sprayRatePerHa: 250,
+                chemicals: [SprayChemical(name: "Product A", volumePerTank: 450, ratePer100L: 75)]),
+            SprayTank(tankNumber: 2, waterVolume: 15, sprayRatePerHa: 250,
+                chemicals: [SprayChemical(name: "Product A", volumePerTank: 11.25, ratePer100L: 75)])
+        ]
+        // Mimics the real orphan's server shape: exact timestamp, same actor
+        // and block IDs, two tanks, but a NULL trip_id.
+        let rawTanks = try JSONSerialization.jsonObject(with: JSONEncoder().encode(tanks))
+        let iso = ISO8601DateFormatter().string(from: event)
+        let sourceId = UUID()
+        let raw: [String: Any] = [
+            "id": sourceId.uuidString,
+            "vineyard_id": vineyard.uuidString,
+            "created_by": owner.uuidString,
+            "start_time": iso, "date": iso,
+            "is_template": false,
+            "block_ids": [a.uuidString, b.uuidString],
+            "tanks": rawTanks
+        ]
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let source = try decoder.decode(
+            BackendSprayRecord.self, from: JSONSerialization.data(withJSONObject: raw)
+        )
+        XCTAssertTrue(VerifiedOrphanSprayRecovery.matches(
+            VerifiedOrphanSprayRecovery.evidence(source), original: original, actorId: owner
+        ))
+        XCTAssertEqual(
+            VerifiedOrphanSprayRecovery.unique([source], original: original, actorId: owner)?.id,
+            sourceId
+        )
+        XCTAssertNil(VerifiedOrphanSprayRecovery.unique(
+            [source, source], original: original, actorId: owner
+        ), "Two matching records must never be selected automatically")
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let persistence = PersistenceStore(directory: folder)
+        let store = MigratedDataStore(persistence: persistence)
+        store.selectedVineyardId = vineyard
+        store.currentUserIdProvider = { owner }
+        store.trips = [original]
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        let authority = VineyardWriteAuthority(defaults: defaults)
+        authority.bind(userId: owner)
+        authority.verified(
+            vineyardId: vineyard.uuidString,
+            access: VineyardOperationalAccess(legacyCanEnter: true, canWrite: true),
+            explicitlyWritable: true
+        )
+        store.operationalWriteAuthority = authority
+
+        let restored = try store.installVerifiedServerOrphanForSavedTrip(
+            source, tripId: original.id, actorId: owner
+        )
+        XCTAssertEqual(restored.id, sourceId)
+        XCTAssertEqual(restored.canonicalTripId, original.id)
+        XCTAssertEqual(restored.tanks, tanks)
+        XCTAssertTrue(restored.recoveredFromServerOrphan)
+        XCTAssertEqual(store.trips, [original])
+        XCTAssertEqual(store.sprayRecords, [restored])
+        XCTAssertEqual(SprayRepository(persistence: persistence).loadRecords(for: vineyard), [restored])
+        let second = try store.installVerifiedServerOrphanForSavedTrip(
+            source, tripId: original.id, actorId: owner
+        )
+        XCTAssertEqual(second, restored, "Repeated review may not create a second recipe")
+        XCTAssertEqual(store.sprayRecords.count, 1)
+    }
+
+
 }
