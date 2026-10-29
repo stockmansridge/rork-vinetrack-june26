@@ -216,6 +216,12 @@ final class SubscriptionService {
         do {
             let result = try await Purchases.shared.logIn(userId.uuidString)
             applyCustomerInfo(result.customerInfo)
+            // A freshly installed TestFlight app can hold a stale StoreKit /
+            // RevenueCat snapshot even after identifying the account. Verify
+            // the current customer info before the entitlement gate decides to
+            // show a paywall. This does NOT restore purchases, grant access,
+            // weaken server entitlement checks, or start a subscription.
+            await refreshCustomerInfo()
             await refreshOfferings()
         } catch {
             lastError = error.localizedDescription
