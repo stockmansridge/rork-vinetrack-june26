@@ -742,8 +742,10 @@ fun SprayCalculatorScreen(
         val basis = if (line.basis == SprayCalculator.RateBasis.PER_100L) {
             SprayProductRateBasis.PER_100_LITRES
         } else {
-            // Legacy `per_hectare` means WHOLE BLOCK — never treated area.
-            productAreaBasis[line.uid] ?: SprayProductRateBasis.WHOLE_BLOCK_AREA
+            // New banded sprays default chemical per-ha rates to treated hectares;
+            // explicit product choices and restored historical bases still win.
+            productAreaBasis[line.uid] ?: if (isGroundSpray) SprayProductRateBasis.TREATED_AREA
+            else SprayProductRateBasis.WHOLE_BLOCK_AREA
         }
         // The LINE's rate unit, never the product's inventory unit: the
         // engine costs and reports in whatever unit it is handed, so passing
@@ -762,7 +764,7 @@ fun SprayCalculatorScreen(
             // an unconfirmed default, and the flow blocks on it rather than
             // freezing a guess into a compliance record.
             isAreaBasisExplicit = line.basis == SprayCalculator.RateBasis.PER_100L ||
-                productAreaBasis[line.uid] != null,
+                isGroundSpray || productAreaBasis[line.uid] != null,
         )
     }
 
@@ -1229,7 +1231,8 @@ fun SprayCalculatorScreen(
             SprayCalculatorInputBuilder.Product(
                 chemicalId = line.chemicalId,
                 basis = if (line.basis == SprayCalculator.RateBasis.PER_100L) SprayProductRateBasis.PER_100_LITRES
-                    else productAreaBasis[line.uid] ?: SprayProductRateBasis.WHOLE_BLOCK_AREA,
+                    else productAreaBasis[line.uid] ?: if (isGroundSpray) SprayProductRateBasis.TREATED_AREA
+                        else SprayProductRateBasis.WHOLE_BLOCK_AREA,
                 appliedRate = if (chem != null) effectiveRateDisplay(chem, line) else 0.0,
                 unit = if (chem != null) lineRateUnit(chem, line) else "",
                 isOverride = chemicalEditorValue(line.overrideText) != null,
@@ -2273,7 +2276,7 @@ fun SprayCalculatorScreen(
                             line.basis != SprayCalculator.RateBasis.PER_100L
                         ) {
                             GuidedProductBasisPicker(
-                                selected = productAreaBasis[line.uid],
+                                selected = productAreaBasis[line.uid] ?: SprayProductRateBasis.TREATED_AREA,
                                 accent = VineColors.Olive,
                             ) { basis ->
                                 productAreaBasis[line.uid] = basis
@@ -2281,9 +2284,9 @@ fun SprayCalculatorScreen(
                             }
                             if (productAreaBasis[line.uid] == null) {
                                 Text(
-                                    "Choose an area basis for this product before continuing.",
+                                    "Treated band assumed from Target; change if this label uses whole-block hectares.",
                                     fontSize = 11.sp,
-                                    color = VineColors.Warning,
+                                    color = vine.textSecondary,
                                 )
                             }
                         }
@@ -2302,6 +2305,9 @@ fun SprayCalculatorScreen(
                         // Renders nothing today — a fabricated "no issues" verdict
                         // would be worse than silence.
                         ResistanceCheckSlot(guidedFlow.isResistanceCheckApplicable)
+                    }
+                    if (idx < chemLines.lastIndex) {
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
                     }
                 }
 
@@ -3525,16 +3531,6 @@ internal fun CalcChemicalLineCard(
                 modifier = Modifier.weight(1f),
                 maxLines = 1,
             )
-            normalizedUrl(chem?.labelUrl)?.let { url ->
-                IconButton(onClick = { uriHandler.openUri(url) }, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Filled.Description, contentDescription = "Open chemical label", tint = VineColors.Olive, modifier = Modifier.size(18.dp))
-                }
-            }
-            normalizedUrl(chem?.productUrl)?.let { url ->
-                IconButton(onClick = { uriHandler.openUri(url) }, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Filled.Language, contentDescription = "Open product page", tint = vine.textSecondary, modifier = Modifier.size(18.dp))
-                }
-            }
             // Basis chip
             Text(
                 if (line.basis == SprayCalculator.RateBasis.PER_100L) "Per 100L" else "Per Ha",
@@ -3548,6 +3544,18 @@ internal fun CalcChemicalLineCard(
             )
             IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
                 Icon(Icons.Filled.Cancel, contentDescription = "Remove chemical", tint = vine.textSecondary, modifier = Modifier.size(20.dp))
+            }
+        }
+        // Text-labelled actions are on their own row so long product names
+        // are not squeezed by two ambiguous 32dp icons.
+        if (normalizedUrl(chem?.labelUrl) != null || normalizedUrl(chem?.productUrl) != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                normalizedUrl(chem?.labelUrl)?.let { url ->
+                    OutlinedButton(onClick = { uriHandler.openUri(url) }) { Text("Label") }
+                }
+                normalizedUrl(chem?.productUrl)?.let { url ->
+                    OutlinedButton(onClick = { uriHandler.openUri(url) }) { Text("Product Page") }
+                }
             }
         }
         if (chem != null) {
