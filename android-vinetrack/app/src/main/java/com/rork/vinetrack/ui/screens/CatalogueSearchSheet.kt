@@ -53,9 +53,10 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
                 else photoError = "Unable to read the camera image. Choose another photo."
             }
         },
+        onError = { photoError = it },
     )
     var added by remember { mutableStateOf(false) }
-    LaunchedEffect(search.result?.id) {
+    LaunchedEffect(search.result?.text("revision_id")) {
         if (search.result != null) scrollState.animateScrollTo(scrollState.maxValue)
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
