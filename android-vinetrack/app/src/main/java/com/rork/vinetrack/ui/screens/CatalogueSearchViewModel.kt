@@ -47,9 +47,10 @@ class CatalogueSearchViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
     fun select(row: CatalogueRow) {
-        if (_state.value.context != null) return
+        if (_state.value.context != null || _state.value.busy) return
         viewModelScope.launch {
-            _state.update { it.copy(busy = true, error = null) }
+            // A failed selection must not leave the last product's review visible.
+            _state.update { it.copy(busy = true, error = null, result = null) }
             try { val result = repository.revision(requireNotNull(row.text("revision_id"))); _state.update { it.copy(result = result) } }
             catch (_: Exception) { _state.update { it.copy(error = "Unable to load this result. Try again.") } }
             finally { _state.update { it.copy(busy = false) } }
