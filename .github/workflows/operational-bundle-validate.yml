@@ -34,7 +34,6 @@ jobs:
           git add -- ios/VineTrack ios/VineTrackTests android-vinetrack/app/src docs/sync/sync-compatibility-register.json
           if ! git diff --cached --quiet; then
             git -c user.name='VineTrack repair automation' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix(spray-sync): apply reviewed operational bundle with rate confirmation and safe sync references'
-            # Normal fast-forward push only. Concurrent edits fail rather than being overwritten.
             git push origin HEAD:refs/heads/fix/sync-compatibility-318-319-20261030
           fi
           echo "tested_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -55,6 +54,14 @@ jobs:
           echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
           echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
           chmod +x android-vinetrack/gradlew
+      - name: Generate missing test-only configuration
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt')
+          if not path.exists():
+              path.write_text('package com.rork.vinetrack\nobject Config { val allValues: Map<String, String> = mapOf("EXPO_PUBLIC_SUPABASE_URL" to "http://127.0.0.1:9", "EXPO_PUBLIC_SUPABASE_ANON_KEY" to "ci-test-only-invalid-key") }\n')
+          # This untracked file is never committed, signed, or distributed.
       - name: Compile app and run only focused spray, auth and bundle tests
         shell: bash
         run: |
@@ -84,6 +91,14 @@ jobs:
         with:
           ref: ${{ needs.apply-reviewed-source.outputs.tested_sha }}
           persist-credentials: false
+      - name: Generate missing test-only configuration
+        shell: python
+        run: |
+          from pathlib import Path
+          roots = list(Path('ios/VineTrack').rglob('Config.swift'))
+          if not roots:
+              Path('ios/VineTrack/Config.swift').write_text('enum Config { static let allValues: [String: String] = ["EXPO_PUBLIC_SUPABASE_URL": "http://127.0.0.1:9", "EXPO_PUBLIC_SUPABASE_ANON_KEY": "ci-test-only-invalid-key"] }\n')
+          # This untracked file is never committed, signed, or distributed.
       - name: Discover available iPhone simulator
         shell: bash
         run: |
