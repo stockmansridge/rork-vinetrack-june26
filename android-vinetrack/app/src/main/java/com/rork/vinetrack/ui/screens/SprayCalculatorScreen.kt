@@ -160,6 +160,7 @@ import com.rork.vinetrack.data.spray.SprayCarrierBasis
 import com.rork.vinetrack.data.spray.SprayCarrierAreaBasis
 import com.rork.vinetrack.data.spray.SprayVolumeChoice
 import com.rork.vinetrack.data.spray.SprayVolumeHelp
+import com.rork.vinetrack.ui.components.SprayInfoHelp
 import com.rork.vinetrack.ui.components.SprayPlanningCards
 import com.rork.vinetrack.ui.components.SprayConcentrationWarning
 import com.rork.vinetrack.ui.components.SprayLabelRateSheet
@@ -3490,7 +3491,12 @@ internal fun CalcChemicalLineCard(
                 modifier = Modifier.semantics { contentDescription = "chemicalEvidenceReview" })
         }
         line.operationalSource?.let { source ->
-            Text(if (source == com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.PROGRAM_STEP) "Program Step rate" else "Preferred vineyard rate — vineyard-defined", style = MaterialTheme.typography.bodySmall)
+            Text(when (source) {
+                com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.PROGRAM_STEP -> "Program Step rate"
+                com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.VINEYARD_PREFERRED -> "Preferred vineyard rate"
+                com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.CONFIRMED_DEFAULT -> "Confirmed catalogue/default rate"
+                com.rork.vinetrack.data.chemical.OperationalRateResolver.Source.OPERATOR_PLANNING -> "Operator-entered for this spray"
+            }, style = MaterialTheme.typography.bodySmall)
             if (chem != null) line.rateAmount?.let { amount ->
                 val preferred = com.rork.vinetrack.data.chemical.VineyardPreferredRate(amount, line.rateUnit.orEmpty(), if (line.basis == SprayCalculator.RateBasis.PER_100L) "per_100_litres" else "per_hectare")
                 com.rork.vinetrack.data.chemical.OperationalRateResolver.warning(preferred, chem)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
@@ -3617,12 +3623,20 @@ internal fun CalcChemicalLineCard(
 
         if (chem != null) {
             Spacer8()
-            Text("Label rate basis", fontSize = 11.sp, color = vine.textSecondary)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Product rate basis", fontSize = 11.sp, color = vine.textSecondary)
+                SprayInfoHelp("Product rate basis",
+                    "Per 100 L is chemical per 100 litres of spray water. Per ha is chemical per hectare. These are not interchangeable with the WATER rate chosen in Spray Volume. If no suitable catalogue rate is recorded, use Enter rate from product label.")
+            }
             SuggestedRateBasisRow(chem, line, onChanged)
             if (editingLabelRate) {
                 val units = if (chem.unit.equals("L", true) || chem.unit.equals("mL", true)) listOf("mL", "L") else listOf("g", "kg")
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Product label rate — operator entered", fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Product label rate", fontWeight = FontWeight.SemiBold)
+                        SprayInfoHelp("Operator-entered product rate",
+                            "This is an operator-entered rate for the current spray, not a VineTrack verified catalogue rate. Check the exact product, crop, intended use, basis and unit against its label.")
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(SprayCalculator.RateBasis.PER_100L to "Per 100 L", SprayCalculator.RateBasis.PER_HECTARE to "Per ha").forEach { (basis, title) ->
                             OutlinedButton(onClick = { draftBasis = basis; draftAmount = ""; checkedLabel = false }) {
@@ -3637,9 +3651,8 @@ internal fun CalcChemicalLineCard(
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = checkedLabel, onCheckedChange = { checkedLabel = it })
-                        Text("I checked the product, crop, target and rate against the applicable label", modifier = Modifier.weight(1f), fontSize = 12.sp)
+                        Text("I checked the applicable label", modifier = Modifier.weight(1f), fontSize = 12.sp)
                     }
-                    Text("Operator-entered for this spray; not catalogue-verified.", fontSize = 12.sp, color = vine.textSecondary)
                     Row {
                         OutlinedButton(onClick = { editingLabelRate = false }) { Text("Cancel") }
                         Spacer(Modifier.width(8.dp))
