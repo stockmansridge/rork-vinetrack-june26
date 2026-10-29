@@ -1,5 +1,74 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## PR #20 v186 Trip UTC / Growth mirror validation — LOCAL CORRECTIONS PASS; PR HEAD BLOCKED; NO MERGE OR UPLOAD
+
+### Source and scope
+
+- Repository `stockmansridge/rork-vinetrack-june26`, PR20 branch `fix/ios-trip-legacy-utc-growth-mirror-20261030`, exact reviewed head `8a81ade2396daca314bcf24ad962ad60c9523e33`, base `447f054100e3c09fd0b3bc7188b80901d703090c`. Read-only GitHub API verified open/unmerged at start and final check. Returned potential merge SHA is not an actual merged-source receipt and is not used as delivery provenance.
+- Managed workspace starting/current HEAD `9f011341d97336b85f928a98968f865c482de648` is the source parent, NOT the corrected integration SHA. Downloaded exact head/base archives outside the project; app/unit source parity with base differs only in existing `Config.swift`, preserved. Initially applied all five PR files and confirmed parity with PR head except configuration, before adding the supplemental regressions/corrections below. No checkout/reset/manual commit/push/GitHub merge.
+- Only the five PR iOS source/test paths changed, plus this report and approved plan. No Android, SQL, backend/customer-record writes, queue clearing, original-trip recreation, chemical-hold bypass, signing/version change or upload. User's reported230 canonical records/230 unique matching Pins/zero note differences/zero deletions/enforced unique index is supplied live investigation evidence, not independently queried by this validation.
+
+### Exact execution sequence and failures
+
+1. Exact PR `VineTrackTests/TankSessionLegacyUTCDecodeTests`: **6 passed in149s**. Original methods: `testHistoricalTimezoneLessTankDateDecodesAsUTC`, `testMicrosecondSnakeCaseUTCStillDecodes`, `testExplicitOffsetStillPreserved`, `testStrictLegacyFormatDoesNotInventUnclearDates`, `testContradictoryTankAliasesStillRejectEntireRecord`, `testLocalNumericDateEncodingRemainsCompatible`.
+2. Exact PR `VineTrackTests/GrowthStageMirrorReplayTests`: **24 passed in23s**, full suite including230 mirrors/restart/no uploads/original evidence, display-name fallback with immutable author UUID, bounded delayed capture with independent save-time evidence, clean stale canonical cache, changed/ambiguous mirrors, pending canonical edits/deletes, disk failure, edit/photo/delete races, account incarnation and scope fences, independent Trip push.
+3. Exact PR sixteen retained-data/compatibility/recovery selectors listed below: **165 passed in25s**.
+4. Supplemental reproducing selection: `VineTrackTests/TankSessionLegacyUTCDecodeTests/testImpossibleCalendarDatesAndTrailingTextAreRejected` and `VineTrackTests/GrowthStageMirrorReplayTests/heldEvidenceConflictCannotReplaceCanonicalCacheWhenAnotherMirrorAcknowledges()`: **0 passed/2 failed**. Assertions demonstrated Foundation normalizing `2026-02-30T01:21:27.000` to March2 and a held identity-evidence conflict losing its clean cached canonical when another candidate commits. No compiler/runner failure; no original tests weakened.
+5. Corrected workspace tank/Growth suites: **33 passed in81s** (source inventory8 UTC methods and25 Growth methods; tool gives aggregate, not per-suite passing-name discovery). Includes an additional mixed historical/modern `[BackendTrip]` response test preserving trip/tank IDs, tank numbers and paths, plus explicit whole-response failure with coding index/key on malformed date; valid leap years covered.
+6. Same sixteen retained-data/compatibility/recovery selectors on final corrected source: **165 passed in20s**. Final combined executed result **198 passed,0 reported failures**; skipped count not supplied by the tool. This is a targeted selection, not the entire app suite. Earlier2 failing safety regressions are fixed locally, not erased from this history.
+7. Exactly one separate final `runChecks({appPath:"ios"})` after tests: **simulator build PASS**. Two unrelated existing asset URL notices remain untouched. Device/Release validation and physical/interactive acceptance not performed.
+
+Sixteen regression selectors, each prefixed `VineTrackTests/`:
+
+```text
+SyncCompatibilityTests
+RetainedRecoveryDiagnosticExportTests
+TripOccurrenceJournalTests
+LegacySprayPairReceiptTests
+SpraySaveForLaterTests
+RecoveredSprayApplicationSafetyTests
+StartTankCommitCoordinatorTests
+SprayOccurrenceRecoveryHotfixTests
+SprayTripStartAdmissionTests
+SpraySavedJobActivationIntegrationTests
+TankSessionLifecycleTests
+MobileRequestSyncSafeguardTests
+ActiveTripRouteRecoveryTests
+DeviceTripOwnershipTests
+VineyardWriteAuthorityTests
+GrowthStageLiveDecodingTests
+```
+
+### Local corrections beyond unchanged upstream PR
+
+- Enforce complete timestamp syntax plus Gregorian year/month/day/hour/minute/second validity before invoking Foundation, rejecting normalization and trailing text. Exact timezone-less historical forms are UTC; modern fractional Z/offset forms and local numeric cache decoding remain supported. Contradictory aliases still throw; no skipped records, default dates, remote JSON rewrites or lost decode-path reporting.
+- Validate the retained original/canonical evidence match BEFORE staging a clean canonical cache replacement. Otherwise an unrelated successful candidate can commit the held candidate's staged overwrite. New mixed-batch regression checks both in-memory and durable cache, queued original, retained evidence and no remote upsert.
+- Growth reconciliation still requires unique scoped positive server identity, immutable author UUID, matching substantive observation, timestamp/coordinate/photo constraints, no dirty/delete/photo/unknown canonical intent and strictly newer server cache time. Original mirror evidence is durably written before replacing visible aliases; unknown/mismatched identity remains queued with `GROWTH_PIN_IDENTITY_REVIEW`. Newer local edits and account changes retain their existing protections; no uniqueness bypass or server inserts/deletions added.
+- Focused second read-only review found no further concrete must-fix in these corrections. It did not execute independent tests.
+
+### Final corrected source SHA256 (not an invented merged commit)
+
+```text
+33b5b22bcdd0834921531a82d34f47c04121d60be691f6de5fa8e5cbd084b534 ios/VineTrack/LegacyImported/Models/Trip.swift
+5ed56669596e4bc51c8c743983810b7d12425acbb145f990e8a97993c65fa882 ios/VineTrack/Backend/Sync/GrowthStageMirrorReplay.swift
+096b022e0de3ba1a87265ab41749c2d82046c841a6a343b4929f2b1c1d440e89 ios/VineTrack/Backend/Sync/GrowthStageRecordSyncService.swift
+4a5739f181e485595eb311342898c3507b719cc05b2a6b81bd08e8d40857e308 ios/VineTrackTests/TankSessionLegacyUTCDecodeTests.swift
+7a83c024bdb6406769e3fbaf207063d67392c1ecebee1e7cf6b1b63257515cf9 ios/VineTrackTests/GrowthStageMirrorReplayTests.swift
+```
+
+`git diff --check` passed. A corrected managed commit SHA is not yet available during this turn; source hashes pin the tested bytes. The original PR head must not be described as passing these added regressions. Incorporate these corrections upstream and verify the actual merged source SHA/parity before preparing TestFlight. No TestFlight candidate was uploaded or independently marked v186-ready.
+
+### Original-iPhone acceptance remains open
+
+After a safe merged candidate is delivered and installed in place (never uninstall/reset/clear queues):
+
+1. Capture build/account/vineyard and pre-sync per-entity pending counts; preserve a private retained-evidence export if available before an explicit sync.
+2. Confirm Trips sync completes without incorrect-format error. Any remaining failure must retain exact local-versus-response operation/coding path, not be treated as successful empty data.
+3. Confirm proven Growth mirrors resolve to existing canonical server IDs, with no duplicate inserts/deletions.230 pending entries clear only where identity is actually proven; do not infer clearance from synthetic230 coverage.
+4. Retain genuinely changed/ambiguous/photo-bearing entries with review reasons and compare their original values/evidence. No forced acknowledgement of all230.
+5. Confirm the original116-path/eight-block/two-tank Trip/spray, original IDs, zero completed paths if unchanged, WAL/journals/receipts and quantities remain intact. Do not Start or apply chemicals to validate sync; authorized documented chemical-rate approval remains separate.
+6. List remaining pending uploads by entity separately from Growth Stages. Capture after-sync diagnostics and original phone confirmation. Incident is NOT resolved by simulator/test/build success.
+
 ## Original iPhone retained-evidence export — 29 October 2026 — 147 TESTS PASS; ORIGINAL INCIDENT UNPROVEN; NO UPLOAD
 
 ### Provenance and production evidence

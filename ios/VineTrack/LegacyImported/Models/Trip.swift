@@ -1,6 +1,37 @@
 import Foundation
 import CoreLocation
 
+/// Historical tank-session JSON omitted its UTC suffix. The server's
+/// original Trip start_time was checked against these values: they are
+/// UTC, not vineyard-local wall times. Keep the raw server JSON unchanged.
+/// Only exact ISO-8601 zone-less tank dates receive the legacy UTC suffix.
+nonisolated enum TankSessionDateParser {
+    static func parse(_ raw: String) -> Date? {
+        // Foundation's ISO parser normalizes some impossible dates and accepts
+        // trailing text. Validate the complete wire spelling and Gregorian date
+        // before using it; do not turn malformed historical evidence into a date.
+        guard raw.range(
+            of: #"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):?[0-5][0-9])?\z"#,
+            options: .regularExpression
+        ) != nil else { return nil }
+        let parts = raw.prefix(19).split(whereSeparator: { $0 == "-" || $0 == "T" || $0 == ":" }).compactMap { Int($0) }
+        guard parts.count == 6 else { return nil }
+        let year = parts[0], month = parts[1], day = parts[2]
+        guard year >= 1, (1...12).contains(month), (0...23).contains(parts[3]),
+              (0...59).contains(parts[4]), (0...59).contains(parts[5]) else { return nil }
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+        let days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        guard (1...days[month - 1]).contains(day) else { return nil }
+        let hasZone = raw.hasSuffix("Z") || raw.dropFirst(19).contains("+") || raw.dropFirst(19).contains("-")
+        let canonical = hasZone ? raw : raw + "Z"
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: canonical) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: canonical)
+    }
+}
+
 nonisolated struct TankSession: Codable, Identifiable, Sendable, Hashable {
     let id: UUID
     var tankNumber: Int
@@ -64,11 +95,7 @@ nonisolated struct TankSession: Codable, Identifiable, Sendable, Hashable {
             func parse<K: CodingKey>(_ container: KeyedDecodingContainer<K>, _ k: K) throws -> Date? {
                 guard container.contains(k), try !container.decodeNil(forKey: k) else { return nil }
                 if let text = try? container.decode(String.self, forKey: k) {
-                    let formatter = ISO8601DateFormatter()
-                    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-                    if let result = formatter.date(from: text) { return result }
-                    formatter.formatOptions = [.withInternetDateTime]
-                    guard let result = formatter.date(from: text) else {
+                    guard let result = TankSessionDateParser.parse(text) else {
                         throw DecodingError.dataCorruptedError(forKey: k, in: container, debugDescription: "Invalid tank-session date")
                     }
                     return result

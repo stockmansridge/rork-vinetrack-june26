@@ -194,7 +194,9 @@ final class GrowthStageRecordSyncService {
                 variety: variety?.displayName,
                 varietyId: variety?.varietyId
             ) else { return false }
-            mirrored.recordedByName = pin.createdBy ?? auth?.userName
+            // A historical backfill cannot attribute somebody else's old Pin
+            // to the person currently signed in. Preserve unknown authorship.
+            mirrored.recordedByName = pin.createdBy ?? (snapshotVariety ? auth?.userName : nil)
             // Pin creation stamps the authenticated UUID; do not reattribute imported pins.
             records.append(mirrored)
             metadata.markDirty(mirrored.id, at: Date())
@@ -470,13 +472,26 @@ final class GrowthStageRecordSyncService {
             if metadata.pendingDeletes[canonical.id] != nil || deletionStore.growthRecordIds.contains(canonical.id) ||
                 metadata.pendingUpserts[canonical.id] != nil || pendingPhotos[canonical.id] != nil ||
                 metadata.isUnknownOutcome(canonical.id) { held.insert(candidate.id); continue }
-            if let existing = next.first(where: { $0.id == canonical.id }),
-               existing != canonical.toGrowthStageRecord() { held.insert(candidate.id); continue }
-            // Keep the complete historical mirror, including original identity, owner,
-            // notes, photos and timestamps. Only the visible duplicate is aliased.
+            // Validate retained identity evidence before staging ANY cache change.
+            // Another successful mirror can commit this shared batch even if this
+            // candidate is held, so a held candidate must leave `next` untouched.
             if let retained = evidence[candidate.id], retained.original != candidate || retained.canonicalId != canonical.id {
                 held.insert(candidate.id); continue
             }
+            let canonicalRecord = canonical.toGrowthStageRecord()
+            if let cachedIndex = next.firstIndex(where: { $0.id == canonical.id }),
+               next[cachedIndex] != canonicalRecord {
+                // Canonical has no pending writes, photos, deletes or unknown
+                // outcomes (checked above). A newer server revision can safely
+                // replace an older clean cache in this same durable save.
+                // Never overwrite a newer/equal-time divergent local snapshot.
+                guard canonicalRecord.updatedAt > next[cachedIndex].updatedAt else {
+                    held.insert(candidate.id); continue
+                }
+                next[cachedIndex] = canonicalRecord
+            }
+            // Keep the complete historical mirror, including original identity, owner,
+            // notes, photos and timestamps. Only the visible duplicate is aliased.
             evidence[candidate.id] = .init(original: candidate, canonicalId: canonical.id)
             next.removeAll { $0.id == candidate.id }
             if !next.contains(where: { $0.id == canonical.id }) { next.append(canonical.toGrowthStageRecord()) }
