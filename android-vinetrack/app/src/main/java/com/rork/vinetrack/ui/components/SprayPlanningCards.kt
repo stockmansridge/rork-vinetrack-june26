@@ -40,11 +40,13 @@ fun SprayPlanningCards(
     Column(modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Spraying workflow", fontWeight = FontWeight.SemiBold)
-                Text(if (configuration == null)
-                    "No pass configuration recorded. Continue with the normal Tank Mixing → Trip workflow."
-                    else "Continue with Tank Mixing → Trip using the selected pass configuration.", style = MaterialTheme.typography.bodySmall)
-                Text("Sprayer configuration", fontWeight = FontWeight.Medium)
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text("Sprayer pass setup", fontWeight = FontWeight.SemiBold)
+                    SprayInfoHelp("Optional pass setup",
+                        "Single Row treats the two facing vine faces; 2 Row treats both sides of two complete rows from an aisle pass. Leaving it unset retains normal Tank Mixing and Trip. This does not select a true over-row driving route.")
+                }
+                Text(if (configuration == null) "Normal Tank Mixing → Trip" else "${configuration.title} pass selected",
+                    style = MaterialTheme.typography.bodySmall)
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     val choices = listOf<SprayPassConfiguration?>(null) + SprayPassConfiguration.entries
                     choices.forEachIndexed { index, pass ->
@@ -55,18 +57,23 @@ fun SprayPlanningCards(
                 if (configuration != null) {
                     SprayPassIllustration(configuration)
                     Text(if (configuration == SprayPassConfiguration.STANDARD_PASS)
-                        "Sprays the facing sides of two adjacent vine rows. Each pass covers one complete-row equivalent."
-                        else "Both sides of two complete vine rows per pass.", style = MaterialTheme.typography.bodySmall)
-                } else Text("You can continue without recording a pass configuration.", style = MaterialTheme.typography.bodySmall)
+                        "1 row equivalent per pass" else "2 row equivalents per pass",
+                        style = MaterialTheme.typography.bodySmall)
+                }
                 rowSpacingMetres?.let { Text("Vineyard row spacing: ${region.formatLength(it)}") }
                 resolution?.effectiveWorkingWidthMetres?.let { Text("Effective working width: ${region.formatLength(it)}") }
                 resolution?.controllerLitresPer100mTravel?.let { Text("Controller application: ${region.formatVolumePer100Length(it)}") }
-                Text("Physical row spacing stays unchanged. Controller travel and physical vine-row rates are different measures.", style = MaterialTheme.typography.bodySmall)
+                SprayInfoHelp("Controller rate explanation",
+                    "Physical vineyard row spacing stays unchanged. Controller travel and actual vine-row spray rates are different measurements; VineTrack calculates the figure from the selected setup.")
             }
         }
         Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Plan spray volume", fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    Text("Plan spray volume", fontWeight = FontWeight.SemiBold)
+                    SprayInfoHelp("Water planning",
+                        "By Area uses the selected blocks. Only Full Tanks is a legacy planning mode which cannot currently Start Spray; it should not be selected for new One-off applications.")
+                }
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     SprayPlanningMethod.entries.forEachIndexed { index, option ->
                         SegmentedButton(selected = method == option, onClick = { onMethod(option) },
@@ -84,7 +91,8 @@ fun SprayPlanningCards(
                     if (specification == SprayFullTankSpecification.TARGET_AREA)
                         PlanningField("Planned area (${region.areaUnitAbbreviation})", areaText, onArea)
                     else PlanningField("Calibrated rate ($rateUnit)", rateText, onRate)
-                    Text("Planned area only. Actual block/row coverage is recorded during the Trip; no partial-block allocation is assumed.", style = MaterialTheme.typography.bodySmall)
+                    SprayInfoHelp("Full Tank planning",
+                        "Planned area does not establish actual treated rows. Actual coverage is tracked during Trip. This legacy mode cannot currently Start Spray.")
                 } else Text("Calculate the spray using the selected block area.", style = MaterialTheme.typography.bodySmall)
                 if (resolution != null) {
                     Text("Planned area: ${region.formatArea(resolution.plannedAreaHa)}")
