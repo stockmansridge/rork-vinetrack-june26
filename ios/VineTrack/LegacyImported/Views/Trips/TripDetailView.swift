@@ -85,7 +85,7 @@ struct TripDetailView: View {
         if trip.tripFunction == TripFunction.spraying.rawValue {
             return "Spray Trip \(dateStr)"
         }
-        return "Maintenance Trip \(dateStr)
+        return "Maintenance Trip \(dateStr)"
     }
 
     /// A queued occurrence spray is a saved trip, not disposable history.
