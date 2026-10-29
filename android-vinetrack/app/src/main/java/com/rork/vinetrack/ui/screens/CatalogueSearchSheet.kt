@@ -3,9 +3,6 @@ package com.rork.vinetrack.ui.screens
 import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import com.rork.vinetrack.ui.components.rememberPhotoCaptureCoordinator
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -44,18 +41,28 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
     val country = ChemicalRegistration.normaliseCountry(state.selectedVineyard?.country.orEmpty())
     val scrollState = rememberScrollState()
     val capture = rememberPhotoCaptureCoordinator(
-        onPhoto = { uri, _ ->
-            if (uri != null) scope.launch {
-                val bytes = runCatching { context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }?.let { bitmap ->
-                    ByteArrayOutputStream().use { out -> bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out); out.toByteArray() }
-                } }.getOrNull()
-                if (bytes != null) model.discover(vineyard, country, bytes)
-                else photoError = "Unable to read the camera image. Choose another photo."
+        onPhoto = { uri, receipt ->
+            if (uri != null && receipt != null) scope.launch {
+                val bytes = runCatching {
+                    if (!receipt.admitted { }) return@runCatching null
+                    context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }?.let { bitmap ->
+                        ByteArrayOutputStream().use { out ->
+                            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                            out.toByteArray()
+                        }
+                    }
+                }.getOrNull()
+                if (bytes != null && receipt.admitted { }) {
+                    model.discover(vineyard, country, bytes)
+                    // Only mark camera acquisition complete once the discovery
+                    // request/context is durably accepted for this vineyard.
+                    if (model.state.value.context?.vineyardId == vineyard &&
+                        model.state.value.context?.inputKind == "photo") receipt.persisted()
+                } else photoError = "Camera evidence is retained or unavailable. Try again after checking your account."
             }
         },
         onError = { photoError = it },
     )
-    var added by remember { mutableStateOf(false) }
     LaunchedEffect(search.result?.text("revision_id")) {
         if (search.result != null) scrollState.animateScrollTo(scrollState.maxValue)
     }
@@ -123,8 +130,11 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
                     val rates = result.rateRows(key)
                     if (rates.isNotEmpty()) { Text(title, style = MaterialTheme.typography.titleSmall); rates.forEach { Text(it.rateText) } }
                 }
-                Button(onClick = { if (!added) { added = true; model.add(vineyard) { saved -> vm.acceptCatalogueChemical(saved); onSaved(saved); onDismiss() } } }, enabled = !search.busy && !added,
-                    modifier = Modifier.fillMaxWidth()) { Text(if (added) "Adding…" else "Add to Vineyard") }
+                Button(onClick = {
+                    model.add(vineyard) { saved -> vm.acceptCatalogueChemical(saved); onSaved(saved); onDismiss() }
+                }, enabled = !search.busy, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (search.busy) "Adding…" else "Add to Vineyard")
+                }
             }
             if (search.busy) CircularProgressIndicator()
             search.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
