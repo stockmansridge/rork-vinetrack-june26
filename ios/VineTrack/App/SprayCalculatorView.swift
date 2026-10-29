@@ -5183,6 +5183,18 @@ struct CalcChemicalLineCard: View {
                 .disabled(selectedChemical == nil)
                 .accessibilityHint("Opens this product's Chemical Store record to review or edit")
 
+                if let chem = selectedChemical {
+                    HStack(spacing: 7) {
+                        Label(chem.chemicalV3RevisionId == nil ? "Vineyard product" : "VineTrack catalogue",
+                              systemImage: chem.chemicalV3RevisionId == nil ? "house.fill" : "checkmark.seal.fill")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(chem.chemicalV3RevisionId == nil ? Color(red: 0.12, green: 0.37, blue: 0.66) : Color(red: 0.38, green: 0.56, blue: 0.12))
+                        Text(chem.verificationStatus.label)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 // P5 — ROW 2: actions.
                 HStack(spacing: 2) {
                     if let chem = selectedChemical,
