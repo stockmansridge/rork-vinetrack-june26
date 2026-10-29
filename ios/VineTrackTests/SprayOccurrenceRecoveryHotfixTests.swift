@@ -291,4 +291,77 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
         XCTAssertTrue(store.trips.isEmpty)
     }
 
+    @MainActor func testSprayStartLinksTripAndPersistsProvenanceAcrossRestart() throws {
+        let vineyard = UUID(), savedTrip = UUID()
+        var recipe = SprayRecord(vineyardId: vineyard, notes: "Original frozen mix")
+        XCTAssertFalse(recipe.hasRecordedTripLink)
+        recipe.linkToOperationalTrip(savedTrip)
+        XCTAssertEqual(recipe.canonicalTripId, savedTrip)
+        let payload = BackendSprayRecord.upsert(
+            from: recipe, createdBy: UUID(), clientUpdatedAt: recipe.startTime
+        )
+        XCTAssertEqual(payload.tripId, savedTrip, "A planned spray cannot upload with a NULL trip link")
+        recipe.recoveredFromServerOrphan = true
+        let restored = try JSONDecoder().decode(SprayRecord.self, from: JSONEncoder().encode(recipe))
+        XCTAssertEqual(restored.canonicalTripId, savedTrip)
+        XCTAssertTrue(restored.recoveredFromServerOrphan)
+    }
+
+    @MainActor func testVerifiedOrphanRequiresSameOwnerVineyardMinuteBlocksAndValidTanks() throws {
+        let actor = UUID(), vineyard = UUID(), a = UUID(), b = UUID()
+        let time = Date(timeIntervalSince1970: 1_793_239_620)
+        let committed = try TripOccurrencePlanner.commit([
+            .init(vineyardId: vineyard, blockId: a, blockName: "A", label: 1.5, rows: []),
+            .init(vineyardId: vineyard, blockId: b, blockName: "B", label: 2.5, rows: [])
+        ], vineyardId: vineyard)
+        let trip = Trip(vineyardId: vineyard, paddockId: a, paddockName: "Synthetic",
+            paddockIds: [a,b], startTime: time, isActive: false,
+            rowSequence: [1.5,2.5], totalTanks: 2,
+            tripFunction: TripFunction.spraying.rawValue, occurrenceCoverage: committed)
+        func item(actor foundActor: UUID = actor, vineyard foundVineyard: UUID = vineyard,
+                  start: Date = time, blocks: Set<UUID>? = nil,
+                  tankCount: Int = 2, valid: Bool = true,
+                  linkedTrip: UUID? = nil) -> VerifiedOrphanSprayRecovery.Evidence {
+            .init(vineyardId: foundVineyard, tripId: linkedTrip, createdBy: foundActor,
+                  startTime: start, date: start, blockIds: blocks ?? Set([a,b]),
+                  tankCount: tankCount, tanksValid: valid,
+                  isTemplate: false, endTime: nil, deletedAt: nil)
+        }
+        XCTAssertTrue(VerifiedOrphanSprayRecovery.matches(item(), original: trip, actorId: actor))
+        XCTAssertFalse(VerifiedOrphanSprayRecovery.matches(item(actor: UUID()), original: trip, actorId: actor))
+        XCTAssertFalse(VerifiedOrphanSprayRecovery.matches(item(vineyard: UUID()), original: trip, actorId: actor))
+        XCTAssertFalse(VerifiedOrphanSprayRecovery.matches(item(start: time.addingTimeInterval(120)), original: trip, actorId: actor))
+        XCTAssertFalse(VerifiedOrphanSprayRecovery.matches(item(blocks: Set([a])), original: trip, actorId: actor))
+        XCTAssertFalse(VerifiedOrphanSprayRecovery.matches(item(tankCount: 1), original: trip, actorId: actor))
+        XCTAssertFalse(VerifiedOrphanSprayRecovery.matches(item(valid: false), original: trip, actorId: actor))
+        XCTAssertFalse(VerifiedOrphanSprayRecovery.matches(item(linkedTrip: UUID()), original: trip, actorId: actor))
+    }
+
+    @MainActor func testStaleRemoteOrphanCannotOverwriteConfirmedLocalTankLink() throws {
+        let vineyard = UUID(), tripId = UUID(), id = UUID()
+        let tank = SprayTank(tankNumber: 1, waterVolume: 400, sprayRatePerHa: 200,
+            chemicals: [SprayChemical(name: "Synthetic", volumePerTank: 200, ratePer100L: 100)])
+        var local = SprayRecord(id: id, tripId: tripId, vineyardId: vineyard,
+            tanks: [tank], notes: "Original tank mix", recoveredFromServerOrphan: true)
+        let remote = SprayRecord(id: id, vineyardId: vineyard, tanks: [tank],
+            notes: "Stale, unlinked server snapshot")
+        let reconciled = SprayCompletionResolver.preservingServerCompletion(local: local, server: remote)
+        XCTAssertEqual(reconciled.canonicalTripId, tripId)
+        XCTAssertEqual(reconciled.tanks, [tank])
+        XCTAssertEqual(reconciled.notes, local.notes)
+        XCTAssertTrue(reconciled.recoveredFromServerOrphan)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: root))
+        store.selectedVineyardId = vineyard
+        store.sprayRecords = [local]
+        store.applyRemoteSprayRecordUpsert(remote)
+        XCTAssertEqual(store.sprayRecords, [local])
+        // Once the remote has accepted the SAME link, ordinary projection is safe.
+        local.recoveredFromServerOrphan = false
+        XCTAssertEqual(local.canonicalTripId, tripId)
+    }
+
+
 }
