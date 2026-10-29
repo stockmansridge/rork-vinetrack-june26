@@ -166,6 +166,7 @@ struct SprayCalculatorView: View {
     /// Per-product-line area basis for banded jobs. Keyed by `ChemicalLine.id`
     /// because the decision belongs to the individual product, never the job.
     @State private var productAreaBasis: [UUID: SprayProductRateBasis] = [:]
+    @State private var expandedProductBasisLines: Set<UUID> = []
     /// The section the operator has explicitly opened. `nil` follows the flow's
     /// own `activeStep`, so the screen advances by itself as decisions are made.
     @State private var scrollRequest: SprayGuidedStep?
@@ -663,14 +664,18 @@ struct SprayCalculatorView: View {
             let hasInvalidStoredRate = SprayRegisteredUseRates.productUnitReviewMessage(chemical) != nil
                 || (line.operationalRateSource == nil && SprayRegisteredUseRates.hasInvalidStructuredRates(chemical))
             let rate = hasInvalidStoredRate ? 0 : (line.overrideRate ?? seededRate ?? legacyScalarRate ?? 0)
-            let chosenAreaBasis = productAreaBasis[line.id]
+            let chosenAreaBasis = SprayProductRateBasis.forCurrentApplication(
+                isBanded: flow.requiresBandWidth,
+                carrierAreaBasis: carrierAreaBasis,
+                explicitProductChoice: productAreaBasis[line.id]
+            )
             let basis: SprayProductRateBasis = {
                 switch line.basis {
                 case .per100Litres:
                     return .per100Litres
                 case .perHectare:
                     // Legacy `per_hectare` means WHOLE BLOCK — never treated area.
-                    return chosenAreaBasis ?? .wholeBlockArea
+                    return chosenAreaBasis
                 }
             }()
             // THE label rate, carried verbatim into the plan.
@@ -713,7 +718,7 @@ struct SprayCalculatorView: View {
                 // chooses, but on a banded pass it is not yet a decision. The
                 // flag keeps that distinction so the flow can insist on an
                 // answer instead of persisting an unconfirmed default.
-                isAreaBasisExplicit: chosenAreaBasis != nil,
+                isAreaBasisExplicit: true, // Earlier application-area decision is inherited.
                 labelRate: labelRate,
                 // TOTALS are the operator's stock unit's business — 0.53 Kg,
                 // not 526.5 of something unstated. This is the only place base
@@ -2825,17 +2830,32 @@ struct SprayCalculatorView: View {
                     }
 
                     if asksAreaBasis && line.basis == .perHectare {
-                        GuidedProductBasisPicker(
-                            selected: productAreaBasis[line.id] ?? .wholeBlockArea
-                        ) { basis in
-                            withAnimation(.snappy(duration: 0.2)) {
-                                productAreaBasis[line.id] = basis
+                        let resolvedAreaBasis = SprayProductRateBasis.forCurrentApplication(
+                            isBanded: true,
+                            carrierAreaBasis: carrierAreaBasis,
+                            explicitProductChoice: productAreaBasis[line.id]
+                        )
+                        HStack(spacing: 8) {
+                            Text("Rate applies to: \(resolvedAreaBasis == .treatedArea ? "Treated Band Area" : "Whole Block Area")")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 4)
+                            Button(expandedProductBasisLines.contains(line.id) ? "Done" : "Change") {
+                                if expandedProductBasisLines.contains(line.id) {
+                                    expandedProductBasisLines.remove(line.id)
+                                } else {
+                                    expandedProductBasisLines.insert(line.id)
+                                }
                             }
+                            .font(.caption.weight(.medium))
+                            .accessibilityIdentifier("spray.productArea.change.\(line.id)")
                         }
-                        if productAreaBasis[line.id] == nil {
-                            Text("Choose an area basis for this product before continuing.")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
+                        if expandedProductBasisLines.contains(line.id) {
+                            GuidedProductBasisPicker(selected: resolvedAreaBasis) { basis in
+                                withAnimation(.snappy(duration: 0.2)) {
+                                    productAreaBasis[line.id] = basis
+                                }
+                            }
                         }
                     }
 
@@ -2853,6 +2873,9 @@ struct SprayCalculatorView: View {
                     )
                 }
                 .padding(.bottom, 4)
+                if line.id != chemicalLines.last?.id {
+                    Divider().padding(.vertical, 8)
+                }
             }
 
             Button {
@@ -4419,7 +4442,7 @@ struct SprayCalculatorView: View {
     /// until that choice has actually been made.
     private func persistedRateBasis(for line: ChemicalLine, planLine: SprayProductLineResult) -> SprayProductRateBasis {
         if planLine.basis == .per100Litres { return .per100Litres }
-        return productAreaBasis[line.id] ?? .wholeBlockArea
+        return planLine.basis
     }
 
     /// Freezes the product's resistance classification onto this spray line.
@@ -4834,6 +4857,7 @@ struct CalcChemicalLineCard: View {
     @State private var rangeRejection: String?
     @State private var rateSheetOptions: [SpraySelectableRate] = []
     @State private var showsRateSheet: Bool = false
+    @State private var showsRateBasisHelp: Bool = false
     @State private var cachedRateChemical: SavedChemical?
     @State private var cachedRates: [SpraySelectableRate] = []
 
@@ -4924,7 +4948,7 @@ struct CalcChemicalLineCard: View {
     }
 
     /// 100 m is recommended only where the label supports it.
-    private var recommendsHundredMetres: Bool { hasGenuinePer100LVineyardRate }
+    private var recommendsHundredMetres: Bool { false }
 
     /// Move the line onto a basis by selecting a rate that genuinely states it.
     ///
@@ -4986,7 +5010,7 @@ struct CalcChemicalLineCard: View {
     /// this control never restricts the carrier workflow.
     @ViewBuilder
     private var rateBasisControl: some View {
-        let current = selectedOfferedRate?.basis ?? line.basis
+        let current: ChemicalRateBasis? = selectedOfferedRate?.basis ?? (line.overrideRate != nil ? line.basis : nil)
         VStack(alignment: .leading, spacing: 8) {
             Text("Rate basis")
                 .font(.caption.weight(.semibold))
@@ -5005,15 +5029,27 @@ struct CalcChemicalLineCard: View {
                     title: "Per ha",
                     isCurrent: current == .perHectare,
                     isAvailable: hasGenuinePerHectareVineyardRate,
-                    isRecommended: !recommendsHundredMetres && hasGenuinePerHectareVineyardRate
+                    isRecommended: false
                 )
             }
 
-            Text("What this product rate is measured against. Your water volume "
-                 + "basis is chosen in Carrier / Spray Volume and is not changed by this.")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                Text("Choose a label-supported product rate.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Button {
+                    showsRateBasisHelp = true
+                } label: {
+                    Image(systemName: "info.circle")
+                }
+                .accessibilityLabel("About product rate basis")
+                Spacer(minLength: 0)
+            }
+            .alert("Product rate basis", isPresented: $showsRateBasisHelp) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Per 100 L is chemical per 100 litres of spray water. Per ha is chemical per hectare. These are separate from your sprayer's water volume; switching this control never converts a label rate.")
+            }
 
             if !hasGenuinePer100LVineyardRate {
                 Text("This label states no per-100 L grapevine rate.")
@@ -5191,34 +5227,22 @@ struct CalcChemicalLineCard: View {
                 .accessibilityHint("Opens this product's Chemical Store record to review or edit")
 
                 // P5 — ROW 2: actions.
-                HStack(spacing: 2) {
+                HStack(spacing: 8) {
                     if let chem = selectedChemical,
                        let url = Self.normalizedLabelURL(chem.labelURL) {
-                        Button {
-                            openURL(url)
-                        } label: {
-                            Image(systemName: "doc.text.magnifyingglass")
-                                .font(.subheadline)
-                                .foregroundStyle(VineyardTheme.olive)
-                                .frame(width: 44, height: 44)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Open chemical label")
+                        Button("Label") { openURL(url) }
+                            .font(.caption.weight(.semibold))
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .accessibilityLabel("Open chemical label")
                     }
                     if let chem = selectedChemical,
                        let url = Self.normalizedLabelURL(chem.productURL) {
-                        Button {
-                            openURL(url)
-                        } label: {
-                            Image(systemName: "globe")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 44, height: 44)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Open product page (not the official label)")
+                        Button("Product page") { openURL(url) }
+                            .font(.caption.weight(.semibold))
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .accessibilityLabel("Open manufacturer product page")
                     }
                     Spacer(minLength: 0)
                     Button(role: .destructive) {
