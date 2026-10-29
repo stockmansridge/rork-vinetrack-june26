@@ -130,7 +130,7 @@ private fun SprayPassIllustration(configuration: SprayPassConfiguration, modifie
     Canvas(modifier.fillMaxWidth().height(106.dp).semantics {
         contentDescription = if (configuration == SprayPassConfiguration.STANDARD_PASS)
             "Single Row sprayer, arrows pointing left and right toward adjacent vine-row faces"
-        else "Over-row boom with four heads treating both sides of two rows"
+        else "Two Row aisle sprayer treating both sides of two adjacent vine rows"
     }) {
         val over = configuration == SprayPassConfiguration.OVER_ROW
         val rows = if (over) listOf(0.33f, 0.67f) else listOf(0.18f, 0.82f)
