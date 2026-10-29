@@ -49,6 +49,11 @@ final class MobileSprayUXParityUITests: XCTestCase {
             XCTAssertTrue(header.waitForExistence(timeout: 8))
             if !name.exists { reach(header, in: app, down: true); header.tap() }
             XCTAssertEqual(name.value as? String, "Synthetic program")
+            XCTAssertFalse(app.buttons["spray.header.blocks"].isEnabled)
+            XCTAssertFalse(app.buttons["spray.continue.blocks"].isEnabled)
+            app.buttons["spray.operation"].tap()
+            app.buttons[operation].tap()
+            XCTAssertTrue(name.exists, "Program Application stays open until Continue")
         } else {
             XCTAssertTrue(name.waitForExistence(timeout: 8), "New Application must be expanded")
             XCTAssertFalse(app.buttons["spray.header.blocks"].isEnabled)
@@ -232,9 +237,9 @@ final class MobileSprayUXParityUITests: XCTestCase {
         let passes = app.segmentedControls["spray.passConfiguration"]
         XCTAssertTrue(passes.waitForExistence(timeout: 5), app.debugDescription)
         for _ in 0..<12 where !passes.isHittable { scroll.swipeUp() }
-        for title in ["Not Set", "Single Row", "Over-Row", "Not Set"] {
+        for title in ["Not Set", "Single Row", "2 Row", "Not Set"] {
             passes.buttons[title].tap()
-            for stable in ["Not Set", "Single Row", "Over-Row"] { XCTAssertTrue(passes.buttons[stable].exists) }
+            for stable in ["Not Set", "Single Row", "2 Row"] { XCTAssertTrue(passes.buttons[stable].exists) }
         }
         let products = app.buttons["spray.continue.products"]
         for _ in 0..<16 where !products.isHittable { scroll.swipeUp() }

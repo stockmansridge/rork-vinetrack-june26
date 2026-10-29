@@ -141,7 +141,7 @@ struct SprayCanopyAndRatePresetTests {
         #expect(!flow.isComplete(.carrier))
         // The exact words the operator sees.
         #expect(SprayGuidedBlocker.canopyConfirmationRequired.title
-            == "Select canopy type, size and density")
+            == "Confirm canopy")
     }
 
     /// The canopy is asked BEFORE the volume, because the volume is derived
@@ -390,12 +390,14 @@ struct SprayCanopyAndRatePresetTests {
         #expect(rate.labelRange == 150...200)
     }
 
-    @Test("A fixed rate has no band, so nothing is ever flagged against it")
-    func fixedRateIsNeverFlagged() throws {
+    @Test("An unchanged fixed rate is quiet; a different dose retains the existing label warning")
+    func fixedRateWarnsOnlyWhenChanged() throws {
         let rate = try #require(
             SprayRegisteredUseRates.defaultSelection(for: fixedRateProduct(), carrier: .litresPer100Metres)
         )
-        #expect(SprayLabelRangeCheck.warning(appliedBaseValue: 999, rate: rate) == nil)
+        #expect(SprayLabelRangeCheck.warning(appliedBaseValue: 200, rate: rate) == nil)
+        #expect(SprayLabelRangeCheck.warning(appliedBaseValue: 999, rate: rate)
+            == "Entered rate differs from the selected label rate (200 g/100 L). Check the applicable label before spraying.")
     }
 
     // MARK: - 10, 13, 18. Selecting a point calculates, immediately

@@ -479,4 +479,18 @@ struct SprayRateBasisPreferenceTests {
         #expect(Set(SprayRateBasisPreference.order(for: .litresPerHectare))
                 == Set([.per100Litres, .perHectare]))
     }
+    @Test("A manually entered amount differing from a fixed label rate is highlighted")
+    func fixedLabelRateDifferenceIsVisible() {
+        let label = SpraySelectableRate(
+            id: UUID(), origin: .registeredUse,
+            crop: "Grapevines", targetRaw: "Sucker control",
+            label: "Spotlight Plus", basis: .per100Litres,
+            seed: .value(300), displayText: "300 mL/100 L",
+            labelUnit: "mL"
+        )
+        let warning = SprayLabelRangeCheck.warning(appliedBaseValue: 140, rate: label)
+        #expect(warning?.contains("300 mL/100 L") == true)
+        #expect(SprayLabelRangeCheck.warning(appliedBaseValue: 300, rate: label) == nil)
+    }
+
 }

@@ -62,9 +62,19 @@ final class SubscriptionService {
     /// offline grace window. Loaded on `login`.
     private(set) var lastVerification: EntitlementVerificationSnapshot?
 
+    private(set) var isVerifyingInitialCustomer = false
+    private var identityGeneration = UUID()
     private var currentUserId: UUID?
     private var didConfigure: Bool = false
     private var customerInfoStreamTask: Task<Void, Never>?
+    private let identifyCustomer: ((UUID) async throws -> Void)?
+    private let fetchInitialCustomer: (() async throws -> CustomerInfo)?
+
+    init(identifyCustomer: ((UUID) async throws -> Void)? = nil,
+         fetchInitialCustomer: (() async throws -> CustomerInfo)? = nil) {
+        self.identifyCustomer = identifyCustomer
+        self.fetchInitialCustomer = fetchInitialCustomer
+    }
 
     var isSubscribed: Bool {
         guard let info = customerInfo else { return false }
@@ -170,6 +180,7 @@ final class SubscriptionService {
     }
 
     var hasResolvedStatus: Bool {
+        guard !isVerifyingInitialCustomer else { return false }
         switch status {
         case .subscribed, .notSubscribed, .failure: return true
         case .unknown, .loading: return false
@@ -199,7 +210,9 @@ final class SubscriptionService {
         customerInfoStreamTask = Task { [weak self] in
             for await info in Purchases.shared.customerInfoStream {
                 await MainActor.run {
-                    guard let self else { return }
+                    guard let self, !self.isVerifyingInitialCustomer,
+                          let userId = self.currentUserId,
+                          Purchases.shared.appUserID.caseInsensitiveCompare(userId.uuidString) == .orderedSame else { return }
                     self.applyCustomerInfo(info)
                 }
             }
@@ -208,16 +221,34 @@ final class SubscriptionService {
 
     /// Identify RevenueCat with the Supabase auth user UUID.
     func login(userId: UUID, userCreatedAt: Date?) async {
+        let generation = UUID()
+        identityGeneration = generation
+        isVerifyingInitialCustomer = true
+        status = .loading
+        customerInfo = nil
+        defer { if identityGeneration == generation { isVerifyingInitialCustomer = false } }
         self.userCreatedAt = userCreatedAt
         self.currentUserId = userId
         lastVerification = EntitlementVerificationStore.shared.load(for: userId)
-        configureIfNeeded()
-        guard didConfigure else { return }
+        if identifyCustomer == nil || fetchInitialCustomer == nil { configureIfNeeded() }
+        guard didConfigure || (identifyCustomer != nil && fetchInitialCustomer != nil) else { return }
         do {
-            let result = try await Purchases.shared.logIn(userId.uuidString)
-            applyCustomerInfo(result.customerInfo)
-            await refreshOfferings()
+            if let identifyCustomer { try await identifyCustomer(userId) }
+            else { _ = try await Purchases.shared.logIn(userId.uuidString) }
+            guard identityGeneration == generation, currentUserId == userId else { return }
+            // Verify the identified customer before the initial routing decision.
+            // No purchase, restore, or server permission override is performed.
+            if let fetchInitialCustomer {
+                let info = try await fetchInitialCustomer()
+                guard identityGeneration == generation, currentUserId == userId else { return }
+                applyCustomerInfo(info)
+            } else {
+                await refreshCustomerInfo(fetchCurrent: true)
+            }
+            guard identityGeneration == generation, currentUserId == userId else { return }
+            if didConfigure { await refreshOfferings() }
         } catch {
+            guard identityGeneration == generation, currentUserId == userId else { return }
             lastError = error.localizedDescription
             status = .failure(error.localizedDescription)
         }
@@ -225,6 +256,9 @@ final class SubscriptionService {
 
     /// Reset RevenueCat identity on sign out.
     func logout() async {
+        identityGeneration = UUID()
+        isVerifyingInitialCustomer = false
+        customerInfo = nil
         userCreatedAt = nil
         currentUserId = nil
         guard didConfigure else { return }
@@ -241,14 +275,18 @@ final class SubscriptionService {
 
     // MARK: - Refresh
 
-    func refreshCustomerInfo() async {
+    func refreshCustomerInfo(fetchCurrent: Bool = false) async {
+        let generation = identityGeneration
+        let userId = currentUserId
         configureIfNeeded()
         guard didConfigure else { return }
         status = .loading
         do {
-            let info = try await Purchases.shared.customerInfo()
+            let info = try await Purchases.shared.customerInfo(fetchPolicy: fetchCurrent ? .fetchCurrent : .cachedOrFetched)
+            guard identityGeneration == generation, currentUserId == userId else { return }
             applyCustomerInfo(info)
         } catch {
+            guard identityGeneration == generation, currentUserId == userId else { return }
             lastError = error.localizedDescription
             status = .failure(error.localizedDescription)
         }

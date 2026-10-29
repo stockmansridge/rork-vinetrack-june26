@@ -3,6 +3,26 @@ import XCTest
 @testable import VineTrack
 
 final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
+    @MainActor func testRejectedActivationCompletesCallbackExactlyOnceWithoutChangingOriginalTrip() {
+        let trip = Trip(vineyardId: UUID(), paddockName: "Original synthetic plan", isActive: false)
+        let tracking = TripTrackingService()
+        var callbacks: [Bool] = []
+        tracking.activateSavedTrip(trip) { callbacks.append($0) }
+        XCTAssertEqual(callbacks, [false], "Missing store must finish the recovery spinner")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: root))
+        store.trips = [trip]
+        store.selectedVineyardId = trip.vineyardId
+        tracking.configure(store: store, locationService: LocationService())
+        callbacks = []
+        tracking.activateSavedTrip(trip) { callbacks.append($0) }
+        XCTAssertEqual(callbacks, [false], "Absent recipe must finish without replacement")
+        XCTAssertEqual(store.trips, [trip])
+        XCTAssertTrue(store.sprayRecords.isEmpty)
+        XCTAssertNil(store.deviceActiveTripId)
+    }
+
     @MainActor func testOccurrenceWalReleasesOnlyLegacyGateWithExactDurableParentAndRetainsEvidence() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

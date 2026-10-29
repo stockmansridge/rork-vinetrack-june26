@@ -85,6 +85,8 @@ struct NewBackendRootView: View {
                     markDisclaimerAcceptedLocally()
                     disclaimerAccepted = true
                 }
+            } else if subscription.isVerifyingInitialCustomer {
+                subscriptionLoadingView
             } else if entitlementGate.hasAccess {
                 // Combined access gate (Phase 2A): Supabase entitlement first,
                 // then the RevenueCat / legacy-trial / offline-cache fallbacks.
@@ -244,6 +246,9 @@ struct NewBackendRootView: View {
                   didApplyDefaultVineyard,
                   !didCheckDisclaimer else { return }
             await checkDisclaimer()
+        }
+        .onChange(of: subscription.isVerifyingInitialCustomer) { _, verifying in
+            if !verifying { Task { await entitlementGate.refresh(force: true) } }
         }
         .onChange(of: subscription.status) { _, _ in
             // A RevenueCat entitlement change (purchase, renewal, restore,
@@ -574,6 +579,7 @@ struct NewBackendRootView: View {
         if store.selectedVineyard == nil { return .noVineyards }
         if !didCheckDisclaimer { return .disclaimer }
         if !disclaimerAccepted { return .disclaimer }
+        if subscription.isVerifyingInitialCustomer { return .subscriptionLoading }
         if entitlementGate.hasAccess {
             if let vid = store.selectedVineyardId,
                entitlementGate.isVineyardConfirmedInaccessible(vid) {

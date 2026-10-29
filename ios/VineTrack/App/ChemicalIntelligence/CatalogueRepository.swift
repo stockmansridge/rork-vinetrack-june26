@@ -23,6 +23,19 @@ final class CatalogueRepository: CatalogueBackendProtocol {
         guard row.id.lowercased() == id.lowercased() else { throw BackendRepositoryError.emptyResponse }
         return row
     }
+    /// Read-only current approval pointer. A newer catalogue revision must never
+    /// rewrite a vineyard's product rate or any historical spray by itself.
+    func approvedRevisionId(productId: UUID) async throws -> String? {
+        let row: CatalogueWire = try await client.from("chemical_v3_products")
+            .select("id,approved_revision_id")
+            .eq("id", value: productId.uuidString)
+            .single().execute().value
+        guard row.id.lowercased() == productId.uuidString.lowercased() else {
+            throw BackendRepositoryError.emptyResponse
+        }
+        return row.text("approved_revision_id")
+    }
+
     /// Display-only fallback. Never changes the saved chemical or its linked revision.
     func resolvedFrontLabelPath(for exactRevision: CatalogueWire) async throws -> String? {
         try await CatalogueFrontLabelResolver.resolve(exactRevision: exactRevision, product: { id in

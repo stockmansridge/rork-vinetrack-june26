@@ -7,7 +7,8 @@ import kotlinx.serialization.SerialName
 @Serializable
 enum class SprayPassConfiguration(val title: String, val rowEquivalents: Double) {
     @SerialName("standard_pass") STANDARD_PASS("Single Row", 1.0),
-    @SerialName("over_row_two_rows") OVER_ROW("Over-Row", 2.0),
+    // Historical enum and wire name remain unchanged; this is 2-row aisle coverage, NOT true over-row travel.
+    @SerialName("over_row_two_rows") OVER_ROW("2 Row", 2.0),
 }
 
 @Serializable

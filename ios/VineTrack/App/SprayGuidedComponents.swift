@@ -299,14 +299,20 @@ struct ResistanceFindingRow: View {
 /// difference between whole-block and treated-band hectares is a 4× difference
 /// in product, so it is not a detail the operator should have to go looking for.
 struct GuidedProductBasisPicker: View {
-    let selected: SprayProductRateBasis
+    let selected: SprayProductRateBasis?
     let onSelect: (SprayProductRateBasis) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Apply this product rate to:")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                Text("Chemical dose applies to")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                SprayFieldHelp(
+                    title: "Chemical product area",
+                    message: "This only applies to hectare-rated products in a banded spray. Whole block uses gross hectares; treated band uses the actual treated hectares. It is independent of the water-volume area choice."
+                )
+            }
             HStack(spacing: 8) {
                 ForEach(SprayProductRateBasis.areaChoices, id: \.self) { basis in
                     GuidedChip(

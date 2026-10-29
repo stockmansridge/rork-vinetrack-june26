@@ -563,15 +563,15 @@ final class TripTrackingService {
         at activationTime: Date = Date(),
         onStarted: @escaping (Bool) -> Void = { _ in }
     ) {
-        guard let store else { return }
+        guard let store else { onStarted(false); return }
         guard admitTripChange(store.trips.first(where: { $0.id == savedTrip.id })) else { onStarted(false); return }
         guard store.selectedVineyardId != nil else {
             errorMessage = "No vineyard selected."
-            return
+            onStarted(false); return
         }
         if store.deviceActiveTripId != nil {
             errorMessage = deviceTripConflictMessage(in: store)
-            return
+            onStarted(false); return
         }
         guard !savedTrip.isActive,
               savedTrip.endTime == nil,
@@ -584,7 +584,7 @@ final class TripTrackingService {
                   $0.tripId == savedTrip.id && !$0.isTemplate && $0.endTime == nil
               }) else {
             errorMessage = "Only a Not Started spray job can be activated."
-            return
+            onStarted(false); return
         }
 
         let recipe = store.sprayRecords[recordIndex]
@@ -681,7 +681,7 @@ final class TripTrackingService {
                 ))
             } catch {
                 errorMessage = "Couldn't save the Trip start on this device. Free up storage and retry."
-                return
+                onStarted(false); return
             }
         }
         // Persist both linked operational records before GPS or sync callbacks
@@ -689,7 +689,7 @@ final class TripTrackingService {
         // snapshots are deliberately untouched.
         guard store.updateSprayRecord(record) else {
             errorMessage = record.operationalPlanningBlocker ?? "Couldn't save the spray start. Keep this screen open and retry."
-            return
+            onStarted(false); return
         }
         store.updateTrip(activated)
         store.claimDeviceTrip(activated.id)

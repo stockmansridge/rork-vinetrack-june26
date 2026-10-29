@@ -95,11 +95,28 @@ object SprayRegisteredUseRates {
 
     /** Structured rates are authoritative if any registered-use row carries a rate. */
     fun hasStructuredRates(chemical: SavedChemical): Boolean =
-        chemical.registeredUses.orEmpty().any { it.rates.isNotEmpty() }
+        hasCatalogueEvidence(chemical) || chemical.registeredUses.orEmpty().any { it.rates.isNotEmpty() }
 
     /** Vineyard rates only, plus legitimate product-level rates; legacy only when structured rates are absent. */
-    fun vineyardRates(chemical: SavedChemical): List<SpraySelectableRate> =
-        if (hasStructuredRates(chemical)) structuredVineyardRates(chemical) else legacyRates(chemical)
+    fun hasCatalogueEvidence(chemical: SavedChemical): Boolean =
+        chemical.rates is CatalogueRateEvidence || chemical.chemicalV3RevisionId != null
+
+    fun vineyardRates(chemical: SavedChemical): List<SpraySelectableRate> {
+        if (hasCatalogueEvidence(chemical)) {
+            if (chemical.chemicalV3ReviewStatusSnapshot != "approved" || chemical.chemicalV3RevisionId == null) return emptyList()
+            val entries = (chemical.rates as? CatalogueRateEvidence)?.selectableRates().orEmpty()
+                .filter { compatibleUnit(it.unit, chemical.unit) }
+            return entries.flatMap { entry ->
+                val range = entry.amount as? SprayRateAmount.Range
+                if (range == null || entries.count { it.basis == entry.basis } != 1) listOf(entry)
+                else listOf(entry) + presetPoints(range.minimum, range.maximum).map { (preset, value) ->
+                    entry.copy(id = stableId("${entry.id}|${preset.raw}"), amount = SprayRateAmount.Fixed(value),
+                        displayText = "$value ${entry.unit}${basisSuffix(entry.basis)}", preset = preset)
+                }
+            }
+        }
+        return if (hasStructuredRates(chemical)) structuredVineyardRates(chemical) else legacyRates(chemical)
+    }
 
     fun selectableVineyardRates(chemical: SavedChemical): List<SpraySelectableRate> =
         vineyardRates(chemical).filter { it.isSelectable }
@@ -141,6 +158,7 @@ object SprayRegisteredUseRates {
 
     /** Finds the offered row represented by a confirmed Chemical Store default without converting it. */
     fun confirmedSelection(chemical: SavedChemical): SpraySelectableRate? {
+        if (hasCatalogueEvidence(chemical)) return null
         val slots = ChemicalDefaultRateValidity.validSlots(chemical.defaultRates)
         if (slots.size != 1) return null
         val slot = slots.single()

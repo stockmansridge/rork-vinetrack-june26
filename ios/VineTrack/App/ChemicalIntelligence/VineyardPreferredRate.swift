@@ -23,12 +23,12 @@ nonisolated struct VineyardPreferredRate: Codable, Sendable, Hashable {
 
 /// Shared operational priority. Lower tiers retain the existing registered selection workflow.
 nonisolated enum OperationalRateResolver {
-    enum Source: String, Codable, Sendable { case programStep, vineyardPreferred, confirmedDefault, operatorPlanning }
+    enum Source: String, Codable, Sendable { case programStep, vineyardPreferred, confirmedDefault, operatorPlanning, savedApplication }
     struct Selection: Sendable, Equatable {
         let rate: VineyardPreferredRate
         let source: Source
         func sourceText(vineyard: String) -> String {
-            switch source { case .programStep: return "Program Step rate"; case .vineyardPreferred: return "\(vineyard) preferred rate"; case .confirmedDefault: return "Confirmed/default rate"; case .operatorPlanning: return "Operator-entered rate" }
+            switch source { case .programStep: return "Program Step rate"; case .vineyardPreferred: return "\(vineyard) preferred rate"; case .confirmedDefault: return "Confirmed/default rate"; case .operatorPlanning: return "Operator-entered rate"; case .savedApplication: return "Saved application rate" }
         }
     }
     static func rateFromProgram(_ product: SprayChemical) -> VineyardPreferredRate? {

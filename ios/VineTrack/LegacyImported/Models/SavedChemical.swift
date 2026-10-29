@@ -251,6 +251,8 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
     var entrySource: String?
     var chemicalV3RevisionId: UUID? = nil
     var chemicalV3ProductId: UUID? = nil
+    var chemicalV3ReviewStatusSnapshot: String? = nil
+    var chemicalV3LabelRates: ChemicalV3LabelRateOptions? = nil
     var backendActivityGroupScheme: String? = nil
     var backendActivityGroups: [String] = []
 
@@ -366,7 +368,7 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         case chemicalIntelligence
         case masterChemicalId, masterSourceRevision
         case vineyardPreferredRate, vineyardPreferredRatePending, vineyardPreferredRateOnly, savedChemicalGeneralPending
-        case defaultRates, entrySource, chemicalV3RevisionId, chemicalV3ProductId, backendActivityGroupScheme, backendActivityGroups
+        case defaultRates, entrySource, chemicalV3RevisionId, chemicalV3ProductId, chemicalV3ReviewStatusSnapshot, chemicalV3LabelRates, backendActivityGroupScheme, backendActivityGroups
     }
 
     nonisolated init(from decoder: Decoder) throws {
@@ -434,6 +436,8 @@ nonisolated struct SavedChemical: Codable, Identifiable, Sendable, Hashable {
         entrySource = try? container.decodeIfPresent(String.self, forKey: .entrySource)
         chemicalV3RevisionId = try? container.decodeIfPresent(UUID.self, forKey: .chemicalV3RevisionId)
         chemicalV3ProductId = try? container.decodeIfPresent(UUID.self, forKey: .chemicalV3ProductId)
+        chemicalV3ReviewStatusSnapshot = try? container.decodeIfPresent(String.self, forKey: .chemicalV3ReviewStatusSnapshot)
+        chemicalV3LabelRates = try? container.decodeIfPresent(ChemicalV3LabelRateOptions.self, forKey: .chemicalV3LabelRates)
         backendActivityGroupScheme = try? container.decodeIfPresent(String.self, forKey: .backendActivityGroupScheme)
         backendActivityGroups = (try? container.decodeIfPresent([String].self, forKey: .backendActivityGroups)) ?? []
     }

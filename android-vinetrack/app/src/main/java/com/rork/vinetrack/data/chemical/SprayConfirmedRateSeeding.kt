@@ -31,6 +31,7 @@ object SprayConfirmedRateSeeding {
      * ```
      */
     fun seedFor(chemical: SavedChemical): Seed? {
+        if (SprayRegisteredUseRates.hasCatalogueEvidence(chemical)) return null
         if (SprayRegisteredUseRates.productUnitReviewMessage(chemical) != null) return null
         val resolution = ChemicalSprayDefaultHandoff.resolutionFor(chemical.defaultRates) ?: return null
         if (SprayRegisteredUseRates.hasStructuredRates(chemical)) {
@@ -59,13 +60,13 @@ object SprayConfirmedRateSeeding {
 
     /** The confirmed band governing a line on [basis], if any. */
     fun rangeFor(chemical: SavedChemical, basis: SprayCalculator.RateBasis): ChemicalSprayRangeSelection? =
-        ChemicalSprayDefaultHandoff.resolutions(chemical.defaultRates)
+        (if (SprayRegisteredUseRates.hasCatalogueEvidence(chemical)) emptyList() else ChemicalSprayDefaultHandoff.resolutions(chemical.defaultRates))
             .firstOrNull { it.basis == basis }
             ?.selectionOrNull
 
     /** The confirmed scalar governing a line on [basis], if any. */
     fun prefillFor(chemical: SavedChemical, basis: SprayCalculator.RateBasis): ChemicalSprayPrefill? =
-        ChemicalSprayDefaultHandoff.resolutions(chemical.defaultRates)
+        (if (SprayRegisteredUseRates.hasCatalogueEvidence(chemical)) emptyList() else ChemicalSprayDefaultHandoff.resolutions(chemical.defaultRates))
             .firstOrNull { it.basis == basis }
             ?.prefillOrNull
 

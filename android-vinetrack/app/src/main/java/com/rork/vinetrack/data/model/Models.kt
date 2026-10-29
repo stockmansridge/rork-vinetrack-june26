@@ -2200,6 +2200,7 @@ data class SavedChemical(
     // offers a diff instead. Null forever is valid (unlinked chemical).
     @SerialName("master_chemical_id") val masterChemicalId: String? = null,
     @SerialName("master_source_revision") val masterSourceRevision: Int? = null,
+    @SerialName("chemical_v3_review_status_snapshot") val chemicalV3ReviewStatusSnapshot: String? = null,
     @SerialName("chemical_v3_revision_id") val chemicalV3RevisionId: String? = null,
     @SerialName("chemical_v3_product_id") val chemicalV3ProductId: String? = null,
     @SerialName("entry_source") val entrySource: String? = null,

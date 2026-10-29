@@ -15,7 +15,14 @@ object CatalogueLegacyRatesSerializer : KSerializer<List<ChemicalRate>> {
     override fun deserialize(decoder: Decoder): List<ChemicalRate> {
         val jsonDecoder = decoder as? JsonDecoder ?: return delegate.deserialize(decoder)
         val element = jsonDecoder.decodeJsonElement()
-        return if (element is JsonArray) runCatching { jsonDecoder.json.decodeFromJsonElement(delegate, element) }.getOrDefault(emptyList()) else emptyList()
+        return when (element) {
+            is JsonObject -> CatalogueRateEvidence(element)
+            is JsonArray -> runCatching { jsonDecoder.json.decodeFromJsonElement(delegate, element) }.getOrDefault(emptyList())
+            else -> emptyList()
+        }
     }
-    override fun serialize(encoder: Encoder, value: List<ChemicalRate>) = delegate.serialize(encoder, value)
+    override fun serialize(encoder: Encoder, value: List<ChemicalRate>) {
+        if (value is CatalogueRateEvidence && encoder is JsonEncoder) encoder.encodeJsonElement(value.original)
+        else delegate.serialize(encoder, value)
+    }
 }

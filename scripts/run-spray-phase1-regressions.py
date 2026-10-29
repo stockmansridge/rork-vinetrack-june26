@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-CLASSES = ['SprayGuidedFlowTest', 'SprayBandedGroundCarrierTest']
+CLASSES = sys.argv[1:] or ['SprayGuidedFlowTest', 'SprayBandedGroundCarrierTest']
 
 
 def main():

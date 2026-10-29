@@ -7,8 +7,12 @@ struct TripDetailView: View {
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(NetworkMonitor.self) private var network
     @Environment(TripSyncService.self) private var tripSync
+    @Environment(TripTrackingService.self) private var tracking
     @Environment(\.dismiss) private var dismiss
     @State private var showSummary: Bool = false
+    @State private var showSavedSprayStartConfirmation = false
+    @State private var isRecoveringSavedSpray = false
+    @State private var savedSprayRecoveryError: String?
     @State private var showDeleteConfirmation: Bool = false
     @State private var position: MapCameraPosition = .automatic
     @State private var isExporting: Bool = false
@@ -40,6 +44,16 @@ struct TripDetailView: View {
         store.trips.first(where: { $0.id == trip.id }) ?? trip
     }
 
+    /// Recover the original plan only; never mint a substitute trip.
+    private var mayRecoverSavedOccurrenceSpray: Bool {
+        let item = currentTrip
+        return item.coverageBasis == .occurrence && !item.isActive && item.endTime == nil
+            && item.tripFunction == TripFunction.spraying.rawValue
+            && item.pathPoints.isEmpty && item.totalDistance == 0
+            && item.completedPaths.isEmpty && item.skippedPaths.isEmpty
+            && item.tankSessions.isEmpty
+    }
+
     private var pinsForTrip: [VinePin] {
         store.pins.filter { $0.tripId == trip.id }
     }
@@ -65,6 +79,7 @@ struct TripDetailView: View {
             return record.sprayReference
         }
         let dateStr = trip.startTime.formattedTZ(date: .abbreviated, time: .omitted, in: tz)
+        if trip.tripFunction == TripFunction.spraying.rawValue { return "Spray Trip \(dateStr)" }
         return "Maintenance Trip \(dateStr)"
     }
 
@@ -94,6 +109,32 @@ struct TripDetailView: View {
                     }
                 }
                 .padding(.vertical, 4)
+            }
+
+            if mayRecoverSavedOccurrenceSpray {
+                Section {
+                    Button {
+                        showSavedSprayStartConfirmation = true
+                    } label: {
+                        Label("Recover & Start This Spray Trip", systemImage: "arrow.clockwise.circle.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    .disabled(isRecoveringSavedSpray)
+                    .accessibilityIdentifier("trip.recoverSavedOccurrenceSpray")
+                    if isRecoveringSavedSpray {
+                        ProgressView("Checking original saved actions…")
+                    }
+                    Text("Uses this trip's existing \(currentTrip.rowSequence.count)-path plan and saved identifiers. Never starts a replacement trip.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else if currentTrip.isActive && tracking.activeTrip?.id == currentTrip.id {
+                Section {
+                    Button("Go to Active Trip") { dismiss() }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
             }
 
             Section("Trip Summary") {
@@ -355,7 +396,8 @@ struct TripDetailView: View {
                     .disabled(isExporting)
                 }
             }
-            if accessControl.canDeleteOperationalRecords && !trip.isActive {
+            // Queued occurrence plans retain their recovery evidence.
+            if accessControl.canDeleteOperationalRecords && !currentTrip.isActive && !mayRecoverSavedOccurrenceSpray {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) {
                         showDeleteConfirmation = true
@@ -396,6 +438,20 @@ struct TripDetailView: View {
             Button("OK", role: .cancel) { sprayExportError = nil }
         } message: {
             Text(sprayExportError ?? "")
+        }
+        .confirmationDialog("Start Original Saved Spray?", isPresented: $showSavedSprayStartConfirmation) {
+            Button("Recover and Start Original Trip") { recoverAndStartOriginalSpray() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Checks the saved spray recipe and occurrence journal before activation. If recovery cannot be verified, the original data remains queued.")
+        }
+        .alert("Spray Recovery Unavailable", isPresented: Binding(
+            get: { savedSprayRecoveryError != nil },
+            set: { if !$0 { savedSprayRecoveryError = nil } }
+        )) {
+            Button("OK", role: .cancel) { savedSprayRecoveryError = nil }
+        } message: {
+            Text(savedSprayRecoveryError ?? "")
         }
         .alert("Delete Trip", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
@@ -442,6 +498,35 @@ struct TripDetailView: View {
         }
         .onChange(of: trip.pathPoints.count) { _, _ in
             rebuildDisplayTrail()
+        }
+    }
+
+    /// Rehydrate and activate only the exact saved pair through its journal.
+    private func recoverAndStartOriginalSpray() {
+        guard mayRecoverSavedOccurrenceSpray, !isRecoveringSavedSpray else { return }
+        isRecoveringSavedSpray = true
+        do {
+            try store.reconcileLegacySpraySaves()
+            guard let original = store.trips.first(where: { $0.id == trip.id }),
+                  store.sprayRecords.contains(where: {
+                      $0.tripId == original.id && !$0.isTemplate && $0.endTime == nil
+                  }) else {
+                savedSprayRecoveryError = "The original spray recipe is not available in this device's Chemical/Spray Store. Its queued trip has not been altered. Do not delete or create another spray; recover the original saved evidence before starting."
+                isRecoveringSavedSpray = false
+                return
+            }
+            tracking.activateSavedTrip(original) { success in
+                isRecoveringSavedSpray = false
+                if success {
+                    dismiss()
+                } else {
+                    savedSprayRecoveryError = tracking.errorMessage ??
+                        "The original occurrence journal could not be verified. Your saved trip is retained."
+                }
+            }
+        } catch {
+            isRecoveringSavedSpray = false
+            savedSprayRecoveryError = "The original saved spray could not be reconciled. Nothing was deleted or replaced. \(error.localizedDescription)"
         }
     }
 

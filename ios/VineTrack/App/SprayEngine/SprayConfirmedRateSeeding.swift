@@ -37,7 +37,8 @@ nonisolated enum SprayConfirmedRateSeeding {
         for chemical: SavedChemical,
         basis: ChemicalRateBasis
     ) -> ChemicalSprayRateHandoff.Resolution? {
-        ChemicalSprayRateHandoff.resolutions(chemical.defaultRates)
+        guard chemical.chemicalV3RevisionId == nil, chemical.chemicalV3LabelRates == nil else { return nil }
+        return ChemicalSprayRateHandoff.resolutions(chemical.defaultRates)
             .first { lineBasis($0.basis) == basis }
     }
 
@@ -94,7 +95,25 @@ nonisolated enum SprayConfirmedRateSeeding {
             return
         }
 
+        if chemical.chemicalV3RevisionId != nil || chemical.chemicalV3LabelRates != nil {
+            let offered = SprayRegisteredUseRates.selectableVineyardRates(for: chemical).filter { !$0.isRangePreset }
+            let selection = offered.count == 1 ? offered.first : nil
+            line.selectedRateId = selection?.id ?? UUID()
+            line.basis = selection?.basis ?? fallbackBasis
+            return
+        }
         guard let confirmed = ChemicalSprayRateHandoff.resolution(chemical.defaultRates) else {
+            // Approved V3 may carry both distinct label bases, neither of which
+            // is a vineyard preference. A water-volume configuration does not
+            // authorize choosing a chemical dose basis on the operator's behalf.
+            if chemical.chemicalV3ReviewStatusSnapshot == "approved",
+               chemical.chemicalV3RevisionId != nil,
+               let options = chemical.chemicalV3LabelRates,
+               Set(options.validOptions.compactMap { $0.sprayBasis }).count > 1 {
+                line.selectedRateId = UUID()
+                line.basis = fallbackBasis
+                return
+            }
             let selection = SprayRegisteredUseRates.defaultSelection(for: chemical, preferring: order)
             line.selectedRateId = selection?.id ?? UUID()
             line.basis = selection?.basis ?? fallbackBasis
@@ -149,6 +168,16 @@ nonisolated enum SprayConfirmedRateSeeding {
         if let selection = OperationalRateResolver.resolve(program: program, chemical: chemical), selection.source != .confirmedDefault {
             applyOperational(selection, to: &line)
         }
+        return line
+    }
+
+    /// Historical applications restore their recorded amount and unit, never today's preferences.
+    static func restoredLine(for chemical: SavedChemical, recorded: SprayChemical) -> ChemicalLine {
+        var line = ChemicalLine(chemicalId: chemical.id, selectedRateId: UUID(),
+            basis: recorded.reportedRateBasis == .per100Litres ? .per100Litres : .perHectare,
+            overrideRate: recorded.reportedRateBaseValue)
+        line.operationalRateUnit = recorded.unit == .litres ? "L" : recorded.unit == .kilograms ? "kg" : recorded.unit.rawValue
+        line.operationalRateSource = .savedApplication
         return line
     }
 

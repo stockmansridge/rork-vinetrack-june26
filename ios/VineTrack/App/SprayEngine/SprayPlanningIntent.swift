@@ -4,7 +4,8 @@ import Foundation
 nonisolated enum SprayPassConfiguration: String, Codable, Sendable, CaseIterable {
     case standardPass = "standard_pass"
     case overRow = "over_row_two_rows"
-    var title: String { self == .standardPass ? "Single Row" : "Over-Row" }
+    // Historical over_row_two_rows is TWO-ROW AISLE coverage, not a true over-row travel route.
+    var title: String { self == .standardPass ? "Single Row" : "2 Row" }
     var rowEquivalents: Double { self == .standardPass ? 1 : 2 }
 }
 

@@ -1,5 +1,89 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Latest main / PR #11, #16, #17 reconciliation — 29 October 2026 — BUILDS AND FOCUSED LOGIC GREEN; iOS UI RUN INCOMPLETE; ORIGINAL HANDSET RECOVERY OPEN
+
+### Exact provenance and integration method
+
+- Local branch remains `main`; current managed HEAD/source parent at final inspection is **`38a33fb81c81ab58fafe11a04116a2841ee09344`**, the preceding #12 emergency checkpoint, NOT a commit containing this integration. The final managed integration commit does not exist yet at inspection; no manual commit/push was attempted. The 44-file SHA256 manifest below identifies this turn's native/test/runner source.
+- Public refs were queried before integration and rechecked after final builds, unchanged: main **`12dcb10e4724852c21af5f840be293d3a390a882`**; #11 **`017ae7b23eb7fe82bb76a69765214f37deb38167`**; #12 **`7060f992a90e1225eaa2eb42700ad626923f3fe7`**; #16 **`4cfda28e908c4a87ccf96ef5f22c2657a02b51ee`**; #17 **`c794e4c2ab43d8dee9b1f65a1f02ca38e16b5810`**.
+- Downloaded main's exact archive and the reviewed PR diffs/metadata over HTTPS; no `git fetch`, checkout, reset, cherry-pick or GitHub merge. Local origin is the managed Rork router. Comparing native source with that main archive found only local generated configuration differences (`Config.swift`, Android configuration/environment); functional native source already matched main before these edits. Those local files were retained.
+- #11 base `93fe2521f624c1d676b5aa88d71192a29a5dfcc6`; #16 and #17 base `12dcb10e4724852c21af5f840be293d3a390a882`. All three were open/unmerged when reviewed. All three diffs passed a dry apply check. The retained exact-context helper applied 27 reviewed #11 file deltas; #16/#17 were integrated surgically into current source. PR #12's newer exact-parent legacy admission and read-only duplicate scan were retained, not duplicated or replaced.
+
+### Semantic reconciliation, not just a clean textual apply
+
+- Calculator: compact product/rate controls with See details, Label and Product Page actions; separate Per ha and Per 100 L label options; neutral minimum/midpoint/maximum range choices. Application remains available and requires deliberate operation confirmation on Program as well as One-off starts. Existing explicit Continue progression remains; selection does not automatically close the current card. Reviewed pass-profile wording is `2 Row`.
+- New Banded area-based lines default to treated area with a visible whole-block override. Per-100-L products remain volume-based. Historical saved applications do not receive the new Banded default, including Android direct non-template job prefills.
+- Android previously discarded object-shaped `rates`. It now retains the original V3 JSON through cache encode/decode, including unknown fields, without treating it as a legacy scalar array. Only an approved revision exposes usable positive finite, non-review ranges on their own basis. Presence of V3 evidence prevents obsolete legacy/confirmed-default fallback; multiple bases never automatically choose a dose. Existing explicit Program and vineyard preferences remain separately attributed operational choices.
+- iOS V3 unresolved/unapproved/missing options now fail closed rather than reviving old structured/legacy rates. Old default-rate range gates do not override current V3 label choices on either phone. Reopening an iOS non-template application restores its recorded base dose, unit and basis rather than today's defaults; UI provenance explicitly says Saved application rate. The historical source record is not edited by this prefill.
+- #16: queued occurrence Spray Trip detail has an explicit Recover & Start action, original-plan confirmation, spinner and actionable failure. It reconciles retained local evidence, locates the original trip/open recipe, and calls existing dedicated activation. Queued-plan deletion is hidden. All synchronous activation rejection paths finish `onStarted(false)`, including two persistence-rejection paths missing from the PR. No replacement trip, new recipe identity, receipt fabrication, journal bypass or offline operation deletion.
+- #17: initial login now forces RevenueCat `.fetchCurrent` after identifying the customer, not a default cache-policy refresh. Cached login/stream emissions cannot resolve startup mid-verification; root routing shows checking until initial verification finishes and then refreshes the existing combined entitlement gate. Async identity generations fence stale login/fetch results. Deterministic service tests cover pending, current entitled, expired, unentitled, fetch failure and old-login failure after a newer identity. No automatic purchase/restore or changed backend billing/write authority.
+- RevenueCat dashboard integration doctor reported NOT CONNECTED; public native configuration already exists. No dashboard, product, billing or credential configuration was changed. Synthetic SDK decoding tests are not live store/RevenueCat acceptance.
+
+### Executed validation, including failures
+
+- Final iOS focused `swiftTest`: **218 passed in 38s**. Selection: `VineTrackTests/` plus each of `ChemicalV3SprayRateOptionsTests`, `SubscriptionInitialVerificationTests`, `EntitlementDecisionTests`, `EntitlementAccessRegressionTests`, `ReadOnlyEntitlementContractTests`, `SprayOccurrenceRecoveryHotfixTests`, `TripOccurrenceJournalTests`, `SpraySaveForLaterTests`, `LegacySprayPairReceiptTests`, `SprayTripStartAdmissionTests`, `SpraySavedJobActivationIntegrationTests`, `SprayRateBasisPreferenceTests`, `SprayRegisteredUseRateTests`, `SprayVineyardRateScopingTests`, `SprayCanopyAndRatePresetTests`. Aggregate tool result; no skipped count was supplied.
+- Initial focused run158 passed/1 failed: new SDK CustomerInfo fixture needed snake-case keys/date decoding. Corrected fixture decoding; next160 passed in47s. Broadened run216 passed/2 failed exposed old expectations for pre-existing canopy wording and fixed-dose safety warning. Updated only those expectations: Confirm canopy remains required; unchanged fixed dose is quiet and a changed dose must show the existing label warning. No warning or production gate was weakened. Final218 pass includes those corrections and the added account-fencing test.
+- iOS production-calculator UI selection requested all six `VineTrackUITests/MobileSprayUXParityUITests/testPhase2{RecommendedToReview,CustomToReview,BandedToReview,SpreaderToReview,EditBlocks,ProgramPrefill}` journeys. **INCOMPLETE: 0 passed, 1 reported failure**, first selected Banded journey: `Failed to application app.rork.nt0v48tayl7v8noxcfe74 is not running`. Test build succeeded (5.857s), products synced, but no successful UI journey was reported. Cause is not established as app versus simulator/runner. Runtime log query returned no logs. No unchanged automatic rerun and no claim that iOS rendered progression passed this turn. Temporary runner log was subsequently overwritten by final host selection.
+- Android host command: `python3 scripts/run-spray-phase1-regressions.py ChemicalV3SprayRateOptionsTest SprayRegisteredUseRatesTest SprayBandedGroundCarrierTest SprayGuidedFlowTest VineyardPreferredRateTest`. Final **68 tests, 0 failures, 0 errors, 0 skipped**, artifacts `/tmp/vinetrack-spray-phase1-m6puylyq`. New V3 tests assert separate ranges/presets, stable offers, exact original-object cache round trip, pending approval and review/incomplete rejection. Initial compilation failed with zero tests because PR #11 used Checkbox without importing it; imported the existing Material control, then68 passed. After the final V3 default-gate repair, reran and again68 passed.
+- Final Android `androidTest`, selection `com.rork.vinetrack.data.SprayPhase1CalculatorAndroidTest`: **6 passed, 0 failed, 0 skipped in54s**. Previous source checkpoint also passed6 in55s. Real local production-calculator controls cover recommended/custom Foliar, Banded, Spreader, edit Blocks and supplied Program prefill with explicit Application confirmation; these are isolated fixtures, not authenticated customer Program journeys.
+- Exactly one separate normal iOS `runChecks`: **PASS, simulator build succeeded**. Exactly one separate normal Android `runChecks`: **PASS, build succeeded**. Neither tool is a test result or device/Release-signing acceptance. Existing two direct-storage image URL notices per platform remain unchanged/out of scope.
+- Final `git diff --check HEAD` PASS; no differences in iOS project release settings, Android build/version properties or manifest. No Supabase/schema/customer-record changes, SQL execution, version/signing changes, TestFlight/Google Play upload or delivery. SQL276–278 were previously reported applied; not modified or independently reverified in this turn. Managed history/tooling retained.
+
+### Readiness and next controlled acceptance
+
+- Source/build checkpoint is available for controlled device investigation; **not an accepted release and not a green iOS UI acceptance gate**. Re-run/diagnose the incomplete iOS UI selection when authorised and complete authenticated Program/repeat/Label/Product Page and subscription startup checks on the actual phones. Automated arithmetic/journal tests do not prove external links opened or live store entitlements were resolved.
+- Original **29 October 2026, 1:07 pm** trip remains unverified: **116 planned paths, zero completed**, original trip/recipe/occurrence IDs and offline actions must remain intact. No original handset journal, authenticated receipt transcript or physical device was available. No production trip was recovered, started, deleted or substituted by this work.
+- On the original handset, retain local app data; open that exact queued trip, confirm the original plan/recipe, then use Recover & Start Original Trip online. Stop on any unresolved receipt/held journal or missing recipe; capture the exact error/receipt evidence rather than create another spray or clear data. Acceptance requires the original trip to activate once, with no duplicate start and retained identities/evidence. Signing, archive and store delivery remain separate, unrequested steps.
+
+### Final changed native/test/runner manifest (SHA256)
+
+```text
+cc199848fdc572c60c35443500b4c65b673592b4f1b64f84fd611abc010dc7b6 android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayPhase1CalculatorAndroidTest.kt
+5f0fe4b1e08a9fb8df536360f3a12e4a24d0bc176321bf1db6b4c6ffbd99ef04 android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayPlanningAndroidTest.kt
+8642a139d0ca31ccf9d27da03f4085b102cf987d9978f544d833e229b3519368 android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/CatalogueLegacyRatesSerializer.kt
+6001566244eda98af1e31b8b5b50bfa9b1d2dd0d616c16fa5c3092c13674d840 android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/CatalogueRateEvidence.kt
+5a13cb7a3cf67d7a2270c028b1f185f0c4fa26e7ae8eed420898bb42ba19af05 android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/SprayConfirmedRateSeeding.kt
+fda4299f03f31810fd6b97a5d5cba998d4ee3fd111c66146d935d166f50c746c android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/SprayRegisteredUseRates.kt
+ad47cd1bbd4b427660ec13c523d5b9d000f14b5c52dc26cf66a8fce5a18ed9a2 android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/VineyardPreferredRate.kt
+11a1c384fbdda562bebe2910e46416334e732f1ed29ad3eeaceb59481eefea74 android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/Models.kt
+bbd41155d66af43042e685d72a0888e11f58e04cfbcd5be154b874c68e1ed49a android-vinetrack/app/src/main/java/com/rork/vinetrack/data/spray/SprayPlanningIntent.kt
+95115b1508889495374cc3f127d63f9740863d2e6af3e737f68eb46d39e254d0 android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayGuidedComponents.kt
+b0fdc437de3a87ad09aec39be1b1c0cb6becefbf8db5fbf6958608f1391e7b26 android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayLabelRateSheet.kt
+2eed16a4f3b6e7faa603e6ce891370b3efcdcfdb4120564f91d08ef87fbc95b5 android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayPlanningCards.kt
+1965ce50d8107cf741dc5bff73d688196b23b300c7527deae50e7180f133b712 android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CatalogueSearchSheet.kt
+073a03135965b300737ae1d1ccf9c249ad2cace59dff170c4e65a3fe600afb88 android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CatalogueSearchViewModel.kt
+bb6f9a6aab0ade0f5cc158b949580cf4f66b0460b76c77f6dbd7f852d7080396 android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt
+2951b13999e9cb83b4dc4928166a7ad9cacf3c18cbb695c2a5501281a5ff3442 android-vinetrack/app/src/test/java/com/rork/vinetrack/data/ChemicalV3SprayRateOptionsTest.kt
+97a4511bab89daab764653c231d0cfb02844a5b004805432d93be5d8b24f1872 ios/VineTrack/App/ChemicalIntelligence/CatalogueRepository.swift
+b083898eabffb121fb54f14b24fb3fabdd9e7a4be927abc466e3bdc41fc72fcc ios/VineTrack/App/ChemicalIntelligence/CatalogueSavedChemicalView.swift
+9fcb0ed4d8aca56fc7917f6b20d95bab410cb868170bc2a106110978f8f8306d ios/VineTrack/App/ChemicalIntelligence/CatalogueSearchModel.swift
+bb2a0e59687b18289337d35707bece592889a15a1fa238ae84ee552b76784f7a ios/VineTrack/App/ChemicalIntelligence/CatalogueSearchView.swift
+bec43a1c9d4e703d0354faf41556472c33a0d7da1b168e51436b316cc09ecc80 ios/VineTrack/App/ChemicalIntelligence/ChemicalServerDefaultRateOptions.swift
+87e68f2ee74119e1938e3cc474e4ed253a5be54b1250c507e21a7e9c37560ee4 ios/VineTrack/App/ChemicalIntelligence/VineyardPreferredRate.swift
+9a95273cb6b22884d622ef793ae9b0f2ce28447e81b714423fc530cd94e5240e ios/VineTrack/App/NewBackendRootView.swift
+337a716dcabd9cedda40a72af1d6ba43778b8746f82665b9ef1f90df5c24bd2d ios/VineTrack/App/SprayCalculatorView.swift
+15b0df91e4556fcf50539f8412940aec8ff11ec5ee701f803fd0f6e51fb3a69a ios/VineTrack/App/SprayEngine/SprayConfirmedRateSeeding.swift
+f03758a79528ecb4f2352320fde2951db07f1326db269a9f70c8a6aa70e6c84d ios/VineTrack/App/SprayEngine/SprayPlanningIntent.swift
+7f85fe4db9a86a50c1ae04d921255615e4f81315cf171fc50a05c3358b122fb3 ios/VineTrack/App/SprayEngine/SprayRegisteredUseRates.swift
+4063951d17c0be3337c2880c74f7e5920bb8a36d013716089479879bac314a46 ios/VineTrack/App/SprayGuidedComponents.swift
+2ede04c8164875d51aac2ba1d8c01e1d5451ae977d4726de0123da02cb7807b3 ios/VineTrack/App/SprayLabelRateSelectionView.swift
+6ed40aaa32dfaff54a72a6d36a73a5bab855cbb96d586a0b552da6d1c1dfd362 ios/VineTrack/App/SprayPlanningCardsView.swift
+188a711a53eead643a3228713e5d4ce202a49ed1cca95cef422ca86def86b0c0 ios/VineTrack/Backend/Models/BackendManagement.swift
+f8e85679b0043d46de0ec2f8cd487d4084439028ac8275c0fd8b636b61b9924b ios/VineTrack/Backend/Subscription/SubscriptionService.swift
+ad92379867e0caa297a0a9ad64bc23918070c354a1accd024d8a61b57f1d4639 ios/VineTrack/LegacyImported/Models/SavedChemical.swift
+992f784d2cea2b1c138cd0e67beedec6456a682adee0cabe490f31d439382320 ios/VineTrack/LegacyImported/Services/TripTrackingService.swift
+0d1c0312648c70e106fe577e9f1ef06d64370684f13d678b5661fad21644d8f1 ios/VineTrack/LegacyImported/Views/Spray/SprayLineChemicalPicker.swift
+cb1caeee6900c37022d8723185549e92d864f54f41ee1e7e88e537a0cda27681 ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift
+438b4dce8f69bdb7bdec2a977f73790380d767a97a7d048e814b01a8ccdbbae6 ios/VineTrackTests/ChemicalV3SprayRateOptionsTests.swift
+6e4749700dae46d15d7f2bed2b573cdcd09ce541ba2dbfcf86b7a05748c9d073 ios/VineTrackTests/SprayCanopyAndRatePresetTests.swift
+f55ae61342b205e8f73139211dbc5375e4dd208fe292f1c5fa0b145d0b9eb388 ios/VineTrackTests/SprayOccurrenceRecoveryHotfixTests.swift
+d8c4d8b6842ac1ebc05418789b0b6791bcd06dae225e33fc20004edd51337222 ios/VineTrackTests/SprayRateBasisPreferenceTests.swift
+0fd11b69320789dc16ad3f6008ebc87c73a13abd24f8bb25be80ac85c27a7cc8 ios/VineTrackTests/SubscriptionInitialVerificationTests.swift
+6f5b6a900397fc188c204b20967a41614c00cfbf38a7eb6ba88889d6c29387a7 ios/VineTrackUITests/MobileSprayUXParityUITests.swift
+35eea64f6877b107278d78f5c08bf4ea0040145ac61bd650988a204885d345cd scripts/reconcile-vinetrack-pr11.py
+b4adc6084b10e07dc03f7887ed1c62c0a4b0eb2cf6c40451aab8ea7b0080ff54 scripts/run-spray-phase1-regressions.py
+```
+
 ## Emergency iOS Spray Trip recovery — 29 October 2026 — SOURCE READY FOR CONTROLLED TESTFLIGHT VALIDATION; ORIGINAL DEVICE TRIP UNVERIFIED
 
 ### Review and integration
