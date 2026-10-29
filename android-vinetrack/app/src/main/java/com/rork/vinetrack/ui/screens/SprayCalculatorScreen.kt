@@ -1868,7 +1868,11 @@ fun SprayCalculatorScreen(
                         showsFullTankOption = prefillRecord != null || planningMethod == SprayPlanningMethod.FULL_TANK)
                 }
                 if (guidedFlow.requiresBandWidth) {
-                    Text("Rate applies to", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Water application applies to", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                        SprayInfoHelp("Water application area",
+                            "This choice calculates SPRAY WATER. Treated Area counts the sprayed band; Whole Block uses gross hectares. It does not decide how each chemical product is dosed.")
+                    }
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                         SprayCarrierAreaBasis.entries.forEachIndexed { index, basis ->
                             SegmentedButton(
