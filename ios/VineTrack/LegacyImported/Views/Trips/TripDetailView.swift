@@ -84,6 +84,10 @@ struct TripDetailView: View {
         do {
             // Recover a torn local paired save first, preserving original IDs.
             try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
+            // The receipt WAL may already be marked locally complete while
+            // the separately stored recipe is absent after hydration. Restore
+            // only this original trip's exact retained recipe when available.
+            _ = try store.restoreQueuedOccurrenceSprayRecordIfRetained(tripId: trip.id)
         } catch {
             occurrenceRecoveryError = "Original spray data is retained but cannot be read: \(error.localizedDescription)"
             isRecoveringOriginalSpray = false
