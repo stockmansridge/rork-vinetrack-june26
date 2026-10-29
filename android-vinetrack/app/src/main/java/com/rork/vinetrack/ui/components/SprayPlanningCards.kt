@@ -36,6 +36,7 @@ fun SprayPlanningCards(
     rateText: String, onRate: (String) -> Unit, region: RegionFormatter,
     resolution: SprayPlanningResolution?, modifier: Modifier = Modifier,
     rateUnit: String = region.volumePerAreaUnit, rowSpacingMetres: Double? = null,
+    showsFullTankOption: Boolean = true,
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
@@ -74,12 +75,14 @@ fun SprayPlanningCards(
                     SprayInfoHelp("Water planning",
                         "By Area uses the selected blocks. Only Full Tanks is a legacy planning mode which cannot currently Start Spray; it should not be selected for new One-off applications.")
                 }
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    SprayPlanningMethod.entries.forEachIndexed { index, option ->
-                        SegmentedButton(selected = method == option, onClick = { onMethod(option) },
-                            shape = SegmentedButtonDefaults.itemShape(index, 2)) { Text(option.title) }
+                if (showsFullTankOption) {
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        SprayPlanningMethod.entries.forEachIndexed { index, option ->
+                            SegmentedButton(selected = method == option, onClick = { onMethod(option) },
+                                shape = SegmentedButtonDefaults.itemShape(index, 2)) { Text(option.title) }
+                        }
                     }
-                }
+                } else Text("By Area · selected blocks", fontWeight = FontWeight.Medium)
                 if (method == SprayPlanningMethod.FULL_TANK) {
                     PlanningField("Intended tank volume (${region.volumeUnitAbbreviation})", tankText, onTank)
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
