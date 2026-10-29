@@ -221,14 +221,21 @@ nonisolated enum SprayLabelRangeCheck {
         appliedBaseValue: Double?,
         rate: SpraySelectableRate?
     ) -> String? {
-        guard let applied = appliedBaseValue,
-              applied.isFinite,
-              let rate,
-              let range = rate.labelRange,
-              let rangeText = rate.labelRangeText,
-              !range.contains(applied)
-        else { return nil }
-        return "Outside the registered label range of \(rangeText)."
+        guard let applied = appliedBaseValue, applied.isFinite, applied > 0,
+              let rate else { return nil }
+        if let range = rate.labelRange, let rangeText = rate.labelRangeText,
+           !range.contains(applied) {
+            return "Outside the registered label range of \(rangeText)."
+        }
+        // A fixed registered dose is not a recommendation for any number the
+        // operator types. Keep manual values/provenance intact, but never allow
+        // a different number to appear unremarked as an "Applied label rate".
+        if rate.labelRange == nil,
+           let fixed = rate.seed.seedableValue,
+           abs(applied - fixed) > max(0.000_001, abs(fixed) * 0.000_001) {
+            return "Manual rate differs from the selected label rate (\(rate.displayText)). Recheck the official label before applying."
+        }
+        return nil
     }
 }
 
