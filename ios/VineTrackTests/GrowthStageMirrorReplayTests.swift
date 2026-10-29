@@ -69,7 +69,7 @@ import Foundation
         let service = GrowthStageRecordSyncService(repository: repo, metadata: metadata, persistence: storage)
         try await service.pushQueuedGrowthRecords(vineyardId: local.vineyardId)
         #expect(service.pendingUpsertCount == 0)
-        #expect(service.records.map(\\.id) == [updatedRemote.id])
+        #expect(service.records.map(\.id) == [updatedRemote.id])
         #expect(service.records.first?.notes == remote.notes)
         let archive: [UUID: GrowthStageRecordSyncService.MirrorIdentityEvidence] =
             storage.load(key: "vinetrack_growth_mirror_identity_evidence_v1") ?? [:]
