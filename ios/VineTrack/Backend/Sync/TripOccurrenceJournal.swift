@@ -293,6 +293,40 @@ import Foundation
             ? Failure.updateRequired.localizedDescription : Failure.reconciliation.localizedDescription
         try save(state)
     }
+    /// Retry the SAME original create + activate intents after an unavailable
+    /// backend has been repaired. The caller MUST first make an authenticated,
+    /// vineyard-scoped server read and establish that this trip ID does not
+    /// exist remotely. A conflicting server row must use receipt reconciliation.
+    ///
+    /// Nothing is reminted, discarded, re-dated or converted to numeric paths.
+    /// Arbitrary held edits/finalisations and absent or altered WALs fail closed.
+    func releaseHeldOriginalCreationAfterVerifiedServerAbsence(
+        expectedCoverage: JSON
+    ) throws {
+        guard var state = try load(),
+              state.creationConfirmed == false, state.serverActive == false,
+              state.pending.count == 2,
+              state.pending[0].rpc == "create_trip_with_occurrences_v1",
+              state.pending[1].rpc == "activate_trip_occurrences_v1",
+              state.pending[0].params[occurrence: "p_trip"]?[occurrence: "id"] == .string(scope.tripId),
+              state.pending[0].params[occurrence: "p_trip"]?[occurrence: "vineyard_id"] == .string(scope.vineyardId),
+              state.pending[0].params[occurrence: "p_coverage"] == expectedCoverage,
+              state.acknowledged == expectedCoverage,
+              state.pending[1].params[occurrence: "p_trip_id"] == .string(scope.tripId),
+              state.pending[1].params[occurrence: "p_start"] != nil,
+              state.history.contains(where: { $0.id == state.pending[0].id }),
+              state.history.contains(where: { $0.id == state.pending[1].id }) else {
+            throw Failure.reconciliation
+        }
+        guard let held = state.heldReason else { return }
+        guard held == Failure.reconciliation.localizedDescription ||
+              held == Failure.updateRequired.localizedDescription else {
+            throw Failure.reconciliation
+        }
+        state.heldReason = nil
+        try save(state)
+    }
+
     private func save(_ state: Snapshot) throws {
         do { try JSONEncoder().encode(state).write(to: fileURL, options: .atomic) }
         catch { throw Failure.storage }

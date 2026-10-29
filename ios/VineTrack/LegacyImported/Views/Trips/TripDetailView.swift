@@ -1,18 +1,35 @@
 import SwiftUI
 import MapKit
 
+/// A queued spray is only startable when it has no recorded GPS, tank or
+/// completion work. Only the retained original occurrence may be activated.
+enum SavedOccurrenceSprayStartEligibility {
+    static func mayStart(_ trip: Trip) -> Bool {
+        trip.coverageBasis == .occurrence
+            && trip.tripFunction == TripFunction.spraying.rawValue
+            && !trip.isActive && trip.endTime == nil
+            && trip.pathPoints.isEmpty && trip.totalDistance == 0
+            && trip.completedPaths.isEmpty && trip.skippedPaths.isEmpty
+            && trip.tankSessions.isEmpty && !trip.rowSequence.isEmpty
+    }
+}
+
 struct TripDetailView: View {
     let trip: Trip
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(NetworkMonitor.self) private var network
     @Environment(TripSyncService.self) private var tripSync
+    @Environment(TripTrackingService.self) private var tracking
     @Environment(\.dismiss) private var dismiss
     @State private var showSummary: Bool = false
     @State private var showDeleteConfirmation: Bool = false
     @State private var position: MapCameraPosition = .automatic
     @State private var isExporting: Bool = false
     @State private var sprayExportError: String?
+    @State private var occurrenceRecoveryError: String?
+    @State private var isRecoveringOriginalSpray = false
+    @State private var showOriginalStartHelp = false
     @State private var displayTrailSegments: [TrailSegment] = []
     @State private var showRowCompletion: Bool = false
     @State private var showPathMap: Bool = false
@@ -65,7 +82,60 @@ struct TripDetailView: View {
             return record.sprayReference
         }
         let dateStr = trip.startTime.formattedTZ(date: .abbreviated, time: .omitted, in: tz)
+        if trip.tripFunction == TripFunction.spraying.rawValue {
+            return "Spray Trip \(dateStr)"
+        }
         return "Maintenance Trip \(dateStr)"
+    }
+
+    /// A queued occurrence spray is a saved trip, not disposable history.
+    private var isQueuedOccurrenceSpray: Bool {
+        let saved = currentTrip
+        return saved.coverageBasis == .occurrence && !saved.isActive && saved.endTime == nil &&
+            SprayReportPayloadV1.isSprayTrip(saved, linkedRecord: sprayRecord)
+    }
+
+    private var canStartOriginalQueuedSpray: Bool {
+        isQueuedOccurrenceSpray && SavedOccurrenceSprayStartEligibility.mayStart(currentTrip)
+    }
+
+    @MainActor private func recoverAndStartOriginalSpray() {
+        guard canStartOriginalQueuedSpray, !isRecoveringOriginalSpray else { return }
+        guard accessControl.canCreateOperationalRecords else {
+            occurrenceRecoveryError = "Read-only access: an active subscription is required to start this saved spray."
+            return
+        }
+        occurrenceRecoveryError = nil
+        isRecoveringOriginalSpray = true
+        do {
+            // Recover only the original saved pair; never replace a trip or
+            // mint new occurrence IDs when an older journal is held.
+            try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
+            _ = try store.restoreQueuedOccurrenceSprayRecordIfRetained(tripId: trip.id)
+            guard let original = store.trips.first(where: { $0.id == trip.id }),
+                  store.selectedVineyardId == original.vineyardId,
+                  SavedOccurrenceSprayStartEligibility.mayStart(original),
+                  store.sprayRecords.contains(where: {
+                      $0.tripId == original.id && $0.vineyardId == original.vineyardId
+                          && !$0.isTemplate && $0.endTime == nil
+                  }) else {
+                occurrenceRecoveryError = "The original spray recipe or saved plan is not available on this device. The queued trip is retained. Do not delete or recreate this spray."
+                isRecoveringOriginalSpray = false
+                return
+            }
+            tracking.activateSavedTrip(original) { started in
+                isRecoveringOriginalSpray = false
+                if started {
+                    dismiss() // The Trip tab opens the existing active trip.
+                } else {
+                    occurrenceRecoveryError = tracking.errorMessage ??
+                        "Original spray activation is still pending. The saved trip and operations were retained."
+                }
+            }
+        } catch {
+            occurrenceRecoveryError = "The original spray is retained, but recovery cannot finish: \(error.localizedDescription)"
+            isRecoveringOriginalSpray = false
+        }
     }
 
     var body: some View {
@@ -96,6 +166,62 @@ struct TripDetailView: View {
                 .padding(.vertical, 4)
             }
 
+            if canStartOriginalQueuedSpray {
+                Section {
+                    HStack(spacing: 12) {
+                        Button {
+                            recoverAndStartOriginalSpray()
+                        } label: {
+                            HStack(spacing: 8) {
+                                if isRecoveringOriginalSpray {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "play.fill")
+                                }
+                                Text("Start Trip")
+                                    .font(.headline)
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isRecoveringOriginalSpray || !accessControl.canCreateOperationalRecords)
+                        .accessibilityIdentifier("trip.startOriginalQueuedSpray")
+
+                        Button {
+                            showOriginalStartHelp = true
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .font(.title3)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("How to start a queued spray")
+                    }
+                    if isRecoveringOriginalSpray {
+                        ProgressView("Checking saved trip…")
+                    } else if !accessControl.canCreateOperationalRecords {
+                        Text("Read-only access — subscription required.")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text("Not started · \(currentTrip.rowSequence.count) planned paths")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else if isQueuedOccurrenceSpray {
+                Section {
+                    Text("Saved spray has progress or requires review before starting.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else if currentTrip.isActive && tracking.activeTrip?.id == currentTrip.id {
+                Section {
+                    Button("Go to Active Trip") { dismiss() }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+
             Section("Trip Summary") {
                 if let raw = trip.tripFunction, !raw.isEmpty {
                     if let function = TripFunction(rawValue: raw) {
@@ -109,7 +235,11 @@ struct TripDetailView: View {
                 if let title = trip.tripTitle, !title.isEmpty {
                     statRow("Title", value: title, icon: "text.cursor")
                 }
-                statRow("Duration", value: formatDuration(trip.activeDuration), icon: "clock")
+                if canStartOriginalQueuedSpray {
+                    statRow("Status", value: "Not started", icon: "clock")
+                } else {
+                    statRow("Duration", value: formatDuration(trip.activeDuration), icon: "clock")
+                }
                 statRow("Distance", value: formatDistance(trip.totalDistance), icon: "point.topleft.down.to.point.bottomright.curvepath")
                 if !trip.paddockName.isEmpty {
                     statRow("Block", value: trip.paddockName, icon: "leaf")
@@ -259,7 +389,7 @@ struct TripDetailView: View {
                 }
             }
 
-            if accessControl.canViewCosting {
+            if accessControl.canViewCosting && !canStartOriginalQueuedSpray {
                 Section {
                     DisclosureGroup(isExpanded: $showCostSection) {
                         tripCostBody
@@ -355,7 +485,7 @@ struct TripDetailView: View {
                     .disabled(isExporting)
                 }
             }
-            if accessControl.canDeleteOperationalRecords && !trip.isActive {
+            if accessControl.canDeleteOperationalRecords && !trip.isActive && !isQueuedOccurrenceSpray {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) {
                         showDeleteConfirmation = true
@@ -388,6 +518,19 @@ struct TripDetailView: View {
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        .alert("Starting a saved spray", isPresented: $showOriginalStartHelp) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Start Trip checks the original saved recipe and occurrence operations, then activates the same trip and planned paths. If verification fails, your queued trip remains unchanged; no replacement trip is made.")
+        }
+        .alert("Queued Spray Recovery", isPresented: Binding(
+            get: { occurrenceRecoveryError != nil },
+            set: { if !$0 { occurrenceRecoveryError = nil } }
+        )) {
+            Button("OK", role: .cancel) { occurrenceRecoveryError = nil }
+        } message: {
+            Text(occurrenceRecoveryError ?? "")
         }
         .alert("Spray Report Unavailable", isPresented: Binding(
             get: { sprayExportError != nil },

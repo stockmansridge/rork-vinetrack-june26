@@ -392,4 +392,54 @@ final class TripOccurrenceJournalTests: XCTestCase {
         let dir=directory(); defer { try? FileManager.default.removeItem(at: dir) }; let j=try journal(dir)
         try j.setStatus(a,status:"done"); XCTAssertEqual(try j.load()?.projected[occurrence:"extension"],try fixture()[occurrence:"extension"])
     }
+    @MainActor func testBackendUpgradeRetriesOriginalHeldCreateWithoutChangingFrozenIDs() throws {
+        let dir = directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let journal = try TripOccurrenceJournal(scope: scope, directory: dir)
+        let frozen = try fixture()
+        let trip: TripOccurrenceCoverage.JSON = .object([
+            "id": .string(scope.tripId),
+            "vineyard_id": .string(scope.vineyardId),
+            "is_active": .bool(false)
+        ])
+        let create = try journal.prepareCreation(trip: trip, coverage: frozen)
+        let activation = try journal.activate(.object([
+            "startTime": .string("2026-10-29T02:07:00Z")
+        ]))
+        try journal.hold("OCCURRENCE_SYNC_UNAVAILABLE")
+        let retained = try XCTUnwrap(journal.load())
+        XCTAssertNotNil(retained.heldReason)
+        try journal.releaseHeldOriginalCreationAfterVerifiedServerAbsence(
+            expectedCoverage: frozen
+        )
+        let retried = try XCTUnwrap(journal.load())
+        XCTAssertNil(retried.heldReason)
+        XCTAssertEqual(retried.pending, [create, activation])
+        XCTAssertEqual(retried.history.map(\.id), retained.history.map(\.id))
+        XCTAssertEqual(retried.acknowledged, frozen)
+        XCTAssertEqual(retried.creationConfirmed, false)
+        XCTAssertEqual(retried.serverActive, false)
+    }
+
+    @MainActor func testBackendUpgradeRefusesChangedLocalCoverageAndKeepsHold() throws {
+        let dir = directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let journal = try TripOccurrenceJournal(scope: scope, directory: dir)
+        let original = try fixture()
+        let trip: TripOccurrenceCoverage.JSON = .object([
+            "id": .string(scope.tripId),
+            "vineyard_id": .string(scope.vineyardId)
+        ])
+        _ = try journal.prepareCreation(trip: trip, coverage: original)
+        _ = try journal.activate(.object([
+            "startTime": .string("2026-10-29T02:07:00Z")
+        ]))
+        try journal.hold("OCCURRENCE_CONFLICT")
+        let before = try XCTUnwrap(journal.load())
+        XCTAssertThrowsError(try journal.releaseHeldOriginalCreationAfterVerifiedServerAbsence(
+            expectedCoverage: fixture(otherBlock: true)
+        ))
+        XCTAssertEqual(try journal.load(), before)
+    }
+
 }

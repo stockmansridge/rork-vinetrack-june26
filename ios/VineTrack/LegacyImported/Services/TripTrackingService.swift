@@ -563,15 +563,15 @@ final class TripTrackingService {
         at activationTime: Date = Date(),
         onStarted: @escaping (Bool) -> Void = { _ in }
     ) {
-        guard let store else { return }
+        guard let store else { onStarted(false); return }
         guard admitTripChange(store.trips.first(where: { $0.id == savedTrip.id })) else { onStarted(false); return }
         guard store.selectedVineyardId != nil else {
             errorMessage = "No vineyard selected."
-            return
+            onStarted(false); return
         }
         if store.deviceActiveTripId != nil {
             errorMessage = deviceTripConflictMessage(in: store)
-            return
+            onStarted(false); return
         }
         guard !savedTrip.isActive,
               savedTrip.endTime == nil,
@@ -584,7 +584,7 @@ final class TripTrackingService {
                   $0.tripId == savedTrip.id && !$0.isTemplate && $0.endTime == nil
               }) else {
             errorMessage = "Only a Not Started spray job can be activated."
-            return
+            onStarted(false); return
         }
 
         let recipe = store.sprayRecords[recordIndex]
@@ -616,11 +616,34 @@ final class TripTrackingService {
                 let journal = try TripOccurrenceJournal(scope: .init(ownerId: owner.uuidString.lowercased(),
                     vineyardId: savedTrip.vineyardId.uuidString.lowercased(), tripId: savedTrip.id.uuidString.lowercased()))
                 if NetworkMonitor.shared.isOnline {
+                    // A saved trip can be LOCAL ONLY after its first create RPC
+                    // failed against an older server. Confirm its exact ID
+                    // remotely before retrying any original retained intent.
+                    let repo = SupabaseTripSyncRepository()
+                    let remoteTrips = try await repo.fetchAllTrips(vineyardId: savedTrip.vineyardId)
+                    guard authService?.userId == owner,
+                          store.selectedVineyardId == savedTrip.vineyardId else {
+                        throw TripOccurrenceCoverage.Failure.scopeConflict
+                    }
                     let retained = try journal.load()
-                    if retained?.creationConfirmed != false || retained?.pending.contains(where: { $0.rpc == "create_trip_with_occurrences_v1" }) != true {
-                        let recovery = try await SupabaseTripSyncRepository().fetchOccurrenceRecovery(tripId: savedTrip.id, operationIds: retained?.pending.map(\.id) ?? [])
-                        guard authService?.userId == owner else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                    if remoteTrips.contains(where: { $0.id == savedTrip.id }) {
+                        let recovery = try await repo.fetchOccurrenceRecovery(
+                            tripId: savedTrip.id,
+                            operationIds: retained?.pending.map(\.id) ?? []
+                        )
+                        guard authService?.userId == owner,
+                              store.selectedVineyardId == savedTrip.vineyardId else {
+                            throw TripOccurrenceCoverage.Failure.scopeConflict
+                        }
                         try journal.recover(recovery)
+                    } else if retained?.heldReason != nil {
+                        // A previously held original create+activate may retry only
+                        // after the authenticated read confirms no remote trip.
+                        // An ordinary unheld saved spray with a pending create
+                        // must be allowed to prepare its FIRST activation.
+                        try journal.releaseHeldOriginalCreationAfterVerifiedServerAbsence(
+                            expectedCoverage: savedTrip.occurrenceCoverage ?? .null
+                        )
                     }
                 }
                 guard let state = try journal.load(), state.heldReason == nil,

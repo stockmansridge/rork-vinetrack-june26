@@ -1,4 +1,5 @@
--- Prospective occurrence authority foundation. Undeployed; no historical DML.
+-- Occurrence authority foundation. Applied to VineTrack Supabase on 2026-10-29.
+-- No historical DML; replay original retained operation IDs only.
 -- Requires 006 and the existing auth.uid()/vineyard role contracts.
 -- Native producers MUST remain disabled until all consumers and replay pass.
 begin;
@@ -13,10 +14,16 @@ begin
   end if;
   if exists(select 1 from pg_roles where rolname='vinetrack_occurrence_writer' and
     (rolcanlogin or rolsuper or rolcreaterole or rolbypassrls)) or exists(
-    select 1 from pg_auth_members where roleid='vinetrack_occurrence_writer'::regrole) then
+    select 1 from pg_auth_members where roleid='vinetrack_occurrence_writer'::regrole
+    and member <> 'postgres'::regrole) then
     raise exception 'Unsafe existing occurrence writer role';
   end if;
 end $role$;
+-- Supabase grants postgres membership without SET by default. PostgreSQL
+-- requires SET ROLE and schema CREATE to transfer function ownership. Grant
+-- both only for this migration and revoke before transaction commit.
+grant vinetrack_occurrence_writer to postgres with set true;
+grant create on schema public to vinetrack_occurrence_writer;
 grant usage on schema public,auth to vinetrack_occurrence_writer;
 grant execute on function auth.uid(),public.has_vineyard_role(uuid,text[]),public.is_vineyard_member(uuid) to vinetrack_occurrence_writer;
 grant select,insert,update on public.trips to vinetrack_occurrence_writer;
@@ -534,4 +541,6 @@ end $fn$;
 alter function public.finalize_trip_occurrences_v1(uuid,uuid,bigint,bigint,jsonb,jsonb) owner to vinetrack_occurrence_writer;
 revoke all on function public.finalize_trip_occurrences_v1(uuid,uuid,bigint,bigint,jsonb,jsonb) from public,anon,service_role;
 grant execute on function public.finalize_trip_occurrences_v1(uuid,uuid,bigint,bigint,jsonb,jsonb) to authenticated;
+revoke create on schema public from vinetrack_occurrence_writer;
+revoke vinetrack_occurrence_writer from postgres granted by postgres;
 commit;
