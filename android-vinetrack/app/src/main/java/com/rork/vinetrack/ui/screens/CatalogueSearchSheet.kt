@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -112,7 +113,11 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
                             Column(Modifier.weight(1f).padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(row.text("product_name") ?: "Product", style = MaterialTheme.typography.titleSmall)
                                 Text(CatalogueRow.compactManufacturer(row.text("manufacturer").orEmpty()), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("VineTrack catalogue", style = MaterialTheme.typography.labelSmall)
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Icon(Icons.Filled.CheckCircle, contentDescription = null,
+                                        tint = androidx.compose.ui.graphics.Color(0xFF85B830), modifier = Modifier.size(15.dp))
+                                    Text("VineTrack catalogue", style = MaterialTheme.typography.labelSmall)
+                                }
                             }
                         }
                     }
