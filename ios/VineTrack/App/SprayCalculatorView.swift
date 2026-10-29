@@ -234,7 +234,7 @@ struct SprayCalculatorView: View {
             }()
             _sprayName = State(initialValue: prefilledName)
             _operationType = State(initialValue: r.operationType)
-            _isApplicationResolved = State(initialValue: true)
+            _isApplicationResolved = State(initialValue: false) // Program prefill is not today's operator confirmation.
             _notes = State(initialValue: r.notes)
             _numberOfFansJets = State(initialValue: r.numberOfFansJets)
             if let firstTank = r.tanks.first, firstTank.sprayRatePerHa > 0 {
