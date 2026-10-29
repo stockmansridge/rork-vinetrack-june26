@@ -524,6 +524,14 @@ final class TripTrackingService {
                     throw TripOccurrenceCoverage.Failure.reconciliation
                 }
                 ready = try intended.withOccurrenceProjection(state.projected)
+                // Server-orphan restoration is never an offline-only start:
+                // the original parent AND its exact spray link need accepted
+                // server receipts before GPS recording can begin.
+                if store.sprayRecords.contains(where: {
+                    $0.canonicalTripId == intended.id && $0.recoveredFromServerOrphan
+                }) && !NetworkMonitor.shared.isOnline {
+                    throw TripOccurrenceCoverage.Failure.reconciliation
+                }
                 if NetworkMonitor.shared.isOnline {
                     let repo = SupabaseTripSyncRepository()
                     try await repo.upsertTrip(BackendTrip.upsert(from: intended, createdBy: owner, clientUpdatedAt: intended.startTime))
@@ -618,6 +626,10 @@ final class TripTrackingService {
         }
 
         let recipe = store.sprayRecords[recordIndex]
+        if recipe.recoveredFromServerOrphan && !NetworkMonitor.shared.isOnline {
+            errorMessage = "Connect to the internet to verify this original recovered spray and Trip link before starting."
+            onStarted(false); return
+        }
         if let blocker = recipe.operationalPlanningBlocker ?? SprayStartRecipeValidation.blocker(recipe.tanks) {
             errorMessage = blocker
             onStarted(false); return
