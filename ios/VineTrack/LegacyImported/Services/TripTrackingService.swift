@@ -616,11 +616,33 @@ final class TripTrackingService {
                 let journal = try TripOccurrenceJournal(scope: .init(ownerId: owner.uuidString.lowercased(),
                     vineyardId: savedTrip.vineyardId.uuidString.lowercased(), tripId: savedTrip.id.uuidString.lowercased()))
                 if NetworkMonitor.shared.isOnline {
+                    // A saved trip can be LOCAL ONLY after its first create RPC
+                    // failed against an older server. Confirm its exact ID
+                    // remotely before retrying any original retained intent.
+                    let repo = SupabaseTripSyncRepository()
+                    let remoteTrips = try await repo.fetchAllTrips(vineyardId: savedTrip.vineyardId)
+                    guard authService?.userId == owner,
+                          store.selectedVineyardId == savedTrip.vineyardId else {
+                        throw TripOccurrenceCoverage.Failure.scopeConflict
+                    }
                     let retained = try journal.load()
-                    if retained?.creationConfirmed != false || retained?.pending.contains(where: { $0.rpc == "create_trip_with_occurrences_v1" }) != true {
-                        let recovery = try await SupabaseTripSyncRepository().fetchOccurrenceRecovery(tripId: savedTrip.id, operationIds: retained?.pending.map(\.id) ?? [])
-                        guard authService?.userId == owner else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+                    if remoteTrips.contains(where: { $0.id == savedTrip.id }) {
+                        let recovery = try await repo.fetchOccurrenceRecovery(
+                            tripId: savedTrip.id,
+                            operationIds: retained?.pending.map(\.id) ?? []
+                        )
+                        guard authService?.userId == owner,
+                              store.selectedVineyardId == savedTrip.vineyardId else {
+                            throw TripOccurrenceCoverage.Failure.scopeConflict
+                        }
                         try journal.recover(recovery)
+                    } else {
+                        // The server has no such trip. Re-enable ONLY the
+                        // already-journalled create/activate chain; keep its
+                        // original trip, operation and occurrence identities.
+                        try journal.releaseHeldOriginalCreationAfterVerifiedServerAbsence(
+                            expectedCoverage: savedTrip.occurrenceCoverage ?? .null
+                        )
                     }
                 }
                 guard let state = try journal.load(), state.heldReason == nil,
