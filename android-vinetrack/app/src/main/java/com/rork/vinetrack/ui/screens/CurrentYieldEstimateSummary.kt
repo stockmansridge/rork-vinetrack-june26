@@ -85,6 +85,7 @@ internal fun CurrentYieldEstimateSummary(estimate: CurrentYieldEstimate.Trip, de
     fun number(value: Double) = String.format(Locale.US, "%.3f", value)
     fun tonnes(value: Double?) = value?.let { "${number(it)} t" } ?: "Bunch weight required"
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        estimate.countMethod?.let { Text(it, fontWeight = FontWeight.SemiBold) }
         if (current) Text("Current Estimate", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         estimate.blocks.forEach { block ->
             Text(block.name, fontWeight = FontWeight.SemiBold)

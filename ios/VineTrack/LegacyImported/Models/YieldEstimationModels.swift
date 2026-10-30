@@ -44,15 +44,18 @@ nonisolated struct BunchCountEntry: Codable, Sendable, Hashable {
     var bunchesPerVine: Double
     var recordedAt: Date
     var recordedBy: String
+    var quadrant: QuadrantCountMeasurement?
 
     init(
         bunchesPerVine: Double,
         recordedAt: Date = Date(),
-        recordedBy: String = ""
+        recordedBy: String = "",
+        quadrant: QuadrantCountMeasurement? = nil
     ) {
         self.bunchesPerVine = bunchesPerVine
         self.recordedAt = recordedAt
         self.recordedBy = recordedBy
+        self.quadrant = quadrant
     }
 }
 
@@ -70,6 +73,11 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
     var completedAt: Date?
     /// Physical counts captured only for newly completed trips; old trips remain untouched.
     var blockVineCounts: [String: Int]
+    /// Additive method metadata; absent on legacy/full-vine trips.
+    var countMethod: String?
+    var quadrantSectionLengthCm: Double?
+    var isQuadrantCount: Bool { countMethod == "quadrant" || sampleSites.contains { $0.bunchCountEntry?.quadrant != nil } }
+    var countMethodName: String { isQuadrantCount ? "Quadrant Count" : "Bunches Per Vine Count" }
 
     func vineCount(for paddock: Paddock) -> Int {
         guard isCompleted else { return paddock.authoritativeVineCount }
@@ -111,7 +119,9 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         completedAt: Date? = nil,
         applyDamage: Bool = true,
         routeSourceSessionId: UUID? = nil,
-        blockVineCounts: [String: Int] = [:]
+        blockVineCounts: [String: Int] = [:],
+        countMethod: String? = nil,
+        quadrantSectionLengthCm: Double? = nil
     ) {
         self.id = id
         self.vineyardId = vineyardId
@@ -127,13 +137,15 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         self.applyDamage = applyDamage
         self.routeSourceSessionId = routeSourceSessionId
         self.blockVineCounts = blockVineCounts
+        self.countMethod = countMethod
+        self.quadrantSectionLengthCm = quadrantSectionLengthCm
     }
 
     nonisolated enum CodingKeys: String, CodingKey {
         case id, vineyardId, createdAt, selectedPaddockIds, samplesPerHectare
         case sampleSites, blockBunchWeightsKg, averageBunchWeightKg
         case previousBunchWeights, pathWaypoints, isCompleted, completedAt
-        case applyDamage, routeSourceSessionId, blockVineCounts
+        case applyDamage, routeSourceSessionId, blockVineCounts, countMethod, quadrantSectionLengthCm
     }
 
     init(from decoder: Decoder) throws {
@@ -151,6 +163,8 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         applyDamage = try container.decodeIfPresent(Bool.self, forKey: .applyDamage) ?? true
         routeSourceSessionId = try container.decodeIfPresent(UUID.self, forKey: .routeSourceSessionId)
         blockVineCounts = try container.decodeIfPresent([String: Int].self, forKey: .blockVineCounts) ?? [:]
+        countMethod = try container.decodeIfPresent(String.self, forKey: .countMethod)
+        quadrantSectionLengthCm = try container.decodeIfPresent(Double.self, forKey: .quadrantSectionLengthCm)
 
         if let perBlock = try? container.decode([UUID: Double].self, forKey: .blockBunchWeightsKg) {
             blockBunchWeightsKg = perBlock
@@ -181,6 +195,8 @@ nonisolated struct YieldEstimationSession: Codable, Identifiable, Sendable {
         try container.encode(applyDamage, forKey: .applyDamage)
         try container.encodeIfPresent(routeSourceSessionId, forKey: .routeSourceSessionId)
         if !blockVineCounts.isEmpty { try container.encode(blockVineCounts, forKey: .blockVineCounts) }
+        try container.encodeIfPresent(countMethod, forKey: .countMethod)
+        try container.encodeIfPresent(quadrantSectionLengthCm, forKey: .quadrantSectionLengthCm)
     }
 }
 
@@ -361,5 +377,24 @@ nonisolated struct DamageRecord: Codable, Identifiable, Sendable, Hashable {
         }
         area = abs(area) / 2.0
         return area / 10_000.0
+    }
+}
+
+/// Original field evidence shared with Android. Do not round the normalized result.
+nonisolated struct QuadrantCountMeasurement: Codable, Sendable, Hashable {
+    let rawBunchCount: Double
+    let sectionLengthCm: Double
+    let vineSpacingCm: Double
+    let calculationVersion: Int
+    var bunchesPerVine: Double { rawBunchCount * (vineSpacingCm / sectionLengthCm) }
+
+    static func make(rawBunchCount: Double, sectionLengthCm: Double, vineSpacingCm: Double?, isSystemAdmin: Bool) -> Self? {
+        guard isSystemAdmin, rawBunchCount.isFinite, rawBunchCount >= 0,
+              rawBunchCount.rounded(.down) == rawBunchCount,
+              sectionLengthCm.isFinite, sectionLengthCm > 0,
+              let vineSpacingCm, vineSpacingCm.isFinite, vineSpacingCm > 0 else { return nil }
+        let measurement = Self(rawBunchCount: rawBunchCount, sectionLengthCm: sectionLengthCm,
+            vineSpacingCm: vineSpacingCm, calculationVersion: 1)
+        return measurement.bunchesPerVine.isFinite ? measurement : nil
     }
 }

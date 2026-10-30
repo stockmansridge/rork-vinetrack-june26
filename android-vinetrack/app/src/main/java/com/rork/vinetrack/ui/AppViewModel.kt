@@ -17391,6 +17391,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * the session id.
      */
     fun saveYieldSession(session: YieldEstimationSession, onResult: (Boolean) -> Unit = {}) {
+        val previousIsQuadrant = _ui.value.yieldSessions.firstOrNull { it.id.equals(session.id, true) }?.isQuadrantCount == true
+        if (((session.isQuadrantCount || previousIsQuadrant) && !_ui.value.isSystemAdmin) || (previousIsQuadrant && !session.isQuadrantCount)) {
+            _ui.update { it.copy(yieldSessionError = "Trip could not be saved: Quadrant Count requires System Admin access.") }
+            onResult(false)
+            return
+        }
         val vineyardId = _ui.value.selectedVineyardId
         if (vineyardId == null || !session.vineyardId.equals(vineyardId, true)) { onResult(false); return }
         val clientUpdatedAt = Instant.now().toString()

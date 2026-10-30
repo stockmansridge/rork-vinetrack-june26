@@ -16,6 +16,9 @@ class YieldEstimationViewModel {
     var isCompleted: Bool = false
     var completedAt: Date?
     var blockVineCounts: [String: Int] = [:]
+    var countMethod: String?
+    var quadrantSectionLengthCm: Double = 60
+    var isQuadrantCount: Bool { countMethod == "quadrant" }
 
     private func vineCount(for paddock: Paddock) -> Int {
         guard isCompleted else { return paddock.authoritativeVineCount }
@@ -104,12 +107,26 @@ class YieldEstimationViewModel {
     }
 
     func recordBunchCount(siteId: UUID, bunchesPerVine: Double, recordedBy: String) {
+        guard !isQuadrantCount else { return }
         guard let index = sampleSites.firstIndex(where: { $0.id == siteId }) else { return }
         sampleSites[index].bunchCountEntry = BunchCountEntry(
             bunchesPerVine: bunchesPerVine,
             recordedAt: Date(),
             recordedBy: recordedBy
         )
+    }
+
+    @discardableResult
+    func recordQuadrantCount(siteId: UUID, measurement: QuadrantCountMeasurement, recordedBy: String, isSystemAdmin: Bool) -> Bool {
+        guard isQuadrantCount, !isCompleted,
+              let checked = QuadrantCountMeasurement.make(rawBunchCount: measurement.rawBunchCount,
+                sectionLengthCm: measurement.sectionLengthCm, vineSpacingCm: measurement.vineSpacingCm,
+                isSystemAdmin: isSystemAdmin),
+              let index = sampleSites.firstIndex(where: { $0.id == siteId }) else { return false }
+        sampleSites[index].bunchCountEntry = BunchCountEntry(bunchesPerVine: checked.bunchesPerVine,
+            recordedAt: Date(), recordedBy: recordedBy, quadrant: checked)
+        quadrantSectionLengthCm = checked.sectionLengthCm
+        return true
     }
 
     func generatePath(paddocks: [Paddock]) {
@@ -386,6 +403,8 @@ class YieldEstimationViewModel {
         sessionCreatedAt = session.createdAt
         applyDamage = session.applyDamage
         routeSourceSessionId = session.routeSourceSessionId
+        countMethod = session.isQuadrantCount ? "quadrant" : session.countMethod
+        quadrantSectionLengthCm = session.quadrantSectionLengthCm ?? 60
     }
 
     func toSession(vineyardId: UUID, samplesPerHectare: Int) -> YieldEstimationSession {
@@ -407,7 +426,9 @@ class YieldEstimationViewModel {
             completedAt: completedAt,
             applyDamage: applyDamage,
             routeSourceSessionId: routeSourceSessionId,
-            blockVineCounts: blockVineCounts
+            blockVineCounts: blockVineCounts,
+            countMethod: countMethod,
+            quadrantSectionLengthCm: isQuadrantCount ? quadrantSectionLengthCm : nil
         )
     }
 
@@ -421,6 +442,8 @@ class YieldEstimationViewModel {
     }
 
     func resetForNewEstimation() {
+        countMethod = nil
+        quadrantSectionLengthCm = 60
         sessionId = nil
         selectedPaddockIds.removeAll()
         sampleSites = []

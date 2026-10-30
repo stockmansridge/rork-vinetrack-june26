@@ -24,6 +24,7 @@ data class BunchCountEntry(
     val bunchesPerVine: Double,
     val recordedAt: String,
     val recordedBy: String = "",
+    val quadrant: QuadrantCountMeasurement? = null,
 )
 
 /**
@@ -136,7 +137,12 @@ data class YieldEstimationSession(
     val routeSourceSessionId: String? = null,
     /** Physical counts captured only for newly completed trips; old trips remain untouched. */
     val blockVineCounts: Map<String, Int> = emptyMap(),
+    val countMethod: String? = null,
+    val quadrantSectionLengthCm: Double? = null,
 ) {
+    val isQuadrantCount: Boolean get() = countMethod == "quadrant" || sampleSites.any { it.bunchCountEntry?.quadrant != null }
+    val countMethodName: String get() = if (isQuadrantCount) "Quadrant Count" else "Bunches Per Vine Count"
+
     fun vineCount(paddock: Paddock): Int = if (!isCompleted) paddock.authoritativeVineCount else
         blockVineCounts.entries.firstOrNull { it.key.equals(paddock.id, ignoreCase = true) }?.value
             ?: paddock.effectiveVineCount
@@ -179,3 +185,21 @@ data class BlockYieldEstimate(
     val samplesRecorded: Int,
     val samplesTotal: Int,
 )
+
+/** Original measurements, shared JSON shape with iOS. Normalized value is not rounded. */
+@Serializable
+data class QuadrantCountMeasurement(
+    val rawBunchCount: Double,
+    val sectionLengthCm: Double,
+    val vineSpacingCm: Double,
+    val calculationVersion: Int,
+) {
+    val bunchesPerVine: Double get() = rawBunchCount * (vineSpacingCm / sectionLengthCm)
+    companion object {
+        fun make(rawBunchCount: Double, sectionLengthCm: Double, vineSpacingCm: Double?, isSystemAdmin: Boolean): QuadrantCountMeasurement? {
+            if (!isSystemAdmin || !rawBunchCount.isFinite() || rawBunchCount < 0 || kotlin.math.floor(rawBunchCount) != rawBunchCount ||
+                !sectionLengthCm.isFinite() || sectionLengthCm <= 0 || vineSpacingCm == null || !vineSpacingCm.isFinite() || vineSpacingCm <= 0) return null
+            return QuadrantCountMeasurement(rawBunchCount, sectionLengthCm, vineSpacingCm, 1).takeIf { it.bunchesPerVine.isFinite() }
+        }
+    }
+}

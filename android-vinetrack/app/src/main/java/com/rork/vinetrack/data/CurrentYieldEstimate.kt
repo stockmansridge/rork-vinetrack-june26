@@ -34,7 +34,7 @@ object CurrentYieldEstimate {
     ) {
         val tonnesPerHa: Double? get() = displayTonnes?.takeIf { sampledAreaHa > 0 }?.div(sampledAreaHa)
     }
-    data class Trip(val blocks: List<Block>, val sampledAreaHa: Double, val totalTonnes: Double?) {
+    data class Trip(val blocks: List<Block>, val sampledAreaHa: Double, val totalTonnes: Double?, val countMethod: String? = null) {
         val tonnesPerHa: Double? get() = totalTonnes?.takeIf { sampledAreaHa > 0 }?.div(sampledAreaHa)
     }
     fun key(blockId: String, varietyKey: String) = blockId.lowercase() + "|" + varietyKey.trim().lowercase()
@@ -67,6 +67,6 @@ object CurrentYieldEstimate {
         val blocks = paddocks.filter { session.isPaddockSelected(it.id) }.map { block(session, it, weights, remaining(it.id)) }
         val sampled = blocks.filter { it.samplesRecorded > 0 }
         val total = if (sampled.isEmpty() || sampled.any { it.displayTonnes == null }) null else sampled.sumOf { it.displayTonnes ?: 0.0 }
-        return Trip(blocks, sampled.sumOf { it.sampledAreaHa }, total)
+        return Trip(blocks, sampled.sumOf { it.sampledAreaHa }, total, if (session.isQuadrantCount) session.countMethodName else null)
     }
 }

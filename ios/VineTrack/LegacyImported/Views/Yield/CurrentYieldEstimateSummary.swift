@@ -11,6 +11,7 @@ struct CurrentYieldEstimateSummary: View {
     }
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let method = estimate.countMethod { Text(method).font(.caption.weight(.semibold)) }
             if current { Text("Current Estimate").font(.caption.weight(.semibold)).foregroundStyle(VineyardTheme.leafGreen) }
             ForEach(estimate.blocks) { block in
                 VStack(alignment: .leading, spacing: 3) {
