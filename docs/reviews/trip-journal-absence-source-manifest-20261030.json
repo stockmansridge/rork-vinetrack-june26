@@ -1,0 +1,81 @@
+{
+  "managed_source_parent": "37fd2672db6ae3b5ff364fbf5715e6dee982e12d",
+  "integration_commit": null,
+  "reviewed_public_pr22_head": "d4c991d64e2c444805c039ca7392fce22228958a",
+  "reviewed_public_main_head": "69dfdeb0ce3b76ecfe32cbfd6d0e8a0877581cfc",
+  "scope": "iOS active journal deletion absence verification, scoped retained counts and sync termination; no Android, backend or release changes",
+  "validation": {
+    "requested_suite_count": 12,
+    "tests_passed": 184,
+    "test_duration_seconds": 148,
+    "normal_ios_simulator_build": "PASS",
+    "original_device_acceptance": "UNVERIFIED"
+  },
+  "files": [
+    {
+      "path": "ios/VineTrack/App/BackendSettingsView.swift",
+      "sha256": "6d0dbdb836a6e8fb8d6c763296cee7e025cf12872e0f02ed3ad83e233a8f6452",
+      "parent_sha256": "ebd3ce9b7fb4d82b04f56c130b7bc45affefd92bfcf50da2822ea77fcf8eefb8"
+    },
+    {
+      "path": "ios/VineTrack/App/NewMainTabView.swift",
+      "sha256": "00ca347c59220b8396608769c7a7a1b8d1829ebbd4dd7d71e486f6d38fa3226f",
+      "parent_sha256": "fabc240b7164a6e00f84b78cb040f46888cff9d56fdcd2eceba8bcf9ee950354"
+    },
+    {
+      "path": "ios/VineTrack/App/SyncDiagnosticsView.swift",
+      "sha256": "43efbfa58d4dc48fbdc844c919f0f009314b92dec96dff4ebde1cc3c01adcb48",
+      "parent_sha256": "06f3471c0ba3e7ade55afcd666b638a4e9310377587847f4ad72e29f935da5f5"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift",
+      "sha256": "feab99ca5b13f7ca4c89428df803ba89b389e7f3c81e96895118c839a2d54f5e",
+      "parent_sha256": "2b296af195457ec095b7af682a6917bb249625eb49271600db0b65f53cd5511e"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Repositories/TripSyncRepositoryProtocol.swift",
+      "sha256": "fb963295429a8100b097e031dc24b5403f465630f9ef6f172b58619df5cef8df",
+      "parent_sha256": "1b4d1e2810a1d1146b70c89bbb60400d2b2e04f2e6271033ba9f8d237bcbe838"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TripDeleteAbsenceReceipt.swift",
+      "sha256": "2c286b146e7b662188150e07e59edeb01b25b987e50686694f14909de44551f0",
+      "parent_sha256": null
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TripDeletionJournal.swift",
+      "sha256": "0bfadcf617aeebab0fd85448588e11b9f6d3d8f58803d6fe2c1baa1ea6e84c5b",
+      "parent_sha256": "83db9b59230d70253c08b2de17efa27b43b617fdc14cc7fe3bb88c0859b41725"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TripRetainedState.swift",
+      "sha256": "ba5698c5aa276afc3809ce668e10c387e06ea5d6e0a33a33bf8015c5a7538c07",
+      "parent_sha256": null
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TripSyncService.swift",
+      "sha256": "1f0c04dc274b33d5e6e3d86fb0730e11458a19d6e5c61f963ba9c6b5325540c6",
+      "parent_sha256": "bd2a1e961496d1f6aa83276d455bf883a3157a519122bc591578908a4e190823"
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift",
+      "sha256": "fc28b70d39619ccbe13a3df3123366dd6518a2b541dd2f0cf475db5a9cb15b0d",
+      "parent_sha256": "8623bebed1b08045342b84f85d3408789eea032faf446446b0e323de360d94b9"
+    },
+    {
+      "path": "ios/VineTrackTests/TripDeletionRecoveryTests.swift",
+      "sha256": "ff378c203b1eee11ba8bc2fb5b10ac78cf23dfda112dde16c3f5c3873b1d9b3e",
+      "parent_sha256": "c2af1bd1468595d94d24b11f8e638c77ac9159d1b2a5a99b9e717660cebae2d3"
+    },
+    {
+      "path": "ios/VineTrackTests/TripJournalAbsenceIntegrationTests.swift",
+      "sha256": "4034318935f97863ccf382b9518f36dd4cd744c1eb2b039677374ac2c88bd871",
+      "parent_sha256": null
+    },
+    {
+      "path": "scripts/snapshot-trip-journal-absence-source.py",
+      "sha256": "bc5383e06a0eafd680737d2f6b4f181953cade485edc88cc8ae4bec0b74a984c",
+      "parent_sha256": null
+    }
+  ]
+}

@@ -16,6 +16,29 @@ import Testing
         try await service.pushLocalTrips(vineyardId: vineyard)
         #expect(metadata.pendingDeletes[id] != nil)
     }
+    @Test func originalAbsenceHoldCanBeReverifiedWithoutClearingCancellation() async throws {
+        let disk = try persistence(), journal = TripDeletionJournal(persistence: disk)
+        let scope = TripDeletionJournal.Scope(account: UUID(), vineyard: UUID(), trip: UUID())
+        let original = try journal.prepare(trip: scope.trip, queuedAt: Date(timeIntervalSince1970: 100), scope: scope, evidence: Data([9]), established: true)
+        try journal.hold(original, reason: "TRIP_DELETE_ABSENCE_OR_ACCESS_UNVERIFIED")
+        let restarted = TripDeletionJournal(persistence: disk)
+        let held = try #require(restarted.load().intents[scope.trip])
+        var calls = 0
+        let acknowledged = try await restarted.replay(held, account: scope.account, vineyard: scope.vineyard, isCurrent: { true }) { _ in
+            calls += 1
+            let cancelled = try restarted.isCancelled(scope.trip)
+            let reason = try restarted.load().intents[scope.trip]?.reviewReason
+            #expect(cancelled)
+            #expect(reason == held.reviewReason)
+            return "SERVER_ABSENCE_VERIFIED_TEST_RECEIPT"
+        }
+        #expect(acknowledged && calls == 1)
+        let saved = try #require(restarted.load().intents[scope.trip])
+        #expect(saved.revision == original.revision && saved.originalEvidence == original.originalEvidence)
+        #expect(saved.reviewReason == nil && saved.acknowledgement != nil)
+        #expect(try restarted.isCancelled(scope.trip))
+    }
+
     private func persistence() throws -> PersistenceStore {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

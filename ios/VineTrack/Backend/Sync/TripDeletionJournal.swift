@@ -127,10 +127,15 @@ import Foundation
         state.intents[intent.trip]?.reviewReason = reason
         try persistence.saveOrThrow(state, key: Self.key)
     }
+    /// Only this historic ambiguity is eligible for read/verification again. Other holds stay closed.
+    static func canReverify(_ intent: Intent) -> Bool {
+        intent.reviewReason == "TRIP_DELETE_ABSENCE_OR_ACCESS_UNVERIFIED" && intent.scope != nil &&
+            intent.creationOutcome != "uncertain" && intent.acknowledgement == nil
+    }
     func acknowledge(_ intent: Intent, evidence: String) throws -> Bool {
         var state = try load()
-        guard state.intents[intent.trip]?.revision == intent.revision,
-              state.intents[intent.trip]?.reviewReason == nil else { return false }
+        guard state.intents[intent.trip] == intent,
+              intent.reviewReason == nil || Self.canReverify(intent) else { return false }
         state.intents[intent.trip]?.acknowledgement = evidence
         state.intents[intent.trip]?.reviewReason = nil
         try persistence.saveOrThrow(state, key: Self.key)
@@ -140,16 +145,15 @@ import Foundation
     func replay(_ intent: Intent, account: UUID?, vineyard: UUID,
                 isCurrent: () -> Bool, remote: (Scope) async throws -> String) async throws -> Bool {
         let current = try load().intents[intent.trip]
-        guard current?.revision == intent.revision, current?.reviewReason == nil else { return false }
+        guard current == intent, intent.reviewReason == nil || Self.canReverify(intent) else { return false }
         guard let scope = intent.scope else { return false }
         guard account == scope.account, vineyard == scope.vineyard, isCurrent() else { return false }
-        guard intent.reviewReason == nil else { return false }
         if intent.acknowledgement != nil { return true }
         guard Self.inFlight[intent.trip, default: 0] == 0 else {
             try hold(intent, reason: "TRIP_DELETE_CREATE_IN_FLIGHT"); return false
         }
         let evidence: String
-        if intent.creationOutcome == "neverSent" { evidence = "LOCAL_CREATION_NEVER_SENT_CANCELLED" }
+        if intent.creationOutcome == "neverSent", intent.reviewReason == nil { evidence = "LOCAL_CREATION_NEVER_SENT_CANCELLED" }
         else { evidence = try await remote(scope) }
         guard isCurrent() else { return false }
         return try acknowledge(intent, evidence: evidence)

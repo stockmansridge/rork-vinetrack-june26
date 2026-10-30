@@ -3,9 +3,35 @@ import Supabase
 
 final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     private let provider: SupabaseClientProvider
+    private let deletionAuthority: VineyardWriteAuthority
+    struct DeletionSession {
+        let actor: UUID
+        let token: String
+        let incarnation: UInt64
+    }
+    private let deletionSessionSource: (() async throws -> DeletionSession)?
+    private let deletionTransport: (URLRequest) async throws -> (Data, URLResponse)
 
-    init(provider: SupabaseClientProvider = .shared) {
+    init(provider: SupabaseClientProvider = .shared,
+         deletionAuthority: VineyardWriteAuthority = .shared,
+         deletionSession: (() async throws -> DeletionSession)? = nil,
+         deletionTransport: @escaping (URLRequest) async throws -> (Data, URLResponse) = { try await URLSession.shared.data(for: $0) }) {
         self.provider = provider
+        self.deletionAuthority = deletionAuthority
+        self.deletionSessionSource = deletionSession
+        self.deletionTransport = deletionTransport
+    }
+
+    private func deletionSession() async throws -> DeletionSession {
+        if let deletionSessionSource { return try await deletionSessionSource() }
+        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
+        let generation = deletionAuthority.accountGeneration
+        let session = try await provider.client.auth.session
+        guard generation == deletionAuthority.accountGeneration,
+              provider.client.auth.currentUser?.id == session.user.id else {
+            throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ACCOUNT_CHANGED")
+        }
+        return DeletionSession(actor: session.user.id, token: session.accessToken, incarnation: generation)
     }
 
     func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip] {
@@ -302,40 +328,59 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             .execute()
     }
 
-    /// RLS-empty reads are explicitly ambiguous, not acknowledgements. The old
-    /// void RPC has no scoped absence receipt; no absence is inferred from its errors.
+    /// Active journal resolver: empty SELECTs require the existing authoritative read-only RPC.
+    /// The returned receipt is durably acknowledged by the journal, never by a missing-row heuristic.
     func resolveDeletion(_ scope: TripDeletionJournal.Scope, isCurrent: () -> Bool) async throws -> String {
-        guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let session = try await provider.client.auth.session
-        guard session.user.id == scope.account, provider.client.auth.currentUser?.id == scope.account, isCurrent() else {
+        try await resolveDeletion(scope, verificationOnly: false, isCurrent: isCurrent)
+    }
+
+    func reverifyDeletion(_ scope: TripDeletionJournal.Scope, isCurrent: () -> Bool) async throws -> String {
+        try await resolveDeletion(scope, verificationOnly: true, isCurrent: isCurrent)
+    }
+
+    private func resolveDeletion(_ scope: TripDeletionJournal.Scope, verificationOnly: Bool, isCurrent: () -> Bool) async throws -> String {
+        let session = try await deletionSession()
+        func current() -> Bool { isCurrent() && deletionAuthority.accountGeneration == session.incarnation }
+        guard session.actor == scope.account, current() else {
             throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ACCOUNT_CHANGED")
         }
-        try VineyardWriteAuthority.shared.requireWrite(vineyardId: scope.vineyard.uuidString)
+        try deletionAuthority.requireWrite(vineyardId: scope.vineyard.uuidString)
         guard var components = URLComponents(url: provider.supabaseURL.appendingPathComponent("rest/v1/trips"), resolvingAgainstBaseURL: false) else {
             throw URLError(.badURL)
         }
         components.queryItems = [URLQueryItem(name: "select", value: "id,vineyard_id,deleted_at"),
             URLQueryItem(name: "id", value: "eq.\(scope.trip.uuidString.lowercased())"), URLQueryItem(name: "limit", value: "2")]
         guard let url = components.url else { throw URLError(.badURL) }
-        let bytes = try await deletionRequest(url: url, token: session.accessToken)
+        let bytes = try await deletionRequest(url: url, token: session.token)
         let rows = try JSONDecoder().decode([TripDeletionJournal.RemoteRow].self, from: bytes)
-        guard provider.client.auth.currentUser?.id == scope.account, isCurrent() else {
+        let afterLookup = try await deletionSession()
+        guard afterLookup.actor == scope.account, afterLookup.incarnation == session.incarnation, current() else {
             throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ACCOUNT_CHANGED")
+        }
+        if rows.isEmpty {
+            let proof = try await deletionRequest(url: provider.supabaseURL.appendingPathComponent("rest/v1/rpc/confirm_trip_absence_v1"),
+                token: session.token, body: JSONEncoder().encode(SoftDeleteTripRequest(tripId: scope.trip)))
+            let receipt = try JSONDecoder().decode(TripDeleteAbsenceReceipt.self, from: proof)
+            let afterReceipt = try await deletionSession()
+            guard current() else { throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ACCOUNT_CHANGED") }
+            try receipt.requireConfirmation(trip: scope.trip, owner: scope.account, generation: session.incarnation,
+                currentOwner: afterReceipt.actor, currentGeneration: afterReceipt.incarnation)
+            return "SERVER_ABSENCE_VERIFIED:" + proof.base64EncodedString()
         }
         let deleted = try TripDeletionJournal.hasServerTombstone(rows, scope: scope)
-        let currentSession = try await provider.client.auth.session
-        guard currentSession.user.id == scope.account, currentSession.refreshToken == session.refreshToken, isCurrent() else {
-            throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ACCOUNT_CHANGED")
-        }
-        try VineyardWriteAuthority.shared.requireWrite(vineyardId: scope.vineyard.uuidString)
+        try deletionAuthority.requireWrite(vineyardId: scope.vineyard.uuidString)
         if deleted { return "SERVER_TOMBSTONE_OBSERVED" }
+        guard !verificationOnly else {
+            throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ABSENCE_OR_ACCESS_UNVERIFIED")
+        }
         do {
             _ = try await deletionRequest(url: provider.supabaseURL.appendingPathComponent("rest/v1/rpc/soft_delete_trip"),
-                token: session.accessToken, body: JSONEncoder().encode(SoftDeleteTripRequest(tripId: scope.trip)))
+                token: session.token, body: JSONEncoder().encode(SoftDeleteTripRequest(tripId: scope.trip)))
         } catch let error as PostgrestError where ["42501", "P0001", "PGRST116"].contains(error.code ?? "") {
             throw TripDeletionJournal.Held(reason: "TRIP_DELETE_SERVER_REVIEW_REQUIRED_\(error.code ?? "UNKNOWN")")
         }
-        guard provider.client.auth.currentUser?.id == scope.account else {
+        let afterDelete = try await deletionSession()
+        guard afterDelete.actor == scope.account, afterDelete.incarnation == session.incarnation, current() else {
             throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ACCOUNT_CHANGED")
         }
         return "DELETE_RPC_ACKNOWLEDGED"
@@ -349,7 +394,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         request.setValue(AppConfig.supabaseAnonKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await deletionTransport(request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             if (response as? HTTPURLResponse)?.statusCode == 403 {
                 throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ACCESS_UNVERIFIED")

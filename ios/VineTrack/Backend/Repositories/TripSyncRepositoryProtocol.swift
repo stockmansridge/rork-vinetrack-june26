@@ -18,10 +18,15 @@ protocol TripSyncRepositoryProtocol: Sendable {
     func updateTripWorkTaskLink(id: UUID, workTaskId: UUID?) async throws
     func softDeleteTrip(id: UUID) async throws
     func resolveDeletion(_ scope: TripDeletionJournal.Scope, isCurrent: () -> Bool) async throws -> String
+    /// Previously held ambiguities are rechecked read-only; never issue a fresh delete here.
+    func reverifyDeletion(_ scope: TripDeletionJournal.Scope, isCurrent: () -> Bool) async throws -> String
     func fetchOccurrenceRecovery(tripId: UUID, operationIds: [String]) async throws -> TripOccurrenceCoverage.JSON
 }
 
 extension TripSyncRepositoryProtocol {
+    func reverifyDeletion(_ scope: TripDeletionJournal.Scope, isCurrent: () -> Bool) async throws -> String {
+        throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ABSENCE_OR_ACCESS_UNVERIFIED")
+    }
     func resolveDeletion(_ scope: TripDeletionJournal.Scope, isCurrent: () -> Bool) async throws -> String {
         throw TripDeletionJournal.Held(reason: "TRIP_DELETE_SCOPED_TRANSPORT_UNAVAILABLE")
     }

@@ -1330,7 +1330,7 @@ struct SyncSettingsView: View {
 
             LabeledContent("Pending uploads", value: "\(syncCenter.pendingUpserts)")
                 .font(.footnote)
-            LabeledContent("Spray jobs held locally", value: "\(syncCenter.heldSprayPairs)")
+            LabeledContent("Spray jobs held locally", value: tripSync.retainedState.inspectionError == nil ? "\(tripSync.retainedState.sprays.count)" : "Review required")
                 .font(.footnote)
             LabeledContent("Pending deletes", value: "\(syncCenter.pendingDeletes)")
                 .font(.footnote)
@@ -1521,8 +1521,11 @@ struct SyncSettingsView: View {
         }
     }
     private func tripStateFrom(_ status: TripSyncService.Status, lastSync: Date?) -> VineyardSyncState {
+        if status != .syncing, let summary = tripSync.retainedState.summary { return .held(summary) }
         switch status {
-        case .held(let count): return .held("Unrelated work synchronized; \(count) saved spray jobs held locally pending verified receipt.")
+        case .held:
+            if tripSync.pendingDeleteCount > 0 { return .held(tripSync.errorMessage ?? "Trip deletions retained. Open diagnostics to verify original scope.") }
+            return .idle // Old per-sweep warning is not current retained evidence.
         case .idle: return .idle
         case .syncing: return .syncing
         case .success: return .success(lastSync)
@@ -1538,8 +1541,12 @@ struct SyncSettingsView: View {
         }
     }
     private func sprayStateFrom(_ status: SprayRecordSyncService.Status, lastSync: Date?) -> VineyardSyncState {
+        let retained = tripSync.retainedState
+        if status != .syncing, !retained.sprays.isEmpty || retained.inspectionError != nil {
+            return .held(retained.summary ?? "Saved spray evidence needs review.")
+        }
         switch status {
-        case .held(let count): return .held("Unrelated work synchronized; \(count) saved spray jobs held locally pending verified receipt.")
+        case .held: return .idle // Do not repeat a stale spray count after receipt recovery.
         case .idle: return .idle
         case .syncing: return .syncing
         case .success: return .success(lastSync)
