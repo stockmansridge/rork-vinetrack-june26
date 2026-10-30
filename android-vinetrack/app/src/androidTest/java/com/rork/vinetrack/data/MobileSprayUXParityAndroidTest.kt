@@ -93,7 +93,7 @@ class MobileSprayUXParityAndroidTest {
         compose.onNodeWithText("Confirm canopy").assertExists()
         compose.onNodeWithText("You selected VSP · Medium · Low. Confirm this canopy to calculate the recommended spray volume.").assertExists()
         compose.runOnIdle { assertFalse(finalSelection.isConfirmed) }
-        compose.onNodeWithText("Confirm Canopy — VSP · Medium · Low").performScrollTo().performClick()
+        compose.onNodeWithTag("spray.confirm.canopy").performScrollTo().performClick()
         compose.onNodeWithText("Spray at the recommended volume?").assertExists()
         compose.runOnIdle { assertTrue(finalSelection.isConfirmed) }
     }
