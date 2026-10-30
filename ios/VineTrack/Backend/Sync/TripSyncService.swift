@@ -104,6 +104,11 @@ final class TripSyncService {
     /// Trips whose last remote delete failed while still pending.
     var failedDeleteIds: Set<UUID> { Set(metadata.failedDeleteIds.filter { !isHeld($0) }) }
 
+    var retainedState: TripRetainedState {
+        guard let store, let vineyard = store.selectedVineyardId else { return TripRetainedState() }
+        return store.tripRetainedState(vineyard: vineyard, pendingDeletes: Set(metadata.pendingDeletes.keys))
+    }
+
     private weak var store: MigratedDataStore?
     private weak var auth: NewBackendAuthService?
     private let repository: any TripSyncRepositoryProtocol
@@ -164,7 +169,9 @@ final class TripSyncService {
                 "upload trip=\($0.key) revision=\($0.value.timeIntervalSince1970) cancelled=\((try? store.tripDeletionJournal.isCancelled($0.key)) ?? true) review=\(knownTripIds.contains($0.key) ? "inspect upload independently" : "TRIP_UPLOAD_ORIGINAL_SNAPSHOT_UNAVAILABLE")"
             }
             let deletes = intents.map { "delete trip=\($0.trip) account=\($0.scope?.account.uuidString ?? "unresolved") vineyard=\($0.scope?.vineyard.uuidString ?? "unresolved") revision=\($0.revision) creation=\($0.creationOutcome) review=\($0.reviewReason ?? "none") acknowledgement=\($0.acknowledgement ?? "none")" }
-            return (["Trip uploads (separate from deletion): \(uploads.count)"] + uploads + deletes).joined(separator: "\n")
+            let retained = retainedState
+            let sprays = retained.sprays.map { "held spray record=\($0.record) trip=\($0.trip) review=\($0.reason)" }
+            return (["Current-scope spray jobs held locally: \(retained.sprays.count)", retained.inspectionError ?? "Retained inspection complete"] + sprays + ["Trip uploads (separate from deletion): \(uploads.count)"] + uploads + deletes).joined(separator: "\n")
         } catch { return "Trip deletion evidence unreadable: \(error.localizedDescription)" }
     }
 
@@ -228,6 +235,7 @@ final class TripSyncService {
     }
 
     func sync(vineyardId: UUID) async {
+        guard !isSyncing else { return }
         guard SupabaseClientProvider.shared.isConfigured else {
             errorMessage = "Supabase not configured"
             syncStatus = .failure("Supabase not configured")
@@ -235,11 +243,22 @@ final class TripSyncService {
         }
         syncStatus = .syncing
         errorMessage = nil
+        // No early return, cancellation or retained hold may leave a permanent spinner.
+        defer {
+            if syncStatus == .syncing { syncStatus = .failure("Trip sync interrupted. Retained work is unchanged; retry Sync Trips.") }
+        }
+        let current = store?.remoteApplicationCurrentCheck() ?? { true }
         do {
             try await pushLocalTrips(vineyardId: vineyardId)
             await TripLabourSnapshotJournal.shared.replay(trips: store?.trips ?? [])
             try await pullRemoteTrips(vineyardId: vineyardId)
-            let held = try (store?.legacySprayHeldCount(vineyard: vineyardId) ?? 0) + metadata.pendingDeletes.count
+            guard current() else { throw CancellationError() }
+            let retained = retainedState
+            if let issue = retained.inspectionError { throw TripDeletionJournal.Held(reason: issue) }
+            // Unscoped legacy deletions remain outstanding too; never present their absence from
+            // the current-scope projection as overall success or mislabel them as spray jobs.
+            let held = max(retained.total, metadata.pendingDeletes.count)
+            if held > 0, let summary = retained.summary { errorMessage = summary }
             if !failedUpsertIds.isEmpty {
                 syncStatus = .failure("Trip reconciliation pending. Original device evidence is retained; completed trips will not be reopened.")
                 return
@@ -766,14 +785,20 @@ final class TripSyncService {
             do {
                 let scopeCurrent = { current() && store.currentUserIdProvider?() == account && store.selectedVineyardId == vineyardId }
                 if intent.scope?.account == account, intent.scope?.vineyard == vineyardId, scopeCurrent() {
-                    try store.finishTripDeletionLocally(intent)
+                    try store.finishTripDeletionLocally(intent,
+                        preserveLinkedRecords: TripDeletionJournal.canReverify(intent) || intent.acknowledgement != nil)
                 }
                 let acknowledged = try await store.tripDeletionJournal.replay(intent, account: account, vineyard: vineyardId,
                     isCurrent: scopeCurrent) { scope in
-                        try await self.repository.resolveDeletion(scope, isCurrent: scopeCurrent)
+                        if TripDeletionJournal.canReverify(intent) {
+                            return try await self.repository.reverifyDeletion(scope, isCurrent: scopeCurrent)
+                        }
+                        return try await self.repository.resolveDeletion(scope, isCurrent: scopeCurrent)
                     }
-                if acknowledged { try metadata.clearDeletedRevision(tripId, at: timestamp) }
-                else { deleteFailures.append(intent.reviewReason ?? "TRIP_DELETE_ORIGINAL_ACCOUNT_OR_VINEYARD_REQUIRED") }
+                if acknowledged {
+                    // Journal proof is durable first; metadata cleanup must also succeed before reporting completion.
+                    try metadata.clearDeletedRevision(tripId, at: timestamp)
+                } else { deleteFailures.append(intent.reviewReason ?? "TRIP_DELETE_ORIGINAL_ACCOUNT_OR_VINEYARD_REQUIRED") }
             } catch let held as TripDeletionJournal.Held {
                 try store.tripDeletionJournal.hold(intent, reason: held.reason)
                 deleteFailures.append(held.reason)

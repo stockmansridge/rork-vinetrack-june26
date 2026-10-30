@@ -281,6 +281,13 @@ struct NewMainTabView: View {
                 await prefetchOptimalRipenessWeather()
             }
         }
+        // Manual per-area sync also refreshes the same current-scope held-job projection.
+        .onChange(of: tripSync.syncStatus) { _, _ in
+            syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes, failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes, heldSprayPairs: heldLegacySprayPairs)
+        }
+        .onChange(of: sprayRecordSync.syncStatus) { _, _ in
+            syncStatusCenter.refreshPending(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes, failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes, heldSprayPairs: heldLegacySprayPairs)
+        }
         // Manual "Sync now" requested from Sync settings or the status bar.
         .onChange(of: syncStatusCenter.manualSyncToken) { _, _ in
             Task { await runFullSweep(alertRefresh: .refresh, startsManualDiagnostic: true) }
@@ -364,6 +371,12 @@ struct NewMainTabView: View {
         isSweeping = true
         let sweepVineyardId = store.selectedVineyardId
         defer {
+            if syncStatusCenter.isSyncing {
+                syncStatusCenter.syncDidFinish(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes,
+                    failedUpserts: aggregateFailedUpserts, failedDeletes: aggregateFailedDeletes,
+                    pullSucceeded: false, heldSprayPairs: heldLegacySprayPairs,
+                    error: "Sync interrupted. Saved work is retained; open Sync diagnostics and retry.")
+            }
             let shouldRepeat = isSweepRequested || store.selectedVineyardId != sweepVineyardId
             let shouldStartManualDiagnostic = isManualDiagnosticRequested
             isSweepRequested = false
@@ -796,13 +809,12 @@ struct NewMainTabView: View {
     /// Plain "not configured" notices are ignored — they aren't actionable
     /// field errors.
     private var heldLegacySprayPairs: Int {
-        guard let vineyard = store.selectedVineyardId else { return 0 }
-        // A corrupt retained store is not proof that the hold disappeared.
-        return (try? store.legacySprayHeldCount(vineyard: vineyard)) ?? 1
+        tripSync.retainedState.sprays.count
     }
 
     private var aggregateSyncError: String? {
         let messages = [
+            tripSync.retainedState.inspectionError,
             pinSync.errorMessage,
             paddockSync.errorMessage,
             tripSync.errorMessage,

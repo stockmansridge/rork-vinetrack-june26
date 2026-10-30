@@ -1578,7 +1578,7 @@ private struct EntityDiagnosticRow: View {
             case .success:
                 if row.pendingUpserts > 0 || row.pendingDeletes > 0 { return ("pending", .orange) }
                 return ("synced", .green)
-            case .held: return ("spray work held locally", .orange)
+            case .held: return ("retained work needs review", .orange)
             case .failure: return ("failed", .red)
             }
         }()

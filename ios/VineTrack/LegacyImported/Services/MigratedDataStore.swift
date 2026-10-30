@@ -1734,7 +1734,7 @@ final class MigratedDataStore {
 
     /// Completes a journal-first cancellation after a crash or failed cache write.
     /// Newer local work or unreadable archives are held, never removed or overwritten.
-    func finishTripDeletionLocally(_ intent: TripDeletionJournal.Intent) throws {
+    func finishTripDeletionLocally(_ intent: TripDeletionJournal.Intent, preserveLinkedRecords: Bool = false) throws {
         guard let scope = intent.scope, currentUserIdProvider?() == scope.account,
               selectedVineyardId == scope.vineyard else { throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ORIGINAL_ACCOUNT_OR_VINEYARD_REQUIRED") }
         let all: [Trip]
@@ -1757,6 +1757,9 @@ final class MigratedDataStore {
             try persistence.saveOrThrow(all.filter { $0.id != intent.trip }, key: TripRepository.storageKey)
             trips.removeAll { $0.id == intent.trip }
         }
+        // Receipt-only re-verification must not repeat dependent-record deletion/unlink writes.
+        // Cancellation remains durable even if a historical local snapshot needed removal above.
+        guard !preserveLinkedRecords else { return }
         deleteTripCostAllocations(tripId: intent.trip)
         clearTripLinkOnPins(tripId: intent.trip, propagate: true)
         releaseDeviceTrip(intent.trip)
@@ -2091,6 +2094,24 @@ final class MigratedDataStore {
                 try await LegacySprayPairReceipt.request(rpc: rpc, body: body, scope: scope, isCurrent: current)
             }
         } catch { /* Exact evidence stays durable and held. Unrelated writers continue. */ }
+    }
+
+    /// Shared current-scope presentation. Global WAL admission remains unchanged.
+    func tripRetainedState(vineyard: UUID, pendingDeletes: Set<UUID>) -> TripRetainedState {
+        guard let account = currentUserIdProvider?() else { return TripRetainedState() }
+        do {
+            let wal = LegacySpraySaveRecovery(persistence: persistence)
+            let sprays = try wal.attempts().filter { item in
+                guard item.scope.actor == account, item.scope.vineyard == vineyard else { return false }
+                return try wal.requiresLegacyReceipt(item)
+            }.map { TripRetainedState.Spray(trip: $0.trip.id, record: $0.record.id, reason: $0.receiptBlocker ?? "VERIFIED_RECEIPT_REQUIRED") }
+                .sorted { $0.trip.uuidString < $1.trip.uuidString }
+            let deletions = try tripDeletionJournal.load().intents.values.filter {
+                $0.scope?.account == account && $0.scope?.vineyard == vineyard &&
+                    ($0.acknowledgement == nil || pendingDeletes.contains($0.trip))
+            }.map(\.trip).sorted { $0.uuidString < $1.uuidString }
+            return TripRetainedState(sprays: sprays, deletions: deletions)
+        } catch { return TripRetainedState(inspectionError: error.localizedDescription) }
     }
 
     func legacySprayHeldCount(vineyard: UUID) throws -> Int {
