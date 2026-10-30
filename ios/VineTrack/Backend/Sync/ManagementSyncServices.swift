@@ -134,6 +134,13 @@ final class ManagementSyncMetadata {
         clearAcknowledged(upserts: ids, deletes: [])
     }
 
+    func clearDirty(_ ids: [UUID], acknowledged: [UUID: Date]) {
+        clearDirty(ids.filter { id in
+            guard let sentAt = acknowledged[id] else { return false }
+            return state.pendingUpserts[id] == sentAt
+        })
+    }
+
     func clearDeleted(_ ids: [UUID]) {
         clearAcknowledged(upserts: [], deletes: ids)
     }
@@ -535,7 +542,7 @@ final class SavedSprayPresetSyncService {
                 queuedAt: dirty,
                 vineyardId: vineyardId
             ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
+            metadata.clearDirty(result.uploaded, acknowledged: dirty)
             SyncIssueCenter.shared.notePending(entity: "Spray Presets", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }
@@ -683,7 +690,7 @@ final class SprayEquipmentSyncService {
                 queuedAt: dirty,
                 vineyardId: vineyardId
             ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
+            metadata.clearDirty(result.uploaded, acknowledged: dirty)
             SyncIssueCenter.shared.notePending(entity: "Spray Equipment", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }
@@ -852,7 +859,7 @@ final class TractorSyncService {
                 queuedAt: dirty,
                 vineyardId: vineyardId
             ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
+            metadata.clearDirty(result.uploaded, acknowledged: dirty)
             SyncIssueCenter.shared.notePending(entity: "Tractors", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }
@@ -900,16 +907,8 @@ final class TractorSyncService {
                     #endif
                 }
             }
-            for ghost in plan.ghosts {
-                store.applyRemoteTractorDelete(ghost.id)
-                metadata.clearDirty([ghost.id])
-                metadata.clearDeleted([ghost.id])
-            }
-            #if DEBUG
-            if !plan.ghosts.isEmpty {
-                print("[TractorSync] full pull retired \(plan.ghosts.count) stale local tractor(s) for vineyard \(vineyardId)")
-            }
-            #endif
+            // Absence (including a changed permission scope or interrupted snapshot)
+            // is not a delete instruction. Apply explicit deletedAt tombstones below.
             if remote.isEmpty { return }
         }
 
@@ -1018,7 +1017,7 @@ final class VineyardMachineSyncService {
                 queuedAt: dirty,
                 vineyardId: vineyardId
             ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
+            metadata.clearDirty(result.uploaded, acknowledged: dirty)
             SyncIssueCenter.shared.notePending(entity: "Machinery", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }
@@ -1064,16 +1063,8 @@ final class VineyardMachineSyncService {
                     #endif
                 }
             }
-            for ghost in plan.ghosts {
-                store.applyRemoteVineyardMachineDelete(ghost.id)
-                metadata.clearDirty([ghost.id])
-                metadata.clearDeleted([ghost.id])
-            }
-            #if DEBUG
-            if !plan.ghosts.isEmpty {
-                print("[VineyardMachineSync] full pull retired \(plan.ghosts.count) stale local machine(s) for vineyard \(vineyardId)")
-            }
-            #endif
+            // Absence (including a changed permission scope or interrupted snapshot)
+            // is not a delete instruction. Apply explicit deletedAt tombstones below.
             if remote.isEmpty { return }
         }
 
@@ -1187,7 +1178,7 @@ final class FuelPurchaseSyncService {
                 queuedAt: dirty,
                 vineyardId: vineyardId
             ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
+            metadata.clearDirty(result.uploaded, acknowledged: dirty)
             SyncIssueCenter.shared.notePending(entity: "Fuel Purchases", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }
@@ -1231,16 +1222,8 @@ final class FuelPurchaseSyncService {
                     #endif
                 }
             }
-            for ghost in plan.ghosts {
-                store.applyRemoteFuelPurchaseDelete(ghost.id)
-                metadata.clearDirty([ghost.id])
-                metadata.clearDeleted([ghost.id])
-            }
-            #if DEBUG
-            if !plan.ghosts.isEmpty {
-                print("[FuelPurchaseSync] full pull retired \(plan.ghosts.count) stale local row(s) for vineyard \(vineyardId)")
-            }
-            #endif
+            // Absence (including a changed permission scope or interrupted snapshot)
+            // is not a delete instruction. Apply explicit deletedAt tombstones below.
             if remote.isEmpty { return }
         }
         for item in remote {
@@ -1347,7 +1330,7 @@ final class TractorFuelLogSyncService {
                 queuedAt: dirty,
                 vineyardId: vineyardId
             ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
+            metadata.clearDirty(result.uploaded, acknowledged: dirty)
             SyncIssueCenter.shared.notePending(entity: "Fuel Logs", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }
@@ -1391,16 +1374,8 @@ final class TractorFuelLogSyncService {
                     #endif
                 }
             }
-            for ghost in plan.ghosts {
-                store.applyRemoteTractorFuelLogDelete(ghost.id)
-                metadata.clearDirty([ghost.id])
-                metadata.clearDeleted([ghost.id])
-            }
-            #if DEBUG
-            if !plan.ghosts.isEmpty {
-                print("[TractorFuelLogSync] full pull retired \(plan.ghosts.count) stale local row(s) for vineyard \(vineyardId)")
-            }
-            #endif
+            // Absence (including a changed permission scope or interrupted snapshot)
+            // is not a delete instruction. Apply explicit deletedAt tombstones below.
             if remote.isEmpty { return }
         }
         for item in remote {
@@ -1571,7 +1546,7 @@ final class OperatorCategorySyncService {
                         queuedAt: dirty,
                         vineyardId: vineyardId
                     ) { try await repository.upsertMany($0) }
-                    metadata.clearDirty(result.uploaded)
+                    metadata.clearDirty(result.uploaded, acknowledged: dirty)
                     if let error = result.firstRetryableError { throw error }
                 }
             }
@@ -1787,7 +1762,7 @@ final class WorkTaskTypeSyncService {
                 queuedAt: dirty,
                 vineyardId: vineyardId
             ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
+            metadata.clearDirty(result.uploaded, acknowledged: dirty)
             SyncIssueCenter.shared.notePending(entity: "Task Types", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }
@@ -1954,7 +1929,7 @@ final class EquipmentItemSyncService {
                 queuedAt: dirty,
                 vineyardId: vineyardId
             ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
+            metadata.clearDirty(result.uploaded, acknowledged: dirty)
             SyncIssueCenter.shared.notePending(entity: "Equipment", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }
@@ -2121,7 +2096,7 @@ final class SavedInputSyncService {
                 queuedAt: dirty,
                 vineyardId: vineyardId
             ) { try await repository.upsertMany($0) }
-            metadata.clearDirty(result.uploaded)
+            metadata.clearDirty(result.uploaded, acknowledged: dirty)
             SyncIssueCenter.shared.notePending(entity: "Saved Inputs", count: metadata.pendingUpserts.count)
             if let error = result.firstRetryableError { throw error }
         }

@@ -89,13 +89,17 @@ class HomeHydrationAndroidTest {
         client = HttpClient(MockEngine { request ->
             val table = request.url.encodedPath.substringAfterLast('/')
             val v = request.url.parameters["vineyard_id"]?.removePrefix("eq.") ?: a
-            if (table == "paddocks" && v == a && blockNextA.compareAndSet(true, false)) {
+            // Equipment is now the first authoritative read. Suspend that boundary
+            // rather than waiting for a later historical/field request to be reached.
+            if (table == "vineyard_machines" && v == a && blockNextA.compareAndSet(true, false)) {
                 blocked.complete(Unit); release.await()
             }
             if (!online || (failReferences && table in setOf("vineyard_machines", "spray_equipment"))) {
                 respond("Synthetic outage", HttpStatusCode.ServiceUnavailable)
             } else {
-                val payload = when (table) {
+                // Repaired reference reads continue until an empty keyset page.
+                // Do not return the first page again for id=gt.<last-id>.
+                val payload = if (request.url.parameters["id"]?.startsWith("gt.") == true) "[]" else when (table) {
                     "paddocks" -> body(blocks(v))
                     "vineyard_machines" -> body(machines(v))
                     "spray_equipment" -> body(if (v == b && missingBRig) emptyList() else rigs(v))

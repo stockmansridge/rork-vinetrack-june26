@@ -190,6 +190,10 @@ struct SprayCalculatorView: View {
     @State private var pendingLaterSave: (record: SprayRecord, trip: Trip)? = nil
     @State private var errorMessage: String?
     @State private var showStartConfirmation: Bool = false
+    @State private var confirmedActualRates: Bool = false
+    @State private var reviewedGeometry: SprayApplicationSnapshot?
+    @State private var reviewedVineyardId: UUID?
+    @State private var reviewedUserId: UUID?
     @State private var startEngineHoursText: String = ""
     @State private var isStartingJob: Bool = false
     @State private var showWeatherDataSettings: Bool = false
@@ -1155,7 +1159,7 @@ struct SprayCalculatorView: View {
                         mode: summaryMode,
                         localSaveNotice: summaryMode == .savedForLater ? "Saved on this device. Synchronization and Start require verified paired-create recovery; no spray has started." : nil,
                         canViewFinancials: accessControl.canViewFinancials,
-                        onContinue: summaryMode == .readyToStart ? { finalizeStartFromMixSummary() } : nil
+                        onContinue: summaryMode == .readyToStart ? { saveAndStartJob() } : nil
                     )
                 }
             }
@@ -1452,10 +1456,12 @@ struct SprayCalculatorView: View {
         VStack(alignment: .leading, spacing: 8) {
             SectionHeader(title: "Spray Name", icon: "tag")
             if prefillRecord?.isTemplate == true {
-                Text("Source: Spray Program — review canopy conditions; all values remain editable.")
-                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text("Source: Spray Program").font(.caption).foregroundStyle(.secondary)
+                    FieldInfoButton(title: "Spray Program", message: "Review current canopy conditions. Program values are editable for this application; calculations use the selected blocks' verified geometry.")
+                }
                 if let spacing = prefillProgram?.calculatorInputs?.rowSpacingMetres {
-                    Text("Program row spacing: \(guidedFormat.metres(spacing, decimals: 2)). Calculation uses the selected blocks' verified geometry.")
+                    Text("Program row spacing: \(guidedFormat.metres(spacing, decimals: 2))")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -2154,6 +2160,7 @@ struct SprayCalculatorView: View {
         title: String,
         icon: String,
         tint: Color,
+        help: String? = nil,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -2165,13 +2172,14 @@ struct SprayCalculatorView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
+                if let help { FieldInfoButton(title: title, message: help) }
             }
             content()
         }
     }
 
     private var mixTractorSection: some View {
-        mixSectionContainer(title: "Tractor", icon: "car.fill", tint: .indigo) {
+        mixSectionContainer(title: "Tractor", icon: "car.fill", tint: .indigo, help: "A tractor is optional. Select one for fuel-cost estimates, or leave it Not Set. Add or edit tractors in Equipment.") {
             VStack(spacing: 10) {
                 Menu {
                     Button {
@@ -2226,19 +2234,8 @@ struct SprayCalculatorView: View {
                 .buttonStyle(.plain)
                 .disabled(availableTractors.isEmpty)
 
-                if availableTractors.isEmpty {
-                    Text("Add tractors in Equipment to enable fuel cost estimates.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
-                } else if selectedTractorId == nil {
-                    Text("Optional — select a tractor so fuel cost can be estimated.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
-                }
+                // Editing equipment in final review must not create a dead end.
+                if !isEquipmentConfirmed { equipmentConfirmation }
             }
         }
     }
@@ -2307,7 +2304,7 @@ struct SprayCalculatorView: View {
                 mixStartPathSection
                 mixProposedSequenceSection
             } else if trackingPatternChoice == .freeDrive {
-                mixSectionContainer(title: "Free Drive", icon: "scribble.variable", tint: .teal) {
+                mixSectionContainer(title: "Free Drive", icon: "scribble.variable", tint: .teal, help: "Free Drive records distance, pins and Trip history without a planned row sequence. Row coverage is recorded only when the active tracking mode can genuinely establish it; a plan alone never proves treatment.") {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(spacing: 8) {
                             Image(systemName: "info.circle.fill")
@@ -2315,9 +2312,6 @@ struct SprayCalculatorView: View {
                             Text("No planned row sequence")
                                 .font(.subheadline.weight(.semibold))
                         }
-                        Text("Drive freely — the app detects the row/path you are in from GPS, ticks it off when covered, and keeps recording distance, pins and trip history.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                     .padding(14)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -2341,17 +2335,8 @@ struct SprayCalculatorView: View {
     /// Start Path + Sequence Direction card, identical layout to
     /// `StartTripSheet.directionSection` so Maintenance and Spray match.
     private var mixStartPathSection: some View {
-        mixSectionContainer(title: "Start Path & Direction", icon: "arrow.up.arrow.down", tint: .blue) {
+        mixSectionContainer(title: "Start Path & Direction", icon: "arrow.up.arrow.down", tint: .blue, help: rowGuidanceHelperText) {
             VStack(spacing: 10) {
-                HStack(spacing: 6) {
-                    Image(systemName: "info.circle")
-                        .font(.caption2)
-                    Text(rowGuidanceHelperText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    Spacer()
-                }
 
                 Menu {
                     ForEach(qualifiedCandidates) { path in
@@ -3023,6 +3008,8 @@ struct SprayCalculatorView: View {
                     .padding(.horizontal)
 
                     tankMixPreviewSection
+                    SprayActualRateConfirmation(tanks: pendingTanks, confirmed: $confirmedActualRates)
+                        .padding(.horizontal)
 
                     confirmTripSetup
                         .padding(.horizontal)
@@ -3054,9 +3041,8 @@ struct SprayCalculatorView: View {
                     HStack(spacing: 10) {
                         Image(systemName: "cloud.sun.fill")
                             .foregroundStyle(.blue)
-                        Text("Weather data will be captured automatically at the start, every hour during the spray, and when the trip ends.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Text("Automatic weather capture").font(.caption)
+                        FieldInfoButton(title: "Weather capture", message: "Weather data is captured separately at the start, during the spray and when the Trip ends. Unavailable weather is recorded honestly and never prevents a valid Trip from starting.")
                         Spacer()
                     }
                     .padding(12)
@@ -3095,7 +3081,7 @@ struct SprayCalculatorView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(VineyardTheme.olive)
-                        .disabled(isStartingJob || calculatorOperationalBlocker != nil)
+                        .disabled(isStartingJob || calculatorOperationalBlocker != nil || !confirmedActualRates || !SprayStartRateReview.isReviewable(pendingTanks) || !validStartEngineHours)
                         .accessibilityIdentifier("spray.startTrip")
                         if let blocker = calculatorOperationalBlocker {
                             Text(blocker).font(.caption).foregroundStyle(.orange)
@@ -3904,9 +3890,6 @@ struct SprayCalculatorView: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
-                Text("The whole job's water — what you'll actually mix. Product rates are dosed against this total.")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
             .padding(12)
             .background(Color(.secondarySystemGroupedBackground))
@@ -4110,7 +4093,7 @@ struct SprayCalculatorView: View {
                 }
             }
             if let intent = guidedInputs.planningIntent {
-                GuidedReviewGroup(title: "Selected Physical Work") {
+                GuidedReviewGroup(title: "Selected Physical Work", help: SprayWorkAreaSelection.routeAdmissionMessage) {
                     VStack(alignment: .leading, spacing: 8) {
                         Button("Select Work Area") { showingWorkArea = true }
                             .disabled(intent.configuration == nil)
@@ -4123,15 +4106,14 @@ struct SprayCalculatorView: View {
                             }
                         }
                         Text("Known selected treatment area: not certified").font(.caption)
-                        Text(SprayWorkAreaSelection.routeAdmissionMessage).font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 .sheet(isPresented: $showingWorkArea) {
                     SprayWorkAreaSelectionView(choices: SprayWorkAreaSelection.choices(plannedCandidates),
                         configuration: intent.configuration ?? .standardPass, selected: $selectedPhysicalWork)
                 }
-                GuidedReviewGroup(title: "Actual Spray Coverage") {
-                    Text("Not recorded by this plan. Only genuine tracked and recorded operations establish coverage.").font(.caption).foregroundStyle(.secondary)
+                GuidedReviewGroup(title: "Actual Spray Coverage", help: "Only genuine tracked and recorded operations establish spray coverage. Selecting a planned area is not a record of completed treatment.") {
+                    Text("Not yet recorded").font(.caption).foregroundStyle(.secondary)
                 }
             }
             SprayConcentrationWarningView(products: SprayPlanningOperationalGate.warningProducts(
@@ -4611,6 +4593,10 @@ struct SprayCalculatorView: View {
            let equip = store.sprayEquipment.first(where: { $0.id == equipId }) {
             pendingTanks = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
         }
+        reviewedGeometry = flow.snapshot
+        reviewedVineyardId = store.selectedVineyardId
+        reviewedUserId = auth.userId
+        confirmedActualRates = false
         showStartConfirmation = true
     }
 
@@ -4628,18 +4614,33 @@ struct SprayCalculatorView: View {
             errorMessage = "A trip is already in progress. End it before starting a new spray."
             return
         }
+        guard confirmedActualRates, validStartEngineHours,
+              SprayStartRateReview.isReviewable(pendingTanks) else {
+            errorMessage = "Confirm the actual chemical rates and check the engine hours."
+            return
+        }
+        guard store.selectedVineyardId == reviewedVineyardId, auth.userId == reviewedUserId else {
+            errorMessage = "The account or vineyard changed. Reopen this spray review."
+            return
+        }
+        let currentTanks = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
+        guard SprayStartRateReview.evidence(currentTanks) == SprayStartRateReview.evidence(pendingTanks),
+              flow.snapshot == reviewedGeometry else {
+            pendingTanks = currentTanks
+            reviewedGeometry = flow.snapshot
+            confirmedActualRates = false
+            errorMessage = "The mix changed. Confirm the updated actual rates."
+            return
+        }
         errorMessage = nil
         isStartingJob = true
-
-        await captureWeather()
-        performCalculation()
-
-        pendingTanks = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
-
-        // Skip the intermediate readyToStart summary sheet — the Spray Tank
-        // Mixing screen now shows the mix preview, so tapping Start Spray Trip
-        // should begin live tracking directly.
+        // Start exactly the reviewed recipe. The tracking service already captures
+        // start/hourly weather independently; a weather request must not block Start.
         finalizeStartFromMixSummary()
+    }
+
+    private var validStartEngineHours: Bool {
+        startEngineHoursText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || parsedStartEngineHours != nil
     }
 
     private var parsedStartEngineHours: Double? {
@@ -4657,6 +4658,13 @@ struct SprayCalculatorView: View {
     }
 
     private func finalizeStartFromMixSummary() {
+        guard confirmedActualRates, validStartEngineHours,
+              SprayStartRateReview.isReviewable(pendingTanks),
+              store.selectedVineyardId == reviewedVineyardId, auth.userId == reviewedUserId else {
+            errorMessage = "Confirm the actual chemical rates before starting this Trip."
+            isStartingJob = false
+            return
+        }
         if let blocker = flow.firstBlocker { errorMessage = blocker.message; isStartingJob = false; return }
         guard let equipId = selectedEquipmentId,
               let equip = store.sprayEquipment.first(where: { $0.id == equipId }) else { isStartingJob = false; return }

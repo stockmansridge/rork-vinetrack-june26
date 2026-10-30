@@ -136,7 +136,16 @@ class AccountScopedTankSafetyTest {
             job.await()
             assertArrayEquals(claimed, queueFile.readBytes())
             assertEquals(local, active.load()?.trip)
-            assertEquals(PendingWriteStatus.IN_PROGRESS, PendingWriteRepository(ReviewWriteDisk(queueFile)).list().single().status)
+            val retained = queue.list().single()
+            assertEquals(PendingWriteStatus.IN_PROGRESS, retained.status)
+            // A new repository models process restart: no upload remains in flight.
+            // Startup requeues the same intent as FAILED without losing its evidence.
+            val restarted = PendingWriteRepository(ReviewWriteDisk(queueFile)).list().single()
+            assertEquals(PendingWriteStatus.FAILED, restarted.status)
+            assertEquals(retained.id, restarted.id)
+            assertEquals(retained.payloadJson, restarted.payloadJson)
+            assertEquals(retained.createdAt, restarted.createdAt)
+            assertEquals(retained.attemptCount, restarted.attemptCount)
         } finally { root.deleteRecursively() }
     }
 

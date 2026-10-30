@@ -29,6 +29,7 @@ struct SprayTripSetupSheet: View {
     @State private var showCalculator: Bool = false
     @State private var planningStep: SprayProgramStep?
     @State private var pendingSavedTrip: Trip?
+    @State private var pendingSavedRecipe: SprayRecord?
     @State private var legacyRecoveryError: String?
 
     /// The vineyard's Program, from the SAME sources the Spray Program tab
@@ -132,8 +133,17 @@ struct SprayTripSetupSheet: View {
             .sheet(item: $pendingSavedTrip) { trip in
                 SprayTripStartConfirmationSheet(
                     machineName: machineName(for: trip),
-                    latestEngineHours: latestEngineHours(for: trip)
+                    latestEngineHours: latestEngineHours(for: trip),
+                    tanks: pendingSavedRecipe?.tanks ?? []
                 ) { startEngineHours in
+                    guard let reviewed = pendingSavedRecipe,
+                          let current = store.sprayRecords.first(where: { $0.id == reviewed.id && $0.tripId == trip.id }),
+                          current.hasSameRecipeEvidence(as: reviewed),
+                          store.selectedVineyardId == trip.vineyardId else {
+                        pendingSavedTrip = nil
+                        legacyRecoveryError = "The saved spray changed. Reopen it to confirm its actual rates."
+                        return
+                    }
                     do { try store.requireLegacySpraySyncAdmission(trip: trip.id) }
                     catch { legacyRecoveryError = error.localizedDescription; return }
                     tracking.activateSavedTrip(trip, startEngineHours: startEngineHours, onStarted: { success in
@@ -161,6 +171,7 @@ struct SprayTripSetupSheet: View {
         // Saved calculator jobs already own the canonical trip identity and its
         // full block/row/tank/equipment plan. Activate that exact snapshot; do
         // not create a primary-block replacement and relink the spray record.
+        pendingSavedRecipe = record
         pendingSavedTrip = savedTrip
     }
 

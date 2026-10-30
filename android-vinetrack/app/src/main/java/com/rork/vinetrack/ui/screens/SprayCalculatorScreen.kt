@@ -1340,15 +1340,22 @@ fun SprayCalculatorScreen(
         }
     }
 
-    fun startJobNow(startEngineHours: Double?) {
+    fun startJobNow(startEngineHours: Double?, reviewedInput: SprayRecordRepository.SprayInput) {
         calculatorOperationalBlocker?.let { errorMessage = it; return }
         val r = runCalculation() ?: return
+        val currentInput = buildInput()
+        if (com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(currentInput.tanks) !=
+            com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(reviewedInput.tanks) ||
+            currentInput.applicationGeometry != reviewedInput.applicationGeometry) {
+            errorMessage = "The mix changed. Reopen Start and confirm the updated actual rates."
+            return
+        }
         if (saving) return
         saving = true
         val firstPaddock = selectedPaddocks.firstOrNull()
         val paddockNames = selectedPaddocks.joinToString(", ") { it.name }
         vm.startSprayJobNow(
-            input = buildInput(),
+            input = reviewedInput,
             paddockId = firstPaddock?.id,
             paddockIds = selectedPaddocks.map { it.id },
             paddockName = paddockNames,
@@ -1415,6 +1422,15 @@ fun SprayCalculatorScreen(
             modifier = modifier,
         )
         if (showOperationalStartConfirmation) {
+            val currentReviewInput = buildInput()
+            // Bind the reviewed snapshot and consent to the full operational scope.
+            // Ignore regenerated tank IDs/timestamps, but never silently adopt changed geometry.
+            val reviewScope = listOf(
+                com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(currentReviewInput.tanks),
+                currentReviewInput.applicationGeometry, selectedPaddocks.map { it.id },
+                tractorId, selectedEquipment?.id, buildRowPlan(reviewResult.totalTanks),
+            )
+            val reviewedInput = remember(reviewScope) { currentReviewInput }
             val machine = state.machines.firstOrNull { it.id == tractorId || it.legacyTractorId == tractorId }
             val latestHours = state.fuelLogs.asSequence()
                 .filter { log ->
@@ -1426,10 +1442,13 @@ fun SprayCalculatorScreen(
             SprayTripStartConfirmation(
                 machineName = selectedTractor?.displayName ?: "Not selected",
                 latestEngineHours = latestHours,
+                tanks = reviewedInput.tanks,
+                scopeKey = "${state.currentUserId}|${state.selectedVineyardId}|new-spray",
+                scopeEvidence = reviewScope,
                 onDismiss = { showOperationalStartConfirmation = false },
                 onStart = { hours ->
                     showOperationalStartConfirmation = false
-                    startJobNow(hours)
+                    startJobNow(hours, reviewedInput)
                 },
             )
         }
@@ -1476,9 +1495,12 @@ fun SprayCalculatorScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 if (prefillRecord?.isTemplate == true) {
-                    Text("Source: Spray Program — review canopy conditions; all values remain editable.", fontSize = 12.sp, color = vine.textSecondary)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Source: Spray Program", fontSize = 12.sp, color = vine.textSecondary)
+                        SprayInfoHelp("Spray Program", "Review current canopy conditions. Program values are editable for this application; calculations use the selected blocks' verified geometry.")
+                    }
                     prefillRecord.programCalculatorInputs?.rowSpacingMetres?.let { spacing ->
-                        Text("Program row spacing: ${fmt.lengthValue(spacing)} ${fmt.lengthUnitAbbreviation}. Calculation uses the selected blocks' verified geometry.", fontSize = 12.sp, color = vine.textSecondary)
+                        Text("Program row spacing: ${fmt.lengthValue(spacing)} ${fmt.lengthUnitAbbreviation}", fontSize = 12.sp, color = vine.textSecondary)
                     }
                 }
                 var menu by remember { mutableStateOf(false) }
@@ -1788,6 +1810,13 @@ fun SprayCalculatorScreen(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Spray Unit", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    state.equipmentSyncError?.let { Text(it, fontSize = 12.sp, color = VineColors.Warning) }
+                    if (!state.sprayEquipmentKnowledge.isKnown && state.sprayEquipment.isEmpty()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Spray units have not loaded.", modifier = Modifier.weight(1f), color = vine.textSecondary)
+                            TextButton(onClick = { vm.refresh() }) { Text("Retry") }
+                        }
+                    }
                     EquipmentSummaryCard(
                         equipmentName = selectedEquipment?.displayName,
                         tankCapacity = selectedEquipment?.tankCapacityLitres,
@@ -1960,14 +1989,17 @@ fun SprayCalculatorScreen(
                 }
 
                 if (guidedFlow.effectiveCarrierBasis == SprayCarrierBasis.MANUAL_TOTAL_VOLUME) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Total spray water", fontWeight = FontWeight.SemiBold)
+                        SprayInfoHelp("Total spray water", "Enter the total water you will mix. Manual water does not establish a dilute canopy reference or label approval; product rate validation still applies.")
+                    }
                     OutlinedTextField(value = manualTotalLitresText, onValueChange = { manualTotalLitresText = it; result = null },
                         label = { Text("Total spray water (${fmt.volumeUnitAbbreviation})") }, singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
-                    Text("Enter a positive total water volume. Manual water does not establish a dilute canopy reference or label approval; product rate validation still applies.", style = MaterialTheme.typography.bodySmall)
                 } else if (operationType == "Foliar Spray") {
                     val decision = guidedFlow.volumeDecision
                     decision?.recommendation?.let { recommendation ->
-                        GuidedCalculatedPanel(title = "Recommended spray volume — CF 1.00", accent = VineColors.LeafGreen) {
+                        GuidedCalculatedPanel(title = "Recommended spray volume — CF 1.00", accent = VineColors.LeafGreen, help = SprayVolumeHelp.RECOMMENDED_VOLUME) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 GuidedCalculatedRow(label = fmt.volumePer100LengthUnit, value = carrierFormat.litresPer100m(recommendation.diluteLitresPer100Metres), accent = VineColors.LeafGreen, emphasis = true)
                                 GuidedCalculatedRow(
@@ -1976,7 +2008,6 @@ fun SprayCalculatorScreen(
                                     accent = VineColors.LeafGreen,
                                     caption = if (recommendation.diluteLitresPerHectare == null) SprayVolumeHelp.ROW_SPACING_REQUIRED else null,
                                 )
-                                Text(SprayVolumeHelp.RECOMMENDED_VOLUME, fontSize = 12.sp, color = vine.textSecondary)
                             }
                         }
                         if (prefillRecord?.programCalculatorInputs?.diluteLitresPer100m != null) {
@@ -2410,7 +2441,7 @@ fun SprayCalculatorScreen(
 
                     guidedFlow.inputs.planningIntent?.let { intent ->
                         val workChoices = SprayWorkAreaSelection.choices(plannedCandidates)
-                        GuidedReviewGroup(title = "Selected Physical Work", accent = VineColors.Olive) {
+                        GuidedReviewGroup(title = "Selected Physical Work", accent = VineColors.Olive, help = SprayWorkAreaSelection.ROUTE_MESSAGE) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(onClick = { showingWorkArea = true }, enabled = intent.configuration != null) { Text("Select Work Area") }
                                 Text(if (selectedPhysicalWork.isEmpty()) "Work area not selected — an admitted unbound save will not create an executable Trip."
@@ -2421,11 +2452,10 @@ fun SprayCalculatorScreen(
                                         Text("Retained selection is stale or unavailable. Re-select explicitly.", color = VineColors.Warning)
                                 }
                                 Text("Known selected treatment area: not certified", style = MaterialTheme.typography.bodySmall)
-                                Text(SprayWorkAreaSelection.ROUTE_MESSAGE, style = MaterialTheme.typography.bodySmall)
                             }
                         }
-                        GuidedReviewGroup(title = "Actual Spray Coverage", accent = VineColors.Olive) {
-                            Text("Not recorded by this plan. Only genuine tracked and recorded operations establish coverage.", style = MaterialTheme.typography.bodySmall)
+                        GuidedReviewGroup(title = "Actual Spray Coverage", accent = VineColors.Olive, help = "Only genuine tracked and recorded operations establish spray coverage. Selecting a planned area is not a record of completed treatment.") {
+                            Text("Not yet recorded", style = MaterialTheme.typography.bodySmall)
                         }
                         if (showingWorkArea) SprayWorkAreaSelectionSheet(workChoices, intent.configuration ?: SprayPassConfiguration.STANDARD_PASS,
                             selectedPhysicalWork.toList(), onChange = { selectedPhysicalWork.clear(); selectedPhysicalWork.addAll(it) }, onDismiss = { showingWorkArea = false })
@@ -4701,15 +4731,10 @@ private fun SprayTankMixReview(
             }
 
             item {
-                Text(
-                    "Weather data will be captured automatically at the start, every hour during the spray, and when the trip ends.",
-                    fontSize = 12.sp,
-                    color = vine.textSecondary,
-                    modifier = Modifier.fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(VineColors.Indigo.copy(alpha = 0.08f))
-                        .padding(12.dp),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Automatic weather capture", modifier = Modifier.weight(1f), color = vine.textSecondary)
+                    SprayInfoHelp("Weather capture", "Weather data is captured separately at the start, during the spray and when the Trip ends. Unavailable weather is recorded honestly and does not prevent a valid Trip from starting.")
+                }
             }
 
             errorMessage?.let { msg ->

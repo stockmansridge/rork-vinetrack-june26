@@ -29,6 +29,9 @@ struct TripDetailView: View {
     @State private var verifiedOrphanCandidate: BackendSprayRecord?
     @State private var showRecoveredTankMix = false
     @State private var recoveredMixReviewed = false
+    @State private var pendingRateReviewTrip: Trip?
+    @State private var pendingRateReviewRecipe: SprayRecord?
+    @State private var pendingRateReviewOwner: UUID?
     @State private var showDeleteConfirmation: Bool = false
     @State private var position: MapCameraPosition = .automatic
     @State private var isExporting: Bool = false
@@ -96,330 +99,59 @@ struct TripDetailView: View {
     }
 
     var body: some View {
-        List {
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(displayName)
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(VineyardTheme.olive)
-                        Spacer(minLength: 8)
-                        RecordSyncBadge(state: RecordSyncState.forTrip(trip.id, tripSync: tripSync))
-                    }
-                    RecordSyncFailureHint(state: RecordSyncState.forTrip(trip.id, tripSync: tripSync))
-                    Label(trip.startTime.formattedTZ(date: .abbreviated, time: .shortened, in: tz), systemImage: "calendar")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    if let endTime = trip.endTime {
-                        Label("Ended \(endTime.formattedTZ(date: .abbreviated, time: .shortened, in: tz))", systemImage: "flag.checkered")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    } else if trip.isActive {
-                        Label("Active", systemImage: "circle.fill")
-                            .font(.subheadline)
-                            .foregroundStyle(.green)
-                    }
-                }
-                .padding(.vertical, 4)
+        tripDetailAlerts
+        .task(id: "\(trip.id):\(accessControl.canViewCosting)") {
+            chemicalPrices = nil
+            if accessControl.canViewCosting {
+                var calendar = Calendar.current
+                calendar.timeZone = store.settings.resolvedTimeZone
+                let vintage = VintageResolver.vintageYear(for: trip.startTime, seasonStartMonth: store.settings.seasonStartMonth, seasonStartDay: store.settings.seasonStartDay, calendar: calendar)
+                chemicalPrices = try? await CatalogueRepository().chemicalSeasonPrices(vineyardId: trip.vineyardId, vintage: vintage)
             }
-
-            if mayRecoverSavedOccurrenceSpray {
-                Section {
-                    HStack(spacing: 12) {
-                        Button {
-                            recoverAndStartOriginalSpray()
-                        } label: {
-                            Label("Start Trip", systemImage: "play.fill")
-                                .font(.headline)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(isRecoveringSavedSpray || !accessControl.canCreateOperationalRecords)
-                        .accessibilityIdentifier("trip.startOriginalQueuedSpray")
-                        Button { showOriginalStartHelp = true } label: {
-                            Image(systemName: "info.circle").font(.title3)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("How to start a queued spray")
-                    }
-                    if let candidate = verifiedOrphanCandidate {
-                        Text("Saved spray found · \(candidate.tanks?.count ?? 0) tanks")
-                            .font(.subheadline.weight(.medium))
-                        Button("Review saved tank mix") {
-                            showRecoveredTankMix = true
-                        }
-                        .accessibilityIdentifier("trip.reviewRecoveredSprayMix")
-                        Button("Confirm saved mix & Start Trip") {
-                            confirmRecoveredOrphanAndStart()
-                        }
-                        .disabled(!recoveredMixReviewed || isRecoveringSavedSpray ||
-                                  !accessControl.canCreateOperationalRecords)
-                        .accessibilityIdentifier("trip.confirmRecoveredOrphanSpray")
-                        Text("Application is blocked until the original quantities, units and applicable label rates can be verified. Reviewing alone does not clear this hold.")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    } else if !accessControl.canCreateOperationalRecords {
-                        Text("Read-only access — subscription required.").font(.caption).foregroundStyle(.orange)
-                    } else if isRecoveringSavedSpray {
-                        ProgressView("Locating original spray…")
-                    } else {
-                        Text("\(currentTrip.rowSequence.count) paths · Original saved trip")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                if let diagnostic = tracking.lastSprayStartDiagnostic {
-                    Section {
-                        DisclosureGroup("Start diagnostics") {
-                            Text(diagnostic).font(.caption.monospaced()).textSelection(.enabled)
-                            ShareLink("Share diagnostics", item: diagnostic)
-                        }
-                    }
-                }
-            } else if currentTrip.isActive && tracking.activeTrip?.id == currentTrip.id {
-                Section {
-                    Button("Go to Active Trip") { dismiss() }
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
+            if accessControl.canViewCosting, vineyardMembers.isEmpty {
+                if let members = try? await teamRepository.listMembers(vineyardId: trip.vineyardId) {
+                    vineyardMembers = members
                 }
             }
-
-            Section("Trip Summary") {
-                if let raw = trip.tripFunction, !raw.isEmpty {
-                    if let function = TripFunction(rawValue: raw) {
-                        statRow("Function", value: function.displayName, icon: function.icon)
-                    } else if raw.hasPrefix("custom:") {
-                        let label = trip.tripTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let display = (label?.isEmpty == false) ? label! : String(raw.dropFirst("custom:".count))
-                        statRow("Function", value: display, icon: "wrench.and.screwdriver")
-                    }
-                }
-                if let title = trip.tripTitle, !title.isEmpty {
-                    statRow("Title", value: title, icon: "text.cursor")
-                }
-                if mayRecoverSavedOccurrenceSpray {
-                    statRow("Status", value: "Not started", icon: "clock")
-                } else {
-                    statRow("Duration", value: formatDuration(trip.activeDuration), icon: "clock")
-                }
-                statRow("Distance", value: formatDistance(trip.totalDistance), icon: "point.topleft.down.to.point.bottomright.curvepath")
-                if !trip.paddockName.isEmpty {
-                    statRow("Block", value: trip.paddockName, icon: "leaf")
-                }
-                if !trip.personName.isEmpty {
-                    statRow("Operator", value: trip.personName, icon: "person")
-                }
-                if let workTaskLabel = linkedWorkTaskLabel {
-                    statRow("Work Task", value: workTaskLabel, icon: "checklist")
-                }
-                if !trip.rowSequence.isEmpty {
-                    statRow("Pattern", value: trip.trackingPattern.title, icon: trip.trackingPattern.icon)
-                    if let startDescription = startMidrowDescription {
-                        statRow("Started", value: startDescription, icon: "flag")
-                    }
-                    statRow("Paths planned", value: "\(trip.rowSequence.count)", icon: "list.number")
-                    statRow("Complete", value: "\(rowCompletionResults.filter { $0.status == .complete }.count)", icon: "checkmark.circle")
-                    let partialCount = rowCompletionResults.filter { $0.status == .partial }.count
-                    if partialCount > 0 {
-                        statRow("Partial", value: "\(partialCount)", icon: "exclamationmark.triangle")
-                    }
-                    let notDoneCount = rowCompletionResults.filter { $0.status == .notComplete }.count
-                    if notDoneCount > 0 {
-                        statRow("Not complete", value: "\(notDoneCount)", icon: "xmark.circle")
-                    }
-                }
-                if pinsForTrip.count > 0 {
-                    statRow("Pins recorded", value: "\(pinsForTrip.count)", icon: "mappin")
-                }
-            }
-
-            if let record = sprayRecord {
-                Section {
-                    DisclosureGroup(isExpanded: $showSprayDetails) {
-                        if !record.sprayReference.isEmpty {
-                            statRow("Reference", value: record.sprayReference, icon: "drop.fill")
-                        }
-                        statRow("Date", value: record.date.formattedTZ(date: .abbreviated, time: .omitted, in: tz), icon: "calendar")
-                        if record.tanks.count > 0 {
-                            statRow("Tanks", value: "\(record.tanks.count)", icon: "cylinder")
-                        }
-                        Button {
-                            showTankMix = true
-                        } label: {
-                            Label("View tank mix", systemImage: "cylinder.split.1x2")
-                                .frame(minHeight: 44)
-                        }
-                        .accessibilityLabel("View planned tank mix")
-                    } label: {
-                        Label("Spray Record", systemImage: "drop.fill")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                }
-            } else if trip.totalTanks > 0 {
-                Section("Spray Record") {
-                    Button {
-                        showTankMix = true
-                    } label: {
-                        Label("View tank mix", systemImage: "cylinder.split.1x2")
-                            .frame(minHeight: 44)
-                    }
-                    .accessibilityLabel("View planned tank mix")
-                    Text("Tank mix details unavailable on this device.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if !rowCompletionResults.isEmpty {
-                Section {
-                    DisclosureGroup(isExpanded: $showRowCompletion) {
-                        if let paddockName = coverageSourcePaddockName {
-                            statRow("Block", value: paddockName, icon: "leaf")
-                        }
-                        ForEach(rowCompletionResults) { result in
-                            rowCompletionRow(result)
-                        }
-                    } label: {
-                        Label("Row Completion", systemImage: "checklist")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                }
-            } else if !coveredRowSummary.isEmpty {
-                Section {
-                    DisclosureGroup(isExpanded: $showRowCompletion) {
-                        statRow("Rows covered", value: "\(coveredRowNumbers.count)", icon: "checkmark.circle")
-                        if let paddockName = coverageSourcePaddockName {
-                            statRow("Block", value: paddockName, icon: "leaf")
-                        }
-                        Text(coveredRowSummary)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } label: {
-                        Label("Row Coverage", systemImage: "checklist")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                }
-            }
-
+        }
+        .onAppear {
+            rebuildDisplayTrail()
             if trip.pathPoints.count > 1 {
-                Section {
-                    DisclosureGroup(isExpanded: $showPathMap) {
-                        Group {
-                            if network.isOnline {
-                                Map(position: $position) {
-                                    ForEach(displayTrailSegments) { segment in
-                                        MapPolyline(coordinates: segment.coordinates)
-                                            .stroke(segment.color, lineWidth: 4)
-                                    }
-                                }
-                                .mapStyle(.hybrid)
-                            } else {
-                                OfflineVineyardMapView(
-                                    trails: displayTrailSegments.map {
-                                        OfflineVineyardMapView.Trail(id: $0.id, coordinates: $0.coordinates, color: $0.color)
-                                    }
-                                )
-                                .clipShape(.rect(cornerRadius: 12))
-                            }
-                        }
-                        .frame(height: 240)
-                    } label: {
-                        Label("Path Map", systemImage: "map")
-                            .font(.subheadline.weight(.semibold))
-                    }
+                let coords = trip.pathPoints.map { $0.coordinate }
+                let lats = coords.map { $0.latitude }
+                let lons = coords.map { $0.longitude }
+                if let minLat = lats.min(), let maxLat = lats.max(),
+                   let minLon = lons.min(), let maxLon = lons.max() {
+                    let center = CLLocationCoordinate2D(
+                        latitude: (minLat + maxLat) / 2,
+                        longitude: (minLon + maxLon) / 2
+                    )
+                    let span = MKCoordinateSpan(
+                        latitudeDelta: max(maxLat - minLat, 0.001) * 1.4,
+                        longitudeDelta: max(maxLon - minLon, 0.001) * 1.4
+                    )
+                    position = .region(MKCoordinateRegion(center: center, span: span))
                 }
             }
+        }
+        .onChange(of: trip.pathPoints.count) { _, _ in
+            rebuildDisplayTrail()
+        }
+    }
 
-            if !trip.rowSequence.isEmpty {
-                Section {
-                    Button {
-                        showSummary = true
-                    } label: {
-                        Label("View Path Summary", systemImage: "list.bullet.clipboard")
-                    }
-                }
-            }
-
-            if let details = trip.seedingDetails, details.hasAnyValue {
-                Section {
-                    DisclosureGroup(isExpanded: $showSeedingDetails) {
-                        seedingDetailsBody(details)
-                    } label: {
-                        Label("Seeding Details", systemImage: "leaf.arrow.circlepath")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                }
-            }
-
-            if accessControl.canViewCosting && !mayRecoverSavedOccurrenceSpray {
-                Section {
-                    DisclosureGroup(isExpanded: $showCostSection) {
-                        tripCostBody
-                        if !trip.isActive {
-                            Button {
-                                showEditCostingLinks = true
-                            } label: {
-                                Label("Edit operator, worker type & tractor", systemImage: "pencil")
-                                    .font(.subheadline.weight(.medium))
-                            }
-                            .padding(.top, 4)
-                        }
-                    } label: {
-                        Label("Estimated Trip Cost", systemImage: "dollarsign.circle")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                }
-            }
-
-            if let notes = trip.completionNotes?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-               !notes.isEmpty {
-                Section("Completion Notes") {
-                    Text(notes)
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
-                        .padding(.vertical, 2)
-                }
-            }
-
-            // Manual Corrections intentionally hidden from the normal Trip
-            // Review UI. Events are still stored on the trip and included
-            // in audit/debug surfaces and exports as required.
-
-            if !pinsForTrip.isEmpty {
-                Section {
-                    DisclosureGroup(isExpanded: $showPinsSection) {
-                        ForEach(pinsForTrip) { pin in
-                        HStack {
-                            Group {
-                                if pin.mode == .growth {
-                                    GrapeLeafIcon(size: 18, color: VineyardTheme.leafGreen)
-                                } else {
-                                    Image(systemName: "wrench.fill")
-                                        .foregroundStyle(.orange)
-                                }
-                            }
-                            .frame(width: 24)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(pin.buttonName.isEmpty ? "Pin" : pin.buttonName)
-                                    .font(.subheadline.weight(.medium))
-                                Text(pin.timestamp.formattedTZ(date: .abbreviated, time: .shortened, in: tz))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if pin.isCompleted {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(.green)
-                            }
-                        }
-                    }
-                    } label: {
-                        Label("Pins (\(pinsForTrip.count))", systemImage: "mappin.and.ellipse")
-                            .font(.subheadline.weight(.semibold))
-                    }
-                }
-            }
+    private var tripListContent: some View {
+        List {
+            tripHeaderSection
+            tripRecoverySection
+            tripSummarySection
+            tripSprayRecordSection
+            tripRowsSection
+            tripTrailSection
+            tripPathSummarySection
+            tripSeedingSection
+            tripCostSection
+            tripCompletionSection
+            tripPinsSection
         }
         .navigationTitle("Trip")
         .navigationBarTitleDisplayMode(.inline)
@@ -458,6 +190,10 @@ struct TripDetailView: View {
                 }
             }
         }
+    }
+
+    private var tripDetailSheets: some View {
+        tripListContent
         .sheet(isPresented: $showSummary) {
             TripSummarySheet(trip: trip)
                 .presentationDetents([.medium, .large])
@@ -509,6 +245,27 @@ struct TripDetailView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
+    }
+
+    private var tripDetailEditingSheets: some View {
+        tripDetailSheets
+        .sheet(item: $pendingRateReviewTrip, onDismiss: {
+            pendingRateReviewRecipe = nil
+            pendingRateReviewOwner = nil
+        }) { original in
+            SprayTripStartConfirmationSheet(
+                machineName: original.tractorId.flatMap { id in
+                    store.currentTractors.first(where: { $0.id == id })?.displayName
+                } ?? pendingRateReviewRecipe?.tractor ?? "Not Set",
+                latestEngineHours: original.tractorId.flatMap { id in
+                    store.currentTractorFuelLogs.filter { $0.tractorId == id && $0.engineHours?.isFinite == true }
+                        .max(by: { $0.fillDateTime < $1.fillDateTime })?.engineHours
+                },
+                tanks: pendingRateReviewRecipe?.tanks ?? []
+            ) { hours in
+                activateRateReviewedOriginal(original, startEngineHours: hours)
+            }
+        }
         .sheet(isPresented: $showEditCostingLinks) {
             TripCostingLinksEditSheet(
                 trip: currentTrip,
@@ -523,6 +280,10 @@ struct TripDetailView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
+    }
+
+    private var tripDetailAlerts: some View {
+        tripDetailEditingSheets
         .alert("Spray Report Unavailable", isPresented: Binding(
             get: { sprayExportError != nil },
             set: { if !$0 { sprayExportError = nil } }
@@ -559,42 +320,382 @@ struct TripDetailView: View {
         } message: {
             Text("Are you sure you want to delete this trip? This action cannot be undone.")
         }
-        .task(id: "\(trip.id):\(accessControl.canViewCosting)") {
-            chemicalPrices = nil
-            if accessControl.canViewCosting {
-                var calendar = Calendar.current
-                calendar.timeZone = store.settings.resolvedTimeZone
-                let vintage = VintageResolver.vintageYear(for: trip.startTime, seasonStartMonth: store.settings.seasonStartMonth, seasonStartDay: store.settings.seasonStartDay, calendar: calendar)
-                chemicalPrices = try? await CatalogueRepository().chemicalSeasonPrices(vineyardId: trip.vineyardId, vintage: vintage)
+    }
+
+    @ViewBuilder
+    private var tripHeaderSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(displayName)
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(VineyardTheme.olive)
+                    Spacer(minLength: 8)
+                    RecordSyncBadge(state: RecordSyncState.forTrip(trip.id, tripSync: tripSync))
+                }
+                RecordSyncFailureHint(state: RecordSyncState.forTrip(trip.id, tripSync: tripSync))
+                Label(trip.startTime.formattedTZ(date: .abbreviated, time: .shortened, in: tz), systemImage: "calendar")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                if let endTime = trip.endTime {
+                    Label("Ended \(endTime.formattedTZ(date: .abbreviated, time: .shortened, in: tz))", systemImage: "flag.checkered")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else if trip.isActive {
+                    Label("Active", systemImage: "circle.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.green)
+                }
             }
-            if accessControl.canViewCosting, vineyardMembers.isEmpty {
-                if let members = try? await teamRepository.listMembers(vineyardId: trip.vineyardId) {
-                    vineyardMembers = members
+            .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private var tripRecoverySection: some View {
+        if mayRecoverSavedOccurrenceSpray {
+            Section {
+                HStack(spacing: 12) {
+                    Button {
+                        recoverAndStartOriginalSpray()
+                    } label: {
+                        Label("Start Trip", systemImage: "play.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isRecoveringSavedSpray || !accessControl.canCreateOperationalRecords)
+                    .accessibilityIdentifier("trip.startOriginalQueuedSpray")
+                    Button { showOriginalStartHelp = true } label: {
+                        Image(systemName: "info.circle").font(.title3)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("How to start a queued spray")
+                }
+                if let candidate = verifiedOrphanCandidate {
+                    Text("Saved spray found · \(candidate.tanks?.count ?? 0) tanks")
+                        .font(.subheadline.weight(.medium))
+                    Button("Review saved tank mix") {
+                        showRecoveredTankMix = true
+                    }
+                    .accessibilityIdentifier("trip.reviewRecoveredSprayMix")
+                    Button("Confirm saved mix & Start Trip") {
+                        confirmRecoveredOrphanAndStart()
+                    }
+                    .disabled(!recoveredMixReviewed || isRecoveringSavedSpray ||
+                              !accessControl.canCreateOperationalRecords)
+                    .accessibilityIdentifier("trip.confirmRecoveredOrphanSpray")
+                    Text("Application is blocked until the original quantities, units and applicable label rates can be verified. Reviewing alone does not clear this hold.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else if !accessControl.canCreateOperationalRecords {
+                    Text("Read-only access — subscription required.").font(.caption).foregroundStyle(.orange)
+                } else if isRecoveringSavedSpray {
+                    ProgressView("Locating original spray…")
+                } else {
+                    Text("\(currentTrip.rowSequence.count) paths · Original saved trip")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let diagnostic = tracking.lastSprayStartDiagnostic {
+                Section {
+                    DisclosureGroup("Start diagnostics") {
+                        Text(diagnostic).font(.caption.monospaced()).textSelection(.enabled)
+                        ShareLink("Share diagnostics", item: diagnostic)
+                    }
+                }
+            }
+        } else if currentTrip.isActive && tracking.activeTrip?.id == currentTrip.id {
+            Section {
+                Button("Go to Active Trip") { dismiss() }
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tripSprayRecordSection: some View {
+        if let record = sprayRecord {
+            Section {
+                DisclosureGroup(isExpanded: $showSprayDetails) {
+                    if !record.sprayReference.isEmpty {
+                        statRow("Reference", value: record.sprayReference, icon: "drop.fill")
+                    }
+                    statRow("Date", value: record.date.formattedTZ(date: .abbreviated, time: .omitted, in: tz), icon: "calendar")
+                    if record.tanks.count > 0 {
+                        statRow("Tanks", value: "\(record.tanks.count)", icon: "cylinder")
+                    }
+                    Button {
+                        showTankMix = true
+                    } label: {
+                        Label("View tank mix", systemImage: "cylinder.split.1x2")
+                            .frame(minHeight: 44)
+                    }
+                    .accessibilityLabel("View planned tank mix")
+                } label: {
+                    Label("Spray Record", systemImage: "drop.fill")
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+        } else if trip.totalTanks > 0 {
+            Section("Spray Record") {
+                Button {
+                    showTankMix = true
+                } label: {
+                    Label("View tank mix", systemImage: "cylinder.split.1x2")
+                        .frame(minHeight: 44)
+                }
+                .accessibilityLabel("View planned tank mix")
+                Text("Tank mix details unavailable on this device.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tripRowsSection: some View {
+        if !rowCompletionResults.isEmpty {
+            Section {
+                DisclosureGroup(isExpanded: $showRowCompletion) {
+                    if let paddockName = coverageSourcePaddockName {
+                        statRow("Block", value: paddockName, icon: "leaf")
+                    }
+                    ForEach(rowCompletionResults) { result in
+                        rowCompletionRow(result)
+                    }
+                } label: {
+                    Label("Row Completion", systemImage: "checklist")
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+        } else if !coveredRowSummary.isEmpty {
+            Section {
+                DisclosureGroup(isExpanded: $showRowCompletion) {
+                    statRow("Rows covered", value: "\(coveredRowNumbers.count)", icon: "checkmark.circle")
+                    if let paddockName = coverageSourcePaddockName {
+                        statRow("Block", value: paddockName, icon: "leaf")
+                    }
+                    Text(coveredRowSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } label: {
+                    Label("Row Coverage", systemImage: "checklist")
+                        .font(.subheadline.weight(.semibold))
                 }
             }
         }
-        .onAppear {
-            rebuildDisplayTrail()
-            if trip.pathPoints.count > 1 {
-                let coords = trip.pathPoints.map { $0.coordinate }
-                let lats = coords.map { $0.latitude }
-                let lons = coords.map { $0.longitude }
-                if let minLat = lats.min(), let maxLat = lats.max(),
-                   let minLon = lons.min(), let maxLon = lons.max() {
-                    let center = CLLocationCoordinate2D(
-                        latitude: (minLat + maxLat) / 2,
-                        longitude: (minLon + maxLon) / 2
-                    )
-                    let span = MKCoordinateSpan(
-                        latitudeDelta: max(maxLat - minLat, 0.001) * 1.4,
-                        longitudeDelta: max(maxLon - minLon, 0.001) * 1.4
-                    )
-                    position = .region(MKCoordinateRegion(center: center, span: span))
+    }
+
+    @ViewBuilder
+    private var tripTrailSection: some View {
+        if trip.pathPoints.count > 1 {
+            Section {
+                DisclosureGroup(isExpanded: $showPathMap) {
+                    Group {
+                        if network.isOnline {
+                            Map(position: $position) {
+                                ForEach(displayTrailSegments) { segment in
+                                    MapPolyline(coordinates: segment.coordinates)
+                                        .stroke(segment.color, lineWidth: 4)
+                                }
+                            }
+                            .mapStyle(.hybrid)
+                        } else {
+                            OfflineVineyardMapView(
+                                trails: displayTrailSegments.map {
+                                    OfflineVineyardMapView.Trail(id: $0.id, coordinates: $0.coordinates, color: $0.color)
+                                }
+                            )
+                            .clipShape(.rect(cornerRadius: 12))
+                        }
+                    }
+                    .frame(height: 240)
+                } label: {
+                    Label("Path Map", systemImage: "map")
+                        .font(.subheadline.weight(.semibold))
                 }
             }
         }
-        .onChange(of: trip.pathPoints.count) { _, _ in
-            rebuildDisplayTrail()
+    }
+
+    @ViewBuilder
+    private var tripPathSummarySection: some View {
+        if !trip.rowSequence.isEmpty {
+            Section {
+                Button {
+                    showSummary = true
+                } label: {
+                    Label("View Path Summary", systemImage: "list.bullet.clipboard")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tripSeedingSection: some View {
+        if let details = trip.seedingDetails, details.hasAnyValue {
+            Section {
+                DisclosureGroup(isExpanded: $showSeedingDetails) {
+                    seedingDetailsBody(details)
+                } label: {
+                    Label("Seeding Details", systemImage: "leaf.arrow.circlepath")
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tripCostSection: some View {
+        if accessControl.canViewCosting && !mayRecoverSavedOccurrenceSpray {
+            Section {
+                DisclosureGroup(isExpanded: $showCostSection) {
+                    tripCostBody
+                    if !trip.isActive {
+                        Button {
+                            showEditCostingLinks = true
+                        } label: {
+                            Label("Edit operator, worker type & tractor", systemImage: "pencil")
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .padding(.top, 4)
+                    }
+                } label: {
+                    Label("Estimated Trip Cost", systemImage: "dollarsign.circle")
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tripCompletionSection: some View {
+        if let notes = trip.completionNotes?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !notes.isEmpty {
+            Section("Completion Notes") {
+                Text(notes)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .padding(.vertical, 2)
+            }
+        }
+
+        // Manual Corrections intentionally hidden from the normal Trip
+        // Review UI. Events are still stored on the trip and included
+        // in audit/debug surfaces and exports as required.
+    }
+
+    @ViewBuilder
+    private var tripPinsSection: some View {
+        if !pinsForTrip.isEmpty {
+            Section {
+                DisclosureGroup(isExpanded: $showPinsSection) {
+                    ForEach(pinsForTrip) { pin in
+                    HStack {
+                        Group {
+                            if pin.mode == .growth {
+                                GrapeLeafIcon(size: 18, color: VineyardTheme.leafGreen)
+                            } else {
+                                Image(systemName: "wrench.fill")
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(pin.buttonName.isEmpty ? "Pin" : pin.buttonName)
+                                .font(.subheadline.weight(.medium))
+                            Text(pin.timestamp.formattedTZ(date: .abbreviated, time: .shortened, in: tz))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if pin.isCompleted {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        }
+                    }
+                }
+                } label: {
+                    Label("Pins (\(pinsForTrip.count))", systemImage: "mappin.and.ellipse")
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
+        }
+    }
+
+    // Type-check summary branches separately; presentation and all start gates are unchanged.
+    private var tripSummarySection: some View {
+        Section("Trip Summary") {
+            tripSummaryIdentityRows
+            tripSummaryScopeRows
+            tripSummaryCoverageRows
+            tripSummaryPinRows
+        }
+    }
+
+    @ViewBuilder
+    private var tripSummaryIdentityRows: some View {
+        if let raw = trip.tripFunction, !raw.isEmpty {
+            if let function = TripFunction(rawValue: raw) {
+                statRow("Function", value: function.displayName, icon: function.icon)
+            } else if raw.hasPrefix("custom:") {
+                let label = trip.tripTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let display = (label?.isEmpty == false) ? label! : String(raw.dropFirst("custom:".count))
+                statRow("Function", value: display, icon: "wrench.and.screwdriver")
+            }
+        }
+        if let title = trip.tripTitle, !title.isEmpty {
+            statRow("Title", value: title, icon: "text.cursor")
+        }
+        if mayRecoverSavedOccurrenceSpray {
+            statRow("Status", value: "Not started", icon: "clock")
+        } else {
+            statRow("Duration", value: formatDuration(trip.activeDuration), icon: "clock")
+        }
+        statRow("Distance", value: formatDistance(trip.totalDistance), icon: "point.topleft.down.to.point.bottomright.curvepath")
+    }
+
+    @ViewBuilder
+    private var tripSummaryScopeRows: some View {
+        if !trip.paddockName.isEmpty {
+            statRow("Block", value: trip.paddockName, icon: "leaf")
+        }
+        if !trip.personName.isEmpty {
+            statRow("Operator", value: trip.personName, icon: "person")
+        }
+        if let workTaskLabel = linkedWorkTaskLabel {
+            statRow("Work Task", value: workTaskLabel, icon: "checklist")
+        }
+    }
+
+    @ViewBuilder
+    private var tripSummaryCoverageRows: some View {
+        if !trip.rowSequence.isEmpty {
+            statRow("Pattern", value: trip.trackingPattern.title, icon: trip.trackingPattern.icon)
+            if let startDescription = startMidrowDescription {
+                statRow("Started", value: startDescription, icon: "flag")
+            }
+            statRow("Paths planned", value: "\(trip.rowSequence.count)", icon: "list.number")
+            statRow("Complete", value: "\(rowCompletionResults.filter { $0.status == .complete }.count)", icon: "checkmark.circle")
+            let partialCount = rowCompletionResults.filter { $0.status == .partial }.count
+            if partialCount > 0 {
+                statRow("Partial", value: "\(partialCount)", icon: "exclamationmark.triangle")
+            }
+            let notDoneCount = rowCompletionResults.filter { $0.status == .notComplete }.count
+            if notDoneCount > 0 {
+                statRow("Not complete", value: "\(notDoneCount)", icon: "xmark.circle")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tripSummaryPinRows: some View {
+        if pinsForTrip.count > 0 {
+            statRow("Pins recorded", value: "\(pinsForTrip.count)", icon: "mappin")
         }
     }
 
@@ -622,18 +723,11 @@ struct TripDetailView: View {
                       SavedOccurrenceSprayStartEligibility.mayStart(original) else {
                     throw TripOccurrenceCoverage.Failure.scopeConflict
                 }
-                if store.sprayRecords.contains(where: {
+                if let recipe = store.sprayRecords.first(where: {
                     $0.canonicalTripId == original.id && $0.vineyardId == original.vineyardId
                         && !$0.isTemplate && $0.endTime == nil
                 }) {
-                    tracking.activateSavedTrip(original) { started in
-                        isRecoveringSavedSpray = false
-                        if started { dismiss() }
-                        else {
-                            savedSprayRecoveryError = tracking.errorMessage ??
-                                "The original operation was not accepted. The saved trip is retained."
-                        }
-                    }
+                    prepareOriginalRateReview(original, recipe: recipe)
                     return
                 }
 
@@ -712,21 +806,57 @@ struct TripDetailView: View {
                 _ = try store.installVerifiedServerOrphanForSavedTrip(
                     matched, tripId: original.id, actorId: actor
                 )
-                tracking.activateSavedTrip(original) { started in
-                    isRecoveringSavedSpray = false
-                    if started {
-                        verifiedOrphanCandidate = nil
-                        dismiss()
-                    } else {
-                        savedSprayRecoveryError = tracking.errorMessage ??
-                            "The original occurrence still requires reconciliation. Saved evidence was retained."
-                    }
+                guard let installed = store.sprayRecords.first(where: { $0.id == matched.id }) else {
+                    throw TripOccurrenceCoverage.Failure.reconciliation
                 }
+                prepareOriginalRateReview(original, recipe: installed)
             } catch {
                 isRecoveringSavedSpray = false
                 tracking.recordSprayStartFailure(error, stage: "confirmOriginalSpray", tripId: trip.id)
                 savedSprayRecoveryError = "Link not verified: \(error.localizedDescription) Original tanks and paths retained. See Start diagnostics."
             }
+        }
+    }
+
+    /// All saved-start routes use the same final rate confirmation. Recovering a
+    /// link or opening a tank display is not consent to the actual chemical rates.
+    private func prepareOriginalRateReview(_ original: Trip, recipe: SprayRecord) {
+        isRecoveringSavedSpray = false
+        if let blocker = RecoveredSprayApplicationSafety.blocker(recipe)
+            ?? recipe.operationalPlanningBlocker ?? SprayStartRecipeValidation.blocker(recipe.tanks) {
+            savedSprayRecoveryError = blocker
+            return
+        }
+        guard let owner = store.currentUserIdProvider?(),
+              store.selectedVineyardId == original.vineyardId else {
+            savedSprayRecoveryError = "The account or vineyard changed. Reopen the original spray."
+            return
+        }
+        pendingRateReviewOwner = owner
+        pendingRateReviewRecipe = recipe
+        pendingRateReviewTrip = original
+    }
+
+    private func activateRateReviewedOriginal(_ original: Trip, startEngineHours: Double?) {
+        guard let owner = pendingRateReviewOwner,
+              store.currentUserIdProvider?() == owner,
+              store.selectedVineyardId == original.vineyardId,
+              store.trips.first(where: { $0.id == original.id }) == original,
+              let reviewed = pendingRateReviewRecipe,
+              let current = store.sprayRecords.first(where: { $0.id == reviewed.id }),
+              current.canonicalTripId == original.id,
+              current.hasSameRecipeEvidence(as: reviewed),
+              accessControl.canCreateOperationalRecords else {
+            pendingRateReviewTrip = nil
+            savedSprayRecoveryError = "The saved spray changed. Reopen it to confirm its actual rates."
+            return
+        }
+        pendingRateReviewTrip = nil
+        isRecoveringSavedSpray = true
+        tracking.activateSavedTrip(original, startEngineHours: startEngineHours) { started in
+            isRecoveringSavedSpray = false
+            if started { verifiedOrphanCandidate = nil; dismiss() }
+            else { savedSprayRecoveryError = tracking.errorMessage ?? "The original Trip is retained; start was not confirmed." }
         }
     }
 

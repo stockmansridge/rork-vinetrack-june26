@@ -674,6 +674,7 @@ data class SprayGuidedFlow(
         }
 
         SprayGuidedStep.PRODUCTS -> when {
+            plan.tankSplit.totalTanks <= 0 -> SprayGuidedBlocker.CarrierNotCalculable
             inputs.products.isEmpty() -> SprayGuidedBlocker.NoProductsAdded
             else -> {
                 // A product rated per TREATED hectare against geometry that cannot

@@ -15,18 +15,6 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import java.io.IOException
 
-/** Outcome of a refresh-token exchange, used by the HTTP retry layer. */
-enum class RefreshOutcome {
-    /** A valid (fresh or concurrently refreshed) access token is available. */
-    REFRESHED,
-
-    /** The refresh token was actively rejected — the session is truly invalid. */
-    REJECTED,
-
-    /** Network/transient server failure — the session may still be valid. */
-    TRANSIENT,
-}
-
 /**
  * Hook the auth layer installs on [SupabaseClient] so the shared HTTP client
  * can transparently refresh an expired Supabase access token and retry the
@@ -143,16 +131,25 @@ object SupabaseClient {
                     bearer != anonKey
 
                 if (isSessionRequest && refresher != null) {
-                    // Proactive: refresh a token that is about to expire so the
-                    // request succeeds first time after long idle periods.
+                    // Never send an already-expiring token after a failed refresh.
+                    // Transient failure retains local data and pending work;
+                    // only explicit auth rejection enters account recovery.
                     if (refresher.accessTokenExpiresSoon()) {
                         Log.d(AUTH_TAG, "Access token expiring soon — refreshing before request")
-                        refresher.refreshAccessToken()
+                        when (SessionRefreshAdmission.decision(refresher.refreshAccessToken())) {
+                            SessionRefreshAdmission.Decision.SEND_WITH_CURRENT_TOKEN -> Unit
+                            SessionRefreshAdmission.Decision.REQUIRE_REAUTHENTICATION -> throw BackendError.Unauthorized
+                            SessionRefreshAdmission.Decision.RETAIN_AND_RETRY -> throw BackendError.Network(
+                                IOException("Could not refresh session. Saved vineyard data is retained; retry when connected."),
+                            )
+                        }
+                        requireOriginalAccount()
                     }
-                    // Swap in the latest persisted token in case the captured
-                    // one is stale (another request refreshed meanwhile).
-                    val latest = refresher.sessionAccessToken
-                    if (!latest.isNullOrBlank() && latest != bearer) request.replaceBearerToken(latest)
+                    // A refresh that returned no token is not permission to reuse
+                    // the expired token captured when this request was constructed.
+                    val latest = refresher.sessionAccessToken?.takeIf { it.isNotBlank() }
+                        ?: throw BackendError.Unauthorized
+                    if (latest != bearer) request.replaceBearerToken(latest)
                 }
 
                 requireOriginalAccount()

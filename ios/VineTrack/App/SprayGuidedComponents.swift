@@ -398,6 +398,7 @@ struct GuidedReviewRow: View {
 struct GuidedReviewGroup<Content: View>: View {
     let title: String
     var onEdit: (() -> Void)?
+    var help: String? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -407,6 +408,7 @@ struct GuidedReviewGroup<Content: View>: View {
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.secondary)
                     .tracking(0.5)
+                if let help { FieldInfoButton(title: title, message: help) }
                 Spacer()
                 if let onEdit {
                     Button("Edit", action: onEdit)

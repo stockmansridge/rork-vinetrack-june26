@@ -215,7 +215,9 @@ object SprayApplicationPlanner {
      * so tank counts and per-tank volumes on current jobs cannot shift.
      */
     fun tankSplit(totalLitres: Double, tankCapacityLitres: Double): SprayTankSplit {
-        if (totalLitres <= 0 || tankCapacityLitres <= 0) {
+        if (!totalLitres.isFinite() || !tankCapacityLitres.isFinite() ||
+            totalLitres <= 0 || tankCapacityLitres <= 0 ||
+            !(totalLitres / tankCapacityLitres).isFinite() || ceil(totalLitres / tankCapacityLitres) > 10_000) {
             return SprayTankSplit(tankCapacityLitres, fullTankCount = 0, lastTankLitres = 0.0)
         }
         val numberOfTanks = ceil(totalLitres / tankCapacityLitres).toInt()

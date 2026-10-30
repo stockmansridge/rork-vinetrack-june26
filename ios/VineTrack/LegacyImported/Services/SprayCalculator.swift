@@ -18,16 +18,11 @@ enum SprayCalculator {
         let totalArea = selectedPaddocks.reduce(0) { $0 + $1.areaHectares }
         let totalWaterLitres = totalArea * waterRateLitresPerHectare
 
-        let numberOfTanks = totalWaterLitres > 0 ? Int(ceil(totalWaterLitres / tankCapacity)) : 0
-        let fullTankCount = totalWaterLitres > tankCapacity ? numberOfTanks - 1 : 0
-        let lastTankLitres: Double
-        if totalWaterLitres <= 0 {
-            lastTankLitres = 0
-        } else if totalWaterLitres <= tankCapacity {
-            lastTankLitres = totalWaterLitres
-        } else {
-            lastTankLitres = totalWaterLitres - (Double(fullTankCount) * tankCapacity)
-        }
+        // One bounded tank allocator for both legacy and guided routes.
+        let split = SprayApplicationPlanner.tankSplit(totalLitres: totalWaterLitres, tankCapacityLitres: tankCapacity)
+        let numberOfTanks = split.totalTanks
+        let fullTankCount = split.fullTankCount
+        let lastTankLitres = split.lastTankLitres
 
         let chemicalResults: [ChemicalCalculationResult] = chemicalLines.compactMap { line in
             guard let chemical = chemicals.first(where: { $0.id == line.chemicalId }),

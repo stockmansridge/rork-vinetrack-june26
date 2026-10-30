@@ -108,11 +108,25 @@ final class SupabaseSavedSprayPresetSyncRepository: SavedSprayPresetSyncReposito
 
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendSavedSprayPreset] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let q = provider.client.from("saved_spray_presets").select().eq("vineyard_id", value: vineyardId.uuidString)
-        if let since {
-            return try await q.gte("updated_at", value: iso(since)).order("updated_at", ascending: true).execute().value
+        var records: [BackendSavedSprayPreset] = []
+        var after: UUID?
+        var seen: Set<UUID> = []
+        let deadline = Date().addingTimeInterval(30)
+        for _ in 0..<200 {
+            try Task.checkCancellation()
+            guard Date() < deadline else { throw URLError(.timedOut) }
+            var q = provider.client.from("saved_spray_presets").select().eq("vineyard_id", value: vineyardId.uuidString)
+            if let since { q = q.gte("updated_at", value: iso(since)) }
+            if let after { q = q.gt("id", value: after.uuidString) }
+            let page: [BackendSavedSprayPreset] = try await q.order("id", ascending: true).limit(500).execute().value
+            if page.isEmpty { return records }
+            guard page.allSatisfy({ $0.vineyardId == vineyardId && seen.insert($0.id).inserted }) else {
+                throw BackendRepositoryError.emptyResponse
+            }
+            records.append(contentsOf: page)
+            after = page.last?.id
         }
-        return try await q.order("updated_at", ascending: true).execute().value
+        throw URLError(.dataLengthExceedsMaximum)
     }
 
     func upsertMany(_ items: [BackendSavedSprayPresetUpsert]) async throws {
@@ -135,11 +149,25 @@ final class SupabaseSprayEquipmentSyncRepository: SprayEquipmentSyncRepositoryPr
 
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendSprayEquipment] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let q = provider.client.from("spray_equipment").select().eq("vineyard_id", value: vineyardId.uuidString)
-        if let since {
-            return try await q.gte("updated_at", value: iso(since)).order("updated_at", ascending: true).execute().value
+        var records: [BackendSprayEquipment] = []
+        var after: UUID?
+        var seen: Set<UUID> = []
+        let deadline = Date().addingTimeInterval(30)
+        for _ in 0..<200 {
+            try Task.checkCancellation()
+            guard Date() < deadline else { throw URLError(.timedOut) }
+            var q = provider.client.from("spray_equipment").select().eq("vineyard_id", value: vineyardId.uuidString)
+            if let since { q = q.gte("updated_at", value: iso(since)) }
+            if let after { q = q.gt("id", value: after.uuidString) }
+            let page: [BackendSprayEquipment] = try await q.order("id", ascending: true).limit(500).execute().value
+            if page.isEmpty { return records }
+            guard page.allSatisfy({ $0.vineyardId == vineyardId && seen.insert($0.id).inserted }) else {
+                throw BackendRepositoryError.emptyResponse
+            }
+            records.append(contentsOf: page)
+            after = page.last?.id
         }
-        return try await q.order("updated_at", ascending: true).execute().value
+        throw URLError(.dataLengthExceedsMaximum)
     }
 
     func upsertMany(_ items: [BackendSprayEquipmentUpsert]) async throws {
@@ -162,11 +190,25 @@ final class SupabaseTractorSyncRepository: TractorSyncRepositoryProtocol {
 
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendTractor] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let q = provider.client.from("tractors").select().eq("vineyard_id", value: vineyardId.uuidString)
-        if let since {
-            return try await q.gte("updated_at", value: iso(since)).order("updated_at", ascending: true).execute().value
+        var records: [BackendTractor] = []
+        var after: UUID?
+        var seen: Set<UUID> = []
+        let deadline = Date().addingTimeInterval(30)
+        for _ in 0..<200 {
+            try Task.checkCancellation()
+            guard Date() < deadline else { throw URLError(.timedOut) }
+            var q = provider.client.from("tractors").select().eq("vineyard_id", value: vineyardId.uuidString)
+            if let since { q = q.gte("updated_at", value: iso(since)) }
+            if let after { q = q.gt("id", value: after.uuidString) }
+            let page: [BackendTractor] = try await q.order("id", ascending: true).limit(500).execute().value
+            if page.isEmpty { return records }
+            guard page.allSatisfy({ $0.vineyardId == vineyardId && seen.insert($0.id).inserted }) else {
+                throw BackendRepositoryError.emptyResponse
+            }
+            records.append(contentsOf: page)
+            after = page.last?.id
         }
-        return try await q.order("updated_at", ascending: true).execute().value
+        throw URLError(.dataLengthExceedsMaximum)
     }
 
     func upsertMany(_ items: [BackendTractorUpsert]) async throws {
@@ -189,11 +231,25 @@ final class SupabaseVineyardMachineSyncRepository: VineyardMachineSyncRepository
 
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendVineyardMachine] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let q = provider.client.from("vineyard_machines").select().eq("vineyard_id", value: vineyardId.uuidString)
-        if let since {
-            return try await q.gte("updated_at", value: iso(since)).order("updated_at", ascending: true).execute().value
+        var records: [BackendVineyardMachine] = []
+        var after: UUID?
+        var seen: Set<UUID> = []
+        let deadline = Date().addingTimeInterval(30)
+        for _ in 0..<200 {
+            try Task.checkCancellation()
+            guard Date() < deadline else { throw URLError(.timedOut) }
+            var q = provider.client.from("vineyard_machines").select().eq("vineyard_id", value: vineyardId.uuidString)
+            if let since { q = q.gte("updated_at", value: iso(since)) }
+            if let after { q = q.gt("id", value: after.uuidString) }
+            let page: [BackendVineyardMachine] = try await q.order("id", ascending: true).limit(500).execute().value
+            if page.isEmpty { return records }
+            guard page.allSatisfy({ $0.vineyardId == vineyardId && seen.insert($0.id).inserted }) else {
+                throw BackendRepositoryError.emptyResponse
+            }
+            records.append(contentsOf: page)
+            after = page.last?.id
         }
-        return try await q.order("updated_at", ascending: true).execute().value
+        throw URLError(.dataLengthExceedsMaximum)
     }
 
     func upsertMany(_ items: [BackendVineyardMachineUpsert]) async throws {
@@ -216,11 +272,25 @@ final class SupabaseFuelPurchaseSyncRepository: FuelPurchaseSyncRepositoryProtoc
 
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendFuelPurchase] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let q = provider.client.from("fuel_purchases").select().eq("vineyard_id", value: vineyardId.uuidString)
-        if let since {
-            return try await q.gte("updated_at", value: iso(since)).order("updated_at", ascending: true).execute().value
+        var records: [BackendFuelPurchase] = []
+        var after: UUID?
+        var seen: Set<UUID> = []
+        let deadline = Date().addingTimeInterval(30)
+        for _ in 0..<200 {
+            try Task.checkCancellation()
+            guard Date() < deadline else { throw URLError(.timedOut) }
+            var q = provider.client.from("fuel_purchases").select().eq("vineyard_id", value: vineyardId.uuidString)
+            if let since { q = q.gte("updated_at", value: iso(since)) }
+            if let after { q = q.gt("id", value: after.uuidString) }
+            let page: [BackendFuelPurchase] = try await q.order("id", ascending: true).limit(500).execute().value
+            if page.isEmpty { return records }
+            guard page.allSatisfy({ $0.vineyardId == vineyardId && seen.insert($0.id).inserted }) else {
+                throw BackendRepositoryError.emptyResponse
+            }
+            records.append(contentsOf: page)
+            after = page.last?.id
         }
-        return try await q.order("updated_at", ascending: true).execute().value
+        throw URLError(.dataLengthExceedsMaximum)
     }
 
     func upsertMany(_ items: [BackendFuelPurchaseUpsert]) async throws {
@@ -243,11 +313,25 @@ final class SupabaseTractorFuelLogSyncRepository: TractorFuelLogSyncRepositoryPr
 
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendTractorFuelLog] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let q = provider.client.from("tractor_fuel_logs").select().eq("vineyard_id", value: vineyardId.uuidString)
-        if let since {
-            return try await q.gte("updated_at", value: iso(since)).order("updated_at", ascending: true).execute().value
+        var records: [BackendTractorFuelLog] = []
+        var after: UUID?
+        var seen: Set<UUID> = []
+        let deadline = Date().addingTimeInterval(30)
+        for _ in 0..<200 {
+            try Task.checkCancellation()
+            guard Date() < deadline else { throw URLError(.timedOut) }
+            var q = provider.client.from("tractor_fuel_logs").select().eq("vineyard_id", value: vineyardId.uuidString)
+            if let since { q = q.gte("updated_at", value: iso(since)) }
+            if let after { q = q.gt("id", value: after.uuidString) }
+            let page: [BackendTractorFuelLog] = try await q.order("id", ascending: true).limit(500).execute().value
+            if page.isEmpty { return records }
+            guard page.allSatisfy({ $0.vineyardId == vineyardId && seen.insert($0.id).inserted }) else {
+                throw BackendRepositoryError.emptyResponse
+            }
+            records.append(contentsOf: page)
+            after = page.last?.id
         }
-        return try await q.order("updated_at", ascending: true).execute().value
+        throw URLError(.dataLengthExceedsMaximum)
     }
 
     func upsertMany(_ items: [BackendTractorFuelLogUpsert]) async throws {
@@ -397,11 +481,25 @@ final class SupabaseSavedInputSyncRepository: SavedInputSyncRepositoryProtocol {
 
     func fetch(vineyardId: UUID, since: Date?) async throws -> [BackendSavedInput] {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        let q = provider.client.from("saved_inputs").select().eq("vineyard_id", value: vineyardId.uuidString)
-        if let since {
-            return try await q.gte("updated_at", value: iso(since)).order("updated_at", ascending: true).execute().value
+        var records: [BackendSavedInput] = []
+        var after: UUID?
+        var seen: Set<UUID> = []
+        let deadline = Date().addingTimeInterval(30)
+        for _ in 0..<200 {
+            try Task.checkCancellation()
+            guard Date() < deadline else { throw URLError(.timedOut) }
+            var q = provider.client.from("saved_inputs").select().eq("vineyard_id", value: vineyardId.uuidString)
+            if let since { q = q.gte("updated_at", value: iso(since)) }
+            if let after { q = q.gt("id", value: after.uuidString) }
+            let page: [BackendSavedInput] = try await q.order("id", ascending: true).limit(500).execute().value
+            if page.isEmpty { return records }
+            guard page.allSatisfy({ $0.vineyardId == vineyardId && seen.insert($0.id).inserted }) else {
+                throw BackendRepositoryError.emptyResponse
+            }
+            records.append(contentsOf: page)
+            after = page.last?.id
         }
-        return try await q.order("updated_at", ascending: true).execute().value
+        throw URLError(.dataLengthExceedsMaximum)
     }
 
     func upsertMany(_ items: [BackendSavedInputUpsert]) async throws {

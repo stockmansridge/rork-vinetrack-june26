@@ -25,6 +25,7 @@ final class SprayBandedGroundCarrierTests: XCTestCase {
         inputs.isGrowthStageResolved = true
         inputs.isEquipmentSelected = true
         inputs.isEquipmentConfirmed = true
+        inputs.tankCapacityLitres = 1_000 // A startable fixture needs a real tank, not the zero default.
         inputs.carrierBasis = basis
         inputs.carrierAreaBasis = areaBasis
         inputs.litresPerHectare = rate

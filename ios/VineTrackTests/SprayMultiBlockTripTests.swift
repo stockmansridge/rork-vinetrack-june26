@@ -101,7 +101,8 @@ struct SprayMultiBlockTripTests {
             trackingPattern: .everySecondRow,
             rowSequence: [0.5, 68.5, 108.5], totalTanks: 1
         )
-        let plannedTanks = [SprayTank(tankNumber: 1, waterVolume: 2_000, sprayRatePerHa: 500)]
+        let plannedTanks = [SprayTank(tankNumber: 1, waterVolume: 2_000, sprayRatePerHa: 500,
+            chemicals: [SprayChemical(name: "Synthetic product", volumePerTank: 2_000, ratePerHa: 500)])]
         let record = SprayRecord(
             tripId: trip.id, vineyardId: vineyardId, date: plannedAt,
             startTime: plannedAt, sprayReference: "Saved plan", tanks: plannedTanks
@@ -156,7 +157,8 @@ struct SprayMultiBlockTripTests {
             date: Date(timeIntervalSince1970: 1_700_000_000),
             startTime: Date(timeIntervalSince1970: 1_700_000_000),
             sprayReference: "Three blocks",
-            tanks: [SprayTank(tankNumber: 1, waterVolume: 1_000, sprayRatePerHa: 500)]
+            tanks: [SprayTank(tankNumber: 1, waterVolume: 1_000, sprayRatePerHa: 500,
+                chemicals: [SprayChemical(name: "Synthetic product", volumePerTank: 1_000, ratePerHa: 500)])]
         )
         store.addInactiveTrip(planned)
         store.addSprayRecord(record)

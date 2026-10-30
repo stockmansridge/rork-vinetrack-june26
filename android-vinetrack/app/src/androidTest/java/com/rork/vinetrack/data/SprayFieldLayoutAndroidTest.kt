@@ -79,17 +79,56 @@ class SprayFieldLayoutAndroidTest {
         assertTrue("Clipped text: $text; " + layouts.joinToString { "size=${it.size} widthOverflow=${it.didOverflowWidth} heightOverflow=${it.didOverflowHeight} lines=${it.lineCount} lastBottom=${it.getLineBottom(it.lineCount - 1)} font=${it.layoutInput.style.fontSize} maxLines=${it.layoutInput.maxLines} constraints=${it.layoutInput.constraints}" }, layouts.none { it.hasVisualOverflow })
     }
 
+    @Test fun consentIsInvalidatedByScopeAndRecipeChanges() {
+        val scope = mutableStateOf("block-A|geometry-A|route-A")
+        val water = mutableStateOf(1000.0)
+        var launches = 0
+        compose.setContent {
+            AppTheme {
+                SprayTripStartConfirmation(
+                    machineName = "Fixture tractor", latestEngineHours = null,
+                    tanks = listOf(com.rork.vinetrack.data.model.SprayTank("tank", waterVolume = water.value,
+                        chemicals = listOf(com.rork.vinetrack.data.model.SprayChemical("product", "Product",
+                            volumePerTank = 1000.0, ratePerHa = 1000.0)))),
+                    scopeKey = "actor|vineyard|trip", scopeEvidence = scope.value,
+                    onDismiss = {}, onStart = { launches++ },
+                )
+            }
+        }
+        val start = compose.onNode(hasText("Start Trip") and hasClickAction())
+        start.assertIsNotEnabled()
+        compose.onNode(isToggleable()).performScrollTo().performClick()
+        start.assertIsEnabled()
+        // Identical tank quantities must not carry consent to another block/route.
+        compose.runOnIdle { scope.value = "block-B|geometry-B|route-B" }
+        start.assertIsNotEnabled()
+        compose.onNode(isToggleable()).performScrollTo().performClick()
+        start.assertIsEnabled()
+        compose.runOnIdle { water.value = 900.0 }
+        start.assertIsNotEnabled()
+        compose.onNode(isToggleable()).performScrollTo().performClick()
+        start.performClick()
+        compose.runOnIdle { assertEquals(1, launches) }
+    }
+
     @Test fun engineHoursBlankAndEnteredCallbacksAndInvalidInput() {
         var launches = 0
         var hours: Double? = -1.0
         compose.setContent {
             var visible by remember { mutableStateOf(true) }
             AppTheme {
-                if (visible) SprayTripStartConfirmation("Fixture tractor", null, {}, {
-                    launches++; hours = it
-                })
+                if (visible) SprayTripStartConfirmation(
+                    machineName = "Fixture tractor", latestEngineHours = null,
+                    tanks = listOf(com.rork.vinetrack.data.model.SprayTank("tank", waterVolume = 1000.0,
+                        chemicals = listOf(com.rork.vinetrack.data.model.SprayChemical("product", "Product",
+                            volumePerTank = 1000.0, ratePerHa = 1000.0)))),
+                    scopeKey = "isolated-layout-fixture", onDismiss = {},
+                    onStart = { launches++; hours = it },
+                )
             }
         }
+        compose.onNode(hasText("Start Trip") and hasClickAction()).assertIsNotEnabled()
+        compose.onNode(isToggleable()).performScrollTo().performClick()
         compose.onNode(hasText("Start Trip") and hasClickAction()).performClick()
         compose.runOnIdle { assertEquals(1, launches); assertNull(hours) }
         compose.onNodeWithText("Start engine hours (optional)").performTextInput("123.5")

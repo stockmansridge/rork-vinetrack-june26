@@ -1,0 +1,238 @@
+{
+  "reviewed_public_head": "07ddba427a3edb49a5aafb9f639f29c59e7d2fe8",
+  "managed_source_parent": "c6f542d0d03ddf3f8ccc1b4917eaa4192ba1f4c0",
+  "integration_commit": null,
+  "scope": "Changed native and validation-script inputs relative to managed parent; not a full repository archive.",
+  "files": [
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/HomeHydrationAndroidTest.kt",
+      "sha256": "44e7259e796f62453995a0bcce1e9ef483bc6acd8770ac7287bc8e3e809a6b25",
+      "reviewed_head_comparison": "local_difference"
+    },
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayFieldLayoutAndroidTest.kt",
+      "sha256": "d7a1d7970891a9239c45661a4b6391106776a6797dd3e5f93ed66e618d0b7da9",
+      "reviewed_head_comparison": "local_difference"
+    },
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayStartProductionAndroidTest.kt",
+      "sha256": "850c8a8c04526e3ce3715130ec1705f88ba7a36dcbaeecf343c225f288f4e778",
+      "reviewed_head_comparison": "local_difference"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/ScopedSyncReadGate.kt",
+      "sha256": "9570762a3a14af1b69ecf600812eeb8c45334de2b85cbf494ef71a7afbd9ef89",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SessionRefreshAdmission.kt",
+      "sha256": "7b6ff84ec629d75253cedf2ec2fb87ef6a94334621a49b0283dde92fa5e0b17a",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SprayCalculator.kt",
+      "sha256": "9de8b8feef89d79fdd227ccdd5fb4e4178edd63f531717e1580dcb554a88cad9",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SupabaseClient.kt",
+      "sha256": "fd2b1095b7335b7f0a4d552ac7dc83af7eb94cdbb207684cca328fd7b8886451",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/VineyardRepository.kt",
+      "sha256": "181b092bd06ae18283f8157c257cd116b631614933eda348e1373cfc44a99406",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/spray/SprayApplicationPlan.kt",
+      "sha256": "2caa3b68dc11fc67e552ba7047da4dbae221642df840870709efdbc652e1ae3c",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/spray/SprayGuidedFlow.kt",
+      "sha256": "fce9358ea42e8fd4092a454e493984f7dd3bc13c20445bf2722d2ff3f6d9264b",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/spray/SprayStartRateReview.kt",
+      "sha256": "d4f37b5a6be0854a8558d310fadc6af8794ae73fdf5469f1e1dc8e3df2721761",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt",
+      "sha256": "ab89ffe75e4af17ea9b96a1414b32630d6f1172a3236efe72224ec82fb609bc2",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayGuidedComponents.kt",
+      "sha256": "cb35839f4fce2068485c37b1f3e6427b9b5bdbe84f524af6c5a13e6901026e6b",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt",
+      "sha256": "c2f4541dd49d84b8f887925ca42fa18d8bab3ba5e318605ff6a78b3c74e7f148",
+      "reviewed_head_comparison": "local_difference"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayTripSetupScreen.kt",
+      "sha256": "c3b7d90b863814e5f3d94a95fdec86b306bc74b4afd67e219a930928a338798d",
+      "reviewed_head_comparison": "local_difference"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayTripStartConfirmation.kt",
+      "sha256": "958cdd07c8cdaa22ba3c5396882a1659095362b25a70ec4866efb02aad6f7c69",
+      "reviewed_head_comparison": "local_difference"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt",
+      "sha256": "cf82d86fbcbe68a5786fe510b3078da7f94fa4e7321eb97ce3380a9aecdde3f0",
+      "reviewed_head_comparison": "local_difference"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/AccountScopedTankSafetyTest.kt",
+      "sha256": "5eaf8179bf035d6d8c9a1ef2ea3fcc0a7c57c0751cf1c99bd3daca31d2fe5d99",
+      "reviewed_head_comparison": "local_difference"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SessionRefreshAdmissionTest.kt",
+      "sha256": "bc9b4d93f4e27aefb1861eb11fcf7968f6fef69aa493e24c9b824e7ca7af0ce8",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayBandedGroundCarrierTest.kt",
+      "sha256": "8228975fdd9c662c50ad98ed4bfc2342895c005d8d5528c67f12ee3ef55f8e94",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayOperationalBundleTest.kt",
+      "sha256": "373f9a95d629458eaeb9fb4b92286a1728955b3aca8a46371595d2d0fece48dd",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrack/App/NewMainTabView.swift",
+      "sha256": "fabc240b7164a6e00f84b78cb040f46888cff9d56fdcd2eceba8bcf9ee950354",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrack/App/SprayCalculatorView.swift",
+      "sha256": "18a46dea03564bb3d2d7682d5bbfd3c8bfa2c1dfe343e382a55b3ff55f1f676b",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrack/App/SprayEngine/SprayApplicationPlan.swift",
+      "sha256": "f9e6f03bf753e508e6044766e7a4434c84c54c3a0ba59e6ec54f0a40cfc6ebdb",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrack/App/SprayEngine/SprayGuidedFlow.swift",
+      "sha256": "6f0d7b0a928428babbab8c4a5b811e30c064c76af4fe56236bb3fe2958154b97",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrack/App/SprayGuidedComponents.swift",
+      "sha256": "a8cb769d0562e02596f4f66e69dfe0cc161ad78251dc7d1111c3f3bc9b08e150",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrack/App/SprayStartRateReview.swift",
+      "sha256": "62d8ab4d8095d6b6d97222b1c312f4ced095785ec7509e04c280ae8faeaf2012",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrack/App/SprayTripSetupSheet.swift",
+      "sha256": "88fabe3dafdcd024a37e2c1befc247c8583762e02e388712b9244555157edac7",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrack/App/SprayTripStartConfirmationSheet.swift",
+      "sha256": "727cb2c16b514d02fc8374fdc5c6e8b44fc82ee3873b4d2e0c88379d99b4e258",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Repositories/SupabaseManagementSyncRepositories.swift",
+      "sha256": "e8bd0d9075b1108f5d49a129e5903c0ab71a5621ba7a4cc4bef0dc08440a99c6",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/ManagementSyncServices.swift",
+      "sha256": "f62a6f5065914c58b9aea8d7459762d826f2f1085aed30791cb32e3a486e5bfa",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Services/SprayCalculator.swift",
+      "sha256": "a4e7894fa1fe05c9c2fe5b444f6ac933cd8c70784648596ed53faf3c2d61a9c7",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift",
+      "sha256": "33408770bdc5ad8ffa6d06b89f74a640a1e9764bf4a7db06fa9cb86b09ac0ecb",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrackTests/SprayBandedGroundCarrierTests.swift",
+      "sha256": "2aa35db8f20b3c99a028acfef42f9d893d740440e4e9a3512dfe3b86eb4b9d8e",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrackTests/SprayMultiBlockTripTests.swift",
+      "sha256": "a6976fa8c5f4d709f0fa41c8eb703e7d84936329b72632ac2cc73762a6b97d8e",
+      "reviewed_head_comparison": "local_difference"
+    },
+    {
+      "path": "ios/VineTrackTests/SprayOperationalBundleTests.swift",
+      "sha256": "6d42ccb9e720242e861787a609a0b3398a379ed75ed3b8063439df160a32792c",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrackUITests/MobileSprayUXParityUITests.swift",
+      "sha256": "6da1cf8a8ea6805b5813cfbc5bcc3c02cd544f0e215f4cb57a7fc4131bb00182",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "ios/VineTrackUITests/SprayEditingAcceptanceUITests.swift",
+      "sha256": "b75ff3086531969c8fb0e94d90f56724872e11a3ec50920b78ac5505a4e14197",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "scripts/audit_sync_inventory.py",
+      "sha256": "b90382e39ec1bff200639920927815e55404d99eea571aad279a8b3867107f7d",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "scripts/prepare-pr22-source.py",
+      "sha256": "20976b5adff9010c8ee18a44b6843aadcb36c9d4f208b20dec072884316c3c4e",
+      "reviewed_head_comparison": "not_in_reviewed_head"
+    },
+    {
+      "path": "scripts/repairs/apply_operational_bundle.py",
+      "sha256": "afd49d6fe9a9fa7b78786ded92cb258c1e08f62460a97d8168d79a9a8ec5030c",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "scripts/repairs/operational-bundle.json.gz.b64",
+      "sha256": "9442c7de782b644bb6c1d34b712595860b9cf8e342a48e7dd3ba36035b2e8ea9",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "scripts/repairs/operational-followup.json.gz.b64",
+      "sha256": "8c690b0eaee9169ed62782f6de2eb5858ab564edcdc7d8dd7895c6ae529d2a0a",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "scripts/repairs/trip_summary_compile.py",
+      "sha256": "637351c92392dd7b6e703523b9bf49e17fc9674708a3a2f7e9c46dac51a0ce0b",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    },
+    {
+      "path": "scripts/snapshot-pr22-source.py",
+      "sha256": "16b6f0c62fc07b81417e8b2667abfd9b114095afb9b3b92a84e30899707a47be",
+      "reviewed_head_comparison": "not_in_reviewed_head"
+    },
+    {
+      "path": "scripts/tests/test_sync_inventory.py",
+      "sha256": "d8d6c4e309e0b92b06bd87ee7f8d1b22fc245b1d24759b88c7049b0cfb1e4319",
+      "reviewed_head_comparison": "matches_reviewed_head"
+    }
+  ]
+}

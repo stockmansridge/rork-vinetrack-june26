@@ -108,7 +108,8 @@ class VineyardRepository(private val session: SessionStore) {
     }
 
     suspend fun listMachines(vineyardId: String): List<VineyardMachine> = withContext(Dispatchers.IO) {
-        get("vineyard_machines?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=name.asc")
+        listReferencePages<VineyardMachine>("vineyard_machines", vineyardId, { it.id }, { it.vineyardId })
+            .sortedBy { it.name }
     }
 
     suspend fun listWorkTasks(vineyardId: String): List<WorkTask> = withContext(Dispatchers.IO) {
@@ -120,7 +121,8 @@ class VineyardRepository(private val session: SessionStore) {
     }
 
     suspend fun listSprayEquipment(vineyardId: String): List<SprayEquipment> = withContext(Dispatchers.IO) {
-        get("spray_equipment?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=name.asc")
+        listReferencePages<SprayEquipment>("spray_equipment", vineyardId, { it.id }, { it.vineyardId })
+            .sortedBy { it.name }
     }
 
     suspend fun listSavedChemicals(vineyardId: String): List<SavedChemical> = withContext(Dispatchers.IO) {
@@ -611,6 +613,25 @@ class VineyardRepository(private val session: SessionStore) {
         val status: String = "unknown",
         val message: String? = null,
     )
+
+    private suspend inline fun <reified T> listReferencePages(
+        table: String, vineyardId: String, crossinline id: (T) -> String, crossinline scope: (T) -> String,
+    ): List<T> = kotlinx.coroutines.withTimeout(15_000) {
+        val all = mutableListOf<T>()
+        val seen = mutableSetOf<String>()
+        var after: String? = null
+        repeat(200) {
+            val cursor = after?.let { "&id=gt.$it" }.orEmpty()
+            val page: List<T> = get("$table?select=*&vineyard_id=eq.$vineyardId&deleted_at=is.null&order=id.asc&limit=500$cursor")
+            if (page.isEmpty()) return@withTimeout all.toList()
+            check(page.all { scope(it).equals(vineyardId, true) && seen.add(id(it).lowercase()) }) {
+                "Equipment response was incomplete or belonged to another vineyard"
+            }
+            all.addAll(page)
+            after = id(page.last())
+        }
+        error("Equipment refresh exceeded the safe page budget; saved data is retained")
+    }
 
     private suspend inline fun <reified T> get(path: String): T {
         if (!SupabaseClient.isConfigured) throw BackendError.NotConfigured

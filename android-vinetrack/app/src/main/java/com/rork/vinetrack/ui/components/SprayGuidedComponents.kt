@@ -211,6 +211,7 @@ fun GuidedReviewGroup(
     accent: Color,
     modifier: Modifier = Modifier,
     onEdit: (() -> Unit)? = null,
+    help: String? = null,
     content: @Composable () -> Unit,
 ) {
     Column(
@@ -231,6 +232,7 @@ fun GuidedReviewGroup(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f),
             )
+            if (help != null) SprayInfoHelp(title, help)
             if (onEdit != null) {
                 Surface(color = Color.Transparent, onClick = onEdit) {
                     Text(
@@ -404,6 +406,7 @@ fun GuidedCalculatedPanel(
     title: String,
     accent: Color,
     modifier: Modifier = Modifier,
+    help: String? = null,
     content: @Composable () -> Unit,
 ) {
     Column(
@@ -413,12 +416,16 @@ fun GuidedCalculatedPanel(
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            text = title.uppercase(),
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = title.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            if (help != null) SprayInfoHelp(title, help)
+        }
         content()
     }
 }

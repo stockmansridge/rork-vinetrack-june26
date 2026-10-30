@@ -43,6 +43,7 @@ class SprayBandedGroundCarrierTest {
             isGrowthStageAssigned = true,
             isEquipmentSelected = true,
             isEquipmentConfirmed = true,
+            tankCapacityLitres = 1_000.0, // A startable fixture needs a real tank, not the zero default.
             carrierBasis = basis,
             carrierAreaBasis = areaBasis,
             litresPerHectare = rate,

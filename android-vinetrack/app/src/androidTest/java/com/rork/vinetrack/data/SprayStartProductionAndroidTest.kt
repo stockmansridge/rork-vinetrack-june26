@@ -266,9 +266,21 @@ class SprayStartProductionAndroidTest {
         }
         compose.mainClock.autoAdvance = true
         tick()
-        compose.onNodeWithText("Equipment", substring = false).performScrollTo().performClick()
-        tick()
-        compose.onNode(hasText("Confirm equipment", substring = true) and hasClickAction()).performScrollTo().performClick()
+        // Historical prefill deliberately leaves Application unconfirmed. Follow the
+        // same production progression as an operator instead of opening a locked card.
+        fun continueWith(text: String) {
+            val matcher = hasText(text) and hasClickAction()
+            compose.onNode(hasScrollToNodeAction()).performScrollToNode(matcher)
+            compose.onNode(matcher).assertIsEnabled().performClick()
+            tick()
+        }
+        compose.onNodeWithText("Operation type").performClick()
+        compose.onNode(hasText("Foliar Spray") and hasAnyAncestor(isPopup())).performClick()
+        continueWith("Continue to Blocks →")
+        continueWith("Continue to Target →")
+        continueWith("Continue to Growth Stage →")
+        continueWith("Continue to Equipment →")
+        continueWith("  Confirm equipment")
         tick()
         compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Create Spray Job & View Tank Mix", substring = true))
         compose.onNodeWithText("Create Spray Job & View Tank Mix", substring = true).assertIsEnabled().performClick()
@@ -287,6 +299,9 @@ class SprayStartProductionAndroidTest {
             compose.onNodeWithText("Start engine hours (optional)").performTextInput(hours)
             tick()
         }
+        compose.onNode(hasText("Start Trip") and hasClickAction()).assertIsNotEnabled()
+        compose.onNode(isToggleable()).performScrollTo().performClick()
+        compose.onNode(hasText("Start Trip") and hasClickAction()).assertIsEnabled()
         // Exercise the production Button's accessibility action, not an IME-obscured screen coordinate.
         compose.onNode(hasText("Start Trip") and hasClickAction()).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         tick()
@@ -509,13 +524,15 @@ class SprayStartProductionAndroidTest {
         assertEquals(original.rpc!!.record, savedRequest!!.getValue("p_record"))
     }
 
-    @Test fun timestampedCalculatorAcceptedReloadFailureRecoversFrozenOriginal() {
+    @Test fun timestampedCalculatorAcceptedReloadFailureStartsFrozenOriginal() {
         failReload = true; setup()
-        assertFalse(start(123.5, calculatorInput(firstClock)).isStarted)
-        val original = requireNotNull(LegacySpraySaveStore(app).retainedStart(vineyard))
-        val recovered = start(999.0, calculatorInput(retryClock))
-        assertTrue(recovered.message, recovered.isStarted); assertEquals(original.trip.id, recovered.tripId)
+        val started = start(123.5, calculatorInput(firstClock))
+        assertTrue(started.message, started.isStarted)
+        // The accepted pair now supplies its frozen original even if an unrelated reload fails.
+        val original = storedAttempts().single()
+        assertEquals(original.trip.id, started.tripId)
         assertEquals(123.5, ActiveTripStore(app).load()!!.trip.startEngineHours!!, 0.0)
+        // Initial accepted save reloads once, then recovers the exact original receipt.
         assertEquals(1, creates); assertEquals(1, recoveries); assertFrozen(original)
         assertFalse(vm.ui.value.isTracking); assertTrue(vm.requiresFirstTankReview(ActiveTripStore(app).load()!!.trip))
     }
@@ -550,8 +567,8 @@ class SprayStartProductionAndroidTest {
         assertTrue(outcome.message!!.contains("separate job")); assertTrue(outcome.message!!.contains("Save for Later"))
     }
 
-    @Test fun timestampedCalculatorChangedEvidenceCannotResumeAcceptedOriginal() {
-        failReload = true; setup()
+    @Test fun timestampedCalculatorChangedEvidenceCannotResumeUnacknowledgedOriginal() {
+        mode = "lost"; setup()
         assertFalse(start(12.25, calculatorInput(firstClock)).isStarted)
         val original = requireNotNull(LegacySpraySaveStore(app).retainedStart(vineyard))
         val retry = calculatorInput(retryClock)
@@ -582,7 +599,8 @@ class SprayStartProductionAndroidTest {
         }
         val differentBlock = start(999.0, retry, listOf(UUID.randomUUID().toString()))
         assertFalse(differentBlock.isStarted); assertTrue(differentBlock.message!!.contains(original.trip.id))
-        assertEquals(1, creates); assertEquals(1, recoveries); assertNull(ActiveTripStore(app).load())
+        // Changed evidence is held before any recovery request is sent.
+        assertEquals(1, creates); assertEquals(0, recoveries); assertNull(ActiveTripStore(app).load())
         assertFrozen(original)
     }
 
