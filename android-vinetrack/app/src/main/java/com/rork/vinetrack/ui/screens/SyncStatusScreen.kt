@@ -74,6 +74,9 @@ import androidx.compose.ui.unit.sp
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.PendingSyncItem
+import com.rork.vinetrack.ui.SyncDownloadTone
+import com.rork.vinetrack.ui.syncDownloadStatus
+import com.rork.vinetrack.data.HomeReadKnowledge
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.SectionHeader
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -121,7 +124,8 @@ fun SyncStatusScreen(
     // needs-attention counts; last-synced times come from the domain read-cache.
     val itemsByType = remember(state.pendingSyncItems) { state.pendingSyncItems.groupBy { it.entityType } }
     var syncTick by remember { mutableIntStateOf(0) }
-    val syncTimes = remember(state.pendingSyncItems, state.selectedVineyardId, syncTick) { vm.domainSyncTimes() }
+    val syncTimes = remember(state.pendingSyncItems, state.selectedVineyardId, syncTick,
+        state.isLoadingVineyardData, state.blocksKnowledge, state.pinsKnowledge, state.spraysKnowledge) { vm.domainSyncTimes() }
     /** Function ids with a per-function sync currently in flight (spinner + guard). */
     var syncingIds by remember { mutableStateOf(setOf<String>()) }
 
@@ -152,7 +156,7 @@ fun SyncStatusScreen(
                 syncingIds = syncingIds - spec.id
                 syncTick++
             }
-            snackbarHostState.showSnackbar("${spec.title} refreshed.")
+            snackbarHostState.showSnackbar("Refresh requested. Check ${spec.title} status below.")
         }
     }
     // Tier-A Stage F-3 — details sheet for a single pending item. Read-only:
@@ -209,7 +213,7 @@ fun SyncStatusScreen(
                             fontSize = 16.sp,
                         )
                         Text(
-                            if (online) "Connected — changes save to the server."
+                            if (online) "Network connected. Check download and upload status below."
                             else "No connection — changes may not save right now.",
                             fontSize = 13.sp,
                             color = vine.textSecondary,
@@ -237,7 +241,7 @@ fun SyncStatusScreen(
                     }
                     if (!evidenceHeld && count == 0 && state.tankActualSyncNotice == null && state.pendingPhotoCount == 0) {
                         Text(
-                            "No pending items.",
+                            "No pending uploads. Download status is shown below.",
                             fontSize = 13.sp,
                             color = vine.textSecondary,
                         )
@@ -308,6 +312,7 @@ fun SyncStatusScreen(
                 syncingIds = syncingIds,
                 online = online,
                 onSync = ::runFunctionSync,
+                state = state,
             )
 
             SectionHeader("Operations", onLight = true)
@@ -318,6 +323,7 @@ fun SyncStatusScreen(
                 syncingIds = syncingIds,
                 online = online,
                 onSync = ::runFunctionSync,
+                state = state,
             )
 
             SectionHeader("Operational Tools", onLight = true)
@@ -328,6 +334,7 @@ fun SyncStatusScreen(
                 syncingIds = syncingIds,
                 online = online,
                 onSync = ::runFunctionSync,
+                state = state,
             )
             Text(
                 "Each area syncs automatically — use a sync button to pull the latest shared data now. Items waiting to sync are listed under Pending Sync.",
@@ -413,7 +420,6 @@ fun SyncStatusScreen(
                                     .clickable { detailItem = item },
                             ) {
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                 ) {
@@ -555,7 +561,7 @@ private fun SyncItemDetails(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
-                    .background(vine.textSecondary.copy(alpha = 0.08f))
+                    .background(vine.textSecondary.copy(alpha = 0.08f)),
                     .padding(12.dp),
             ) {
                 Text(
@@ -729,6 +735,7 @@ private fun SyncFunctionsCard(
     syncingIds: Set<String>,
     online: Boolean,
     onSync: (SyncFunctionSpec) -> Unit,
+    state: AppUiState,
 ) {
     val vine = LocalVineColors.current
     VineyardCard {
@@ -741,7 +748,14 @@ private fun SyncFunctionsCard(
                     spec = spec,
                     items = spec.entityTypes.flatMap { itemsByType[it].orEmpty() },
                     lastSyncedAt = spec.syncTimeKey?.let { syncTimes[it] },
-                    isSyncing = spec.id in syncingIds,
+                    isSyncing = spec.id in syncingIds || state.isLoadingVineyardData,
+                    readKnowledge = when (spec.id) {
+                        "paddocks" -> state.blocksKnowledge
+                        "pins" -> state.pinsKnowledge
+                        "spray" -> state.spraysKnowledge
+                        else -> null
+                    },
+                    readError = if (spec.id == "paddocks") state.paddockError else null,
                     online = online,
                     onSync = { onSync(spec) },
                 )
@@ -761,6 +775,8 @@ private fun SyncFunctionRow(
     items: List<PendingSyncItem>,
     lastSyncedAt: Long?,
     isSyncing: Boolean,
+    readKnowledge: HomeReadKnowledge?,
+    readError: String?,
     online: Boolean,
     onSync: () -> Unit,
 ) {
@@ -786,8 +802,13 @@ private fun SyncFunctionRow(
             statusColor = VineColors.Warning
         }
         else -> {
-            statusText = lastSyncedAt?.let { "Up to date · " + relativeTime(it) } ?: "Up to date"
-            statusColor = VineColors.Success
+            val downloaded = syncDownloadStatus(readKnowledge, lastSyncedAt != null, !readError.isNullOrBlank(), online)
+            statusText = downloaded.label + (lastSyncedAt?.let { " - " + relativeTime(it) } ?: "")
+            statusColor = when (downloaded.tone) {
+                SyncDownloadTone.Current -> VineColors.Success
+                SyncDownloadTone.Attention -> VineColors.Destructive
+                SyncDownloadTone.Saved, SyncDownloadTone.Waiting -> VineColors.Warning
+            }
         }
     }
     Row(
@@ -817,6 +838,9 @@ private fun SyncFunctionRow(
                 color = vine.textPrimary,
             )
             Text(statusText, fontSize = 12.sp, color = statusColor)
+            readError?.takeIf { it.isNotBlank() }?.let { error ->
+                Text(error, fontSize = 12.sp, color = VineColors.Warning)
+            }
         }
         if (isSyncing) {
             CircularProgressIndicator(
