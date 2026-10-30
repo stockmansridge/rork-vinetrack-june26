@@ -1,0 +1,24 @@
+name: Quadrant source verification
+on:
+  push:
+    branches: [feature/quadrant-count-admin]
+    paths:
+      - .github/workflows/quadrant-source-check.yml
+      - tools/quadrant-count.patch
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Package tracked source for focused review (no application build)
+        run: git archive --format=tar.gz --output=quadrant-source.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quadrant-source
+          path: quadrant-source.tar.gz
+          retention-days: 1
