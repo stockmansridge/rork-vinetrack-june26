@@ -420,6 +420,7 @@ fun SyncStatusScreen(
                                     .clickable { detailItem = item },
                             ) {
                                 Row(
+                                    modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                 ) {
@@ -467,7 +468,7 @@ fun SyncStatusScreen(
         }
     }
 
-    // Tier-A Stage F-3 — read-only details sheet with copyable diagnostics.
+    // Tier-A Stage F-3 — details sheet with copyable diagnostics.
     // The only actions are Copy diagnostics and dismiss; no retry, dismiss,
     // or overwrite, and nothing here mutates the pending row.
     val sheetItem = detailItem
@@ -561,7 +562,7 @@ private fun SyncItemDetails(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
-                    .background(vine.textSecondary.copy(alpha = 0.08f)),
+                    .background(vine.textSecondary.copy(alpha = 0.08f))
                     .padding(12.dp),
             ) {
                 Text(
