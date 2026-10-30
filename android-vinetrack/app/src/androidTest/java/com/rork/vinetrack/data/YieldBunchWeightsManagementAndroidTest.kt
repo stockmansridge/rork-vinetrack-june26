@@ -43,7 +43,12 @@ class YieldBunchWeightsManagementAndroidTest {
         YieldBunchWeightRow(UUID.randomUUID().toString(), vineyardId, blockId, key, "Renamed Shiraz", grams)
     private fun install(handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData) {
         client?.close()
-        client = HttpClient(MockEngine(handler)) { install(ContentNegotiation) { json(SupabaseClient.json) } }
+        client = HttpClient(MockEngine { request ->
+            if (request.url.encodedPath.endsWith("/vineyards")) {
+                assertEquals("eq.$vineyard", request.url.parameters["id"])
+                respond("""[{"id":"$vineyard"}]""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            } else handler(request)
+        }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
         SupabaseClient.installInstrumentationTransport(client)
     }
     private fun headers(count: Int) = headersOf(HttpHeaders.ContentType to listOf("application/json"), "Content-Range" to listOf("0-199/$count"))
@@ -56,7 +61,7 @@ class YieldBunchWeightsManagementAndroidTest {
         val master = row()
         val blockOverride = row(block, 180.0)
         assertEquals(blockOverride.id, YieldBunchWeightRow.resolved(listOf(master, blockOverride), vineyard, block, "shiraz").recordId)
-        assertEquals(0.12, YieldBunchWeightRow.resolved(listOf(master), vineyard, block, "shiraz").kg!!, 0.0)
+        assertEquals(0.12, YieldBunchWeightRow.resolved(listOf(master), vineyard.uppercase(), block.uppercase(), " SHIRAZ ").kg!!, 0.0)
         assertNull(YieldBunchWeightRow.resolved(emptyList(), vineyard, block, "shiraz").kg)
         assertNull(YieldBunchWeightRow.resolved(listOf(row(vineyardId = UUID.randomUUID().toString()), row(key = "merlot")), vineyard, block, "shiraz").kg)
         listOf(0.0, -1.0, 5000.1, Double.POSITIVE_INFINITY, Double.NaN).forEach { assertFalse(row(grams = it).isValid) }

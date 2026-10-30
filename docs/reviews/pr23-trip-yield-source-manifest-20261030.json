@@ -1,0 +1,186 @@
+{
+  "managed_source_parent": "c6bf17ce7e046efa25e120c8dd148ae56371e4cd",
+  "integration_commit": null,
+  "reviewed_pr23_head": "eea8b318d2275da4b32389fba63ba955d317ec76",
+  "reviewed_pr23_base": "58dc23dffc7340a56ebebc36868a6eeda40c4081",
+  "existing_native_before_images": "All 14 modified upstream files matched reconciled base; 9 upstream additions had no local conflict",
+  "validation": {
+    "ios_tests": {
+      "passed": 94,
+      "seconds": 134
+    },
+    "android_instrumentation": {
+      "passed": 14,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 14
+    },
+    "android_host": {
+      "passed": 15,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "ios_normal_simulator_build": "PASS",
+    "android_normal_build": "PASS",
+    "original_phone_and_portal_sync_acceptance": "UNVERIFIED"
+  },
+  "files": [
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/YieldBunchWeightsManagementAndroidTest.kt",
+      "sha256": "4451a9bb38a4252b4dd56612d16d54bd0aa828f160ff29b4d7dbb3b2b58606bd",
+      "parent_sha256": "0fa33838f8f6b0fc32f85924ec70c67fbda898d3c99e0e572c06744ee64586cf",
+      "reviewed_pr_head_sha256": "4451a9bb38a4252b4dd56612d16d54bd0aa828f160ff29b4d7dbb3b2b58606bd"
+    },
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/YieldMasterWeightCacheAndroidTest.kt",
+      "sha256": "03c31d08d34977a20c5c2b2ec55e528d003dd8682a9f973780fb8eb6a2d1c26b",
+      "parent_sha256": "cfc2afb15929f45f822384db5e94323d6d00a2e6deae457a4c2b6d76689a045c",
+      "reviewed_pr_head_sha256": "03c31d08d34977a20c5c2b2ec55e528d003dd8682a9f973780fb8eb6a2d1c26b"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/YieldBunchWeightsRepository.kt",
+      "sha256": "b5f0b5b3cd3187c07114014560c769b31a46f65cbb6e0a3917f9ee273150f4c6",
+      "parent_sha256": "4c3205784ee0bb057711c8063917a7df1d9747b6eda389a4973f88a9bebbbc0e",
+      "reviewed_pr_head_sha256": "b5f0b5b3cd3187c07114014560c769b31a46f65cbb6e0a3917f9ee273150f4c6"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/YieldMasterWeightRepository.kt",
+      "sha256": "63eb831bdeb02cd25e996388d1d40504608f215278d0dc0bec4c51204f1634cb",
+      "parent_sha256": "fd4ef546bb782fc6a13c909d177d272474aca598c6c57e70872b4531eda2cff6",
+      "reviewed_pr_head_sha256": "63eb831bdeb02cd25e996388d1d40504608f215278d0dc0bec4c51204f1634cb"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt",
+      "sha256": "0b8412d9026ad132cd9bf31883ae7bd70ce1bb74822488afcce4b3e1208970a7",
+      "parent_sha256": "60d4cc9264534309046fe381b73fc4ac069c23f937b1d047f5e6168265362597",
+      "reviewed_pr_head_sha256": "0b8412d9026ad132cd9bf31883ae7bd70ce1bb74822488afcce4b3e1208970a7"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CurrentYieldEstimateSummary.kt",
+      "sha256": "7ce292c3b22d23b1cf0420703aa67265fa858684c96684aa3bb47b21f6a88c4e",
+      "parent_sha256": "b8cb2c3281311dc79b02873e2b24b68cb8839c3b8df29f95c33069ef7287defb",
+      "reviewed_pr_head_sha256": "7ce292c3b22d23b1cf0420703aa67265fa858684c96684aa3bb47b21f6a88c4e"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldScreen.kt",
+      "sha256": "53ac3c22fabb8a0b93c47682445c46f6fac9329c835d82a49b585dd51cef70da",
+      "parent_sha256": "82389b4bb8db147c8f6023d51df8c8c932ef16c9ac779fc9b8e084c65b8e86df",
+      "reviewed_pr_head_sha256": "53ac3c22fabb8a0b93c47682445c46f6fac9329c835d82a49b585dd51cef70da"
+    },
+    {
+      "path": "docs/sync/TRIP_YIELD_PORTAL_CLOSEOUT_20261030.md",
+      "sha256": "29435d72b4dc9eec1f5813b7a674e2bf6becfd12cd977950ccca077dba9d622a",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": "29435d72b4dc9eec1f5813b7a674e2bf6becfd12cd977950ccca077dba9d622a"
+    },
+    {
+      "path": "ios/VineTrack/App/NewMainTabView.swift",
+      "sha256": "b58c86e26bd8c9b68cb75aa41018258f2a9465549db7d81d88f4d690be19c3b1",
+      "parent_sha256": "00ca347c59220b8396608769c7a7a1b8d1829ebbd4dd7d71e486f6d38fa3226f",
+      "reviewed_pr_head_sha256": "b58c86e26bd8c9b68cb75aa41018258f2a9465549db7d81d88f4d690be19c3b1"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift",
+      "sha256": "d2b764007b4a7ff8aae8b3706932dc3b051a143c613bdead9919da4d7b922a80",
+      "parent_sha256": "feab99ca5b13f7ca4c89428df803ba89b389e7f3c81e96895118c839a2d54f5e",
+      "reviewed_pr_head_sha256": "d2b764007b4a7ff8aae8b3706932dc3b051a143c613bdead9919da4d7b922a80"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Repositories/YieldBunchWeightsRepository.swift",
+      "sha256": "97cc7896afb9315d67eead8cbb1b8d8d68935b1e7f144dc1501af8ac623aa749",
+      "parent_sha256": "3d6632190e225ceebd2da97d385c8d3abcb21378d2a3ccb3bb31b6162e95650e",
+      "reviewed_pr_head_sha256": "97cc7896afb9315d67eead8cbb1b8d8d68935b1e7f144dc1501af8ac623aa749"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Repositories/YieldMasterWeightCache.swift",
+      "sha256": "9513c28f091fed018359e1afe133bd23a0d96bf1a4149d4d3ee937fdf925afb5",
+      "parent_sha256": "fc6a06b0df30e84562ed33facec241d90f77305765c955a38dc9f0b65eac764d",
+      "reviewed_pr_head_sha256": "9513c28f091fed018359e1afe133bd23a0d96bf1a4149d4d3ee937fdf925afb5"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TripDeletionJournal.swift",
+      "sha256": "6f273da5da414e9cdee1e6dc686b3c116ff00d7bb1234def87cdafb959a2f027",
+      "parent_sha256": "0bfadcf617aeebab0fd85448588e11b9f6d3d8f58803d6fe2c1baa1ea6e84c5b",
+      "reviewed_pr_head_sha256": "6f273da5da414e9cdee1e6dc686b3c116ff00d7bb1234def87cdafb959a2f027"
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Yield/CurrentYieldEstimateSummary.swift",
+      "sha256": "9797f0d39db061742344e22ff003cfc72d521d7a2463d20ba7f954178ea304ad",
+      "parent_sha256": "581fc1695224fefd543d7b4b3ad25bb68baed5e69ddf4f91c03c8f34e28278f5",
+      "reviewed_pr_head_sha256": "9797f0d39db061742344e22ff003cfc72d521d7a2463d20ba7f954178ea304ad"
+    },
+    {
+      "path": "ios/VineTrackTests/TripDeletionPersistenceIdentityTests.swift",
+      "sha256": "275ff9aa855401ab65412790cec8685a9892c8df0c77bd2a1f434e3e74ab73b8",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": "275ff9aa855401ab65412790cec8685a9892c8df0c77bd2a1f434e3e74ab73b8"
+    },
+    {
+      "path": "ios/VineTrackTests/TripJournalAbsenceIntegrationTests.swift",
+      "sha256": "b52e34bb685b0790594ee5bf16955db9c1b624a59598d3b41b9a5937fb315a92",
+      "parent_sha256": "4034318935f97863ccf382b9518f36dd4cd744c1eb2b039677374ac2c88bd871",
+      "reviewed_pr_head_sha256": "b52e34bb685b0790594ee5bf16955db9c1b624a59598d3b41b9a5937fb315a92"
+    },
+    {
+      "path": "ios/VineTrackTests/YieldMasterFullSyncTests.swift",
+      "sha256": "565d773a64f511e157288d5e1b65aac4be5baf68a1b595e1732ee4b263e7086e",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": "565d773a64f511e157288d5e1b65aac4be5baf68a1b595e1732ee4b263e7086e"
+    },
+    {
+      "path": "scripts/fixtures/trip-deletion/PersistenceHarness.swift",
+      "sha256": "beb6583e334a2198cbe7459cd74167810ff82d3de045aa1d3117fc900937db77",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": "beb6583e334a2198cbe7459cd74167810ff82d3de045aa1d3117fc900937db77"
+    },
+    {
+      "path": "scripts/fixtures/yield-sync/BoundaryStubs.swift",
+      "sha256": "3a20e27e798966a2303991c4303c9750937ffdc24b351e3070dcccc6cd2a24cd",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": "3a20e27e798966a2303991c4303c9750937ffdc24b351e3070dcccc6cd2a24cd"
+    },
+    {
+      "path": "scripts/fixtures/yield-sync/Supabase.swift",
+      "sha256": "4303738050edf0cc3d886608f7f6288b6061c6dee1e312d9e14682ffadbcf0ca",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": "4303738050edf0cc3d886608f7f6288b6061c6dee1e312d9e14682ffadbcf0ca"
+    },
+    {
+      "path": "scripts/prepare-pr23-source.py",
+      "sha256": "6891ecf80a2cd25b78510f59e03739bb0d2d55739b391177d2295391a9eedb40",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": null
+    },
+    {
+      "path": "scripts/run-pr23-yield-host-tests.py",
+      "sha256": "3856457f78074ff82d4bdaa4324c075657042a8f3b20ffe93b2e672253f95d48",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": null
+    },
+    {
+      "path": "scripts/run-trip-persistence-identity-tests.py",
+      "sha256": "ffe3ae9de98de89a973315b2c0a21a8978320d768bafca75b260ea37af33acf1",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": "ffe3ae9de98de89a973315b2c0a21a8978320d768bafca75b260ea37af33acf1"
+    },
+    {
+      "path": "scripts/run-yield-cache-sync-tests.py",
+      "sha256": "b3079144f01753ee49197c1f4dfc019d4f413afb81d17366394aa001b472589d",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": "b3079144f01753ee49197c1f4dfc019d4f413afb81d17366394aa001b472589d"
+    },
+    {
+      "path": "scripts/snapshot-pr23-trip-yield-source.py",
+      "sha256": "700f9aa613bd47a95d4705ba42f1d5f67c0df34990fd77fd9748f30ffe2b11bb",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": null
+    },
+    {
+      "path": "scripts/tests/test_trip_yield_repair_wiring.py",
+      "sha256": "d051db4f85c9c289708a1a81e5283c62bf28a2ed1d40690c77f6b6ab175fab17",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": "d051db4f85c9c289708a1a81e5283c62bf28a2ed1d40690c77f6b6ab175fab17"
+    }
+  ]
+}

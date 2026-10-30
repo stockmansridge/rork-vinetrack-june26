@@ -132,9 +132,19 @@ import Foundation
         intent.reviewReason == "TRIP_DELETE_ABSENCE_OR_ACCESS_UNVERIFIED" && intent.scope != nil &&
             intent.creationOutcome != "uncertain" && intent.acknowledgement == nil
     }
+    /// ISO8601 persistence drops subsecond dates; the durable UUID revision is
+    /// the identity. Still compare every other retained evidence/state field so
+    /// a newer hold or acknowledgement cannot be cleared by a suspended replay.
+    private static func matches(_ current: Intent?, _ expected: Intent) -> Bool {
+        guard let current else { return false }
+        return current.trip == expected.trip && current.revision == expected.revision
+            && current.scope == expected.scope && current.originalEvidence == expected.originalEvidence
+            && current.creationOutcome == expected.creationOutcome
+            && current.reviewReason == expected.reviewReason && current.acknowledgement == expected.acknowledgement
+    }
     func acknowledge(_ intent: Intent, evidence: String) throws -> Bool {
         var state = try load()
-        guard state.intents[intent.trip] == intent,
+        guard Self.matches(state.intents[intent.trip], intent),
               intent.reviewReason == nil || Self.canReverify(intent) else { return false }
         state.intents[intent.trip]?.acknowledgement = evidence
         state.intents[intent.trip]?.reviewReason = nil
@@ -145,7 +155,7 @@ import Foundation
     func replay(_ intent: Intent, account: UUID?, vineyard: UUID,
                 isCurrent: () -> Bool, remote: (Scope) async throws -> String) async throws -> Bool {
         let current = try load().intents[intent.trip]
-        guard current == intent, intent.reviewReason == nil || Self.canReverify(intent) else { return false }
+        guard Self.matches(current, intent), intent.reviewReason == nil || Self.canReverify(intent) else { return false }
         guard let scope = intent.scope else { return false }
         guard account == scope.account, vineyard == scope.vineyard, isCurrent() else { return false }
         if intent.acknowledgement != nil { return true }

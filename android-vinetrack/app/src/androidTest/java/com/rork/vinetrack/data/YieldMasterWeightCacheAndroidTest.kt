@@ -36,13 +36,20 @@ class YieldMasterWeightCacheAndroidTest {
     private fun install(response: suspend () -> Pair<String, HttpStatusCode>) {
         client?.close()
         client = HttpClient(MockEngine { request ->
-            assertTrue(request.url.encodedPath.endsWith("/rpc/resolve_yield_bunch_weight"))
-            val (body, status) = response()
-            respond(body, status, headersOf(HttpHeaders.ContentType, "application/json"))
+            if (request.url.encodedPath.endsWith("/vineyards")) {
+                respond("""[{"id":"$vineyard"}]""", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            } else {
+                assertTrue(request.url.encodedPath.endsWith("/yield_bunch_weights"))
+                assertEquals("count=exact", request.headers["Prefer"])
+                val (body, status) = response()
+                val count = if (body.startsWith("[")) (SupabaseClient.json.parseToJsonElement(body) as kotlinx.serialization.json.JsonArray).size else 0
+                respond(body, status, headersOf(HttpHeaders.ContentType to listOf("application/json"), "Content-Range" to listOf("0-199/$count")))
+            }
         }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
         SupabaseClient.installInstrumentationTransport(client)
     }
-    private fun available(key: String = "shiraz", grams: Int = 120) = """{"bunch_weight_grams":$grams,"source":"block_override","record_id":"$block","variety_key":"$key"}"""
+    private fun available(vineyardId: String = vineyard, grams: Int = 120) = """[{"id":"$block","vineyard_id":"$vineyardId","paddock_id":"$block","variety_key":"shiraz","variety_name":"Shiraz","bunch_weight_grams":$grams}]"""
+
     private fun repository(): YieldMasterWeightRepository = YieldMasterWeightRepository(context).also { it.session.save("synthetic-access", "synthetic-refresh", actor, null) }
     @After fun cleanup() { SupabaseClient.installInstrumentationTransport(null); client?.close(); names.forEach { base.deleteSharedPreferences(prefix + it) }; root.deleteRecursively() }
     @Test fun confirmedWeightSurvivesRecreatedCacheAndOfflineRead() = runBlocking {
@@ -50,10 +57,17 @@ class YieldMasterWeightCacheAndroidTest {
         install { "offline" to HttpStatusCode.ServiceUnavailable }
         val recreated = YieldMasterWeightRepository(context); recreated.refresh(vineyard, listOf(paddock))
         assertEquals(0.12, recreated.cached(vineyard).values.single().kg!!, 0.0)
+        assertNotNull(recreated.syncError(vineyard))
+        install { available(grams = 130) to HttpStatusCode.OK }
+        val before = recreated.changes.value
+        recreated.refresh(vineyard, listOf(paddock))
+        assertNull(recreated.syncError(vineyard))
+        assertTrue(recreated.changes.value > before)
+        assertEquals(0.13, recreated.cached(vineyard).values.single().kg!!, 0.0)
     }
     @Test fun confirmedAbsenceReplacesAvailableWeightOnDisk() = runBlocking {
         val repo = repository(); install { available() to HttpStatusCode.OK }; repo.refresh(vineyard, listOf(paddock))
-        install { """{"bunch_weight_grams":null,"source":"not_configured","record_id":null,"variety_key":"shiraz"}""" to HttpStatusCode.OK }
+        install { "[]" to HttpStatusCode.OK }
         repo.refresh(vineyard, listOf(paddock)); val cached = YieldMasterWeightRepository(context).cached(vineyard).values.single()
         assertEquals("not_configured", cached.source); assertNull(cached.kg)
     }
@@ -83,7 +97,19 @@ class YieldMasterWeightCacheAndroidTest {
         repo.refresh(vineyard, listOf(paddock)); assertTrue(repo.cached(vineyard).isEmpty())
     }
     @Test fun mismatchedOrMalformedResponseNeverEntersConfirmedCache() = runBlocking {
-        val repo = repository(); install { available(key = "wrong") to HttpStatusCode.OK }; repo.refresh(vineyard, listOf(paddock)); assertTrue(repo.cached(vineyard).isEmpty())
+        val repo = repository(); install { available(vineyardId = UUID.randomUUID().toString()) to HttpStatusCode.OK }; repo.refresh(vineyard, listOf(paddock)); assertTrue(repo.cached(vineyard).isEmpty())
         install { available(grams = -1) to HttpStatusCode.OK }; repo.refresh(vineyard, listOf(paddock)); assertTrue(repo.cached(vineyard).isEmpty())
     }
+    @Test fun completeReadRefreshUsesRemovedOverrideFallbackAndOriginalUnits() = runBlocking {
+        val repo = repository()
+        install { available(grams = 90) to HttpStatusCode.OK }
+        repo.refresh(vineyard, listOf(paddock))
+        assertEquals(0.09, repo.cached(vineyard).values.single().kg!!, 0.0)
+        install { """[{"id":"$actor","vineyard_id":"$vineyard","paddock_id":null,"variety_key":"shiraz","variety_name":"Shiraz","bunch_weight_grams":140}]""" to HttpStatusCode.OK }
+        repo.refresh(vineyard, listOf(paddock))
+        val weight=repo.cached(vineyard).values.single()
+        assertEquals("variety_default", weight.source)
+        assertEquals(0.14, weight.kg!!, 0.0)
+    }
+
 }
