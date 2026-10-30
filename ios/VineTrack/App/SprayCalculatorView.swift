@@ -672,8 +672,13 @@ struct SprayCalculatorView: View {
             // default; an explicit per-product Whole Block choice still wins.
             // Never revise the area basis of a historical saved spray.
             let newSpray = prefillRecord == nil || prefillRecord?.isTemplate == true
+            // This projection is an INPUT to flow. Reading flow here re-enters
+            // guidedInputs -> guidedProductLines after the first chemical is
+            // selected and overflows the main-thread stack (build 189).
+            // Use the same leaf operation check as SprayGuidedFlow; do not
+            // construct a flow to decide how to construct its own products.
             let chosenAreaBasis = productAreaBasis[line.id] ??
-                (newSpray && flow.requiresBandWidth && line.basis == .perHectare ? .treatedArea : nil)
+                (newSpray && operationType == .bandedSpray && line.basis == .perHectare ? .treatedArea : nil)
             let basis: SprayProductRateBasis = {
                 switch line.basis {
                 case .per100Litres:

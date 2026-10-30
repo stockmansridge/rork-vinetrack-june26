@@ -166,7 +166,7 @@ class SprayProductRecursionTests(unittest.TestCase):
             fixture = path / 'main.swift'
             fixture.write_text(host_source(fragment))
             compiled = subprocess.run([compiler, str(fixture), '-o', str(path / 'probe')],
-                capture_output=True, text=True, timeout=35)
+                capture_output=True, text=True, timeout=120)
             self.assertEqual(compiled.returncode, 0, compiled.stderr)
             run = subprocess.run([str(path / 'probe')], capture_output=True, text=True, timeout=5)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
