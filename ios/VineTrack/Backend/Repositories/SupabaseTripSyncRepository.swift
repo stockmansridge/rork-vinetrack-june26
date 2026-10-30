@@ -55,12 +55,40 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         }
     }
 
-    private func requireTripWrite(_ id: UUID) async throws -> UUID {
+    private func requireTripWrite(_ id: UUID, allowConfirmedAbsence: Bool = false) async throws -> UUID? {
         guard let owner = provider.client.auth.currentUser?.id else { throw CancellationError() }
+        let generation = VineyardWriteAuthority.shared.accountGeneration
         struct Row: Decodable { let vineyard_id: UUID }
         let rows: [Row] = try await provider.client.from("trips").select("vineyard_id")
             .eq("id", value: id.uuidString).limit(2).execute().value
-        guard provider.client.auth.currentUser?.id == owner, rows.count == 1 else {
+        guard provider.client.auth.currentUser?.id == owner,
+              VineyardWriteAuthority.shared.accountGeneration == generation else {
+            throw CancellationError()
+        }
+        if rows.isEmpty, allowConfirmedAbsence {
+            // Only deletes may take this read-only path. An empty RLS-filtered
+            // result alone is not proof; ask the server and bind its answer to
+            // this exact record and account incarnation. No missing row is made.
+            do {
+                let receipt: TripDeleteAbsenceReceipt = try await provider.client
+                    .rpc("confirm_trip_absence_v1", params: SoftDeleteTripRequest(tripId: id))
+                    .execute().value
+                try receipt.requireConfirmation(
+                    trip: id, owner: owner, generation: generation,
+                    currentOwner: provider.client.auth.currentUser?.id,
+                    currentGeneration: VineyardWriteAuthority.shared.accountGeneration
+                )
+                return nil // Deletion intent is satisfied; nothing exists to write.
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Do not let the service's legacy "not found" text matcher treat
+                // an absent RPC, failed auth, malformed response or timeout as
+                // successful deletion. Keep the pending item for a real receipt.
+                throw TripDeleteAbsenceReceipt.Failure.unconfirmed
+            }
+        }
+        guard rows.count == 1 else {
             throw VineyardWriteAuthority.Restricted(reason: "WRITE_SCOPE_UNRESOLVED")
         }
         try VineyardWriteAuthority.shared.requireWrite(vineyardId: rows[0].vineyard_id.uuidString)
@@ -292,7 +320,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
 
     func softDeleteTrip(id: UUID) async throws {
         guard provider.isConfigured else { throw BackendRepositoryError.missingSupabaseConfiguration }
-        _ = try await requireTripWrite(id)
+        guard try await requireTripWrite(id, allowConfirmedAbsence: true) != nil else { return }
         try await provider.client
             .rpc("soft_delete_trip", params: SoftDeleteTripRequest(tripId: id))
             .execute()

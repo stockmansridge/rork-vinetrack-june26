@@ -81,8 +81,9 @@
     "explicit recovery result and per-entity diagnostic status; no generic all-green shortcut"
   ],
   "route_signatures": {
-    "literal": "bb04cb27da47dd09590be02fd520bda9abb465364fdabe58063165640c8cc537",
+    "literal": "bf0e03d07459e05dd936c6c2b602c316ec2baf6a53eb047fdcaafd571d407f8c",
     "dynamic": "2da03dbe79bead9407a16a006adc54a1b2015891fa25dd47ae969e034b9b2813"
   },
-  "route_signature_policy": "File/API/literal-or-dynamic-expression fingerprint, including call multiplicity. Line shifts do not cause drift. Any endpoint addition/removal or dynamic dispatch change requires review. This is coverage, not semantic correctness."
+  "route_signature_policy": "File/API/literal-or-dynamic-expression fingerprint, including call multiplicity. Line shifts do not cause drift. Any endpoint addition/removal or dynamic dispatch change requires review. This is coverage, not semantic correctness.",
+  "trip_delete_absence_contract": "confirm_trip_absence_v1 is read-only: physical absence is actor/trip/version bound; RLS-hidden rows, malformed replies, missing authentication and transport failures never acknowledge a delete. Existing writes and all old routes remain unchanged."
 }
