@@ -61,6 +61,30 @@ import Foundation
         try FileManager.default.createDirectory(at: scoped, withIntermediateDirectories: true)
         fileURL = scoped.appendingPathComponent(scope.tripId + ".json")
     }
+    /// Read-only discovery for a legacy deletion whose cache row has already gone.
+    /// Both embedded scope and canonical journal path must agree; ambiguity stays held.
+    static func originalDeletionEvidence(tripId: UUID) throws -> (TripDeletionJournal.Scope, Data)? {
+        let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+            .appendingPathComponent("TripOccurrenceJournals", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: root.path) else { return nil }
+        guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey]) else {
+            throw Failure.scopeConflict
+        }
+        var matches: [(TripDeletionJournal.Scope, Data)] = []
+        for case let url as URL in files where url.lastPathComponent.lowercased() == tripId.uuidString.lowercased() + ".json" {
+            let bytes = try Data(contentsOf: url)
+            let snapshot = try JSONDecoder().decode(Snapshot.self, from: bytes)
+            guard let account = UUID(uuidString: snapshot.scope.ownerId), let vineyard = UUID(uuidString: snapshot.scope.vineyardId),
+                  snapshot.scope.tripId == tripId.uuidString.lowercased(),
+                  url.deletingLastPathComponent().lastPathComponent == snapshot.scope.vineyardId,
+                  url.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == snapshot.scope.ownerId,
+                  try TripOccurrenceJournal(scope: snapshot.scope).load() != nil else { throw Failure.scopeConflict }
+            matches.append((.init(account: account, vineyard: vineyard, trip: tripId), bytes))
+        }
+        guard matches.count <= 1 else { throw Failure.scopeConflict }
+        return matches.first
+    }
+
     func load() throws -> Snapshot? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
         let state: Snapshot

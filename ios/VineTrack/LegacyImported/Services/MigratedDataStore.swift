@@ -355,6 +355,27 @@ final class MigratedDataStore {
     let yieldRepo: YieldRepository
 
     private let persistence: PersistenceStore
+    var tripDeletionJournal: TripDeletionJournal { TripDeletionJournal(persistence: persistence) }
+    var tripDeletionError: String?
+
+    /// Legacy queue recovery uses immutable original WAL scope, never selection or operator labels.
+    func recoverTripDeletionIntent(id: UUID, queuedAt: Date, established: Bool) throws -> TripDeletionJournal.Intent {
+        if let intent = try tripDeletionJournal.load().intents[id] { return intent }
+        let matches = try LegacySpraySaveRecovery(persistence: persistence).attempts().filter { $0.trip.id == id }
+        if matches.count == 1, let original = matches.first {
+            return try tripDeletionJournal.prepare(trip: id, queuedAt: queuedAt,
+                scope: .init(account: original.scope.actor, vineyard: original.scope.vineyard, trip: id),
+                evidence: JSONEncoder().encode(original), established: established || original.verified?.status == "accepted",
+                uncertainCreation: original.rpcClaimed && original.verified?.status != "accepted")
+        }
+        if let original = try TripOccurrenceJournal.originalDeletionEvidence(tripId: id) {
+            let snapshot = try JSONDecoder().decode(TripOccurrenceJournal.Snapshot.self, from: original.1)
+            return try tripDeletionJournal.prepare(trip: id, queuedAt: queuedAt,
+                scope: original.0, evidence: original.1, established: established || snapshot.creationConfirmed == true,
+                uncertainCreation: snapshot.creationConfirmed != true && snapshot.pending.contains { $0.rpc == "create_trip_with_occurrences_v1" })
+        }
+        return try tripDeletionJournal.prepare(trip: id, queuedAt: queuedAt, scope: nil, evidence: nil, established: established)
+    }
     var buttonPersistence: PersistenceStore { persistence }
     private let pinNotesDraftStore: PinNotesDraftStore
 
@@ -1674,20 +1695,71 @@ final class MigratedDataStore {
         let vineyardId = target.vineyardId
         guard operationalWriteAuthority.admit(vineyardId: vineyardId.uuidString) else { return }
         guard tripId != deviceActiveTripId || isDeviceTripOwner else { return }
-        // Clean up local links that depend on this trip BEFORE removing it so
-        // nothing is left pointing at a missing trip.
-        // 1. Trip cost allocations — soft-delete locally and propagate so the
-        //    server rows are removed too.
-        deleteTripCostAllocations(tripId: tripId)
-        // 2. Pins that are trip-owned — clear the dangling trip link but keep
-        //    the observation. Propagated via updatePin (marks dirty).
-        clearTripLinkOnPins(tripId: tripId, propagate: true)
-        trips.removeAll { $0.id == tripId }
-        tripRepo.saveSlice(trips, for: vineyardId)
-        releaseDeviceTrip(tripId)
-        // Fires markTripDeleted on the sync service, which also drops any
-        // pending work_task_id clear for this trip (subsumed by the delete).
-        onTripDeleted?(tripId)
+        // Commit cancellation before touching the cache or dependent links. A failed
+        // cache removal still leaves replay blocked and the full original snapshot retained.
+        do {
+            guard let account = currentUserIdProvider?() else {
+                throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ACCOUNT_UNRESOLVED")
+            }
+            let previous = try tripDeletionJournal.load().intents[tripId]?.queuedAt.timeIntervalSince1970 ?? 0
+            let queuedAt = Date(timeIntervalSince1970: max(floor(Date().timeIntervalSince1970), previous + 1))
+            var originalScope = TripDeletionJournal.Scope(account: account, vineyard: target.vineyardId, trip: tripId)
+            var uncertainCreation = false
+            var established = TripSyncMetadata(persistence: persistence).isParentEstablished(tripId)
+            if let original = try LegacySpraySaveRecovery(persistence: persistence).attempts().first(where: { $0.trip.id == tripId }) {
+                originalScope = .init(account: original.scope.actor, vineyard: original.scope.vineyard, trip: tripId)
+                uncertainCreation = original.rpcClaimed && original.verified?.status != "accepted"
+                established = established || original.verified?.status == "accepted"
+            }
+            if let occurrence = try TripOccurrenceJournal.originalDeletionEvidence(tripId: tripId) {
+                guard occurrence.0 == originalScope else { throw TripDeletionJournal.Held(reason: "TRIP_DELETE_OWNERSHIP_CONFLICT") }
+                let snapshot = try JSONDecoder().decode(TripOccurrenceJournal.Snapshot.self, from: occurrence.1)
+                uncertainCreation = uncertainCreation || (snapshot.creationConfirmed != true && snapshot.pending.contains { $0.rpc == "create_trip_with_occurrences_v1" })
+                established = established || snapshot.creationConfirmed == true
+            }
+            guard originalScope.account == account, originalScope.vineyard == target.vineyardId else {
+                throw TripDeletionJournal.Held(reason: "TRIP_DELETE_OWNERSHIP_CONFLICT")
+            }
+            let intent = try tripDeletionJournal.prepare(trip: tripId, queuedAt: queuedAt, scope: originalScope,
+                evidence: JSONEncoder().encode(target), established: established, uncertainCreation: uncertainCreation)
+            // Queue publication precedes removal too; cancellation journal is the durable authority.
+            onTripDeleted?(tripId)
+            try finishTripDeletionLocally(intent)
+            tripDeletionError = nil
+        } catch {
+            tripDeletionError = "Trip deletion retained: \(error.localizedDescription)"
+            return
+        }
+    }
+
+    /// Completes a journal-first cancellation after a crash or failed cache write.
+    /// Newer local work or unreadable archives are held, never removed or overwritten.
+    func finishTripDeletionLocally(_ intent: TripDeletionJournal.Intent) throws {
+        guard let scope = intent.scope, currentUserIdProvider?() == scope.account,
+              selectedVineyardId == scope.vineyard else { throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ORIGINAL_ACCOUNT_OR_VINEYARD_REQUIRED") }
+        let all: [Trip]
+        switch persistence.loadOutcome(key: TripRepository.storageKey) as PersistenceStore.LoadOutcome<[Trip]> {
+        case .missing: all = []
+        case .decoded(let values): all = values
+        case .failed: throw TripDeletionJournal.Held(reason: "TRIP_DELETE_LOCAL_ARCHIVE_UNREADABLE")
+        }
+        let targets = (trips + all).filter { $0.id == intent.trip }
+        if !targets.isEmpty {
+            let original: Trip?
+            if let bytes = intent.originalEvidence {
+                original = (try? JSONDecoder().decode(Trip.self, from: bytes)) ??
+                    (try? JSONDecoder().decode(LegacySpraySaveRecovery.Attempt.self, from: bytes))?.trip
+            } else { original = nil }
+            guard let original, targets.allSatisfy({ $0.vineyardId == scope.vineyard &&
+                (try? LegacySpraySaveRecovery.sameProjection($0, original)) == true }) else {
+                throw TripDeletionJournal.Held(reason: "TRIP_DELETE_NEWER_LOCAL_WORK_RETAINED")
+            }
+            try persistence.saveOrThrow(all.filter { $0.id != intent.trip }, key: TripRepository.storageKey)
+            trips.removeAll { $0.id == intent.trip }
+        }
+        deleteTripCostAllocations(tripId: intent.trip)
+        clearTripLinkOnPins(tripId: intent.trip, propagate: true)
+        releaseDeviceTrip(intent.trip)
     }
 
     /// Clear the `tripId` link on any pins owned by `tripId`. Keeps the pin
@@ -1710,6 +1782,7 @@ final class MigratedDataStore {
     /// Apply a trip upsert that originated from a remote sync pull. Does NOT
     /// trigger `onTripChanged` (avoids re-marking the trip dirty).
     func applyRemoteTripUpsert(_ trip: Trip) {
+        guard (try? tripDeletionJournal.isCancelled(trip.id)) == false else { return }
         // Parent activation may arrive before orphan-link acceptance. Keep the
         // original queued projection/time for retry, even across a restart.
         let preserved = sprayRecords + sprayRepo.loadRecords(for: trip.vineyardId)
@@ -1997,7 +2070,8 @@ final class MigratedDataStore {
 
     func unchangedAcceptedLegacySprays() throws -> [LegacySpraySaveRecovery.Attempt] {
         try LegacySpraySaveRecovery(persistence: persistence).attempts().filter { item in
-            item.trip.coverageBasis == .legacy && !item.isHeld && item.scope.vineyard == selectedVineyardId &&
+            if try tripDeletionJournal.isCancelled(item.trip.id) { return false }
+            return item.trip.coverageBasis == .legacy && !item.isHeld && item.scope.vineyard == selectedVineyardId &&
                 trips.first(where: { $0.id == item.trip.id }).map { (try? LegacySpraySaveRecovery.sameProjection($0, item.trip)) == true } == true &&
                 sprayRecords.first(where: { $0.id == item.record.id }).map { (try? LegacySpraySaveRecovery.sameProjection($0, item.record)) == true } == true
         }

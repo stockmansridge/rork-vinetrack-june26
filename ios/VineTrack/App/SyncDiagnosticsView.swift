@@ -1489,6 +1489,9 @@ struct SyncDiagnosticsView: View {
             carriers: sprayCarrierInputs,
             summary: sprayFinalisationSummary
         ))
+        lines.append("\nTrip deletion recovery (uploads listed independently):")
+        lines.append(tripSync.deletionRecoveryDiagnostics)
+        if let failure = store.tripDeletionError { lines.append(failure) }
         return lines.joined(separator: "\n")
     }
 }

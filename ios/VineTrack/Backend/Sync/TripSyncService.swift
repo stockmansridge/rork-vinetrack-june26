@@ -26,7 +26,7 @@ final class TripSyncService {
         return (try? store.isLegacySpraySyncHeld(trip: id)) ?? true
     }
     var pendingUpsertCount: Int { metadata.pendingUpserts.keys.filter { !isHeld($0) }.count }
-    var pendingDeleteCount: Int { metadata.pendingDeletes.keys.filter { !isHeld($0) }.count }
+    var pendingDeleteCount: Int { metadata.pendingDeletes.count }
     /// Number of trips with a queued explicit `work_task_id = null` clear that
     /// has not yet been confirmed by the server.
     var pendingWorkTaskClearCount: Int { metadata.pendingWorkTaskClears.count }
@@ -39,12 +39,16 @@ final class TripSyncService {
     /// trip can be queued purely because its FINAL ended state is held back
     /// while its actual-use rows upload, and that must never block its own
     /// children.
-    func isParentEstablished(_ id: UUID) -> Bool { !isHeld(id) && metadata.isParentEstablished(id) }
+    func isParentEstablished(_ id: UUID) -> Bool {
+        !isHeld(id) && metadata.pendingDeletes[id] == nil &&
+            (try? store?.tripDeletionJournal.isCancelled(id)) != true && metadata.isParentEstablished(id)
+    }
 
     /// True only when the parent row has never reached the server. This is the
     /// one legitimate reason to defer a child upload.
     func isPendingParentCreation(_ id: UUID) -> Bool {
-        metadata.pendingUpserts[id] != nil && !metadata.isParentEstablished(id)
+        metadata.pendingDeletes[id] != nil || (try? store?.tripDeletionJournal.isCancelled(id)) == true ||
+            (metadata.pendingUpserts[id] != nil && !metadata.isParentEstablished(id))
     }
 
     /// True when the trip is queued ONLY because Phase 5 finalisation is held.
@@ -146,7 +150,22 @@ final class TripSyncService {
     }
 
     func markTripDeleted(_ id: UUID) {
-        metadata.markDeleted(id, at: Date())
+        let intent = try? store?.tripDeletionJournal.load().intents[id]
+        metadata.markDeleted(id, at: intent?.queuedAt ?? Date())
+    }
+
+    /// Identifies uploads independently from deletion intents; no item is inferred from counts.
+    var deletionRecoveryDiagnostics: String {
+        guard let store else { return "Trip deletion evidence unavailable" }
+        do {
+            let intents = try store.tripDeletionJournal.load().intents.values.sorted { $0.trip.uuidString < $1.trip.uuidString }
+            let knownTripIds = Set((store.trips + store.tripRepo.loadAll()).map(\.id))
+            let uploads = metadata.pendingUpserts.sorted { $0.key.uuidString < $1.key.uuidString }.map {
+                "upload trip=\($0.key) revision=\($0.value.timeIntervalSince1970) cancelled=\((try? store.tripDeletionJournal.isCancelled($0.key)) ?? true) review=\(knownTripIds.contains($0.key) ? "inspect upload independently" : "TRIP_UPLOAD_ORIGINAL_SNAPSHOT_UNAVAILABLE")"
+            }
+            let deletes = intents.map { "delete trip=\($0.trip) account=\($0.scope?.account.uuidString ?? "unresolved") vineyard=\($0.scope?.vineyard.uuidString ?? "unresolved") revision=\($0.revision) creation=\($0.creationOutcome) review=\($0.reviewReason ?? "none") acknowledgement=\($0.acknowledgement ?? "none")" }
+            return (["Trip uploads (separate from deletion): \(uploads.count)"] + uploads + deletes).joined(separator: "\n")
+        } catch { return "Trip deletion evidence unreadable: \(error.localizedDescription)" }
     }
 
     // MARK: - Work Task link
@@ -161,7 +180,7 @@ final class TripSyncService {
     /// (non-nil), while a full unlink requires connectivity to clear.
     func setWorkTaskLink(tripId: UUID, workTaskId: UUID?) async {
         guard let store else { return }
-        guard !isHeld(tripId) else { return }
+        guard !isHeld(tripId), (try? store.tripDeletionJournal.isCancelled(tripId)) == false else { return }
         guard var trip = store.trips.first(where: { $0.id == tripId }) else { return }
         trip.workTaskId = workTaskId
         store.updateTrip(trip)
@@ -220,7 +239,7 @@ final class TripSyncService {
             try await pushLocalTrips(vineyardId: vineyardId)
             await TripLabourSnapshotJournal.shared.replay(trips: store?.trips ?? [])
             try await pullRemoteTrips(vineyardId: vineyardId)
-            let held = try store?.legacySprayHeldCount(vineyard: vineyardId) ?? 0
+            let held = try (store?.legacySprayHeldCount(vineyard: vineyardId) ?? 0) + metadata.pendingDeletes.count
             if !failedUpsertIds.isEmpty {
                 syncStatus = .failure("Trip reconciliation pending. Original device evidence is retained; completed trips will not be reopened.")
                 return
@@ -588,14 +607,23 @@ final class TripSyncService {
 
     func pushLocalTrips(vineyardId: UUID) async throws {
         guard let store else { return }
+        // Import ID-only legacy deletes before ANY retained creation recovery runs.
+        for (id, timestamp) in metadata.pendingDeletes {
+            _ = try store.recoverTripDeletionIntent(id: id, queuedAt: timestamp, established: metadata.isParentEstablished(id))
+        }
+        // Journal-first deletion survives a crash before legacy metadata publication.
+        for intent in try store.tripDeletionJournal.load().intents.values where intent.acknowledgement == nil {
+            if metadata.pendingDeletes[intent.trip] == nil { metadata.markDeleted(intent.trip, at: intent.queuedAt) }
+        }
         await store.recoverLegacySprayReceipts()
         let accepted = try store.unchangedAcceptedLegacySprays().map { $0.trip.id }
         metadata.clearDirty(accepted)
         metadata.markParentsEstablished(accepted)
         try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
         let createdBy = auth?.userId
+        var firstUploadError: Error?
         var dirty = metadata.pendingUpserts
-        for id in Array(dirty.keys) where try store.isLegacySpraySyncHeld(trip: id) {
+        for id in Array(dirty.keys) where try store.tripDeletionJournal.isCancelled(id) || store.isLegacySpraySyncHeld(trip: id) {
             dirty.removeValue(forKey: id)
         }
         if !dirty.isEmpty {
@@ -625,10 +653,11 @@ final class TripSyncService {
             var orphans: [UUID] = []
             var deferredEndIds: Set<UUID> = []
             for (tripId, ts) in dirty {
+                if try store.tripDeletionJournal.isCancelled(tripId) { continue }
                 try store.requireLegacySpraySyncAdmission(trip: tripId)
                 if endedIds.contains(tripId) { continue }
-                // Reclaim queue entries with no local trip — they can never
-                // upload and used to sit in the queue forever.
+                // A missing cache snapshot is not an upload acknowledgement.
+                // Keep this separate item for evidence recovery; deletion must not discard it.
                 guard var trip = byId[tripId] else { orphans.append(tripId); continue }
                 if trip.vineyardId != vineyardId {
                     // Try to repair: only if every paddock on the trip resolves to the
@@ -668,8 +697,7 @@ final class TripSyncService {
                 payloads.append(BackendTrip.upsert(from: trip, createdBy: createdBy, clientUpdatedAt: ts))
                 pushedIds.append(tripId)
             }
-            metadata.clearDirty(orphans)
-            SyncIssueCenter.shared.clearIssues(orphans)
+            metadata.markUpsertsFailed(orphans)
             let result = await SyncQueuePush.run(
                 entity: "Trips",
                 ids: pushedIds,
@@ -680,7 +708,7 @@ final class TripSyncService {
             // The parent row demonstrably exists for everything uploaded, so
             // children may upload even while finalisation stays queued.
             metadata.markParentsEstablished(result.uploaded)
-            metadata.clearDirty(result.uploaded)
+            metadata.clearDirty(result.uploaded.filter { (try? store.tripDeletionJournal.isCancelled($0)) == false })
             for id in result.uploaded where deferredEndIds.contains(id) && shouldDeferEndedTrip(id) {
                 // Still waiting on actual-use rows: keep the trip queued so the
                 // finalisation stage re-runs once they clear.
@@ -688,7 +716,7 @@ final class TripSyncService {
             }
             metadata.markUpsertsFailed(result.failed)
             SyncIssueCenter.shared.notePending(entity: "Trips", count: metadata.pendingUpserts.count)
-            if let error = result.firstRetryableError { throw error }
+            firstUploadError = result.firstRetryableError
             #if DEBUG
             if !skipped.isEmpty {
                 for (id, reason) in skipped {
@@ -705,7 +733,7 @@ final class TripSyncService {
         if !clears.isEmpty {
             let byIdNow = Dictionary(store.trips.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             for (tripId, _) in clears {
-                if try store.isLegacySpraySyncHeld(trip: tripId) { continue }
+                if try store.tripDeletionJournal.isCancelled(tripId) || store.isLegacySpraySyncHeld(trip: tripId) { continue }
                 // Conflict guard: if the user re-linked this trip locally before
                 // the sync, the newer link wins — drop the stale clear and let the
                 // upsert carry the link instead of wiping it.
@@ -731,30 +759,36 @@ final class TripSyncService {
 
         let deletes = metadata.pendingDeletes
         var deleteFailures: [String] = []
-        for (tripId, _) in deletes {
-            if try store.isLegacySpraySyncHeld(trip: tripId) { continue }
+        let account = store.currentUserIdProvider?()
+        let current = store.remoteApplicationCurrentCheck()
+        for (tripId, timestamp) in deletes {
+            guard let intent = try store.tripDeletionJournal.load().intents[tripId] else { continue }
             do {
-                try await repository.softDeleteTrip(id: tripId)
-                metadata.clearDeleted([tripId])
-            } catch {
-                if Self.isMissingRowError(error) {
-                    metadata.clearDeleted([tripId])
-                    #if DEBUG
-                    print("[TripSync] soft delete: remote trip \(tripId) already missing — clearing pending delete")
-                    #endif
-                } else {
-                    #if DEBUG
-                    print("[TripSync] soft delete failed for \(tripId): \(error.localizedDescription)")
-                    #endif
-                    metadata.markDeletesFailed([tripId])
-                    deleteFailures.append(error.localizedDescription)
-                    continue
+                let scopeCurrent = { current() && store.currentUserIdProvider?() == account && store.selectedVineyardId == vineyardId }
+                if intent.scope?.account == account, intent.scope?.vineyard == vineyardId, scopeCurrent() {
+                    try store.finishTripDeletionLocally(intent)
                 }
+                let acknowledged = try await store.tripDeletionJournal.replay(intent, account: account, vineyard: vineyardId,
+                    isCurrent: scopeCurrent) { scope in
+                        try await self.repository.resolveDeletion(scope, isCurrent: scopeCurrent)
+                    }
+                if acknowledged { try metadata.clearDeletedRevision(tripId, at: timestamp) }
+                else { deleteFailures.append(intent.reviewReason ?? "TRIP_DELETE_ORIGINAL_ACCOUNT_OR_VINEYARD_REQUIRED") }
+            } catch let held as TripDeletionJournal.Held {
+                try store.tripDeletionJournal.hold(intent, reason: held.reason)
+                deleteFailures.append(held.reason)
+            } catch is VineyardWriteAuthority.Restricted {
+                try store.tripDeletionJournal.hold(intent, reason: "TRIP_DELETE_ACCESS_UNVERIFIED")
+                deleteFailures.append("TRIP_DELETE_ACCESS_UNVERIFIED")
+            } catch {
+                metadata.markDeletesFailed([tripId])
+                deleteFailures.append(error.localizedDescription)
             }
         }
         if !deleteFailures.isEmpty {
-            errorMessage = "Some trip deletes failed: \(deleteFailures.first ?? "unknown")"
+            errorMessage = "Trip deletions retained: \(deleteFailures.first ?? "unresolved")"
         }
+        if let firstUploadError { throw firstUploadError }
     }
 
     private static func isMissingRowError(_ error: Error) -> Bool {
@@ -787,6 +821,7 @@ final class TripSyncService {
             var localForVineyard: [Trip] = []
             let acceptedOriginalIds = Set(try store.acceptedLegacySprayPairs(vineyard: vineyardId).map { $0.trip.id })
             for trip in store.trips {
+                if try store.tripDeletionJournal.isCancelled(trip.id) { continue }
                 // Immutable acceptance is not permission to recreate an absent/deleted row through initial fallback.
                 if acceptedOriginalIds.contains(trip.id) { continue }
                 if try store.isLegacySpraySyncHeld(trip: trip.id) { continue }
@@ -827,6 +862,10 @@ final class TripSyncService {
     }
 
     private func applyRemote(_ backendTrip: BackendTrip, vineyardId: UUID, store: MigratedDataStore) async {
+        // A pull cannot acknowledge a newer deletion or erase retained edits. Scoped
+        // tombstone acknowledgement is owned solely by the deletion replay above.
+        guard (try? store.tripDeletionJournal.isCancelled(backendTrip.id)) == false,
+              metadata.pendingDeletes[backendTrip.id] == nil else { return }
         guard (try? store.isLegacySpraySyncHeld(trip: backendTrip.id)) == false else {
             metadata.markUpsertsFailed([backendTrip.id]); return
         }
@@ -834,7 +873,7 @@ final class TripSyncService {
         if backendTrip.deletedAt != nil {
             store.applyRemoteTripDelete(backendTrip.id)
             metadata.clearDirty([backendTrip.id])
-            metadata.clearDeleted([backendTrip.id])
+            // No pending local deletion exists here; do not acknowledge by ID.
             metadata.clearWorkTaskClears([backendTrip.id])
             return
         }
@@ -1046,12 +1085,9 @@ final class TripSyncMetadata {
     }
 
     func markDeleted(_ id: UUID, at date: Date) {
-        state.pendingUpserts.removeValue(forKey: id)
-        state.failedUpserts.remove(id)
-        // A deleted trip needs no link clear — the soft-delete subsumes it.
-        state.pendingWorkTaskClears.removeValue(forKey: id)
+        // Preserve upload/link evidence independently. Cancellation fences replay;
+        // deleting a row is not an acknowledgement of any queued edit.
         state.pendingDeletes[id] = date
-        state.establishedParents.remove(id)
         save()
     }
 
@@ -1059,6 +1095,15 @@ final class TripSyncMetadata {
         guard !ids.isEmpty else { return }
         for id in ids { state.pendingUpserts.removeValue(forKey: id); state.failedUpserts.remove(id) }
         save()
+    }
+
+    func clearDeletedRevision(_ id: UUID, at date: Date) throws {
+        guard state.pendingDeletes[id] == date else { return }
+        var next = state
+        next.pendingDeletes.removeValue(forKey: id)
+        next.failedDeletes.remove(id)
+        try persistence.saveOrThrow(next, key: key)
+        state = next
     }
 
     func clearDeleted(_ ids: [UUID]) {

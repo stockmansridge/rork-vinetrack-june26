@@ -1,0 +1,56 @@
+{
+  "reviewed_public_pr22_head": "07ddba427a3edb49a5aafb9f639f29c59e7d2fe8",
+  "managed_source_parent": "fb4b6ec591559c3391e74a5463000c9320549338",
+  "integration_commit": null,
+  "scope": "iOS Trip deletion recovery and diagnostics; no release counter or backend changes",
+  "files": [
+    {
+      "path": "ios/VineTrack/App/SyncDiagnosticsView.swift",
+      "sha256": "06f3471c0ba3e7ade55afcd666b638a4e9310377587847f4ad72e29f935da5f5"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift",
+      "sha256": "2b296af195457ec095b7af682a6917bb249625eb49271600db0b65f53cd5511e"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Repositories/TripSyncRepositoryProtocol.swift",
+      "sha256": "1b4d1e2810a1d1146b70c89bbb60400d2b2e04f2e6271033ba9f8d237bcbe838"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/RetainedRecoveryDiagnosticExport.swift",
+      "sha256": "2e77f4d512837f089be560cfbc11ed05508ea0678ab129be623a59c45a3fc47c"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TripDeletionJournal.swift",
+      "sha256": "83db9b59230d70253c08b2de17efa27b43b617fdc14cc7fe3bb88c0859b41725"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift",
+      "sha256": "93857e0596af7ef52071e2f713edae3abc2dd2798f789e28053cd94dc1a04663"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TripSyncService.swift",
+      "sha256": "bd2a1e961496d1f6aa83276d455bf883a3157a519122bc591578908a4e190823"
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Services/LegacySpraySaveRecovery.swift",
+      "sha256": "6eae0b3df0c62f09134383ef7920b950cd92b1723a4ff024857f3a5fe377c8af"
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift",
+      "sha256": "8623bebed1b08045342b84f85d3408789eea032faf446446b0e323de360d94b9"
+    },
+    {
+      "path": "ios/VineTrackTests/SprayTripPhase5FinalisationTests.swift",
+      "sha256": "3cf70963f27da6aa44ffb00a2fc2b04fb5c4b8ebb398e3fc03ba2d97c630da61"
+    },
+    {
+      "path": "ios/VineTrackTests/TripDeletionRecoveryTests.swift",
+      "sha256": "c2af1bd1468595d94d24b11f8e638c77ac9159d1b2a5a99b9e717660cebae2d3"
+    },
+    {
+      "path": "scripts/snapshot-trip-deletion-source.py",
+      "sha256": "51b55a5158176e8d837e7e19b2a671ce38e6658d174ff1aece5cfcf0586f2759"
+    }
+  ]
+}

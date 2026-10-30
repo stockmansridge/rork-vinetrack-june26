@@ -91,6 +91,7 @@ final class LegacySpraySaveRecovery {
             guard old.scope == scope, old.record == record, old.trip == trip else { throw failure }
             return
         }
+        try TripDeletionJournal(persistence: persistence).registerCreation(.init(account: scope.actor, vineyard: scope.vineyard, trip: trip.id))
         // Local completion is not remote acceptance. A new session cannot bypass retained creation evidence.
         guard try !items.contains(where: { item in
             guard item.scope.actor == scope.actor, item.scope.vineyard == scope.vineyard else { return false }
@@ -107,12 +108,13 @@ final class LegacySpraySaveRecovery {
         var items = try attempts()
         let pending = items.indices.filter { items[$0].scope == scope && !items[$0].localComplete }
         for index in pending {
+            if try TripDeletionJournal(persistence: persistence).isCancelled(items[index].trip.id) { continue }
             try record(items[index].record)
             try trip(items[index].trip)
             items[index].localComplete = true
             try persistence.saveOrThrow(items, key: Self.key)
         }
-        return pending.map { items[$0] }
+        return try pending.filter { try !TripDeletionJournal(persistence: persistence).isCancelled(items[$0].trip.id) }.map { items[$0] }
     }
     /// An occurrence save uses this WAL only for the local recipe/trip pair. Release
     /// its *legacy* transport gate only when the exact original create intent is
@@ -120,6 +122,9 @@ final class LegacySpraySaveRecovery {
     /// all conflicts, activation, receipts and duplicate prevention. Never migrate,
     /// clear, re-create or transmit the retained WAL through the legacy RPC.
     func requiresLegacyReceipt(_ item: Attempt) throws -> Bool {
+        // Acknowledged cancellation ends the create obligation without inventing a
+        // paired-create receipt. Keep the WAL bytes; its own replay remains fenced.
+        if try TripDeletionJournal(persistence: persistence).load().intents[item.trip.id]?.acknowledgement != nil { return false }
         guard item.isHeld else { return false }
         guard item.localComplete, item.trip.coverageBasis == .occurrence,
               item.rpc == nil, !item.rpcClaimed, item.candidate == nil, item.verified == nil else { return true }
@@ -138,6 +143,7 @@ final class LegacySpraySaveRecovery {
     func contains(record: UUID? = nil, trip: UUID? = nil) throws -> Bool {
         try attempts().contains { item in
             guard item.record.id == record || item.trip.id == trip else { return false }
+            if try TripDeletionJournal(persistence: persistence).isCancelled(item.trip.id) { return true }
             return try requiresLegacyReceipt(item)
         }
     }
@@ -149,7 +155,14 @@ final class LegacySpraySaveRecovery {
         isReplaying = true
         defer { isReplaying = false }
         for original in try attempts() where original.scope == scope && original.localComplete && original.isHeld && original.verified == nil {
+            let deletion = TripDeletionJournal(persistence: persistence)
+            if try deletion.isCancelled(original.trip.id) { continue }
             guard let rpc = original.rpc, isCurrent() else { continue }
+            let sendScope = TripDeletionJournal.Scope(account: original.scope.actor, vineyard: original.scope.vineyard, trip: original.trip.id)
+            let claimsCreation = !original.rpcClaimed
+            if claimsCreation { try deletion.beginSend(sendScope) }
+            var established = false
+            defer { if claimsCreation { try? deletion.endSend(sendScope, established: established) } }
             let body = try rpc.body()
             var item = original
             if !item.rpcClaimed {
@@ -161,10 +174,13 @@ final class LegacySpraySaveRecovery {
                 let receipt = try RecoveryDecodeEvidence.decode(LegacySprayPairReceipt.Receipt.self, from: data,
                     source: "supabase_response", operation: "rpc.save_legacy_spray_pair_v1")
                 try receipt.validate(item)
+                established = receipt.status == "accepted"
+                try deletion.requireNotCancelled(original.trip.id)
                 item.candidate = receipt
                 try replace(item)
             }
             guard isCurrent() else { throw failure }
+            try deletion.requireNotCancelled(original.trip.id)
             let data = try await transport("recover_legacy_spray_pair_v1", body)
             guard isCurrent() else { throw failure }
             let receipt = try RecoveryDecodeEvidence.decode(LegacySprayPairReceipt.Receipt.self, from: data,

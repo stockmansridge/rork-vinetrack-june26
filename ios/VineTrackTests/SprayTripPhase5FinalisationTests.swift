@@ -396,12 +396,12 @@ final class SprayTripPhase5FinalisationTests: XCTestCase {
         XCTAssertNotNil(relaunched.pendingUpserts[tripId], "queued finalisation survives the upgrade")
     }
 
-    func testDeletedTripDropsItsEstablishedParentClaim() {
+    func testDeletedTripRetainsHistoricalParentEvidenceForDeletionRecovery() {
         let metadata = TripSyncMetadata(persistence: PersistenceStore(directory: makeDirectory()))
         let tripId = UUID(uuidString: "C4DB2285-F69E-49DC-BD9F-521CF92CE207")!
         metadata.markParentsEstablished([tripId])
         metadata.markDeleted(tripId, at: Date())
-        XCTAssertFalse(metadata.isParentEstablished(tripId))
+        XCTAssertTrue(metadata.isParentEstablished(tripId), "Historical server evidence must survive cancellation; TripSyncService separately fences child replay")
     }
 
     // MARK: - Finalisation diagnostics

@@ -32,7 +32,7 @@ nonisolated enum RetainedRecoveryDiagnosticExport {
     static let keys = [
         "vinetrack_trips", "vinetrack_spray_records", "vinetrack_saved_chemicals",
         "vinetrack_spray_tank_actuals_v1", "vinetrack_start_tank_commit_v1",
-        "vinetrack_legacy_spray_save_attempts_v1", "vinetrack_trip_sync_metadata",
+        "vinetrack_legacy_spray_save_attempts_v1", "vinetrack_trip_sync_metadata", "vinetrack_trip_deletion_journal_v1",
         "vinetrack_spray_record_sync_metadata", "vinetrack_growth_stage_records",
         "vinetrack_growth_stage_record_sync_metadata", "vinetrack_growth_mirror_identity_evidence_v1",
         "vinetrack_pending_growth_photos_v1", "vinetrack_linked_pin_growth_deletions_v1",

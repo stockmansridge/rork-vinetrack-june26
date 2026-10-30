@@ -17,10 +17,14 @@ protocol TripSyncRepositoryProtocol: Sendable {
     /// actually clear the server value. See sql/102_trips_work_task_link.sql.
     func updateTripWorkTaskLink(id: UUID, workTaskId: UUID?) async throws
     func softDeleteTrip(id: UUID) async throws
+    func resolveDeletion(_ scope: TripDeletionJournal.Scope, isCurrent: () -> Bool) async throws -> String
     func fetchOccurrenceRecovery(tripId: UUID, operationIds: [String]) async throws -> TripOccurrenceCoverage.JSON
 }
 
 extension TripSyncRepositoryProtocol {
+    func resolveDeletion(_ scope: TripDeletionJournal.Scope, isCurrent: () -> Bool) async throws -> String {
+        throw TripDeletionJournal.Held(reason: "TRIP_DELETE_SCOPED_TRANSPORT_UNAVAILABLE")
+    }
     func fetchOccurrenceRecovery(tripId: UUID, operationIds: [String]) async throws -> TripOccurrenceCoverage.JSON {
         throw TripOccurrenceCoverage.Failure.updateRequired
     }
