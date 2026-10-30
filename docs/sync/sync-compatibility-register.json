@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "reviewed_source": "8c15003d793e200c12f43c1a35349c77e829fdbf",
   "released_318_source_verified": false,
   "native_319_acceptance_complete": false,
@@ -44,44 +44,15 @@
     "SprayTankActualStore.shared.syncPending"
   ],
   "android_pending_entities": [
-    "pin",
-    "pin_edit",
-    "trip",
-    "trip_metadata",
-    "trip_gps",
-    "trip_row",
-    "trip_row_plan",
-    "trip_tank",
-    "trip_end",
-    "trip_start",
-    "trip_labour",
-    "trip_seeding",
-    "spray_record",
-    "saved_chemical",
-    "spray_job",
-    "fuel_log",
-    "work_task",
-    "work_task_labour",
-    "work_task_machine",
-    "work_task_paddock",
-    "work_task_material",
-    "vineyard_material",
-    "tank_session",
-    "growth_record",
-    "maintenance_log",
-    "yield_record",
-    "picking_record",
-    "paddock",
-    "pruning_yield_settings",
-    "damage_record",
-    "button_config",
-    "yield_session",
-    "pruning_season",
-    "pruning_entry",
-    "pruning_activity",
-    "fertiliser_record",
-    "manual_issue",
-    "custom_pin"
+    "pin", "pin_edit", "trip", "trip_metadata", "trip_gps", "trip_row",
+    "trip_row_plan", "trip_tank", "trip_end", "trip_start", "trip_labour",
+    "trip_seeding", "spray_record", "saved_chemical", "spray_job", "fuel_log",
+    "work_task", "work_task_labour", "work_task_machine", "work_task_paddock",
+    "work_task_material", "vineyard_material", "tank_session", "growth_record",
+    "maintenance_log", "yield_record", "picking_record", "paddock",
+    "pruning_yield_settings", "damage_record", "button_config", "yield_session",
+    "pruning_season", "pruning_entry", "pruning_activity", "fertiliser_record",
+    "manual_issue", "custom_pin"
   ],
   "independent_surfaces_requiring_separate_review": [
     "ManualSprayEntryCoordinator paired-create journal and photo receipts",
@@ -108,5 +79,10 @@
     "read-only trial retains queued intent and does not upload until fresh authority permits",
     "no-change warm sync, 10 changes, large history, photos and active-trip interference",
     "explicit recovery result and per-entity diagnostic status; no generic all-green shortcut"
-  ]
+  ],
+  "route_signatures": {
+    "literal": "bb04cb27da47dd09590be02fd520bda9abb465364fdabe58063165640c8cc537",
+    "dynamic": "2da03dbe79bead9407a16a006adc54a1b2015891fa25dd47ae969e034b9b2813"
+  },
+  "route_signature_policy": "File/API/literal-or-dynamic-expression fingerprint, including call multiplicity. Line shifts do not cause drift. Any endpoint addition/removal or dynamic dispatch change requires review. This is coverage, not semantic correctness."
 }

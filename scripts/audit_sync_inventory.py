@@ -11,6 +11,7 @@ is recorded. Neither a source inventory nor compilation certifies device safety.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -42,6 +43,13 @@ def pending_entities(text: str) -> set[str]:
     return set(CONSTANT.findall(match.group(1)))
 
 
+def route_signature(rows: list[dict]) -> str:
+    """Line/formatting independent; adding a second callsite still requires review."""
+    canonical = sorted((row["file"], row["api"], row["value"]) for row in rows)
+    payload = json.dumps(canonical, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def inventory(root: Path, registry: dict) -> dict:
     observed = {
         "ios_coordinator_calls": sorted(ios_calls((root / IOS).read_text(encoding="utf-8"))),
@@ -65,9 +73,16 @@ def inventory(root: Path, registry: dict) -> dict:
                 for match in regex.finditer(content):
                     destination.append({"file": relative, "line": content.count("\n", 0, match.start()) + 1,
                                         "api": match.group(1), "value": match.group(2)})
+    signatures = {"literal": route_signature(routes), "dynamic": route_signature(dynamic)}
+    expected = registry.get("route_signatures", {})
+    route_drift = {key: {"expected": expected.get(key), "observed": value,
+                         "changed": expected.get(key) != value}
+                   for key, value in signatures.items()}
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "evidence_level": "source-inventory-only; independent queues and per-entity semantics require review",
+        "route_signatures": signatures,
+        "route_drift": route_drift,
         "reviewed_source": registry.get("reviewed_source"),
         "observed": observed,
         "drift": drift,
@@ -101,6 +116,7 @@ def main() -> int:
     else:
         print(payload, end="")
     has_drift = any(v["unregistered"] or v["registered_but_missing"] for v in report["drift"].values())
+    has_drift = has_drift or any(row["changed"] for row in report["route_drift"].values())
     if (args.verify_inventory or args.release_gate) and has_drift:
         print("FAIL: sync surface changed without a register/compatibility review")
         return 1

@@ -9,7 +9,7 @@ import gzip
 import hashlib
 import json
 import sys
-from trip_summary_compile import PATH as SUMMARY_PATH, AFTER as SUMMARY_AFTER, apply as apply_summary
+from trip_summary_compile import PATH as SUMMARY_PATH, AFTER as SUMMARY_AFTER, INTERMEDIATE as SUMMARY_INTERMEDIATE, apply as apply_summary
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED = 'd4ef9b46bf712d98c5c91eecace9d9f1f167cb4fc53da66248b4c23bac475270'
@@ -36,7 +36,7 @@ def main():
             raise ValueError('Refusing symlink: ' + name)
         old = path.read_bytes() if path.exists() else None
         if old is not None and (sha(old) == entry['after'] or
-            (name == SUMMARY_PATH and sha(old) == SUMMARY_AFTER)):
+            (name == SUMMARY_PATH and sha(old) in {SUMMARY_AFTER, SUMMARY_INTERMEDIATE})):
             continue
         if (sha(old) if old is not None else None) != entry['before']:
             raise ValueError('Source changed since review; reconcile first: ' + name)
@@ -56,7 +56,7 @@ def main():
         path.write_bytes(new)
     for entry in bundle['files']:
         current = sha((ROOT / entry['path']).read_bytes())
-        if current != entry['after'] and not (entry['path'] == SUMMARY_PATH and current == SUMMARY_AFTER):
+        if current != entry['after'] and not (entry['path'] == SUMMARY_PATH and current in {SUMMARY_AFTER, SUMMARY_INTERMEDIATE}):
             raise ValueError('Final verification failed: ' + entry['path'])
     apply_summary(ROOT)
     print(f'Applied {len(prepared)} reviewed files; {len(bundle["files"])} verified.')

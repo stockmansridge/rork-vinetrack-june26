@@ -27,6 +27,7 @@ class SyncInventoryTests(unittest.TestCase):
         }
         self.write(audit.IOS, 'await pinSync.syncPinsForSelectedVineyard()\n')
         self.write(audit.ANDROID, 'object PendingEntityType {\n const val PIN = "pin"\n}\nobject PendingOpType {\n const val CREATE = "create"\n}\n')
+        self.registry['route_signatures'] = audit.inventory(self.root, self.registry)['route_signatures']
         self.write(audit.REGISTER, json.dumps(self.registry))
 
     def write(self, relative, content):
@@ -69,6 +70,28 @@ class SyncInventoryTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(SCRIPT), '--root', str(self.root), '--verify-inventory'], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertIn('could not be established', result.stderr)
+
+    def test_route_fingerprint_ignores_line_moves_but_not_duplicate_calls(self):
+        row = {"file": "ios/VineTrack/R.swift", "api": ".from", "value": "pins", "line": 1}
+        self.assertEqual(audit.route_signature([row]), audit.route_signature([{**row, "line": 99}]))
+        self.assertNotEqual(audit.route_signature([row]), audit.route_signature([row, row]))
+
+    def test_unregistered_literal_route_fails_inventory_gate(self):
+        self.write(Path('ios/VineTrack/NewRepository.swift'), 'client.from("unreviewed_table").select()')
+        result = subprocess.run([sys.executable, str(SCRIPT), '--root', str(self.root), '--verify-inventory'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('without a register/compatibility review', result.stdout)
+
+    def test_unregistered_dynamic_route_fails_inventory_gate(self):
+        self.write(Path('android-vinetrack/app/src/main/NewRepo.kt'), 'restUrl(newDataset)')
+        result = subprocess.run([sys.executable, str(SCRIPT), '--root', str(self.root), '--verify-inventory'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+
+    def test_missing_route_register_cannot_pass_verification(self):
+        self.registry.pop('route_signatures')
+        self.write(audit.REGISTER, json.dumps(self.registry))
+        result = subprocess.run([sys.executable, str(SCRIPT), '--root', str(self.root), '--verify-inventory'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
 
 
 if __name__ == '__main__':
