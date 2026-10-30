@@ -7,6 +7,11 @@ final class MobileSprayUXParityUITests: XCTestCase {
     @MainActor func testPhase2SpreaderToReview() { runGuidedJourney(operation: "Spreader") }
     @MainActor func testPhase2EditBlocks() { runGuidedJourney(editBlocks: true) }
     @MainActor func testPhase2ProgramPrefill() { runGuidedJourney(prefilled: true) }
+    @MainActor func testNewSprayFullTankChoiceRetainsDraft() { runGuidedJourney(fullTankRoundTrip: true) }
+    @MainActor func testSprawlHighRowLengthToReview() {
+        runGuidedJourney(canopyType: "Sprawl", canopySize: "Large", canopyDensity: "High", carrierBasis: "L/100 m")
+    }
+    @MainActor func testFoliarManualToReview() { runGuidedJourney(manual: true) }
     @MainActor func testChemicalRecursionMixedProductsAndCancellation() { runGuidedJourney(operation: "Banded Spray", mixedProducts: true) }
     @MainActor func testChemicalRecursionTemplateMixedProducts() { runGuidedJourney(prefilled: true, mixedProducts: true) }
 
@@ -37,7 +42,9 @@ final class MobileSprayUXParityUITests: XCTestCase {
         app.buttons["Done"].tap()
     }
 
-    @MainActor private func runGuidedJourney(operation: String = "Foliar Spray", custom: Bool = false, editBlocks: Bool = false, prefilled: Bool = false, mixedProducts: Bool = false) {
+    @MainActor private func runGuidedJourney(operation: String = "Foliar Spray", custom: Bool = false, editBlocks: Bool = false, prefilled: Bool = false, mixedProducts: Bool = false,
+        fullTankRoundTrip: Bool = false, canopyType: String = "VSP", canopySize: String = "Medium",
+        canopyDensity: String = "Low", carrierBasis: String = "L/ha", manual: Bool = false) {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--keyboard-validation", "--spray-calculator-keyboard-validation", "--spray-regional-validation", "--spray-phase2-validation"]
@@ -59,6 +66,8 @@ final class MobileSprayUXParityUITests: XCTestCase {
             XCTAssertTrue(name.exists, "Program Application stays open until Continue")
         } else {
             XCTAssertTrue(name.waitForExistence(timeout: 8), "New Application must be expanded")
+            XCTAssertTrue(app.buttons["spray.operation"].label.contains("Tap to select operation"))
+            XCTAssertTrue(app.buttons["spray.header.application"].label.contains("Select operation"))
             XCTAssertFalse(app.buttons["spray.header.blocks"].isEnabled)
             XCTAssertFalse(app.buttons["spray.continue.blocks"].isEnabled)
             app.buttons["spray.operation"].tap()
@@ -110,10 +119,35 @@ final class MobileSprayUXParityUITests: XCTestCase {
         let confirmEquipment = app.buttons["Confirm Equipment"]
         reach(confirmEquipment, in: app); confirmEquipment.tap()
         advance("carrier", in: app)
-        if operation == "Foliar Spray" {
-            let vsp = app.buttons["VSP"]; reach(vsp, in: app); vsp.tap()
+        if operation == "Foliar Spray" && !manual {
+            let method = app.segmentedControls["spray.planning.method"]
+            reach(method, in: app)
+            XCTAssertTrue(method.buttons["Only Full Tanks"].exists, "New sprays must retain both planning choices")
+            if fullTankRoundTrip {
+                method.buttons["Only Full Tanks"].tap()
+                let tank = app.textFields["spray.planning.tank"]
+                let area = app.textFields["spray.planning.area"]
+                reach(tank, in: app); tank.tap(); tank.typeText("600"); app.buttons["keyboard.dismiss"].tap()
+                reach(area, in: app); area.tap(); area.typeText("1"); app.buttons["keyboard.dismiss"].tap()
+                reach(method, in: app, down: true); method.buttons["By Area"].tap()
+                XCTAssertFalse(tank.exists)
+                method.buttons["Only Full Tanks"].tap()
+                XCTAssertEqual(tank.value as? String, "600")
+                XCTAssertEqual(area.value as? String, "1")
+                method.buttons["By Area"].tap()
+            }
+            let basis = app.segmentedControls.buttons[carrierBasis]
+            reach(basis, in: app); basis.tap()
+            let type = app.buttons[canopyType]; reach(type, in: app); type.tap()
+            let size = app.buttons[canopySize]; reach(size, in: app); size.tap()
+            let density = app.buttons[canopyDensity]; reach(density, in: app); density.tap()
             let confirm = app.buttons["spray.confirm.canopy"]
-            reach(confirm, in: app); confirm.tap()
+            reach(confirm, in: app)
+            XCTAssertTrue(confirm.label.contains("Confirm canopy"))
+            XCTAssertFalse(app.buttons["spray.continue.products"].isEnabled)
+            confirm.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["spray.canopy.confirmed"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["spray.continue.products"].isEnabled, "A confirmed canopy still needs a volume choice")
             let choice = app.buttons[custom ? "Set my own rate" : "Use recommended rate"]
             reach(choice, in: app); choice.tap()
             if custom {
@@ -132,7 +166,7 @@ final class MobileSprayUXParityUITests: XCTestCase {
             let water = app.textFields["spray.manualWater"]
             reach(water, in: app); water.tap(); water.typeText("400")
             app.buttons["keyboard.dismiss"].tap()
-            XCTAssertFalse(app.buttons["spray.confirm.canopy"].exists, "Spreader manual water must not require canopy confirmation")
+            XCTAssertFalse(app.buttons["spray.confirm.canopy"].exists, "Manual water must not require canopy confirmation")
         }
         advance("products", in: app)
         let add = app.buttons["Add Chemical"]; reach(add, in: app); add.tap()
@@ -293,7 +327,7 @@ final class MobileSprayUXParityUITests: XCTestCase {
         let vsp = app.buttons["VSP"]
         for _ in 0..<12 where !vsp.isHittable { scroll.swipeUp() }
         vsp.tap()
-        let confirm = app.buttons["Confirm Canopy — VSP · Medium · Low"]
+        let confirm = app.buttons["spray.confirm.canopy"]
         for _ in 0..<10 where !confirm.isHittable { scroll.swipeUp() }
         XCTAssertTrue(confirm.waitForExistence(timeout: 5)); confirm.tap()
         let question = app.staticTexts["Spray at the recommended volume?"]

@@ -12,18 +12,15 @@ struct SprayPlanningCardsView: View {
     var rateUnit: String? = nil
     var rowSpacingMetres: Double? = nil
     let resolution: SprayPlanningResolution?
-    var showsFullTankOption: Bool = true
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 4) {
                     Text("Sprayer pass setup").font(.headline)
                     SprayFieldHelp(title: "Optional pass setup",
                         message: "Single Row covers the facing sides of two adjacent vine rows. 2 Row covers both sides of two complete vine rows from an aisle pass. Leaving it unset retains normal Tank Mixing and Trip. These choices do not select a true over-row machine route.")
                 }
-                Text(configuration.map { "\($0.title) pass selected" } ?? "Normal Tank Mixing → Trip")
-                    .font(.caption).foregroundStyle(.secondary)
                 Picker("Sprayer configuration", selection: $configuration) {
                     Text("Not Set").tag(SprayPassConfiguration?.none)
                     ForEach(SprayPassConfiguration.allCases, id: \.self) { pass in
@@ -32,8 +29,14 @@ struct SprayPlanningCardsView: View {
                 }.pickerStyle(.segmented).accessibilityIdentifier("spray.passConfiguration")
                 if let configuration {
                     SprayPassIllustration(configuration: configuration)
-                    Text(configuration == .standardPass ? "1 row equivalent per pass" : "2 row equivalents per pass")
+                }
+                HStack(spacing: 0) {
+                    Text(configuration.map { $0 == .standardPass ? "1 row equivalent per pass" : "2 row equivalents per pass" }
+                         ?? "Normal Tank Mixing → Trip")
                         .font(.caption).foregroundStyle(.secondary)
+                    SprayFieldHelp(title: "Controller rates",
+                        message: "Physical vineyard row spacing stays unchanged. Controller travel, row equivalents and actual vine-row spray rates are different measures. VineTrack calculates the controller figure using the selected setup.")
+                    Spacer(minLength: 0)
                 }
                 if let rowSpacingMetres {
                     LabeledContent("Vineyard row spacing", value: region.formatLength(metres: rowSpacingMetres))
@@ -44,24 +47,30 @@ struct SprayPlanningCardsView: View {
                 if let travel = resolution?.controllerLitresPer100mTravel {
                     LabeledContent("Controller application", value: region.formatVolumePer100Length(travel))
                 }
-                SprayFieldHelp(title: "Controller rates",
-                    message: "Physical vineyard row spacing stays unchanged. Controller travel, row equivalents and actual vine-row spray rates are different measures. VineTrack calculates the controller figure using the selected setup.")
-            }.padding(14).background(Color(.secondarySystemGroupedBackground)).clipShape(.rect(cornerRadius: 14))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(.rect(cornerRadius: 14))
 
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 4) {
                     Text("Plan spray volume").font(.headline)
-                    SprayFieldHelp(title: "Water planning", message: "By Area calculates carrier water from selected blocks. Only Full Tanks is a legacy planning option that cannot currently start a spray and should not be selected for a new One-off application.")
+                    SprayFieldHelp(title: "Water planning", message: "By Area calculates carrier water from selected blocks. Only Full Tanks plans a tank volume against a target area or calibrated rate. Full Tank planning does not currently support Start Spray; calculated coverage is not proof of actual treatment.")
                 }
-                if showsFullTankOption {
-                    Picker("Planning method", selection: $method) {
-                        ForEach(SprayPlanningMethod.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }.pickerStyle(.segmented)
-                } else {
-                    Text("By Area · selected blocks")
-                        .font(.subheadline.weight(.medium))
+                Picker("Planning method", selection: $method) {
+                    ForEach(SprayPlanningMethod.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("spray.planning.method")
                 if method == .fullTank {
+                    HStack(spacing: 0) {
+                        Text("Planning only — Start Spray unavailable.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        SprayFieldHelp(title: "Full Tank planning",
+                            message: LegacySpraySetup.fullTankMessage + " Planned area is not proof of actual treated rows or blocks; true coverage is recorded during the Trip.")
+                        Spacer(minLength: 0)
+                    }
                     field("Intended tank volume (\(region.volumeUnitAbbreviation))", text: $tankText, id: "spray.planning.tank")
                     Picker("Specify Only Full Tanks", selection: $specification) {
                         ForEach(SprayFullTankSpecification.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -71,8 +80,6 @@ struct SprayPlanningCardsView: View {
                     } else {
                         field("Calibrated rate (\(rateUnit ?? region.volumePerAreaUnit))", text: $rateText, id: "spray.planning.rate")
                     }
-                    SprayFieldHelp(title: "Full Tank planning",
-                        message: "Planned area is not proof of actual treated rows or blocks. True coverage is recorded during the Trip. This legacy planning mode cannot currently start a spray.")
                 } else {
                     Text("Calculate the spray using the selected block area.").font(.caption).foregroundStyle(.secondary)
                 }
@@ -92,10 +99,11 @@ struct SprayPlanningCardsView: View {
                     Text("Confirm canopy and configuration; enter a positive volume and area/rate within the selected blocks.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                if method == .fullTank {
-                    Text(LegacySpraySetup.fullTankMessage).font(.caption).foregroundStyle(.secondary)
-                }
-            }.padding(14).background(Color(.secondarySystemGroupedBackground)).clipShape(.rect(cornerRadius: 14))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(.rect(cornerRadius: 14))
         }
     }
 
