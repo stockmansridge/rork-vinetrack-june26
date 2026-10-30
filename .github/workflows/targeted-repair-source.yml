@@ -1,0 +1,40 @@
+name: Targeted repair source evidence
+on:
+  push:
+    branches: [fix/trip-recovery-yield-parity-20261030]
+    paths: ['.github/workflows/targeted-repair-source.yml']
+permissions:
+  contents: read
+jobs:
+  source:
+    if: github.ref == 'refs/heads/fix/trip-recovery-yield-parity-20261030'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Retain source without credentials or customer data
+        shell: python
+        run: |
+          from pathlib import Path
+          import subprocess, zipfile
+          out = Path('repair-evidence'); out.mkdir(exist_ok=True)
+          (out / 'commit.txt').write_text(subprocess.check_output(['git','rev-parse','HEAD'], text=True))
+          roots = {'ios','android-vinetrack','scripts','docs','sql','supabase'}
+          extensions = {'.swift','.kt','.kts','.java','.xml','.toml','.json','.md','.sql','.py','.sh','.pbxproj','.plist','.xcconfig','.yml','.yaml'}
+          excluded = {'Config.swift','Config.kt','local.properties','google-services.json','GoogleService-Info.plist'}
+          with zipfile.ZipFile(out / 'source.zip','w',zipfile.ZIP_DEFLATED) as archive:
+              for name in subprocess.check_output(['git','ls-files'], text=True).splitlines():
+                  p = Path(name)
+                  if not p.parts or p.parts[0] not in roots or p.suffix not in extensions:
+                      continue
+                  if p.name in excluded or any(x.startswith('.') for x in p.parts) or not p.is_file():
+                      continue
+                  archive.write(p, name)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: targeted-repair-source-${{ github.sha }}
+          path: repair-evidence/
+          retention-days: 1
+          if-no-files-found: error
