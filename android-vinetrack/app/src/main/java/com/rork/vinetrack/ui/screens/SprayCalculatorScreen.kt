@@ -912,7 +912,8 @@ fun SprayCalculatorScreen(
     }
 
     // One-line recaps for collapsed sections. Every figure comes off the plan.
-    val applicationSummary = if (sprayName.isBlank()) operationType else "$operationType \u2014 $sprayName"
+    val applicationSummary = if (!isApplicationResolved) "Select operation"
+        else if (sprayName.isBlank()) operationType else "$operationType \u2014 $sprayName"
     val blocksSummary = if (selectedPaddocks.isEmpty()) {
         "No blocks selected"
     } else {
@@ -1506,7 +1507,7 @@ fun SprayCalculatorScreen(
                 var menu by remember { mutableStateOf(false) }
                 ExposedDropdownMenuBox(expanded = menu, onExpandedChange = { menu = it }) {
                     OutlinedTextField(
-                        value = operationType,
+                        value = if (isApplicationResolved) operationType else "Tap to select operation",
                         onValueChange = {},
                         readOnly = true,
                         label = { Text("Operation type") },
@@ -1550,7 +1551,7 @@ fun SprayCalculatorScreen(
                     openedStepRaw = SprayGuidedStep.BLOCKS.raw
                 }
                 if (!isApplicationResolved) {
-                    Text("Choose the operation type for this application, even if Foliar Spray is already displayed.",
+                    Text("Select an operation to continue.",
                         style = MaterialTheme.typography.bodySmall, color = vine.textSecondary)
                 }
                 }
@@ -1911,8 +1912,7 @@ fun SprayCalculatorScreen(
                         areaText = planningAreaText, onArea = { planningAreaText = it; result = null },
                         rateText = planningRateText, onRate = { planningRateText = it; result = null },
                         region = fmt, rateUnit = carrierFormat.carrierBasisLabel(customSprayerBasis), rowSpacingMetres = resolvedRowSpacing,
-                        resolution = guidedFlow.planningResolution,
-                        showsFullTankOption = prefillRecord != null || planningMethod == SprayPlanningMethod.FULL_TANK)
+                        resolution = guidedFlow.planningResolution)
                 }
                 if (guidedFlow.requiresBandWidth) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -3363,6 +3363,11 @@ private fun GuidedContinueAction(
     onContinue: () -> Unit,
 ) {
     val enabled = flow.isComplete(step) && flow.isUnlocked(next)
+    // The other carrier blockers already render next to this action.
+    if (step == SprayGuidedStep.CARRIER && flow.blocker(step) == SprayGuidedBlocker.CanopyConfirmationRequired) {
+        Text("Confirm canopy above", style = MaterialTheme.typography.bodySmall,
+            color = LocalVineColors.current.textSecondary)
+    }
     Button(
         onClick = { if (flow.isComplete(step) && flow.isUnlocked(next)) onContinue() },
         enabled = enabled,

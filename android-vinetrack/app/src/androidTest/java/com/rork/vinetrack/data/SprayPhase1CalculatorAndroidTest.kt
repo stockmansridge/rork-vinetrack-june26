@@ -51,6 +51,10 @@ class SprayPhase1CalculatorAndroidTest {
     @Test fun spreaderContinuesToReview() = runCalculator(custom = false, operation = "Spreader")
     @Test fun editingBlocksRetainsAnswersAndLocksDownstream() = runCalculator(custom = false, editBlocks = true)
     @Test fun programPrefillRetainsAnsweredSteps() = runCalculator(custom = false, prefilled = true)
+    @Test fun newSprayFullTankChoiceRetainsDraft() = runCalculator(custom = false, fullTankRoundTrip = true)
+    @Test fun sprawlHighRowLengthContinuesToReview() = runCalculator(custom = false,
+        canopyType = "Sprawl", canopySize = "Large", canopyDensity = "High", rowLength = true)
+    @Test fun foliarManualContinuesToReview() = runCalculator(custom = false, manual = true)
 
     private fun checkPrefill() {
         if (compose.onAllNodesWithText("Spray name (optional)").fetchSemanticsNodes().isEmpty()) click("Application")
@@ -84,10 +88,13 @@ class SprayPhase1CalculatorAndroidTest {
         }
     }
 
-    private fun runCalculator(custom: Boolean, operation: String = "Foliar Spray", editBlocks: Boolean = false, prefilled: Boolean = false) {
+    private fun runCalculator(custom: Boolean, operation: String = "Foliar Spray", editBlocks: Boolean = false, prefilled: Boolean = false,
+        fullTankRoundTrip: Boolean = false, canopyType: String = "VSP", canopySize: String = "Medium",
+        canopyDensity: String = "Low", rowLength: Boolean = false, manual: Boolean = false) {
         openCalculator(prefilled)
         if (prefilled) checkPrefill() else {
         compose.onNodeWithText("Spray name (optional)").assertExists() // Application starts expanded.
+        compose.onNodeWithText("Tap to select operation").assertExists()
         compose.onNode(hasText("Blocks") and hasClickAction()).assertIsNotEnabled()
         compose.onNodeWithText("Continue to Blocks →").assertIsNotEnabled()
         compose.onNodeWithText("Operation type").performClick()
@@ -133,7 +140,13 @@ class SprayPhase1CalculatorAndroidTest {
         compose.onAllNodes(hasText("Synthetic 1000 L unit") and hasClickAction()).onLast().performClick()
         click("  Confirm equipment")
         click("Continue to Spray Volume →")
-        if (operation == "Banded Spray") {
+        if (manual) {
+            click("Manual")
+            compose.onNodeWithText("Canopy Type").assertDoesNotExist()
+            val water = hasSetTextAction() and hasText("Total spray water (", substring = true)
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(water)
+            compose.onNode(water).performTextInput("400")
+        } else if (operation == "Banded Spray") {
             compose.onNodeWithText("Canopy Type").assertDoesNotExist()
             val rate = hasSetTextAction() and hasText("Application rate (", substring = true)
             compose.onNode(hasScrollToIndexAction()).performScrollToNode(rate)
@@ -142,16 +155,42 @@ class SprayPhase1CalculatorAndroidTest {
             compose.onNodeWithText("Canopy Type").assertDoesNotExist()
             // Spreader retains its existing carrier inputs, with no canopy decision.
         } else {
-        click("VSP")
-        compose.onAllNodesWithText("Confirm Canopy — VSP · Medium · Low").assertCountEquals(1)
+        val fullTankChoice = hasText("Only Full Tanks") and hasClickAction()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(fullTankChoice)
+        compose.onNode(fullTankChoice).assertExists()
+        if (fullTankRoundTrip) {
+            click("Only Full Tanks")
+            val tank = hasSetTextAction() and hasText("Intended tank volume (", substring = true)
+            val area = hasSetTextAction() and hasText("Planned area (", substring = true)
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(tank)
+            compose.onNode(tank).performTextInput("600")
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(area)
+            compose.onNode(area).performTextInput("1")
+            click("By Area")
+            compose.onNode(tank).assertDoesNotExist()
+            click("Only Full Tanks")
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(tank)
+            compose.onNode(tank).assert(hasText("600"))
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(area)
+            compose.onNode(area).assert(hasText("1"))
+            click("By Area")
+        }
+        if (rowLength) click("L/100 m")
+        click(canopyType)
+        click(canopySize)
+        click(canopyDensity)
+        compose.onNodeWithTag("spray.confirm.canopy").assertExists()
         // A composed header may name the blocker, but there must be no separate warning panel.
         val duplicateCanopyWarning = hasText("Confirm canopy") and !hasAnyAncestor(hasClickAction()) and !hasClickAction()
         compose.onAllNodes(duplicateCanopyWarning).assertCountEquals(0)
         compose.onNodeWithText("Continue to Products →").assertIsNotEnabled()
-        click("Confirm Canopy — VSP · Medium · Low")
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasTestTag("spray.confirm.canopy"))
+        compose.onNodeWithTag("spray.confirm.canopy").assertIsEnabled().performClick()
+        compose.waitForIdle()
         compose.onNodeWithText("RECOMMENDED SPRAY VOLUME — CF 1.00").assertExists()
         compose.onNodeWithText("Spray at the recommended volume?").assertExists()
-        compose.onAllNodesWithText("Confirm canopy").assertCountEquals(0)
+        compose.onNodeWithTag("spray.confirm.canopy").assertDoesNotExist()
+        compose.onNodeWithText("Canopy confirmed").assertExists()
         compose.onNodeWithText("Continue to Products →").assertIsNotEnabled()
         click(if (custom) "Set my own rate" else "Use recommended rate")
         if (custom) {

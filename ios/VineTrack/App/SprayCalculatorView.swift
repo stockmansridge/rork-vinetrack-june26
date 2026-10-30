@@ -585,7 +585,7 @@ struct SprayCalculatorView: View {
     }
 
     private var carrierChoiceBinding: Binding<SprayCarrierBasis> {
-        Binding(get: { carrierBasisChoice }, set: { changeRateDisplay(basis: $0, configuration: passConfiguration) })
+        Binding(get: { flow.effectiveCarrierBasis }, set: { changeRateDisplay(basis: $0, configuration: passConfiguration) })
     }
 
     private var passConfigurationBinding: Binding<SprayPassConfiguration?> {
@@ -980,6 +980,14 @@ struct SprayCalculatorView: View {
            index + 1 < SprayGuidedStep.allCases.count {
             let next = SprayGuidedStep.allCases[index + 1]
             let enabled = flow.isComplete(step) && flow.isUnlocked(next)
+            // Other carrier blockers already render immediately above this action.
+            // Confirmation is an action, not an error banner, but must still explain
+            // why Continue is disabled while the displayed canopy is unconfirmed.
+            if step == .carrier, flow.blocker(for: step) == .canopyConfirmationRequired {
+                Text("Confirm canopy above")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("spray.continue.canopyRequirement")
+            }
             Button {
                 guard flow.isComplete(step), flow.isUnlocked(next) else { return }
                 showStep(next)
@@ -1491,7 +1499,7 @@ struct SprayCalculatorView: View {
                         HStack {
                             Image(systemName: type.iconName)
                             Text(type.rawValue)
-                            if operationType == type {
+                            if isApplicationResolved && operationType == type {
                                 Spacer()
                                 Image(systemName: "checkmark")
                             }
@@ -1512,7 +1520,7 @@ struct SprayCalculatorView: View {
                         Text("Operation")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(.primary)
-                        Text(operationType.rawValue)
+                        Text(isApplicationResolved ? operationType.rawValue : "Tap to select operation")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1528,7 +1536,7 @@ struct SprayCalculatorView: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier("spray.operation")
             if !isApplicationResolved {
-                Text("Choose the operation type for this application, even if Foliar Spray is already displayed.")
+                Text("Select an operation to continue.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -3180,6 +3188,7 @@ struct SprayCalculatorView: View {
     // see every decision made so far without scrolling the whole form.
 
     private var applicationSummary: String {
+        guard isApplicationResolved else { return "Select operation" }
         let name = sprayName.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? operationType.rawValue : "\(operationType.rawValue) — \(name)"
     }
@@ -3472,8 +3481,7 @@ struct SprayCalculatorView: View {
                     specification: $fullTankSpecification, tankText: planningBinding($planningTankText),
                     areaText: planningBinding($planningAreaText), rateText: planningBinding($planningRateText), region: planningRegion,
                     rateUnit: customSprayerInputBasis == .litresPer100Metres ? planningRegion.volumePer100LengthUnit : planningRegion.volumePerAreaUnit,
-                    rowSpacingMetres: resolvedRowSpacingMetres, resolution: flow.planningResolution,
-                    showsFullTankOption: prefillRecord != nil || planningMethod == .fullTank)
+                    rowSpacingMetres: resolvedRowSpacingMetres, resolution: flow.planningResolution)
                 if planningRegion.settings != region.settings {
                     Text("Incomplete planning entries are retained in their original units. Complete or clear them before the new regional units can be displayed.")
                         .font(.caption).foregroundStyle(.orange)
