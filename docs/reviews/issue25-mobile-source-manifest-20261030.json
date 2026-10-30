@@ -1,0 +1,97 @@
+{
+  "scope": "Issue 25 partial implementation: management entry and logo refresh; catalogue propagation remains open",
+  "starting_managed_sha": "a153dfc56503ee98aae79dba6a7ba1807de4e3bf",
+  "observed_managed_head_at_snapshot": "a153dfc56503ee98aae79dba6a7ba1807de4e3bf",
+  "public_main_pointer_inspected": "50438333921355136fc8d81a375affc8a3334da0",
+  "ancestry_verified": false,
+  "final_integration_sha": null,
+  "files": [
+    {
+      "path": "ios/VineTrack/App/ChemicalIntelligence/CatalogueSearchView.swift",
+      "sha256": "6d7c6363415a5bcd3169cb5976458878fbfbb9605b48cb552c16e51e549f8a58"
+    },
+    {
+      "path": "ios/VineTrack/App/NewMainTabView.swift",
+      "sha256": "c8c51581d49cf4e528c65f46fd0bf86c9e20a6497e6f70cfb0402fcbb3d570f8"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Storage/VineyardHomeLogoRefresh.swift",
+      "sha256": "a5dd9405e6ade87f955a3d981448b24a04fb02462eb2d9032710a212545abef9"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Storage/VineyardLogoStorageService.swift",
+      "sha256": "a815222cdc13d8f645228c37213da8cf8cea48d9080a9a313eb8a13a536e9cc4"
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift",
+      "sha256": "8784a90aaa97465a9d1b04340233818e9a036bed1a7a7379e196276b105b3c55"
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Vineyard/BackendVineyardDetailSheet.swift",
+      "sha256": "e901b7eae5d5d7adefd1eaa4a683936414b5eec62058c263f24af1e8bc37fee1"
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Vineyard/BackendVineyardListView.swift",
+      "sha256": "014aa3fb7633bd74448a12041be150c62b2d5e4ddaf38fa1183ae831f93c6fc8"
+    },
+    {
+      "path": "ios/VineTrackTests/VineyardHomeLogoRefreshTests.swift",
+      "sha256": "c5d1ebdfa91bcb76fd2bbd18d3c4d0504be6c79a5bec09058a835be7f2b0063d"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt",
+      "sha256": "25cebb9521069de3d7213c96b1e2f8bbdfc7edab44c4270e7ce6eac49fe07437"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CatalogueSearchSheet.kt",
+      "sha256": "18654c315fbbaf23698c778d93781c16111660c253b53b3caacfebcfa75a785f"
+    },
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/VineyardLogoCacheAndroidTest.kt",
+      "sha256": "0d2a7b3865eb8399685d843ba60b4e3a3b55f353492bd0491e4114da7e3d8887"
+    },
+    {
+      "path": "scripts/inspect-issue25-catalogue-contract.py",
+      "sha256": "e354333b47a558d150ad715d4f71ad97a21b7f8816aca8a39517deec76310a8a"
+    },
+    {
+      "path": "scripts/snapshot-issue25-mobile-source.py",
+      "sha256": "143fe66c9d09944ee608fd088dd5df9010fcd9d8f22179ba2fea200b598876f8"
+    }
+  ],
+  "validation": {
+    "ios_before_orphan_cache_regression": {
+      "passed": 0,
+      "failed": 1
+    },
+    "ios_initial_selection": {
+      "passed": 106,
+      "failed": 2,
+      "failures": [
+        "HomeSyncPerformanceTests 40.543 ms versus 16 ms",
+        "offline logo fixture missing records directory"
+      ]
+    },
+    "ios_intermediate_logo_selection": {
+      "passed": 9,
+      "failed": 1,
+      "failure": "offline logo fixture still missing records directory; redundant load did not correct fixture"
+    },
+    "ios_final_logo_selection": {
+      "passed": 10,
+      "failed": 0,
+      "seconds": 39
+    },
+    "android_instrumentation": {
+      "passed": 0,
+      "failed": 0,
+      "skipped": 0,
+      "status": "infra-failed HTTP 503; not retried"
+    },
+    "ios_simulator_build": "PASS",
+    "android_normal_build": "PASS",
+    "device_acceptance": "NOT RUN",
+    "exact_3_1_8_binary_compatibility": "NOT ESTABLISHED",
+    "candidate_delivery": "NOT PREPARED OR UPLOADED"
+  }
+}

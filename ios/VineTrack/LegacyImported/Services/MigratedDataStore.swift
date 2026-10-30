@@ -1046,7 +1046,7 @@ final class MigratedDataStore {
                     SharedImageCache.shared.removeCachedImage(
                         for: .vineyardLogo(vineyardId: backend.id)
                     )
-                } else if let remoteUpdated, localUpdated != remoteUpdated {
+                } else if local.logoPath != backend.logoPath || localUpdated != remoteUpdated {
                     // Remote logo changed. Keep showing the existing cached
                     // image until the new one downloads successfully; just
                     // mark the cache stale and update the timestamp pointer.
@@ -1055,7 +1055,7 @@ final class MigratedDataStore {
                     )
                     updated.logoUpdatedAt = remoteUpdated
                 } else {
-                    updated.logoUpdatedAt = remoteUpdated ?? localUpdated
+                    updated.logoUpdatedAt = remoteUpdated
                 }
                 if updated.logoData == nil, updated.logoPath != nil,
                    let cached = SharedImageCache.shared.cachedImageData(
@@ -1065,9 +1065,9 @@ final class MigratedDataStore {
                 }
                 merged.append(updated)
             } else {
-                let cached = SharedImageCache.shared.cachedImageData(
-                    for: .vineyardLogo(vineyardId: backend.id)
-                )
+                let key = SharedImageCacheKey.vineyardLogo(vineyardId: backend.id)
+                let cached = backend.logoPath == nil ? nil : SharedImageCache.shared.cachedImageData(for: key)
+                if backend.logoPath == nil { SharedImageCache.shared.removeCachedImage(for: key) }
                 let mapped = Vineyard(
                     id: backend.id,
                     name: backend.name,

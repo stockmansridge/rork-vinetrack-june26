@@ -262,6 +262,13 @@ struct BackendVineyardDetailSheet: View {
     private func ensureLogoCached() async {
         guard let path = vineyard.logoPath else { return }
         let key = SharedImageCacheKey.vineyardLogo(vineyardId: vineyard.id)
+        let snapshot = vineyard
+        let scopeIsCurrent = store.remoteApplicationCurrentCheck()
+        let isCurrent: @MainActor () -> Bool = {
+            scopeIsCurrent() && store.vineyards.contains {
+                $0.id == snapshot.id && $0.logoPath == path && $0.logoUpdatedAt == snapshot.logoUpdatedAt
+            }
+        }
 
         // Hydrate from disk cache first if needed — this avoids the empty
         // logo flash on cold launch before any sync has run.
@@ -284,9 +291,10 @@ struct BackendVineyardDetailSheet: View {
             let data = try await logoStorage.downloadLogo(
                 path: path,
                 vineyardId: vineyard.id,
-                remoteUpdatedAt: vineyard.logoUpdatedAt
+                remoteUpdatedAt: snapshot.logoUpdatedAt,
+                isCurrent: isCurrent
             )
-            var updated = vineyard
+            guard isCurrent(), var updated = store.vineyards.first(where: { $0.id == snapshot.id }) else { return }
             updated.logoData = data
             store.upsertLocalVineyard(updated)
         } catch {

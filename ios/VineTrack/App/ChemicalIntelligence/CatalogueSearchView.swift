@@ -36,6 +36,14 @@ struct CatalogueSearchView: View {
                     .buttonStyle(.bordered)
                     .disabled(model.busy || model.context != nil)
                 }
+                Section {
+                    NavigationLink {
+                        ChemicalsManagementView()
+                    } label: {
+                        Label("Manage Vineyard Chemicals", systemImage: "list.bullet.rectangle")
+                    }
+                    .accessibilityIdentifier("catalogue.manageVineyardChemicals")
+                }
                 if let context = model.context {
                     Section("Finding your product") {
                         ProgressView(value: (model.job?.number("progress_percent") ?? 0) / 100)

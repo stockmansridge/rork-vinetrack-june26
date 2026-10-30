@@ -352,6 +352,23 @@ struct NewMainTabView: View {
         }
     }
 
+    private func refreshHomeLogo() async {
+        guard auth.isSignedIn, let account = auth.userId, let vineyardId = store.selectedVineyardId else { return }
+        let signOutSequence = auth.completedSignOutSequence
+        let storeIsCurrent = store.remoteApplicationCurrentCheck()
+        let isCurrent: @MainActor () -> Bool = {
+            storeIsCurrent() && auth.isSignedIn && auth.userId == account && auth.completedSignOutSequence == signOutSequence
+        }
+        await VineyardHomeLogoRefresh.refresh(
+            vineyardId: vineyardId, store: store, online: network.isOnline, isCurrent: isCurrent,
+            metadata: { try await vineyardRegionRepository.listMyVineyards().first { $0.id == vineyardId } },
+            download: { path in
+                try await VineyardLogoStorageService().downloadLogo(path: path, vineyardId: vineyardId,
+                    cacheResult: false, isCurrent: isCurrent)
+            }
+        )
+    }
+
     private enum AlertRefreshMode { case generate, refresh, none }
 
     /// Runs a full sync sweep across every wired service. Overlapping calls
@@ -369,6 +386,9 @@ struct NewMainTabView: View {
         let performanceSweep = PerformanceCapture.shared.begin("full sync sweep including network waits")
         defer { PerformanceCapture.shared.end(performanceSweep) }
         isSweeping = true
+        // Independent read-only refresh: slow image storage must not delay Trip
+        // recovery, equipment refresh, Home interaction or queued writes.
+        Task { await refreshHomeLogo() }
         let sweepVineyardId = store.selectedVineyardId
         let sweepAccountIsCurrent = store.remoteApplicationCurrentCheck()
         defer {

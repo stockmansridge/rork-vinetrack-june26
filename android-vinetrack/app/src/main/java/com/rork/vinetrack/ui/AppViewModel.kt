@@ -8488,29 +8488,56 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Cache key (path + updatedAt) for the currently decoded logo bitmap. */
+    /** Includes account incarnation and selection, not just the remote path. */
     private var loadedLogoKey: String? = null
+    private var displayedLogoScope: String? = null
+    private var logoRefreshGeneration = 0L
 
     /**
      * Hydrates the selected vineyard from durable local JPEG bytes first, then
      * downloads only when the cached path/timestamp identity is stale.
      */
     private fun refreshSelectedVineyardLogo() {
+        val generation = ++logoRefreshGeneration
         val vineyard = _ui.value.selectedVineyard
         val vineyardId = vineyard?.id
         val path = vineyard?.logoPath
+        val account = session.snapshotAccountAccess()
+        val selection = vineyardSelectionEpoch
+        val scope = account?.let { "${it.userId}|${it.generation}|$vineyardId|$selection" }
+        fun current(): Boolean {
+            val selected = _ui.value.selectedVineyard
+            return account != null && session.isAccountAccessCurrent(account) &&
+                selection == vineyardSelectionEpoch && generation == logoRefreshGeneration &&
+                selected?.id == vineyardId && selected?.logoPath == path &&
+                selected?.logoUpdatedAt == vineyard?.logoUpdatedAt
+        }
+        if (displayedLogoScope != scope) {
+            displayedLogoScope = scope
+            loadedLogoKey = null
+            _ui.update { it.copy(selectedVineyardLogo = null) }
+        }
+        if (account == null) return
+        if (vineyardId != null && !path.isNullOrBlank() && path != vineyardLogoRepo.storagePath(vineyardId)) {
+            // Do not render/download a metadata pointer belonging to another vineyard.
+            loadedLogoKey = null
+            _ui.update { it.copy(selectedVineyardLogo = null) }
+            return
+        }
         if (vineyardId == null || path.isNullOrBlank()) {
             loadedLogoKey = null
             if (_ui.value.selectedVineyardLogo != null) {
                 _ui.update { it.copy(selectedVineyardLogo = null) }
             }
             if (vineyardId != null) {
-                viewModelScope.launch(Dispatchers.IO) { vineyardLogoCache.remove(vineyardId) }
+                viewModelScope.launch(Dispatchers.IO) {
+                    session.withAccountAccess(account) { if (current()) vineyardLogoCache.remove(vineyardId) }
+                }
             }
             return
         }
         val updatedAt = vineyard.logoUpdatedAt
-        val key = "$path|${updatedAt ?: ""}"
+        val key = "$scope|$path|${updatedAt ?: ""}"
         if (key == loadedLogoKey && _ui.value.selectedVineyardLogo != null) return
 
         viewModelScope.launch {
@@ -8518,29 +8545,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val cachedBitmap = cached?.jpeg?.let { bytes ->
                 runCatching { BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }.getOrNull()
             }
-            if (cachedBitmap != null && _ui.value.selectedVineyardId == vineyardId) {
+            if (!current()) return@launch
+            if (cachedBitmap != null) {
                 _ui.update { it.copy(selectedVineyardLogo = cachedBitmap) }
             }
             if (cachedBitmap != null && cached?.isCurrent(path, updatedAt) == true) {
-                if (_ui.value.selectedVineyardId == vineyardId) loadedLogoKey = key
+                loadedLogoKey = key
                 return@launch
             }
 
             try {
                 val bytes = vineyardLogoRepo.download(path)
                 val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@launch
-                val currentVineyard = _ui.value.vineyards.firstOrNull { it.id == vineyardId }
-                if (currentVineyard == null ||
-                    currentVineyard.logoPath != path ||
-                    currentVineyard.logoUpdatedAt != updatedAt
-                ) {
-                    return@launch
-                }
+                if (!current()) return@launch
                 withContext(Dispatchers.IO) {
-                    vineyardLogoCache.save(vineyardId, bytes, path, updatedAt)
+                    session.withAccountAccess(account) {
+                        if (current()) vineyardLogoCache.save(vineyardId, bytes, path, updatedAt)
+                    }
                 }
-                val selected = _ui.value.selectedVineyard
-                if (selected?.id == vineyardId && selected.logoPath == path && selected.logoUpdatedAt == updatedAt) {
+                if (current()) {
                     loadedLogoKey = key
                     _ui.update { it.copy(selectedVineyardLogo = bitmap) }
                 }

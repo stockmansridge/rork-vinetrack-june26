@@ -20,6 +20,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.rork.vinetrack.data.chemical.*
@@ -40,6 +42,7 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var photoError by remember { mutableStateOf<String?>(null) }
+    var managingChemicals by remember(state.selectedVineyardId) { mutableStateOf(false) }
     val vineyard = state.selectedVineyardId ?: return
     val country = ChemicalRegistration.normaliseCountry(state.selectedVineyard?.country.orEmpty())
     val scrollState = rememberScrollState()
@@ -86,6 +89,16 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
         }
     }
     LaunchedEffect(vineyard) { model.restore(vineyard); if (prefillQuery.isNotBlank() && model.state.value.context == null) model.query(prefillQuery) }
+    if (managingChemicals) {
+        Dialog(onDismissRequest = { managingChemicals = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+                ChemicalsScreen(vm, state, onBack = { managingChemicals = false })
+            }
+        }
+        // Replace the search window while managing; two modal windows can
+        // otherwise reopen in the wrong order after activity recreation.
+        return
+    }
     ModalBottomSheet(onDismissRequest = onDismiss, modifier = modifier, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().verticalScroll(scrollState).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("Chemical Search", style = MaterialTheme.typography.headlineSmall)
@@ -96,6 +109,9 @@ internal fun CatalogueSearchSheet(vm: AppViewModel, state: AppUiState, onDismiss
                 modifier = Modifier.fillMaxWidth()) { Text("Take Photo of Label") }
             OutlinedButton(onClick = { picker.launch("image/*") }, enabled = !search.busy && search.context == null,
                 modifier = Modifier.fillMaxWidth()) { Text("Choose Existing Photo") }
+            OutlinedButton(onClick = { managingChemicals = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("Manage Vineyard Chemicals")
+            }
             if (search.context != null) {
                 Text("Finding your product", style = MaterialTheme.typography.titleMedium)
                 LinearProgressIndicator(progress = { ((search.job?.number("progress_percent") ?: 0.0) / 100).toFloat() }, modifier = Modifier.fillMaxWidth())

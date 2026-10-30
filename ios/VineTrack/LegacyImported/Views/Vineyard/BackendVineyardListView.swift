@@ -174,7 +174,9 @@ struct BackendVineyardListView: View {
     }
 
     private func fetchMissingLogos() async {
+        let scopeIsCurrent = store.remoteApplicationCurrentCheck()
         for vineyard in store.vineyards {
+            guard !Task.isCancelled, scopeIsCurrent() else { return }
             guard let path = vineyard.logoPath else { continue }
             let key = SharedImageCacheKey.vineyardLogo(vineyardId: vineyard.id)
 
@@ -200,9 +202,16 @@ struct BackendVineyardListView: View {
                 let data = try await logoStorage.downloadLogo(
                     path: path,
                     vineyardId: vineyard.id,
-                    remoteUpdatedAt: vineyard.logoUpdatedAt
+                    remoteUpdatedAt: vineyard.logoUpdatedAt,
+                    isCurrent: {
+                        scopeIsCurrent() && store.vineyards.contains {
+                            $0.id == vineyard.id && $0.logoPath == path && $0.logoUpdatedAt == vineyard.logoUpdatedAt
+                        }
+                    }
                 )
-                if var current = store.vineyards.first(where: { $0.id == vineyard.id }) {
+                if scopeIsCurrent(), var current = store.vineyards.first(where: {
+                    $0.id == vineyard.id && $0.logoPath == path && $0.logoUpdatedAt == vineyard.logoUpdatedAt
+                }) {
                     current.logoData = data
                     store.upsertLocalVineyard(current)
                 }

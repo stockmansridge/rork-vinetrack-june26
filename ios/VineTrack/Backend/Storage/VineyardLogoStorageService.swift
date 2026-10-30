@@ -1,5 +1,6 @@
 import Foundation
 import Supabase
+import UIKit
 
 nonisolated enum VineyardLogoStorage {
     static let bucket = "vineyard-logos"
@@ -46,19 +47,26 @@ final class VineyardLogoStorageService {
         return path
     }
 
-    func downloadLogo(path: String, vineyardId: UUID, remoteUpdatedAt: Date? = nil) async throws -> Data {
+    func downloadLogo(path: String, vineyardId: UUID, remoteUpdatedAt: Date? = nil,
+                      cacheResult: Bool = true, isCurrent: @escaping @MainActor () -> Bool = { true }) async throws -> Data {
         guard provider.isConfigured else {
             throw BackendRepositoryError.missingSupabaseConfiguration
         }
+        guard let account = provider.client.auth.currentUser?.id,
+              (try? VineyardAttachmentPath.vineyard(path)) == vineyardId, isCurrent() else { throw CancellationError() }
         let data = try await provider.client.storage
             .from(VineyardLogoStorage.bucket)
             .download(path: path)
-        SharedImageCache.shared.saveImageData(
-            data,
-            for: .vineyardLogo(vineyardId: vineyardId),
-            remotePath: path,
-            remoteUpdatedAt: remoteUpdatedAt
-        )
+        guard !Task.isCancelled, provider.client.auth.currentUser?.id == account,
+              isCurrent(), UIImage(data: data) != nil else { throw CancellationError() }
+        if cacheResult {
+            SharedImageCache.shared.saveImageData(
+                data,
+                for: .vineyardLogo(vineyardId: vineyardId),
+                remotePath: path,
+                remoteUpdatedAt: remoteUpdatedAt
+            )
+        }
         return data
     }
 
