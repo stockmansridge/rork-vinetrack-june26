@@ -34,7 +34,8 @@ data class YieldBunchWeightRow(
     val isValid: Boolean get() = grams.isFinite() && grams > 0 && grams <= 5000 && varietyKey.isNotBlank()
     companion object {
         fun resolved(rows: List<YieldBunchWeightRow>, vineyard: String, block: String, key: String): YieldMasterWeight {
-            val scoped = rows.filter { it.vineyardId.equals(vineyard, true) && it.varietyKey == key && it.isValid }
+            val canonicalKey = key.trim().lowercase(java.util.Locale.ROOT)
+            val scoped = rows.filter { it.vineyardId.equals(vineyard, true) && it.varietyKey == canonicalKey && it.isValid }
             val row = scoped.firstOrNull { it.paddockId.equals(block, true) } ?: scoped.firstOrNull { it.paddockId == null }
             return YieldMasterWeight(row?.grams, when { row == null -> "not_configured"; row.paddockId == null -> "variety_default"; else -> "block_override" }, row?.id, key)
         }
@@ -61,6 +62,17 @@ class YieldBunchWeightsRepository(context: Context) {
         return withContext(Dispatchers.IO) {
         check(session.retentionGuard.isAccountCurrent(account, session.userId)) { "Account changed" }
         val token = session.accessToken ?: throw BackendError.Unauthorized
+        // Verify visible vineyard scope before an empty table read can replace
+        // confirmed offline weights. RLS-hidden rows are not confirmed absence.
+        val scopeResponse = SupabaseClient.http.get(SupabaseClient.restUrl("vineyards")) {
+            attributes.put(SupabaseClient.accountRequestScope, account)
+            headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
+            url { parameters.append("select", "id"); parameters.append("id", "eq.$vineyard"); parameters.append("limit", "2") }
+        }
+        if (!scopeResponse.status.isSuccess()) throw BackendError.Server(scopeResponse.status.value, scopeResponse.bodyAsText())
+        val scopeRows = scopeResponse.body<List<kotlinx.serialization.json.JsonObject>>()
+        check(scopeRows.size == 1 && (scopeRows[0]["id"] as? JsonPrimitive)?.content.equals(vineyard, true)) { "Vineyard read access unconfirmed" }
+        check(session.retentionGuard.isAccountCurrent(account, session.userId)) { "Account changed" }
         val rows = mutableListOf<YieldBunchWeightRow>()
         var total: Int? = null
         do {

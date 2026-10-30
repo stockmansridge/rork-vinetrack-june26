@@ -370,6 +370,7 @@ struct NewMainTabView: View {
         defer { PerformanceCapture.shared.end(performanceSweep) }
         isSweeping = true
         let sweepVineyardId = store.selectedVineyardId
+        let sweepAccountIsCurrent = store.remoteApplicationCurrentCheck()
         defer {
             if syncStatusCenter.isSyncing {
                 syncStatusCenter.syncDidFinish(upserts: aggregatePendingUpserts, deletes: aggregatePendingDeletes,
@@ -529,6 +530,10 @@ struct NewMainTabView: View {
         await vineyardMaterialSync.syncForSelectedVineyard()
         await workTaskMaterialSync.syncForSelectedVineyard()
         await maintenanceLogSync.syncForSelectedVineyard()
+        if let vineyardId = sweepVineyardId, store.selectedVineyardId == vineyardId, sweepAccountIsCurrent() {
+            do { try await YieldMasterWeightCache.shared.synchronize(vineyardId: vineyardId, paddocks: store.paddocks) }
+            catch { /* The scoped cache retains confirmed values and exposes a stale-read error. */ }
+        }
         await yieldSessionSync.syncForSelectedVineyard()
         await damageRecordSync.syncForSelectedVineyard()
         await historicalYieldSync.syncForSelectedVineyard()
@@ -556,7 +561,8 @@ struct NewMainTabView: View {
         // "Last full sync" is a two-way claim: it only advances when the pull
         // half succeeded AND the upload queue actually drained. A pull-only
         // success used to refresh the timestamp while uploads stayed stuck.
-        let sweepError = aggregateSyncError
+        let interrupted = Task.isCancelled || !sweepAccountIsCurrent() || store.selectedVineyardId != sweepVineyardId
+        let sweepError = interrupted ? "Sync interrupted. Saved work is retained; retry for the current vineyard." : aggregateSyncError
         syncStatusCenter.syncDidFinish(
             upserts: aggregatePendingUpserts,
             deletes: aggregatePendingDeletes,
@@ -822,6 +828,7 @@ struct NewMainTabView: View {
             savedChemicalSync.errorMessage,
             workTaskSync.errorMessage,
             maintenanceLogSync.errorMessage,
+            YieldMasterWeightCache.shared.syncError(vineyardId: store.selectedVineyardId),
             damageRecordSync.errorMessage,
             yieldSessionSync.errorMessage,
             historicalYieldSync.errorMessage,

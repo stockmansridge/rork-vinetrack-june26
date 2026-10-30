@@ -340,6 +340,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
 
     private func resolveDeletion(_ scope: TripDeletionJournal.Scope, verificationOnly: Bool, isCurrent: () -> Bool) async throws -> String {
         let session = try await deletionSession()
+        try Task.checkCancellation()
         func current() -> Bool { isCurrent() && deletionAuthority.accountGeneration == session.incarnation }
         guard session.actor == scope.account, current() else {
             throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ACCOUNT_CHANGED")
@@ -354,6 +355,7 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         let bytes = try await deletionRequest(url: url, token: session.token)
         let rows = try JSONDecoder().decode([TripDeletionJournal.RemoteRow].self, from: bytes)
         let afterLookup = try await deletionSession()
+        try Task.checkCancellation()
         guard afterLookup.actor == scope.account, afterLookup.incarnation == session.incarnation, current() else {
             throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ACCOUNT_CHANGED")
         }
@@ -362,6 +364,8 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
                 token: session.token, body: JSONEncoder().encode(SoftDeleteTripRequest(tripId: scope.trip)))
             let receipt = try JSONDecoder().decode(TripDeleteAbsenceReceipt.self, from: proof)
             let afterReceipt = try await deletionSession()
+            try Task.checkCancellation()
+            try deletionAuthority.requireWrite(vineyardId: scope.vineyard.uuidString)
             guard current() else { throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ACCOUNT_CHANGED") }
             try receipt.requireConfirmation(trip: scope.trip, owner: scope.account, generation: session.incarnation,
                 currentOwner: afterReceipt.actor, currentGeneration: afterReceipt.incarnation)
@@ -380,6 +384,8 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             throw TripDeletionJournal.Held(reason: "TRIP_DELETE_SERVER_REVIEW_REQUIRED_\(error.code ?? "UNKNOWN")")
         }
         let afterDelete = try await deletionSession()
+        try Task.checkCancellation()
+        try deletionAuthority.requireWrite(vineyardId: scope.vineyard.uuidString)
         guard afterDelete.actor == scope.account, afterDelete.incarnation == session.incarnation, current() else {
             throw TripDeletionJournal.Held(reason: "TRIP_DELETE_ACCOUNT_CHANGED")
         }

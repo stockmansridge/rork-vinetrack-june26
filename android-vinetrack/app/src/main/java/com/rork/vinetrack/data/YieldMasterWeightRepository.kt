@@ -3,22 +3,14 @@ package com.rork.vinetrack.data
 import android.content.Context
 import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.model.Paddock
-import io.ktor.client.call.body
-import io.ktor.client.request.headers
-import io.ktor.client.request.post
-import io.ktor.client.request.setBody
-import io.ktor.http.ContentType
-import io.ktor.http.contentType
-import io.ktor.http.isSuccess
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
-/** Read-only RPC + last-server-confirmed cache, isolated by account, vineyard, block and variety. */
+/** Complete shared-table read + last-server-confirmed cache, isolated by account, vineyard, block and variety. */
 class YieldMasterWeightRepository internal constructor(context: Context) {
     val session = SessionStore(context)
     private val prefs = context.applicationContext.getSharedPreferences("yield_master_confirmed_v1", Context.MODE_PRIVATE)
@@ -34,53 +26,53 @@ class YieldMasterWeightRepository internal constructor(context: Context) {
         }
         return result
     }
-    @Serializable private data class Args(
-        @SerialName("p_vineyard_id") val vineyard: String,
-        @SerialName("p_paddock_id") val block: String,
-        @SerialName("p_variety_key") val variety: String,
-    )
+    private val rowsRepository = YieldBunchWeightsRepository(context.applicationContext)
+    private val _changes = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    val changes: kotlinx.coroutines.flow.StateFlow<Long> = _changes
+    private val failures = java.util.concurrent.ConcurrentHashMap<String, String>()
+    fun syncError(vineyardId: String): String? = scope(vineyardId)?.let { failures[it] }
+
     suspend fun refresh(vineyardId: String, paddocks: List<Paddock>): Map<String, YieldMasterWeight> {
-        // Capture BEFORE waiting for a prior refresh, including same-user sign-out/return.
         val account = session.retentionGuard.captureAccount(session.userId) ?: return emptyMap()
         val scope = scope(vineyardId) ?: return emptyMap()
         return mutex.withLock {
-            val weights = cached(vineyardId).toMutableMap()
-            for (paddock in paddocks) for (planting in CurrentYieldEstimate.plantings(paddock)) {
-                if (!session.retentionGuard.isAccountCurrent(account, session.userId)) return@withLock emptyMap()
-                val token = session.accessToken ?: return@withLock emptyMap()
-                try {
-                    val response = SupabaseClient.http.post(SupabaseClient.restUrl("rpc/resolve_yield_bunch_weight")) {
-                        attributes.put(SupabaseClient.accountRequestScope, account)
-                        headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
-                        contentType(ContentType.Application.Json)
-                        setBody(Args(vineyardId, paddock.id, planting.key))
-                    }
-                    if (!response.status.isSuccess()) continue
-                    val result = response.body<YieldMasterWeight>()
-                    if (result.varietyKey != planting.key || result.source !in listOf("block_override", "variety_default", "not_configured") || (result.source != "not_configured" && result.kg == null)) continue
-                    if (!session.retentionGuard.withAccount(account, { session.userId }) {
-                        val confirmed = weights + (CurrentYieldEstimate.key(paddock.id, planting.key) to result)
-                        check(prefs.edit().putString(scope, json.encodeToString(serializer, confirmed)).commit())
-                        weights.clear()
-                        weights.putAll(confirmed)
-                    }) return@withLock emptyMap()
-                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                  catch (_: Exception) { /* A failed read is never confirmation of absence. */ }
+            try {
+                check(session.retentionGuard.isAccountCurrent(account, session.userId)) { "Account changed" }
+                val rows = rowsRepository.fetch(vineyardId)
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                check(session.retentionGuard.withAccount(account, { session.userId }) {
+                    val weights = resolvedRows(vineyardId, paddocks, rows)
+                    check(prefs.edit().putString(scope, json.encodeToString(serializer, weights)).commit())
+                    failures.remove(scope)
+                    _changes.value += 1
+                }) { "Account changed" }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                session.retentionGuard.withAccount(account, { session.userId }) {
+                    failures[scope] = "Shared bunch weights could not refresh; saved values may be out of date."
+                    _changes.value += 1
+                }
             }
-            if (session.retentionGuard.isAccountCurrent(account, session.userId)) weights else emptyMap()
+            if (session.retentionGuard.isAccountCurrent(account, session.userId)) cached(vineyardId) else emptyMap()
         }
     }
+    private fun resolvedRows(vineyardId: String, paddocks: List<Paddock>, rows: List<YieldBunchWeightRow>): Map<String, YieldMasterWeight> =
+        paddocks.filter { it.vineyardId.equals(vineyardId, true) }.flatMap { block ->
+            CurrentYieldEstimate.plantings(block).map { planting ->
+                CurrentYieldEstimate.key(block.id, planting.key) to YieldBunchWeightRow.resolved(rows, vineyardId, block.id, planting.key)
+            }
+        }.toMap()
+
     suspend fun installConfirmedRows(vineyardId: String, paddocks: List<Paddock>, rows: List<YieldBunchWeightRow>, account: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess) {
         check(session.retentionGuard.isAccountCurrent(account, session.userId)) { "Account changed" }
         val scope = scope(vineyardId) ?: return
         mutex.withLock {
-            val weights = paddocks.filter { it.vineyardId.equals(vineyardId, true) }.flatMap { block ->
-                CurrentYieldEstimate.plantings(block).map { planting ->
-                    CurrentYieldEstimate.key(block.id, planting.key) to YieldBunchWeightRow.resolved(rows, vineyardId, block.id, planting.key)
-                }
-            }.toMap()
+            val weights = resolvedRows(vineyardId, paddocks, rows)
             check(session.retentionGuard.withAccount(account, { session.userId }) {
                 check(prefs.edit().putString(scope, json.encodeToString(serializer, weights)).commit())
+                failures.remove(scope)
+                _changes.value += 1
             }) { "Account changed" }
         }
     }

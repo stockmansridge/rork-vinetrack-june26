@@ -50,7 +50,12 @@ struct YieldMasterRefresh: ViewModifier {
         return "\(store.selectedVineyardId?.uuidString ?? "")/\(YieldMasterWeightCache.shared.scopeIdentity)/\(plantings)"
     }
     func body(content: Content) -> some View {
-        content.task(id: identity) {
+        VStack(alignment: .leading, spacing: 6) {
+            if enabled, let warning = YieldMasterWeightCache.shared.syncError(vineyardId: store.selectedVineyardId) {
+                Text(warning).font(.caption).foregroundStyle(.orange)
+            }
+            content
+        }.task(id: identity) {
             if enabled { await YieldMasterWeightCache.shared.refresh(vineyardId: store.selectedVineyardId, paddocks: store.paddocks) }
         }.refreshable {
             if enabled { await YieldMasterWeightCache.shared.refresh(vineyardId: store.selectedVineyardId, paddocks: store.paddocks) }

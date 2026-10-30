@@ -19,7 +19,8 @@ nonisolated struct YieldBunchWeightRow: Codable, Identifiable, Equatable, Sendab
     }
     var isValid: Bool { grams.isFinite && grams > 0 && grams <= 5000 && !varietyKey.isEmpty }
     static func resolved(_ rows: [Self], vineyard: UUID, block: UUID, key: String) -> YieldMasterWeight {
-        let scoped = rows.filter { $0.vineyardId == vineyard && $0.varietyKey == key && $0.isValid }
+        let canonicalKey = key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let scoped = rows.filter { $0.vineyardId == vineyard && $0.varietyKey == canonicalKey && $0.isValid }
         let row = scoped.first { $0.paddockId == block } ?? scoped.first { $0.paddockId == nil }
         return YieldMasterWeight(bunchWeightGrams: row?.grams, source: row.map { $0.paddockId == nil ? "variety_default" : "block_override" } ?? "not_configured", recordId: row?.id, varietyKey: key)
     }
@@ -139,6 +140,14 @@ struct YieldBunchWeightsRepository {
     let provider: SupabaseClientProvider
     nonisolated struct DeleteArgs: Encodable, Sendable { let p_id: UUID }
     func page(vineyard: UUID, offset: Int) async throws -> YieldBunchWeightsRepository.Page {
+        // An RLS-hidden vineyard must not turn an empty weight result into
+        // "Not configured" and erase the last confirmed offline cache.
+        if offset == 0 {
+            struct VineyardRow: Decodable { let id: UUID }
+            let scope: [VineyardRow] = try await provider.client.from("vineyards").select("id")
+                .eq("id", value: vineyard.uuidString).limit(2).execute().value
+            guard scope.count == 1, scope.first?.id == vineyard else { throw URLError(.noPermissionsToReadFile) }
+        }
         let response = try await provider.client.from("yield_bunch_weights")
             .select("id,vineyard_id,paddock_id,variety_key,variety_name,bunch_weight_grams,updated_at", count: .exact)
             .eq("vineyard_id", value: vineyard.uuidString).is("deleted_at", value: nil)

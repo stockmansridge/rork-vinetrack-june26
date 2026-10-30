@@ -31,6 +31,12 @@ internal fun rememberYieldMasterWeights(state: AppUiState, refreshToken: Int = 0
     val scope = "${repository.session.userId}/${state.selectedVineyardId}/$epoch/$locked"
     val vineyard = state.selectedVineyardId
     var weights by remember(scope) { mutableStateOf(if (vineyard == null) emptyMap() else repository.cached(vineyard)) }
+    val cacheRevision by repository.changes.collectAsState()
+    // Cache publications from full Sync/management update visible estimates;
+    // observing them must not start another network fetch loop.
+    LaunchedEffect(scope, cacheRevision) {
+        weights = if (vineyard == null || locked) emptyMap() else repository.cached(vineyard)
+    }
     LaunchedEffect(scope, state.paddocks, refreshToken) {
         if (vineyard != null && !locked) weights = repository.refresh(vineyard, state.paddocks)
     }
@@ -49,8 +55,21 @@ internal fun currentYieldTrip(state: AppUiState, session: YieldEstimationSession
 @Composable
 internal fun CurrentTripEstimateSummary(state: AppUiState, session: YieldEstimationSession, detailed: Boolean = true, current: Boolean = false) {
     var refresh by remember { mutableIntStateOf(0) }
+    YieldMasterWeightSyncNotice(state)
     CurrentYieldEstimateSummary(currentYieldTrip(state, session, refresh), detailed, current || isCurrentYieldTrip(state, session))
     TextButton(onClick = { refresh++ }) { Text("Refresh shared bunch weights") }
+}
+
+@Composable
+internal fun YieldMasterWeightSyncNotice(state: AppUiState) {
+    val context = LocalContext.current
+    val repository = remember { YieldMasterWeightRepository.get(context) }
+    val revision by repository.changes.collectAsState()
+    val locked by repository.session.retentionGuard.state.collectAsState()
+    val warning = remember(revision, state.selectedVineyardId, state.currentUserId, locked) {
+        if (locked) null else state.selectedVineyardId?.let(repository::syncError)
+    }
+    warning?.let { Text(it, fontSize = 12.sp) }
 }
 
 internal fun isCurrentYieldTrip(state: AppUiState, session: YieldEstimationSession): Boolean {

@@ -68,6 +68,18 @@ import Testing
         #expect(fixture.requests.count == 2)
     }
 
+    @Test func writeAuthorityLostDuringProofRetainsOriginalIntent() async throws {
+        let fixture = try AbsenceFixture()
+        let (store, metadata, service, auth) = try fixture.service(held: true)
+        _ = auth
+        fixture.afterProof = {
+            _ = fixture.authority.handleServerCode("VT_READ_ONLY", vineyardId: fixture.scope.vineyard.uuidString)
+        }
+        try await service.pushLocalTrips(vineyardId: fixture.scope.vineyard)
+        #expect(metadata.pendingDeletes[fixture.scope.trip] != nil)
+        #expect(try store.tripDeletionJournal.load().intents[fixture.scope.trip]?.acknowledgement == nil)
+    }
+
     @Test(arguments: ["journal", "metadata"])
     func acknowledgementPersistenceFailureStaysPendingAndRestartDoesNotLoseEvidence(target: String) async throws {
         let fixture = try AbsenceFixture()
