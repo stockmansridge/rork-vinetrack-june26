@@ -451,6 +451,10 @@ struct NewMainTabView: View {
                 elapsedSince: manualReplayStartedAt
             )
         }
+        // Equipment is required for starting work; history must not delay its refresh.
+        await sprayEquipmentSync.syncForSelectedVineyard()
+        await tractorSync.syncForSelectedVineyard()
+        await vineyardMachineSync.syncForSelectedVineyard()
         let performancePins = PerformanceCapture.shared.begin("sync Pins")
         await pinSync.syncPinsForSelectedVineyard()
         PerformanceCapture.shared.end(performancePins)
@@ -489,9 +493,6 @@ struct NewMainTabView: View {
         await buttonConfigSync.syncButtonConfigForSelectedVineyard()
         await savedChemicalSync.syncForSelectedVineyard()
         await savedSprayPresetSync.syncForSelectedVineyard()
-        await sprayEquipmentSync.syncForSelectedVineyard()
-        await tractorSync.syncForSelectedVineyard()
-        await vineyardMachineSync.syncForSelectedVineyard()
         await fuelPurchaseSync.syncForSelectedVineyard()
         await tractorFuelLogSync.syncForSelectedVineyard()
         await operatorCategorySync.syncForSelectedVineyard()

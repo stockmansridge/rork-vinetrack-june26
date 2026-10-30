@@ -85,11 +85,18 @@ class SprayFieldLayoutAndroidTest {
         compose.setContent {
             var visible by remember { mutableStateOf(true) }
             AppTheme {
-                if (visible) SprayTripStartConfirmation("Fixture tractor", null, {}, {
-                    launches++; hours = it
-                })
+                if (visible) SprayTripStartConfirmation(
+                    machineName = "Fixture tractor", latestEngineHours = null,
+                    tanks = listOf(com.rork.vinetrack.data.model.SprayTank("tank", waterVolume = 1000.0,
+                        chemicals = listOf(com.rork.vinetrack.data.model.SprayChemical("product", "Product",
+                            volumePerTank = 1000.0, ratePerHa = 1000.0)))),
+                    scopeKey = "isolated-layout-fixture", onDismiss = {},
+                    onStart = { launches++; hours = it },
+                )
             }
         }
+        compose.onNode(hasText("Start Trip") and hasClickAction()).assertIsNotEnabled()
+        compose.onNodeWithText("I confirm these actual chemical rates", substring = false).performScrollTo().performClick()
         compose.onNode(hasText("Start Trip") and hasClickAction()).performClick()
         compose.runOnIdle { assertEquals(1, launches); assertNull(hours) }
         compose.onNodeWithText("Start engine hours (optional)").performTextInput("123.5")

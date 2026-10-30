@@ -172,15 +172,11 @@ object SprayCalculator {
         val totalArea = selectedPaddocks.sumOf { it.areaHectares }
         val totalWater = totalArea * waterRateLitresPerHectare
 
-        val numberOfTanks = if (totalWater > 0 && tankCapacity > 0) {
-            ceil(totalWater / tankCapacity).toInt()
-        } else 0
-        val fullTankCount = if (totalWater > tankCapacity && tankCapacity > 0) numberOfTanks - 1 else 0
-        val lastTankLitres = when {
-            totalWater <= 0 -> 0.0
-            totalWater <= tankCapacity -> totalWater
-            else -> totalWater - (fullTankCount * tankCapacity)
-        }
+        // Share the guarded allocator with the guided route; never overflow or allocate an unbounded list.
+        val split = com.rork.vinetrack.data.spray.SprayApplicationPlanner.tankSplit(totalWater, tankCapacity)
+        val numberOfTanks = split.totalTanks
+        val fullTankCount = split.fullTankCount
+        val lastTankLitres = split.lastTankLitres
 
         val foliar = usesConcentrationFactor(operationType)
 

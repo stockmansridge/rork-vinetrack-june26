@@ -795,6 +795,7 @@ nonisolated struct SprayGuidedFlow: Sendable {
             return isCarrierResolved ? nil : .carrierNotCalculable
 
         case .products:
+            guard plan.tankSplit.totalTanks > 0 else { return .carrierNotCalculable }
             guard !inputs.products.isEmpty else { return .noProductsAdded }
             let invalidRates = inputs.products.filter { !$0.rate.isFinite || $0.rate <= 0 }
             if !invalidRates.isEmpty { return .unresolvedProducts(names: invalidRates.map(\.name)) }
