@@ -1,0 +1,48 @@
+{
+  "source": "asc testflight crashes log, read-only, 2026-10-30",
+  "build_id": "6149aea9-778f-42c5-81e2-78a03d07749b",
+  "symbolication": "Apple API returned these labels. Matching archive/dSYM unavailable; no independent atos/dwarfdump verification performed. Raw reports are not committed.",
+  "apple_dsym_files": [],
+  "reports": [
+    {
+      "report": "first",
+      "raw_response_sha256": "143979cffd3892ea89df67ff3e6b4c761a26540ddc2f02dce680b34dbe9bb0ee",
+      "crash_log_sha256": "e38950c8aad1cf6057d20ff4308bddaa47357d24100e052f0e579c59f07d40f1",
+      "binary_uuid": "427604DE-2A8C-34E4-8744-979847C2C1E1",
+      "image_base": "0x100350000",
+      "stack_overflow": true,
+      "frames": {
+        "11291424": {
+          "address": "0x100e14b20",
+          "occurrences": 51,
+          "apple_returned_symbol": "closure #1 in SprayCalculatorView.guidedProductLines.getter + 2164 (SprayCalculatorView.swift:808)"
+        },
+        "11297652": {
+          "address": "0x100e16374",
+          "occurrences": 52,
+          "apple_returned_symbol": "SprayCalculatorView.guidedInputs.getter + 3620 (SprayCalculatorView.swift:784)"
+        }
+      }
+    },
+    {
+      "report": "second",
+      "raw_response_sha256": "f2a9001d61d733c6f5be942bacfcfba0b9f28ba1f77ad8eb5f5cb428865085b5",
+      "crash_log_sha256": "2a2d03d66bb97b2032463051909319a5a3580c88ffd58ccc4893473e76d1474a",
+      "binary_uuid": "427604DE-2A8C-34E4-8744-979847C2C1E1",
+      "image_base": "0x102994000",
+      "stack_overflow": true,
+      "frames": {
+        "11291424": {
+          "address": "0x103458b20",
+          "occurrences": 51,
+          "apple_returned_symbol": "closure #1 in SprayCalculatorView.guidedProductLines.getter + 2164 (SprayCalculatorView.swift:808)"
+        },
+        "11297652": {
+          "address": "0x10345a374",
+          "occurrences": 52,
+          "apple_returned_symbol": "SprayCalculatorView.guidedInputs.getter + 3620 (SprayCalculatorView.swift:784)"
+        }
+      }
+    }
+  ]
+}

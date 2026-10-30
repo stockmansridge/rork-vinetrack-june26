@@ -21,6 +21,10 @@ struct SprayCalculatorKeyboardValidationView: View {
             if CommandLine.arguments.contains("--spray-phase2-validation") {
                 store.savedChemicals = [SavedChemical(vineyardId: vineyard, name: "Synthetic product", unit: .grams,
                     rates: [ChemicalRate(label: "Synthetic rate", value: 1)])]
+                if CommandLine.arguments.contains("--spray-mixed-products-validation") {
+                    store.savedChemicals.append(SavedChemical(vineyardId: vineyard, name: "Synthetic water product", unit: .grams,
+                        rates: [ChemicalRate(label: "Synthetic water rate", value: 2, basis: .per100Litres)]))
+                }
             } else if CommandLine.arguments.contains("--spray-direct-start-validation") {
                 store.savedChemicals = [SavedChemical(vineyardId: vineyard, name: "Synthetic valid product", unit: .grams)]
             }

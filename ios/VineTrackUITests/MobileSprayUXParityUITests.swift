@@ -7,6 +7,8 @@ final class MobileSprayUXParityUITests: XCTestCase {
     @MainActor func testPhase2SpreaderToReview() { runGuidedJourney(operation: "Spreader") }
     @MainActor func testPhase2EditBlocks() { runGuidedJourney(editBlocks: true) }
     @MainActor func testPhase2ProgramPrefill() { runGuidedJourney(prefilled: true) }
+    @MainActor func testChemicalRecursionMixedProductsAndCancellation() { runGuidedJourney(operation: "Banded Spray", mixedProducts: true) }
+    @MainActor func testChemicalRecursionTemplateMixedProducts() { runGuidedJourney(prefilled: true, mixedProducts: true) }
 
     @MainActor private func reach(_ element: XCUIElement, in app: XCUIApplication, down: Bool = false) {
         let scroll = app.scrollViews.firstMatch
@@ -35,11 +37,12 @@ final class MobileSprayUXParityUITests: XCTestCase {
         app.buttons["Done"].tap()
     }
 
-    @MainActor private func runGuidedJourney(operation: String = "Foliar Spray", custom: Bool = false, editBlocks: Bool = false, prefilled: Bool = false) {
+    @MainActor private func runGuidedJourney(operation: String = "Foliar Spray", custom: Bool = false, editBlocks: Bool = false, prefilled: Bool = false, mixedProducts: Bool = false) {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--keyboard-validation", "--spray-calculator-keyboard-validation", "--spray-regional-validation", "--spray-phase2-validation"]
         if prefilled { app.launchArguments.append("--spray-phase2-prefill") }
+        if mixedProducts { app.launchArguments.append("--spray-mixed-products-validation") }
         app.launch()
         let open = app.buttons["Open Spray Calculator"]
         XCTAssertTrue(open.waitForExistence(timeout: 8), "Fixture must show Open Spray Calculator"); open.tap()
@@ -133,13 +136,30 @@ final class MobileSprayUXParityUITests: XCTestCase {
         }
         advance("products", in: app)
         let add = app.buttons["Add Chemical"]; reach(add, in: app); add.tap()
-        let product = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Synthetic product")).firstMatch
+        if mixedProducts {
+            XCTAssertTrue(app.navigationBars["Select Chemical"].waitForExistence(timeout: 5))
+            app.navigationBars["Select Chemical"].buttons["Cancel"].tap()
+            XCTAssertTrue(add.waitForExistence(timeout: 5), "Cancellation returns to Products")
+            XCTAssertFalse(app.buttons["spray.continue.review"].isEnabled, "Cancel must not append a product")
+            reach(add, in: app); add.tap()
+        }
+        let product = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", mixedProducts ? "Synthetic water product" : "Synthetic product")).firstMatch
         XCTAssertTrue(product.waitForExistence(timeout: 5), "Synthetic product must be offered in the production picker"); product.tap()
+        if mixedProducts {
+            XCTAssertEqual(app.state, .runningForeground, "First per-100 L selection must render without recursion")
+            let selected = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Synthetic water product")).firstMatch
+            XCTAssertTrue(selected.waitForExistence(timeout: 5), "First product card must render")
+            reach(add, in: app); add.tap()
+            let second = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Synthetic product")).firstMatch
+            XCTAssertTrue(second.waitForExistence(timeout: 5)); second.tap()
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Synthetic product")).firstMatch.waitForExistence(timeout: 5), "Second per-ha product card must render")
+        }
         if operation == "Banded Spray" {
             let basis = app.buttons["Treated Band Area"]; reach(basis, in: app); basis.tap()
         }
         advance("review", in: app)
         XCTAssertTrue(app.buttons["spray.reviewTankMix"].exists, "Keep the existing Review handoff")
+        XCTAssertEqual(app.state, .runningForeground)
     }
 
     @MainActor func testNewOneOffRecommendedCarrierUnlocksProducts() {

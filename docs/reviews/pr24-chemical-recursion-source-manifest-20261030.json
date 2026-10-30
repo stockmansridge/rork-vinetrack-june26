@@ -1,0 +1,106 @@
+{
+  "managed_source_parent": "fe60fd5902c3f341c4a73e2dc5512092ae8d4e13",
+  "integration_commit": null,
+  "reviewed_pr24_head": "9f9f5ada0c7620c9ed4b85292e753190ca583e3c",
+  "reviewed_pr24_base": "13f412660355939343d716fe46aa4354c6068d7f",
+  "production_view_matches_reviewed_head": true,
+  "pr23_manifest_all_26_inputs_unchanged": true,
+  "validation": {
+    "python_before": {
+      "passed": 1,
+      "failed": 2,
+      "skipped": 1
+    },
+    "python_after": {
+      "passed": 3,
+      "failed": 0,
+      "skipped": 1,
+      "reason": "No local Swift compiler"
+    },
+    "mandatory_native_ui": {
+      "passed": 4,
+      "seconds": 338
+    },
+    "additional_native_ui": {
+      "passed": 3,
+      "seconds": 287
+    },
+    "focused_native_calculator": {
+      "passed": 144,
+      "seconds": 25,
+      "includes_exact_expression_111_scenarios": true
+    },
+    "ios_normal_simulator_build": "PASS",
+    "device_release_and_original_phone": "UNVERIFIED",
+    "independent_matching_dsym_symbolication": "BLOCKED: no dSYM returned by Apple"
+  },
+  "release": {
+    "version": "3.1.9",
+    "verified_next_build_number": "190",
+    "number_reserved_or_applied": false,
+    "candidate_prepared": false,
+    "uploaded": false
+  },
+  "files": [
+    {
+      "path": "docs/reviews/ios-build189-chemical-stack-overflow-20261030.md",
+      "sha256": "31c7e147c4723e0f08f4942bc68522e5958149047b04f5a01bcafa59195581e1",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": "31c7e147c4723e0f08f4942bc68522e5958149047b04f5a01bcafa59195581e1"
+    },
+    {
+      "path": "docs/reviews/pr24-build189-crash-evidence-20261030.json",
+      "sha256": "20e1489b96e596d3a75b5181d6fbd252d62c8788da99cc7325451b127ec9c037",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": null
+    },
+    {
+      "path": "ios/VineTrack/App/Keyboard/SprayCalculatorKeyboardValidationView.swift",
+      "sha256": "b3670ccafb2303677672323d433f54b300c49402c6fe77ee79b4cb19cf577b17",
+      "parent_sha256": "5244702570fc461ae315b3cdaa66845f122c233b10086c24cda2c597ee4d6a4e",
+      "reviewed_pr_head_sha256": null
+    },
+    {
+      "path": "ios/VineTrack/App/SprayCalculatorView.swift",
+      "sha256": "6084c0c301e73f3ae85d6566275d174fa3148815ff4634d26bbce7fe664b9642",
+      "parent_sha256": "18a46dea03564bb3d2d7682d5bbfd3c8bfa2c1dfe343e382a55b3ff55f1f676b",
+      "reviewed_pr_head_sha256": "6084c0c301e73f3ae85d6566275d174fa3148815ff4634d26bbce7fe664b9642"
+    },
+    {
+      "path": "ios/VineTrackTests/SprayProductRecursionExpressionTests.swift",
+      "sha256": "474fa8401e6e0069f22227091adf7d984b5ad4c94a963254fd8d74a06a01247e",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": null
+    },
+    {
+      "path": "ios/VineTrackUITests/MobileSprayUXParityUITests.swift",
+      "sha256": "0e1a02909713ac0e936fee7b8198932d51ba1307f60d9200e21c7773db7e962a",
+      "parent_sha256": "6da1cf8a8ea6805b5813cfbc5bcc3c02cd544f0e215f4cb57a7fc4131bb00182",
+      "reviewed_pr_head_sha256": null
+    },
+    {
+      "path": "scripts/generate-pr24-native-expression-test.py",
+      "sha256": "af49e689c1ac98a5d8d7572a9377941186500a8f79bc4d2e5fb3219a5c69db62",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": null
+    },
+    {
+      "path": "scripts/prepare-pr24-source.py",
+      "sha256": "7d5964a8009c235f989c90fe9a80af4ac81bc2a570c0470237431e12abc3afcb",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": null
+    },
+    {
+      "path": "scripts/snapshot-pr24-chemical-recursion-source.py",
+      "sha256": "1f248ff9811eb13d5dd1e6467331bdd89a450dfaecf29a550e6ba1f5224e91d8",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": null
+    },
+    {
+      "path": "scripts/tests/test_spray_product_recursion.py",
+      "sha256": "0cb066e7b0bd669d89aed4d2dbabf0d8816dbdc30606abcce615c45c3943019e",
+      "parent_sha256": null,
+      "reviewed_pr_head_sha256": "0cb066e7b0bd669d89aed4d2dbabf0d8816dbdc30606abcce615c45c3943019e"
+    }
+  ]
+}
