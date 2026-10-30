@@ -59,12 +59,12 @@ class MobileSprayUXParityAndroidTest {
                 }
             }
         }
-        for ((label, expected) in listOf("Single Row" to SprayPassConfiguration.STANDARD_PASS, "Over-Row" to SprayPassConfiguration.OVER_ROW, "Not Set" to null)) {
+        for ((label, expected) in listOf("Single Row" to SprayPassConfiguration.STANDARD_PASS, "2 Row" to SprayPassConfiguration.OVER_ROW, "Not Set" to null)) {
             compose.onNodeWithText(label).performScrollTo().performClick().assertIsSelected()
-            for (stable in listOf("Not Set", "Single Row", "Over-Row")) compose.onNodeWithText(stable).assertExists()
+            for (stable in listOf("Not Set", "Single Row", "2 Row")) compose.onNodeWithText(stable).assertExists()
             compose.runOnIdle { assertEquals(expected, selected) }
         }
-        compose.onNodeWithText(LegacySpraySetup.FULL_TANK_MESSAGE).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Planning only — Start Spray unavailable.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("By Area").performScrollTo().performClick()
         compose.onNodeWithText("Calculate the spray using the selected block area.").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Only Full Tanks").performScrollTo().performClick()
@@ -90,10 +90,10 @@ class MobileSprayUXParityAndroidTest {
         }
         compose.onNodeWithText("Choose canopy type").assertExists()
         compose.onNodeWithText("VSP").performScrollTo().performClick()
-        compose.onNodeWithText("Confirm canopy").assertExists()
+        compose.onNodeWithTag("spray.confirm.canopy").assertExists()
         compose.onNodeWithText("You selected VSP · Medium · Low. Confirm this canopy to calculate the recommended spray volume.").assertExists()
         compose.runOnIdle { assertFalse(finalSelection.isConfirmed) }
-        compose.onNodeWithText("Confirm Canopy — VSP · Medium · Low").performScrollTo().performClick()
+        compose.onNodeWithTag("spray.confirm.canopy").performScrollTo().performClick()
         compose.onNodeWithText("Spray at the recommended volume?").assertExists()
         compose.runOnIdle { assertTrue(finalSelection.isConfirmed) }
     }

@@ -27,9 +27,17 @@ nonisolated enum SprayProgramProgression {
     }
 
     static func completed(records: [SprayRecord], trips: [Trip], vineyardId: UUID?, window: SeasonWindow) -> [SprayRecord] {
-        SprayProgramOperationalRecords.unique(records).filter { record in
+        // Build the operational join once rather than scanning every Trip for each
+        // spray on every Home render. Keep the first duplicate exactly as first(where:)
+        // did; a missing/unknown recorded link must still resolve with no Trip.
+        var tripsById: [UUID: Trip] = [:]
+        tripsById.reserveCapacity(trips.count)
+        for trip in trips where tripsById[trip.id] == nil {
+            tripsById[trip.id] = trip
+        }
+        return SprayProgramOperationalRecords.unique(records).filter { record in
             record.vineyardId == vineyardId && record.hasRecordedEventDate && window.contains(record.date) &&
-            SprayCompletionResolver.status(record: record, trip: trips.first { $0.id == record.canonicalTripId }) == .completed
+            SprayCompletionResolver.status(record: record, trip: record.canonicalTripId.flatMap { tripsById[$0] }) == .completed
         }
     }
 

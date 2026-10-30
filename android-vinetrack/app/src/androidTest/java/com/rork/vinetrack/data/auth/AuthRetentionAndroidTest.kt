@@ -290,12 +290,31 @@ class AuthRetentionAndroidTest {
         val writes = PendingWriteRepository(PendingWriteStore(context))
         PinCreateSync(writes).enqueue(PinRepository.PinInput("pin", "vineyard"))
         val before = context.getSharedPreferences("vinetrack_pending_writes", 0).all.toMap()
-        val client = mockAuthClient { _, _ -> 400 to "{\"code\":\"refresh_token_not_found\"}" }
+        val drafts = com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context)
+        val originalDraft = com.rork.vinetrack.data.model.WorkTaskPlanningDraft(
+            null, "vineyard", owner, date = "2026-11-05T00:00:00Z", taskType = "pruning",
+            assignmentName = "Greg Horner", durationText = "1", notes = "Need bamboo and loose tie onto it",
+        )
+        drafts.save(originalDraft)
+        assertEquals(originalDraft, drafts.load(owner, "vineyard", null))
+        val draftPreferences = context.names.associateWith { name -> context.getSharedPreferences(name, 0).all.toMap() }
+        var requests = 0
+        val client = mockAuthClient { _, _ ->
+            requests++
+            400 to "{\"code\":400,\"error_code\":\"refresh_token_not_found\"}"
+        }
         try {
-            assertEquals(SessionValidity.Rejected, AuthRepository(session, client).revalidateSession())
+            val repository = AuthRepository(session, client)
+            assertEquals(SessionValidity.Rejected, repository.revalidateSession())
+            assertEquals(SessionValidity.Rejected, repository.revalidateSession())
+            assertEquals("A retained rejection must not trigger repeated exchanges", 1, requests)
             assertTrue(session.retentionGuard.isLocked)
             assertEquals(owner, SessionStore(context).recoveryPrincipal)
             assertEquals(before, context.getSharedPreferences("vinetrack_pending_writes", 0).all)
+            for ((name, bytes) in draftPreferences.filterKeys { it != "vinetrack_session" }) {
+                assertEquals("Retained field preferences changed: $name", bytes, context.getSharedPreferences(name, 0).all)
+            }
+            assertEquals(originalDraft, com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context).load(owner, "vineyard", null))
         } finally { client.close() }
     }
 
@@ -539,7 +558,8 @@ class AuthRetentionAndroidTest {
         val backup = File(root, "pin_capture_evidence_recovery_v2.json.bak")
         backup.writeText("corrupt-capture-original")
         val store = com.rork.vinetrack.data.PinCaptureEvidenceStore(context)
-        denied { store.markUploaded("pin", 1) }
+        assertFalse("Corrupt evidence cannot be acknowledged", store.markUploaded("pin", 1))
+        assertNotNull("Recovery hold must be surfaced", store.readIssue.value)
         assertEquals("corrupt-capture-original", backup.readText())
         assertFalse(File(root, "pin_capture_evidence_recovery_v2.json").exists())
         assertEquals("[]", prefs.getString("pin_capture_evidence_json", null))

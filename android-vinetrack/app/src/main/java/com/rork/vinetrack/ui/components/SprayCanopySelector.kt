@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -80,7 +81,7 @@ fun SprayCanopySelector(
         }
         if (selection.type == null) {
             Text(
-                "Choose the training system for this block before the canopy can recommend a spray volume.",
+                "Select a canopy type.",
                 fontSize = 11.sp,
                 color = VineColors.Warning,
                 modifier = Modifier.padding(top = 6.dp),
@@ -89,9 +90,6 @@ fun SprayCanopySelector(
         }
 
         val type = selection.type
-        if (!isConfirmed) {
-            Text(selection.confirmationMessage, style = MaterialTheme.typography.bodySmall, color = vine.textSecondary)
-        }
         Text(
             "Canopy Size",
             fontSize = 13.sp,
@@ -199,19 +197,23 @@ fun SprayCanopySelector(
             }
         }
 
-        Button(
-            onClick = onConfirm,
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp).heightIn(min = 48.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (isConfirmed) VineColors.LeafGreen.copy(alpha = 0.16f) else VineColors.Orange.copy(alpha = 0.16f),
-                contentColor = if (isConfirmed) VineColors.DarkGreen else VineColors.Orange,
-            ),
-        ) {
-            Text(
-                if (isConfirmed) "Canopy confirmed" else selection.confirmationButton,
-                textAlign = TextAlign.Center,
-                fontWeight = FontWeight.SemiBold,
-            )
+        if (isConfirmed) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp).heightIn(min = 48.dp).testTag("spray.canopy.confirmed"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(Icons.Default.Check, contentDescription = null, tint = VineColors.Olive)
+                Text("Canopy confirmed", fontWeight = FontWeight.SemiBold, color = VineColors.Olive)
+            }
+        } else {
+            Button(
+                onClick = onConfirm,
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp).heightIn(min = 48.dp).testTag("spray.confirm.canopy"),
+                colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive, contentColor = Color.White),
+            ) {
+                Text("Confirm canopy", textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold)
+            }
         }
     }
 }

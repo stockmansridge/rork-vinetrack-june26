@@ -278,6 +278,23 @@ struct SprayProgramRound2Tests {
         #expect(SprayProgramProgression.completed(records: [record], trips: [], vineyardId: vineyard, window: window).isEmpty)
     }
 
+    @Test func completionJoinKeepsFirstTripDuplicateAndRecordedLinkAuthority() {
+        let vineyard = UUID()
+        let window = SeasonWindow.window(vintage: 2027, seasonStartMonth: 7, seasonStartDay: 1, timeZone: TimeZone(secondsFromGMT: 0)!)
+        let active = Trip(vineyardId: vineyard, startTime: window.start, isActive: true)
+        var completedDuplicate = active
+        completedDuplicate.isActive = false
+        completedDuplicate.endTime = window.start.addingTimeInterval(300)
+        let linked = SprayRecord(tripId: active.id, vineyardId: vineyard, date: window.start)
+        var unrecorded = SprayRecord(tripId: active.id, vineyardId: vineyard, date: window.start)
+        unrecorded.hasRecordedTripLink = false
+        let missing = SprayRecord(tripId: UUID(), vineyardId: vineyard, date: window.start)
+        let independentlyCompleted = SprayRecord(vineyardId: vineyard, date: window.start, endTime: window.start)
+        let records = [linked, unrecorded, missing, independentlyCompleted]
+        #expect(Set(SprayProgramProgression.completed(records: records, trips: [active, completedDuplicate], vineyardId: vineyard, window: window).map(\.id)) == [independentlyCompleted.id])
+        #expect(Set(SprayProgramProgression.completed(records: records, trips: [completedDuplicate, active], vineyardId: vineyard, window: window).map(\.id)) == [linked.id, independentlyCompleted.id])
+    }
+
     @Test func vintageDatasetUsesEventDateAndCompletedTripNotRepairDate() {
         let vineyard = UUID()
         let window = SeasonWindow.window(vintage: 2027, seasonStartMonth: 7, seasonStartDay: 1, timeZone: TimeZone(secondsFromGMT: 0)!)

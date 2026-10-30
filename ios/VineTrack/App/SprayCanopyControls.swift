@@ -181,11 +181,6 @@ struct SprayCanopyControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             canopyTypeSection
-            if !selection.isConfirmed {
-                Text(selection.confirmationMessage)
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
             if let type = selection.type {
                 canopySizeSection(type: type)
                 canopyDensitySection
@@ -214,8 +209,7 @@ struct SprayCanopyControls: View {
             }
             .pickerStyle(.segmented)
             if selection.type == nil {
-                Text("Choose the training system for this block before the canopy "
-                     + "can recommend a spray volume.")
+                Text("Select a canopy type.")
                     .font(.caption2)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
@@ -300,21 +294,28 @@ struct SprayCanopyControls: View {
         }
     }
 
-    /// The operator whose canopy really is Medium / Low needs a way to say so
-    /// without changing a picker and changing it back.
+    /// A normal action until accepted; a read-only success state afterwards.
+    /// Selecting a different canopy still invalidates confirmation in the model.
+    @ViewBuilder
     private var confirmPrompt: some View {
-        Button {
-            selection.confirm()
-        } label: {
-            Text(selection.isConfirmed ? "Canopy confirmed" : selection.confirmationButton)
-                .font(.caption.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: 44)
-                .background(Color.orange.opacity(0.16))
-                .foregroundStyle(.orange)
-                .clipShape(.rect(cornerRadius: 8))
+        if selection.isConfirmed {
+            Label("Canopy confirmed", systemImage: "checkmark.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(VineyardTheme.olive)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .accessibilityIdentifier("spray.canopy.confirmed")
+        } else {
+            Button {
+                selection.confirm()
+            } label: {
+                Text("Confirm canopy")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(VineyardTheme.olive)
+            .accessibilityHint(selection.confirmationMessage)
+            .accessibilityIdentifier("spray.confirm.canopy")
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("spray.confirm.canopy")
     }
 }

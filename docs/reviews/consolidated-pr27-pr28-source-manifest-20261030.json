@@ -1,0 +1,138 @@
+{
+  "scope": "PR27/PR28 integration, Android validation fixtures, Home completion-join optimization and read-only catalogue inspection tooling",
+  "managed_source_parent": "687fa6d03c80a33a7399a8cc4a75e2423c037f5f",
+  "inspected_public_main": "8543d725cfdfc8d20c2eaecc4cf265b49538540b",
+  "reviewed_pr_heads": {
+    "27": "aef91ca05ededd6fe3690ef5e5ccc79d2dc8af69",
+    "28": "ec839e830879a9461811f413c5ec289cc609d82a"
+  },
+  "final_integration_sha": null,
+  "boundary": "Bounded source inventory only. No signed candidate, backend propagation deployment, original-device acceptance or released-binary certification.",
+  "files": [
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/MobileSprayUXParityAndroidTest.kt",
+      "sha256": "bc8e21a66b23c81c56c06cf597676989ad8df46c752bb2dd43b39dd57765ba31",
+      "parent_sha256": "8a611f7f40c69ec41cefbcb840916341c1ae34e40315419c4b26c7759d08fa63"
+    },
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayPhase1CalculatorAndroidTest.kt",
+      "sha256": "52e0c5c8e63b4b544a9c3cb641454cf432d17fa20403a99a77cbfddc294833bc",
+      "parent_sha256": "cc199848fdc572c60c35443500b4c65b673592b4f1b64f84fd611abc010dc7b6"
+    },
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/AuthRetentionAndroidTest.kt",
+      "sha256": "d8361160edf46dce03f9ac1003f3429d2b3b4fd578f0bb2a0f1445e15664fe86",
+      "parent_sha256": "d0466cf4d1a9639ec04fe4abd3ef9103832edf3836c067d1e26335b252ff0d17"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/RefreshRejection.kt",
+      "sha256": "5c4698eb7af07e8e4251992ea88b4fc1bb4843ab4f5c93c864f49657fb0aee30",
+      "parent_sha256": "55241dc73b72cb2347a3d67299b9ac2834727eafbc2d5f9f457e049d62a83d25"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/SyncDownloadStatus.kt",
+      "sha256": "7be4e1a4b816e8768b324341e6932e8621a365a208f030f847148dd84d78d78c",
+      "parent_sha256": null
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayCanopySelector.kt",
+      "sha256": "b603bde08c68eda937869b7075fede75436368e68ad7151d8ff0538912204720",
+      "parent_sha256": "c3655a9df8a213b8544aa91f6b628cd6193285cae3a1f190a437c01a51fa76e2"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayPlanningCards.kt",
+      "sha256": "1ad65d15670d42af27a7f636c2812bc3a54aa7014ee425c90675dad2ffbe401a",
+      "parent_sha256": "2eed16a4f3b6e7faa603e6ce891370b3efcdcfdb4120564f91d08ef87fbc95b5"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt",
+      "sha256": "0e66a296b648163128b4c3579b013eba36819885d239c557c5f539b87ee22af2",
+      "parent_sha256": "c2f4541dd49d84b8f887925ca42fa18d8bab3ba5e318605ff6a78b3c74e7f148"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SyncStatusScreen.kt",
+      "sha256": "7f85e12e584559cac45c0ea83fd29999266cc7998a8cf97c5a7c44e783f77417",
+      "parent_sha256": "12ba6cea8191cb03fbf3ce7b326a40f7a289bdf13fabb4359e7430bff30ef47d"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/RefreshRejectionLegacyTest.kt",
+      "sha256": "4e959921dca3eeabb482108435d78ed0cc1cd888c8aab24a20faafd570891b5b",
+      "parent_sha256": null
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/ui/SyncDownloadStatusTest.kt",
+      "sha256": "12e6b5872064a738588d071e3ca18943551c19a7384a389bc74be1bd0dce52aa",
+      "parent_sha256": null
+    },
+    {
+      "path": "docs/reviews/android-block-download-auth-status-20261030.md",
+      "sha256": "878aa2483d7700412f3ec69b7a9d48e2c8875b60a28788648ad07fcd7a603420",
+      "parent_sha256": null
+    },
+    {
+      "path": "docs/reviews/spray-flow-human-testing-20261030.md",
+      "sha256": "f7e00ad3fec17925bf4bd9e9cda6f5df84a70433483781418ac58148fb3de219",
+      "parent_sha256": null
+    },
+    {
+      "path": "ios/VineTrack/App/SprayCalculatorView.swift",
+      "sha256": "9ba2c05eb01b5fb47f74f9697551c9b5203700e09aed9a6e46573a06d9a0e55c",
+      "parent_sha256": "6084c0c301e73f3ae85d6566275d174fa3148815ff4634d26bbce7fe664b9642"
+    },
+    {
+      "path": "ios/VineTrack/App/SprayCanopyControls.swift",
+      "sha256": "dff6624e8e07943cf3385e9a43a5b1edfdfe64b821bbd28d9760b1dc6d5453ee",
+      "parent_sha256": "fc2db55712fcb313924e80821dbfb9a8aa3336709401f4335c609d519d401980"
+    },
+    {
+      "path": "ios/VineTrack/App/SprayPlanningCardsView.swift",
+      "sha256": "fb0b45e5293d0b285af05800cdba62efac2e3accfc9bd384b94301da3af217fe",
+      "parent_sha256": "6ed40aaa32dfaff54a72a6d36a73a5bab855cbb96d586a0b552da6d1c1dfd362"
+    },
+    {
+      "path": "ios/VineTrack/App/SprayProgram/SprayProgramProgression.swift",
+      "sha256": "afa920717cca3e5cdce69bc6833e8276606b72ff3f45735b85514a226e8ee5e1",
+      "parent_sha256": "36e2a29f7d8d4bef50d71883b9dcc3e9ce32201302a78a989f78ea04e990380b"
+    },
+    {
+      "path": "ios/VineTrackTests/SprayProgramRound2Tests.swift",
+      "sha256": "591a16326054c48b16d53b2acddf6557a00cc9f39f8203cfb407e468bfc51e28",
+      "parent_sha256": "f3a4b570ccdbaaf31a1824adadc500852ef049a564e76fbd3e50366748a6737e"
+    },
+    {
+      "path": "ios/VineTrackUITests/MobileSprayUXParityUITests.swift",
+      "sha256": "0c0aa38d42403e6a688e68548a4fb7cadaf067ab1e48aaa5ad40a36127334e88",
+      "parent_sha256": "0e1a02909713ac0e936fee7b8198932d51ba1307f60d9200e21c7773db7e962a"
+    },
+    {
+      "path": "scripts/inspect-issue25-catalogue-contract.py",
+      "sha256": "2fab361087127d4ca69c87f4a2582c51f98dc0aa27a828956c14e73961342725",
+      "parent_sha256": "e354333b47a558d150ad715d4f71ad97a21b7f8816aca8a39517deec76310a8a"
+    },
+    {
+      "path": "scripts/prepare-pr27-pr28-source.py",
+      "sha256": "85c239639bc1fac4175cbd3046c3ab990a615bc32e7602d9bc441b2e8bfd3df8",
+      "parent_sha256": null
+    },
+    {
+      "path": "scripts/run-pr27-auth-download-host-tests.py",
+      "sha256": "22be4f23c5d3fa36224ac9fa255a9c0e19643b4e69354d8a12ddba40f333d0c6",
+      "parent_sha256": null
+    },
+    {
+      "path": "scripts/snapshot-consolidated-pr27-pr28-source.py",
+      "sha256": "3eb4b98dd8d242dfe2c238a85f756ff97dabebd24ea138fe9126f16ae7d7f24a",
+      "parent_sha256": null
+    },
+    {
+      "path": "scripts/test_android_download_status_host.py",
+      "sha256": "22f9b259d9f25551dab798960cb7151b39fd68f838d47ea62fd870e33f7d0215",
+      "parent_sha256": null
+    },
+    {
+      "path": "scripts/tests/test_spray_flow_human_testing.py",
+      "sha256": "bd099baf1078161d0e0f31c069556b5e64dee6c08d9a4039a7c6dd8db5879c28",
+      "parent_sha256": null
+    }
+  ]
+}
