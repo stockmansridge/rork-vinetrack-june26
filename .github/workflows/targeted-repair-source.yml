@@ -13,6 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: 58dc23dffc7340a56ebebc36868a6eeda40c4081
           persist-credentials: false
       - name: Retain source without credentials or customer data
         shell: python
