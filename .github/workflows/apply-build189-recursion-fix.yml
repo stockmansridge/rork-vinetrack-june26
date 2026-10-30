@@ -25,29 +25,37 @@ jobs:
           assert blob(path) == 'b91ea21a82bf9ed730f46dee1fb57e14bf811db0', 'View changed: reconcile rather than overwrite'
           assert blob(engine) == '0c0a805bf416cc8a67d7a213709afb37dfd24c88', 'Flow rule changed: re-review'
           before = '            let chosenAreaBasis = productAreaBasis[line.id] ??\n                (newSpray && flow.requiresBandWidth && line.basis == .perHectare ? .treatedArea : nil)'
-          after = '''            // This projection is an INPUT to flow. Reading flow here re-enters
-                      // guidedInputs -> guidedProductLines after the first chemical is
-                      // selected and overflows the main-thread stack (build 189).
-                      // Use the same leaf operation check as SprayGuidedFlow; do not
-                      // construct a flow to decide how to construct its own products.
-                      let chosenAreaBasis = productAreaBasis[line.id] ??
-                          (newSpray && operationType == .bandedSpray && line.basis == .perHectare ? .treatedArea : nil)'''
-          # Multiline string indentation is explicit: normalize the five comment
-          # lines and decision to match the surrounding Swift source.
-          after = '\n'.join([after.splitlines()[0]] + [line[10:] for line in after.splitlines()[1:]])
+          after = '\n'.join([
+              '            // This projection is an INPUT to flow. Reading flow here re-enters',
+              '            // guidedInputs -> guidedProductLines after the first chemical is',
+              '            // selected and overflows the main-thread stack (build 189).',
+              '            // Use the same leaf operation check as SprayGuidedFlow; do not',
+              '            // construct a flow to decide how to construct its own products.',
+              '            let chosenAreaBasis = productAreaBasis[line.id] ??',
+              '                (newSpray && operationType == .bandedSpray && line.basis == .perHectare ? .treatedArea : nil)'])
           source = path.read_text()
           assert source.count(before) == 1
           path.write_text(source.replace(before, after))
+          assert blob(path) == '935be095c8644385fb24db04b2ad518e4490e57a', 'Must equal locally tested production source'
+          test = Path('scripts/tests/test_spray_product_recursion.py')
+          code = test.read_text()
+          assert code.count('text=True, timeout=35)') == 1
+          test.write_text(code.replace('text=True, timeout=35)', 'text=True, timeout=120)'))
       - name: Focused source and production-expression tests
         run: |
           python3 -m unittest discover -s scripts/tests -p test_spray_product_recursion.py -v
           if command -v swiftc >/dev/null; then swiftc -frontend -parse ios/VineTrack/App/SprayCalculatorView.swift; fi
           git diff --check
-      - name: Commit only the verified calculator expression to the repair branch
+      - name: Verify change scope
+        shell: python
         run: |
-          test "$(git diff --name-only)" = "ios/VineTrack/App/SprayCalculatorView.swift"
+          import subprocess
+          actual = set(subprocess.check_output(['git','diff','--name-only'], text=True).splitlines())
+          assert actual == {'ios/VineTrack/App/SprayCalculatorView.swift','scripts/tests/test_spray_product_recursion.py'}
+      - name: Commit only the verified correction and focused test bound
+        run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add ios/VineTrack/App/SprayCalculatorView.swift
+          git add ios/VineTrack/App/SprayCalculatorView.swift scripts/tests/test_spray_product_recursion.py
           git commit -m 'fix(iOS): break recursive flow construction after first chemical selection'
           git push origin HEAD:refs/heads/fix/ios-189-chemical-flow-recursion
