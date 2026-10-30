@@ -1280,6 +1280,7 @@ private fun YieldListView(
                             }
                         } else {
                             item(key = "vintage-est-current") {
+                                YieldMasterWeightSyncNotice(state)
                                 CurrentYieldEstimateSummary(currentReport, current = true)
                                 Text("Latest completed observation per block; current shared weights and vines.", color = vine.textSecondary, fontSize = 11.sp)
                             }

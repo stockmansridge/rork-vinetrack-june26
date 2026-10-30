@@ -18545,6 +18545,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (pendingWrites.readIssue.value == null && pinEvidenceStore.readIssue.value == null) {
             startTankCommitCoordinator.recover()
         }
+        if (_ui.value.isOnline && isCurrentLoad()) {
+            com.rork.vinetrack.data.YieldMasterWeightRepository.get(getApplication())
+                .refresh(vineyardId, _ui.value.paddocks)
+        }
+        if (!isCurrentLoad()) return
         com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("vineyard.load.published")
         reconcileMissingBudburstFromGrowthRecords()
         prepareOptimalRipenessWeather(vineyardId)
