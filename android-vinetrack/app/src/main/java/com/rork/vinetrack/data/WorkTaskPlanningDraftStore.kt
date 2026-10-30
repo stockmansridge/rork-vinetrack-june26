@@ -45,7 +45,25 @@ class WorkTaskPlanningDraftStore(
         check(write(intent.persistenceKey, json.encodeToString(intent))) { "Request could not be saved to this device" }
     }
     fun loadIntent(author: String, vineyard: String, task: String): WorkTaskWriteIntent? =
-        read("work-task-write-$author-$vineyard-$task")?.let { json.decodeFromString<WorkTaskWriteIntent>(it) }
+        read("work-task-write-$author-$vineyard-$task")?.let { json.decodeFromString<WorkTaskWriteIntent>(it) }?.also {
+            check(it.authorId == author && it.vineyardId == vineyard && it.taskId == task)
+        }
+
+    fun recovery(intent: WorkTaskWriteIntent): TaskWriteRecovery? =
+        read("${intent.persistenceKey}-lifecycle")?.let { json.decodeFromString<TaskWriteRecovery>(it) }?.also {
+            check(it.original.copy(acknowledged = false) == intent.copy(acknowledged = false)) { "Retained request differs from lifecycle evidence" }
+        }
+
+    fun saveRecovery(state: TaskWriteRecovery) {
+        check(write("${state.original.persistenceKey}-lifecycle", json.encodeToString(state))) { "Request lifecycle could not be saved" }
+    }
+
+    fun archiveIntent(intent: WorkTaskWriteIntent) {
+        val text = json.encodeToString(intent)
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+        check(write("${intent.persistenceKey}-history-$hash", text)) { "Original request could not be archived" }
+        recovery(intent)?.let { check(write("${intent.persistenceKey}-history-$hash-lifecycle", json.encodeToString(it))) }
+    }
 
     fun load(author: String, vineyard: String, task: String?): WorkTaskPlanningDraft? {
         val key = "work-task-planning-$author-$vineyard-${task ?: "new"}"

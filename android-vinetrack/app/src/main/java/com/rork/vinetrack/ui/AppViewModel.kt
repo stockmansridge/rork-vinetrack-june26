@@ -1223,17 +1223,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun loadWorkTaskPlanningDraft(taskId: String?): com.rork.vinetrack.data.model.WorkTaskPlanningDraft? {
         val author = session.userId ?: return null
         val vineyard = _ui.value.selectedVineyardId ?: return null
+        if (taskId != null) {
+            val original = planningDrafts.loadIntent(author, vineyard, taskId)
+            if (original?.acknowledged == true && planningDrafts.recovery(original)?.followUpComplete == true) return null
+        }
         return planningDrafts.load(author, vineyard, taskId)
     }
 
     fun discardWorkTaskPlanningDraft(taskId: String?) {
         val author = session.userId ?: return
         val vineyard = _ui.value.selectedVineyardId ?: return
+        val draft = planningDrafts.load(author, vineyard, taskId)
+        val id = taskId ?: draft?.creationId
+        val retained = id?.let { planningDrafts.loadIntent(author, vineyard, it) }
+        check(retained == null) { "Retain this request and its draft. Check saved task first." }
         planningDrafts.discardPlanningDraft(author, vineyard, taskId)
     }
 
     fun saveWorkTaskPlanningDraft(draft: com.rork.vinetrack.data.model.WorkTaskPlanningDraft) {
         require(com.rork.vinetrack.data.model.WorkTaskPlanning.canSaveDraft(draft, session.userId, _ui.value.selectedVineyardId, _ui.value.currentRole))
+        val id = draft.taskId ?: draft.creationId
+        val original = id?.let { planningDrafts.loadIntent(draft.authorId, draft.vineyardId, it) }
+        check(original == null || (original.acknowledged && planningDrafts.recovery(original)?.followUpComplete == true)) { "Original request and its draft are retained. Check saved task first." }
         planningDrafts.save(draft)
     }
 
@@ -1272,36 +1283,134 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun saveWorkTaskPlanningOnline(draft: com.rork.vinetrack.data.model.WorkTaskPlanningDraft, day: java.time.LocalDate, onResult: (Result<WorkTask>) -> Unit) {
+    fun workTaskWriteRecovery(taskId: String): com.rork.vinetrack.data.TaskWriteRecovery? {
+        val owner = session.userId ?: return null
+        val vineyard = _ui.value.selectedVineyardId ?: return null
+        val original = planningDrafts.loadIntent(owner, vineyard, taskId) ?: return null
+        return planningDrafts.recovery(original) ?: com.rork.vinetrack.data.TaskWriteRecovery(original)
+    }
+
+    fun recoverWorkTaskPlanning(taskId: String, retry: Boolean, onResult: (Result<WorkTask>) -> Unit) {
         viewModelScope.launch {
             onResult(runCatching {
-                saveWorkTaskPlanningDraft(draft)
-                val blocks = selectedBlocks(draft.blockIds.toList())
-                require(blocks.size == draft.blockIds.size) { "Selected blocks unavailable" }
-                val id = draft.taskId ?: requireNotNull(draft.creationId)
-                val intent = com.rork.vinetrack.data.WorkTaskWriteContract.planning(draft, id, day, Instant.now(), blocks.firstOrNull()?.id,
-                    blocks.joinToString(", ") { it.name }, blocks.sumOf { it.areaHectares })
-                val saved = submitWorkTaskIntent(intent)
-                planningDrafts.archiveCreatedDraft(draft, saved.id)
-                reconcileWorkTaskPaddocks(saved.id, saved.vineyardId, draft.blockIds.toList())
+                val owner = session.userId ?: error("Sign in with the original account")
+                val vineyard = _ui.value.selectedVineyardId ?: error("Select the original vineyard")
+                val original = planningDrafts.loadIntent(owner, vineyard, taskId) ?: error("Original request unavailable")
+                val retainedDraft = planningDrafts.load(owner, vineyard, null)?.takeIf { it.creationId == taskId }
+                    ?: planningDrafts.load(owner, vineyard, taskId)
+                val saved = if (retry) submitWorkTaskIntent(original, retryOriginal = true) else {
+                    val verified = com.rork.vinetrack.data.WorkTaskWriteCoordinator(planningDrafts).recover(original,
+                        { session.userId == owner && _ui.value.selectedVineyardId == vineyard && !hasPendingTaskHeader(taskId) },
+                        { com.rork.vinetrack.data.WorkTaskPlanningRepository(session).recover(it) })
+                    acceptVerifiedTask(original, verified)
+                }
+                if (retainedDraft != null) finishWorkTaskPlanning(retainedDraft, saved, recovering = true)
                 saved
             })
         }
     }
 
-    private suspend fun submitWorkTaskIntent(intent: com.rork.vinetrack.data.WorkTaskWriteIntent): WorkTask {
+    private suspend fun finishWorkTaskPlanning(draft: com.rork.vinetrack.data.model.WorkTaskPlanningDraft, saved: WorkTask, recovering: Boolean) {
+        var stage = com.rork.vinetrack.data.TaskWriteStage.BLOCK_ALLOCATION
+        try {
+            check(session.userId == draft.authorId && _ui.value.selectedVineyardId == draft.vineyardId)
+            if (recovering) {
+                // Refresh existing links before recovery; never delete links that may be newer work.
+                val remote = workTaskPaddockRepo.listForVineyard(draft.vineyardId).filter { it.workTaskId == saved.id }
+                check(session.userId == draft.authorId && _ui.value.selectedVineyardId == draft.vineyardId)
+                check(remote.all { it.paddockId in draft.blockIds }) { "Server block allocation differs; manager review required" }
+                _ui.update { st -> st.copy(workTaskPaddocks = st.workTaskPaddocks.filterNot { it.workTaskId == saved.id } + remote) }
+            }
+            check(session.userId == draft.authorId && _ui.value.selectedVineyardId == draft.vineyardId &&
+                _ui.value.currentRole in listOf("owner", "manager", "supervisor", "operator")) { "Write access required to finish block allocation" }
+            com.rork.vinetrack.data.OperationalWrites.requireWrite(draft.vineyardId)
+            // Persist stable child requests before publication. Existing pending requests are never replaced.
+            val original = planningDrafts.loadIntent(draft.authorId, draft.vineyardId, saved.id) ?: error("Original request unavailable")
+            val stamp = original.payload["client_updated_at"]?.jsonPrimitive?.content ?: error("Original request timestamp unavailable")
+            val queued = pendingWrites.list().filter { it.entityType == PendingEntityType.WORK_TASK_PADDOCK && it.status in PendingWriteStatus.unresolved }
+                .filter { it.opType == PendingOpType.CREATE }.map { kotlinx.serialization.json.Json { ignoreUnknownKeys = true }.decodeFromString<com.rork.vinetrack.data.WorkTaskPaddockSync.CreatePayload>(it.payloadJson) }
+                .filter { it.workTaskId == saved.id && it.vineyardId == draft.vineyardId }
+            val known = _ui.value.workTaskPaddocks.filter { it.workTaskId == saved.id } + queued.map { WorkTaskPaddock(it.id, it.workTaskId, it.vineyardId, it.paddockId, it.areaHa) }
+            for (block in draft.blockIds.filterNot { id -> known.any { it.paddockId == id } }) {
+                val joinId = java.util.UUID.nameUUIDFromBytes("${draft.authorId}:${draft.vineyardId}:${saved.id}:$stamp:planning:$block".toByteArray()).toString()
+                check(pendingWrites.list().none { it.entityType == PendingEntityType.WORK_TASK_PADDOCK && it.clientId == joinId }) {
+                    "Original block allocation request retained; review Sync Status before retrying this step"
+                }
+                workTaskPaddockSync.enqueueCreate(joinId, saved.id, saved.vineyardId, block,
+                    _ui.value.paddocks.firstOrNull { it.id == block }?.areaHectares, stamp)
+                _ui.update { st -> st.copy(workTaskPaddocks = st.workTaskPaddocks + WorkTaskPaddock(joinId, saved.id, saved.vineyardId, block)) }
+            }
+            // Queue removals durably too: a later allocation failure cannot turn a saved header into a failed save.
+            // Recovery never deletes unexpected links or replaces an unresolved child request.
+            if (!recovering) for (row in known.filterNot { it.paddockId in draft.blockIds }) {
+                check(pendingWrites.list().none { it.entityType == PendingEntityType.WORK_TASK_PADDOCK && it.clientId == row.id && it.status in PendingWriteStatus.unresolved }) {
+                    "Existing block request retained; review block allocation in Sync Status"
+                }
+                workTaskPaddockSync.enqueueDelete(row.id, saved.id)
+                _ui.update { st -> st.copy(workTaskPaddocks = st.workTaskPaddocks.filterNot { it.id == row.id }) }
+            }
+            stage = com.rork.vinetrack.data.TaskWriteStage.CLEANUP
+            planningDrafts.archiveCreatedDraft(draft, saved.id)
+            val currentIntent = planningDrafts.loadIntent(draft.authorId, draft.vineyardId, saved.id) ?: error("Original request unavailable")
+            val recovery = planningDrafts.recovery(currentIntent) ?: com.rork.vinetrack.data.TaskWriteRecovery(currentIntent)
+            planningDrafts.saveRecovery(recovery.copy(followUpComplete = true, confirmed = saved, phase = com.rork.vinetrack.data.TaskWritePhase.CONFIRMED))
+        } catch (error: Exception) {
+            val failure = com.rork.vinetrack.data.TaskWriteFailure(stage, com.rork.vinetrack.data.TaskWritePhase.CONFIRMED, cause = error, savedTask = saved)
+            try {
+                val original = planningDrafts.loadIntent(draft.authorId, draft.vineyardId, saved.id)
+                if (original != null) {
+                    val state = planningDrafts.recovery(original) ?: com.rork.vinetrack.data.TaskWriteRecovery(original)
+                    planningDrafts.saveRecovery(state.copy(stage = stage, detail = failure.diagnostic(), confirmed = saved, followUpComplete = false))
+                }
+            } catch (storage: Exception) { failure.addSuppressed(storage) }
+            throw failure
+        }
+    }
+
+    fun saveWorkTaskPlanningOnline(draft: com.rork.vinetrack.data.model.WorkTaskPlanningDraft, day: java.time.LocalDate, onResult: (Result<WorkTask>) -> Unit) {
+        viewModelScope.launch {
+            onResult(runCatching {
+                val id = draft.taskId ?: requireNotNull(draft.creationId)
+                val prior = planningDrafts.loadIntent(draft.authorId, draft.vineyardId, id)
+                if (prior != null && (!prior.acknowledged || draft.baselineJson == null)) {
+                    val state = planningDrafts.recovery(prior) ?: com.rork.vinetrack.data.TaskWriteRecovery(prior)
+                    throw com.rork.vinetrack.data.TaskWriteFailure(com.rork.vinetrack.data.TaskWriteStage.SERVER_REVIEW, state.phase, state.status, state.code)
+                }
+                saveWorkTaskPlanningDraft(draft)
+                val blocks = selectedBlocks(draft.blockIds.toList())
+                require(blocks.size == draft.blockIds.size) { "Selected blocks unavailable" }
+                val intent = com.rork.vinetrack.data.WorkTaskWriteContract.planning(draft, id, day, Instant.now(), blocks.firstOrNull()?.id,
+                    blocks.joinToString(", ") { it.name }, blocks.sumOf { it.areaHectares })
+                val saved = submitWorkTaskIntent(intent)
+                finishWorkTaskPlanning(draft, saved, recovering = false)
+                saved
+            })
+        }
+    }
+
+    private suspend fun submitWorkTaskIntent(intent: com.rork.vinetrack.data.WorkTaskWriteIntent, retryOriginal: Boolean = false): WorkTask {
         require(session.userId == intent.authorId && _ui.value.selectedVineyardId == intent.vineyardId &&
             _ui.value.currentRole in listOf("owner", "manager", "supervisor", "operator") && !hasPendingTaskHeader(intent.taskId))
-        val saved = com.rork.vinetrack.data.WorkTaskWriteCoordinator(planningDrafts).submit(intent,
+        val saved = com.rork.vinetrack.data.WorkTaskWriteCoordinator(planningDrafts).submitTracked(intent,
+            retryOriginal = retryOriginal,
             canWrite = { session.userId == intent.authorId && _ui.value.selectedVineyardId == intent.vineyardId && !hasPendingTaskHeader(intent.taskId) },
-            send = {
-                check(_ui.value.isOnline) { "Saved on this device only. No automatic replay." }
-                com.rork.vinetrack.data.WorkTaskPlanningRepository(session).write(it)
+            send = { original, dispatch, progress ->
+                check(_ui.value.isOnline) { "No connection; task request not sent" }
+                com.rork.vinetrack.data.WorkTaskPlanningRepository(session).write(original, dispatch, progress)
             })
+        return acceptVerifiedTask(intent, saved)
+    }
+
+    private fun acceptVerifiedTask(intent: com.rork.vinetrack.data.WorkTaskWriteIntent, saved: WorkTask): WorkTask {
+        try {
+        check(session.userId == intent.authorId && _ui.value.selectedVineyardId == intent.vineyardId)
         _ui.update { st -> st.copy(workTasks = st.workTasks.filterNot { it.id == saved.id } + saved) }
         domainCache.saveWorkTasks(intent.authorId, intent.vineyardId, _ui.value.workTasks)
         originalCompletionBaselines.remove(saved.id)
         return saved
+        } catch (error: Exception) {
+            throw com.rork.vinetrack.data.TaskWriteFailure(com.rork.vinetrack.data.TaskWriteStage.LOCAL_PERSISTENCE, com.rork.vinetrack.data.TaskWritePhase.CONFIRMED, cause = error, savedTask = saved)
+        }
     }
 
     private fun guardedCompletion(task: WorkTask, action: String, selected: java.time.LocalDate?, onResult: (Boolean) -> Unit) {

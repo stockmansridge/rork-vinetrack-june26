@@ -1474,6 +1474,9 @@ private fun WorkTaskSheet(
     var showAssignment by remember { mutableStateOf(false) }
     var showQuickAdd by remember { mutableStateOf(false) }
     var showRangePicker by remember { mutableStateOf(false) }
+    var writeRecovery by remember(existing?.id) { mutableStateOf<com.rork.vinetrack.data.TaskWriteRecovery?>(null) }
+    var technicalDetails by remember { mutableStateOf<String?>(null) }
+    var showSaveDiagnostics by remember { mutableStateOf(false) }
 
     LaunchedEffect(existing?.id, state.currentUserId, state.selectedVineyardId) {
         try {
@@ -1487,9 +1490,12 @@ private fun WorkTaskSheet(
                 taskType = draft.taskType; selectedBlockIds = draft.blockIds; hoursText = draft.durationText; notes = draft.notes
                 runCatching { Instant.parse(draft.date).atZone(state.seasonZone).toLocalDate() }.getOrNull()?.let { workDay = it }
                 planningChanged = true
-                draftMessage = "Resumed local draft. Only online selection save is available with an original baseline. Other fields are not queued; no automatic rebase."
+                draftMessage = "Your local draft has been restored. Check any retained save request before making further changes."
             }
         } catch (_: Exception) { resumedPlanningDraft = true; draftMessage = "Stored draft could not be read. It has not been overwritten." }
+        try { writeRecovery = vm.workTaskWriteRecovery(existing?.id ?: creationId)?.takeUnless { existing != null && it.phase == com.rork.vinetrack.data.TaskWritePhase.CONFIRMED && it.followUpComplete } }
+        catch (error: Exception) { draftMessage = "Retained request could not be read. Keep this installation and ask support to review it."; technicalDetails = error.toString() }
+        if (writeRecovery != null) draftMessage = "An original save request is retained. Choose Check saved task to verify it before continuing."
         if (!resumedPlanningDraft && existing != null) {
             try { planningBaselineJson = vm.loadWorkTaskPlanningBaseline(existing) }
             catch (_: Exception) { draftMessage = "Online selection unavailable. Refresh the task before editing; local draft remains available." }
@@ -1530,20 +1536,37 @@ private fun WorkTaskSheet(
         }, onDismiss = { showQuickAdd = false })
     }
 
+    fun handleSaveResult(result: Result<WorkTask>) {
+        saving = false
+        result.fold({ saved ->
+            planningBaselineJson = null
+            if (!lifecycle.hasPersistedTask) lifecycle = lifecycle.acceptingFirstSave(saved.id)
+            showsSavedFeedback = true
+            draftMessage = "Task header confirmed saved. Block allocations are separate and may still be pending sync. You can add resources to this verified task."
+        }, { error ->
+            val failure = error as? com.rork.vinetrack.data.TaskWriteFailure
+            draftMessage = failure?.userMessage ?: "The task could not be saved. Your draft is retained. Review the form and connection; diagnostics contain the failure details."
+            technicalDetails = failure?.diagnostic() ?: "stage=VALIDATION error=${error.javaClass.simpleName}: ${error.message}"
+            failure?.savedTask?.takeIf { it.vineyardId == editorVineyard && state.currentUserId == editorAuthor && state.selectedVineyardId == editorVineyard }?.let { saved ->
+                if (!lifecycle.hasPersistedTask) lifecycle = lifecycle.acceptingFirstSave(saved.id)
+            }
+        })
+        runCatching { vm.workTaskWriteRecovery(existing?.id ?: creationId) }.onSuccess { writeRecovery = it }
+    }
+
+    fun recoverSave(retry: Boolean) {
+        if (saving || state.currentUserId != editorAuthor || state.selectedVineyardId != editorVineyard) return
+        saving = true
+        vm.recoverWorkTaskPlanning(existing?.id ?: creationId, retry, ::handleSaveResult)
+    }
+
     fun save() {
         val author = state.currentUserId ?: return
         val vineyard = state.selectedVineyardId ?: return
         if (saving || author != editorAuthor || vineyard != editorVineyard || (existing != null && vineyard != existing.vineyardId)) return
         saving = true
         val draft = com.rork.vinetrack.data.model.WorkTaskPlanningDraft(lifecycle.persistedTaskId, vineyard, author, assignedTo, externalId, assignmentName, scheduleBasis, targetStage, workDateIso, null, taskType, selectedBlockIds, hoursText, notes, baselineJson = planningBaselineJson, creationId = creationId)
-        vm.saveWorkTaskPlanningOnline(draft, workDay) { result ->
-            saving = false; planningBaselineJson = null
-            result.fold({ saved ->
-                if (!lifecycle.hasPersistedTask) lifecycle = lifecycle.acceptingFirstSave(saved.id)
-                showsSavedFeedback = true
-                draftMessage = "Header saved online. Blocks use the existing separate allocation sync. Reopen and review before further edits."
-            }, { draftMessage = "Save not confirmed. Draft and original request retained; review server state. No automatic retry or rebase." })
-        }
+        vm.saveWorkTaskPlanningOnline(draft, workDay, ::handleSaveResult)
     }
 
     LaunchedEffect(showsSavedFeedback) {
@@ -1666,10 +1689,18 @@ private fun WorkTaskSheet(
             }
             Text("Online planning uses the original task version. Completion, costing and linked Trips remain untouched. No automatic replay.", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { savePlanningDraft() }) { Text("Save local planning draft") }
-            if (resumedPlanningDraft) TextButton(onClick = {
+            if (resumedPlanningDraft && writeRecovery == null) TextButton(onClick = {
                 runCatching { require(state.currentUserId == editorAuthor && state.selectedVineyardId == editorVineyard); vm.discardWorkTaskPlanningDraft(existing?.id) }.fold({ onDismiss() }, { draftMessage = "Draft could not be removed. Unconfirmed write requests remain protected." })
             }) { Text("Discard planning draft and close") }
             draftMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            if (writeRecovery != null) {
+                OutlinedButton(onClick = { recoverSave(false) }, enabled = !saving, modifier = Modifier.fillMaxWidth()) { Text("Check saved task") }
+                if (writeRecovery?.phase in setOf(com.rork.vinetrack.data.TaskWritePhase.UNSENT, com.rork.vinetrack.data.TaskWritePhase.REJECTED) && writeRecovery?.code != "VERSION_CONFLICT") {
+                    OutlinedButton(onClick = { recoverSave(true) }, enabled = !saving, modifier = Modifier.fillMaxWidth()) { Text("Retry original request") }
+                }
+                Text("Recovery uses the retained original fields and task identity, not any new form edits.", style = MaterialTheme.typography.bodySmall)
+            }
+            if (technicalDetails != null || writeRecovery != null) TextButton(onClick = { showSaveDiagnostics = true }) { Text("Save diagnostics") }
 
             OutlinedTextField(
                 value = hoursText,
@@ -1751,7 +1782,7 @@ private fun WorkTaskSheet(
 
             Button(
                 onClick = { save() },
-                enabled = !saving && taskType.isNotBlank(),
+                enabled = !saving && taskType.isNotBlank() && writeRecovery == null,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
             ) {
@@ -1762,6 +1793,14 @@ private fun WorkTaskSheet(
                 }
             }
         }
+    }
+
+    if (showSaveDiagnostics) {
+        AlertDialog(onDismissRequest = { showSaveDiagnostics = false }, title = { Text("Task save diagnostics") },
+            text = { androidx.compose.foundation.text.selection.SelectionContainer { Text(
+                "Task: ${existing?.id ?: creationId}\nAccount: $editorAuthor\nVineyard: $editorVineyard\n" +
+                (technicalDetails ?: writeRecovery?.let { "stage=${it.stage} phase=${it.phase} http=${it.status} code=${it.code}\n${it.detail.orEmpty()}" }.orEmpty())
+            ) } }, confirmButton = { TextButton(onClick = { showSaveDiagnostics = false }) { Text("Close") } })
     }
 
     if ((addingLabour || editLabour != null) && lifecycle.persistedTaskId != null) {

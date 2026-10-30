@@ -1,0 +1,73 @@
+{
+  "scope": "Android Work Task header write recovery; separate from iOS Trip deletion",
+  "source_parent": "feee81254d11c4910bc1ca105f7ea019cc8472ac",
+  "integration_commit": null,
+  "inputs": [
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SupabaseClient.kt",
+      "sha256": "a5d2bbac1ddf3e3115aa99bf33c02df7debe215e031187ee85b407916a38d296",
+      "bytes": 11741,
+      "parent_sha256": "fd2b1095b7335b7f0a4d552ac7dc83af7eb94cdbb207684cca328fd7b8886451"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/WorkTaskPlanningDraftStore.kt",
+      "sha256": "b3d19d52408e2c0ff908232b7f706182b44e8e6dc4c7c1865e75e90de415d2c6",
+      "bytes": 4186,
+      "parent_sha256": "ff74b9f2c6a12f45542c61493f064e78247c7b661833cc3470862a1f1eb40228"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/WorkTaskPlanningRepository.kt",
+      "sha256": "d7022e5886c09c01911b2980a98e66a06e540088b1365e8adf17374a0d78fde3",
+      "bytes": 16013,
+      "parent_sha256": "833b389b99dff6e4ce83305d6925ec8a3469c9430c0de43ea8deb4952fa33e13"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/WorkTaskWriteCoordinator.kt",
+      "sha256": "09f9f31085b63b5c43313b616b89c19477b3009bf28cc2e04608c6de0dde0fbf",
+      "bytes": 6370,
+      "parent_sha256": "1f6eebaeb88c2777c702527a17c035bda25d10278dad2e32b095abbcf78ce427"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/WorkTaskWriteRecovery.kt",
+      "sha256": "b24a3f3db7f57a59cdc4f0c19976afa8d88ebbaa415c5227b0d4a9455f562683",
+      "bytes": 3628,
+      "parent_sha256": null
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt",
+      "sha256": "60d4cc9264534309046fe381b73fc4ac069c23f937b1d047f5e6168265362597",
+      "bytes": 985999,
+      "parent_sha256": "ab89ffe75e4af17ea9b96a1414b32630d6f1172a3236efe72224ec82fb609bc2"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/WorkTasksScreen.kt",
+      "sha256": "02c55fdb8ba70584ef80cac50e30512730f82ca809ff72d3418b67647b7c4f0f",
+      "bytes": 114769,
+      "parent_sha256": "f4ce5a645986d27c43cad869c66af02b97c64984df5f224134d092a6fd58f2f1"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/WorkTaskWriteRecoveryTest.kt",
+      "sha256": "e7129ee2d62ec329adfc97abdd1aef17af7392b594ab1e80a0fa7335c9860812",
+      "bytes": 16189,
+      "parent_sha256": null
+    },
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/WorkTaskWriteRecoveryAndroidTest.kt",
+      "sha256": "c981a5992227d3f4adad1d82811e498ec0cfe127aea3faa83430c8b80648bbca",
+      "bytes": 9275,
+      "parent_sha256": null
+    },
+    {
+      "path": "scripts/run-work-task-write-recovery-tests.py",
+      "sha256": "ce3f9cc59a8a7ecbd8db40ff9bfb24025e5d64b5e699f8d6059c27b1644fbd3a",
+      "bytes": 1822,
+      "parent_sha256": null
+    },
+    {
+      "path": "scripts/snapshot-work-task-write-recovery-source.py",
+      "sha256": "4cf1519e75b12d41ea25fe5f795cab634e0ec056dc43f98b643b64d8cb86395c",
+      "bytes": 1864,
+      "parent_sha256": null
+    }
+  ]
+}

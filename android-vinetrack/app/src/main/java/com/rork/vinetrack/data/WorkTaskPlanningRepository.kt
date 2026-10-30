@@ -84,8 +84,18 @@ class WorkTaskPlanningRepository(private val session: SessionStore) {
     }
 
     /** Acknowledges only one canonical row. No duplicate INSERT recovery or conditional PATCH retry. */
-    suspend fun write(intent: WorkTaskWriteIntent): WorkTask = withContext(Dispatchers.IO) {
-        require(session.userId == intent.authorId && session.selectedVineyardId == intent.vineyardId)
+    suspend fun write(intent: WorkTaskWriteIntent, beforeDispatch: () -> Unit = {}, progress: (TaskWriteStage) -> Unit = {}): WorkTask = withContext(Dispatchers.IO) {
+        progress(TaskWriteStage.SESSION)
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        fun current() { check(session.isAccountAccessCurrent(access) && session.userId == intent.authorId && session.selectedVineyardId == intent.vineyardId) { "Original account or vineyard changed" } }
+        current()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        fun HttpRequestBuilder.scoped() {
+            current()
+            attributes.put(SupabaseClient.accountRequestScope, access)
+            headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
+        }
+        progress(TaskWriteStage.VALIDATION)
         val baseline = intent.baselineJson?.let { json.parseToJsonElement(it).jsonObject }
         if (baseline != null) {
             val version = baseline["sync_version"]?.jsonPrimitive?.longOrNull ?: error(refreshMessage)
@@ -93,34 +103,75 @@ class WorkTaskPlanningRepository(private val session: SessionStore) {
                 baseline["vineyard_id"]?.jsonPrimitive?.content == intent.vineyardId && baseline["deleted_at"] == JsonNull &&
                 version > 0 && version < Long.MAX_VALUE && intent.payload["sync_version"]?.jsonPrimitive?.longOrNull == version + 1)
         } else require(intent.payload["id"]?.jsonPrimitive?.content == intent.taskId && intent.payload["vineyard_id"]?.jsonPrimitive?.content == intent.vineyardId && intent.payload["sync_version"]?.jsonPrimitive?.longOrNull == 1L)
+        progress(TaskWriteStage.MEMBERSHIP)
         val membership = SupabaseClient.http.get(SupabaseClient.restUrl("vineyard_members")) {
-            auth(); parameter("select", "role"); parameter("vineyard_id", "eq.${intent.vineyardId}"); parameter("user_id", "eq.${intent.authorId}")
+            scoped(); parameter("select", "role"); parameter("vineyard_id", "eq.${intent.vineyardId}"); parameter("user_id", "eq.${intent.authorId}")
         }
-        check(membership.status.isSuccess())
+        checkResponse(membership, TaskWriteStage.MEMBERSHIP, false)
+        current()
         val member = json.parseToJsonElement(membership.bodyAsText()).jsonArray.singleOrNull()?.jsonObject
         require(member?.get("role")?.jsonPrimitive?.content in listOf("owner", "manager", "supervisor", "operator"))
+        progress(TaskWriteStage.ASSIGNMENT)
         intent.payload["assigned_to"]?.takeUnless { it == JsonNull || it == baseline?.get("assigned_to") }?.let { selected ->
             val response = SupabaseClient.http.get(SupabaseClient.restUrl("vineyard_members")) {
-                auth(); parameter("select", "user_id"); parameter("vineyard_id", "eq.${intent.vineyardId}"); parameter("user_id", "eq.${selected.jsonPrimitive.content}")
+                scoped(); parameter("select", "user_id"); parameter("vineyard_id", "eq.${intent.vineyardId}"); parameter("user_id", "eq.${selected.jsonPrimitive.content}")
             }
-            check(response.status.isSuccess() && json.parseToJsonElement(response.bodyAsText()).jsonArray.size == 1)
+            checkResponse(response, TaskWriteStage.ASSIGNMENT, false)
+            current()
+            check(json.parseToJsonElement(response.bodyAsText()).jsonArray.size == 1) { "Selected assignee is not a visible current vineyard member" }
         }
         intent.payload["assigned_external_resource_id"]?.takeUnless { it == JsonNull || it == baseline?.get("assigned_external_resource_id") }?.let { selected ->
             check(ExternalResourceRepository(session).list(intent.vineyardId).any { it.id == selected.jsonPrimitive.content && it.isActive && it.deletedAt == null })
         }
-        require(session.userId == intent.authorId && session.selectedVineyardId == intent.vineyardId)
+        current()
+        progress(TaskWriteStage.SESSION) // Includes the shared client's suspended refresh before dispatch.
         val response = SupabaseClient.http.request(SupabaseClient.restUrl("work_tasks")) {
             method = if (baseline == null) HttpMethod.Post else HttpMethod.Patch
-            auth(); headers { append("Prefer", "return=representation") }; contentType(ContentType.Application.Json)
+            scoped(); headers { append("Prefer", "return=representation") }; contentType(ContentType.Application.Json)
+            attributes.put(SupabaseClient.operationalWriteVineyard, intent.vineyardId)
+            attributes.put(SupabaseClient.taskWriteDispatch) { current(); beforeDispatch() }
             baseline?.let { row -> WorkTaskWriteContract.predicates(row, observedKeys).forEach { (key, predicate) -> parameter(key, predicate) } }
             setBody(intent.payload.toString())
         }
-        check(response.status.isSuccess()) { conflictMessage }
-        val row = json.parseToJsonElement(response.bodyAsText()).jsonArray.singleOrNull()?.jsonObject ?: error(conflictMessage)
+        checkResponse(response, TaskWriteStage.SERVER_REJECTION, true)
+        progress(TaskWriteStage.ACKNOWLEDGEMENT)
+        current()
+        val row = json.parseToJsonElement(response.bodyAsText()).jsonArray.singleOrNull()?.jsonObject
+            ?: throw TaskWriteFailure(TaskWriteStage.ACKNOWLEDGEMENT, TaskWritePhase.DISPATCHED, code = "EMPTY_WRITE_ACKNOWLEDGEMENT")
         WorkTaskWriteContract.verify(baseline, intent.payload, row, observedKeys)
         val saved = json.decodeFromJsonElement<WorkTask>(row)
         check(saved.id == intent.taskId && saved.vineyardId == intent.vineyardId && session.userId == intent.authorId && session.selectedVineyardId == intent.vineyardId)
         saved
+    }
+
+    /** Read-only recovery: scoped positive matching row only. No INSERT/PATCH fallback. */
+    suspend fun recover(intent: WorkTaskWriteIntent): WorkTask = withContext(Dispatchers.IO) {
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        fun current() { check(session.isAccountAccessCurrent(access) && session.userId == intent.authorId && session.selectedVineyardId == intent.vineyardId) }
+        current()
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl("work_tasks")) {
+            attributes.put(SupabaseClient.accountRequestScope, access)
+            headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $token") }
+            parameter("select", "*"); parameter("id", "eq.${intent.taskId}"); parameter("vineyard_id", "eq.${intent.vineyardId}")
+        }
+        checkResponse(response, TaskWriteStage.SERVER_REVIEW, false)
+        current()
+        val row = json.parseToJsonElement(response.bodyAsText()).jsonArray.singleOrNull()?.jsonObject
+            ?: throw TaskWriteFailure(TaskWriteStage.SERVER_REVIEW, TaskWritePhase.UNKNOWN, code = "ABSENCE_OR_ACCESS_UNVERIFIED")
+        try { WorkTaskRecoveryProof.verify(intent, row) }
+        catch (error: Exception) { throw TaskWriteFailure(TaskWriteStage.SERVER_REVIEW, TaskWritePhase.UNKNOWN, code = "VERSION_CONFLICT", cause = error) }
+    }
+
+    private suspend fun checkResponse(response: io.ktor.client.statement.HttpResponse, stage: TaskWriteStage, taskWrite: Boolean) {
+        if (response.status.isSuccess()) return
+        val body = response.bodyAsText()
+        val code = runCatching { json.parseToJsonElement(body).jsonObject["code"]?.jsonPrimitive?.content }.getOrNull()
+        val status = response.status.value
+        val rejected = taskWrite && status in 400..499 && status !in listOf(408, 409, 425, 429)
+        throw TaskWriteFailure(if (status == 401) TaskWriteStage.SESSION else stage,
+            if (!taskWrite) TaskWritePhase.UNSENT else if (rejected) TaskWritePhase.REJECTED else TaskWritePhase.DISPATCHED,
+            status, code, BackendError.Server(status, body))
     }
 
     private fun HttpRequestBuilder.auth() {

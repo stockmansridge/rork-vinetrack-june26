@@ -73,6 +73,9 @@ object SupabaseClient {
     /** Opt-in vineyard admission repeated after every suspended refresh and before a retry. */
     val operationalWriteVineyard = io.ktor.util.AttributeKey<String>("VineTrackOperationalWriteVineyard")
 
+    /** Work-task-only opt-in. Runs after session preflight, immediately before execute; forbids implicit retry. */
+    internal val taskWriteDispatch = io.ktor.util.AttributeKey<() -> Unit>("WorkTaskWriteDispatch")
+
     @Volatile internal var performanceCapture: AdminPerformanceCapture? = null
 
     private fun readDataset(path: String): ReadTrafficLedger.Dataset = when (path.substringAfter("/rest/v1/").substringBefore('/')) {
@@ -168,8 +171,10 @@ object SupabaseClient {
                     })
                 }
                 measureRead(false)
+                val taskDispatch = request.attributes.getOrNull(taskWriteDispatch)
+                taskDispatch?.invoke()
                 val call = execute(request)
-                if (!isSessionRequest || refresher == null) return@intercept call
+                if (taskDispatch != null || !isSessionRequest || refresher == null) return@intercept call
                 if (call.response.status.value != 401) return@intercept call
 
                 Log.d(AUTH_TAG, "401 from ${request.url.encodedPath} — attempting session refresh")
