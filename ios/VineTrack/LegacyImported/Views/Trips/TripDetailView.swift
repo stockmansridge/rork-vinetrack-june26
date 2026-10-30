@@ -187,54 +187,7 @@ struct TripDetailView: View {
                 }
             }
 
-            Section("Trip Summary") {
-                if let raw = trip.tripFunction, !raw.isEmpty {
-                    if let function = TripFunction(rawValue: raw) {
-                        statRow("Function", value: function.displayName, icon: function.icon)
-                    } else if raw.hasPrefix("custom:") {
-                        let label = trip.tripTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let display = (label?.isEmpty == false) ? label! : String(raw.dropFirst("custom:".count))
-                        statRow("Function", value: display, icon: "wrench.and.screwdriver")
-                    }
-                }
-                if let title = trip.tripTitle, !title.isEmpty {
-                    statRow("Title", value: title, icon: "text.cursor")
-                }
-                if mayRecoverSavedOccurrenceSpray {
-                    statRow("Status", value: "Not started", icon: "clock")
-                } else {
-                    statRow("Duration", value: formatDuration(trip.activeDuration), icon: "clock")
-                }
-                statRow("Distance", value: formatDistance(trip.totalDistance), icon: "point.topleft.down.to.point.bottomright.curvepath")
-                if !trip.paddockName.isEmpty {
-                    statRow("Block", value: trip.paddockName, icon: "leaf")
-                }
-                if !trip.personName.isEmpty {
-                    statRow("Operator", value: trip.personName, icon: "person")
-                }
-                if let workTaskLabel = linkedWorkTaskLabel {
-                    statRow("Work Task", value: workTaskLabel, icon: "checklist")
-                }
-                if !trip.rowSequence.isEmpty {
-                    statRow("Pattern", value: trip.trackingPattern.title, icon: trip.trackingPattern.icon)
-                    if let startDescription = startMidrowDescription {
-                        statRow("Started", value: startDescription, icon: "flag")
-                    }
-                    statRow("Paths planned", value: "\(trip.rowSequence.count)", icon: "list.number")
-                    statRow("Complete", value: "\(rowCompletionResults.filter { $0.status == .complete }.count)", icon: "checkmark.circle")
-                    let partialCount = rowCompletionResults.filter { $0.status == .partial }.count
-                    if partialCount > 0 {
-                        statRow("Partial", value: "\(partialCount)", icon: "exclamationmark.triangle")
-                    }
-                    let notDoneCount = rowCompletionResults.filter { $0.status == .notComplete }.count
-                    if notDoneCount > 0 {
-                        statRow("Not complete", value: "\(notDoneCount)", icon: "xmark.circle")
-                    }
-                }
-                if pinsForTrip.count > 0 {
-                    statRow("Pins recorded", value: "\(pinsForTrip.count)", icon: "mappin")
-                }
-            }
+            tripSummarySection
 
             if let record = sprayRecord {
                 Section {
@@ -615,6 +568,78 @@ struct TripDetailView: View {
         }
         .onChange(of: trip.pathPoints.count) { _, _ in
             rebuildDisplayTrail()
+        }
+    }
+
+    // Type-check summary branches separately; presentation and all start gates are unchanged.
+    private var tripSummarySection: some View {
+        Section("Trip Summary") {
+            tripSummaryIdentityRows
+            tripSummaryScopeRows
+            tripSummaryCoverageRows
+            tripSummaryPinRows
+        }
+    }
+
+    @ViewBuilder
+    private var tripSummaryIdentityRows: some View {
+        if let raw = trip.tripFunction, !raw.isEmpty {
+            if let function = TripFunction(rawValue: raw) {
+                statRow("Function", value: function.displayName, icon: function.icon)
+            } else if raw.hasPrefix("custom:") {
+                let label = trip.tripTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let display = (label?.isEmpty == false) ? label! : String(raw.dropFirst("custom:".count))
+                statRow("Function", value: display, icon: "wrench.and.screwdriver")
+            }
+        }
+        if let title = trip.tripTitle, !title.isEmpty {
+            statRow("Title", value: title, icon: "text.cursor")
+        }
+        if mayRecoverSavedOccurrenceSpray {
+            statRow("Status", value: "Not started", icon: "clock")
+        } else {
+            statRow("Duration", value: formatDuration(trip.activeDuration), icon: "clock")
+        }
+        statRow("Distance", value: formatDistance(trip.totalDistance), icon: "point.topleft.down.to.point.bottomright.curvepath")
+    }
+
+    @ViewBuilder
+    private var tripSummaryScopeRows: some View {
+        if !trip.paddockName.isEmpty {
+            statRow("Block", value: trip.paddockName, icon: "leaf")
+        }
+        if !trip.personName.isEmpty {
+            statRow("Operator", value: trip.personName, icon: "person")
+        }
+        if let workTaskLabel = linkedWorkTaskLabel {
+            statRow("Work Task", value: workTaskLabel, icon: "checklist")
+        }
+    }
+
+    @ViewBuilder
+    private var tripSummaryCoverageRows: some View {
+        if !trip.rowSequence.isEmpty {
+            statRow("Pattern", value: trip.trackingPattern.title, icon: trip.trackingPattern.icon)
+            if let startDescription = startMidrowDescription {
+                statRow("Started", value: startDescription, icon: "flag")
+            }
+            statRow("Paths planned", value: "\(trip.rowSequence.count)", icon: "list.number")
+            statRow("Complete", value: "\(rowCompletionResults.filter { $0.status == .complete }.count)", icon: "checkmark.circle")
+            let partialCount = rowCompletionResults.filter { $0.status == .partial }.count
+            if partialCount > 0 {
+                statRow("Partial", value: "\(partialCount)", icon: "exclamationmark.triangle")
+            }
+            let notDoneCount = rowCompletionResults.filter { $0.status == .notComplete }.count
+            if notDoneCount > 0 {
+                statRow("Not complete", value: "\(notDoneCount)", icon: "xmark.circle")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tripSummaryPinRows: some View {
+        if pinsForTrip.count > 0 {
+            statRow("Pins recorded", value: "\(pinsForTrip.count)", icon: "mappin")
         }
     }
 
