@@ -4,20 +4,27 @@ on:
     branches: [fix/spray-flow-human-testing-20261030]
     paths: [.github/workflows/spray-flow-source-check.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
   source:
+    if: github.ref == 'refs/heads/fix/spray-flow-human-testing-20261030'
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          fetch-depth: 0
           submodules: false
-      - name: Export exact source for focused inspection
-        run: git archive --format=tar.gz --output=/tmp/vinetrack-spray-source.tar.gz HEAD
-      - uses: actions/upload-artifact@v4
-        with:
-          name: vinetrack-spray-source
-          path: /tmp/vinetrack-spray-source.tar.gz
-          retention-days: 1
+      - name: Apply checksum-verified tested source
+        run: python3 scripts/repairs/apply-spray-flow-20261030.py
+      - name: Verify production UI source guards
+        env:
+          PYTHONPATH: scripts/tests
+        run: python3 -m unittest test_spray_flow_human_testing.SprayFlowSourceTests -v
+      - name: Commit only verified staged application files to isolated branch
+        run: |
+          git diff --cached --check
+          git diff --cached --stat
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Fix production spray-flow selection, canopy confirmation and Full Tank visibility'
+          git push origin HEAD:refs/heads/fix/spray-flow-human-testing-20261030
+          git log -1 --format='%H %T'
