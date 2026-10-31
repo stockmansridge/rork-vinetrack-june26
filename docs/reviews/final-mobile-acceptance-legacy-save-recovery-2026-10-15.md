@@ -1,5 +1,12 @@
 # Mobile source closeout / legacy Save for Later — 15 October 2026
 
+## Android recovery managed provenance confirmed — 31 October 2026
+
+- Automatic sync has now retained the repaired source as **`98ef5a67e3af4b5faafb80ec80500fd55006e9fd`**, parent **`da345bd992f734fd3ea2b90db00fcaa7e4339311`**; Android Git tree **`4133d87d1152dd0d9639556504914a8f1a7ac851`**. This closes the missing repaired-revision requirement, not the delivery or original-device gates. No manual Git mutation.
+- Rechecked all12 source inputs and12 evidence files against the unchanged continuation manifest: no mismatches. Android/scripts worktree matches the repaired revision; tracked iOS has no delta from the parent and generated configuration retains its recorded hash. Historical manifests remain unchanged. Separate record: `docs/reviews/android-recovery-managed-provenance-20261031.json`.
+- Rechecked the local APK SHA256: **`34ec0002ce124001f2226934c3b2b28f38d429d84be6a4c6887f0ea785da3eb7`**, identical to the inspected3.1.9(12) artifact below. This links unchanged inspected bytes to the retained source inventory; it is not a new reproducible-build certification or installed-signature comparison. No native edits, build or instrumentation rerun; reuse the final90/0/0 runtime result and separate normal build PASS below.
+- `adb devices -l` returns no connected devices. Installed package/versionCode/certificate, unused next counter, durable source/artifact retention and actual tester delivery remain unverified. Required next input is the original installed APK or verified installed package/version/signing details plus installation channel. Upload-key signing must not substitute for Play app signing. No counter change, upload, installation, reset or public release; original-device acceptance remains open.
+
 ## Android populated recovery continuation — focused runtime PASS, delivery not certified, 31 October 2026
 
 **Targeted Android runtime gates now PASS. No verified in-place update has been delivered.** This supersedes the earlier editor/runtime blocker below, not the original-device failure or historical evidence. No iOS, Portal, catalogue or unrelated release work was used as a gate for this targeted correction.

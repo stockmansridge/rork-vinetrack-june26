@@ -1,0 +1,47 @@
+{
+  "scope": "Android populated recovery; provenance continuation only; no new build or delivery",
+  "repaired_managed_revision": "98ef5a67e3af4b5faafb80ec80500fd55006e9fd",
+  "managed_source_parent": "da345bd992f734fd3ea2b90db00fcaa7e4339311",
+  "android_git_tree": "4133d87d1152dd0d9639556504914a8f1a7ac851",
+  "historical_manifest": {
+    "path": "docs/reviews/android-recovery-journeys-source-manifest-20261031.json",
+    "sha256": "a2fa283409697f5755891a6e82b0f2a4aa20ffd62a037fbd748115e4889e8015",
+    "source_inputs_verified": 12,
+    "evidence_files_verified": 12,
+    "mismatches": []
+  },
+  "verification": {
+    "android_and_scripts_worktree_matches_repaired_revision": true,
+    "tracked_ios_delta_from_parent": false,
+    "preserved_ios_generated_config_sha256": "71301cf111ea1855e8c86d50dd9a2675bab62550aa09f872aae83ccf8374508b",
+    "android_build_settings_sha256": "ab5e787d43d5a26d89c058b325ac0203addd188b24383dff0cf6f3e19ecdec80",
+    "diff_whitespace_check": "PASS",
+    "connected_adb_devices": 0,
+    "new_native_changes": false,
+    "tests_or_build_rerun": false,
+    "reused_runtime_result": "90 passed, 0 failed, 0 skipped in 65 seconds; historical structured tool result",
+    "reused_normal_build_result": "PASS after final native changes"
+  },
+  "local_apk": {
+    "path": "android-vinetrack/app/build/outputs/apk/release/app-release.apk",
+    "sha256_rechecked": "34ec0002ce124001f2226934c3b2b28f38d429d84be6a4c6887f0ea785da3eb7",
+    "version_name": "3.1.9",
+    "version_code": 12,
+    "certificate_sha256_from_prior_inspection": "241548efe6df8100c833d4eaebd2b3cf22dd70ffb638d9faa77bbd03f0077ef3",
+    "note": "Unchanged previously inspected bytes; not a newly rebuilt artifact or proof of installed-app update compatibility. No durable tester URL established."
+  },
+  "delivery": {
+    "status": "BLOCKED",
+    "remaining_requirements": [
+      "Original installed APK or verified package/versionCode/signing certificate and installation channel",
+      "Verified unused compatible next versionCode",
+      "Durable matching artifact/source retention and actual tester availability",
+      "Post-install original-device acceptance preserving retained work"
+    ],
+    "counter_changed": false,
+    "uploaded": false,
+    "installed": false,
+    "public_release": false
+  },
+  "historical_manifests_modified": false
+}
