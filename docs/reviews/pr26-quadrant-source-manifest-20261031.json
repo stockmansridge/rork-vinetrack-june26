@@ -1,0 +1,225 @@
+{
+  "managed_source_parent": "afce8dc1695f1d451475353260208458c8a3bc20",
+  "integration_commit": null,
+  "reviewed_pr26_head": "e681f2796b22bd9d94bdd936a8fd9ea388584191",
+  "reviewed_pr26_base": "50438333921355136fc8d81a375affc8a3334da0",
+  "scope": "Bounded source inventory, not full source/archive or installed-binary certification",
+  "integration": "17 exact paths initially applied; only PR26 insertion reconciled into newer AppViewModel; subsequent local safety, fixture and test deltas are individually hashed",
+  "protected_source_unchanged": [
+    "ios/VineTrack/App/SprayProgram/SprayProgramProgression.swift",
+    "ios/VineTrack.xcodeproj/project.pbxproj",
+    "android-vinetrack/app/build.gradle.kts",
+    "android-vinetrack/gradle.properties"
+  ],
+  "preserved_ignored_generated_configuration": {
+    "path": "ios/VineTrack/Config.swift",
+    "sha256": "71301cf111ea1855e8c86d50dd9a2675bab62550aa09f872aae83ccf8374508b"
+  },
+  "validation": {
+    "ios_final_native_selection": {
+      "passed": 70,
+      "seconds": 81
+    },
+    "ios_final_ui_selection": {
+      "passed": 4,
+      "failed": 1,
+      "blocker": "Quadrant normalization/process-relaunch scenario; most recent runner error is a location main-thread warning, not established root cause"
+    },
+    "android_instrumentation": {
+      "passed": 21,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 29
+    },
+    "ios_normal_simulator_build": "PASS; device Release unverified",
+    "android_normal_build": "PASS",
+    "supplemental_host_harness": "Imported, not executed in this integration",
+    "live_authenticated_replay_and_original_device_acceptance": "UNVERIFIED",
+    "test_candidate_delivery": "NOT PREPARED; required gates open"
+  },
+  "backend": "Read-only metadata confirmed deployed admin guard and enabled trigger; SQL not executed; no customer rows queried or written",
+  "files": [
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/YieldTripNavigationAndroidTest.kt",
+      "sha256": "fbbf54d1c8d42e99316fb0e1a5cfde9d882ce1c5f13b9e22a6da400128f2949a",
+      "parent_sha256": "002688b91de07338c3093dfc2146a60aca97657c361d041929b4900a6731fd4a",
+      "reviewed_pr26_head_sha256": null,
+      "matches_reviewed_head": null
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/CurrentYieldEstimate.kt",
+      "sha256": "c297570cc018c3085502f54a224497b01fc625ab190121bfbda8e29f8905f601",
+      "parent_sha256": "cd8c9dd732cc0244e5c2d3a98d7f82bfb6cd3572f425a7375e5aea05a804504d",
+      "reviewed_pr26_head_sha256": "c297570cc018c3085502f54a224497b01fc625ab190121bfbda8e29f8905f601",
+      "matches_reviewed_head": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/YieldEstimationSession.kt",
+      "sha256": "4f7c1e52dc6c7b5db1aa039918d394326608acd8a6b92835c0b10b779dfa84f7",
+      "parent_sha256": "d403b8c21cfb9d621193475a07e2e253b088b2f2118bb972018a300a19949826",
+      "reviewed_pr26_head_sha256": "4f7c1e52dc6c7b5db1aa039918d394326608acd8a6b92835c0b10b779dfa84f7",
+      "matches_reviewed_head": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt",
+      "sha256": "c094701d1a07edaeedd0f50480d60e5876828ac45f7931a7d28346c6ef9bd63a",
+      "parent_sha256": "25cebb9521069de3d7213c96b1e2f8bbdfc7edab44c4270e7ce6eac49fe07437",
+      "reviewed_pr26_head_sha256": "8194aebe737b6473271dd168ba0952d4887b9f44d1bcaee2a52227bc152a05be",
+      "matches_reviewed_head": false
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CurrentYieldEstimateSummary.kt",
+      "sha256": "e43681729d6249acfc1249993d374ab55851baba8248fb567ed4c65a7d562e72",
+      "parent_sha256": "7ce292c3b22d23b1cf0420703aa67265fa858684c96684aa3bb47b21f6a88c4e",
+      "reviewed_pr26_head_sha256": "e43681729d6249acfc1249993d374ab55851baba8248fb567ed4c65a7d562e72",
+      "matches_reviewed_head": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldEstimationScreen.kt",
+      "sha256": "6f07278d7106f1511ad05459fb853f99ef484ac5cedc39cd6c9951a05e5a7499",
+      "parent_sha256": "a33dd8e2985f15d100211f98ac112cee383bf3a1ef6affa641928f406dd0ee20",
+      "reviewed_pr26_head_sha256": "98e8233288faeff46a1d8d35a539dbb58dfcbd5b7191f3eebbcece46d46ec07b",
+      "matches_reviewed_head": false
+    },
+    {
+      "path": "docs/quadrant-count-admin-beta.md",
+      "sha256": "95e8515ebd6143d4a1f13df3cbe39c1da67e752b43c2470440265506d43320cd",
+      "parent_sha256": null,
+      "reviewed_pr26_head_sha256": "95e8515ebd6143d4a1f13df3cbe39c1da67e752b43c2470440265506d43320cd",
+      "matches_reviewed_head": true
+    },
+    {
+      "path": "ios/VineTrack/App/SystemAdminService.swift",
+      "sha256": "74d4da7c4b9a194cbade429268919fef04b843c1c8cd5cf47832b4f67fd77f9f",
+      "parent_sha256": "c7bbeefffd19149246b50b83c7017543a9182674b328c879810fc43f6defa889",
+      "reviewed_pr26_head_sha256": null,
+      "matches_reviewed_head": null
+    },
+    {
+      "path": "ios/VineTrack/App/YieldTripValidationView.swift",
+      "sha256": "8c13bde31a155550d9375c3f89db9bef7fcbcf8e34acd6140222efdaca277b8d",
+      "parent_sha256": "69643780af5624acd8ea3389d2591c7a03b000d087f5549b5cf21397ec2f3f31",
+      "reviewed_pr26_head_sha256": "5fe9c2bd68fb99519e163f43cd9947fd3c89d75b504c8248274511e0911b8695",
+      "matches_reviewed_head": false
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Models/CurrentYieldEstimate.swift",
+      "sha256": "685a9411316f45e340f85a9584c887fed9cc829357ddfc09f944d3759f72f365",
+      "parent_sha256": "d91d27a5eb15fbb5297f6242b13280b497b42ae9f9db546aa3ef4aae9fb00701",
+      "reviewed_pr26_head_sha256": "685a9411316f45e340f85a9584c887fed9cc829357ddfc09f944d3759f72f365",
+      "matches_reviewed_head": true
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Models/YieldEstimationModels.swift",
+      "sha256": "26d0fb2e20a6b915967d77d85bda14a101209007346a0c12a032d3b09c2d2cbc",
+      "parent_sha256": "711d0645ec7dc12a20c3a58bd5d6786e4ad0ce4187e05ca5c8f79c417410d938",
+      "reviewed_pr26_head_sha256": "26d0fb2e20a6b915967d77d85bda14a101209007346a0c12a032d3b09c2d2cbc",
+      "matches_reviewed_head": true
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Services/MigratedDataStore+Yield.swift",
+      "sha256": "8068a77976de71c0f12454d4f0a7a3a678152d0c228bda2db0afb0e35e8f0c10",
+      "parent_sha256": "6c1191e6a115ef206d01265aaa77ce3d5cd0c6ca51d40eb304fc78fc6ab70a12",
+      "reviewed_pr26_head_sha256": "8068a77976de71c0f12454d4f0a7a3a678152d0c228bda2db0afb0e35e8f0c10",
+      "matches_reviewed_head": true
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Yield/CurrentYieldEstimateSummary.swift",
+      "sha256": "01f3abd536a7be2846849375f7f6ab406441c83facc19158c312dc6c2376b2ba",
+      "parent_sha256": "9797f0d39db061742344e22ff003cfc72d521d7a2463d20ba7f954178ea304ad",
+      "reviewed_pr26_head_sha256": "01f3abd536a7be2846849375f7f6ab406441c83facc19158c312dc6c2376b2ba",
+      "matches_reviewed_head": true
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Yield/YieldEstimationStubs.swift",
+      "sha256": "24f5a4c2144644b612692570827d04113aa1da31083c71d43c01636f032db367",
+      "parent_sha256": "425beee3b816cd92a559021e6db408c906694514ba8e5c8a63c52d038f607625",
+      "reviewed_pr26_head_sha256": "280a1bedd465a282ca7b91751946d36cb9573ded7ff6c08a74fd4edd4472db53",
+      "matches_reviewed_head": false
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Yield/YieldEstimationView.swift",
+      "sha256": "7c3910e20201a254765dbacebc11f2001d651eb49ba36d8c14b249112722459d",
+      "parent_sha256": "4d1174f1cea404b82bacd0da0b147dea4c971f6bd35127bd6e061822f9aab1d2",
+      "reviewed_pr26_head_sha256": "acd0a28b072a17a348df290e58da4ae16fc07e5ee0c7c88ad516bf85a2246c49",
+      "matches_reviewed_head": false
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Yield/YieldEstimationViewModel.swift",
+      "sha256": "9c2921b672e28929e6d3a02810e8df235d3ed984c7fca60bca7e3da64d3d6648",
+      "parent_sha256": "e780950a134beeb9c438fcba641db6185a09cc6519aa397a75a5d40c4512617c",
+      "reviewed_pr26_head_sha256": "522096c18a15a41ff2eafc6ef52f6fda95adaff2869341c539739f17711b952f",
+      "matches_reviewed_head": false
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Yield/YieldReportView.swift",
+      "sha256": "42b5f237eecad85ccd6b37d3ff68b15dbf50ee20e882060d31ea621b01dd2922",
+      "parent_sha256": "bc6ec5d9b3adf401fb71567dad7a828abe357443d6c72160831c559db85fe4fa",
+      "reviewed_pr26_head_sha256": "42b5f237eecad85ccd6b37d3ff68b15dbf50ee20e882060d31ea621b01dd2922",
+      "matches_reviewed_head": true
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Yield/YieldSamplingNavigationView.swift",
+      "sha256": "a29b2f274ddb0c7b97d7ddd803f3a13d8ffaed10015f5315fb0c84af73bccdf9",
+      "parent_sha256": "fe016ae21d778fa928b027f2771ad2493ebf3b86308a0a2b89f9585f90ef69fb",
+      "reviewed_pr26_head_sha256": "94d1a5b929cfa0eaa6a36d7a15d55c6d33bf8bea59c51b363f7f7ac9ef73884f",
+      "matches_reviewed_head": false
+    },
+    {
+      "path": "ios/VineTrackTests/QuadrantCountNativeTests.swift",
+      "sha256": "915e8f1e2619fbca2600d9dcd710b20266de643105f7a02329c44f97c50976df",
+      "parent_sha256": null,
+      "reviewed_pr26_head_sha256": null,
+      "matches_reviewed_head": null
+    },
+    {
+      "path": "ios/VineTrackUITests/QuadrantCountUITests.swift",
+      "sha256": "ebd8351b3fe0577bd223572d5912086dfd4467e4505631e6778aae62024dcc35",
+      "parent_sha256": null,
+      "reviewed_pr26_head_sha256": null,
+      "matches_reviewed_head": null
+    },
+    {
+      "path": "scripts/inspect-quadrant-count-contract.py",
+      "sha256": "65a0e01a1b59df8d3da8198f68374318acdca7fa60ccb67337946816821e228b",
+      "parent_sha256": null,
+      "reviewed_pr26_head_sha256": null,
+      "matches_reviewed_head": null
+    },
+    {
+      "path": "scripts/prepare-pr26-source.py",
+      "sha256": "549b2fdd06247a3a29efe7b5ba7795059c4fcc5015f184b63e7f010a4a9e9cf8",
+      "parent_sha256": null,
+      "reviewed_pr26_head_sha256": null,
+      "matches_reviewed_head": null
+    },
+    {
+      "path": "scripts/review-quadrant-source.py",
+      "sha256": "9f0d4bdc0e2e34d7ad62db817d13230b0305355483a29b95804557ce66111abe",
+      "parent_sha256": null,
+      "reviewed_pr26_head_sha256": null,
+      "matches_reviewed_head": null
+    },
+    {
+      "path": "scripts/snapshot-pr26-quadrant-source.py",
+      "sha256": "d41213f35307f188706fb4abc6246d50c53069a4f394f3b5d9e2fc165cf1060a",
+      "parent_sha256": null,
+      "reviewed_pr26_head_sha256": null,
+      "matches_reviewed_head": null
+    },
+    {
+      "path": "scripts/test-quadrant-count.py",
+      "sha256": "8240de3cb73f8a97d8107d5026c344d3933942339b8fba5fe1130331c5b9c79a",
+      "parent_sha256": null,
+      "reviewed_pr26_head_sha256": "8240de3cb73f8a97d8107d5026c344d3933942339b8fba5fe1130331c5b9c79a",
+      "matches_reviewed_head": true
+    },
+    {
+      "path": "sql/quadrant_count_admin_beta.sql",
+      "sha256": "0e888a611891ec2a1c1e232d1d60c139948bbcccf27b92d5c756cc148ace3ad7",
+      "parent_sha256": null,
+      "reviewed_pr26_head_sha256": "0e888a611891ec2a1c1e232d1d60c139948bbcccf27b92d5c756cc148ace3ad7",
+      "matches_reviewed_head": true
+    }
+  ]
+}

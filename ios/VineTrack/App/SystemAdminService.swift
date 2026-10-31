@@ -27,6 +27,15 @@ final class SystemAdminService {
         self.repository = repository
     }
 
+    #if DEBUG
+    /// Disposable workflow fixture only; never present in Release or used by auth.
+    static func yieldValidationService(isAdmin: Bool) -> SystemAdminService {
+        let service = SystemAdminService()
+        service.isSystemAdmin = isAdmin
+        return service
+    }
+    #endif
+
     // MARK: - Public API
 
     /// Convenience accessor — defaults to OFF if not loaded yet or unknown.

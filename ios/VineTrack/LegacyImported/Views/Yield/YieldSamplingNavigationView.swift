@@ -8,6 +8,8 @@ import CoreLocation
 /// so values save into the existing YieldEstimationSession.
 struct YieldSamplingNavigationView: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(SystemAdminService.self) private var systemAdmin
+    @State private var quadrantLengthText = "60"
     @Environment(LocationService.self) private var locationService
     @Environment(NetworkMonitor.self) private var network
     @Environment(YieldEstimationSessionSyncService.self) private var yieldSessionSync
@@ -161,8 +163,7 @@ struct YieldSamplingNavigationView: View {
             titleVisibility: .visible
         ) {
             Button("Complete & Lock") {
-                viewModel.markCompleted(paddocks: paddocks)
-                if saveSession() { onReturnToTrips() }
+                if viewModel.saveCompletion(paddocks: paddocks, persist: saveSession) { onReturnToTrips() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -409,7 +410,10 @@ struct YieldSamplingNavigationView: View {
     private var bottomPanel: some View {
         VStack(spacing: 12) {
             guidancePanel
-            entryPanel
+            if viewModel.isQuadrantCount {
+                QuadrantCountFields(countText: $bunchesText, lengthText: $quadrantLengthText,
+                    vineSpacingCm: quadrantSpacingCm, isSystemAdmin: systemAdmin.isSystemAdmin)
+            } else { entryPanel }
             actionRow
             if !viewModel.isCompleted && recordedCount > 0 {
                 completeButton
@@ -548,7 +552,7 @@ struct YieldSamplingNavigationView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.green)
-            .disabled(parsedBunches == nil || viewModel.isCompleted)
+            .disabled((viewModel.isQuadrantCount ? quadrantMeasurement == nil : parsedBunches == nil) || viewModel.isCompleted)
         }
     }
 
@@ -675,16 +679,31 @@ struct YieldSamplingNavigationView: View {
     }
 
     private func loadSiteIntoForm() {
+        quadrantLengthText = String(format: "%g", currentSite?.bunchCountEntry?.quadrant?.sectionLengthCm ?? viewModel.quadrantSectionLengthCm)
         guard let site = currentSite else {
             bunchesText = ""
             return
         }
         if let entry = site.bunchCountEntry {
-            bunchesText = String(format: "%.2f", entry.bunchesPerVine)
+            bunchesText = viewModel.isQuadrantCount
+                ? entry.quadrant.map { String(format: "%g", $0.rawBunchCount) } ?? ""
+                : String(format: "%.2f", entry.bunchesPerVine)
             if recorderName.isEmpty { recorderName = entry.recordedBy }
         } else {
             bunchesText = ""
         }
+    }
+
+    private var quadrantSpacingCm: Double? {
+        if let original = currentSite?.bunchCountEntry?.quadrant { return original.vineSpacingCm }
+        guard let block = paddocks.first(where: { $0.id == currentSite?.paddockId }),
+              block.vineSpacingIsKnown != false else { return nil }
+        return block.vineSpacing * 100
+    }
+    private var quadrantMeasurement: QuadrantCountMeasurement? {
+        guard let count = parsedBunches,
+              let length = Double(quadrantLengthText.replacingOccurrences(of: ",", with: ".")) else { return nil }
+        return .make(rawBunchCount: count, sectionLengthCm: length, vineSpacingCm: quadrantSpacingCm, isSystemAdmin: systemAdmin.isSystemAdmin)
     }
 
     private var parsedBunches: Double? {
@@ -695,8 +714,14 @@ struct YieldSamplingNavigationView: View {
 
     private func recordAndNext() {
         guard let site = currentSite, let value = parsedBunches else { return }
-        viewModel.recordBunchCount(siteId: site.id, bunchesPerVine: value, recordedBy: recorderName)
-        saveSession()
+        if viewModel.isQuadrantCount {
+            guard let measurement = quadrantMeasurement,
+                  viewModel.saveQuadrantCount(siteId: site.id, measurement: measurement,
+                    recordedBy: recorderName, isSystemAdmin: systemAdmin.isSystemAdmin, persist: saveSession) else { return }
+        } else {
+            viewModel.recordBunchCount(siteId: site.id, bunchesPerVine: value, recordedBy: recorderName)
+            saveSession()
+        }
         bunchesFocused = false
         advanceToNextUnrecorded(after: site.id)
     }
@@ -736,7 +761,7 @@ struct YieldSamplingNavigationView: View {
             vineyardId: vid,
             samplesPerHectare: store.settings.samplesPerHectare
         )
-        let accepted = store.saveYieldSession(session)
+        let accepted = store.saveYieldSession(session, isSystemAdmin: systemAdmin.isSystemAdmin)
         saveFailed = !accepted
         return accepted
     }

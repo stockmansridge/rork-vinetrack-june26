@@ -97,6 +97,7 @@ import com.rork.vinetrack.data.model.SampleSite
 import com.rork.vinetrack.data.model.YieldEstimationSession
 import com.rork.vinetrack.data.remainingYieldMultiplierForVintage
 import com.rork.vinetrack.ui.AppUiState
+import com.rork.vinetrack.data.model.QuadrantCountMeasurement
 import com.rork.vinetrack.ui.AppViewModel
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.VineyardCard
@@ -136,21 +137,49 @@ fun YieldEstimationScreen(
     val vineyardId = state.selectedVineyardId
     // "" = no active trip (home). rememberSaveable keeps resume across config changes.
     var activeTripId by rememberSaveable { mutableStateOf("") }
+    var showCountMethod by rememberSaveable { mutableStateOf(false) }
     var viewingTripId by rememberSaveable { mutableStateOf("") }
     var showSampling by rememberSaveable { mutableStateOf(false) }
     var showCompletion by rememberSaveable { mutableStateOf(false) }
     // Local optimistic draft so typing/taps never wait for state round-trips.
     var localDraft by remember { mutableStateOf<YieldEstimationSession?>(null) }
 
-    val draft = BunchCountTripLogic.activeDraft(state.yieldSessions, vineyardId)
-    val completedTrips = BunchCountTripLogic.completedTrips(state.yieldSessions, vineyardId)
+    val visibleTrips = state.yieldSessions.filter { !it.isQuadrantCount || state.isSystemAdmin }
+    val draft = BunchCountTripLogic.activeDraft(visibleTrips, vineyardId)
+    val completedTrips = BunchCountTripLogic.completedTrips(visibleTrips, vineyardId)
 
     val session: YieldEstimationSession? =
-        localDraft?.takeIf { it.id == activeTripId }
-            ?: state.yieldSessions.firstOrNull { it.id == activeTripId }
+        localDraft?.takeIf { it.id == activeTripId && (!it.isQuadrantCount || state.isSystemAdmin) }
+            ?: visibleTrips.firstOrNull { it.id == activeTripId }
 
-    fun apply(updated: YieldEstimationSession) {
-        vm.saveYieldSession(updated) { accepted -> if (accepted) localDraft = updated }
+    fun apply(updated: YieldEstimationSession): Boolean {
+        var saved = false
+        vm.saveYieldSession(updated) { accepted ->
+            saved = accepted
+            if (accepted) localDraft = updated
+        }
+        return saved
+    }
+
+    fun startCount(quadrant: Boolean) {
+        if (quadrant && !state.isSystemAdmin) return
+        val vid = vineyardId ?: return
+        val fresh = BunchCountTripLogic.startTrip(vid, state.yieldSamplesPerHectareDefault).let {
+            if (quadrant) it.copy(countMethod = "quadrant", quadrantSectionLengthCm = 60.0) else it
+        }
+        vm.saveYieldSession(fresh) { accepted ->
+            if (accepted) { localDraft = fresh; activeTripId = fresh.id }
+        }
+        showCountMethod = false
+    }
+    if (showCountMethod && state.isSystemAdmin) {
+        AlertDialog(onDismissRequest = { showCountMethod = false },
+            title = { Text("Start Bunch Count Trip") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { startCount(false) }) { Text("1. Bunches Per Vine Count") }
+                TextButton(onClick = { startCount(true) }) { Text("2. Quadrant Count") }
+            } },
+            confirmButton = { TextButton(onClick = { showCountMethod = false }) { Text("Cancel") } })
     }
 
     fun closeTrip() {
@@ -192,6 +221,9 @@ fun YieldEstimationScreen(
                     session = s,
                     onRecord = { siteId, bunches, recordedBy ->
                         apply(s.recordBunch(siteId, bunches, recordedBy))
+                    },
+                    onQuadrantRecord = { siteId, measurement ->
+                        state.isSystemAdmin && apply(s.recordQuadrant(siteId, measurement, state.currentUserId ?: ""))
                     },
                     onComplete = { showSampling = false; showCompletion = true },
                     onBack = { closeTrip() },
@@ -241,10 +273,7 @@ fun YieldEstimationScreen(
                 draft = draft,
                 completedTrips = completedTrips,
                 onStart = {
-                    val vid = vineyardId ?: return@BunchCountTripHome
-                    val fresh = BunchCountTripLogic.startTrip(vid, state.yieldSamplesPerHectareDefault)
-                    apply(fresh)
-                    activeTripId = fresh.id
+                    if (state.isSystemAdmin) showCountMethod = true else startCount(false)
                 },
                 onResume = { resumed ->
                     activeTripId = resumed.id
@@ -262,7 +291,7 @@ private fun YieldEstimationSession.recordBunch(
     siteId: String,
     bunchesPerVine: Double,
     recordedBy: String,
-): YieldEstimationSession = copy(
+): YieldEstimationSession = if (isQuadrantCount) this else copy(
     sampleSites = sampleSites.map {
         if (it.id == siteId) {
             it.copy(
@@ -347,7 +376,7 @@ private fun BunchCountTripHome(
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = VineColors.Info, modifier = Modifier.size(22.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Resume trip in progress", color = vine.textPrimary, fontWeight = FontWeight.SemiBold)
+                                Text(if (draft.isQuadrantCount) "Resume Quadrant Count" else "Resume trip in progress", color = vine.textPrimary, fontWeight = FontWeight.SemiBold)
                                 Text(
                                     if (draft.totalSiteCount > 0)
                                         "${draft.recordedSiteCount} of ${draft.totalSiteCount} sample sites recorded"
@@ -419,7 +448,7 @@ private fun TripSetupScreen(
     vm: AppViewModel,
     state: AppUiState,
     session: YieldEstimationSession,
-    onApply: (YieldEstimationSession) -> Unit,
+    onApply: (YieldEstimationSession) -> Boolean,
     onStartSampling: () -> Unit,
     onCompleteTrip: () -> Unit,
     onDiscard: () -> Unit,
@@ -484,7 +513,7 @@ private fun TripSetupScreen(
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
-                title = { Text("Bunch Count Trip") },
+                title = { Text(if (session.isQuadrantCount) "Quadrant Count" else "Bunch Count Trip") },
                 navigationIcon = { BackNavIcon(onBack) },
                 actions = {
                     // Secondary trip actions — deliberately kept out of the
@@ -661,8 +690,13 @@ private fun TripSetupScreen(
     }
 
     selectedSite?.let { site ->
-        BunchCountDialog(
-            site = site,
+        CountMethodDialog(
+            site = site, session = session, state = state,
+            onQuadrantSave = { measurement ->
+                val saved = state.isSystemAdmin && onApply(session.recordQuadrant(site.id, measurement, state.currentUserId ?: ""))
+                if (saved) selectedSite = null
+                saved
+            },
             onDismiss = { selectedSite = null },
             onSave = { bunches ->
                 onApply(session.recordBunch(site.id, bunches, state.currentUserId ?: ""))
@@ -798,7 +832,7 @@ private fun TripCompletionScreen(
     vm: AppViewModel,
     state: AppUiState,
     session: YieldEstimationSession,
-    onApply: (YieldEstimationSession) -> Unit,
+    onApply: (YieldEstimationSession) -> Boolean,
     onSaved: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -918,7 +952,7 @@ private fun CompletedTripScreen(
         containerColor = vine.appBackground,
         topBar = {
             TopAppBar(
-                title = { Text("Bunch Count Trip") },
+                title = { Text(if (session.isQuadrantCount) "Quadrant Count" else "Bunch Count Trip") },
                 navigationIcon = { BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
@@ -1092,6 +1126,7 @@ private fun YieldSamplingMapScreen(
     state: AppUiState,
     session: YieldEstimationSession,
     onRecord: (siteId: String, bunches: Double, recordedBy: String) -> Unit,
+    onQuadrantRecord: (String, QuadrantCountMeasurement) -> Boolean,
     onComplete: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -1147,7 +1182,8 @@ private fun YieldSamplingMapScreen(
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                GoogleMap(
+                val preview = LocalYieldMapPreview.current
+                if (preview != null) preview() else GoogleMap(
                     modifier = Modifier.fillMaxSize(),
                     cameraPositionState = camera,
                     properties = MapProperties(mapType = MapType.HYBRID, isMyLocationEnabled = tracker.hasPermission),
@@ -1243,8 +1279,13 @@ private fun YieldSamplingMapScreen(
     }
 
     recordingSite?.let { site ->
-        BunchCountDialog(
-            site = site,
+        CountMethodDialog(
+            site = site, session = session, state = state,
+            onQuadrantSave = { measurement ->
+                val saved = state.isSystemAdmin && onQuadrantRecord(site.id, measurement)
+                if (saved) recordingSite = null
+                saved
+            },
             onDismiss = { recordingSite = null },
             onSave = { bunches ->
                 onRecord(site.id, bunches, state.currentUserId ?: "")
@@ -1335,3 +1376,54 @@ private fun formatTonnes(t: Double): String = if (t >= 100) t.roundToInt().toStr
 private fun formatGrams(kg: Double): String = (kg * 1000).roundToInt().toString()
 private fun formatBunches(b: Double): String = String.format("%.1f", b)
 private fun trimNumber(d: Double): String = if (d == d.toLong().toDouble()) d.toLong().toString() else d.toString()
+
+private fun YieldEstimationSession.recordQuadrant(siteId: String, measurement: QuadrantCountMeasurement, recordedBy: String): YieldEstimationSession {
+    if (!isQuadrantCount || isCompleted) return this
+    return copy(quadrantSectionLengthCm = measurement.sectionLengthCm, sampleSites = sampleSites.map { site ->
+        if (site.id == siteId) site.copy(bunchCountEntry = BunchCountEntry(measurement.bunchesPerVine,
+            Instant.now().toString(), recordedBy, quadrant = measurement)) else site
+    })
+}
+
+@Composable
+private fun CountMethodDialog(
+    site: SampleSite,
+    session: YieldEstimationSession,
+    state: AppUiState,
+    onDismiss: () -> Unit,
+    onSave: (Double) -> Unit,
+    onQuadrantSave: (QuadrantCountMeasurement) -> Boolean,
+) {
+    if (!session.isQuadrantCount) {
+        BunchCountDialog(site = site, onDismiss = onDismiss, onSave = onSave)
+        return
+    }
+    if (!state.isSystemAdmin) return
+    val original = site.bunchCountEntry?.quadrant
+    val block = state.paddocks.firstOrNull { it.id.equals(site.paddockId, true) }
+    val spacing = original?.vineSpacingCm ?: block?.vineSpacing?.times(100)
+    var count by rememberSaveable(site.id) { mutableStateOf(original?.rawBunchCount?.let(::trimNumber) ?: "") }
+    var length by rememberSaveable(site.id) { mutableStateOf(trimNumber(original?.sectionLengthCm ?: session.quadrantSectionLengthCm ?: 60.0)) }
+    val parsedCount = count.replace(',', '.').toDoubleOrNull()
+    val parsedLength = length.replace(',', '.').toDoubleOrNull()
+    val measurement = if (parsedCount != null && parsedLength != null)
+        QuadrantCountMeasurement.make(parsedCount, parsedLength, spacing, state.isSystemAdmin) else null
+    AlertDialog(onDismissRequest = onDismiss,
+        title = { Text("Quadrant Count - Sample ${site.siteIndex}") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("${site.paddockName} - Row ${site.rowNumber}", fontSize = 13.sp)
+            OutlinedTextField(value = length, onValueChange = { length = it }, label = { Text("Count section (cm)") },
+                singleLine = true, keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Decimal))
+            Text(spacing?.let { "Vine spacing: ${trimNumber(it)} cm" } ?: "Set vine spacing in Blocks before counting.", fontSize = 13.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { count = trimNumber(kotlin.math.max(0.0, (parsedCount ?: 0.0) - 1)) }) { Text("-") }
+                OutlinedTextField(value = count, onValueChange = { count = it }, label = { Text("Bunches in section") },
+                    singleLine = true, modifier = Modifier.weight(1f),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number))
+                TextButton(onClick = { count = trimNumber((parsedCount ?: 0.0) + 1) }) { Text("+") }
+            }
+            measurement?.let { Text("Estimated: ${formatBunches(it.bunchesPerVine)} bunches/vine", fontSize = 13.sp) }
+        } },
+        confirmButton = { TextButton(enabled = measurement != null, onClick = { measurement?.let { onQuadrantSave(it) } }) { Text("Record") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
+}

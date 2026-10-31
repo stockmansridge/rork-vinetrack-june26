@@ -167,3 +167,95 @@ struct FullScreenPathMapView: View {
             .mapStyle(.hybrid)
     }
 }
+
+
+/// New measured-section form; the full-vine form above is deliberately unchanged.
+struct QuadrantCountFields: View {
+    @Binding var countText: String
+    @Binding var lengthText: String
+    let vineSpacingCm: Double?
+    let isSystemAdmin: Bool
+    private var measurement: QuadrantCountMeasurement? {
+        guard let count = Double(countText.replacingOccurrences(of: ",", with: ".")),
+              let length = Double(lengthText.replacingOccurrences(of: ",", with: ".")) else { return nil }
+        return .make(rawBunchCount: count, sectionLengthCm: length, vineSpacingCm: vineSpacingCm, isSystemAdmin: isSystemAdmin)
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Count section (cm)")
+                TextField("60", text: $lengthText).keyboardType(.decimalPad).multilineTextAlignment(.trailing)
+                    .accessibilityIdentifier("yield.quadrant.length")
+            }
+            HStack {
+                Text("Vine spacing")
+                Spacer()
+                Text(vineSpacingCm.map { String(format: "%.1f cm", $0) } ?? "Set spacing in Blocks")
+            }.font(.caption)
+            HStack {
+                Button { countText = String(format: "%.0f", max(0, (Double(countText) ?? 0) - 1)) }
+                    label: { Image(systemName: "minus.circle.fill").font(.title) }
+                    .buttonStyle(.borderless)
+                TextField("Bunches in section", text: $countText).keyboardType(.numberPad)
+                    .font(.title2.monospacedDigit()).multilineTextAlignment(.center)
+                    .accessibilityIdentifier("yield.quadrant.count")
+                Button { countText = String(format: "%.0f", (Double(countText) ?? 0) + 1) }
+                    label: { Image(systemName: "plus.circle.fill").font(.title) }
+                    .buttonStyle(.borderless)
+            }
+            if let measurement { Text(String(format: "Estimated: %.1f bunches/vine", measurement.bunchesPerVine)).font(.caption) }
+        }
+    }
+}
+
+struct QuadrantCountEntrySheet: View {
+    let site: SampleSite
+    let defaultLengthCm: Double
+    let vineSpacingCm: Double?
+    let isSystemAdmin: Bool
+    let onSave: (QuadrantCountMeasurement, String) -> Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var countText = ""
+    @State private var lengthText = "60"
+    @State private var nameText = ""
+    @State private var saveFailed = false
+    private var measurement: QuadrantCountMeasurement? {
+        guard let count = Double(countText.replacingOccurrences(of: ",", with: ".")),
+              let length = Double(lengthText.replacingOccurrences(of: ",", with: ".")) else { return nil }
+        return .make(rawBunchCount: count, sectionLengthCm: length,
+            vineSpacingCm: site.bunchCountEntry?.quadrant?.vineSpacingCm ?? vineSpacingCm, isSystemAdmin: isSystemAdmin)
+    }
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Sample") {
+                    LabeledContent("Block", value: site.paddockName)
+                    LabeledContent("Row", value: "\(site.rowNumber)")
+                }
+                Section("Quadrant Count") {
+                    QuadrantCountFields(countText: $countText, lengthText: $lengthText,
+                        vineSpacingCm: site.bunchCountEntry?.quadrant?.vineSpacingCm ?? vineSpacingCm, isSystemAdmin: isSystemAdmin)
+                    TextField("Recorded by", text: $nameText)
+                }
+            }
+            .navigationTitle("Quadrant Count")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        guard let measurement else { return }
+                        if onSave(measurement, nameText) { dismiss() } else { saveFailed = true }
+                    }.disabled(measurement == nil)
+                }
+            }
+            .onAppear {
+                let original = site.bunchCountEntry?.quadrant
+                countText = original.map { String(format: "%.0f", $0.rawBunchCount) } ?? ""
+                lengthText = String(format: "%g", original?.sectionLengthCm ?? defaultLengthCm)
+                nameText = site.bunchCountEntry?.recordedBy ?? ""
+            }
+            .alert("Trip not saved", isPresented: $saveFailed) { Button("OK", role: .cancel) {} }
+                message: { Text("Keep this sample open and retry.") }
+        }
+    }
+}
