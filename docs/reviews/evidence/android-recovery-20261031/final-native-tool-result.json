@@ -1,0 +1,19 @@
+{
+  "evidence_kind": "transcription of structured androidTest tool result; not a raw instrumentation log",
+  "app_path": "android-vinetrack",
+  "selection": [
+    "com.rork.vinetrack.data.auth.AuthRetentionAndroidTest",
+    "com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest",
+    "com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest",
+    "com.rork.vinetrack.ui.GuardedSheetStateAndroidTest"
+  ],
+  "result_verbatim": "Android instrumentation tests passed for android-vinetrack. 90 passed, 0 failed, 0 skipped. 65s. JVM src/test tests were not run.",
+  "passed": 90,
+  "failed": 0,
+  "skipped": 0,
+  "seconds": 65,
+  "raw_success_log_returned": false,
+  "stale_failure_log_warning": "/tmp/rork-android-test-android-vinetrack.log was not refreshed by successful runs; it still contains the earlier one-test unsettled virtual-clock failure. It is not final-run evidence.",
+  "normal_build_result_verbatim": "Checks passed. Build succeeded for android-vinetrack.",
+  "original_device_tested": false
+}

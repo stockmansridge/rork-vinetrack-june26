@@ -54,6 +54,9 @@ class DomainCacheStore(context: Context) {
 
     private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
         context.applicationContext.getSharedPreferences("vinetrack_domain_cache", Context.MODE_PRIVATE),
+        // This store owns no storage monitor. Use existing bounded admission before the
+        // preference commit so concurrent startup cache saves do not abort hydration.
+        waitBeforeCommit = true,
     )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }

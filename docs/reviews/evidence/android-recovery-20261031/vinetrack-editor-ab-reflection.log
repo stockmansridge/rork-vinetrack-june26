@@ -1,0 +1,303 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest:
+INSTRUMENTATION_STATUS: test=ordinarySignInPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: stream=
+EDITOR_DIAGNOSTIC ordinary sample=0 mainHeartbeat=true clockMs=54416 recomposers=[pending=true,changes=93,broadcastAwaiters=true,invalidations=androidx.compose.runtime.collection.MutableVector@ec7db8e,snapshotInvalidations=[],concurrent=0] pending={} responses=74 checkpoints=99 mainStack=android.os.MessageQueue.nativePollOnce(Native Method) > android.os.MessageQueue.next(MessageQueue.java:387) > java.lang.reflect.Method.invoke(Native Method) > androidx.test.espresso.base.Interrogator.getNextMessage(Interrogator.java:1) > androidx.test.espresso.base.Interrogator.loopAndInterrogate(Interrogator.java:10) > androidx.test.espresso.base.UiControllerImpl.loopUntil(UiControllerImpl.java:8) > androidx.test.espresso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16) > androidx.test.espresso.Espresso$1.run(Espresso.java:1) > java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524) > java.util.concurrent.FutureTask.run(FutureTask.java:317) > android.os.Handler.handleCallback(Handler.java:991) > android.os.Handler.dispatchMessage(Handler.java:102) > android.os.Looper.loopOnce(Looper.java:232) > android.os.Looper.loop(Looper.java:317) > android.app.ActivityThread.main(ActivityThread.java:8934) > java.lang.reflect.Method.invoke(Native Method) > com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591) > com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=
+EDITOR_DIAGNOSTIC ordinary sample=1 mainHeartbeat=true clockMs=161616 recomposers=[pending=true,changes=93,broadcastAwaiters=true,invalidations=androidx.compose.runtime.collection.MutableVector@ec7db8e,snapshotInvalidations=[],concurrent=0] pending={} responses=74 checkpoints=99 mainStack=android.os.MessageQueue.nativePollOnce(Native Method) > android.os.MessageQueue.next(MessageQueue.java:387) > java.lang.reflect.Method.invoke(Native Method) > androidx.test.espresso.base.Interrogator.getNextMessage(Interrogator.java:1) > androidx.test.espresso.base.Interrogator.loopAndInterrogate(Interrogator.java:10) > androidx.test.espresso.base.UiControllerImpl.loopUntil(UiControllerImpl.java:8) > androidx.test.espresso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16) > androidx.test.espresso.Espresso$1.run(Espresso.java:1) > java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524) > java.util.concurrent.FutureTask.run(FutureTask.java:317) > android.os.Handler.handleCallback(Handler.java:991) > android.os.Handler.dispatchMessage(Handler.java:102) > android.os.Looper.loopOnce(Looper.java:232) > android.os.Looper.loop(Looper.java:317) > android.app.ActivityThread.main(ActivityThread.java:8934) > java.lang.reflect.Method.invoke(Native Method) > com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591) > com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=
+[native image packet extracted separately]
+
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=
+[native image packet extracted separately]
+
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=
+[native image packet extracted separately]
+
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=
+[native image packet extracted separately]
+
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: stream=
+EDITOR_DIAGNOSTIC ordinary sample=2 mainHeartbeat=true clockMs=283216 recomposers=[pending=true,changes=93,broadcastAwaiters=true,invalidations=androidx.compose.runtime.collection.MutableVector@ec7db8e,snapshotInvalidations=[],concurrent=0] pending={} responses=74 checkpoints=99 mainStack=android.os.MessageQueue.nativePollOnce(Native Method) > android.os.MessageQueue.next(MessageQueue.java:387) > java.lang.reflect.Method.invoke(Native Method) > androidx.test.espresso.base.Interrogator.getNextMessage(Interrogator.java:1) > androidx.test.espresso.base.Interrogator.loopAndInterrogate(Interrogator.java:10) > androidx.test.espresso.base.UiControllerImpl.loopUntil(UiControllerImpl.java:8) > androidx.test.espresso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16) > androidx.test.espresso.Espresso$1.run(Espresso.java:1) > java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524) > java.util.concurrent.FutureTask.run(FutureTask.java:317) > android.os.Handler.handleCallback(Handler.java:991) > android.os.Handler.dispatchMessage(Handler.java:102) > android.os.Looper.loopOnce(Looper.java:232) > android.os.Looper.loop(Looper.java:317) > android.app.ActivityThread.main(ActivityThread.java:8934) > java.lang.reflect.Method.invoke(Native Method) > com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591) > com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+
+INSTRUMENTATION_STATUS_CODE: 2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: text.No block: checkpoints=[fixture.reset.sameGuard.true, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, route.VineyardLoading, complete.session.admitted, waiting.main.settings.ready, vineyard.load.begin, route.Main, field.commit.contended, contention.stack=dalvik.system.VMStack.getThreadStackTrace(Native Method)
+java.lang.Thread.getStackTrace(Thread.java:1955)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.checkpoint(PopulatedCleanExitActivityTest.kt:46)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.access$checkpoint(PopulatedCleanExitActivityTest.kt:24)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint(CleanExitDiagnostics.kt:11)
+com.rork.vinetrack.data.auth.AuthRetentionGuard.tryWithAccount$app_debug(AuthRetentionGuard.kt:109)
+com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:44)
+com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8)
+com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77)
+com.rork.vinetrack.data.DomainCacheStore.savePicking(DomainCacheStore.kt:921)
+com.rork.vinetrack.data.DomainCacheRepository.savePicking(DomainCacheRepository.kt:424)
+com.rork.vinetrack.ui.AppViewModel$refreshRemoteSnapshots$1.invokeSuspend(AppViewModel.kt:5428)
+kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:98)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+androidx.test.espresso.base.Interrogator.loopAndInterrogate(Interrogator.java:14)
+androidx.test.espresso.base.UiControllerImpl.loopUntil(UiControllerImpl.java:8)
+androidx.test.espresso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16)
+androidx.test.espresso.Espresso$1.run(Espresso.java:1)
+java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524)
+java.util.concurrent.FutureTask.run(FutureTask.java:317)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+android.os.Looper.loopOnce(Looper.java:232)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911), complete.main.settings.ready, waiting.vineyard.load.published, vineyard.load.published, vineyard.load.finished, complete.vineyard.load.published, waiting.cache.hydrated, complete.cache.hydrated, waiting.text.Log a New Task, complete.text.Log a New Task, waiting.text.No block]; session=true; identity=A; locked=false; finishing=false; epoch=0; files=[profileInstalled]; preferenceFiles=null; pending={}; responseCount=74; lastResponses=[GET /rest/v1/vineyard_growth_stage_images 503, POST /rest/v1/rpc/get_pruning_vineyard_summary 503, GET /rest/v1/work_tasks 200, GET /rest/v1/work_task_paddocks 200, GET /rest/v1/work_task_labour_lines 200, GET /rest/v1/work_task_machine_lines 200]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, POST /rest/v1/rpc/record_my_client_activity, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/spray_tank_actuals, GET /rest/v1/pruning_yield_settings, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings, GET /rest/v1/vineyard_trip_functions, POST /rest/v1/rpc/list_vineyard_spray_targets, GET /rest/v1/saved_inputs, GET /rest/v1/saved_spray_presets, GET /rest/v1/fuel_purchases, GET /rest/v1/equipment_items, GET /rest/v1/vineyard_button_configs, POST /rest/v1/rpc/list_vineyard_grape_varieties, POST /rest/v1/rpc/get_rootstock_catalog, POST /rest/v1/rpc/list_vineyard_grape_clones, POST /rest/v1/rpc/list_vineyard_rootstocks, GET /rest/v1/yield_bunch_weights, POST /rest/v1/rpc/get_vineyard_region_settings, POST /rest/v1/rpc/get_vineyard_season_settings, GET /rest/v1/vineyard_growth_stage_images]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:71)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage$default(PopulatedCleanExitActivityTest.kt:65)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitText(PopulatedCleanExitActivityTest.kt:163)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.openTaskEditor(PopulatedCleanExitActivityTest.kt:292)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.ordinarySignInPopulatedTaskEditorDiagnostic(PopulatedCleanExitActivityTest.kt:298)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.junit4.android.ComposeNotIdleException: Idling resource timed out: possibly due to compose being busy.
+IdlingResourceRegistry has the following idling resources registered:
+- [busy] ComposeIdlingResource is busy due to pending recompositions.
+         - Note: Timeout on pending recomposition means that there are most likely infinite re-compositions happening in the tested code.
+         - Debug: hadRecomposerChanges = true, hadSnapshotChanges = false, hadAwaitersOnMainClock = false 
+All registered idling resources: Compose-Espresso link
+	at androidx.compose.ui.test.EspressoLink_androidKt.rethrowWithMoreInfo(EspressoLink.android.kt:133)
+	at androidx.compose.ui.test.EspressoLink_androidKt.runEspressoOnIdle(EspressoLink.android.kt:106)
+	at androidx.compose.ui.test.EspressoLink.runUntilIdle(EspressoLink.android.kt:82)
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment.waitForIdle(ComposeUiTest.android.kt:632)
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment.access$waitForIdle(ComposeUiTest.android.kt:398)
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidTestOwner.getRoots(ComposeUiTest.android.kt:874)
+	at androidx.compose.ui.test.TestOwnerKt.getAllSemanticsNodes(TestOwner.kt:105)
+	at androidx.compose.ui.test.TestOwnerKt.getAllSemanticsNodes$default(TestOwner.kt:98)
+	at androidx.compose.ui.test.SemanticsNodeInteractionCollection.fetchSemanticsNodes(SemanticsNodeInteraction.kt:249)
+	at androidx.compose.ui.test.SemanticsNodeInteractionCollection.fetchSemanticsNodes$default(SemanticsNodeInteraction.kt:245)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitText$lambda$0(PopulatedCleanExitActivityTest.kt:164)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.$r8$lambda$5esgdPuZ3Gvz05Znf1akcjJR4mU(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$$ExternalSyntheticLambda8.invoke(D8$$SyntheticClass:0)
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:801)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:68)
+	... 71 more
+Caused by: androidx.test.espresso.IdlingResourceTimeoutException: Wait for [Compose-Espresso link] to become idle timed out
+	at androidx.test.espresso.IdlingPolicy.handleTimeout(IdlingPolicy.java:4)
+	at androidx.test.espresso.base.UiControllerImpl$5.resourcesHaveTimedOut(UiControllerImpl.java:1)
+	at androidx.test.espresso.base.IdlingResourceRegistry$Dispatcher.handleTimeout(IdlingResourceRegistry.j
+... output truncated ...
+nostic
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 60.915
+There were 2 failures:
+1) ordinarySignInPopulatedTaskEditorDiagnostic(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.AssertionError: text.No block: checkpoints=[fixture.reset.sameGuard.true, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, route.VineyardLoading, complete.session.admitted, waiting.main.settings.ready, vineyard.load.begin, route.Main, field.commit.contended, contention.stack=dalvik.system.VMStack.getThreadStackTrace(Native Method)
+java.lang.Thread.getStackTrace(Thread.java:1955)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.checkpoint(PopulatedCleanExitActivityTest.kt:46)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.access$checkpoint(PopulatedCleanExitActivityTest.kt:24)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint(CleanExitDiagnostics.kt:11)
+com.rork.vinetrack.data.auth.AuthRetentionGuard.tryWithAccount$app_debug(AuthRetentionGuard.kt:109)
+com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:44)
+com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8)
+com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77)
+com.rork.vinetrack.data.DomainCacheStore.savePicking(DomainCacheStore.kt:921)
+com.rork.vinetrack.data.DomainCacheRepository.savePicking(DomainCacheRepository.kt:424)
+com.rork.vinetrack.ui.AppViewModel$refreshRemoteSnapshots$1.invokeSuspend(AppViewModel.kt:5428)
+kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:98)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+androidx.test.espresso.base.Interrogator.loopAndInterrogate(Interrogator.java:14)
+androidx.test.espresso.base.UiControllerImpl.loopUntil(UiControllerImpl.java:8)
+androidx.test.espresso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16)
+androidx.test.espresso.Espresso$1.run(Espresso.java:1)
+java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524)
+java.util.concurrent.FutureTask.run(FutureTask.java:317)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+android.os.Looper.loopOnce(Looper.java:232)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911), complete.main.settings.ready, waiting.vineyard.load.published, vineyard.load.published, vineyard.load.finished, complete.vineyard.load.published, waiting.cache.hydrated, complete.cache.hydrated, waiting.text.Log a New Task, complete.text.Log a New Task, waiting.text.No block]; session=true; identity=A; locked=false; finishing=false; epoch=0; files=[profileInstalled]; preferenceFiles=null; pending={}; responseCount=74; lastResponses=[GET /rest/v1/vineyard_growth_stage_images 503, POST /rest/v1/rpc/get_pruning_vineyard_summary 503, GET /rest/v1/work_tasks 200, GET /rest/v1/work_task_paddocks 200, GET /rest/v1/work_task_labour_lines 200, GET /rest/v1/work_task_machine_lines 200]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, POST /rest/v1/rpc/record_my_client_activity, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/spray_tank_actuals, GET /rest/v1/pruning_yield_settings, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings, GET /rest/v1/vineyard_trip_functions, POST /rest/v1/rpc/list_vineyard_spray_targets, GET /rest/v1/saved_inputs, GET /rest/v1/saved_spray_presets, GET /rest/v1/fuel_purchases, GET /rest/v1/equipment_items, GET /rest/v1/vineyard_button_configs, POST /rest/v1/rpc/list_vineyard_grape_varieties, POST /rest/v1/rpc/get_rootstock_catalog, POST /rest/v1/rpc/list_vineyard_grape_clones, POST /rest/v1/rpc/list_vineyard_rootstocks, GET /rest/v1/yield_bunch_weights, POST /rest/v1/rpc/get_vineyard_region_settings, POST /rest/v1/rpc/get_vineyard_season_settings, GET /rest/v1/vineyard_growth_stage_images]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:71)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage$default(PopulatedCleanExitActivityTest.kt:65)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitText(PopulatedCleanExitActivityTest.kt:163)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.openTaskEditor(PopulatedCleanExitActivityTest.kt:292)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.ordinarySignInPopulatedTaskEditorDiagnostic(PopulatedCleanExitActivityTest.kt:298)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.junit4.android.ComposeNotIdleException: Idling resource timed out: possibly due to compose being busy.
+IdlingResourceRegistry has the following idling resources registered:
+- [busy] ComposeIdlingResource is busy due to pending recompositions.
+         - Note: Timeout on pending recomposition means that there are most likely infinite re-compositions happening in the tested code.
+         - Debug: hadRecomposerChanges = true, hadSnapshotChanges = false, hadAwaitersOnMainClock = false 
+All registered idling resources: Compose-Espresso link
+	at androidx.compose.ui.test.EspressoLink_androidKt.rethrowWithMoreInfo(EspressoLink.android.kt:133)
+	at androidx.compose.ui.test.EspressoLink_androidKt.runEspressoOnIdle(EspressoLink.android.kt:106)
+	at androidx.compose.ui.test.EspressoLink.runUntilIdle(EspressoLink.android.kt:82)
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment.waitForIdle(ComposeUiTest.android.kt:632)
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment.access$waitForIdle(ComposeUiTest.android.kt:398)
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidTestOwner.getRoots(ComposeUiTest.android.kt:874)
+	at androidx.compose.ui.test.TestOwnerKt.getAllSemanticsNodes(TestOwner.kt:105)
+	at androidx.compose.ui.test.TestOwnerKt.getAllSemanticsNodes$default(TestOwner.kt:98)
+	at androidx.compose.ui.test.SemanticsNodeInteractionCollection.fetchSemanticsNodes(SemanticsNodeInteraction.kt:249)
+	at androidx.compose.ui.test.SemanticsNodeInteractionCollection.fetchSemanticsNodes$default(SemanticsNodeInteraction.kt:245)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitText$lambda$0(PopulatedCleanExitActivityTest.kt:164)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.$r8$lambda$5esgdPuZ3Gvz05Znf1akcjJR4mU(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$$ExternalSyntheticLambda8.invoke(D8$$SyntheticClass:0)
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:801)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:68)
+	... 71 more
+Caused by: androidx.test.espresso.IdlingResourceTimeoutException: Wait for [Compose-Espresso link] to become idle timed out
+	at androidx.test.espresso.IdlingPolicy.handleTimeout(IdlingPolicy.java:4)
+	at androidx.test.espresso.base.UiControllerImpl$5.resourcesHaveTimedOut(UiControllerImpl.java:1)
+	at androidx.test.espresso.base.IdlingResourceRegistry$Dispatcher.handleTimeout(IdlingResourceRegistry.java:4)
+	at androidx.test.espresso.base.IdlingResourceRegistry$Dispatcher.handleMessage(IdlingResourceRegistry.java:6)
+	at android.os.Handler.dispatchMessage(Handler.java:105)
+	at androidx.test.espresso.base.Interrogator.loopAndInterrogate(Interrogator.java:14)
+	at androidx.test.espresso.base.UiControllerImpl.loopUntil(UiControllerImpl.java:8)
+	at androidx.test.espresso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16)
+	at androidx.test.espresso.Espresso$1.run(Espresso.java:1)
+	at java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524)
+	at java.util.concurrent.FutureTask.run(FutureTask.java:317)
+	at android.os.Handler.handleCallback(Handler.java:991)
+	at android.os.Handler.dispatchMessage(Handler.java:102)
+	at android.os.Looper.loopOnce(Looper.java:232)
+	at android.os.Looper.loop(Looper.java:317)
+	at android.app.ActivityThread.main(ActivityThread.java:8934)
+	at java.lang.reflect.Method.invoke(Native Method)
+	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+2) recoveryFormPopulatedTaskEditorDiagnostic(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.AssertionError: text.No block: checkpoints=[fixture.reset.sameGuard.true, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, route.VineyardLoading, vineyard.load.begin, complete.session.admitted, waiting.main.settings.ready, route.Main, field.commit.contended, contention.stack=dalvik.system.VMStack.getThreadStackTrace(Native Method)
+java.lang.Thread.getStackTrace(Thread.java:1955)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.checkpoint(PopulatedCleanExitActivityTest.kt:46)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.access$checkpoint(PopulatedCleanExitActivityTest.kt:24)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint(CleanExitDiagnostics.kt:11)
+com.rork.vinetrack.data.auth.AuthRetentionGuard.tryWithAccount$app_debug(AuthRetentionGuard.kt:109)
+com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:44)
+com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8)
+com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77)
+com.rork.vinetrack.data.DomainCacheStore.savePicking(DomainCacheStore.kt:921)
+com.rork.vinetrack.data.DomainCacheRepository.savePicking(DomainCacheRepository.kt:424)
+com.rork.vinetrack.ui.AppViewModel$refreshRemoteSnapshots$1.invokeSuspend(AppViewModel.kt:5428)
+kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:98)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+androidx.test.espresso.base.Interrogator.loopAndInterrogate(Interrogator.java:14)
+androidx.test.espresso.base.UiControllerImpl.loopUntil(UiControllerImpl.java:8)
+androidx.test.espresso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16)
+androidx.test.espresso.Espresso$1.run(Espresso.java:1)
+java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524)
+java.util.concurrent.FutureTask.run(FutureTask.java:317)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+android.os.Looper.loopOnce(Looper.java:232)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911), complete.main.settings.ready, waiting.vineyard.load.published, vineyard.load.published, vineyard.load.finished, complete.vineyard.load.published, waiting.cache.hydrated, complete.cache.hydrated, owner.disposing, owner.disposed, owner.attached, waiting.text.Local work protected, complete.text.Local work protected, waiting.recovery.home, owner.disposing, owner.disposed, owner.attached, route.Restoring, vineyard.load.begin, route.Main, complete.recovery.home, waiting.recovery.loaded, vineyard.load.published, complete.recovery.loaded, vineyard.load.finished, waiting.text.Log a New Task, complete.text.Log a New Task, waiting.text.No block]; session=true; identity=A; locked=false; finishing=false; epoch=2; files=[]; preferenceFiles=null; pending={}; responseCount=148; lastResponses=[GET /rest/v1/vineyard_growth_stage_images 503, POST /rest/v1/rpc/get_pruning_vineyard_summary 503, GET /rest/v1/work_task_paddocks 200, GET /rest/v1/work_tasks 200, GET /rest/v1/work_task_labour_lines 200, GET /rest/v1/work_task_machine_lines 200]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, POST /rest/v1/rpc/record_my_client_activity, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/spray_tank_actuals, GET /rest/v1/pruning_yield_settings, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings, GET /rest/v1/vineyard_trip_functions, POST /rest/v1/rpc/list_vineyard_spray_targets, GET /rest/v1/saved_inputs, GET /rest/v1/saved_spray_presets, GET /rest/v1/fuel_purchases, GET /rest/v1/equipment_items, GET /rest/v1/vineyard_button_configs, POST /rest/v1/rpc/list_vineyard_grape_varieties, POST /rest/v1/rpc/get_rootstock_catalog, POST /rest/v1/rpc/list_vineyard_grape_clones, POST /rest/v1/rpc/list_vineyard_rootstocks, GET /rest/v1/yield_bunch_weights, POST /rest/v1/rpc/get_vineyard_region_settings, GET /rest/v1/vineyard_growth_stage_images, POST /rest/v1/rpc/get_vineyard_season_settings]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:71)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage$default(PopulatedCleanExitActivityTest.kt:65)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitText(PopulatedCleanExitActivityTest.kt:163)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.openTaskEditor(PopulatedCleanExitActivityTest.kt:292)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoveryFormPopulatedTaskEditorDiagnostic(PopulatedCleanExitActivityTest.kt:304)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.junit4.android.ComposeNotIdleException: Idling resource timed out: possibly due to compose being busy.
+IdlingResourceRegistry has the following idling resources registered:
+- [busy] ComposeIdlingResource is busy due to pending recompositions.
+         - Note: Timeout on pending recomposition means that there are most likely infinite re-compositions happening in the tested code.
+         - Debug: hadRecomposerChanges = true, hadSnapshotChanges = false, hadAwaitersOnMainClock = false 
+All registered idling resources: Compose-Espresso link
+	at androidx.compose.ui.test.EspressoLink_androidKt.rethrowWithMoreInfo(EspressoLink.android.kt:133)
+	at androidx.compose.ui.test.EspressoLink_androidKt.runEspressoOnIdle(EspressoLink.android.kt:106)
+	at androidx.compose.ui.test.EspressoLink.runUntilIdle(EspressoLink.android.kt:82)
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment.waitForIdle(ComposeUiTest.android.kt:632)
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment.access$waitForIdle(ComposeUiTest.android.kt:398)
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidTestOwner.getRoots(ComposeUiTest.android.kt:874)
+	at androidx.compose.ui.test.TestOwnerKt.getAllSemanticsNodes(TestOwner.kt:105)
+	at androidx.compose.ui.test.TestOwnerKt.getAllSemanticsNodes$default(TestOwner.kt:98)
+	at androidx.compose.ui.test.SemanticsNodeInteractionCollection.fetchSemanticsNodes(SemanticsNodeInteraction.kt:249)
+	at androidx.compose.ui.test.SemanticsNodeInteractionCollection.fetchSemanticsNodes$default(SemanticsNodeInteraction.kt:245)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitText$lambda$0(PopulatedCleanExitActivityTest.kt:164)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.$r8$lambda$5esgdPuZ3Gvz05Znf1akcjJR4mU(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$$ExternalSyntheticLambda8.invoke(D8$$SyntheticClass:0)
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:801)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:68)
+	... 71 more
+Caused by: androidx.test.espresso.IdlingResourceTimeoutException: Wait for [Compose-Espresso link] to become idle timed out
+	at androidx.test.espresso.IdlingPolicy.handleTimeout(IdlingPolicy.java:4)
+	at androidx.test.espresso.base.UiControllerImpl$5.resourcesHaveTimedOut(UiControllerImpl.java:1)
+	at androidx.test.espresso.base.IdlingResourceRegistry$Dispatcher.handleTimeout(IdlingResourceRegistry.java:4)
+	at androidx.test.espresso.base.IdlingResourceRegistry$Dispatcher.handleMessage(IdlingResourceRegistry.java:6)
+	at android.os.Handler.dispatchMessage(Handler.java:105)
+	at androidx.test.espresso.base.Interrogator.loopAndInterrogate(Interrogator.java:14)
+	at androidx.test.espresso.base.UiControllerImpl.loopUntil(UiControllerImpl.java:8)
+	at androidx.test.espresso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16)
+	at androidx.test.espresso.Espresso$1.run(Espresso.java:1)
+	at java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524)
+	at java.util.concurrent.FutureTask.run(FutureTask.java:317)
+	at android.os.Handler.handleCallback(Handler.java:991)
+	at android.os.Handler.dispatchMessage(Handler.java:102)
+	at android.os.Looper.loopOnce(Looper.java:232)
+	at android.os.Looper.loop(Looper.java:317)
+	at android.app.ActivityThread.main(ActivityThread.java:8934)
+	at java.lang.reflect.Method.invoke(Native Method)
+	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+
+FAILURES!!!
+Tests run: 2,  Failures: 2
+
+
+INSTRUMENTATION_CODE: -1

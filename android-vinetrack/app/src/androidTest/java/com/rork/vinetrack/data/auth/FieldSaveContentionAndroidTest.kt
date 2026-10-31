@@ -47,6 +47,33 @@ class FieldSaveContentionAndroidTest {
         }
     }
 
+    @Test fun domainCacheWaitsBeforePreferencesAndPreservesOriginalBlock() {
+        val session = SessionStore(context)
+        val cache = com.rork.vinetrack.data.DomainCacheRepository(context)
+        val original = com.rork.vinetrack.data.model.Paddock("original-block", "vineyard", "Original block")
+        cache.savePaddocks("account-A", "vineyard", listOf(original))
+        val updated = original.copy(name = "Confirmed block")
+        contend(session, listOf({ cache.savePaddocks("account-A", "vineyard", listOf(updated)) }), beforeUnlock = {
+            assertEquals(listOf(original), cache.loadPaddocks("account-A", "vineyard"))
+        })
+        assertEquals(listOf(updated), cache.loadPaddocks("account-A", "vineyard"))
+    }
+
+    @Test fun revokedDeferredDomainCacheCannotChangeOriginalBytesOrBindToLaterAccount() {
+        val session = SessionStore(context)
+        val cache = com.rork.vinetrack.data.DomainCacheRepository(context)
+        val original = com.rork.vinetrack.data.model.Paddock("original-block", "vineyard", "Original block")
+        cache.savePaddocks("account-A", "vineyard", listOf(original))
+        val before = context.getSharedPreferences("vinetrack_domain_cache", 0).all.toMap()
+        contend(session, listOf({
+            assertTrue(runCatching { cache.savePaddocks("account-A", "vineyard", emptyList()) }.exceptionOrNull() is FieldAccessRevoked)
+        }), beforeUnlock = { session.clear() })
+        assertEquals(before, context.getSharedPreferences("vinetrack_domain_cache", 0).all)
+        assertTrue(session.retentionGuard.isLocked)
+        assertTrue(runCatching { session.save("B-access", "B-refresh", "account-B", null) }.isFailure)
+        assertEquals(before, context.getSharedPreferences("vinetrack_domain_cache", 0).all)
+    }
+
     @Test fun revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting() {
         val session = SessionStore(context)
         val trips = ActiveTripStore(context)
@@ -56,7 +83,13 @@ class FieldSaveContentionAndroidTest {
         contend(session, listOf(
             { assertTrue(runCatching { trips.saveDurably("account-A", "vineyard", trip) }.exceptionOrNull() is FieldAccessRevoked) },
             { assertTrue(runCatching { photos.enqueue("pin", "vineyard", byteArrayOf(1, 2, 3)) }.exceptionOrNull() is FieldAccessRevoked) },
-            { assertTrue(runCatching { PinCreateSync(pins).enqueue(PinRepository.PinInput("pin", "vineyard", createdBy = "account-A")) }.exceptionOrNull() is FieldAccessRevoked) },
+            {
+                val failure = runCatching { PinCreateSync(pins).enqueue(PinRepository.PinInput("pin", "vineyard", createdBy = "account-A")) }.exceptionOrNull()
+                // enqueue's durable-update boundary converts a rejected leaf commit to this
+                // explicit failed-save result; it does not expose the leaf exception type.
+                assertTrue("Original pin rejection: ${failure?.stackTraceToString() ?: "NO FAILURE"}", failure is IllegalStateException)
+                assertEquals("Pending write could not be committed durably.", failure?.message)
+            },
         ), beforeUnlock = { session.clear() })
         assertTrue(session.retentionGuard.isLocked)
         assertNull(trips.load())
@@ -391,7 +424,7 @@ class FieldSaveContentionAndroidTest {
         assertFalse("Admission holder deadlocked", holder.isAlive)
         assertTrue("Field save worker deadlocked", workers.none(Thread::isAlive))
         assertNull(failure.get())
-        assertTrue("Field operation failed: ${failures.map { it.javaClass.simpleName }}", failures.isEmpty())
+        assertTrue("Field operation failed: ${failures.joinToString("\n") { it.stackTraceToString() }}", failures.isEmpty())
         assertEquals(0L, done.count)
     }
 

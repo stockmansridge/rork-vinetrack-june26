@@ -7,12 +7,12 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.withFrameMillis
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
-import kotlin.math.abs
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 
 /** Fraction of the visible sheet height the user must drag down before a gesture dismisses. */
 private const val DISMISS_DRAG_FRACTION = 0.75f
@@ -49,8 +49,11 @@ fun rememberGuardedSheetState(skipPartiallyExpanded: Boolean = true): SheetState
             if (target != SheetValue.Hidden) {
                 true
             } else {
-                val current = tracker.currentOffset
+                val current = tracker.readCurrentOffset()
                 val settled = tracker.settledOffset
+                if (com.rork.vinetrack.BuildConfig.DEBUG) {
+                    com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("sheet.dismiss.current.$current.settled.$settled")
+                }
                 if (current == null || settled == null) {
                     // Sheet hasn't finished animating in yet — don't trap it open.
                     true
@@ -67,35 +70,27 @@ fun rememberGuardedSheetState(skipPartiallyExpanded: Boolean = true): SheetState
             }
         },
     )
+    // confirmValueChange may run in the same input dispatch as the last drag event,
+    // before snapshotFlow collects. Measure the current offset synchronously there.
+    tracker.readCurrentOffset = { runCatching { sheetState.requireOffset() }.getOrNull() }
     LaunchedEffect(sheetState) {
-        var lastOffset: Float? = null
-        var stableSinceMs = 0L
-        while (isActive) {
-            withFrameMillis { frameMs ->
-                val offset = runCatching { sheetState.requireOffset() }.getOrNull()
-                if (offset == null) {
-                    lastOffset = null
-                } else {
-                    tracker.currentOffset = offset
-                    val last = lastOffset
-                    if (last == null || abs(offset - last) > 0.5f) {
-                        lastOffset = offset
-                        stableSinceMs = frameMs
-                    } else if (
-                        frameMs - stableSinceMs >= SETTLE_STABILITY_MS &&
-                        sheetState.targetValue != SheetValue.Hidden
-                    ) {
-                        tracker.settledOffset = offset
-                    }
+        // Observe actual offset/anchor changes rather than requesting frames forever.
+        // An always-awaiting frame loop keeps the Recomposer pending even at rest.
+        snapshotFlow { runCatching { sheetState.requireOffset() }.getOrNull() to sheetState.targetValue }
+            .collectLatest { (offset, target) ->
+                if (offset != null && target != SheetValue.Hidden) {
+                    // Any motion or re-anchoring cancels this settling observation.
+                    delay(SETTLE_STABILITY_MS)
+                    tracker.settledOffset = offset
+                    com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("sheet.offset.settled")
                 }
             }
-        }
     }
     return sheetState
 }
 
 /** Mutable holder read from inside `confirmValueChange` (which is not composable). */
 private class SheetDragTracker {
-    var currentOffset: Float? = null
+    var readCurrentOffset: () -> Float? = { null }
     var settledOffset: Float? = null
 }

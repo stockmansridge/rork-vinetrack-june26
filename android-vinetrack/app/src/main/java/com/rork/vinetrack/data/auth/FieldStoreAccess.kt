@@ -58,7 +58,9 @@ internal class FieldStoreAccess(context: Context) {
     }
 
     /** Editors retain their original authority; no retry can recapture a later account generation. */
-    fun preferences(prefs: SharedPreferences): SharedPreferences = object : SharedPreferences by prefs {
+    // Opt-in only for stores without storage monitors: acquire authority before prefs.commit().
+    // Leaf stores that may already own a storage monitor remain strictly nonblocking.
+    fun preferences(prefs: SharedPreferences, waitBeforeCommit: Boolean = false): SharedPreferences = object : SharedPreferences by prefs {
         override fun edit(): SharedPreferences.Editor {
             val access = captured()
             val editor = prefs.edit()
@@ -71,10 +73,10 @@ internal class FieldStoreAccess(context: Context) {
                 override fun putBoolean(key: String?, value: Boolean) = apply { editor.putBoolean(key, value) }
                 override fun remove(key: String?) = apply { editor.remove(key) }
                 override fun clear() = apply { editor.clear() }
-                override fun commit(): Boolean = try { execute(access, wait = false) { editor.commit() } }
+                override fun commit(): Boolean = try { execute(access, wait = waitBeforeCommit) { editor.commit() } }
                     catch (_: FieldAccessRevoked) { false }
                 override fun apply() {
-                    if (!execute(access, wait = false) { editor.commit() }) throw FieldPersistenceFailure()
+                    if (!execute(access, wait = waitBeforeCommit) { editor.commit() }) throw FieldPersistenceFailure()
                 }
             }
         }

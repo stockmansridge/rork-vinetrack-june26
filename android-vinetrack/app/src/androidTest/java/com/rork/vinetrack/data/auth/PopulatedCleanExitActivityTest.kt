@@ -16,7 +16,6 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.json
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
-import kotlinx.coroutines.runBlocking
 import org.junit.*
 import org.junit.Assert.*
 import org.junit.runner.RunWith
@@ -34,6 +33,9 @@ class PopulatedCleanExitActivityTest {
     private val checkpoints = java.util.concurrent.CopyOnWriteArrayList<String>()
     private val pending = java.util.concurrent.ConcurrentHashMap<Int, String>()
     private val responses = java.util.concurrent.CopyOnWriteArrayList<String>()
+    private val unhandled = java.util.concurrent.CopyOnWriteArrayList<String>()
+    private val operationalWrites = java.util.concurrent.CopyOnWriteArrayList<String>()
+    private var diagnosticWorker: Thread? = null
     private val requestSequence = AtomicInteger(0)
     private val uncaught = AtomicReference<String?>(null)
     private var previousUncaught: Thread.UncaughtExceptionHandler? = null
@@ -41,21 +43,24 @@ class PopulatedCleanExitActivityTest {
     private fun checkpoint(stage: String) {
         checkpoints.add(stage)
         android.util.Log.i("CleanExitFixture", stage)
+        if (stage == "field.commit.contended") {
+            val stack = Thread.currentThread().stackTrace.joinToString("\n")
+            checkpoints.add("contention.stack=$stack")
+        }
     }
 
     private fun diagnostic(): String {
         val session = SessionStore(app)
         val identity = when (session.userId) { A -> "A"; B -> "B"; null -> "none"; else -> "unexpected" }
-        val tree = runCatching {
-            val roots = compose.onAllNodes(isRoot(), useUnmergedTree = true)
-            roots.fetchSemanticsNodes().indices.joinToString("\n") { roots[it].printToString() }
-        }.getOrElse { "hierarchy unavailable: ${it.javaClass.simpleName}" }
+        // Never query Compose semantics here: failures can already be waiting for Compose idle.
+        val main = android.os.Looper.getMainLooper().thread
+        val mainStack = main.stackTrace.joinToString("\n")
         val files = app.filesDir.walkTopDown().filter { it.isFile }.map { it.relativeTo(app.filesDir).path }.toList()
         val preferences = java.io.File(app.applicationInfo.dataDir, "shared_prefs").listFiles()?.map { it.name }
-        return "checkpoints=$checkpoints; session=${session.hasSession}; identity=$identity; " +
+        return "checkpoints=${checkpoints.filterNot { it == "field.commit.waiting" }}; session=${session.hasSession}; identity=$identity; " +
             "locked=${session.retentionGuard.isLocked}; finishing=${session.retentionGuard.finishingCleanExit.value}; " +
             "epoch=${session.retentionGuard.identityEpoch.value}; files=$files; preferenceFiles=$preferences; " +
-            "pending=$pending; responses=$responses; uncaught=${uncaught.get()}; tree=$tree"
+            "pending=$pending; responseCount=${responses.size}; lastResponses=${responses.takeLast(6)}; unhandled=${unhandled.distinct()}; uncaught=${uncaught.get()}; mainState=${main.state}; mainStack=$mainStack"
     }
 
     private fun awaitStage(stage: String, timeoutMillis: Long = 20_000, condition: () -> Boolean) {
@@ -96,6 +101,7 @@ class PopulatedCleanExitActivityTest {
         account.set(A)
         client = fixtureClient()
         SupabaseClient.installInstrumentationTransport(client)
+        AuthRecoveryRepository.installInstrumentationTransport { fixtureClient() }
         checkpoint("activity.launch.begin")
         scenario = ActivityScenario.launch(MainActivity::class.java)
         scenario.onActivity { checkpoint("activity.created.${it.lifecycle.currentState}") }
@@ -111,6 +117,11 @@ class PopulatedCleanExitActivityTest {
             val uid = account.get()
             var status = HttpStatusCode.OK
             val body = when {
+                request.method != HttpMethod.Get && path.startsWith("/rest/v1/") && !path.startsWith("/rest/v1/rpc/") -> {
+                    operationalWrites.add("${request.method.value} $path")
+                    status = HttpStatusCode.MethodNotAllowed
+                    "{}"
+                }
                 path == "/auth/v1/token" -> """{"access_token":"access-$uid","refresh_token":"refresh-$uid","user":{"id":"$uid","email":"synthetic@example.invalid"}}"""
                 path == "/auth/v1/user" -> """{"id":"$uid","email":"synthetic@example.invalid"}"""
                 path == "/auth/v1/logout" -> { logouts.incrementAndGet(); "{}" }
@@ -130,7 +141,10 @@ class PopulatedCleanExitActivityTest {
                 path == "/rest/v1/rpc/get_my_vineyard_access_matrix" -> """{"account":{"has_any_accessible_vineyard":true},"vineyards":[{"vineyard_id":"$v","has_vineyard_access":true,"membership_role":"operator"}]}"""
                 path == "/rest/v1/rpc/get_my_operational_tool_preferences" -> """{"has_preference":false,"visible_tool_ids":[],"hidden_tool_ids":[]}"""
                 path.substringAfterLast('/') in emptyTables && request.method == HttpMethod.Get -> "[]"
-                else -> { status = HttpStatusCode.ServiceUnavailable; "{}" } // Explicit synthetic failure; never production fallback.
+                else -> {
+                    unhandled.add("${request.method.value} $path")
+                    status = HttpStatusCode.ServiceUnavailable; "{}"
+                } // Explicit synthetic failure; never production fallback.
             }
             responses.add("${request.method.value} $path ${status.value}")
             pending.remove(sequence)
@@ -138,11 +152,14 @@ class PopulatedCleanExitActivityTest {
         }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
 
     @After fun teardown() {
+        diagnosticWorker?.interrupt()
+        diagnosticWorker?.join(2_000)
         if (::app.isInitialized) android.util.Log.i("CleanExitFixture", diagnostic())
         if (::scenario.isInitialized) scenario.close()
         CleanExitDiagnostics.observer = null
         Thread.setDefaultUncaughtExceptionHandler(previousUncaught)
         SupabaseClient.installInstrumentationTransport(null)
+        AuthRecoveryRepository.installInstrumentationTransport(null)
         SupabaseClient.sessionRefresher = null
         SupabaseClient.performanceCapture = null
         if (::client.isInitialized) client.close()
@@ -186,14 +203,18 @@ class PopulatedCleanExitActivityTest {
         checkpoint("settings.signout.clicked")
     }
 
-    @Test fun populatedRecoveryRelaunchRendersHomeAndExistingTaskAndTripBlockChoices() {
-        signIn()
-        val session = SessionStore(app)
-        val obsolete = requireNotNull(session.accountAccess())
+    private fun retainDraft(): Map<String, *> {
         val draft = WorkTaskPlanningDraft(null, "vineyard-A", A, date = "2026-11-05", taskType = "pruning",
             assignmentName = "Greg Horner", durationText = "1", notes = "Need bamboo and loose tie onto it", creationId = "original-creation")
         WorkTaskPlanningDraftStore(app).save(draft)
-        val draftBefore = app.getSharedPreferences("vinetrack_local_planning", 0).all.toMap()
+        return app.getSharedPreferences("vinetrack_local_planning", 0).all.toMap()
+    }
+
+    private fun recoverThroughForm(wrongAccountFirst: Boolean = false): Map<String, *> {
+        signIn()
+        val session = SessionStore(app)
+        val obsolete = requireNotNull(session.accountAccess())
+        val draftBefore = retainDraft()
         val evidence = AccountTransitionEvidence(app)
         val assessment = evidence.inspect(A)
         assertNotNull("Populated recovery rejected at ${evidence.failureCategory}; keys=${app.getSharedPreferences(evidence.failureCategory, 0).all.keys}; files=${app.filesDir.walkTopDown().filter { it.isFile }.map { it.relativeTo(app.filesDir).path }.toList()}", assessment)
@@ -202,33 +223,144 @@ class PopulatedCleanExitActivityTest {
         scenario = ActivityScenario.launch(MainActivity::class.java)
         awaitText("Local work protected")
         compose.onAllNodes(hasText("Settings") and hasClickAction()).assertCountEquals(0)
-        // Isolated production recovery transport, not a live customer sign-in or a UI-password test.
-        runBlocking { assertTrue(AuthRecoveryRepository { fixtureClient() }.recover(session, "synthetic@example.invalid", "synthetic-password")) }
+        fun submit() {
+            compose.onNodeWithText("Account email").performTextReplacement("synthetic@example.invalid")
+            compose.onNodeWithText("Password").performTextInput("synthetic-password")
+            compose.onNodeWithText("Restore original account").performScrollTo().performClick()
+        }
+        if (wrongAccountFirst) {
+            account.set(B)
+            submit()
+            awaitStage("recovery.wrong-account.IDENTITY") {
+                compose.onAllNodesWithText("Recovery stage: IDENTITY.", substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            assertTrue(session.retentionGuard.isLocked)
+            assertEquals(draftBefore, app.getSharedPreferences("vinetrack_local_planning", 0).all)
+            compose.onAllNodes(hasText("Home") and hasClickAction()).assertCountEquals(0)
+            account.set(A)
+        }
+        submit()
         awaitStage("recovery.home") { compose.onAllNodes(hasText("Home") and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
         awaitStage("recovery.loaded", timeoutMillis = 60_000) { pending.isEmpty() && checkpoints.count { it == "vineyard.load.published" } >= 2 }
         assertFalse(session.withAccountAccess(obsolete) { fail("Obsolete session authority returned") })
         assertEquals(draftBefore, app.getSharedPreferences("vinetrack_local_planning", 0).all)
-        assertEquals(draft, WorkTaskPlanningDraftStore(app).load(A, "vineyard-A", null))
+        assertEquals("original-creation", WorkTaskPlanningDraftStore(app).load(A, "vineyard-A", null)?.creationId)
         assertEquals("block-$A", DomainCacheRepository(app).loadPaddocks(A, "vineyard-A")!!.single().id)
+        assertOriginalIdentityAndNoOperationalWrites()
+        return draftBefore
+    }
+
+    private fun assertOriginalIdentityAndNoOperationalWrites() {
+        assertEquals(A, SessionStore(app).userId)
+        assertEquals("task-$A", DomainCacheRepository(app).loadWorkTasks(A, "vineyard-A")!!.single().id)
+        assertEquals("trip-$A", DomainCacheRepository(app).loadTrips(A, "vineyard-A")!!.single().id)
+        assertTrue("Unexpected operational writes: $operationalWrites", operationalWrites.isEmpty())
+    }
+
+    /** Samples wall time, main heartbeat/stacks and native screen without Compose synchronisation. */
+    @OptIn(androidx.compose.runtime.ExperimentalComposeRuntimeApi::class)
+    private fun watchEditor(label: String) {
+        diagnosticWorker = Thread({
+            try {
+                repeat(3) { sample ->
+                    Thread.sleep(2_000)
+                    val latch = java.util.concurrent.CountDownLatch(1)
+                    android.os.Handler(android.os.Looper.getMainLooper()).post { latch.countDown() }
+                    val responsive = latch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    val recomposers = androidx.compose.runtime.Recomposer.runningRecomposers.value.map { info ->
+                        val internals = runCatching {
+                            val outer = info.javaClass.getDeclaredField("this\$0").apply { isAccessible = true }.get(info)
+                            fun value(name: String): Any? = outer.javaClass.getDeclaredField(name).apply { isAccessible = true }.get(outer)
+                            val clock = value("broadcastFrameClock")!!
+                            "broadcastAwaiters=${clock.javaClass.getMethod("getHasAwaiters").invoke(clock)},invalidations=${value("compositionInvalidations")},snapshotInvalidations=${value("snapshotInvalidations")},concurrent=${value("concurrentCompositionsOutstanding")}"
+                        }.getOrElse { "probe=${it.javaClass.simpleName}" }
+                        "pending=${info.hasPendingWork},changes=${info.changeCount},$internals"
+                    }
+                    val details = "EDITOR_DIAGNOSTIC $label sample=$sample mainHeartbeat=$responsive clockMs=${compose.mainClock.currentTime} recomposers=$recomposers pending=$pending responses=${responses.size} checkpoints=${checkpoints.size} mainStack=${android.os.Looper.getMainLooper().thread.stackTrace.joinToString(" > ")}"
+                    android.util.Log.i("CleanExitFixture", details)
+                    val instrumentation = InstrumentationRegistry.getInstrumentation()
+                    instrumentation.sendStatus(2, android.os.Bundle().apply { putString("stream", "\n$details\n") })
+                    if (sample == 1) {
+                        instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
+                            val directory = java.io.File(app.getExternalFilesDir(null), "recovery-editor-evidence").apply { mkdirs() }
+                            java.io.File(directory, "$label.png").outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                            val scaled = android.graphics.Bitmap.createScaledBitmap(bitmap, 180, bitmap.height * 180 / bitmap.width, true)
+                            val bytes = java.io.ByteArrayOutputStream().also { scaled.compress(android.graphics.Bitmap.CompressFormat.WEBP_LOSSY, 20, it) }.toByteArray()
+                            android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP).chunked(1500).forEachIndexed { index, chunk ->
+                                instrumentation.sendStatus(2, android.os.Bundle().apply { putString("stream", "\nRECOVERY_SCREEN_${label}_${index}=$chunk\n") })
+                            }
+                            if (scaled !== bitmap) scaled.recycle()
+                            bitmap.recycle()
+                        }
+                    }
+                }
+            } catch (_: InterruptedException) { /* Test finished; no background work leaks. */ }
+        }, "recovery-editor-diagnostic").apply { isDaemon = true; start() }
+    }
+
+    private fun openTaskEditor(label: String) {
         compose.onNodeWithText("Work Tasks").performScrollTo().performClick()
         awaitText("Log a New Task")
         compose.onNodeWithText("Log a New Task").performScrollTo().performClick()
+        watchEditor(label)
         awaitText("No block")
+    }
+
+    @Test fun ordinarySignInPopulatedTaskEditorDiagnostic() {
+        signIn()
+        val before = retainDraft()
+        openTaskEditor("ordinary")
+        assertEquals(before, app.getSharedPreferences("vinetrack_local_planning", 0).all)
+    }
+
+    @Test fun recoveryFormPopulatedTaskEditorDiagnostic() {
+        val before = recoverThroughForm()
+        openTaskEditor("recovered")
+        assertEquals(before, app.getSharedPreferences("vinetrack_local_planning", 0).all)
+    }
+
+    @Test fun recoveryFormHomeBlocksAndReopenPreserveDraft() {
+        val before = recoverThroughForm(wrongAccountFirst = true)
+        scenario.close()
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        awaitStage("reopen.home") { compose.onAllNodes(hasText("Home") and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onAllNodesWithText("Local work protected").assertCountEquals(0)
+        assertEquals(before, app.getSharedPreferences("vinetrack_local_planning", 0).all)
+        assertFalse(SessionStore(app).retentionGuard.isLocked)
+        assertEquals("block-$A", DomainCacheRepository(app).loadPaddocks(A, "vineyard-A")!!.single().id)
+        assertOriginalIdentityAndNoOperationalWrites()
+    }
+
+    @Test fun recoveredHomeWorkTaskSelectsExistingBlock() {
+        val before = recoverThroughForm()
+        openTaskEditor("task-selection")
         compose.onNodeWithText("Block", substring = false).performScrollTo().performClick()
         compose.onNodeWithText("Private block $A", substring = false).assertExists().performClick()
         compose.onNodeWithContentDescription("Selected").assertExists()
-        // Dismiss the menu and editor using Android's supported back action; never save a task.
+        // Confirm the field itself changed, not just the presence of a menu option.
         InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
-        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.onNode(hasText("Private block $A") and hasText("Block")).assertExists()
+        assertEquals(before, app.getSharedPreferences("vinetrack_local_planning", 0).all)
+        assertOriginalIdentityAndNoOperationalWrites()
+    }
+
+    @Test fun recoveredHomeTripSelectsExistingBlock() {
+        val before = recoverThroughForm()
         compose.onNode(hasText("Trip") and hasClickAction()).performClick()
         awaitText("  Start Trip")
-        compose.onNodeWithText("  Start Trip").performScrollTo().performClick()
+        compose.onNodeWithText("  Start Trip").assertIsDisplayed().performClick()
         awaitText("Start a Trip")
         compose.onNodeWithText("Maintenance Trip", substring = false).performClick()
         awaitText("No blocks selected")
         compose.onNodeWithText("No blocks selected", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("Private block $A", substring = false).performClick()
+        compose.onNode(isToggleable() and hasAnyAncestor(hasText("Private block $A"))).assertIsOn()
+        compose.onNodeWithText("Done", substring = false).performClick()
         compose.onNodeWithText("Private block $A", substring = false).assertExists()
-        assertFalse(session.retentionGuard.isLocked)
+        compose.onAllNodesWithText("No blocks selected", substring = false).assertCountEquals(0)
+        assertEquals(before, app.getSharedPreferences("vinetrack_local_planning", 0).all)
+        assertFalse(SessionStore(app).retentionGuard.isLocked)
+        assertOriginalIdentityAndNoOperationalWrites()
     }
 
     @Test fun populatedSettingsExitRecreateRelaunchReturnAThenBIsolatesPrivateCachesAndAuthority() {
@@ -377,7 +509,7 @@ class PopulatedCleanExitActivityTest {
             waterVolumeL = 120.0, chemicals = emptyList(), confirmedAt = "2026-10-12T00:00:00Z", confirmedBy = A)))
     }
     @Test fun unsynchronisedPinRefusalKeepsSessionAndQueue() = assertRefused("vinetrack_pending_writes", "Pending records") {
-        val row = PendingWrite("unsent", "pin", "create", "{\"id\":\"unsent\",\"vineyard_id\":\"$vineyard\"}", "unsent", 1, 1)
+        val row = PendingWrite("unsent", "pin", "create", """{"id":"unsent","vineyard_id":"$vineyard"}""", "unsent", 1, 1)
         assertTrue(PendingWriteStore(app).save(listOf(row)))
     }
     @Test fun unfinishedPhotoRefusalKeepsSessionAndJpeg() {

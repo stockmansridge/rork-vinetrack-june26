@@ -1,0 +1,83 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest:
+INSTRUMENTATION_STATUS: test=recoveryFormPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: recovery.loaded: checkpoints=[fixture.reset.sameGuard.true, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, route.VineyardLoading, complete.session.admitted, waiting.main.settings.ready, vineyard.load.begin, route.Main, complete.main.settings.ready, waiting.vineyard.load.published, vineyard.load.published, vineyard.load.finished, complete.vineyard.load.published, waiting.cache.hydrated, complete.cache.hydrated, owner.disposing, owner.disposed, owner.attached, waiting.text.Local work protected, complete.text.Local work protected, waiting.recovery.home, owner.disposing, owner.disposed, owner.attached, route.Restoring, route.VineyardLoading, vineyard.load.begin, route.Main, field.commit.contended, vineyard.load.failure.FieldSaveBusy, vineyard.load.finished, complete.recovery.home, waiting.recovery.loaded]; session=true; identity=A; locked=false; finishing=false; epoch=2; files=[profileInstalled]; preferenceFiles=null; pending={}; responseCount=103; lastResponses=[GET /rest/v1/pruning_seasons 503, POST /rest/v1/rpc/get_pruning_vineyard_summary 503, POST /rest/v1/rpc/list_pruning_activities 503, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings 503, GET /rest/v1/spray_tank_actuals 503, POST /rest/v1/rpc/get_canopy_reference_images_v1 503]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, POST /rest/v1/rpc/record_my_client_activity, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/pruning_yield_settings, GET /rest/v1/spray_tank_actuals, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings, GET /rest/v1/vineyard_trip_functions, POST /rest/v1/rpc/list_vineyard_spray_targets, GET /rest/v1/saved_inputs, GET /rest/v1/saved_spray_presets, GET /rest/v1/fuel_purchases, GET /rest/v1/equipment_items, GET /rest/v1/vineyard_button_configs, POST /rest/v1/rpc/list_vineyard_grape_varieties, POST /rest/v1/rpc/get_rootstock_catalog, POST /rest/v1/rpc/list_vineyard_grape_clones, POST /rest/v1/rpc/list_vineyard_rootstocks, GET /rest/v1/yield_bunch_weights, POST /rest/v1/rpc/get_vineyard_region_settings, GET /rest/v1/vineyard_growth_stage_images, POST /rest/v1/rpc/get_vineyard_season_settings]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:67)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm(PopulatedCleanExitActivityTest.kt:234)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm$default(PopulatedCleanExitActivityTest.kt:203)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoveryFormPopulatedTaskEditorDiagnostic(PopulatedCleanExitActivityTest.kt:299)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 60000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:64)
+	... 70 more
+
+INSTRUMENTATION_STATUS: stream=
+Error in recoveryFormPopulatedTaskEditorDiagnostic(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.AssertionError: recovery.loaded: checkpoints=[fixture.reset.sameGuard.true, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, route.VineyardLoading, complete.session.admitted, waiting.main.settings.ready, vineyard.load.begin, route.Main, complete.main.settings.ready, waiting.vineyard.load.published, vineyard.load.published, vineyard.load.finished, complete.vineyard.load.published, waiting.cache.hydrated, complete.cache.hydrated, owner.disposing, owner.disposed, owner.attached, waiting.text.Local work protected, complete.text.Local work protected, waiting.recovery.home, owner.disposing, owner.disposed, owner.attached, route.Restoring, route.VineyardLoading, vineyard.load.begin, route.Main, field.commit.contended, vineyard.load.failure.FieldSaveBusy, vineyard.load.finished, complete.recovery.home, waiting.recovery.loaded]; session=true; identity=A; locked=false; finishing=false; epoch=2; files=[profileInstalled]; preferenceFiles=null; pending={}; responseCount=103; lastResponses=[GET /rest/v1/pruning_seasons 503, POST /rest/v1/rpc/get_pruning_vineyard_summary 503, POST /rest/v1/rpc/list_pruning_activities 503, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings 503, GET /rest/v1/spray_tank_actuals 503, POST /rest/v1/rpc/get_canopy_reference_images_v1 503]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, POST /rest/v1/rpc/record_my_client_activity, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/pruning_yield_settings, GET /rest/v1/spray_tank_actuals, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings, GET /rest/v1/vineyard_trip_functions, POST /rest/v1/rpc/list_vineyard_spray_targets, GET /rest/v1/saved_inputs, GET /rest/v1/saved_spray_presets, GET /rest/v1/fuel_purchases, GET /rest/v1/equipment_items, GET /rest/v1/vineyard_button_configs, POST /rest/v1/rpc/list_vineyard_grape_varieties, POST /rest/v1/rpc/get_rootstock_catalog, POST /rest/v1/rpc/list_vineyard_grape_clones, POST /rest/v1/rpc/list_vineyard_rootstocks, GET /rest/v1/yield_bunch_weights, POST /rest/v1/rpc/get_vineyard_region_settings, GET /rest/v1/vineyard_growth_stage_images, POST /rest/v1/rpc/get_vineyard_season_settings]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:67)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm(PopulatedCleanExitActivityTest.kt:234)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm$default(PopulatedCleanExitActivityTest.kt:203)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoveryFormPopulatedTaskEditorDiagnostic(PopulatedCleanExitActivityTest.kt:299)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 60000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:64)
+	... 70 more
+
+INSTRUMENTATION_STATUS: test=recoveryFormPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 65.772
+There was 1 failure:
+1) recoveryFormPopulatedTaskEditorDiagnostic(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.AssertionError: recovery.loaded: checkpoints=[fixture.reset.sameGuard.true, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, route.VineyardLoading, complete.session.admitted, waiting.main.settings.ready, vineyard.load.begin, route.Main, complete.main.settings.ready, waiting.vineyard.load.published, vineyard.load.published, vineyard.load.finished, complete.vineyard.load.published, waiting.cache.hydrated, complete.cache.hydrated, owner.disposing, owner.disposed, owner.attached, waiting.text.Local work protected, complete.text.Local work protected, waiting.recovery.home, owner.disposing, owner.disposed, owner.attached, route.Restoring, route.VineyardLoading, vineyard.load.begin, route.Main, field.commit.contended, vineyard.load.failure.FieldSaveBusy, vineyard.load.finished, complete.recovery.home, waiting.recovery.loaded]; session=true; identity=A; locked=false; finishing=false; epoch=2; files=[profileInstalled]; preferenceFiles=null; pending={}; responseCount=103; lastResponses=[GET /rest/v1/pruning_seasons 503, POST /rest/v1/rpc/get_pruning_vineyard_summary 503, POST /rest/v1/rpc/list_pruning_activities 503, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings 503, GET /rest/v1/spray_tank_actuals 503, POST /rest/v1/rpc/get_canopy_reference_images_v1 503]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, POST /rest/v1/rpc/record_my_client_activity, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/pruning_yield_settings, GET /rest/v1/spray_tank_actuals, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings, GET /rest/v1/vineyard_trip_functions, POST /rest/v1/rpc/list_vineyard_spray_targets, GET /rest/v1/saved_inputs, GET /rest/v1/saved_spray_presets, GET /rest/v1/fuel_purchases, GET /rest/v1/equipment_items, GET /rest/v1/vineyard_button_configs, POST /rest/v1/rpc/list_vineyard_grape_varieties, POST /rest/v1/rpc/get_rootstock_catalog, POST /rest/v1/rpc/list_vineyard_grape_clones, POST /rest/v1/rpc/list_vineyard_rootstocks, GET /rest/v1/yield_bunch_weights, POST /rest/v1/rpc/get_vineyard_region_settings, GET /rest/v1/vineyard_growth_stage_images, POST /rest/v1/rpc/get_vineyard_season_settings]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:67)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm(PopulatedCleanExitActivityTest.kt:234)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm$default(PopulatedCleanExitActivityTest.kt:203)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoveryFormPopulatedTaskEditorDiagnostic(PopulatedCleanExitActivityTest.kt:299)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 60000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:64)
+	... 70 more
+
+FAILURES!!!
+Tests run: 1,  Failures: 1
+
+
+INSTRUMENTATION_CODE: -1

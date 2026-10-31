@@ -22,14 +22,26 @@ import kotlinx.serialization.Serializable
 
 /** Isolated authentication transport; ordinary field access is restored only by original-user admission. */
 class AuthRecoveryRepository(
-    private val clientFactory: () -> HttpClient = {
-        HttpClient(Android) {
-            expectSuccess = false
-            followRedirects = false
-            install(ContentNegotiation) { json(SupabaseClient.json) }
-        }
-    },
+    private val clientFactory: () -> HttpClient = { newIsolatedClient() },
 ) {
+    companion object {
+        @Volatile private var instrumentationClientFactory: (() -> HttpClient)? = null
+
+        /** Debug-only, independent client per attempt; never shares the ordinary app engine. */
+        internal fun installInstrumentationTransport(factory: (() -> HttpClient)?) {
+            check(com.rork.vinetrack.BuildConfig.DEBUG)
+            instrumentationClientFactory = factory
+        }
+
+        private fun newIsolatedClient(): HttpClient {
+            if (com.rork.vinetrack.BuildConfig.DEBUG) instrumentationClientFactory?.let { return it() }
+            return HttpClient(Android) {
+                expectSuccess = false
+                followRedirects = false
+                install(ContentNegotiation) { json(SupabaseClient.json) }
+            }
+        }
+    }
     @Serializable private data class Credentials(val email: String, val password: String)
     @Serializable private data class Token(
         @SerialName("access_token") val accessToken: String? = null,

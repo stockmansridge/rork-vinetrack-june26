@@ -1,0 +1,395 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest:
+INSTRUMENTATION_STATUS: test=ordinarySignInPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: vineyard.load.published: checkpoints=[fixture.reset.sameGuard.true, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, complete.session.admitted, waiting.main.settings.ready, route.VineyardLoading, vineyard.load.begin, route.Main, field.commit.contended, contention.stack=dalvik.system.VMStack.getThreadStackTrace(Native Method)
+java.lang.Thread.getStackTrace(Thread.java:1955)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.checkpoint(PopulatedCleanExitActivityTest.kt:46)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.access$checkpoint(PopulatedCleanExitActivityTest.kt:24)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint(CleanExitDiagnostics.kt:11)
+com.rork.vinetrack.data.auth.AuthRetentionGuard.tryWithAccount$app_debug(AuthRetentionGuard.kt:109)
+com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:44)
+com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8)
+com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77)
+com.rork.vinetrack.data.DomainCacheStore.saveSprayEquipment$app_debug(DomainCacheStore.kt:687)
+com.rork.vinetrack.data.DomainCacheRepository.saveSprayEquipment$app_debug(DomainCacheRepository.kt:119)
+com.rork.vinetrack.ui.AppViewModel.loadVineyardDataBody(AppViewModel.kt:18007)
+com.rork.vinetrack.ui.AppViewModel.access$loadVineyardDataBody(AppViewModel.kt:1192)
+com.rork.vinetrack.ui.AppViewModel$loadVineyardDataBody$1.invokeSuspend(Unknown Source:15)
+kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+android.os.Looper.loopOnce(Looper.java:232)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911), vineyard.load.failure.FieldSaveBusy, vineyard.load.contention.at.[com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:46), com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8), com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77), com.rork.vinetrack.data.DomainCacheStore.saveSprayEquipment$app_debug(DomainCacheStore.kt:687), com.rork.vinetrack.data.DomainCacheRepository.saveSprayEquipment$app_debug(DomainCacheRepository.kt:119), com.rork.vinetrack.ui.AppViewModel.loadVineyardDataBody(AppViewModel.kt:18007), com.rork.vinetrack.ui.AppViewModel.access$loadVineyardDataBody(AppViewModel.kt:1192), com.rork.vinetrack.ui.AppViewModel$loadVineyardDataBody$1.invokeSuspend(Unknown Source:15)], vineyard.load.finished, complete.main.settings.ready, waiting.vineyard.load.published]; session=true; identity=A; locked=false; finishing=false; epoch=0; files=[profileInstalled]; preferenceFiles=null; pending={}; responseCount=30; lastResponses=[GET /rest/v1/spray_tank_actuals 503, GET /rest/v1/pruning_seasons 503, POST /rest/v1/rpc/get_pruning_vineyard_summary 503, POST /rest/v1/rpc/list_pruning_activities 503, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings 503, POST /rest/v1/rpc/get_canopy_reference_images_v1 503]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, POST /rest/v1/rpc/record_my_client_activity, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/pruning_yield_settings, GET /rest/v1/spray_tank_actuals, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:71)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.signIn(PopulatedCleanExitActivityTest.kt:178)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.ordinarySignInPopulatedTaskEditorDiagnostic(PopulatedCleanExitActivityTest.kt:296)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 60000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:68)
+	... 69 more
+
+INSTRUMENTATION_STATUS: stream=
+Error in ordinarySignInPopulatedTaskEditorDiagnostic(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.AssertionError: vineyard.load.published: checkpoints=[fixture.reset.sameGuard.true, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, complete.session.admitted, waiting.main.settings.ready, route.VineyardLoading, vineyard.load.begin, route.Main, field.commit.contended, contention.stack=dalvik.system.VMStack.getThreadStackTrace(Native Method)
+java.lang.Thread.getStackTrace(Thread.java:1955)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.checkpoint(PopulatedCleanExitActivityTest.kt:46)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.access$checkpoint(PopulatedCleanExitActivityTest.kt:24)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint(CleanExitDiagnostics.kt:11)
+com.rork.vinetrack.data.auth.AuthRetentionGuard.tryWithAccount$app_debug(AuthRetentionGuard.kt:109)
+com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:44)
+com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8)
+com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77)
+com.rork.vinetrack.data.DomainCacheStore.saveSprayEquipment$app_debug(DomainCacheStore.kt:687)
+com.rork.vinetrack.data.DomainCacheRepository.saveSprayEquipment$app_debug(DomainCacheRepository.kt:119)
+com.rork.vinetrack.ui.AppViewModel.loadVineyardDataBody(AppViewModel.kt:18007)
+com.rork.vinetrack.ui.AppViewModel.access$loadVineyardDataBody(AppViewModel.kt:1192)
+com.rork.vinetrack.ui.AppViewModel$loadVineyardDataBody$1.invokeSuspend(Unknown Source:15)
+kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+android.os.Looper.loopOnce(Looper.java:232)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911), vineyard.load.failure.FieldSaveBusy, vineyard.load.contention.at.[com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:46), com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8), com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77), com.rork.vinetrack.data.DomainCacheStore.saveSprayEquipment$app_debug(DomainCacheStore.kt:687), com.rork.vinetrack.data.DomainCacheRepository.saveSprayEquipment$app_debug(DomainCacheRepository.kt:119), com.rork.vinetrack.ui.AppViewModel.loadVineyardDataBody(AppViewModel.kt:18007), com.rork.vinetrack.ui.AppViewModel.access$loadVineyardDataBody(AppViewModel.kt:1192), com.rork.vinetrack.ui.AppViewModel$loadVineyardDataBody$1.invokeSuspend(Unknown Source:15)], vineyard.load.finished, complete.main.settings.ready, waiting.vineyard.load.published]; session=true; identity=A; locked=false; finishing=false; epoch=0; files=[profileInstalled]; preferenceFiles=null; pending={}; responseCount=30; lastResponses=[GET /rest/v1/spray_tank_actuals 503, GET /rest/v1/pruning_seasons 503, POST /rest/v1/rpc/get_pruning_vineyard_summary 503, POST /rest/v1/rpc/list_pruning_activities 503, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings 503, POST /rest/v1/rpc/get_canopy_reference_images_v1 503]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, POST /rest/v1/rpc/record_my_client_activity, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/pruning_yield_settings, GET /rest/v1/spray_tank_actuals, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:71)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.signIn(PopulatedCleanExitActivityTest.kt:178)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.ordinarySignInPopulatedTaskEditorDiagnostic(PopulatedCleanExitActivityTest.kt:296)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 60000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:68)
+	... 69 more
+
+INSTRUMENTATION_STATUS: test=ordinarySignInPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveredHomeTripSelectsExistingBlock
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Semantic Node has no parent layout with a Scroll SemanticsAction
+	at androidx.compose.ui.test.ActionsKt.scrollToNode(Actions.kt:97)
+	at androidx.compose.ui.test.ActionsKt.performScrollTo(Actions.kt:82)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoveredHomeTripSelectsExistingBlock(PopulatedCleanExitActivityTest.kt:335)
+
+INSTRUMENTATION_STATUS: stream=
+Error in recoveredHomeTripSelectsExistingBlock(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.AssertionError: Semantic Node has no parent layout with a Scroll SemanticsAction
+	at androidx.compose.ui.test.ActionsKt.scrollToNode(Actions.kt:97)
+	at androidx.compose.ui.test.ActionsKt.performScrollTo(Actions.kt:82)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoveredHomeTripSelectsExistingBlock(PopulatedCleanExitActivityTest.kt:335)
+
+INSTRUMENTATION_STATUS: test=recoveredHomeTripSelectsExistingBlock
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveryFormPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=recoveryFormPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveryFormHomeBlocksAndReopenPreserveDraft
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: vineyard.load.published: checkpoints=[fixture.reset.sameGuard.true, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, vineyard.load.begin, route.Main, complete.session.admitted, waiting.main.settings.ready, field.commit.contended, contention.stack=dalvik.system.VMStack.getThreadStackTrace(Native Method)
+java.lang.Thread.getStackTrace(Thread.java:1955)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.checkpoint(PopulatedCleanExitActivityTest.kt:46)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.access$checkpoint(PopulatedCleanExitActivityTest.kt:24)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint(CleanExitDiagnostics.kt:11)
+com.rork.vinetrack.data.auth.AuthRetentionGuard.tryWithAccount$app_debug(AuthRetentionGuard.kt:109)
+com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:44)
+com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8)
+com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77)
+com.rork.vinetrack.data.DomainCacheStore.savePicking(DomainCacheStore.kt:921)
+com.rork.vinetrack.data.DomainCacheRepository.savePicking(DomainCacheRepository.kt:424)
+com.rork.vinetrack.ui.AppViewModel$refreshRemoteSnapshots$1.invokeSuspend(AppViewModel.kt:5428)
+kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:98)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+androidx.test.espresso.base.Interrogator.loopAndInterrogate(Interrogator.java:14)
+androidx.test.espresso.base.UiControllerImpl.loopUntil(UiControllerImpl.java:8)
+androidx.test.espresso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16)
+androidx.test.espresso.Espresso$1.run(Espresso.java:1)
+java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524)
+java.util.concurrent.FutureTask.run(FutureTask.java:317)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+android.os.Looper.loopOnce(Looper.java:232)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911), field.commit.contended, contention.stack=dalvik.system.VMStack.getThreadStackTrace(Native Method)
+java.lang.Thread.getStackTrace(Thread.java:1955)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.checkpoint(PopulatedCleanExitActivityTest.kt:46)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.access$checkpoint(PopulatedCleanExitActivityTest.kt:24)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint(CleanExitDiagnostics.kt:11)
+com.rork.vinetrack.data.auth.AuthRetentionGuard.tryWithAccount$app_debug(AuthRetentionGuard.kt:109)
+com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:44)
+com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8)
+com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77)
+com.rork.vinetrack.data.DomainCacheStore.savePaddocks(DomainCacheStore.kt:700)
+com.rork.vinetrack.data.DomainCacheRepository.savePaddocks(DomainCacheRepository.kt:127)
+com.rork.vinetrack.ui.AppViewModel.loadVineyardDataBody(AppViewModel.kt:18056)
+com.rork.vinetrack.ui.AppViewModel.access$loadVineyardDataBody(AppViewModel.kt:1192)
+com.rork.vinetrack.ui.AppViewModel$loadVineyardDataBody$1.invokeSuspend(Unknown Source:15)
+kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+androidx.test.espresso.base.Interrogator.loopAndInterrogate(Interrogator.java:14)
+androidx.test.espresso.base.UiControllerImpl.loopUntil(UiControllerImpl.java:8)
+androidx.test.espresso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16)
+androidx.test.espr
+... output truncated ...
+presso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16)
+androidx.test.espresso.Espresso$1.run(Espresso.java:1)
+java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524)
+java.util.concurrent.FutureTask.run(FutureTask.java:317)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+android.os.Looper.loopOnce(Looper.java:232)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911), vineyard.load.failure.FieldSaveBusy, vineyard.load.contention.at.[com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:46), com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8), com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77), com.rork.vinetrack.data.DomainCacheStore.savePaddocks(DomainCacheStore.kt:700), com.rork.vinetrack.data.DomainCacheRepository.savePaddocks(DomainCacheRepository.kt:127), com.rork.vinetrack.ui.AppViewModel.loadVineyardDataBody(AppViewModel.kt:18056), com.rork.vinetrack.ui.AppViewModel.access$loadVineyardDataBody(AppViewModel.kt:1192), com.rork.vinetrack.ui.AppViewModel$loadVineyardDataBody$1.invokeSuspend(Unknown Source:15)], vineyard.load.finished, complete.main.settings.ready, waiting.vineyard.load.published]; session=true; identity=A; locked=false; finishing=false; epoch=4; files=[]; preferenceFiles=null; pending={}; responseCount=32; lastResponses=[GET /rest/v1/spray_tank_actuals 503, GET /rest/v1/pruning_seasons 503, POST /rest/v1/rpc/get_pruning_vineyard_summary 503, POST /rest/v1/rpc/list_pruning_activities 503, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings 503, POST /rest/v1/rpc/get_canopy_reference_images_v1 503]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, POST /rest/v1/rpc/record_my_client_activity, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/pruning_yield_settings, GET /rest/v1/spray_tank_actuals, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:71)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.signIn(PopulatedCleanExitActivityTest.kt:178)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm(PopulatedCleanExitActivityTest.kt:208)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoveryFormHomeBlocksAndReopenPreserveDraft(PopulatedCleanExitActivityTest.kt:309)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 60000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:68)
+	... 70 more
+
+INSTRUMENTATION_STATUS: test=recoveryFormHomeBlocksAndReopenPreserveDraft
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveredHomeWorkTaskSelectsExistingBlock
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=recoveredHomeWorkTaskSelectsExistingBlock
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 139.969
+There were 3 failures:
+1) ordinarySignInPopulatedTaskEditorDiagnostic(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.AssertionError: vineyard.load.published: checkpoints=[fixture.reset.sameGuard.true, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, complete.session.admitted, waiting.main.settings.ready, route.VineyardLoading, vineyard.load.begin, route.Main, field.commit.contended, contention.stack=dalvik.system.VMStack.getThreadStackTrace(Native Method)
+java.lang.Thread.getStackTrace(Thread.java:1955)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.checkpoint(PopulatedCleanExitActivityTest.kt:46)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.access$checkpoint(PopulatedCleanExitActivityTest.kt:24)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint(CleanExitDiagnostics.kt:11)
+com.rork.vinetrack.data.auth.AuthRetentionGuard.tryWithAccount$app_debug(AuthRetentionGuard.kt:109)
+com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:44)
+com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8)
+com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77)
+com.rork.vinetrack.data.DomainCacheStore.saveSprayEquipment$app_debug(DomainCacheStore.kt:687)
+com.rork.vinetrack.data.DomainCacheRepository.saveSprayEquipment$app_debug(DomainCacheRepository.kt:119)
+com.rork.vinetrack.ui.AppViewModel.loadVineyardDataBody(AppViewModel.kt:18007)
+com.rork.vinetrack.ui.AppViewModel.access$loadVineyardDataBody(AppViewModel.kt:1192)
+com.rork.vinetrack.ui.AppViewModel$loadVineyardDataBody$1.invokeSuspend(Unknown Source:15)
+kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+android.os.Looper.loopOnce(Looper.java:232)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911), vineyard.load.failure.FieldSaveBusy, vineyard.load.contention.at.[com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:46), com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8), com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77), com.rork.vinetrack.data.DomainCacheStore.saveSprayEquipment$app_debug(DomainCacheStore.kt:687), com.rork.vinetrack.data.DomainCacheRepository.saveSprayEquipment$app_debug(DomainCacheRepository.kt:119), com.rork.vinetrack.ui.AppViewModel.loadVineyardDataBody(AppViewModel.kt:18007), com.rork.vinetrack.ui.AppViewModel.access$loadVineyardDataBody(AppViewModel.kt:1192), com.rork.vinetrack.ui.AppViewModel$loadVineyardDataBody$1.invokeSuspend(Unknown Source:15)], vineyard.load.finished, complete.main.settings.ready, waiting.vineyard.load.published]; session=true; identity=A; locked=false; finishing=false; epoch=0; files=[profileInstalled]; preferenceFiles=null; pending={}; responseCount=30; lastResponses=[GET /rest/v1/spray_tank_actuals 503, GET /rest/v1/pruning_seasons 503, POST /rest/v1/rpc/get_pruning_vineyard_summary 503, POST /rest/v1/rpc/list_pruning_activities 503, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings 503, POST /rest/v1/rpc/get_canopy_reference_images_v1 503]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, POST /rest/v1/rpc/record_my_client_activity, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/pruning_yield_settings, GET /rest/v1/spray_tank_actuals, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:71)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.signIn(PopulatedCleanExitActivityTest.kt:178)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.ordinarySignInPopulatedTaskEditorDiagnostic(PopulatedCleanExitActivityTest.kt:296)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 60000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:68)
+	... 69 more
+2) recoveredHomeTripSelectsExistingBlock(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.AssertionError: Semantic Node has no parent layout with a Scroll SemanticsAction
+	at androidx.compose.ui.test.ActionsKt.scrollToNode(Actions.kt:97)
+	at androidx.compose.ui.test.ActionsKt.performScrollTo(Actions.kt:82)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoveredHomeTripSelectsExistingBlock(PopulatedCleanExitActivityTest.kt:335)
+3) recoveryFormHomeBlocksAndReopenPreserveDraft(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.AssertionError: vineyard.load.published: checkpoints=[fixture.reset.sameGuard.true, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, vineyard.load.begin, route.Main, complete.session.admitted, waiting.main.settings.ready, field.commit.contended, contention.stack=dalvik.system.VMStack.getThreadStackTrace(Native Method)
+java.lang.Thread.getStackTrace(Thread.java:1955)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.checkpoint(PopulatedCleanExitActivityTest.kt:46)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.access$checkpoint(PopulatedCleanExitActivityTest.kt:24)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint(CleanExitDiagnostics.kt:11)
+com.rork.vinetrack.data.auth.AuthRetentionGuard.tryWithAccount$app_debug(AuthRetentionGuard.kt:109)
+com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:44)
+com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8)
+com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77)
+com.rork.vinetrack.data.DomainCacheStore.savePicking(DomainCacheStore.kt:921)
+com.rork.vinetrack.data.DomainCacheRepository.savePicking(DomainCacheRepository.kt:424)
+com.rork.vinetrack.ui.AppViewModel$refreshRemoteSnapshots$1.invokeSuspend(AppViewModel.kt:5428)
+kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:98)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+androidx.test.espresso.base.Interrogator.loopAndInterrogate(Interrogator.java:14)
+androidx.test.espresso.base.UiControllerImpl.loopUntil(UiControllerImpl.java:8)
+androidx.test.espresso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16)
+androidx.test.espresso.Espresso$1.run(Espresso.java:1)
+java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524)
+java.util.concurrent.FutureTask.run(FutureTask.java:317)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+android.os.Looper.loopOnce(Looper.java:232)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911), field.commit.contended, contention.stack=dalvik.system.VMStack.getThreadStackTrace(Native Method)
+java.lang.Thread.getStackTrace(Thread.java:1955)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.checkpoint(PopulatedCleanExitActivityTest.kt:46)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.access$checkpoint(PopulatedCleanExitActivityTest.kt:24)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest$setup$1.invoke(PopulatedCleanExitActivityTest.kt:83)
+com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint(CleanExitDiagnostics.kt:11)
+com.rork.vinetrack.data.auth.AuthRetentionGuard.tryWithAccount$app_debug(AuthRetentionGuard.kt:109)
+com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:44)
+com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8)
+com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77)
+com.rork.vinetrack.data.DomainCacheStore.savePaddocks(DomainCacheStore.kt:700)
+com.rork.vinetrack.data.DomainCacheRepository.savePaddocks(DomainCacheRepository.kt:127)
+com.rork.vinetrack.ui.AppViewModel.loadVineyardDataBody(AppViewModel.kt:18056)
+com.rork.vinetrack.ui.AppViewModel.access$loadVineyardDataBody(AppViewModel.kt:1192)
+com.rork.vinetrack.ui.AppViewModel$loadVineyardDataBody$1.invokeSuspend(Unknown Source:15)
+kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+androidx.test.espresso.base.Interrogator.loopAndInterrogate(Interrogator.java:14)
+androidx.test.espresso.base.UiControllerImpl.loopUntil(UiControllerImpl.java:8)
+androidx.test.espresso.base.UiControllerImpl.loopMainThreadUntilIdle(UiControllerImpl.java:16)
+androidx.test.espresso.Espresso$1.run(Espresso.java:1)
+java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524)
+java.util.concurrent.FutureTask.run(FutureTask.java:317)
+android.os.Handler.handleCallback(Handler.java:991)
+android.os.Handler.dispatchMessage(Handler.java:102)
+android.os.Looper.loopOnce(Looper.java:232)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911), vineyard.load.failure.FieldSaveBusy, vineyard.load.contention.at.[com.rork.vinetrack.data.auth.FieldStoreAccess.execute(FieldStoreAccess.kt:46), com.rork.vinetrack.data.auth.FieldStoreAccess.access$execute(FieldStoreAccess.kt:8), com.rork.vinetrack.data.auth.FieldStoreAccess$preferences$1$edit$1.apply(FieldStoreAccess.kt:77), com.rork.vinetrack.data.DomainCacheStore.savePaddocks(DomainCacheStore.kt:700), com.rork.vinetrack.data.DomainCacheRepository.savePaddocks(DomainCacheRepository.kt:127), com.rork.vinetrack.ui.AppViewModel.loadVineyardDataBody(AppViewModel.kt:18056), com.rork.vinetrack.ui.AppViewModel.access$loadVineyardDataBody(AppViewModel.kt:1192), com.rork.vinetrack.ui.AppViewModel$loadVineyardDataBody$1.invokeSuspend(Unknown Source:15)], vineyard.load.finished, complete.main.settings.ready, waiting.vineyard.load.published]; session=true; identity=A; locked=false; finishing=false; epoch=4; files=[]; preferenceFiles=null; pending={}; responseCount=32; lastResponses=[GET /rest/v1/spray_tank_actuals 503, GET /rest/v1/pruning_seasons 503, POST /rest/v1/rpc/get_pruning_vineyard_summary 503, POST /rest/v1/rpc/list_pruning_activities 503, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings 503, POST /rest/v1/rpc/get_canopy_reference_images_v1 503]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, POST /rest/v1/rpc/record_my_client_activity, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/pruning_yield_settings, GET /rest/v1/spray_tank_actuals, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:71)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.signIn(PopulatedCleanExitActivityTest.kt:178)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm(PopulatedCleanExitActivityTest.kt:208)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoveryFormHomeBlocksAndReopenPreserveDraft(PopulatedCleanExitActivityTest.kt:309)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 60000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:68)
+	... 70 more
+
+FAILURES!!!
+Tests run: 5,  Failures: 3
+
+
+INSTRUMENTATION_CODE: -1

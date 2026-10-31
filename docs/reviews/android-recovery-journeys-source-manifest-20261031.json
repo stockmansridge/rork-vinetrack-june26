@@ -1,0 +1,183 @@
+{
+  "managed_source_parent": "da345bd992f734fd3ea2b90db00fcaa7e4339311",
+  "repaired_managed_revision": null,
+  "public_main": "20dc66e7f1027d996102777c2c66901fda6a4c77",
+  "public_android_tree_byte_identical_to_parent": true,
+  "public_android_file_count": 1223,
+  "scope": "Android populated recovery, bounded cache admission and resting-sheet idling; no public release",
+  "protected": {
+    "ios_tracked_source_unchanged": true,
+    "ios_generated_configuration": {
+      "path": "ios/VineTrack/Config.swift",
+      "sha256": "71301cf111ea1855e8c86d50dd9a2675bab62550aa09f872aae83ccf8374508b"
+    },
+    "historical_recovery_inventory": "docs/reviews/android-populated-auth-source-manifest-20261031.json",
+    "historical_quadrant_inventory": "docs/reviews/pr26-quadrant-source-manifest-20261031.json",
+    "quadrant_inputs_byte_unchanged": 25,
+    "diagnostics_only_normalized_inputs": [
+      "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt"
+    ],
+    "version_and_build_settings_unchanged": true
+  },
+  "validation": {
+    "final_instrumentation": {
+      "passed": 90,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 65
+    },
+    "classes": {
+      "AuthRetentionAndroidTest": 59,
+      "PopulatedCleanExitActivityTest": 13,
+      "FieldSaveContentionAndroidTest": 16,
+      "GuardedSheetStateAndroidTest": 2
+    },
+    "five_independent_rendered_journeys_passed": true,
+    "prior_focused_host_25": "historical unchanged-contract evidence, not rerun",
+    "normal_android_build": "PASS after final native changes",
+    "original_device": "NOT ACCEPTED; no device/evidence/installed signer access"
+  },
+  "inspected_release_build": {
+    "apk_sha256": "34ec0002ce124001f2226934c3b2b28f38d429d84be6a4c6887f0ea785da3eb7",
+    "bytes": 77417285,
+    "package": "com.rork.vinetrack",
+    "version_name": "3.1.9",
+    "version_code": 12,
+    "signer_certificate_sha256": "241548efe6df8100c833d4eaebd2b3cf22dd70ffb638d9faa77bbd03f0077ef3",
+    "verified_v2_signature": true,
+    "release_debuggable": false,
+    "release_debug_constant": false,
+    "storage_isolation_activation": false,
+    "test_fixture_classes_and_mock_engine_absent": true,
+    "recovery_factory_uses_android_engine_only": true,
+    "release_recovery_transport_registration_throws": true,
+    "recovery_source_line_metadata_present": true,
+    "installed_signature_and_version_verified": false,
+    "update_compatibility": "UNVERIFIED; original installed package/version/certificate unavailable",
+    "tester_availability": "UNESTABLISHED; local inspected build is not a delivered update candidate"
+  },
+  "delivery": {
+    "verified_update_candidate": false,
+    "counter_changed": false,
+    "uploaded_to_store": false,
+    "installed_in_place": false,
+    "public_release": false,
+    "blockers": [
+      "Final repaired managed SHA not yet available",
+      "Installed signing identity/version and unused code unverified",
+      "Tester delivery availability and durable matching artifact/source retention unverified"
+    ]
+  },
+  "files": [
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/FieldSaveContentionAndroidTest.kt",
+      "sha256": "a34d6b102f2a344b6359cda90f3a2edebf6338d5dde215961075e73aedf4aa17",
+      "parent_sha256": "9b9a76b0efdc4b24012d849464c61266248d9b51795591e23df19c9e4cf28964"
+    },
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/PopulatedCleanExitActivityTest.kt",
+      "sha256": "75b88f6cc9e24d277e9ef4295bc968a5deddee0a8bfb2639af47119e13baf538",
+      "parent_sha256": "15e39f0b82c9364317f6b4fce027134973c72dba2f52455ad7a679722c436c3b"
+    },
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/ui/GuardedSheetStateAndroidTest.kt",
+      "sha256": "9543a677aaf9d554d2e0afe3328e442e3a67fa0bf6c8ad1bab0e0c737f37ef5c",
+      "parent_sha256": null
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/DomainCacheStore.kt",
+      "sha256": "a9eb555ed113cb40fcc7723b13453a7a7f6f0dec39a089ba40d643efda070f98",
+      "parent_sha256": "254b8f7cd9e343c6aa8261a1107d62e7cc5255e90a88263f605773cd5242ff18"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AuthRecoveryRepository.kt",
+      "sha256": "fac43dadb3a96012012fb67d565c7099963fb4245be4266be52a2f77522f4ba2",
+      "parent_sha256": "25ea927ef4ffa24e7c04363657af0e94d78982b31c20b680451fa49bed24a2b9"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/FieldStoreAccess.kt",
+      "sha256": "c8047a8250d38b6735a79d201df9656bd0c596988592604e21ddbd3699b672c8",
+      "parent_sha256": "3134c6d08820d9753178445f36eaa434f151eb38f817734342590b0c6d5c4b48"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt",
+      "sha256": "9b341109074002e31c3997bd15e36dbd3b1983dc1940177afcce05e1830dd98f",
+      "parent_sha256": "c094701d1a07edaeedd0f50480d60e5876828ac45f7931a7d28346c6ef9bd63a"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/GuardedSheetState.kt",
+      "sha256": "74b6c8fbd3d8dcca625f82e2edad79e93a0b418505a269f2fe0ae3d515bd8610",
+      "parent_sha256": "9dcf42d8ba785de2f85088c26fc704d8f5db20fdfdcead42c365c7df5578dc37"
+    },
+    {
+      "path": "scripts/extract-android-recovery-evidence.py",
+      "sha256": "ae5ee56e1c2143349ac2a2af2260107a8e7d0187492c595c35fc43ea253cf6bf",
+      "parent_sha256": null
+    },
+    {
+      "path": "scripts/inspect-android-recovery-apk.py",
+      "sha256": "93319a528d7fdc7ce2008316728219623972543d33f5d203ed9f408a95007f8c",
+      "parent_sha256": null
+    },
+    {
+      "path": "scripts/retain-android-recovery-evidence.py",
+      "sha256": "dba3d7aba17ad6e1be9c89c4b24e319ccf353f42834f1c7753458ab3d86d0d84",
+      "parent_sha256": null
+    },
+    {
+      "path": "scripts/snapshot-android-recovery-journeys-source.py",
+      "sha256": "442e98789c9575aca6fef28e412e526973faae1b4cb190068fb6cecfd308b83f",
+      "parent_sha256": null
+    }
+  ],
+  "evidence": [
+    {
+      "path": "docs/reviews/evidence/android-recovery-20261031/final-native-tool-result.json",
+      "sha256": "da7e1c5795c5c74ae0fcf57484f6404a8576709ee6b5fc36b1155c413b11e915"
+    },
+    {
+      "path": "docs/reviews/evidence/android-recovery-20261031/ordinary.webp",
+      "sha256": "04f08e9d9092e0fa8eb8d9e97d23dfa58cd15846d8014950c82b9f16011ba7df"
+    },
+    {
+      "path": "docs/reviews/evidence/android-recovery-20261031/vinetrack-domain-admission-focused.log",
+      "sha256": "3ed1f90bc6a2f078d5fec08a8d4045998b76f64bb863901ed71739a796368af5"
+    },
+    {
+      "path": "docs/reviews/evidence/android-recovery-20261031/vinetrack-drag-and-pin-diagnostics.log",
+      "sha256": "c1940d73d000e6cbe0d26b6af5d72743b4ca9f1594469ecbc85658690bc364fd"
+    },
+    {
+      "path": "docs/reviews/evidence/android-recovery-20261031/vinetrack-editor-ab-clock.log",
+      "sha256": "740c7514ac9ffceb2e028290dfb7e9164518ff5e9f7fdc0519b86488794376fd"
+    },
+    {
+      "path": "docs/reviews/evidence/android-recovery-20261031/vinetrack-editor-ab-initial.log",
+      "sha256": "62ab102d7454cabf75acafc622d114b05c07ddd71db8f0dd7584e23344dd0e5c"
+    },
+    {
+      "path": "docs/reviews/evidence/android-recovery-20261031/vinetrack-editor-ab-reflection.log",
+      "sha256": "fda918552f5be2086476b7004a4788c87db3a1330a6be1210e9e8c413c85234c"
+    },
+    {
+      "path": "docs/reviews/evidence/android-recovery-20261031/vinetrack-editor-event-driven.log",
+      "sha256": "6b09c9d85abbde7d9b86e8a3d5ca2d9c262587fe0d8b242495dd1c637c6b71ea"
+    },
+    {
+      "path": "docs/reviews/evidence/android-recovery-20261031/vinetrack-five-journeys-sheet-gates.log",
+      "sha256": "8fb116023d568629ddcb1abce336f60c2ec629026af67af3d80dedb8341495a8"
+    },
+    {
+      "path": "docs/reviews/evidence/android-recovery-20261031/vinetrack-recovery-load-busy.log",
+      "sha256": "9b9a96d049a38151f17037acaf2be055f59caa38533f51a176d3beb9e52973b1"
+    },
+    {
+      "path": "docs/reviews/evidence/android-recovery-20261031/vinetrack-sheet-current-offset.log",
+      "sha256": "43d6c5fc81afceb2480efe5fea12eb8da496a09eb7b8058463d83882d3f702d6"
+    },
+    {
+      "path": "docs/reviews/evidence/android-recovery-20261031/vinetrack-sheet-unsettled-virtual-clock.log",
+      "sha256": "06f4fb675400713f628b3e3310921ec8855aa29068c29707a205187b6b71a104"
+    }
+  ]
+}

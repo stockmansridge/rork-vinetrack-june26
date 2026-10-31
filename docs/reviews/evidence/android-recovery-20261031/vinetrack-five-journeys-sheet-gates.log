@@ -1,0 +1,190 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.ui.GuardedSheetStateAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.ui.GuardedSheetStateAndroidTest:
+INSTRUMENTATION_STATUS: test=smallDragStaysOpenAndLargeDeliberateDragDismisses
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.ui.GuardedSheetStateAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Assert failed: The component with Text + InputText + EditableText contains 'Cancel editor' (ignoreCase: false) is not displayed!
+	at androidx.compose.ui.test.AssertionsKt.assertIsDisplayed(Assertions.kt:34)
+	at com.rork.vinetrack.ui.GuardedSheetStateAndroidTest.smallDragStaysOpenAndLargeDeliberateDragDismisses(GuardedSheetStateAndroidTest.kt:56)
+
+INSTRUMENTATION_STATUS: stream=
+Error in smallDragStaysOpenAndLargeDeliberateDragDismisses(com.rork.vinetrack.ui.GuardedSheetStateAndroidTest):
+java.lang.AssertionError: Assert failed: The component with Text + InputText + EditableText contains 'Cancel editor' (ignoreCase: false) is not displayed!
+	at androidx.compose.ui.test.AssertionsKt.assertIsDisplayed(Assertions.kt:34)
+	at com.rork.vinetrack.ui.GuardedSheetStateAndroidTest.smallDragStaysOpenAndLargeDeliberateDragDismisses(GuardedSheetStateAndroidTest.kt:56)
+
+INSTRUMENTATION_STATUS: test=smallDragStaysOpenAndLargeDeliberateDragDismisses
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.ui.GuardedSheetStateAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=restingSheetIdlesAndExplicitCancelWorks
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.ui.GuardedSheetStateAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=restingSheetIdlesAndExplicitCancelWorks
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest:
+INSTRUMENTATION_STATUS: test=revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Field operation failed: java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertTrue(Assert.java:53)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting$lambda$2(FieldSaveContentionAndroidTest.kt:86)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.$r8$lambda$_mjCiRK0LNHpUfCurhjN9pwmGh8(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest$$ExternalSyntheticLambda10.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.contend$lambda$3$0(FieldSaveContentionAndroidTest.kt:404)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.$r8$lambda$6YEg2cOHUDXQmj2s7uyX5rSBphk(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest$$ExternalSyntheticLambda15.run(D8$$SyntheticClass:0)
+	at java.lang.Thread.run(Thread.java:1119)
+
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.contend(FieldSaveContentionAndroidTest.kt:421)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting(FieldSaveContentionAndroidTest.kt:83)
+
+INSTRUMENTATION_STATUS: stream=
+Error in revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting(com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest):
+java.lang.AssertionError: Field operation failed: java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertTrue(Assert.java:53)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting$lambda$2(FieldSaveContentionAndroidTest.kt:86)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.$r8$lambda$_mjCiRK0LNHpUfCurhjN9pwmGh8(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest$$ExternalSyntheticLambda10.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.contend$lambda$3$0(FieldSaveContentionAndroidTest.kt:404)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.$r8$lambda$6YEg2cOHUDXQmj2s7uyX5rSBphk(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest$$ExternalSyntheticLambda15.run(D8$$SyntheticClass:0)
+	at java.lang.Thread.run(Thread.java:1119)
+
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.contend(FieldSaveContentionAndroidTest.kt:421)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting(FieldSaveContentionAndroidTest.kt:83)
+
+INSTRUMENTATION_STATUS: test=revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest:
+INSTRUMENTATION_STATUS: test=ordinarySignInPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=ordinarySignInPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveredHomeTripSelectsExistingBlock
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=recoveredHomeTripSelectsExistingBlock
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveryFormPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=recoveryFormPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveryFormHomeBlocksAndReopenPreserveDraft
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=recoveryFormHomeBlocksAndReopenPreserveDraft
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=8
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveredHomeWorkTaskSelectsExistingBlock
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=8
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=8
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=recoveredHomeWorkTaskSelectsExistingBlock
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 28.4
+There were 2 failures:
+1) smallDragStaysOpenAndLargeDeliberateDragDismisses(com.rork.vinetrack.ui.GuardedSheetStateAndroidTest)
+java.lang.AssertionError: Assert failed: The component with Text + InputText + EditableText contains 'Cancel editor' (ignoreCase: false) is not displayed!
+	at androidx.compose.ui.test.AssertionsKt.assertIsDisplayed(Assertions.kt:34)
+	at com.rork.vinetrack.ui.GuardedSheetStateAndroidTest.smallDragStaysOpenAndLargeDeliberateDragDismisses(GuardedSheetStateAndroidTest.kt:56)
+2) revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting(com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest)
+java.lang.AssertionError: Field operation failed: java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertTrue(Assert.java:53)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting$lambda$2(FieldSaveContentionAndroidTest.kt:86)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.$r8$lambda$_mjCiRK0LNHpUfCurhjN9pwmGh8(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest$$ExternalSyntheticLambda10.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.contend$lambda$3$0(FieldSaveContentionAndroidTest.kt:404)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.$r8$lambda$6YEg2cOHUDXQmj2s7uyX5rSBphk(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest$$ExternalSyntheticLambda15.run(D8$$SyntheticClass:0)
+	at java.lang.Thread.run(Thread.java:1119)
+
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.contend(FieldSaveContentionAndroidTest.kt:421)
+	at com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest.revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting(FieldSaveContentionAndroidTest.kt:83)
+
+FAILURES!!!
+Tests run: 8,  Failures: 2
+
+
+INSTRUMENTATION_CODE: -1

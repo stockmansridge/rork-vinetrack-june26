@@ -17873,8 +17873,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val timing = performanceCapture.begin(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.VINEYARD_REFRESH)
         val switchTiming = com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.begin()
         try {
+            com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("vineyard.load.begin")
             loadVineyardDataBody(vineyardId)
+        } catch (failure: Exception) {
+            com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("vineyard.load.failure.${failure.javaClass.simpleName}")
+            if (failure is com.rork.vinetrack.data.auth.FieldSaveBusy) {
+                com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("vineyard.load.contention.at.${failure.stackTrace.filter { it.className.startsWith("com.rork.vinetrack") }.take(8)}")
+            }
+            throw failure
         } finally {
+            com.rork.vinetrack.data.auth.CleanExitDiagnostics.checkpoint("vineyard.load.finished")
             com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("background-load-including-waits", switchTiming)
             performanceCapture.end(timing)
             vineyardReadGate.release(lease)
