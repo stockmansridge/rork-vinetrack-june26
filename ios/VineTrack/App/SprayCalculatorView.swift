@@ -64,6 +64,13 @@ struct SprayCalculatorView: View {
     /// happened to sort first in the store — so a line arrived pre-bound to a
     /// product nobody chose. Adding a line now starts by asking which product.
     @State private var showAddChemicalPicker: Bool = false
+    /// Keep an explicit selection until the sheet is fully dismissed. Editing
+    /// calculator lines while SwiftUI is removing its chemical picker can
+    /// invalidate the binding backing a live Products card.
+    @State private var pendingNewChemicalSelection: SavedChemical?
+    private struct ChemicalLinePickerTarget: Identifiable { let id: UUID }
+    @State private var editingChemicalLineTarget: ChemicalLinePickerTarget?
+    @State private var pendingEditedChemicalSelection: (lineId: UUID, chemical: SavedChemical)?
     @FocusState private var isCustomRateFocused: Bool
     /// The chemical line whose product is currently open in the Chemical
     /// Store editor, so the sheet's dismissal/save handler knows which
@@ -1195,13 +1202,27 @@ struct SprayCalculatorView: View {
             .sheet(isPresented: $showStartConfirmation) {
                 startConfirmationSheet
             }
-            .sheet(isPresented: $showAddChemicalPicker) {
-                NavigationStack {
-                    SprayLineChemicalPicker(selectedId: nil) { chosen in
-                        showAddChemicalPicker = false
-                        guard let chosen else { return }
-                        appendChemicalLine(for: chosen)
-                    }
+            .sheet(isPresented: $showAddChemicalPicker, onDismiss: {
+                guard let selected = pendingNewChemicalSelection else { return }
+                pendingNewChemicalSelection = nil
+                appendChemicalLine(for: selected)
+            }) {
+                // The picker owns its NavigationStack and dismissal. Apply the
+                // choice only after it closes; do not remove the sheet and add
+                // a calculator line inside the same tap callback.
+                SprayLineChemicalPicker(selectedId: nil, allowsUnresolved: false) { chosen in
+                    pendingNewChemicalSelection = chosen
+                }
+            }
+            .sheet(item: $editingChemicalLineTarget, onDismiss: {
+                commitPendingEditedChemicalSelection()
+            }) { target in
+                SprayLineChemicalPicker(
+                    selectedId: chemicalLines.first(where: { $0.id == target.id })?.chemicalId,
+                    allowsUnresolved: false
+                ) { chosen in
+                    guard let chosen else { return }
+                    pendingEditedChemicalSelection = (lineId: target.id, chemical: chosen)
                 }
             }
             // Inspect / edit / re-verify a Products-step chemical WITHOUT
@@ -2827,8 +2848,8 @@ struct SprayCalculatorView: View {
                     CalcChemicalLineCard(
                         line: $line,
                         chemicals: store.savedChemicals,
-                        preferredRateBases: preferredRateBases,
-                        onInspect: { openChemicalInspector(for: line) }
+                        onInspect: { openChemicalInspector(for: line) },
+                        onChooseChemical: { editingChemicalLineTarget = ChemicalLinePickerTarget(id: line.id) }
                     ) {
                         chemicalLines.removeAll { $0.id == line.id }
                     }
@@ -4375,6 +4396,31 @@ struct SprayCalculatorView: View {
         )
     }
 
+    /// Apply one deliberate product switch to the original line ID, never to
+    /// a stale ForEach binding or to a line index captured before a sheet.
+    /// Cancellation, duplicate callbacks, and deleted lines are no-ops.
+    private func commitPendingEditedChemicalSelection() {
+        guard let selection = pendingEditedChemicalSelection else { return }
+        pendingEditedChemicalSelection = nil
+        guard let index = chemicalLines.firstIndex(where: { $0.id == selection.lineId }),
+              chemicalLines[index].chemicalId != selection.chemical.id else { return }
+        var updated = chemicalLines[index]
+        // Read the fallback BEFORE the inout mutation. Accessing updated.basis
+        // in the same argument list as &updated overlaps Swift's exclusive
+        // mutable access and can trap when choosing a different chemical.
+        let originalBasis = updated.basis
+        let rateBases = preferredRateBases
+        SprayConfirmedRateSeeding.seed(
+            &updated,
+            from: selection.chemical,
+            preferring: rateBases,
+            fallbackBasis: originalBasis
+        )
+        chemicalLines[index] = updated
+        // A previous product's whole-block/treated-band override never carries.
+        productAreaBasis[selection.lineId] = nil
+    }
+
     /// Opens the Chemical Store record for a Products-step line.
     private func openChemicalInspector(for line: ChemicalLine) {
         guard let chemical = store.savedChemicals.first(where: { $0.id == line.chemicalId }) else { return }
@@ -4871,14 +4917,12 @@ struct SprayCalculatorView: View {
 struct CalcChemicalLineCard: View {
     @Binding var line: ChemicalLine
     let chemicals: [SavedChemical]
-    /// The vineyard workflow's label rate-basis preference, strongest first.
-    /// Passed in rather than re-derived: one rule, decided once, so swapping a
-    /// product here seeds the same basis the rest of the screen would.
-    let preferredRateBases: [ChemicalRateBasis]
     /// Opens the existing Chemical Store record for THIS line's product, as a
     /// sheet over the calculator, so the operator can inspect, correct or
     /// re-verify it without leaving the spray they are composing.
     let onInspect: () -> Void
+    /// Open a searchable picker; only the owning calculator may replace a line.
+    let onChooseChemical: () -> Void
     let onDelete: () -> Void
 
     @Environment(\.openURL) private var openURL
@@ -5340,33 +5384,8 @@ struct CalcChemicalLineCard: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Chemical").font(.caption).foregroundStyle(.secondary)
-                Menu {
-                    ForEach(ChemicalStorePresentation.active(chemicals)) { chem in
-                        Button {
-                            if line.chemicalId != chem.id {
-                                // Re-seed from the NEW product's confirmed rate,
-                                // then its own registered rates. Left alone, a
-                                // stale `selectedRateId` keeps pointing at the
-                                // previous product's rate and the line silently
-                                // keeps that product's basis.
-                                SprayConfirmedRateSeeding.seed(
-                                    &line,
-                                    from: chem,
-                                    preferring: preferredRateBases,
-                                    fallbackBasis: line.basis
-                                )
-                                rangeRejection = nil
-                            }
-                        } label: {
-                            HStack {
-                                Text(chem.name)
-                                if line.chemicalId == chem.id {
-                                    Spacer()
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
+                Button {
+                    onChooseChemical()
                 } label: {
                     HStack(spacing: 8) {
                         Text(selectedChemical?.name ?? "Select chemical")
@@ -5385,6 +5404,7 @@ struct CalcChemicalLineCard: View {
                     .clipShape(.rect(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("spray.product.selectChemical")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)

@@ -493,4 +493,35 @@ struct SprayRateBasisPreferenceTests {
         #expect(SprayLabelRangeCheck.warning(appliedBaseValue: 300, rate: label) == nil)
     }
 
+    @Test("Changing a calculator chemical clears the previous product's typed dose")
+    func switchingChemicalClearsOldManualRateWithoutChangingLineIdentity() throws {
+        let original = try chemical(bothBasesJSON)
+        let replacement = try chemical(perHectareOnlyJSON)
+        var line = SprayConfirmedRateSeeding.seededLine(
+            for: original,
+            preferring: [.per100Litres, .perHectare],
+            fallbackBasis: .per100Litres
+        )
+        let originalLineId = line.id
+        line.applicationRateDraft = "177"
+        line.overrideRate = 177
+        line.operationalRateSource = .operatorPlanning
+        line.operationalRateUnit = "g"
+
+        SprayConfirmedRateSeeding.seed(
+            &line,
+            from: replacement,
+            preferring: [.per100Litres, .perHectare],
+            fallbackBasis: .per100Litres
+        )
+
+        #expect(line.id == originalLineId)
+        #expect(line.chemicalId == replacement.id)
+        #expect(line.applicationRateDraft == nil)
+        #expect(line.overrideRate == nil)
+        #expect(line.operationalRateSource == nil)
+        #expect(line.operationalRateUnit == nil)
+        #expect(line.basis == .perHectare)
+    }
+
 }
