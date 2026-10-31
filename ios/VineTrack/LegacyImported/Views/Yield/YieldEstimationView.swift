@@ -3,6 +3,8 @@ import MapKit
 
 struct YieldEstimationView: View {
     @Environment(MigratedDataStore.self) private var store
+    @Environment(SystemAdminService.self) private var systemAdmin
+    @State private var showCountMethod = false
     @Environment(\.accessControl) private var accessControl
     @Environment(NetworkMonitor.self) private var network
     @State private var viewModel = YieldEstimationViewModel()
@@ -54,11 +56,16 @@ struct YieldEstimationView: View {
 
     var body: some View {
         Group {
-            if tripStarted {
+            if tripStarted && (!viewModel.isQuadrantCount || systemAdmin.isSystemAdmin) {
                 tripContent
             } else {
                 introContent
             }
+        }
+        .confirmationDialog("Start Bunch Count Trip", isPresented: $showCountMethod, titleVisibility: .visible) {
+            Button("1. Bunches Per Vine Count") { startTrip() }
+            if systemAdmin.isSystemAdmin { Button("2. Quadrant Count") { startQuadrantTrip() } }
+            Button("Cancel", role: .cancel) {}
         }
         .task { if refreshSharedDefaults { await syncSamplingDefault() } }
         .modifier(YieldMasterRefresh(enabled: refreshSharedDefaults))
@@ -72,11 +79,11 @@ struct YieldEstimationView: View {
     // MARK: - Bunch Count Trip home (start / resume / history)
 
     private var activeDraft: YieldEstimationSession? {
-        BunchCountTripLogic.activeDraft(sessions: store.yieldSessions, vineyardId: store.selectedVineyardId)
+        BunchCountTripLogic.activeDraft(sessions: store.yieldSessions.filter { !$0.isQuadrantCount || systemAdmin.isSystemAdmin }, vineyardId: store.selectedVineyardId)
     }
 
     private var completedTrips: [YieldEstimationSession] {
-        BunchCountTripLogic.completedTrips(sessions: store.yieldSessions, vineyardId: store.selectedVineyardId)
+        BunchCountTripLogic.completedTrips(sessions: store.yieldSessions.filter { !$0.isQuadrantCount || systemAdmin.isSystemAdmin }, vineyardId: store.selectedVineyardId)
     }
 
     private var introContent: some View {
@@ -105,7 +112,7 @@ struct YieldEstimationView: View {
                                 .font(.title3)
                                 .foregroundStyle(.blue)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("Resume trip in progress")
+                                Text(draft.isQuadrantCount ? "Resume Quadrant Count" : "Resume trip in progress")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(.primary)
                                 Text(draft.sampleSites.isEmpty
@@ -129,7 +136,7 @@ struct YieldEstimationView: View {
                 }
 
                 Button {
-                    startTrip()
+                    if systemAdmin.isSystemAdmin { showCountMethod = true } else { startTrip() }
                 } label: {
                     Label("Start Bunch Count Trip", systemImage: "plus.circle.fill")
                         .font(.headline)
@@ -214,7 +221,8 @@ struct YieldEstimationView: View {
             vineyardId: store.selectedVineyardId ?? UUID(), createdAt: viewModel.sessionCreatedAt ?? Date(),
             selectedPaddockIds: Array(viewModel.selectedPaddockIds), sampleSites: viewModel.sampleSites,
             blockBunchWeightsKg: viewModel.blockBunchWeightsKg, isCompleted: viewModel.isCompleted,
-            completedAt: viewModel.completedAt, applyDamage: viewModel.applyDamage)
+            completedAt: viewModel.completedAt, applyDamage: viewModel.applyDamage,
+            countMethod: viewModel.countMethod, quadrantSectionLengthCm: viewModel.isQuadrantCount ? viewModel.quadrantSectionLengthCm : nil)
     }
 
     private func startTrip() {
@@ -223,7 +231,16 @@ struct YieldEstimationView: View {
         fitMap()
     }
 
+    private func startQuadrantTrip() {
+        guard systemAdmin.isSystemAdmin else { return }
+        viewModel.startNewTrip()
+        viewModel.countMethod = "quadrant"
+        withAnimation(.smooth(duration: 0.25)) { tripStarted = true }
+        fitMap()
+    }
+
     private func resumeTrip(_ session: YieldEstimationSession) {
+        guard !session.isQuadrantCount || systemAdmin.isSystemAdmin else { return }
         viewModel.loadSession(session)
         withAnimation(.smooth(duration: 0.25)) { tripStarted = true }
         fitMapToSites()
@@ -251,7 +268,7 @@ struct YieldEstimationView: View {
                 setupContent
             }
         }
-        .navigationTitle("Bunch Count Trip")
+        .navigationTitle(viewModel.isQuadrantCount ? "Quadrant Count" : "Bunch Count Trip")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
@@ -269,10 +286,7 @@ struct YieldEstimationView: View {
         }
         .sheet(isPresented: $showBunchCountSheet) {
             if let site = viewModel.selectedSite {
-                BunchCountEntrySheet(site: site) { count, name in
-                    viewModel.recordBunchCount(siteId: site.id, bunchesPerVine: count, recordedBy: name)
-                    saveSession()
-                }
+                countEntrySheet(site: site)
             }
         }
         .fullScreenCover(isPresented: $showFullScreenMap) {
@@ -287,10 +301,7 @@ struct YieldEstimationView: View {
                 }
             )
             .sheet(item: $fullScreenSelectedSite) { site in
-                BunchCountEntrySheet(site: site) { count, name in
-                    viewModel.recordBunchCount(siteId: site.id, bunchesPerVine: count, recordedBy: name)
-                    saveSession()
-                }
+                countEntrySheet(site: site)
             }
         }
         .sheet(isPresented: $showSamplesPerHaEditor) {
@@ -313,6 +324,25 @@ struct YieldEstimationView: View {
         }
         .onAppear {
             fitMap()
+        }
+    }
+
+    @ViewBuilder
+    private func countEntrySheet(site: SampleSite) -> some View {
+        if viewModel.isQuadrantCount {
+            let block = paddocks.first { $0.id == site.paddockId }
+            QuadrantCountEntrySheet(site: site, defaultLengthCm: viewModel.quadrantSectionLengthCm,
+                vineSpacingCm: block.flatMap { $0.vineSpacingIsKnown == false ? nil : $0.vineSpacing * 100 },
+                isSystemAdmin: systemAdmin.isSystemAdmin) { measurement, name in
+                    guard viewModel.recordQuadrantCount(siteId: site.id, measurement: measurement,
+                        recordedBy: name, isSystemAdmin: systemAdmin.isSystemAdmin) else { return false }
+                    return saveSession()
+                }
+        } else {
+            BunchCountEntrySheet(site: site) { count, name in
+                viewModel.recordBunchCount(siteId: site.id, bunchesPerVine: count, recordedBy: name)
+                saveSession()
+            }
         }
     }
 
@@ -849,9 +879,7 @@ struct YieldEstimationView: View {
         Button {
             // Completed trips are preserved history — a new trip is a NEW
             // dated observation, never an overwrite.
-            withAnimation(.smooth(duration: 0.3)) {
-                viewModel.startNewTrip()
-            }
+            if systemAdmin.isSystemAdmin { showCountMethod = true } else { startTrip() }
         } label: {
             Label("Start New Bunch Count Trip", systemImage: "plus.circle.fill")
                 .font(.subheadline.weight(.semibold))
@@ -1040,7 +1068,7 @@ struct YieldEstimationView: View {
     private func saveSession() -> Bool {
         guard let vid = store.selectedVineyardId else { return false }
         let session = viewModel.toSession(vineyardId: vid, samplesPerHectare: samplesPerHa)
-        let accepted = store.saveYieldSession(session)
+        let accepted = store.saveYieldSession(session, isSystemAdmin: systemAdmin.isSystemAdmin)
         saveFailed = !accepted
         return accepted
     }

@@ -10,7 +10,8 @@ struct YieldReportView: View {
             vineyardId: store.selectedVineyardId ?? UUID(), createdAt: viewModel.sessionCreatedAt ?? Date(),
             selectedPaddockIds: Array(viewModel.selectedPaddockIds), sampleSites: viewModel.sampleSites,
             blockBunchWeightsKg: viewModel.blockBunchWeightsKg, isCompleted: viewModel.isCompleted,
-            completedAt: viewModel.completedAt, applyDamage: viewModel.applyDamage)
+            completedAt: viewModel.completedAt, applyDamage: viewModel.applyDamage,
+            countMethod: viewModel.countMethod, quadrantSectionLengthCm: viewModel.isQuadrantCount ? viewModel.quadrantSectionLengthCm : nil)
     }
     var body: some View {
         let vintage = YieldVintageReport.sessionVintage(observation,

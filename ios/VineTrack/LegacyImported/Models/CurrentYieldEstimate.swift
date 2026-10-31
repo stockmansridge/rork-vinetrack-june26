@@ -55,6 +55,7 @@ nonisolated enum CurrentYieldEstimate {
         let blocks: [Block]
         let sampledAreaHa: Double
         let totalTonnes: Double?
+        var countMethod: String? = nil
         var tonnesPerHa: Double? {
             guard sampledAreaHa > 0 else { return nil }
             return totalTonnes.map { $0 / sampledAreaHa }
@@ -106,6 +107,6 @@ nonisolated enum CurrentYieldEstimate {
         // Never present a partial sum as the whole trip when one contributing weight is missing.
         let total: Double? = sampled.isEmpty || sampled.contains { $0.displayTonnes == nil }
             ? nil : sampled.reduce(0) { $0 + ($1.displayTonnes ?? 0) }
-        return Trip(blocks: blocks, sampledAreaHa: sampled.reduce(0) { $0 + $1.sampledAreaHa }, totalTonnes: total)
+        return Trip(blocks: blocks, sampledAreaHa: sampled.reduce(0) { $0 + $1.sampledAreaHa }, totalTonnes: total, countMethod: session.isQuadrantCount ? session.countMethodName : nil)
     }
 }

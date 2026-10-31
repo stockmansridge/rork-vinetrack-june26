@@ -8,6 +8,7 @@ struct YieldTripValidationView: View {
     private static let trip = UUID(uuidString: "99999999-9999-4999-8999-999999999999")!
     @State private var store: MigratedDataStore
     @State private var network = NetworkMonitor()
+    @State private var systemAdmin = SystemAdminService()
     private static let fixtureStore = makeStore()
     init() { _store = State(initialValue: Self.fixtureStore) }
     private static func makeStore() -> MigratedDataStore {
@@ -35,6 +36,7 @@ struct YieldTripValidationView: View {
         NavigationStack { YieldEstimationView(refreshSharedDefaults: false) }
             .environment(store)
             .environment(network)
+            .environment(systemAdmin)
     }
 }
 #endif
