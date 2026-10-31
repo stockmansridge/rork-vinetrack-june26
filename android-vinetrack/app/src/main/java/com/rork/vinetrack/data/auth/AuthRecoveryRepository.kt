@@ -43,7 +43,12 @@ class AuthRecoveryRepository(
 
     /** Uses /user identity and current membership, never typed email or cached vineyard membership. */
     suspend fun recover(session: SessionStore, email: String, password: String): Boolean = withContext(Dispatchers.IO) {
-        check(SupabaseClient.isConfigured && session.recoveryPrincipal != null) { "Original account recovery is unavailable." }
+        val (original, epoch) = session.retentionGuard.serialized {
+            (session.recoveryPrincipal ?: throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.ORIGINAL_IDENTITY)) to session.retentionGuard.identityEpoch.value
+        }
+        var stage = AuthRecoveryFailure.Stage.SIGN_IN
+        try {
+        check(SupabaseClient.isConfigured)
         withTimeout(30_000) {
             clientFactory().use { client ->
                 val response = client.post(SupabaseClient.authUrl("token?grant_type=password")) {
@@ -56,6 +61,7 @@ class AuthRecoveryRepository(
                 val access = token.accessToken ?: error("Additional authentication is required.")
                 var restored = false
                 try {
+                    stage = AuthRecoveryFailure.Stage.IDENTITY
                     val identity = client.get(SupabaseClient.authUrl("user")) {
                         headers {
                             append("apikey", SupabaseClient.anonKey)
@@ -64,7 +70,8 @@ class AuthRecoveryRepository(
                     }
                     check(identity.status.isSuccess()) { "Account verification failed." }
                     val user = identity.body<AppUser>()
-                    check(user.id == session.recoveryPrincipal) { "The verified original account is required." }
+                    check(user.id == original) { "The verified original account is required." }
+                    stage = AuthRecoveryFailure.Stage.VINEYARD_ACCESS
                     val membership = client.get(SupabaseClient.restUrl("vineyard_members?select=vineyard_id,role&user_id=eq.${user.id}")) {
                         headers {
                             append("apikey", SupabaseClient.anonKey)
@@ -84,8 +91,10 @@ class AuthRecoveryRepository(
                     check(vineyards.status.isSuccess()) { "Current vineyard access could not be verified." }
                     val permitted = vineyards.body<List<LiveVineyard>>().map { it.id }.toSet() intersect memberVineyards
                     val refresh = token.refreshToken ?: error("Additional authentication is required.")
-                    restored = session.restoreOriginal(access, refresh, user, permitted)
-                    restored
+                    stage = AuthRecoveryFailure.Stage.IN_FLIGHT
+                    restored = session.restoreOriginal(access, refresh, user, permitted, expectedEpoch = epoch)
+                    if (!restored) throw AuthRecoveryFailure(stage)
+                    true
                 } finally {
                     if (!restored) runCatching {
                         client.post(SupabaseClient.authUrl("logout?scope=local")) {
@@ -97,6 +106,15 @@ class AuthRecoveryRepository(
                     }
                 }
             }
+        }
+        } catch (failure: AuthRecoveryFailure) {
+            throw failure
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            throw AuthRecoveryFailure(stage)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            throw AuthRecoveryFailure(stage)
         }
     }
 

@@ -187,6 +187,8 @@ class AuthRetentionAndroidTest {
     @Test fun historicalTokenRemovalWithSurvivingContextLocksBeforeBusinessConstruction() {
         check(context.getSharedPreferences("vinetrack_session", 0).edit()
             .putString("vineyard_cache_owner", "account-A").commit())
+        check(context.getSharedPreferences("vinetrack_pending_writes", 0).edit()
+            .putString("pending_writes_json", "[{\"unattributed\":true}]").commit())
         val session = SessionStore(context)
         assertTrue(session.retentionGuard.isLocked)
         denied { session.retentionGuard.requireUnlocked() }
@@ -255,7 +257,7 @@ class AuthRetentionAndroidTest {
         val prefs = context.getSharedPreferences("vinetrack_session", 0)
         check(prefs.edit().putString("vineyard_cache_owner", "11111111-1111-4111-8111-111111111111").commit())
         val session = SessionStore(context)
-        assertTrue(session.retentionGuard.isLocked)
+        assertFalse(session.retentionGuard.isLocked)
         assertNull(session.recoveryPrincipal)
         assertFalse(prefs.contains("field_recovery_principal_v1"))
     }
@@ -1095,7 +1097,7 @@ class AuthRetentionAndroidTest {
         val reference = File(root, "canopy_reference_images/reference.jpg")
         check(reference.parentFile!!.mkdirs()); reference.writeBytes(byteArrayOf(1, 2, 3))
         assertNotNull(AccountTransitionEvidence(context).inspectCleanExit())
-        assertNull("Recovery assessment must retain its original strict rules", AccountTransitionEvidence(context).inspect(a))
+        assertEquals(setOf("vineyard"), AccountTransitionEvidence(context).inspect(a)?.vineyards)
         val old = requireNotNull(session.accountAccess())
         val client = HttpClient(MockEngine { respond("{}", HttpStatusCode.OK) })
         try {
@@ -1221,13 +1223,13 @@ class AuthRetentionAndroidTest {
         } finally { client.close() }
     }
 
-    @Test fun exactProfileVerifierMarkerIsPreservedAndRecoveryRulesStayStrict() {
+    @Test fun exactProfileVerifierMarkerIsPreservedForRecoveryAndCleanExit() {
         val marker = File(root, "profileInstalled")
         for (result in listOf(0, 1, 2, 3, 5 shl 16)) {
             val bytes = profileMarkerBytes(result = result)
             marker.writeBytes(bytes)
             assertNotNull(AccountTransitionEvidence(context).inspectCleanExit())
-            assertNull(AccountTransitionEvidence(context).inspect())
+            assertNotNull(AccountTransitionEvidence(context).inspect())
             assertArrayEquals(bytes, marker.readBytes())
         }
     }
@@ -1295,7 +1297,7 @@ class AuthRetentionAndroidTest {
         val prefs = context.getSharedPreferences("vinetrack_saved_chemicals_local", 0)
         val before = prefs.all.toMap()
         assertNotNull(AccountTransitionEvidence(context).inspectCleanExit())
-        assertNull(AccountTransitionEvidence(context).inspect(a))
+        assertEquals(setOf("vineyard-A", "empty-vineyard"), AccountTransitionEvidence(context).inspect(a)?.vineyards)
         assertNotNull(session.cleanExit(requireNotNull(session.accountAccess())))
         session.retentionGuard.finishCleanExit()
         assertEquals(before, prefs.all)
@@ -1365,6 +1367,211 @@ class AuthRetentionAndroidTest {
         assertTrue(session.hasSession)
         assertFalse(session.retentionGuard.isLocked)
     }
+
+    @Test fun nestedCacheTimestampsAreNotReinterpretedAsShorterRowGroups() {
+        val a = "11111111-1111-4111-8111-111111111111"
+        val values = mutableMapOf<String, Any>("cache_owner_user_id" to a)
+        listOf("yield_session_" to "yield_session_at_", "spray_job_templates_" to "spray_job_templates_at_",
+            "spray_equipment_" to "spray_equipment_at_", "machines_" to "machines_at_").forEach { (data, timestamp) ->
+            values[data + "vineyard"] = "[]"
+            values[timestamp + "vineyard"] = 1L
+        }
+        values["spray_tractors_vineyard"] = "[]"
+        values["spray_job_templates_vineyard"] = com.rork.vinetrack.data.SprayProgramTemplateCache.encode(
+            listOf(com.rork.vinetrack.data.model.SprayRecord("template", "vineyard")))
+        val before = values.toMap()
+        assertEquals(setOf("vineyard"), CleanExitCacheContract.recoveryScopes(values, a))
+        assertEquals(before, values)
+        values["spray_job_templates_vineyard"] = com.rork.vinetrack.data.SprayProgramTemplateCache.encode(
+            listOf(com.rork.vinetrack.data.model.SprayRecord("template", "foreign-vineyard")))
+        assertTrue(runCatching { CleanExitCacheContract.recoveryScopes(values, a) }.isFailure)
+        values["spray_job_templates_vineyard"] = before.getValue("spray_job_templates_vineyard")
+        values["yield_session_at_vineyard"] = "invalid timestamp"
+        assertTrue(runCatching { CleanExitCacheContract.recoveryScopes(values, a) }.isFailure)
+    }
+
+    @Test fun populatedRejectedSessionRecoversOriginalAccountWithoutChangingFieldBytes() = runBlocking {
+        val a = "11111111-1111-4111-8111-111111111111"
+        val session = SessionStore(context)
+        session.save("old-access", "old-refresh", a, null)
+        val cache = com.rork.vinetrack.data.DomainCacheRepository(context)
+        cache.saveVineyards(a, listOf(com.rork.vinetrack.data.model.Vineyard("vineyard", "Retained vineyard")))
+        cache.savePaddocks(a, "vineyard", listOf(com.rork.vinetrack.data.model.Paddock("block", "vineyard", "Retained block")))
+        assertTrue(com.rork.vinetrack.data.SavedChemicalLocalStore(context).save(a, "vineyard",
+            listOf(com.rork.vinetrack.data.model.SavedChemical("chemical", "vineyard", name = "Retained chemical"))))
+        com.rork.vinetrack.data.AppPreferencesStore(context).save(com.rork.vinetrack.data.AppPreferences())
+        File(root, "profileInstalled").writeBytes(profileMarkerBytes())
+        val draft = com.rork.vinetrack.data.model.WorkTaskPlanningDraft(null, "vineyard", a,
+            assignmentName = "Greg Horner", date = "2026-11-05", taskType = "pruning", blockIds = setOf("block"),
+            durationText = "1", notes = "Need bamboo and loose tie onto it", creationId = "original-creation")
+        com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context).save(draft)
+        val names = listOf("vinetrack_domain_cache", "vinetrack_saved_chemicals_local", "vinetrack_app_prefs", "vinetrack_local_planning")
+        val before = names.associateWith { context.getSharedPreferences(it, 0).all.toMap() }
+        val old = requireNotNull(session.accountAccess())
+        mockAuthClient { _, _ -> 400 to "{\"code\":\"refresh_token_not_found\"}" }.use {
+            assertEquals(SessionValidity.Rejected, AuthRepository(session, it).revalidateSession())
+        }
+        assertTrue(recoveryClient(a).let { client -> AuthRecoveryRepository { client }.recover(SessionStore(context), "synthetic@example.invalid", "synthetic-password") })
+        assertFalse(session.retentionGuard.isLocked)
+        assertFalse(session.withAccountAccess(old) { fail("Obsolete authority returned") })
+        before.forEach { (name, values) -> assertEquals(values, context.getSharedPreferences(name, 0).all) }
+        assertEquals(draft, com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context).load(a, "vineyard", null))
+        assertEquals("block", cache.loadPaddocks(a, "vineyard")?.single()?.id)
+        assertArrayEquals(profileMarkerBytes(), File(root, "profileInstalled").readBytes())
+        val restarted = SessionStore(context)
+        assertTrue(restarted.hasSession)
+        assertFalse(restarted.retentionGuard.isLocked)
+    }
+
+    @Test fun cacheOwnerAloneDoesNotCreateAnUnfinishedWorkLock() {
+        val a = "11111111-1111-4111-8111-111111111111"
+        check(context.getSharedPreferences("vinetrack_session", 0).edit().putString("vineyard_cache_owner", a).commit())
+        // Disposable historical tokenless before-image; production field writes require a session.
+        check(context.getSharedPreferences("vinetrack_domain_cache", 0).edit()
+            .putString("cache_owner_user_id", a).putString("paddocks_vineyard", "[{\"id\":\"block\",\"vineyard_id\":\"vineyard\",\"name\":\"Retained block\"}]")
+            .putLong("paddocks_at_vineyard", 1L).commit())
+        val session = SessionStore(context)
+        assertFalse("Read caches are not unfinished-work proof", session.retentionGuard.isLocked)
+        assertNull(session.recoveryPrincipal)
+        assertFalse(session.hasSession)
+    }
+
+    @Test fun profileVerifierMarkerDoesNotBlockOwnedRecoveryAssessment() {
+        val bytes = profileMarkerBytes()
+        File(root, "profileInstalled").writeBytes(bytes)
+        assertNotNull(AccountTransitionEvidence(context).inspect("11111111-1111-4111-8111-111111111111"))
+        assertArrayEquals(bytes, File(root, "profileInstalled").readBytes())
+    }
+
+    @Test fun populatedRefreshThenOfflineRestorePreservesDraftQueueAndSession() = runBlocking {
+        val a = "11111111-1111-4111-8111-111111111111"
+        val session = SessionStore(context)
+        session.save("access", "refresh", a, null)
+        com.rork.vinetrack.data.DomainCacheRepository(context).savePaddocks(a, "vineyard",
+            listOf(com.rork.vinetrack.data.model.Paddock("block", "vineyard", "Retained block")))
+        com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context).save(com.rork.vinetrack.data.model.WorkTaskPlanningDraft(
+            null, "vineyard", a, date = "2026-11-05", taskType = "pruning", notes = "Need bamboo and loose tie onto it"))
+        PinCreateSync(PendingWriteRepository(context)).enqueue(PinRepository.PinInput("original-pin", "vineyard"))
+        val names = listOf("vinetrack_domain_cache", "vinetrack_local_planning", "vinetrack_pending_writes")
+        val before = names.associateWith { context.getSharedPreferences(it, 0).all.toMap() }
+        mockAuthClient { _, _ -> 200 to "{\"access_token\":\"fresh-access\",\"refresh_token\":\"fresh-refresh\",\"user\":{\"id\":\"$a\"}}" }.use {
+            assertTrue(AuthRepository(SessionStore(context), it).restoreSession() is AuthRepository.RestoreResult.Online)
+        }
+        val offline = HttpClient(MockEngine { throw java.io.IOException("synthetic offline") })
+        offline.use {
+            assertTrue(AuthRepository(SessionStore(context), it).restoreSession() is AuthRepository.RestoreResult.Offline)
+        }
+        assertEquals("fresh-refresh", session.refreshToken)
+        assertFalse(session.retentionGuard.isLocked)
+        before.forEach { (name, values) -> assertEquals(values, context.getSharedPreferences(name, 0).all) }
+    }
+
+    @Test fun cacheScopeAndDraftAuthorFailuresRemainProtectedWithSpecificStage() = runBlocking {
+        val a = "11111111-1111-4111-8111-111111111111"
+        val b = "22222222-2222-4222-8222-222222222222"
+        val session = SessionStore(context)
+        session.save("access", "refresh", a, null)
+        com.rork.vinetrack.data.DomainCacheRepository(context).savePaddocks(a, "vineyard",
+            listOf(com.rork.vinetrack.data.model.Paddock("block", "vineyard", "Original block")))
+        val cache = context.getSharedPreferences("vinetrack_domain_cache", 0)
+        val valid = cache.all.toMap()
+        session.clear()
+        for (scenario in listOf("foreign-cache", "mismatched-row", "lost-access", "foreign-draft")) {
+            if (scenario == "foreign-cache") check(cache.edit().putString("cache_owner_user_id", b).commit())
+            if (scenario == "mismatched-row") check(cache.edit().putString("paddocks_vineyard", "[{\"id\":\"block\",\"vineyard_id\":\"other\",\"name\":\"Original\"}]").commit())
+            val planning = context.getSharedPreferences("vinetrack_local_planning", 0)
+            if (scenario == "foreign-draft") {
+                val draft = com.rork.vinetrack.data.model.WorkTaskPlanningDraft(null, "vineyard", b, date = "2026-11-05", taskType = "pruning")
+                check(planning.edit().putString(draft.persistenceKey, kotlinx.serialization.json.Json.encodeToString(draft)).commit())
+            }
+            val before = cache.all.toMap(); val draftBefore = planning.all.toMap()
+            val failure = runCatching { AuthRecoveryRepository { recoveryClient(a, member = scenario != "lost-access") }
+                .recover(session, "synthetic@example.invalid", "synthetic-password") }.exceptionOrNull()
+            assertTrue("$scenario did not fail closed", failure is AuthRecoveryFailure)
+            assertEquals(if (scenario == "lost-access") AuthRecoveryFailure.Stage.VINEYARD_ACCESS else AuthRecoveryFailure.Stage.RETAINED_EVIDENCE,
+                (failure as AuthRecoveryFailure).stage)
+            assertFalse(failure.userMessage.contains(a)); assertFalse(failure.userMessage.contains("synthetic-password"))
+            assertTrue(session.retentionGuard.isLocked); assertFalse(session.hasSession)
+            assertEquals(before, cache.all); assertEquals(draftBefore, planning.all)
+            // Restore disposable fixture before the next independent refusal case.
+            check(cache.edit().clear().putString("cache_owner_user_id", a)
+                .putString("paddocks_vineyard", valid["paddocks_vineyard"] as String)
+                .putLong("paddocks_at_vineyard", valid["paddocks_at_vineyard"] as Long).commit())
+            check(planning.edit().clear().commit())
+        }
+    }
+
+    @Test fun delayedRecoveryCannotAdmitALaterSameAccountRejection() = runBlocking {
+        val a = "11111111-1111-4111-8111-111111111111"
+        val session = SessionStore(context)
+        session.save("access", "refresh", a, null); session.clear()
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val delayed = HttpClient(MockEngine { request ->
+            val body = when {
+                request.url.encodedPath.endsWith("/token") -> "{\"access_token\":\"obsolete-access\",\"refresh_token\":\"obsolete-refresh\"}"
+                request.url.encodedPath.endsWith("/user") -> { entered.complete(Unit); withTimeout(5_000) { release.await() }; "{\"id\":\"$a\"}" }
+                request.url.encodedPath.endsWith("/vineyard_members") -> "[]"
+                request.url.encodedPath.endsWith("/vineyards") -> "[]"
+                request.url.encodedPath.endsWith("/logout") -> "{}"
+                else -> error("Unexpected request")
+            }
+            respond(body, HttpStatusCode.OK, headersOf("Content-Type", "application/json"))
+        }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
+        val attempt = async { runCatching { AuthRecoveryRepository { delayed }.recover(session, "synthetic@example.invalid", "synthetic-password") } }
+        try {
+            withTimeout(5_000) { entered.await() }
+            assertTrue(AuthRecoveryRepository { recoveryClient(a) }.recover(session, "synthetic@example.invalid", "synthetic-password"))
+            session.clear()
+            release.complete(Unit)
+            val failure = withTimeout(5_000) { attempt.await() }.exceptionOrNull()
+            assertEquals(AuthRecoveryFailure.Stage.IN_FLIGHT, (failure as AuthRecoveryFailure).stage)
+            assertTrue(session.retentionGuard.isLocked); assertFalse(session.hasSession)
+            assertEquals(a, session.recoveryPrincipal)
+        } finally { release.complete(Unit) }
+    }
+
+    @Test fun failedRecoveryCommitReinstatesLockEvenWhenPreferencesPublishCandidateInMemory() = runBlocking {
+        val a = "11111111-1111-4111-8111-111111111111"
+        val initial = SessionStore(context)
+        initial.save("access", "refresh", a, null); initial.clear()
+        val raw = context.getSharedPreferences("vinetrack_session", 0)
+        var failNext = true
+        val failing = object : SharedPreferences by raw {
+            override fun edit(): SharedPreferences.Editor {
+                val editor = raw.edit()
+                return object : SharedPreferences.Editor by editor {
+                    override fun commit(): Boolean {
+                        val result = editor.commit()
+                        return if (failNext) { failNext = false; false } else result
+                    }
+                }
+            }
+        }
+        val wrapped = object : ContextWrapper(context) {
+            override fun getApplicationContext(): Context = this
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences = if (name == "vinetrack_session") failing else context.getSharedPreferences(name, mode)
+        }
+        val session = SessionStore(wrapped)
+        val failure = runCatching { AuthRecoveryRepository { recoveryClient(a) }.recover(session, "synthetic@example.invalid", "synthetic-password") }.exceptionOrNull()
+        assertEquals(AuthRecoveryFailure.Stage.PERSISTENCE, (failure as AuthRecoveryFailure).stage)
+        assertTrue(session.retentionGuard.isLocked); assertFalse(session.hasSession)
+        assertEquals(a, session.recoveryPrincipal)
+        assertTrue(raw.getBoolean("field_recovery_locked_v1", false))
+        assertNull(raw.getString("access_token", null)); assertNull(raw.getString("refresh_token", null))
+        assertEquals(a, SessionStore(context).recoveryPrincipal)
+    }
+
+    private fun recoveryClient(account: String, member: Boolean = true): HttpClient = HttpClient(MockEngine { request ->
+        val body = when {
+            request.url.encodedPath.endsWith("/token") -> "{\"access_token\":\"returning-access\",\"refresh_token\":\"returning-refresh\"}"
+            request.url.encodedPath.endsWith("/user") -> "{\"id\":\"$account\"}"
+            request.url.encodedPath.endsWith("/vineyard_members") -> if (member) "[{\"vineyard_id\":\"vineyard\",\"role\":\"operator\"}]" else "[]"
+            request.url.encodedPath.endsWith("/vineyards") -> "[{\"id\":\"vineyard\"}]"
+            request.url.encodedPath.endsWith("/logout") -> "{}"
+            else -> error("Unexpected recovery request")
+        }
+        respond(body, HttpStatusCode.OK, headersOf("Content-Type", "application/json"))
+    }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
 
     private fun profileMarkerBytes(schema: Int = 1, result: Int = 0, updated: Long = 1L, size: Long = 0L): ByteArray =
         ByteArrayOutputStream().use { bytes ->

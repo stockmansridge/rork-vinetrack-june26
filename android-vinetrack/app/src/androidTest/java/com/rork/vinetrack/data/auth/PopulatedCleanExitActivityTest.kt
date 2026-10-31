@@ -58,10 +58,10 @@ class PopulatedCleanExitActivityTest {
             "pending=$pending; responses=$responses; uncaught=${uncaught.get()}; tree=$tree"
     }
 
-    private fun awaitStage(stage: String, condition: () -> Boolean) {
+    private fun awaitStage(stage: String, timeoutMillis: Long = 20_000, condition: () -> Boolean) {
         checkpoint("waiting.$stage")
         try {
-            compose.waitUntil(20_000, condition)
+            compose.waitUntil(timeoutMillis, condition)
             checkpoint("complete.$stage")
         } catch (failure: Throwable) {
             throw AssertionError("$stage: ${diagnostic()}", failure)
@@ -94,7 +94,15 @@ class PopulatedCleanExitActivityTest {
         MapPrefsStore(app).save(MapDefaults())
         HomePrefsStore(app).setInfoCardDismissed(true)
         account.set(A)
-        client = HttpClient(MockEngine { request ->
+        client = fixtureClient()
+        SupabaseClient.installInstrumentationTransport(client)
+        checkpoint("activity.launch.begin")
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        scenario.onActivity { checkpoint("activity.created.${it.lifecycle.currentState}") }
+    }
+
+    /** Each repository owns an independent engine; closing recovery must not close app transport. */
+    private fun fixtureClient(): HttpClient = HttpClient(MockEngine { request ->
             val path = request.url.encodedPath
             requests.add(path)
             val sequence = requestSequence.incrementAndGet()
@@ -104,6 +112,7 @@ class PopulatedCleanExitActivityTest {
             var status = HttpStatusCode.OK
             val body = when {
                 path == "/auth/v1/token" -> """{"access_token":"access-$uid","refresh_token":"refresh-$uid","user":{"id":"$uid","email":"synthetic@example.invalid"}}"""
+                path == "/auth/v1/user" -> """{"id":"$uid","email":"synthetic@example.invalid"}"""
                 path == "/auth/v1/logout" -> { logouts.incrementAndGet(); "{}" }
                 path == "/rest/v1/vineyard_members" -> """[{"vineyard_id":"$v","role":"operator","user_id":"$uid"}]"""
                 path == "/rest/v1/vineyards" -> """[{"id":"$v","name":"Synthetic $v"}]"""
@@ -127,11 +136,6 @@ class PopulatedCleanExitActivityTest {
             pending.remove(sequence)
             respond(body, status, headersOf("Content-Type", "application/json"))
         }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
-        SupabaseClient.installInstrumentationTransport(client)
-        checkpoint("activity.launch.begin")
-        scenario = ActivityScenario.launch(MainActivity::class.java)
-        scenario.onActivity { checkpoint("activity.created.${it.lifecycle.currentState}") }
-    }
 
     @After fun teardown() {
         if (::app.isInitialized) android.util.Log.i("CleanExitFixture", diagnostic())
@@ -159,16 +163,17 @@ class PopulatedCleanExitActivityTest {
         awaitStage("main.settings.ready") {
             compose.onAllNodes(hasText("Settings") and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
         }
+        // Await the ordinary load publication before inspecting its durable caches.
+        awaitStage("vineyard.load.published", timeoutMillis = 60_000) {
+            checkpoints.count { it == "vineyard.load.published" } > publicationsBefore &&
+                pending.isEmpty() && !SessionStore(app).retentionGuard.hasOutstandingOperations()
+        }
         val cache = DomainCacheRepository(app)
         awaitStage("cache.hydrated") {
             cache.loadPins(account.get(), vineyard)?.isNotEmpty() == true &&
                 cache.loadTrips(account.get(), vineyard)?.isNotEmpty() == true &&
                 cache.loadGrowth(account.get(), vineyard)?.isNotEmpty() == true &&
                 cache.loadWorkTasks(account.get(), vineyard)?.isNotEmpty() == true
-        }
-        awaitStage("vineyard.load.published") {
-            checkpoints.count { it == "vineyard.load.published" } > publicationsBefore &&
-                pending.isEmpty() && !SessionStore(app).retentionGuard.hasOutstandingOperations()
         }
         assertTrue(SessionStore(app).hasSession)
     }
@@ -179,6 +184,51 @@ class PopulatedCleanExitActivityTest {
         checkpoint("settings.ready")
         compose.onNodeWithText("Sign Out").performScrollTo().performClick()
         checkpoint("settings.signout.clicked")
+    }
+
+    @Test fun populatedRecoveryRelaunchRendersHomeAndExistingTaskAndTripBlockChoices() {
+        signIn()
+        val session = SessionStore(app)
+        val obsolete = requireNotNull(session.accountAccess())
+        val draft = WorkTaskPlanningDraft(null, "vineyard-A", A, date = "2026-11-05", taskType = "pruning",
+            assignmentName = "Greg Horner", durationText = "1", notes = "Need bamboo and loose tie onto it", creationId = "original-creation")
+        WorkTaskPlanningDraftStore(app).save(draft)
+        val draftBefore = app.getSharedPreferences("vinetrack_local_planning", 0).all.toMap()
+        val evidence = AccountTransitionEvidence(app)
+        val assessment = evidence.inspect(A)
+        assertNotNull("Populated recovery rejected at ${evidence.failureCategory}; keys=${app.getSharedPreferences(evidence.failureCategory, 0).all.keys}; files=${app.filesDir.walkTopDown().filter { it.isFile }.map { it.relativeTo(app.filesDir).path }.toList()}", assessment)
+        scenario.close()
+        session.clear()
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        awaitText("Local work protected")
+        compose.onAllNodes(hasText("Settings") and hasClickAction()).assertCountEquals(0)
+        // Isolated production recovery transport, not a live customer sign-in or a UI-password test.
+        runBlocking { assertTrue(AuthRecoveryRepository { fixtureClient() }.recover(session, "synthetic@example.invalid", "synthetic-password")) }
+        awaitStage("recovery.home") { compose.onAllNodes(hasText("Home") and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
+        awaitStage("recovery.loaded", timeoutMillis = 60_000) { pending.isEmpty() && checkpoints.count { it == "vineyard.load.published" } >= 2 }
+        assertFalse(session.withAccountAccess(obsolete) { fail("Obsolete session authority returned") })
+        assertEquals(draftBefore, app.getSharedPreferences("vinetrack_local_planning", 0).all)
+        assertEquals(draft, WorkTaskPlanningDraftStore(app).load(A, "vineyard-A", null))
+        assertEquals("block-$A", DomainCacheRepository(app).loadPaddocks(A, "vineyard-A")!!.single().id)
+        compose.onNodeWithText("Work Tasks").performScrollTo().performClick()
+        awaitText("Log a New Task")
+        compose.onNodeWithText("Log a New Task").performScrollTo().performClick()
+        awaitText("No block")
+        compose.onNodeWithText("Block", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("Private block $A", substring = false).assertExists().performClick()
+        compose.onNodeWithContentDescription("Selected").assertExists()
+        // Dismiss the menu and editor using Android's supported back action; never save a task.
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.onNode(hasText("Trip") and hasClickAction()).performClick()
+        awaitText("  Start Trip")
+        compose.onNodeWithText("  Start Trip").performScrollTo().performClick()
+        awaitText("Start a Trip")
+        compose.onNodeWithText("Maintenance Trip", substring = false).performClick()
+        awaitText("No blocks selected")
+        compose.onNodeWithText("No blocks selected", substring = false).performScrollTo().performClick()
+        compose.onNodeWithText("Private block $A", substring = false).assertExists()
+        assertFalse(session.retentionGuard.isLocked)
     }
 
     @Test fun populatedSettingsExitRecreateRelaunchReturnAThenBIsolatesPrivateCachesAndAuthority() {

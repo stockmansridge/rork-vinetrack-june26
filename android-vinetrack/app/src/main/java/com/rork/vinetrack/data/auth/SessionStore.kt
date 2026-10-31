@@ -35,13 +35,14 @@ class SessionStore(context: Context) {
             persist = { holds -> check(holdPrefs.edit().putString("holds", holdJson.encodeToString(holdSerializer, holds)).commit()) { "Could not retain entitlement hold" } },
             cached = { owner, vineyard -> com.rork.vinetrack.data.subscription.EntitlementVerificationStore(appContext).load()?.operationalAccessFor(vineyard, owner) },
         )
-        // Surviving session context is ambiguity evidence, not ownership. Old auth exits may
-        // have removed tokens without clearing authorless queues. Do not open those stores.
-        if (runCatching {
-            prefs.getString(KEY_REFRESH, null).isNullOrBlank() &&
-                prefs.getString(KEY_VINEYARD_CACHE_OWNER, null) != null
-        }.getOrDefault(true)) {
-            retentionGuard.rejectSession { }
+        // An absent token needs sign-in, not a cache-owner-based authorship claim. A known
+        // prior session or genuinely unresolved work still closes business admission. Inspect
+        // read-only; never remove retained caches/files or manufacture an original principal.
+        retentionGuard.serialized {
+            if (!retentionGuard.isLocked && runCatching {
+                prefs.getString(KEY_REFRESH, null).isNullOrBlank() &&
+                    (prefs.getString(KEY_USER_ID, null) != null || AccountTransitionEvidence(appContext).inspectCleanExit() == null)
+            }.getOrDefault(true)) retentionGuard.rejectSession { }
         }
     }
 
@@ -254,11 +255,17 @@ class SessionStore(context: Context) {
         refreshToken: String,
         user: com.rork.vinetrack.data.model.AppUser,
         permittedVineyards: Set<String>,
+        expectedEpoch: Long = retentionGuard.identityEpoch.value,
     ): Boolean = retentionGuard.recoverIfIdle {
-        if (user.id != recoveryPrincipal || accessToken.isBlank() || refreshToken.isBlank()) return@recoverIfIdle false
-        val evidence = AccountTransitionEvidence(appContext).inspect(user.id) ?: return@recoverIfIdle false
-        if (!permittedVineyards.containsAll(evidence.vineyards)) return@recoverIfIdle false
-        prefs.edit().apply {
+        if (expectedEpoch != retentionGuard.identityEpoch.value) throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.IN_FLIGHT)
+        if (user.id != recoveryPrincipal || accessToken.isBlank() || refreshToken.isBlank())
+            throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.IDENTITY)
+        val evidence = AccountTransitionEvidence(appContext).inspect(user.id)
+            ?: throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.RETAINED_EVIDENCE)
+        if (!permittedVineyards.containsAll(evidence.vineyards))
+            throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.VINEYARD_ACCESS)
+        val principal = checkNotNull(recoveryPrincipal)
+        val committed = prefs.edit().apply {
             putString(KEY_ACCESS, accessToken)
             putString(KEY_REFRESH, refreshToken)
             putString(KEY_USER_ID, user.id)
@@ -273,6 +280,15 @@ class SessionStore(context: Context) {
             if (prefs.getString(KEY_SELECTED_VINEYARD, null) !in permittedVineyards) remove(KEY_SELECTED_VINEYARD)
             if (prefs.getString(KEY_DEFAULT_VINEYARD, null) !in permittedVineyards) remove(KEY_DEFAULT_VINEYARD)
         }.commit()
+        if (!committed) {
+            // SharedPreferences can update its in-memory map even when disk commit fails.
+            // Reinstate the original recovery claim and remove candidate credentials; never
+            // let that partial map appear as an admitted session to another adapter.
+            prefs.edit().putBoolean(KEY_RECOVERY_LOCK, true).putString(KEY_RECOVERY_PRINCIPAL, principal)
+                .remove(KEY_ACCESS).remove(KEY_REFRESH).remove(KEY_USER_ID).commit()
+            throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.PERSISTENCE)
+        }
+        true
     }
 
     /** Credential rejection locks local field access before any credential removal. */

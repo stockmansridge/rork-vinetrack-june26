@@ -30,8 +30,12 @@ class ProtectedWorkRecoveryViewModel internal constructor(
             } catch (cancelled: CancellationException) {
                 mutableState.value = RecoveryUiState()
                 throw cancelled
+            } catch (failure: com.rork.vinetrack.data.auth.AuthRecoveryFailure) {
+                mutableState.value = RecoveryUiState(message = failure.userMessage)
             } catch (_: Exception) {
-                mutableState.value = RecoveryUiState(message = "Access was not restored. Check the original account credentials and connection. Unproven records, changed vineyard access or an unfinished operation can also prevent recovery. Local work remains protected; keep this installation and contact support if this persists.")
+                mutableState.value = RecoveryUiState(message = com.rork.vinetrack.data.auth.AuthRecoveryFailure(
+                    com.rork.vinetrack.data.auth.AuthRecoveryFailure.Stage.UNEXPECTED,
+                ).userMessage)
             }
         }
     }

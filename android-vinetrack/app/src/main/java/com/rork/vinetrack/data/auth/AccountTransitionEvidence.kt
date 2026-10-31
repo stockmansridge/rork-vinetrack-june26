@@ -28,23 +28,43 @@ internal class AccountTransitionEvidence(private val context: Context) {
 
     fun inspect(original: String? = null): Assessment? = assess(original, cleanExit = false)
 
-    /** Clean exit has its own cache exceptions; original-account recovery remains unchanged. */
+    /** Clean exit may retain read caches but never unfinished operations. */
     fun inspectCleanExit(): Assessment? = assess(original = null, cleanExit = true)
 
     private fun assess(original: String?, cleanExit: Boolean): Assessment? = runCatching {
         failureCategory = "file dependencies"
-        inspectLocations(cleanExit)
+        inspectLocations()
         val vineyards = mutableSetOf<String>()
         businessPreferences.forEach { name ->
             failureCategory = name
             val values = context.getSharedPreferences(name, Context.MODE_PRIVATE).all
             when {
-                cleanExit && name in CleanExitCacheContract.devicePreferences -> CleanExitCacheContract.validatePreferences(name, values)
-                cleanExit && name == "vinetrack_domain_cache" -> CleanExitCacheContract.validate(values)
-                cleanExit && name == "vinetrack_saved_chemicals_local" -> CleanExitCacheContract.validateSavedChemicals(
-                    values, context.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).all,
+                name in CleanExitCacheContract.devicePreferences -> CleanExitCacheContract.validatePreferences(name, values)
+                name == "vinetrack_write_holds" -> {
+                    check(values.keys.all { it == "holds" })
+                    values["holds"]?.let { raw ->
+                        check(raw is String)
+                        val holds = codec.decodeFromString<kotlin.collections.Map<String, String>>(raw)
+                        holds.forEach { (key, reason) ->
+                            val scope = key.split(':')
+                            check(scope.size == 2 && scope.all { it.isNotBlank() } &&
+                                reason in setOf("VT_READ_ONLY", "READ_ONLY_TRIAL_EXPIRED"))
+                            check(java.util.UUID.fromString(scope[0]).toString() == scope[0])
+                            if (!cleanExit) { check(scope[0] == original); vineyards.add(scope[1]) }
+                        }
+                    }
+                }
+                name == "vinetrack_domain_cache" -> if (cleanExit) CleanExitCacheContract.validate(values)
+                    else if (values.isNotEmpty()) vineyards.addAll(CleanExitCacheContract.recoveryScopes(values, checkNotNull(original)))
+                name == "vinetrack_saved_chemicals_local" -> {
+                    val pending = context.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE).all
+                    if (cleanExit) CleanExitCacheContract.validateSavedChemicals(values, pending)
+                    else if (values.isNotEmpty()) vineyards.addAll(CleanExitCacheContract.chemicalRecoveryScopes(values, pending, checkNotNull(original)))
+                }
+                !cleanExit && name == "vinetrack_local_planning" -> vineyards.addAll(
+                    RetainedPlanningContract.inspect(values, original),
                 )
-                cleanExit && name == "vinetrack_recovery_snapshots_v2" -> values.forEach { (key, raw) ->
+                name == "vinetrack_recovery_snapshots_v2" -> values.forEach { (key, raw) ->
                     check(key.startsWith("snapshot_") && raw is String)
                     val snapshot = codec.decodeFromString(com.rork.vinetrack.data.RecoverySnapshotStore.Snapshot.serializer(), raw)
                     check(snapshot.formatVersion == 3 && key == "snapshot_${snapshot.vineyardId}" && snapshot.vineyardId.isNotBlank())
@@ -94,7 +114,7 @@ internal class AccountTransitionEvidence(private val context: Context) {
         Assessment(vineyards)
     }.getOrNull()
 
-    private fun inspectLocations(cleanExit: Boolean) {
+    private fun inspectLocations() {
         // Android may expose its own data root through /data/user/0 -> /data/data aliases.
         // Anchor the trusted Context roots once; still reject links beneath those roots.
         val preferences = File(File(context.applicationInfo.dataDir).canonicalFile, "shared_prefs")
@@ -113,7 +133,7 @@ internal class AccountTransitionEvidence(private val context: Context) {
         if (filesRoot.exists()) checkNotNull(filesRoot.listFiles()).forEach { file ->
             // These mirrors contain shared public chemical/guide material, not private field work.
             when {
-                cleanExit && file.name == "profileInstalled" -> validateProfileMarker(file, filesRoot)
+                file.name == "profileInstalled" -> validateProfileMarker(file, filesRoot)
                 file.name !in sharedDirectories -> check(noLeafFiles(file))
             }
         }
@@ -168,7 +188,7 @@ internal class AccountTransitionEvidence(private val context: Context) {
             "vinetrack_operational_tools", "vinetrack_button_templates", "vinetrack_yield_determination",
             "vinetrack_pruning_yield_settings", "vinetrack_region_settings", "vinetrack_map", "vinetrack_operations",
             "vinetrack_canopy_rates", "vinetrack_gdd_settings", "vinetrack_bunch_weights", "vinetrack_app_prefs",
-            "vinetrack_home", "vinetrack_onboarding", "vinetrack_setup_wizard", PhotoCaptureReceipt.PREFERENCES,
+            "vinetrack_home", "vinetrack_onboarding", "vinetrack_setup_wizard", "vinetrack_write_holds", PhotoCaptureReceipt.PREFERENCES,
         )
         val excludedPreferences = setOf(
             "vinetrack_session", "vinetrack_biometric", "vinetrack_entitlement", "vinetrack_telemetry",

@@ -50,6 +50,23 @@ class AuthRecoverySurfaceTest {
         } finally { Dispatchers.resetMain() }
     }
 
+    @Test fun everyRecoveryStageDisplaysOnlyFixedActionableGuidance() = runTest {
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        try {
+            for (stage in com.rork.vinetrack.data.auth.AuthRecoveryFailure.Stage.entries) {
+                val vm = ProtectedWorkRecoveryViewModel { _, _ ->
+                    throw com.rork.vinetrack.data.auth.AuthRecoveryFailure(stage)
+                }
+                vm.verify("synthetic@example.invalid", "synthetic-password")
+                assertFalse(vm.state.value.isBusy)
+                assertEquals(com.rork.vinetrack.data.auth.AuthRecoveryFailure(stage).userMessage, vm.state.value.message)
+                assertTrue(vm.state.value.message!!.contains("Recovery stage: ${stage.name}."))
+                assertFalse(vm.state.value.toString().contains("synthetic-password"))
+                assertFalse(vm.state.value.toString().contains("synthetic@example.invalid"))
+            }
+        } finally { Dispatchers.resetMain() }
+    }
+
     @Test fun duplicateSubmitCannotStartASecondVerification() = runTest {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
         try {

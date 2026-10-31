@@ -1,0 +1,104 @@
+{
+  "managed_source_parent": "7e6ffb2b57aa397ad2e6b1c7ced9316a26ba24dd",
+  "repaired_managed_revision": null,
+  "scope": "Bounded Android auth/recovery inventory, not original-device or signed candidate certification",
+  "user_cited_revision": "136e5ee710a5798e3847af3b9bcb8d08f65e8b6a",
+  "user_cited_revision_is_ancestor_of_parent": false,
+  "protected": {
+    "ios_tracked_source_unchanged_from_parent": true,
+    "pr26_manifest": "docs/reviews/pr26-quadrant-source-manifest-20261031.json",
+    "pr26_manifest_sha256": "ff3f004f6f3d893abdf315ebee9845f4eb9a057d4caa23a370d56049fa6f5337",
+    "all_26_pr26_inputs_unchanged": true,
+    "generated_ios_configuration": {
+      "path": "ios/VineTrack/Config.swift",
+      "sha256": "71301cf111ea1855e8c86d50dd9a2675bab62550aa09f872aae83ccf8374508b"
+    },
+    "native_changes_limited_to_listed_auth_and_tests": true
+  },
+  "validation": {
+    "final_auth_instrumentation": {
+      "passed": 59,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 13
+    },
+    "focused_host_selection": {
+      "passed": 25,
+      "failed": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "unnarrowed_host_attempt": "Compile blocked by seven unrelated stale test signatures; zero tests executed",
+    "rendered_journey": "FAIL: recovery/Home/full vineyard publication and byte preservation reached; Work Task form ComposeNotIdleException at No block; downstream block/Trip checks not executed",
+    "android_normal_build": "PASS via runChecks after final production/test changes",
+    "original_device_recovery": "NOT ACCEPTED; actual retained evidence/diagnostics unavailable",
+    "candidate": "NO-GO; no counter changes, test-only delivery or install"
+  },
+  "files": [
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/AuthRetentionAndroidTest.kt",
+      "sha256": "ea1cebf3e92e397e6e1d96327e8035965c8c35d9c169b24b1bc05fec74b9ae54",
+      "parent_sha256": "d8361160edf46dce03f9ac1003f3429d2b3b4fd578f0bb2a0f1445e15664fe86"
+    },
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/PopulatedCleanExitActivityTest.kt",
+      "sha256": "15e39f0b82c9364317f6b4fce027134973c72dba2f52455ad7a679722c436c3b",
+      "parent_sha256": "fb5cdf2d44fce86e82a49d6f6137fd50078ebacbb72aef15600d7ceaa332f0c3"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AccountTransitionEvidence.kt",
+      "sha256": "402234e963b50f9493a4cd87084cd351729943b625bacd672554db45eb1f7a65",
+      "parent_sha256": "b85aa3bc8c6285643c00f0016493640f31f159f957fc874754ce827e73c0836f"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AuthRecoveryFailure.kt",
+      "sha256": "e44957a81e718634ccc9403bfb292fa2e29ae08ac6e751f2cdfa5c648f4df752",
+      "parent_sha256": null
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AuthRecoveryRepository.kt",
+      "sha256": "25ea927ef4ffa24e7c04363657af0e94d78982b31c20b680451fa49bed24a2b9",
+      "parent_sha256": "d58d8b87e0db1730db5254b9f63f6d958b58a1b056622483342c2cacc1335406"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/CleanExitCacheContract.kt",
+      "sha256": "c6c5d3da79b99461409cd4ba58e10acb99d0b02b8a5428027fbd70e35d7f8cf8",
+      "parent_sha256": "007509afbc96b62ce3dee245e678b73ee74a14b51311a9e16fdca8d2e1b1c095"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/RetainedPlanningContract.kt",
+      "sha256": "5d6a2ad80ed16ec7c4f988aa58f99f101081a27bc3d4db7cb813d8d08b6eb0de",
+      "parent_sha256": null
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/SessionStore.kt",
+      "sha256": "fca5309a37dee0f478925240316f4819a3e2e87b1631682e92c93cca776bc6b6",
+      "parent_sha256": "3b4253dd345b443e1bbab85098c269bb7b45f7961932c075c36e5c1c939dc65b"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/auth/ProtectedWorkRecoveryViewModel.kt",
+      "sha256": "6ad9e28a4845d966166a32a4cb0f5d9e83e745555db998417c5cb279c77e6bb9",
+      "parent_sha256": "cc4fd398807161c5282653446c0c19519357cf5551630c6a8a052f3c17c21671"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/AuthRecoverySurfaceTest.kt",
+      "sha256": "ceaeb20f3e2048871a738cf86659f372d03d95ca81953184b7b68113ec4f81c4",
+      "parent_sha256": "9cf287000a1e92d3053d947ff81c89467b94af26d3010cbfeb0d8868a309aad0"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/RetainedPlanningContractTest.kt",
+      "sha256": "9744e7d941739fb5c8637b2431d578294e0da0839e7cdfdcfe896165c77f86ef",
+      "parent_sha256": null
+    },
+    {
+      "path": "scripts/run-android-populated-auth-host-tests.py",
+      "sha256": "47d1131ac28bd80fec8bdd33e5f4aeca3d82a500498b76eeb581bd8209551e2a",
+      "parent_sha256": null
+    },
+    {
+      "path": "scripts/snapshot-android-populated-auth-source.py",
+      "sha256": "2d8ead9447e96a786f3cf2f6d9d242c00c5c2f3093598828e3b468ba409c6aec",
+      "parent_sha256": null
+    }
+  ]
+}
