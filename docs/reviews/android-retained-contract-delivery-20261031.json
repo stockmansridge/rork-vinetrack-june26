@@ -1,0 +1,38 @@
+{
+  "appPath": "android-vinetrack",
+  "framework": "kotlin",
+  "packageName": "com.rork.vinetrack",
+  "intended_track": "internal",
+  "source_parent": "22f977512f69f508bfd78c1f47f2cadb61c224f7",
+  "source_parent_is_repaired_revision": false,
+  "android_tree": "024bbbe925bd78a349f00505632d5dfcc2782596",
+  "sourceHash": "src_024bbbe925bd78a34",
+  "source_manifest": "docs/reviews/android-retained-contract-source-manifest-20261031.json",
+  "source_manifest_sha256": "dd10d3b690f46a033eac24f1816afa3185ad0f857bf75e02701671d380897c41",
+  "preparation": {
+    "normal_checks": "PASS",
+    "native_affected_selection": {"passed": 96, "failed": 0, "skipped": 0, "seconds": 75},
+    "local_release_inspection": "PASS; bounded local APK inspection, not managed Play artifact identity",
+    "google_play_connected": true,
+    "package_access": {"status": "ok", "packageName": "com.rork.vinetrack", "created": false},
+    "matching_completed_play_build": false
+  },
+  "generatePlayAab_attempt": {
+    "request": {"snapshotId": "22f977512f69f508bfd78c1f47f2cadb61c224f7", "sourceHash": "src_024bbbe925bd78a34", "appPath": "android-vinetrack", "framework": "kotlin"},
+    "response": "The current project has unsynced source changes. Finish this turn, then retry publishing.",
+    "runId": null,
+    "build_started": false
+  },
+  "status": "BLOCKED_PENDING_MANAGED_SYNC",
+  "new_managed_version_code": null,
+  "minimum_required_managed_code_exclusive": 1793450653,
+  "validation_submission": null,
+  "committed_submission": null,
+  "new_update_available": false,
+  "next_action": "After automatic source sync, verify exact manifest inputs and Android tree at the repaired managed revision; generate the matching managed AAB, wait once, list exact completed build, validate and publish only to existing Internal Testing with a code above 1793450653. Record backend-resolved revision/source and actual receipts separately.",
+  "original_device_acceptance": "FAILED at RETAINED_EVIDENCE on previous update; exact handset category/rule unknown",
+  "original_device_data_modified": false,
+  "public_release": false,
+  "ios_built": false,
+  "historical_published_update": {"versionName": "3.1.9", "versionCode": 1793450653, "submissionId": "802b6b97-df4f-457a-8ad0-10250fa3ed42"}
+}

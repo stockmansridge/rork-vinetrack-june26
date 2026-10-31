@@ -149,7 +149,10 @@ internal object CleanExitCacheContract {
     }
 
     fun chemicalRecoveryScopes(values: Map<String, *>, pending: Map<String, *>, original: String): Set<String> {
-        validateSavedChemicals(values, pending)
+        // Recovery admits only audited, explicitly authored operations. Clean exit still
+        // requires the entire queue to be empty. Chemical operations remain unsupported.
+        RetainedEvidenceContract.queue(pending, original)
+        validateSavedChemicals(values, emptyMap<String, Any>())
         return values.keys.mapTo(mutableSetOf()) { key ->
             val scope = key.split('|')
             check(scope[0] == original)

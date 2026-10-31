@@ -1,7 +1,7 @@
 package com.rork.vinetrack.data.auth
 
 /** Fixed stage diagnostics only: no response bodies, identifiers, email, tokens or exception messages. */
-class AuthRecoveryFailure(val stage: Stage) : IllegalStateException(stage.name) {
+class AuthRecoveryFailure(val stage: Stage, val evidence: RecoveryEvidenceDiagnostic? = null) : IllegalStateException(stage.name) {
     enum class Stage(val guidance: String) {
         ORIGINAL_IDENTITY("The original sign-in identity is unavailable. Keep this installation and contact recovery support."),
         SIGN_IN("Sign-in was not completed. Check the original account credentials and connection, then try again."),

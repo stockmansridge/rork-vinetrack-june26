@@ -29,6 +29,8 @@ class PopulatedCleanExitActivityTest {
     private lateinit var client: HttpClient
     private val account = AtomicReference(A)
     private val logouts = AtomicInteger(0)
+    private var includeHistorical = false
+    private var retainedContractBytes: Map<String, Map<String, *>>? = null
     private val requests = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private val checkpoints = java.util.concurrent.CopyOnWriteArrayList<String>()
     private val pending = java.util.concurrent.ConcurrentHashMap<Int, String>()
@@ -117,7 +119,14 @@ class PopulatedCleanExitActivityTest {
             val uid = account.get()
             var status = HttpStatusCode.OK
             val body = when {
-                request.method != HttpMethod.Get && path.startsWith("/rest/v1/") && !path.startsWith("/rest/v1/rpc/") -> {
+                path == "/rest/v1/rpc/record_my_client_activity" -> {
+                    // Existing app telemetry is explicitly rejected, never sent to a backend.
+                    // It is not a field-operation acknowledgement or a diagnostics upload.
+                    status = HttpStatusCode.ServiceUnavailable
+                    "{}"
+                }
+                request.method != HttpMethod.Get && path.startsWith("/rest/v1/") &&
+                    path !in readOnlyRpcs -> {
                     operationalWrites.add("${request.method.value} $path")
                     status = HttpStatusCode.MethodNotAllowed
                     "{}"
@@ -125,8 +134,12 @@ class PopulatedCleanExitActivityTest {
                 path == "/auth/v1/token" -> """{"access_token":"access-$uid","refresh_token":"refresh-$uid","user":{"id":"$uid","email":"synthetic@example.invalid"}}"""
                 path == "/auth/v1/user" -> """{"id":"$uid","email":"synthetic@example.invalid"}"""
                 path == "/auth/v1/logout" -> { logouts.incrementAndGet(); "{}" }
-                path == "/rest/v1/vineyard_members" -> """[{"vineyard_id":"$v","role":"operator","user_id":"$uid"}]"""
-                path == "/rest/v1/vineyards" -> """[{"id":"$v","name":"Synthetic $v"}]"""
+                path == "/rest/v1/vineyard_members" -> if (includeHistorical)
+                    """[{"vineyard_id":"$v","role":"operator","user_id":"$uid"},{"vineyard_id":"historical-vineyard","role":"operator","user_id":"$uid"}]"""
+                    else """[{"vineyard_id":"$v","role":"operator","user_id":"$uid"}]"""
+                path == "/rest/v1/vineyards" -> if (includeHistorical)
+                    """[{"id":"$v","name":"Synthetic $v"},{"id":"historical-vineyard","name":"Historical fixture"}]"""
+                    else """[{"id":"$v","name":"Synthetic $v"}]"""
                 path == "/rest/v1/profiles" -> "[]"
                 path == "/rest/v1/saved_chemicals" && request.method == HttpMethod.Get ->
                     """[{"id":"chemical-$uid","vineyard_id":"$v","name":"Private chemical $uid"}]"""
@@ -190,7 +203,8 @@ class PopulatedCleanExitActivityTest {
             cache.loadPins(account.get(), vineyard)?.isNotEmpty() == true &&
                 cache.loadTrips(account.get(), vineyard)?.isNotEmpty() == true &&
                 cache.loadGrowth(account.get(), vineyard)?.isNotEmpty() == true &&
-                cache.loadWorkTasks(account.get(), vineyard)?.isNotEmpty() == true
+                cache.loadWorkTasks(account.get(), vineyard)?.isNotEmpty() == true &&
+                SavedChemicalLocalStore(app).load(account.get(), vineyard).isNotEmpty()
         }
         assertTrue(SessionStore(app).hasSession)
     }
@@ -210,11 +224,43 @@ class PopulatedCleanExitActivityTest {
         return app.getSharedPreferences("vinetrack_local_planning", 0).all.toMap()
     }
 
-    private fun recoverThroughForm(wrongAccountFirst: Boolean = false): Map<String, *> {
+    private fun retainProductionContracts() {
+        includeHistorical = true
+        val draft = WorkTaskPlanningDraft("task-$A", "vineyard-A", A, date = "2026-11-05T00:00:00Z", taskType = "pruning",
+            externalId = "original-greg-resource", assignmentName = "Greg Horner", durationText = "1", notes = "Need bamboo and loose tie onto it",
+            baselineJson = """{"id":"task-$A","vineyard_id":"vineyard-A","sync_version":1}""")
+        val drafts = WorkTaskPlanningDraftStore(app)
+        drafts.save(draft)
+        val intent = WorkTaskWriteContract.planning(draft, "task-$A", java.time.LocalDate.parse("2026-11-05"),
+            java.time.Instant.parse("2026-10-31T00:00:00Z"), null, "", 0.0)
+        drafts.saveIntent(intent)
+        drafts.saveRecovery(TaskWriteRecovery(original = intent))
+        val queue = PendingWriteRepository(app)
+        val write = PinCreateSync(queue).enqueue(PinRepository.PinInput("original-queued-pin", "historical-vineyard", createdBy = A))
+        queue.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Synthetic retained review hold")
+        val cache = DomainCacheRepository(app)
+        cache.savePins(A, "historical-vineyard", listOf(Pin("historical-pin", "historical-vineyard", createdBy = A)))
+        cache.saveTrips(A, "historical-vineyard", listOf(Trip("historical-trip", "historical-vineyard", operatorUserId = A)))
+        assertTrue(RecoverySnapshotStore.captureBeforeMutation(app, "historical-vineyard").isPreserved)
+        val receipt = RecoverySnapshotStore.TombstoneReceipt(A,
+            PendingWrite("historical-delete", "pin", "delete", "{\"pinId\":\"historical-deleted-pin\"}", "historical-deleted-pin", 1, 1, status = "blocked"),
+            PinDeleteSync.DeleteState("historical-deleted-pin", "historical-vineyard", "2026-10-30T00:00:00Z"))
+        assertTrue(RecoverySnapshotStore(app).preserveTombstone(receipt))
+        retainedContractBytes = listOf("vinetrack_pending_writes", "vinetrack_recovery_snapshots_v2", "vinetrack_local_planning")
+            .associateWith { app.getSharedPreferences(it, 0).all.toMap() }
+    }
+
+    private fun assertContractBytes() {
+        retainedContractBytes?.forEach { (name, values) -> assertEquals(name, values, app.getSharedPreferences(name, 0).all) }
+    }
+
+    private fun recoverThroughForm(wrongAccountFirst: Boolean = false, productionContracts: Boolean = false): Map<String, *> {
         signIn()
         val session = SessionStore(app)
         val obsolete = requireNotNull(session.accountAccess())
-        val draftBefore = retainDraft()
+        retainDraft()
+        if (productionContracts) retainProductionContracts()
+        val draftBefore = app.getSharedPreferences("vinetrack_local_planning", 0).all.toMap()
         val evidence = AccountTransitionEvidence(app)
         val assessment = evidence.inspect(A)
         assertNotNull("Populated recovery rejected at ${evidence.failureCategory}; keys=${app.getSharedPreferences(evidence.failureCategory, 0).all.keys}; files=${app.filesDir.walkTopDown().filter { it.isFile }.map { it.relativeTo(app.filesDir).path }.toList()}", assessment)
@@ -235,6 +281,7 @@ class PopulatedCleanExitActivityTest {
                 compose.onAllNodesWithText("Recovery stage: IDENTITY.", substring = true).fetchSemanticsNodes().isNotEmpty()
             }
             assertTrue(session.retentionGuard.isLocked)
+            assertContractBytes()
             assertEquals(draftBefore, app.getSharedPreferences("vinetrack_local_planning", 0).all)
             compose.onAllNodes(hasText("Home") and hasClickAction()).assertCountEquals(0)
             account.set(A)
@@ -251,6 +298,7 @@ class PopulatedCleanExitActivityTest {
     }
 
     private fun assertOriginalIdentityAndNoOperationalWrites() {
+        assertContractBytes()
         assertEquals(A, SessionStore(app).userId)
         assertEquals("task-$A", DomainCacheRepository(app).loadWorkTasks(A, "vineyard-A")!!.single().id)
         assertEquals("trip-$A", DomainCacheRepository(app).loadTrips(A, "vineyard-A")!!.single().id)
@@ -320,7 +368,7 @@ class PopulatedCleanExitActivityTest {
     }
 
     @Test fun recoveryFormHomeBlocksAndReopenPreserveDraft() {
-        val before = recoverThroughForm(wrongAccountFirst = true)
+        val before = recoverThroughForm(wrongAccountFirst = true, productionContracts = true)
         scenario.close()
         scenario = ActivityScenario.launch(MainActivity::class.java)
         awaitStage("reopen.home") { compose.onAllNodes(hasText("Home") and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
@@ -332,7 +380,7 @@ class PopulatedCleanExitActivityTest {
     }
 
     @Test fun recoveredHomeWorkTaskSelectsExistingBlock() {
-        val before = recoverThroughForm()
+        val before = recoverThroughForm(productionContracts = true)
         openTaskEditor("task-selection")
         compose.onNodeWithText("Block", substring = false).performScrollTo().performClick()
         compose.onNodeWithText("Private block $A", substring = false).assertExists().performClick()
@@ -344,8 +392,72 @@ class PopulatedCleanExitActivityTest {
         assertOriginalIdentityAndNoOperationalWrites()
     }
 
+    @Test fun lockedRecoveryCopiesPreciseSafeDiagnosticsWithoutAnotherSignIn() {
+        signIn()
+        val raw = "[{\"private-note-secret\":\"never-copy-this\"}]"
+        val prefs = app.getSharedPreferences("vinetrack_pending_writes", 0)
+        check(prefs.edit().putString("pending_writes_json", raw).commit())
+        scenario.close()
+        SessionStore(app).clear()
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        awaitText("Local work protected")
+        compose.onNodeWithText("Account email").performTextReplacement("synthetic@example.invalid")
+        compose.onNodeWithText("Password").performTextInput("synthetic-password")
+        compose.onNodeWithText("Restore original account").performClick()
+        awaitStage("retained.failure.visible") {
+            compose.onAllNodesWithText("Recovery stage: RETAINED_EVIDENCE.", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        fun copyAndCheck(stage: String) {
+            val tokenCalls = responses.count { it.startsWith("POST /auth/v1/token ") }
+            compose.onNodeWithText("Copy recovery diagnostics").performScrollTo().performClick()
+            awaitStage("diagnostics.copied") {
+                compose.onAllNodesWithText("Recovery diagnostics copied.", substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            var text = ""
+            scenario.onActivity {
+                val clipboard = it.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                text = clipboard.primaryClip!!.getItemAt(0).text.toString()
+            }
+            assertTrue(text, text.contains("Recovery stage: $stage"))
+            assertTrue(text, text.contains("Store/category: vinetrack_pending_writes"))
+            assertTrue(text, text.contains("Validation rule: DECODE_SCHEMA"))
+            assertTrue(text, text.contains("Version code: ${com.rork.vinetrack.BuildConfig.VERSION_CODE}"))
+            listOf(A, B, "never-copy-this", "private-note-secret", "synthetic-password", "synthetic@example.invalid").forEach { assertFalse(text.contains(it)) }
+            assertEquals(tokenCalls, responses.count { it.startsWith("POST /auth/v1/token ") })
+            assertEquals(raw, prefs.getString("pending_writes_json", null))
+            assertTrue(SessionStore(app).retentionGuard.isLocked)
+            compose.onAllNodes(hasText("Home") and hasClickAction()).assertCountEquals(0)
+        }
+        copyAndCheck("RETAINED_EVIDENCE")
+        scenario.close()
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        awaitText("Local work protected")
+        copyAndCheck("LOCKED")
+        assertTrue(operationalWrites.isEmpty())
+    }
+
+    @Test fun recoveryExistingTaskEditorRetainsOriginalRequestAndFields() {
+        recoverThroughForm(productionContracts = true)
+        compose.onNodeWithText("Work Tasks").performScrollTo().performClick()
+        awaitText("Task Log")
+        compose.onNodeWithText("Task Log").performScrollTo().performClick()
+        awaitText("Task")
+        compose.onNode(hasText("Task", substring = false) and hasText("No block", substring = false)).performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Edit task").performClick()
+        awaitText("Check saved task")
+        compose.onNodeWithText("Assigned to: Greg Horner").assertExists()
+        compose.onNodeWithText("Need bamboo and loose tie onto it", substring = false).assertExists()
+        compose.onNode(hasText("1") and hasText("Duration (hours, optional)")).assertExists()
+        assertContractBytes()
+        assertEquals("task-$A", WorkTaskPlanningDraftStore(app).load(A, "vineyard-A", "task-$A")?.taskId)
+        assertEquals(TaskWritePhase.UNKNOWN, WorkTaskPlanningDraftStore(app).loadIntent(A, "vineyard-A", "task-$A")?.let {
+            WorkTaskPlanningDraftStore(app).recovery(it)?.phase
+        })
+        assertOriginalIdentityAndNoOperationalWrites()
+    }
+
     @Test fun recoveredHomeTripSelectsExistingBlock() {
-        val before = recoverThroughForm()
+        val before = recoverThroughForm(productionContracts = true)
         compose.onNode(hasText("Trip") and hasClickAction()).performClick()
         awaitText("  Start Trip")
         compose.onNodeWithText("  Start Trip").assertIsDisplayed().performClick()
@@ -534,6 +646,13 @@ class PopulatedCleanExitActivityTest {
     }
 
     companion object {
+        private val readOnlyRpcs = setOf("is_system_admin", "get_system_feature_flags", "get_my_vinetrack_access",
+            "get_my_vineyard_access_matrix", "get_my_operational_tool_preferences", "get_app_release_policy",
+            "get_canopy_reference_images_v1", "get_vineyard_team_members", "get_grape_clone_catalog",
+            "get_pruning_vineyard_summary", "list_pruning_activities", "get_vineyard_yield_sampling_settings",
+            "list_vineyard_spray_targets", "list_vineyard_grape_varieties", "get_rootstock_catalog",
+            "list_vineyard_grape_clones", "list_vineyard_rootstocks", "get_vineyard_region_settings",
+            "get_vineyard_season_settings").map { "/rest/v1/rpc/$it" }.toSet()
         private const val A = "11111111-1111-4111-8111-111111111111"
         private const val B = "22222222-2222-4222-8222-222222222222"
         private val emptyTables = setOf("machines", "vineyard_machines", "tractors", "operator_categories", "worker_types", "work_task_paddocks",

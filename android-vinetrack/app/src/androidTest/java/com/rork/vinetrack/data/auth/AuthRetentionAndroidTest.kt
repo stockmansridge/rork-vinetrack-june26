@@ -54,6 +54,84 @@ class AuthRetentionAndroidTest {
         root.deleteRecursively()
     }
 
+    @Test fun productionPopulatedSnapshotAdmitsOriginalWithoutChangingHistoricalBytes() {
+        val owner = "00000000-0000-0000-0000-0000000000a1"
+        SessionStore(context).save("access", "refresh", owner, null)
+        val cache = com.rork.vinetrack.data.DomainCacheRepository(context)
+        cache.savePins(owner, "vineyard", listOf(com.rork.vinetrack.data.model.Pin("pin", "vineyard", createdBy = owner)))
+        assertTrue(com.rork.vinetrack.data.RecoverySnapshotStore.captureBeforeMutation(context, "vineyard").isPreserved)
+        val prefs = context.getSharedPreferences("vinetrack_recovery_snapshots_v2", 0)
+        val before = prefs.all.toMap()
+        val inspector = AccountTransitionEvidence(context)
+        assertNotNull("Rejected production populated snapshot at ${inspector.failureCategory}", inspector.inspect(owner))
+        assertEquals(before, prefs.all)
+        assertNull(inspector.inspect("00000000-0000-0000-0000-0000000000b2"))
+        assertEquals(before, prefs.all)
+    }
+
+    @Test fun productionTombstoneReceiptAdmitsOnlyExactOwnerAndIntegrity() {
+        val owner = "00000000-0000-0000-0000-0000000000a1"
+        SessionStore(context).save("access", "refresh", owner, null)
+        val receipt = com.rork.vinetrack.data.RecoverySnapshotStore.TombstoneReceipt(owner,
+            com.rork.vinetrack.data.model.PendingWrite("original-delete", "pin", "delete", "{\"pinId\":\"pin\"}", "pin", 1, 1, status = "blocked"),
+            com.rork.vinetrack.data.PinDeleteSync.DeleteState("pin", "vineyard", "2026-10-30T00:00:00Z"))
+        assertTrue(com.rork.vinetrack.data.RecoverySnapshotStore(context).preserveTombstone(receipt))
+        val prefs = context.getSharedPreferences("vinetrack_recovery_snapshots_v2", 0)
+        val before = prefs.all.toMap()
+        val inspector = AccountTransitionEvidence(context)
+        assertNotNull("Rejected production receipt at ${inspector.failureCategory}", inspector.inspect(owner))
+        assertNull(inspector.inspect("00000000-0000-0000-0000-0000000000b2"))
+        assertEquals(before, prefs.all)
+        val key = before.keys.single()
+        check(prefs.edit().putString(key, (before.getValue(key) as String).replace("original-delete", "altered-delete")).commit())
+        assertNull(inspector.inspect(owner))
+    }
+
+    @Test fun malformedAndForeignProductionSnapshotsRemainProtectedWithSafeRuleCodes() {
+        val owner = "00000000-0000-0000-0000-0000000000a1"
+        val foreign = "00000000-0000-0000-0000-0000000000b2"
+        SessionStore(context).save("access", "refresh", owner, null)
+        com.rork.vinetrack.data.DomainCacheRepository(context).savePins(owner, "vineyard",
+            listOf(com.rork.vinetrack.data.model.Pin("private-pin", "vineyard", createdBy = owner)))
+        assertTrue(com.rork.vinetrack.data.RecoverySnapshotStore.captureBeforeMutation(context, "vineyard").isPreserved)
+        val prefs = context.getSharedPreferences("vinetrack_recovery_snapshots_v2", 0)
+        val original = requireNotNull(prefs.getString("snapshot_vineyard", null))
+        val json = kotlinx.serialization.json.Json { encodeDefaults = true }
+        val snapshot = json.decodeFromString<com.rork.vinetrack.data.RecoverySnapshotStore.Snapshot>(original)
+        val variants = listOf(
+            snapshot.copy(formatVersion = 4) to "SNAPSHOT_VERSION",
+            snapshot.copy(cachedPins = snapshot.cachedPins.map { it.copy(createdBy = foreign) }) to "SNAPSHOT_PIN_OWNER",
+            snapshot.copy(cachedPins = snapshot.cachedPins.map { it.copy(vineyardId = "foreign-vineyard") }) to "SNAPSHOT_PIN_SCOPE",
+            snapshot.copy(sourceStatuses = snapshot.sourceStatuses.map { it.copy(itemCount = 99) }) to "SNAPSHOT_SOURCE_COUNTS",
+        )
+        variants.forEach { (value, rule) ->
+            val bytes = json.encodeToString(com.rork.vinetrack.data.RecoverySnapshotStore.Snapshot.serializer(), value)
+            check(prefs.edit().putString("snapshot_vineyard", bytes).commit())
+            val inspector = AccountTransitionEvidence(context)
+            assertNull(inspector.inspect(owner))
+            assertEquals(rule, inspector.failureDiagnostic?.rule)
+            assertEquals(value.formatVersion, inspector.failureDiagnostic?.schemaVersion)
+            val text = RecoveryDiagnostics.format("RETAINED_EVIDENCE", inspector.failureDiagnostic)
+            assertFalse(text.contains(owner)); assertFalse(text.contains(foreign)); assertFalse(text.contains("private-pin"))
+            assertEquals(bytes, prefs.getString("snapshot_vineyard", null))
+        }
+    }
+
+    @Test fun productionAuthoredPinQueueAdmitsOriginalAndPreservesRequest() {
+        val owner = "00000000-0000-0000-0000-0000000000a1"
+        SessionStore(context).save("access", "refresh", owner, null)
+        val pending = PendingWriteRepository(context)
+        val write = PinCreateSync(pending).enqueue(PinRepository.PinInput(id = "original-pin", vineyardId = "vineyard", createdBy = owner))
+        val prefs = context.getSharedPreferences("vinetrack_pending_writes", 0)
+        val before = prefs.all.toMap()
+        val inspector = AccountTransitionEvidence(context)
+        assertNotNull("Rejected production queue at ${inspector.failureCategory}", inspector.inspect(owner))
+        assertEquals(setOf("vineyard"), inspector.inspect(owner)?.vineyards)
+        assertNull(inspector.inspect("00000000-0000-0000-0000-0000000000b2"))
+        assertEquals(before, prefs.all)
+        assertEquals(write, com.rork.vinetrack.data.PendingWriteStore(context).load().single())
+    }
+
     @Test fun legitimateAdmissionContentionPersistsTripAndPhotoWithoutRevokingAuthority() {
         val session = SessionStore(context)
         session.save("synthetic-access", "synthetic-refresh", "account-A", null)

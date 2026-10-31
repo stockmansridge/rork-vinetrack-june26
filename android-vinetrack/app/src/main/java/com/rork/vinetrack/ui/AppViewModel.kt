@@ -17894,6 +17894,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val identityEpoch = session.retentionGuard.identityEpoch.value
         val selectionEpoch = vineyardSelectionEpoch
         val generation = ++vineyardDataLoadGeneration
+        // Capture before remote IO; the reconciliation must never bind to a later login.
+        val chemicalCommitAccess = com.rork.vinetrack.data.auth.FieldStoreAccess(getApplication())
         val loadScope = com.rork.vinetrack.data.QuickActionLoadScope(userId, vineyardId, identityEpoch, selectionEpoch, generation)
         fun isCurrentLoad(): Boolean = loadScope.isCurrent(
             com.rork.vinetrack.data.QuickActionLoadScope(session.userId, _ui.value.selectedVineyardId,
@@ -18213,7 +18215,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // optional reference list, soft-fail to the existing list (or empty).
         val savedChemicals = try {
             val remote = repo.listSavedChemicals(vineyardId)
-            if (isCurrentLoad()) savedChemicalCreateSync.mergeRemote(userId, vineyardId, remote) else remote
+            if (isCurrentLoad()) withContext(Dispatchers.IO) {
+                // Admit the whole synchronous reconciliation before any queue/storage monitor.
+                // Its leaf commits stay nonblocking and reuse this authority on this thread.
+                chemicalCommitAccess.admittedForOwner(userId) {
+                    if (!isCurrentLoad()) throw com.rork.vinetrack.data.auth.FieldAccessRevoked()
+                    savedChemicalCreateSync.mergeRemote(userId, vineyardId, remote)
+                }
+            } else remote
         } catch (e: Exception) {
             userId?.let { savedChemicalCreateSync.rows(it, vineyardId) } ?: _ui.value.savedChemicals
         }

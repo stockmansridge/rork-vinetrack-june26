@@ -1,0 +1,30 @@
+{
+  "evidence_kind": "Transcription of observed tool results, not a raw instrumentation log",
+  "focused": {
+    "tool": "androidTest",
+    "selectors": [
+      "com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest#lockedRecoveryCopiesPreciseSafeDiagnosticsWithoutAnotherSignIn",
+      "com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest#populatedSettingsExitRecreateRelaunchReturnAThenBIsolatesPrivateCachesAndAuthority",
+      "com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest#chemicalReconciliationAdmitsBeforeLeafStoresAndPreservesOriginalDuringContention",
+      "com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest#revokedChemicalReconciliationCannotRunOrReplaceRetainedBytes"
+    ],
+    "passed": 4, "failed": 0, "skipped": 0, "seconds": 27
+  },
+  "final": {
+    "tool": "androidTest",
+    "selectors": [
+      "com.rork.vinetrack.data.auth.AuthRetentionAndroidTest",
+      "com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest",
+      "com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest"
+    ],
+    "passed": 96, "failed": 0, "skipped": 0, "seconds": 75,
+    "class_counts": {"AuthRetentionAndroidTest": 63, "PopulatedCleanExitActivityTest": 15, "FieldSaveContentionAndroidTest": 18}
+  },
+  "normal_checks": {"tool": "runChecks", "appPath": "android-vinetrack", "result": "Checks passed. Build succeeded for android-vinetrack.", "unchanged_nonblocking_asset_address_advisories": 2},
+  "raw_success_log_available": false,
+  "log_note": "Successful invocations did not refresh /tmp/rork-android-test-android-vinetrack.log. Its SHA256 remained b906a125c47c96f5d7ab2084ae2617d479ba84578e921c599221d8e8f7f57e13: the preceding 77-pass/1-failure result, retained only as native-77pass-1fail.log. Do not label its copies as final passing logs.",
+  "counts_overlap_do_not_sum": true,
+  "host_tests": "Not rerun; preceding focused historical evidence retained separately",
+  "unchanged_sheet_cases": "2 historical passes reused; not part of the new 96",
+  "original_device": "NOT ACCEPTED; prior installed update failed RETAINED_EVIDENCE; exact handset category/rule remains unknown"
+}

@@ -22,7 +22,7 @@ class CleanExitFixtureApplication : Application() {
         if (immediateOnlineWithoutNetworkManager && name == Context.CONNECTIVITY_SERVICE) null
         else super.getSystemService(name)
 
-    private val namespace = "clean_exit_fixture_${UUID.randomUUID()}_"
+    private var namespace = "clean_exit_fixture_${UUID.randomUUID()}_"
     private val names = linkedSetOf<String>()
     private val fixtureRoot: File by lazy { File(super.getFilesDir(), namespace).also { check(it.mkdirs() || it.isDirectory) } }
     override fun getApplicationContext(): Context = this
@@ -36,7 +36,13 @@ class CleanExitFixtureApplication : Application() {
     }
     fun resetFixture() {
         immediateOnlineWithoutNetworkManager = false
-        synchronized(names) { names.forEach { check(super.getSharedPreferences(namespace + it, MODE_PRIVATE).edit().clear().commit()) } }
+        synchronized(names) {
+            names.forEach { check(super.getSharedPreferences(namespace + it, MODE_PRIVATE).edit().clear().commit()) }
+            names.clear()
+            // A new disposable installation per test, not a production guard reset. The locked
+            // diagnostics journey intentionally ends locked; never unlock it to clean up a test.
+            namespace = "clean_exit_fixture_${UUID.randomUUID()}_"
+        }
         listOf(filesDir, cacheDir, noBackupFilesDir).forEach { dir -> dir.listFiles()?.forEach { check(it.deleteRecursively()) } }
     }
 }

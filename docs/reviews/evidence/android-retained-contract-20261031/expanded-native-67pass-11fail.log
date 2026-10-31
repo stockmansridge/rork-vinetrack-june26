@@ -1,0 +1,708 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.AuthRetentionAndroidTest:
+INSTRUMENTATION_STATUS: test=actualUnscopedLateTankAcknowledgementNowFailsAtDurableStorage
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualUnscopedLateTankAcknowledgementNowFailsAtDurableStorage
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=revokedPhotoReturnAndLostLiveTicketPreserveUncertainEvidenceWithoutRebinding
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=revokedPhotoReturnAndLostLiveTicketPreserveUncertainEvidenceWithoutRebinding
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=populatedReviewedCachesAndPreferencesExitWithoutEmptyingInstallation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=populatedReviewedCachesAndPreferencesExitWithoutEmptyingInstallation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=malformedUnknownOwnerAndMismatchedChemicalSnapshotsRefuseWithoutMutation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=malformedUnknownOwnerAndMismatchedChemicalSnapshotsRefuseWithoutMutation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=legitimateAdmissionContentionPersistsTripAndPhotoWithoutRevokingAuthority
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=legitimateAdmissionContentionPersistsTripAndPhotoWithoutRevokingAuthority
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=vintageDelayedReadRetainsOriginalPendingOperationAndRejectsPostRevocationPublication
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=vintageDelayedReadRetainsOriginalPendingOperationAndRejectsPostRevocationPublication
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=profileVerifierMarkerDoesNotBlockOwnedRecoveryAssessment
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=profileVerifierMarkerDoesNotBlockOwnedRecoveryAssessment
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=8
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=corruptActiveClaimCannotBeOverwrittenThroughProductionClaim
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=8
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=corruptActiveClaimCannotBeOverwrittenThroughProductionClaim
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=9
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=cacheScopeAndDraftAuthorFailuresRemainProtectedWithSpecificStage
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=9
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=cacheScopeAndDraftAuthorFailuresRemainProtectedWithSpecificStage
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=10
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=originalAccountCallbackScopeSurvivesRefreshButNotRevocationOrRecreation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=10
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=originalAccountCallbackScopeSurvivesRefreshButNotRevocationOrRecreation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=11
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=inconclusiveRefreshDenialsAndRateLimitsKeepProductionSession
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=11
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=inconclusiveRefreshDenialsAndRateLimitsKeepProductionSession
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=12
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=historicalTokenRemovalWithSurvivingContextLocksBeforeBusinessConstruction
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=12
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=historicalTokenRemovalWithSurvivingContextLocksBeforeBusinessConstruction
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=13
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=failedRealPhotoMetadataCommitRetainsPriorAttachmentAndBothCapturedByteSets
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=13
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=failedRealPhotoMetadataCommitRetainsPriorAttachmentAndBothCapturedByteSets
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=14
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=actualScoutPhotoWriteAndCleanupAfterRevocationRetainOriginalBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=14
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualScoutPhotoWriteAndCleanupAfterRevocationRetainOriginalBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=15
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=originalAccountRecoveryRestoresFreshSessionAndPreservesOwnedTripBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=15
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=originalAccountRecoveryRestoresFreshSessionAndPreservesOwnedTripBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=16
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=editAdmittedBeforeRevocationCannotCommitAfterItAndPreservesDraftBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=16
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=editAdmittedBeforeRevocationCannotCommitAfterItAndPreservesDraftBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=17
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=unresolvedChemicalCreatesUpdatesAndUnreadableOutboxRefuseEvenWithValidSnapshot
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=17
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=unresolvedChemicalCreatesUpdatesAndUnreadableOutboxRefuseEvenWithValidSnapshot
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=18
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=productionPopulatedSnapshotAdmitsOriginalWithoutChangingHistoricalBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=18
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=productionPopulatedSnapshotAdmitsOriginalWithoutChangingHistoricalBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=19
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=malformedOrLookalikeProfileMarkersRefuseWithoutChangingSessionOrBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=19
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=malformedOrLookalikeProfileMarkersRefuseWithoutChangingSessionOrBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=20
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=actualManualAndPlanningDraftCallbacksCannotDiscardAfterRevocation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=20
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualManualAndPlanningDraftCallbacksCannotDiscardAfterRevocation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=21
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=failedRecoveryTransactionMasksAuthorityWithoutDeletingOriginalSessionOrFieldBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=21
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=failedRecoveryTransactionMasksAuthorityWithoutDeletingOriginalSessionOrFieldBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=22
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=wrongIdentityMissingPermissionAndAuthorlessQueueRemainProtected
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=22
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=wrongIdentityMissingPermissionAndAuthorlessQueueRemainProtected
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=23
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=populatedRejectedSessionRecoversOriginalAccountWithoutChangingFieldBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=23
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=populatedRejectedSessionRecoversOriginalAccountWithoutChangingFieldBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=24
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=productionActiveSnapshotCannotBeSavedUnderAnotherActor
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=24
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=productionActiveSnapshotCannotBeSavedUnderAnotherActor
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=25
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=exitInspectionClosesReentrantWriterAndCallbackAdmission
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=25
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=exitInspectionClosesReentrantWriterAndCallbackAdmission
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=26
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=accountViewModelLifetimeRestoresSameUserButDoesNotCarryAHandlesIntoB
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=26
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=accountViewModelLifetimeRestoresSameUserButDoesNotCarryAHandlesIntoB
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=27
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=delayedCanopyDownloadCannotPromoteManifestOrFilesAfterRevocation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=27
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=delayedCanopyDownloadCannotPromoteManifestOrFilesAfterRevocation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=28
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=corruptCaptureFallbackCannotDecodeToEmptyOrBeDeletedByAnAcknowledgement
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUM
+... output truncated ...
+TUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=ordinarySignInPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=65
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveredHomeTripSelectsExistingBlock
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=65
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=recoveredHomeTripSelectsExistingBlock
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=66
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=unsynchronisedPinRefusalKeepsSessionAndQueue
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=66
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=unsynchronisedPinRefusalKeepsSessionAndQueue
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=67
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=lockedRecoveryCopiesPreciseSafeDiagnosticsWithoutAnotherSignIn
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=67
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=lockedRecoveryCopiesPreciseSafeDiagnosticsWithoutAnotherSignIn
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=68
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveryExistingTaskEditorRetainsOriginalRequestAndFields
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=68
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: stream=
+Error in recoveryExistingTaskEditorRetainsOriginalRequestAndFields(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: test=recoveryExistingTaskEditorRetainsOriginalRequestAndFields
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=69
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=activeTripRefusalKeepsSessionAndSnapshot
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=69
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: stream=
+Error in activeTripRefusalKeepsSessionAndSnapshot(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: test=activeTripRefusalKeepsSessionAndSnapshot
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=70
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveryFormPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=70
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: stream=
+Error in recoveryFormPopulatedTaskEditorDiagnostic(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: test=recoveryFormPopulatedTaskEditorDiagnostic
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=71
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=unfinishedPhotoRefusalKeepsSessionAndJpeg
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=71
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: stream=
+Error in unfinishedPhotoRefusalKeepsSessionAndJpeg(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: test=unfinishedPhotoRefusalKeepsSessionAndJpeg
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=72
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=corruptCacheRefusalKeepsSessionAndUnchangedBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=72
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: stream=
+Error in corruptCacheRefusalKeepsSessionAndUnchangedBytes(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: test=corruptCacheRefusalKeepsSessionAndUnchangedBytes
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=73
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveryFormHomeBlocksAndReopenPreserveDraft
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=73
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: stream=
+Error in recoveryFormHomeBlocksAndReopenPreserveDraft(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: test=recoveryFormHomeBlocksAndReopenPreserveDraft
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=74
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=pendingTankActualRefusalKeepsSessionAndRecord
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=74
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: stream=
+Error in pendingTankActualRefusalKeepsSessionAndRecord(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: test=pendingTankActualRefusalKeepsSessionAndRecord
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=75
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=unresolvedDraftRefusalKeepsSessionAndDraft
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=75
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: stream=
+Error in unresolvedDraftRefusalKeepsSessionAndDraft(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: test=unresolvedDraftRefusalKeepsSessionAndDraft
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=76
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=completedPhotoEmptyDirectoryAllowsSignedOutStartupAndSafeAThenBLogin
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=76
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: stream=
+Error in completedPhotoEmptyDirectoryAllowsSignedOutStartupAndSafeAThenBLogin(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: test=completedPhotoEmptyDirectoryAllowsSignedOutStartupAndSafeAThenBLogin
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=77
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=populatedSettingsExitRecreateRelaunchReturnAThenBIsolatesPrivateCachesAndAuthority
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=77
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: stream=
+Error in populatedSettingsExitRecreateRelaunchReturnAThenBIsolatesPrivateCachesAndAuthority(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: test=populatedSettingsExitRecreateRelaunchReturnAThenBIsolatesPrivateCachesAndAuthority
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=78
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=recoveredHomeWorkTaskSelectsExistingBlock
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest
+INSTRUMENTATION_STATUS: current=78
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=78
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: stream=
+Error in recoveredHomeWorkTaskSelectsExistingBlock(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest):
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+INSTRUMENTATION_STATUS: test=recoveredHomeWorkTaskSelectsExistingBlock
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 19.968
+There were 11 failures:
+1) recoveryExistingTaskEditorRetainsOriginalRequestAndFields(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+2) activeTripRefusalKeepsSessionAndSnapshot(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+3) recoveryFormPopulatedTaskEditorDiagnostic(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+4) unfinishedPhotoRefusalKeepsSessionAndJpeg(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+5) corruptCacheRefusalKeepsSessionAndUnchangedBytes(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+6) recoveryFormHomeBlocksAndReopenPreserveDraft(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+7) pendingTankActualRefusalKeepsSessionAndRecord(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+8) unresolvedDraftRefusalKeepsSessionAndDraft(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+9) completedPhotoEmptyDirectoryAllowsSignedOutStartupAndSafeAThenBLogin(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+10) populatedSettingsExitRecreateRelaunchReturnAThenBIsolatesPrivateCachesAndAuthority(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+11) recoveredHomeWorkTaskSelectsExistingBlock(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.IllegalStateException: Fixture retained blocked in-memory admission after preference reset.
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.setup(PopulatedCleanExitActivityTest.kt:90)
+
+FAILURES!!!
+Tests run: 78,  Failures: 11
+
+
+INSTRUMENTATION_CODE: -1

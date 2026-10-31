@@ -1,0 +1,110 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.AuthRetentionAndroidTest:
+INSTRUMENTATION_STATUS: test=productionPopulatedSnapshotAdmitsOriginalWithoutChangingHistoricalBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Rejected production populated snapshot at retained state
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.productionPopulatedSnapshotAdmitsOriginalWithoutChangingHistoricalBytes(AuthRetentionAndroidTest.kt:66)
+
+INSTRUMENTATION_STATUS: stream=
+Error in productionPopulatedSnapshotAdmitsOriginalWithoutChangingHistoricalBytes(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest):
+java.lang.AssertionError: Rejected production populated snapshot at retained state
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.productionPopulatedSnapshotAdmitsOriginalWithoutChangingHistoricalBytes(AuthRetentionAndroidTest.kt:66)
+
+INSTRUMENTATION_STATUS: test=productionPopulatedSnapshotAdmitsOriginalWithoutChangingHistoricalBytes
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=productionTombstoneReceiptAdmitsOnlyExactOwnerAndIntegrity
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Rejected production receipt at retained state
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.productionTombstoneReceiptAdmitsOnlyExactOwnerAndIntegrity(AuthRetentionAndroidTest.kt:82)
+
+INSTRUMENTATION_STATUS: stream=
+Error in productionTombstoneReceiptAdmitsOnlyExactOwnerAndIntegrity(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest):
+java.lang.AssertionError: Rejected production receipt at retained state
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.productionTombstoneReceiptAdmitsOnlyExactOwnerAndIntegrity(AuthRetentionAndroidTest.kt:82)
+
+INSTRUMENTATION_STATUS: test=productionTombstoneReceiptAdmitsOnlyExactOwnerAndIntegrity
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=productionAuthoredPinQueueAdmitsOriginalAndPreservesRequest
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=3
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Rejected production queue at retained state
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.productionAuthoredPinQueueAdmitsOriginalAndPreservesRequest(AuthRetentionAndroidTest.kt:98)
+
+INSTRUMENTATION_STATUS: stream=
+Error in productionAuthoredPinQueueAdmitsOriginalAndPreservesRequest(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest):
+java.lang.AssertionError: Rejected production queue at retained state
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.productionAuthoredPinQueueAdmitsOriginalAndPreservesRequest(AuthRetentionAndroidTest.kt:98)
+
+INSTRUMENTATION_STATUS: test=productionAuthoredPinQueueAdmitsOriginalAndPreservesRequest
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 0.144
+There were 3 failures:
+1) productionPopulatedSnapshotAdmitsOriginalWithoutChangingHistoricalBytes(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest)
+java.lang.AssertionError: Rejected production populated snapshot at retained state
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.productionPopulatedSnapshotAdmitsOriginalWithoutChangingHistoricalBytes(AuthRetentionAndroidTest.kt:66)
+2) productionTombstoneReceiptAdmitsOnlyExactOwnerAndIntegrity(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest)
+java.lang.AssertionError: Rejected production receipt at retained state
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.productionTombstoneReceiptAdmitsOnlyExactOwnerAndIntegrity(AuthRetentionAndroidTest.kt:82)
+3) productionAuthoredPinQueueAdmitsOriginalAndPreservesRequest(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest)
+java.lang.AssertionError: Rejected production queue at retained state
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.productionAuthoredPinQueueAdmitsOriginalAndPreservesRequest(AuthRetentionAndroidTest.kt:98)
+
+FAILURES!!!
+Tests run: 3,  Failures: 3
+
+
+INSTRUMENTATION_CODE: -1

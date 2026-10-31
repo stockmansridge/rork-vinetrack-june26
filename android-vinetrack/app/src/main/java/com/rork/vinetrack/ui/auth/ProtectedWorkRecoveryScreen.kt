@@ -59,6 +59,13 @@ fun ProtectedWorkRecoveryScreen(modifier: Modifier = Modifier) {
             password = ""
         }) { Text(if (state.isBusy) "Verifying account…" else "Restore original account") }
         state.message?.let { Text(it) }
+        TextButton(enabled = !state.isBusy, onClick = {
+            vm.copyDiagnostics { text ->
+                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("VineTrack recovery diagnostics", text))
+                supportMessage = "Recovery diagnostics copied. Only app version, stage, store, validation rule, schema and safe counts are included. Nothing was uploaded."
+            }
+        }) { Text("Copy recovery diagnostics") }
         TextButton(onClick = {
             val request = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:jonathan@stockmansridge.com.au")).apply {
                 putExtra(Intent.EXTRA_SUBJECT, "VineTrack Android retained-work recovery")

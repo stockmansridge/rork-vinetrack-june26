@@ -210,6 +210,8 @@ class RecoverySnapshotStore internal constructor(
     companion object {
         private const val PREFS = "vinetrack_recovery_snapshots_v2"
 
+        internal fun hasUnprovenEvidence(key: String): Boolean = processUnprovenWrites.containsKey(key)
+
         /** Keys whose durable write failed in this process; their visible value is unproven. */
         private val processUnprovenWrites: MutableMap<String, String> =
             java.util.Collections.synchronizedMap(mutableMapOf())

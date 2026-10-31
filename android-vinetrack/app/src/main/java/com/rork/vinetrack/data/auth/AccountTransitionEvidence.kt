@@ -26,19 +26,27 @@ internal class AccountTransitionEvidence(private val context: Context) {
     var failureCategory: String = "retained state"
         private set
 
+    var failureDiagnostic: RecoveryEvidenceDiagnostic? = null
+        private set
+
     fun inspect(original: String? = null): Assessment? = assess(original, cleanExit = false)
 
     /** Clean exit may retain read caches but never unfinished operations. */
     fun inspectCleanExit(): Assessment? = assess(original = null, cleanExit = true)
 
     private fun assess(original: String?, cleanExit: Boolean): Assessment? = runCatching {
+        failureDiagnostic = null
         failureCategory = "file dependencies"
+        failureDiagnostic = RecoveryEvidenceDiagnostic("file_dependencies", "LOCATION_CONTRACT")
         inspectLocations()
         val vineyards = mutableSetOf<String>()
         businessPreferences.forEach { name ->
             failureCategory = name
             val values = context.getSharedPreferences(name, Context.MODE_PRIVATE).all
+            failureDiagnostic = RecoveryEvidenceDiagnostic(name, "STORE_CONTRACT", recordCount = values.size)
             when {
+                !cleanExit && name == "vinetrack_pending_writes" -> vineyards.addAll(RetainedEvidenceContract.queue(values, original))
+                !cleanExit && name == "vinetrack_recovery_snapshots_v2" -> vineyards.addAll(RetainedEvidenceContract.snapshots(values, original))
                 name in CleanExitCacheContract.devicePreferences -> CleanExitCacheContract.validatePreferences(name, values)
                 name == "vinetrack_write_holds" -> {
                     check(values.keys.all { it == "holds" })
@@ -111,7 +119,10 @@ internal class AccountTransitionEvidence(private val context: Context) {
                 else -> check(values.isEmpty())
             }
         }
+        failureDiagnostic = null
         Assessment(vineyards)
+    }.onFailure { failure ->
+        if (failure is EvidenceContractFailure) failureDiagnostic = failure.diagnostic
     }.getOrNull()
 
     private fun inspectLocations() {

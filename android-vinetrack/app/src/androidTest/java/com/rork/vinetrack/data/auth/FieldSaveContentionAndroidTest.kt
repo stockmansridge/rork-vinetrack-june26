@@ -47,6 +47,39 @@ class FieldSaveContentionAndroidTest {
         }
     }
 
+    @Test fun chemicalReconciliationAdmitsBeforeLeafStoresAndPreservesOriginalDuringContention() {
+        val session = SessionStore(context)
+        val access = FieldStoreAccess(context)
+        val local = com.rork.vinetrack.data.SavedChemicalLocalStore(context)
+        val original = com.rork.vinetrack.data.model.SavedChemical("original-chemical", "vineyard", name = "Original")
+        assertTrue(local.save("account-A", "vineyard", listOf(original)))
+        val pending = PendingWriteRepository(context)
+        val sync = com.rork.vinetrack.data.SavedChemicalCreateSync(
+            com.rork.vinetrack.data.SavedChemicalRepository(session), pending, local, { session.userId })
+        val confirmed = original.copy(name = "Confirmed")
+        contend(session, listOf({ access.admittedForOwner("account-A") {
+            assertEquals(listOf(confirmed), sync.mergeRemote("account-A", "vineyard", listOf(confirmed)))
+        } }), beforeUnlock = { assertEquals(listOf(original), local.load("account-A", "vineyard")) })
+        assertEquals(listOf(confirmed), local.load("account-A", "vineyard"))
+        assertTrue(pending.list().isEmpty())
+    }
+
+    @Test fun revokedChemicalReconciliationCannotRunOrReplaceRetainedBytes() {
+        val session = SessionStore(context)
+        val access = FieldStoreAccess(context)
+        val local = com.rork.vinetrack.data.SavedChemicalLocalStore(context)
+        val original = com.rork.vinetrack.data.model.SavedChemical("original-chemical", "vineyard", name = "Original")
+        assertTrue(local.save("account-A", "vineyard", listOf(original)))
+        val before = context.getSharedPreferences("vinetrack_saved_chemicals_local", 0).all.toMap()
+        contend(session, listOf({
+            assertTrue(runCatching { access.admittedForOwner("account-A") {
+                fail("Obsolete reconciliation executed")
+            } }.exceptionOrNull() is FieldAccessRevoked)
+        }), beforeUnlock = { session.clear() })
+        assertEquals(before, context.getSharedPreferences("vinetrack_saved_chemicals_local", 0).all)
+        assertTrue(session.retentionGuard.isLocked)
+    }
+
     @Test fun domainCacheWaitsBeforePreferencesAndPreservesOriginalBlock() {
         val session = SessionStore(context)
         val cache = com.rork.vinetrack.data.DomainCacheRepository(context)

@@ -1,0 +1,19 @@
+{
+  "apk_sha256": "22716cbbd33e063cd15f60e7ff87c655088bb2d5860d5dcaa6835588be7a9a3b",
+  "bytes": 77417285,
+  "package": "com.rork.vinetrack",
+  "version_name": "3.1.9",
+  "version_code": 12,
+  "signer_certificate_sha256": "241548efe6df8100c833d4eaebd2b3cf22dd70ffb638d9faa77bbd03f0077ef3",
+  "verified_v2_signature": true,
+  "release_debuggable": false,
+  "release_debug_constant": false,
+  "storage_isolation_activation": false,
+  "test_fixture_classes_and_mock_engine_absent": true,
+  "recovery_factory_uses_android_engine_only": true,
+  "release_recovery_transport_registration_throws": true,
+  "recovery_source_line_metadata_present": true,
+  "installed_signature_and_version_verified": false,
+  "update_compatibility": "UNVERIFIED; original installed package/version/certificate unavailable",
+  "tester_availability": "UNESTABLISHED; local inspected build is not a delivered update candidate"
+}
