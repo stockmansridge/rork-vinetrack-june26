@@ -970,6 +970,11 @@ private fun RowLayoutSummary(
             color = vine.textSecondary,
             fontSize = 12.sp,
         )
+        Text(
+            "Contour or curved rows? Use the VineTrack web portal to map them. This mobile editor configures straight rows only.",
+            color = vine.textSecondary,
+            fontSize = 12.sp,
+        )
     }
 }
 
