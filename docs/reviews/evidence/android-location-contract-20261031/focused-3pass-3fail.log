@@ -1,0 +1,146 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.AuthRetentionAndroidTest:
+INSTRUMENTATION_STATUS: test=trustedAndroidRootAliasAdmitsLogoButNestedDanglingLinkStaysHeld
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stack=org.junit.ComparisonFailure: expected:<[LOCATION_LINK_OR_ALIAS]> but was:<[FILES_UNREVIEWED_CONTENT]>
+	at org.junit.Assert.assertEquals(Assert.java:117)
+	at org.junit.Assert.assertEquals(Assert.java:146)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.trustedAndroidRootAliasAdmitsLogoButNestedDanglingLinkStaysHeld(AuthRetentionAndroidTest.kt:148)
+
+INSTRUMENTATION_STATUS: stream=
+Error in trustedAndroidRootAliasAdmitsLogoButNestedDanglingLinkStaysHeld(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest):
+org.junit.ComparisonFailure: expected:<[LOCATION_LINK_OR_ALIAS]> but was:<[FILES_UNREVIEWED_CONTENT]>
+	at org.junit.Assert.assertEquals(Assert.java:117)
+	at org.junit.Assert.assertEquals(Assert.java:146)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.trustedAndroidRootAliasAdmitsLogoButNestedDanglingLinkStaysHeld(AuthRetentionAndroidTest.kt:148)
+
+INSTRUMENTATION_STATUS: test=trustedAndroidRootAliasAdmitsLogoButNestedDanglingLinkStaysHeld
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=logoUnknownBackupSchemaAndLinksRemainProtectedAndUnchanged
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertTrue(Assert.java:53)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.logoUnknownBackupSchemaAndLinksRemainProtectedAndUnchanged(AuthRetentionAndroidTest.kt:109)
+
+INSTRUMENTATION_STATUS: stream=
+Error in logoUnknownBackupSchemaAndLinksRemainProtectedAndUnchanged(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest):
+java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertTrue(Assert.java:53)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.logoUnknownBackupSchemaAndLinksRemainProtectedAndUnchanged(AuthRetentionAndroidTest.kt:109)
+
+INSTRUMENTATION_STATUS: test=logoUnknownBackupSchemaAndLinksRemainProtectedAndUnchanged
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=logoScopeStillRequiresCurrentMembershipAndCannotUnlockForeignVineyard
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=logoScopeStillRequiresCurrentMembershipAndCannotUnlockForeignVineyard
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=legacyCameraBytesAndInterruptedPreferencesHaveSpecificPrivateSafeRules
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stack=org.junit.ComparisonFailure: expected:<[CACHE_LEGACY_CAMERA_CAPTURE_RETAINED]> but was:<[FILES_UNREVIEWED_CONTENT]>
+	at org.junit.Assert.assertEquals(Assert.java:117)
+	at org.junit.Assert.assertEquals(Assert.java:146)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.legacyCameraBytesAndInterruptedPreferencesHaveSpecificPrivateSafeRules(AuthRetentionAndroidTest.kt:157)
+
+INSTRUMENTATION_STATUS: stream=
+Error in legacyCameraBytesAndInterruptedPreferencesHaveSpecificPrivateSafeRules(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest):
+org.junit.ComparisonFailure: expected:<[CACHE_LEGACY_CAMERA_CAPTURE_RETAINED]> but was:<[FILES_UNREVIEWED_CONTENT]>
+	at org.junit.Assert.assertEquals(Assert.java:117)
+	at org.junit.Assert.assertEquals(Assert.java:146)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.legacyCameraBytesAndInterruptedPreferencesHaveSpecificPrivateSafeRules(AuthRetentionAndroidTest.kt:157)
+
+INSTRUMENTATION_STATUS: test=legacyCameraBytesAndInterruptedPreferencesHaveSpecificPrivateSafeRules
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=legacyAbsoluteRelativeAndUriPhotoReferencesRemainHeldWithoutRewriting
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=6
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=legacyAbsoluteRelativeAndUriPhotoReferencesRemainHeldWithoutRewriting
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 0.355
+There were 3 failures:
+1) trustedAndroidRootAliasAdmitsLogoButNestedDanglingLinkStaysHeld(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest)
+org.junit.ComparisonFailure: expected:<[LOCATION_LINK_OR_ALIAS]> but was:<[FILES_UNREVIEWED_CONTENT]>
+	at org.junit.Assert.assertEquals(Assert.java:117)
+	at org.junit.Assert.assertEquals(Assert.java:146)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.trustedAndroidRootAliasAdmitsLogoButNestedDanglingLinkStaysHeld(AuthRetentionAndroidTest.kt:148)
+2) logoUnknownBackupSchemaAndLinksRemainProtectedAndUnchanged(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest)
+java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertTrue(Assert.java:53)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.logoUnknownBackupSchemaAndLinksRemainProtectedAndUnchanged(AuthRetentionAndroidTest.kt:109)
+3) legacyCameraBytesAndInterruptedPreferencesHaveSpecificPrivateSafeRules(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest)
+org.junit.ComparisonFailure: expected:<[CACHE_LEGACY_CAMERA_CAPTURE_RETAINED]> but was:<[FILES_UNREVIEWED_CONTENT]>
+	at org.junit.Assert.assertEquals(Assert.java:117)
+	at org.junit.Assert.assertEquals(Assert.java:146)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.legacyCameraBytesAndInterruptedPreferencesHaveSpecificPrivateSafeRules(AuthRetentionAndroidTest.kt:157)
+
+FAILURES!!!
+Tests run: 6,  Failures: 3
+
+
+INSTRUMENTATION_CODE: -1

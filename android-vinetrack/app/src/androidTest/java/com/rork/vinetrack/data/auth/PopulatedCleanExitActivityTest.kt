@@ -31,6 +31,7 @@ class PopulatedCleanExitActivityTest {
     private val logouts = AtomicInteger(0)
     private var includeHistorical = false
     private var retainedContractBytes: Map<String, Map<String, *>>? = null
+    private var retainedLogoBytes: Map<String, List<Byte>>? = null
     private val requests = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private val checkpoints = java.util.concurrent.CopyOnWriteArrayList<String>()
     private val pending = java.util.concurrent.ConcurrentHashMap<Int, String>()
@@ -246,12 +247,21 @@ class PopulatedCleanExitActivityTest {
             PendingWrite("historical-delete", "pin", "delete", "{\"pinId\":\"historical-deleted-pin\"}", "historical-deleted-pin", 1, 1, status = "blocked"),
             PinDeleteSync.DeleteState("historical-deleted-pin", "historical-vineyard", "2026-10-30T00:00:00Z"))
         assertTrue(RecoverySnapshotStore(app).preserveTombstone(receipt))
+        val image = android.graphics.Bitmap.createBitmap(2, 2, android.graphics.Bitmap.Config.ARGB_8888)
+        val jpeg = java.io.ByteArrayOutputStream().also { image.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, it) }.toByteArray()
+        image.recycle()
+        assertTrue(VineyardLogoCache(app).save("historical-vineyard", jpeg, "historical-vineyard/logos/original.jpg", null))
+        retainedLogoBytes = logoBytes()
         retainedContractBytes = listOf("vinetrack_pending_writes", "vinetrack_recovery_snapshots_v2", "vinetrack_local_planning")
             .associateWith { app.getSharedPreferences(it, 0).all.toMap() }
     }
 
+    private fun logoBytes(): Map<String, List<Byte>> = java.io.File(app.filesDir, "vineyard_logos/historical-vineyard")
+        .listFiles().orEmpty().associate { it.name to it.readBytes().toList() }
+
     private fun assertContractBytes() {
         retainedContractBytes?.forEach { (name, values) -> assertEquals(name, values, app.getSharedPreferences(name, 0).all) }
+        retainedLogoBytes?.let { assertEquals("Retained production logo changed", it, logoBytes()) }
     }
 
     private fun recoverThroughForm(wrongAccountFirst: Boolean = false, productionContracts: Boolean = false): Map<String, *> {

@@ -1,0 +1,71 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.AuthRetentionAndroidTest:
+INSTRUMENTATION_STATUS: test=earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Production logo rejected: null
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest$earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes$1.invokeSuspend(AuthRetentionAndroidTest.kt:71)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:94)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:70)
+	at kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source:1)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:48)
+	at kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source:1)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes(AuthRetentionAndroidTest.kt:57)
+
+INSTRUMENTATION_STATUS: stream=
+Error in earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest):
+java.lang.AssertionError: Production logo rejected: null
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest$earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes$1.invokeSuspend(AuthRetentionAndroidTest.kt:71)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:94)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:70)
+	at kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source:1)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:48)
+	at kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source:1)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes(AuthRetentionAndroidTest.kt:57)
+
+INSTRUMENTATION_STATUS: test=earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 0.134
+There was 1 failure:
+1) earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest)
+java.lang.AssertionError: Production logo rejected: null
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertNotNull(Assert.java:713)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest$earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes$1.invokeSuspend(AuthRetentionAndroidTest.kt:71)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:94)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:70)
+	at kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source:1)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:48)
+	at kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source:1)
+	at com.rork.vinetrack.data.auth.AuthRetentionAndroidTest.earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes(AuthRetentionAndroidTest.kt:57)
+
+FAILURES!!!
+Tests run: 1,  Failures: 1
+
+
+INSTRUMENTATION_CODE: -1

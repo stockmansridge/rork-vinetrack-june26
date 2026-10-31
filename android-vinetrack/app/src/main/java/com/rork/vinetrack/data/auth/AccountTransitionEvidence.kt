@@ -38,8 +38,7 @@ internal class AccountTransitionEvidence(private val context: Context) {
         failureDiagnostic = null
         failureCategory = "file dependencies"
         failureDiagnostic = RecoveryEvidenceDiagnostic("file_dependencies", "LOCATION_CONTRACT")
-        inspectLocations()
-        val vineyards = mutableSetOf<String>()
+        val vineyards = inspectLocations(allowLogoCache = !cleanExit && original != null).toMutableSet()
         businessPreferences.forEach { name ->
             failureCategory = name
             val values = context.getSharedPreferences(name, Context.MODE_PRIVATE).all
@@ -125,30 +124,36 @@ internal class AccountTransitionEvidence(private val context: Context) {
         if (failure is EvidenceContractFailure) failureDiagnostic = failure.diagnostic
     }.getOrNull()
 
-    private fun inspectLocations() {
+    private fun inspectLocations(allowLogoCache: Boolean): Set<String> {
+        val vineyards = mutableSetOf<String>()
+        fun location(ok: Boolean, rule: String) = RecoveryLocationContract.requireLocation(ok, rule)
         // Android may expose its own data root through /data/user/0 -> /data/data aliases.
         // Anchor the trusted Context roots once; still reject links beneath those roots.
         val preferences = File(File(context.applicationInfo.dataDir).canonicalFile, "shared_prefs")
-        if (preferences.exists()) {
-            check(preferences.isDirectory && preferences.canonicalFile == preferences.absoluteFile)
-            checkNotNull(preferences.listFiles()).forEach { file ->
+        if (RecoveryLocationContract.present(preferences)) {
+            RecoveryLocationContract.directory(preferences, "PREFERENCES_ROOT_TYPE").forEach { file ->
                 val name = file.name.removeSuffix(".bak").removeSuffix(".xml")
                 if (name.startsWith("vinetrack_") || name in businessPreferences) {
-                    check(name in businessPreferences || name in excludedPreferences)
+                    location(name in businessPreferences || name in excludedPreferences, "PREFERENCES_UNREVIEWED_STORE")
                     // A backup/interrupted preference replacement is uncertain, not an empty store.
-                    check(file.name == "$name.xml")
+                    location(file.name == "$name.xml", "PREFERENCES_INTERRUPTED_REPLACEMENT")
+                    location(file.absoluteFile == file.canonicalFile && OsConstants.S_ISREG(Os.lstat(file.path).st_mode) &&
+                        Os.lstat(file.path).st_nlink == 1L, "PREFERENCES_FILE_TYPE")
                 }
             }
         }
         val filesRoot = context.filesDir.canonicalFile
-        if (filesRoot.exists()) checkNotNull(filesRoot.listFiles()).forEach { file ->
+        if (RecoveryLocationContract.present(filesRoot)) RecoveryLocationContract.directory(filesRoot, "FILES_ROOT_TYPE").forEach { file ->
             // These mirrors contain shared public chemical/guide material, not private field work.
             when {
-                file.name == "profileInstalled" -> validateProfileMarker(file, filesRoot)
-                file.name !in sharedDirectories -> check(noLeafFiles(file))
+                file.name == "profileInstalled" -> try { validateProfileMarker(file, filesRoot) }
+                    catch (_: Exception) { location(false, "PROFILE_MARKER_CONTRACT") }
+                file.name == "vineyard_logos" && allowLogoCache -> vineyards.addAll(RecoveryLocationContract.logos(file))
+                file.name !in sharedDirectories -> RecoveryLocationContract.emptyTree(file, RecoveryLocationContract.retainedRule(file))
             }
         }
-        listOf("camera-captures").forEach { name -> check(noLeafFiles(File(context.cacheDir.canonicalFile, name))) }
+        RecoveryLocationContract.emptyTree(File(context.cacheDir.canonicalFile, "camera-captures"), "CACHE_LEGACY_CAMERA_CAPTURE_RETAINED")
+        return vineyards
     }
 
     /** AndroidX ProfileVerifier Cache schema 1: two ints and two longs, never business evidence. */
@@ -172,12 +177,6 @@ internal class AccountTransitionEvidence(private val context: Context) {
             check(OsConstants.S_ISREG(after.st_mode) && after.st_dev == opened.st_dev &&
                 after.st_ino == opened.st_ino && after.st_size == opened.st_size && after.st_mtime == opened.st_mtime)
         }
-    }
-
-    private fun noLeafFiles(file: File): Boolean {
-        if (!file.exists()) return true
-        if (file.absoluteFile != file.canonicalFile || !file.isDirectory) return false
-        return checkNotNull(file.listFiles()).all(::noLeafFiles)
     }
 
     private companion object {

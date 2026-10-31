@@ -1,0 +1,41 @@
+{
+  "appPath": "android-vinetrack",
+  "framework": "kotlin",
+  "packageName": "com.rork.vinetrack",
+  "intended_track": "internal",
+  "source_parent": "fd7f0428c9f514d93b9e05c2a2bb1c9fa49784a7",
+  "repaired_managed_revision": null,
+  "source_parent_is_repaired_revision": false,
+  "android_tree": "efaa83ddf41842b2d7a55a7b3370abf1d2e57df2",
+  "sourceHash": "src_efaa83ddf41842b2d",
+  "source_manifest": "docs/reviews/android-location-contract-source-manifest-20261031.json",
+  "source_manifest_sha256": "2f81f9b45094d4e7aeb38fc3fc04e831d2c1f4177b21f7a12710df43761cd950",
+  "preparation": {
+    "normal_checks": "PASS",
+    "native_affected_selection": {"passed": 84, "failed": 0, "skipped": 0, "seconds": 78},
+    "local_release_inspection": "PASS; local APK only, not managed Play artifact or in-place compatibility proof",
+    "google_play_connected": true,
+    "package_access": {"status": "ok", "packageName": "com.rork.vinetrack", "created": false},
+    "matching_completed_play_build": false,
+    "latest_listed_old_build": {"runId": "378bb03c-0b49-4997-8d61-34c52e70fb22", "snapshotId": "mp7tib86phlizt3r47m3p", "sourceHash": "src_024bbbe925bd78a34", "not_selected": "Different source; cannot deliver this correction"}
+  },
+  "generatePlayAab_attempt": {
+    "request": {"snapshotId": "fd7f0428c9f514d93b9e05c2a2bb1c9fa49784a7", "sourceHash": "src_efaa83ddf41842b2d", "appPath": "android-vinetrack", "framework": "kotlin"},
+    "response": "The current project has unsynced source changes. Finish this turn, then retry publishing.",
+    "runId": null,
+    "build_started": false,
+    "unchanged_retry_performed": false
+  },
+  "status": "BLOCKED_PENDING_MANAGED_SYNC",
+  "new_managed_version_code": null,
+  "minimum_required_managed_code_exclusive": 1793486039,
+  "validation_submission": null,
+  "committed_submission": null,
+  "new_update_available": false,
+  "next_action": "After automatic sync, verify all checkpoint inputs/full Android inventory at the repaired managed revision. Do not rerun the parent-fenced generator or unchanged passing tests. Generate matching managed AAB, wait once, list exact completed build, verify backend-resolved source and code above 1793486039, validate and publish existing Internal Testing only. Retain actual receipts separately.",
+  "original_device_acceptance": "FAILED at RETAINED_EVIDENCE / file_dependencies / LOCATION_CONTRACT on installed code 1793486039; exact retained location unknown",
+  "proven_source_defect": "Ordinary production VineyardLogoCache files were refused by the generic no-leaf-file contract; reproduced failing-before. This is not proof of the exact handset file.",
+  "original_device_data_modified": false,
+  "public_release": false,
+  "ios_built": false
+}

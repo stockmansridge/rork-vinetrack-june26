@@ -54,6 +54,126 @@ class AuthRetentionAndroidTest {
         root.deleteRecursively()
     }
 
+    @Test fun earlierProductionLogoCacheRecoversPopulatedInstallationWithoutChangingBytes() = runBlocking {
+        val owner = "00000000-0000-0000-0000-0000000000a1"
+        SessionStore(context).save("old-access", "old-refresh", owner, null)
+        val cache = com.rork.vinetrack.data.DomainCacheRepository(context)
+        cache.savePins(owner, "vineyard", listOf(com.rork.vinetrack.data.model.Pin("original-pin", "vineyard", createdBy = owner)))
+        assertTrue(com.rork.vinetrack.data.RecoverySnapshotStore.captureBeforeMutation(context, "vineyard").isPreserved)
+        val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        val jpeg = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }.toByteArray()
+        bitmap.recycle()
+        assertTrue(com.rork.vinetrack.data.VineyardLogoCache(context).save("vineyard", jpeg, "vineyard/logos/original.jpg", null))
+        val files = root.walkTopDown().filter { it.isFile }.associate { it.relativeTo(root).path to it.readBytes().toList() }
+        val retained = context.getSharedPreferences("vinetrack_recovery_snapshots_v2", 0).all.toMap()
+        SessionStore(context).clear()
+        val inspector = AccountTransitionEvidence(context)
+        val assessment = inspector.inspect(owner)
+        assertNotNull("Production logo rejected: ${inspector.failureDiagnostic}", assessment)
+        assertTrue(AuthRecoveryRepository { recoveryClient(owner) }.recover(SessionStore(context), "synthetic@example.invalid", "synthetic-password"))
+        assertEquals(owner, SessionStore(context).userId)
+        assertFalse(SessionStore(context).retentionGuard.isLocked)
+        assertEquals(files, root.walkTopDown().filter { it.isFile }.associate { it.relativeTo(root).path to it.readBytes().toList() })
+        assertEquals(retained, context.getSharedPreferences("vinetrack_recovery_snapshots_v2", 0).all)
+        assertEquals("original-pin", cache.loadPins(owner, "vineyard")!!.single().id)
+    }
+
+    @Test fun logoScopeStillRequiresCurrentMembershipAndCannotUnlockForeignVineyard() = runBlocking {
+        val owner = "00000000-0000-0000-0000-0000000000a1"
+        SessionStore(context).save("old", "old-refresh", owner, null)
+        assertTrue(com.rork.vinetrack.data.VineyardLogoCache(context).save("foreign-vineyard", logoJpeg(), "remote/logo.jpg", null))
+        val before = fileBytes()
+        SessionStore(context).clear()
+        assertTrue(runCatching { AuthRecoveryRepository { recoveryClient(owner) }.recover(SessionStore(context), "synthetic@example.invalid", "synthetic-password") }.isFailure)
+        assertTrue(SessionStore(context).retentionGuard.isLocked)
+        assertEquals(before, fileBytes())
+    }
+
+    @Test fun logoUnknownBackupSchemaAndLinksRemainProtectedAndUnchanged() {
+        val owner = "original-owner"
+        val variants = listOf("backup", "unknown", "schema", "link", "legacy-image-only", "truncated-image", "hardlink")
+        variants.forEach { variant ->
+            val isolated = File(root, variant).also { check(it.mkdir()) }
+            val fixture = FixtureContext(context.base, isolated, context.prefix + variant + "_")
+            assertTrue(com.rork.vinetrack.data.VineyardLogoCache(fixture).save("vineyard", logoJpeg(), "remote/logo.jpg", null))
+            val directory = File(isolated, "vineyard_logos/vineyard")
+            when (variant) {
+                "backup" -> File(directory, "metadata.json.bak").writeText("original-backup")
+                "unknown" -> File(directory, "private-original-note").writeText("never-copy-private-note")
+                "schema" -> File(directory, "metadata.json").writeText("{\"remotePath\":\"original\",\"unsupported\":true}")
+                "link" -> { val image = File(directory, "logo.jpg"); check(image.delete()); android.system.Os.symlink("missing-original-photo", image.path) }
+                "legacy-image-only" -> check(File(directory, "metadata.json").delete())
+                "truncated-image" -> File(directory, "logo.jpg").let { it.writeBytes(it.readBytes().dropLast(2).toByteArray()) }
+                "hardlink" -> android.system.Os.link(File(directory, "logo.jpg").path, File(root, "original-image-link").path)
+            }
+            val before = isolated.walkTopDown().filter { it.isFile }.associate { it.relativeTo(isolated).path to it.readBytes().toList() }
+            val inspector = AccountTransitionEvidence(fixture)
+            assertNull(inspector.inspect(owner))
+            assertTrue(inspector.failureDiagnostic?.rule in setOf("LOGO_LAYOUT_OR_INTERRUPTED_WRITE", "LOGO_METADATA_SCHEMA", "LOCATION_LINK_OR_ALIAS", "LOGO_IMAGE_FORMAT", "LOGO_IMAGE_FILE"))
+            val diagnostic = RecoveryDiagnostics.format("RETAINED_EVIDENCE", inspector.failureDiagnostic)
+            assertFalse(diagnostic.contains("private-original-note")); assertFalse(diagnostic.contains("never-copy-private-note"))
+            assertEquals(before, isolated.walkTopDown().filter { it.isFile }.associate { it.relativeTo(isolated).path to it.readBytes().toList() })
+        }
+    }
+
+    @Test fun legacyAbsoluteRelativeAndUriPhotoReferencesRemainHeldWithoutRewriting() {
+        val references = listOf("/data/data/com.rork.vinetrack/files/pending_pin_photos/original.jpg",
+            "/data/user/0/com.rork.vinetrack/files/pending_pin_photos/original.jpg", "vineyard/observation/original.jpg",
+            "file:///data/user/0/com.rork.vinetrack/cache/camera-captures/original.jpg", "content://com.rork.vinetrack.fileprovider/camera_captures/original.jpg")
+        val directory = File(root, "pending_pin_photos").also { check(it.mkdir()) }
+        val photo = File(directory, "original.jpg").also { it.writeBytes(logoJpeg()) }
+        references.forEach { reference ->
+            val raw = "[{\"localPath\":\"$reference\"}]"
+            val prefs = context.getSharedPreferences("vinetrack_pending_photos", 0)
+            check(prefs.edit().putString("pending_photos_json", raw).commit())
+            val before = photo.readBytes()
+            val inspector = AccountTransitionEvidence(context)
+            assertNull(inspector.inspect("original-owner"))
+            assertEquals("FILES_PENDING_PIN_PHOTOS_RETAINED", inspector.failureDiagnostic?.rule)
+            assertEquals(raw, prefs.getString("pending_photos_json", null))
+            assertArrayEquals(before, photo.readBytes())
+            val diagnostic = RecoveryDiagnostics.format("LOCKED", inspector.failureDiagnostic)
+            assertFalse(diagnostic.contains(reference)); assertFalse(diagnostic.contains("original.jpg"))
+        }
+    }
+
+    @Test fun trustedAndroidRootAliasAdmitsLogoButNestedDanglingLinkStaysHeld() {
+        val alias = File(root, "os-root-alias")
+        val actual = File(root, "actual-root").also { check(it.mkdir()) }
+        android.system.Os.symlink(actual.path, alias.path)
+        val fixture = FixtureContext(context.base, alias, context.prefix + "alias_")
+        assertTrue(com.rork.vinetrack.data.VineyardLogoCache(fixture).save("vineyard", logoJpeg(), "remote/logo.jpg", null))
+        val inspector = AccountTransitionEvidence(fixture)
+        assertEquals(setOf("vineyard"), inspector.inspect("original-owner")?.vineyards)
+        val dangling = File(actual, "unresolved-original")
+        android.system.Os.symlink("missing-original", dangling.path)
+        assertNull(inspector.inspect("original-owner"))
+        assertEquals("LOCATION_LINK_OR_ALIAS", inspector.failureDiagnostic?.rule)
+        assertEquals("missing-original", android.system.Os.readlink(dangling.path))
+    }
+
+    @Test fun legacyCameraBytesAndInterruptedPreferencesHaveSpecificPrivateSafeRules() {
+        val files = File(root, "files").also { check(it.mkdir()) }
+        val fixture = FixtureContext(context.base, root, context.prefix, files)
+        val photo = File(fixture.cacheDir, "camera-captures/private-original.jpg").also { check(it.parentFile!!.mkdirs()); it.writeBytes(logoJpeg()) }
+        val before = photo.readBytes()
+        val inspector = AccountTransitionEvidence(fixture)
+        assertNull(inspector.inspect("original-owner"))
+        assertEquals("CACHE_LEGACY_CAMERA_CAPTURE_RETAINED", inspector.failureDiagnostic?.rule)
+        assertArrayEquals(before, photo.readBytes())
+        val backup = File(root, "shared_prefs/vinetrack_local_planning.xml.bak").also { check(it.parentFile!!.mkdirs()); it.writeText("original-private-draft") }
+        assertNull(inspector.inspect("original-owner"))
+        assertEquals("PREFERENCES_INTERRUPTED_REPLACEMENT", inspector.failureDiagnostic?.rule)
+        assertEquals("original-private-draft", backup.readText())
+        assertFalse(RecoveryDiagnostics.format("LOCKED", inspector.failureDiagnostic).contains("original-private-draft"))
+    }
+
+    private fun logoJpeg(): ByteArray {
+        val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        return ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it); bitmap.recycle() }.toByteArray()
+    }
+    private fun fileBytes() = root.walkTopDown().filter { it.isFile }.associate { it.relativeTo(root).path to it.readBytes().toList() }
+
     @Test fun productionPopulatedSnapshotAdmitsOriginalWithoutChangingHistoricalBytes() {
         val owner = "00000000-0000-0000-0000-0000000000a1"
         SessionStore(context).save("access", "refresh", owner, null)
@@ -1675,10 +1795,10 @@ class AuthRetentionAndroidTest {
         try { action(); fail("Unsafe account admission") } catch (_: IllegalStateException) { }
     }
 
-    private class FixtureContext(val base: Context, val root: File, val prefix: String) : ContextWrapper(base) {
+    private class FixtureContext(val base: Context, val root: File, val prefix: String, private val filesRoot: File = root) : ContextWrapper(base) {
         val names = linkedSetOf<String>()
         override fun getApplicationContext(): Context = this
-        override fun getFilesDir(): File = root
+        override fun getFilesDir(): File = filesRoot
         override fun getCacheDir(): File = File(root, "fixture-cache").also { check(it.mkdirs() || it.isDirectory) }
         override fun getApplicationInfo(): android.content.pm.ApplicationInfo = android.content.pm.ApplicationInfo(base.applicationInfo).apply {
             dataDir = root.absolutePath

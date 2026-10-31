@@ -1,0 +1,18 @@
+{
+  "evidence_kind": "Honest transcription of tool outcomes; not raw successful instrumentation output",
+  "appPath": "android-vinetrack",
+  "production_logo_failing_before": {"passed": 0, "failed": 1, "skipped": 0, "raw_log": "production-logo-failing-before.log"},
+  "initial_expanded_selection": {"passed": 3, "failed": 3, "skipped": 0, "raw_log": "focused-3pass-3fail.log", "diagnosis": "Dangling symlink canonicalization did not identify unresolved links; add explicit lstat S_ISLNK refusal. Camera fixture incorrectly nested cache under files; use sibling cache/files like production. Logo link assertion follows the same explicit refusal fix."},
+  "corrected_focused_selection": {"passed": 6, "failed": 0, "skipped": 0, "seconds": 13, "additional_variants": ["truncated JPEG", "hardlinked image"]},
+  "final_affected_selection": {"classes": ["com.rork.vinetrack.data.auth.AuthRetentionAndroidTest", "com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest"], "passed": 84, "failed": 0, "skipped": 0, "seconds": 78, "coverage": "69 auth/evidence cases and 15 rendered populated journeys. Production logo bytes retained through original recovery, wrong-account refusal, Home/reopen, both existing-block selectors and original existing-task editor."},
+  "reused_unchanged_evidence": {"field_contention_cases": 18, "sheet_cases": 2, "note": "Historical passes only, not rerun and not added to final 84. Their source and production boundaries are unchanged."},
+  "normal_build": "runChecks(android-vinetrack) PASS; two existing nonblocking asset-address advisories",
+  "successful_raw_log_returned": false,
+  "temporary_log_warning": "Successful tools did not refresh the temporary raw log. Do not relabel the retained 3-pass/3-fail output as final passing evidence.",
+  "overlapping_counts_must_not_be_summed": true,
+  "jvm_tests_run": false,
+  "original_device_tested": false,
+  "live_customer_or_backend_writes": false,
+  "os_process_death_tested": false,
+  "ios_built": false
+}
