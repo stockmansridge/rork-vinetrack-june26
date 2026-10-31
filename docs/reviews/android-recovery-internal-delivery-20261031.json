@@ -1,0 +1,74 @@
+{
+  "scope": "Android 3.1.9 recovery test delivery; no production release",
+  "accepted_repaired_revision": "98ef5a67e3af4b5faafb80ec80500fd55006e9fd",
+  "built_workspace_revision": "aa136a7d8ab0c62cda3aa4ce5af8c26dd3aadf21",
+  "android_git_tree": "4133d87d1152dd0d9639556504914a8f1a7ac851",
+  "android_diff_against_accepted_revision": "empty",
+  "source_hash": "src_4133d87d1152dd0d9",
+  "app_path": "android-vinetrack",
+  "framework": "kotlin",
+  "package_name": "com.rork.vinetrack",
+  "version_name_from_unchanged_source": "3.1.9",
+  "managed_play_version_code": "1793450653",
+  "version_selection": "Managed publisher assigned; validated and committed by Play. Local Gradle code12 was not used as the Play release counter and no guessed code13 was applied.",
+  "build": {
+    "run_id": "6a5a68dc-2d9c-43c7-ab34-a79d577b7ff3",
+    "requested_snapshot_id": "jw0frlu917kg6zh8ta0vh",
+    "resolved_snapshot_id": "aa136a7d8ab0c62cda3aa4ce5af8c26dd3aadf21",
+    "status": "completed",
+    "returned_apk_key": "kotlin-builds/t1ycqwwwkgzt982ur27ya/art_cf77ca488517863ed/app.apk",
+    "listed_after_completion": true,
+    "listed_package_and_source_match": true,
+    "note": "Storage key is a backend build receipt, not a user download URL. Managed AAB checksum/certificate bytes were not returned; do not substitute the local APK hash for the Play bundle."
+  },
+  "validation_receipt": {
+    "status": "validated",
+    "packageName": "com.rork.vinetrack",
+    "track": "internal",
+    "editId": "18222894946259133921",
+    "versionCode": "1793450653",
+    "releaseName": "VineTrack 3.1.9 — protected-work recovery testing",
+    "releaseStatus": "completed",
+    "submissionId": "e38d29a5-b730-4e4b-84f0-e72096570a99"
+  },
+  "publish_receipt": {
+    "status": "published",
+    "packageName": "com.rork.vinetrack",
+    "track": "internal",
+    "editId": "13438086905257213904",
+    "versionCode": "1793450653",
+    "releaseName": "VineTrack 3.1.9 — protected-work recovery testing",
+    "releaseStatus": "completed",
+    "submissionId": "802b6b97-df4f-457a-8ad0-10250fa3ed42"
+  },
+  "release_notes": "Corrects original-account recovery on populated installations, existing block loading, and block selection in Work Tasks and Trip setup. Retains local drafts and pending work. Testing update only; original-device acceptance remains pending.",
+  "checks": {
+    "normal_run_checks": "PASS this delivery turn; no tests run by runChecks",
+    "reused_instrumentation": "90 passed, 0 failed, 0 skipped; no rerun",
+    "source_manifest_inputs_reverified": 12,
+    "evidence_files_reverified": 12,
+    "release_configuration_inspection": "PASS for unchanged local release bytes: signature v2, non-debuggable, DEBUG false, storage isolation activation false, fixtures/test runner/MockEngine absent, production recovery Android engine, release transport registration throws, source line metadata present",
+    "local_inspection_apk_sha256": "34ec0002ce124001f2226934c3b2b28f38d429d84be6a4c6887f0ea785da3eb7",
+    "local_inspection_certificate_sha256": "241548efe6df8100c833d4eaebd2b3cf22dd70ffb638d9faa77bbd03f0077ef3",
+    "signing_configuration_changed": false,
+    "new_signing_key_created": false,
+    "play_validation_and_commit": "PASS through established managed Google Play route"
+  },
+  "availability": {
+    "confirmed": "Provider reports published, completed release on Internal Testing",
+    "tester_play_store_visibility_observed": false,
+    "jonathan_enrollment_or_download_observed": false,
+    "in_place_install_observed": false,
+    "original_device_acceptance": "PENDING after update availability",
+    "instruction": "Use the existing Play Internal Testing enrollment/account to update in place. If Android rejects the update, stop and collect the exact installer error; do not uninstall or clear storage."
+  },
+  "safety": {
+    "ios_rebuilt": false,
+    "unrelated_code_changed": false,
+    "supabase_migration": false,
+    "public_production_release": false,
+    "sideload_substitute_delivered": false,
+    "device_storage_or_queues_modified": false,
+    "installed_apk_or_fingerprint_requested": false
+  }
+}
