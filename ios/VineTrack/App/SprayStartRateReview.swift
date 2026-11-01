@@ -142,7 +142,7 @@ struct SprayInitialTankActualsEditor: View {
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
                     Text(chemical.name).font(.subheadline.weight(.semibold))
-                    Text("Calculated: \(SprayInitialTankInput.input(SprayInitialTankInput.plannedDisplayAmount(chemical))) \(chemical.unitLabel)")
+                    Text("Calculated: \(SprayInitialTankInput.plannedDisplayAmount(chemical).formatted(.number.precision(.fractionLength(0...3)))) \(chemical.unitLabel)")
                         .font(.caption).foregroundStyle(.secondary)
                     actualField("Actual amount added", unit: chemical.unitLabel,
                         text: Binding(get: { input.chemicalTexts[chemical.id] ?? "" },
@@ -169,17 +169,20 @@ struct SprayInitialTankActualsEditor: View {
     }
 
     private func actualField(_ title: String, unit: String, text: Binding<String>, identifier: String) -> some View {
-        HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.subheadline.weight(.semibold))
-            Spacer(minLength: 8)
-            TextField("Enter amount", text: text)
-                .keyboardType(.decimalPad)
-                .multilineTextAlignment(.trailing)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 130)
-                .accessibilityLabel(title)
-                .accessibilityIdentifier(identifier)
-            Text(unit).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(spacing: 12) {
+                TextField("Enter amount", text: text)
+                    .keyboardType(.decimalPad)
+                    .font(.title3)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .background(Color(.tertiarySystemGroupedBackground), in: .rect(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.35)))
+                    .accessibilityLabel(title)
+                    .accessibilityIdentifier(identifier)
+                Text(unit).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+            }
         }
     }
 }

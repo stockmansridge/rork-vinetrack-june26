@@ -32,6 +32,18 @@ class SprayFieldLayoutAndroidTest {
     @Test fun metricHandsetLargeFont() = verifyLayout(360, 1.5f, RegionCountry.Australia)
     @Test fun imperialHandsetDefaultFont() = verifyLayout(360, 1f, RegionCountry.UnitedStates)
 
+    @Test fun newSprayRequiresExplicitPatternIncludingFreeDrive() {
+        compose.setContent {
+            AppTheme(darkTheme = false) {
+                var pattern by remember { mutableStateOf(TrackingPattern.FREE_DRIVE) }
+                var chosen by remember { mutableStateOf(false) }
+                TrackingSetupContent(pattern, { pattern = it; chosen = true }, false,
+                    emptyList(), null, {}, true, {}, emptyList(), emptyList(), hasChosenTrackingPattern = chosen)
+            }
+        }
+        compose.onNodeWithText(TrackingPattern.FREE_DRIVE.title).assertIsNotSelected().performClick().assertIsSelected()
+    }
+
     private fun verifyLayout(width: Int, scale: Float, country: RegionCountry) {
         val formatter = RegionFormatter(country.recommendedPreset)
         val format = SprayCarrierRegionalFormat(formatter)

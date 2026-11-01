@@ -3,6 +3,7 @@ package com.rork.vinetrack.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
@@ -38,7 +39,7 @@ internal fun SprayStartActualFields(
             onValueChange = { onDraftChange(draft + ("water" to it)) },
             label = { Text("Actual water (${region.volumeUnitAbbreviation})") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            singleLine = true, enabled = enabled, modifier = Modifier.fillMaxWidth(),
+            singleLine = true, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
         )
         tank.chemicals.forEachIndexed { index, chemical ->
             HorizontalDivider()
@@ -51,7 +52,7 @@ internal fun SprayStartActualFields(
                 onValueChange = { onDraftChange(draft + ("chemical:$index" to it)) },
                 label = { Text("Actual ${chemical.name} (${chemical.unit})") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                singleLine = true, enabled = enabled, modifier = Modifier.fillMaxWidth(),
+                singleLine = true, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp),
             )
             if (SprayStartActualAmounts.number(draft["chemical:$index"].orEmpty()) == 0.0)
                 Text("This product will be recorded as not added.")

@@ -392,14 +392,14 @@ final class TripOccurrenceJournalTests: XCTestCase {
         let dir=directory(); defer { try? FileManager.default.removeItem(at: dir) }; let j=try journal(dir)
         try j.setStatus(a,status:"done"); XCTAssertEqual(try j.load()?.projected[occurrence:"extension"],try fixture()[occurrence:"extension"])
     }
-    @MainActor func testBackendUpgradeRetriesOriginalHeldCreateWithoutChangingFrozenIDs() throws {
+    @MainActor func testBackendUpgradeRetriesUppercaseOriginalHeldCreateWithoutChangingFrozenIDs() throws {
         let dir = directory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let journal = try TripOccurrenceJournal(scope: scope, directory: dir)
         let frozen = try fixture()
         let trip: TripOccurrenceCoverage.JSON = .object([
-            "id": .string(scope.tripId),
-            "vineyard_id": .string(scope.vineyardId),
+            "id": .string(scope.tripId.uppercased()),
+            "vineyard_id": .string(scope.vineyardId.uppercased()),
             "is_active": .bool(false)
         ])
         let create = try journal.prepareCreation(trip: trip, coverage: frozen)

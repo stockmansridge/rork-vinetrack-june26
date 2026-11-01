@@ -31,12 +31,13 @@ internal class AccountTransitionEvidence(private val context: Context) {
     var failureDiagnostic: RecoveryEvidenceDiagnostic? = null
         private set
 
-    fun inspect(original: String? = null): Assessment? = assess(original, cleanExit = false)
+    fun inspect(original: String? = null, pruningProof: PruningRecoveryVerifier.Proof? = null, epoch: Long = -1L): Assessment? =
+        assess(original, cleanExit = false, pruningProof = pruningProof, epoch = epoch)
 
     /** Clean exit may retain read caches but never unfinished operations. */
     fun inspectCleanExit(): Assessment? = assess(original = null, cleanExit = true)
 
-    private fun assess(original: String?, cleanExit: Boolean): Assessment? = runCatching {
+    private fun assess(original: String?, cleanExit: Boolean, pruningProof: PruningRecoveryVerifier.Proof? = null, epoch: Long = -1L): Assessment? = runCatching {
         failureDiagnostic = null
         failureCategory = "file dependencies"
         failureDiagnostic = RecoveryEvidenceDiagnostic("file_dependencies", "LOCATION_CONTRACT")
@@ -113,6 +114,14 @@ internal class AccountTransitionEvidence(private val context: Context) {
                             check(draft.ownerUserId == original)
                             vineyards.add(draft.vineyardId)
                         }
+                    }
+                }
+                !cleanExit && name in PruningRecoveryVerifier.stores -> {
+                    if (pruningProof != null) {
+                        vineyards.addAll(pruningProof.inspect(name, values, checkNotNull(original), epoch))
+                    } else if (values.isNotEmpty()) {
+                        checkNotNull(original)
+                        vineyards.addAll(PruningRecoveryVerifier.inspectWithoutProof(name, values))
                     }
                 }
                 name in emptyArrayKeys -> {

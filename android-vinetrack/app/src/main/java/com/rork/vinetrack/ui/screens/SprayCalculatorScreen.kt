@@ -593,6 +593,7 @@ fun SprayCalculatorScreen(
     var equipmentConfirmedSignature by rememberSaveable { mutableStateOf<String?>(null) }
     var fansJets by remember { mutableStateOf("") }
     var trackingPattern by remember { mutableStateOf(TrackingPattern.FREE_DRIVE) }
+    var hasChosenTrackingPattern by remember { mutableStateOf(false) }
     var startPath by remember { mutableStateOf(0.5) }
     var directionHigherFirst by remember { mutableStateOf(true) }
 
@@ -795,7 +796,7 @@ fun SprayCalculatorScreen(
         com.rork.vinetrack.data.TripOccurrencePlanner.candidates(orderedSelectedPaddocks)
     }
     val selectedCandidate = availablePaths.firstOrNull { it.key == startCandidateKey } ?: availablePaths.firstOrNull()
-    val plannedCandidates = com.rork.vinetrack.data.TripOccurrencePlanner.plan(availablePaths, trackingPattern, selectedCandidate?.key, directionHigherFirst)
+    val plannedCandidates = if (hasChosenTrackingPattern) com.rork.vinetrack.data.TripOccurrencePlanner.plan(availablePaths, trackingPattern, selectedCandidate?.key, directionHigherFirst) else emptyList()
     val pathSequence = plannedCandidates.map { it.label }
     LaunchedEffect(selectedCandidate?.key) {
         startPath = selectedCandidate?.label ?: 0.5
@@ -1344,6 +1345,7 @@ fun SprayCalculatorScreen(
     fun startJobNow(startEngineHours: Double?, reviewedInput: SprayRecordRepository.SprayInput,
         actuals: com.rork.vinetrack.data.spray.SprayStartActualAmounts,
         actualDraft: com.rork.vinetrack.data.model.SprayActualInputDraft?) {
+        if (!hasChosenTrackingPattern) { errorMessage = "Select a tracking pattern before starting."; return }
         calculatorOperationalBlocker?.let { errorMessage = it; return }
         val r = runCalculation() ?: return
         val currentInput = buildInput()
@@ -1425,13 +1427,14 @@ fun SprayCalculatorScreen(
             tractorLabel = selectedTractor?.displayName ?: if (tractorId == null) "Not Set" else "Unavailable tractor",
             fansJets = fansJets,
             trackingPattern = trackingPattern,
+            hasChosenTrackingPattern = hasChosenTrackingPattern,
             hasRowGeometry = hasRowGeometry,
             startPath = selectedCandidate?.key,
             directionHigherFirst = directionHigherFirst,
             orderedSelectedPaddocks = orderedSelectedPaddocks,
             pathSequence = pathSequence,
             availablePaths = availablePaths,
-            onPatternChange = { trackingPattern = it },
+            onPatternChange = { trackingPattern = it; hasChosenTrackingPattern = true },
             onStartPathChange = { startCandidateKey = it },
             onDirectionChange = { directionHigherFirst = it },
             errorMessage = calculatorOperationalBlocker ?: errorMessage ?: state.sprayError,
@@ -4352,13 +4355,14 @@ internal fun TrackingSetupContent(
     orderedSelectedPaddocks: List<Paddock>,
     pathSequence: List<Double>,
     modifier: Modifier = Modifier,
+    hasChosenTrackingPattern: Boolean = true,
 ) {
     val vine = LocalVineColors.current
     var pathMenu by remember { mutableStateOf(false) }
     VineyardCard(modifier = modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             TrackingPattern.entries.forEach { pattern ->
-                val isSelected = trackingPattern == pattern
+                val isSelected = hasChosenTrackingPattern && trackingPattern == pattern
                 androidx.compose.material3.Surface(
                     onClick = { onPatternChange(pattern) },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics { selected = isSelected },
@@ -4379,7 +4383,9 @@ internal fun TrackingSetupContent(
             }
         }
         Spacer(Modifier.height(16.dp))
-        if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
+        if (!hasChosenTrackingPattern) {
+            Text("Select a tracking pattern, including Free Drive when no planned route is needed.", color = vine.textSecondary)
+        } else if (hasRowGeometry && trackingPattern != TrackingPattern.FREE_DRIVE) {
             ExposedDropdownMenuBox(expanded = pathMenu, onExpandedChange = { pathMenu = it }) {
                 OutlinedTextField(
                     value = availablePaths.firstOrNull { it.key == startPath }?.display ?: "Select a block and path",
@@ -4441,6 +4447,7 @@ private fun patternIcon(pattern: TrackingPattern): ImageVector = when (pattern) 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SprayTankMixReview(
+    hasChosenTrackingPattern: Boolean,
     state: AppUiState,
     result: SprayCalculator.Result,
     operatorName: String,
@@ -4648,6 +4655,7 @@ private fun SprayTankMixReview(
             item {
                 TrackingSetupContent(
                     trackingPattern = trackingPattern,
+                    hasChosenTrackingPattern = hasChosenTrackingPattern,
                     onPatternChange = onPatternChange,
                     hasRowGeometry = hasRowGeometry,
                     availablePaths = availablePaths,
@@ -4790,7 +4798,7 @@ private fun SprayTankMixReview(
                         result.chemicalResults.filter { it.basis == SprayCalculator.RateBasis.PER_100L }.map { it.name }))
                     Button(
                         onClick = onStart,
-                        enabled = !saving && !hasActiveTrip && operationalBlocker == null && actualsReady,
+                        enabled = !saving && hasChosenTrackingPattern && !hasActiveTrip && operationalBlocker == null && actualsReady,
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
                     ) {

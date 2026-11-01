@@ -249,6 +249,15 @@ class SessionStore(context: Context) {
         return if (committed) exit else null
     }
 
+    /** Immutable, read-only snapshot while field stores remain locked. */
+    internal fun pruningRecoverySnapshot(original: String, expectedEpoch: Long): PruningRecoveryVerifier.Snapshot =
+        retentionGuard.serialized {
+            check(original == recoveryPrincipal && expectedEpoch == retentionGuard.identityEpoch.value)
+            PruningRecoveryVerifier.Snapshot(PruningRecoveryVerifier.stores.associateWith { name ->
+                appContext.getSharedPreferences(name, android.content.Context.MODE_PRIVATE).all.toMap()
+            })
+        }
+
     /** Caller must first verify /auth/user and current memberships using the isolated recovery client. */
     internal fun restoreOriginal(
         accessToken: String,
@@ -256,12 +265,13 @@ class SessionStore(context: Context) {
         user: com.rork.vinetrack.data.model.AppUser,
         permittedVineyards: Set<String>,
         expectedEpoch: Long = retentionGuard.identityEpoch.value,
+        pruningProof: PruningRecoveryVerifier.Proof? = null,
     ): Boolean = retentionGuard.recoverIfIdle {
         if (expectedEpoch != retentionGuard.identityEpoch.value) throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.IN_FLIGHT)
         if (user.id != recoveryPrincipal || accessToken.isBlank() || refreshToken.isBlank())
             throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.IDENTITY)
         val inspector = AccountTransitionEvidence(appContext)
-        val evidence = inspector.inspect(user.id)
+        val evidence = inspector.inspect(user.id, pruningProof, expectedEpoch)
             ?: throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.RETAINED_EVIDENCE, inspector.failureDiagnostic)
         if (!permittedVineyards.containsAll(evidence.vineyards))
             throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.VINEYARD_ACCESS)

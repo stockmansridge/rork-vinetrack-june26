@@ -15,6 +15,29 @@ nonisolated struct SprayInitialTankAmounts: Codable, Hashable, Sendable {
         return tanks.min { $0.tankNumber < $1.tankNumber }
     }
 
+    /// Chemical snapshot dates are persisted at millisecond precision. Compare
+    /// that one timestamp at its codec precision, but keep every other field
+    /// (including optional classification, rates and identities) exact.
+    static func samePersistedRecipe(_ left: SprayTank?, _ right: SprayTank) -> Bool {
+        guard let left else { return false }
+        if left == right { return true }
+        func atPersistedPrecision(_ source: SprayTank) -> SprayTank? {
+            var copy = source
+            for index in copy.chemicals.indices {
+                if let date = copy.chemicals[index].chemicalSnapshot?.capturedAt {
+                    guard date.timeIntervalSince1970.isFinite,
+                          let saved = ChemicalLineSnapshot.parseCapturedAt(
+                            ChemicalLineSnapshot.capturedAtFormatter.string(from: date)) else { return nil }
+                    copy.chemicals[index].chemicalSnapshot?.capturedAt = saved
+                }
+            }
+            return copy
+        }
+        guard let savedLeft = atPersistedPrecision(left),
+              let savedRight = atPersistedPrecision(right) else { return false }
+        return savedLeft == savedRight
+    }
+
     func isValid(for tank: SprayTank) -> Bool {
         let productIds = Set(tank.chemicals.map(\.id))
         return tankId == tank.id && tankNumber == tank.tankNumber && tankNumber >= 1 &&
@@ -34,6 +57,12 @@ nonisolated struct SprayInitialTankDraft: Codable, Hashable, Sendable {
     let sprayRecordId: UUID
     let tank: SprayTank
     let amounts: SprayInitialTankAmounts
+
+    func matchesPersistedHandoff(_ other: SprayInitialTankDraft) -> Bool {
+        ownerId == other.ownerId && vineyardId == other.vineyardId && tripId == other.tripId &&
+            sprayRecordId == other.sprayRecordId && amounts == other.amounts &&
+            SprayInitialTankAmounts.samePersistedRecipe(tank, other.tank)
+    }
 
     /// Clear only after the exact entered amounts are attached to this Trip's
     /// real session. Planned values, another owner and another session cannot

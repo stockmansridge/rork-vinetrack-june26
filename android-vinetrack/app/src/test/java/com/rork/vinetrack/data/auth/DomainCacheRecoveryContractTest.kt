@@ -99,4 +99,22 @@ class DomainCacheRecoveryContractTest {
         assertEquals(setOf(vineyard), CleanExitCacheContract.recoveryScopes(values, owner))
         assertEquals(before, values)
     }
+    private fun yieldCache(scope: String = vineyard.uppercase()): Map<String, Any> = mapOf(
+        "cache_owner_user_id" to owner,
+        "yield_session_$vineyard" to """[{"id":"00000000-0000-0000-0000-0000000000C1","vineyardId":"$scope","createdAt":"2026-11-01T00:00:00Z","selectedPaddockIds":[],"sampleSites":[],"blockBunchWeightsKg":[]}]""",
+        "yield_session_at_$vineyard" to 1L,
+    )
+    @Test fun iosUppercaseYieldSessionRecoversWithoutChangingEvidence() {
+        val values = yieldCache(); val before = values.toMap()
+        assertEquals(setOf(vineyard), CleanExitCacheContract.recoveryScopes(values, owner))
+        assertEquals(before, values)
+    }
+    @Test fun differentYieldVineyardStillRejected() {
+        failure("DOMAIN_YIELD_SESSION_RECOVERY_SCOPE") { CleanExitCacheContract.recoveryScopes(yieldCache(owner), owner) }
+    }
+    @Test fun nonUuidCaseDifferencesAreNotTreatedAsIdentity() {
+        assertFalse(CleanExitCacheContract.sameIdentity("PRIVATE", "private"))
+        assertFalse(CleanExitCacheContract.sameIdentity(" $vineyard", vineyard))
+    }
+
 }

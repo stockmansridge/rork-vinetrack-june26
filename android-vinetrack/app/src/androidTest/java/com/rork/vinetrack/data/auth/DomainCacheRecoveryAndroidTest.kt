@@ -9,7 +9,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.rork.vinetrack.data.ActiveTripStore
 import com.rork.vinetrack.data.DomainCacheStore
 import com.rork.vinetrack.data.model.AppUser
-import com.rork.vinetrack.data.model.Trip
+import com.rork.vinetrack.data.model.*
+import com.rork.vinetrack.data.PruningSyncRepository
+import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.*
 import java.io.File
 import java.util.UUID
 import kotlinx.serialization.json.Json
@@ -26,7 +30,7 @@ class DomainCacheRecoveryAndroidTest {
     private lateinit var root: File
     private val owner = "00000000-0000-0000-0000-0000000000a1"
     private val other = "00000000-0000-0000-0000-0000000000b2"
-    private val vineyard = "synthetic-vineyard"
+    private val vineyard = "00000000-0000-4000-8000-0000000000c3"
 
     @Before fun setup() {
         val base = InstrumentationRegistry.getInstrumentation().targetContext
@@ -49,6 +53,10 @@ class DomainCacheRecoveryAndroidTest {
             // A shared vineyard list can include a trip whose operator is somebody else.
             saveTrips(vineyard, listOf(Trip("cached-active", vineyard, isActive = true, operatorUserId = other)), 1L)
             saveSprayTargetOutbox(emptyList())
+            check(saveYieldSessions(vineyard, listOf(YieldEstimationSession(
+                "00000000-0000-4000-8000-0000000000d4", vineyard.uppercase(), "2026-10-20T10:00:00Z",
+                sampleSites = listOf(SampleSite("sample", "block", "Block", 1, -33.0, 149.0, 1,
+                    BunchCountEntry(12.0, "2026-10-20T10:00:00Z", owner))))), 1L))
         }
         return session
     }
@@ -64,6 +72,32 @@ class DomainCacheRecoveryAndroidTest {
         assertFalse(ActiveTripStore(fixture).hasActiveClaim())
         assertTrue(SessionStore(fixture).hasSession)
         assertFalse(SessionStore(fixture).retentionGuard.isLocked)
+    }
+    @Test fun populatedPruningAndYieldRecoverTogetherWithoutReplacingBytes() = runBlocking {
+        val session = populated()
+        val json = Json { encodeDefaults = true }
+        val season = "00000000-0000-4000-8000-0000000000e5"
+        val block = "00000000-0000-4000-8000-0000000000f6"
+        val server = PruningSyncRepository.SeasonRow(season, vineyard, block, seasonYear = 2026)
+        val prefs = fixture.getSharedPreferences("vinetrack_pruning", 0)
+        check(prefs.edit().putString("setups_v2_$vineyard", json.encodeToString(listOf(server.toModel()))).commit())
+        val settings = PruningYieldSettings(season, vineyard, block, bunchesPerBud = 1.7)
+        val settingsPrefs = fixture.getSharedPreferences("vinetrack_pruning_yield_settings", 0)
+        check(settingsPrefs.edit().putString("settings_$vineyard", json.encodeToString(listOf(settings))).commit())
+        val before = cacheSnapshot(); val pruningBefore = prefs.all.toMap(); val settingsBefore = settingsPrefs.all.toMap()
+        session.clear()
+        val epoch = session.retentionGuard.identityEpoch.value
+        val proof = PruningRecoveryVerifier.verify(owner, epoch, session.pruningRecoverySnapshot(owner, epoch), setOf(vineyard),
+            get = { path -> when (path.substringBefore('?')) {
+                "pruning_seasons" -> json.encodeToJsonElement(listOf(server))
+                "pruning_yield_settings" -> json.encodeToJsonElement(listOf(settings))
+                else -> error("Unexpected network read")
+            } }, rpc = { _, _ -> error("Unexpected RPC") })
+        assertTrue(session.restoreOriginal("replacement-access", "replacement-refresh", AppUser(owner), setOf(vineyard), epoch, proof))
+        assertEquals(before, cacheSnapshot()); assertEquals(pruningBefore, prefs.all); assertEquals(settingsBefore, settingsPrefs.all)
+        assertFalse(SessionStore(fixture).retentionGuard.isLocked)
+        assertEquals(12.0, DomainCacheStore(fixture).loadYieldSessions(vineyard).single().sampleSites.single().bunchCountEntry!!.bunchesPerVine, 0.0)
+        assertNull(ActiveTripStore(fixture).load())
     }
     @Test fun actualWriterOutputStillPreventsCleanExit() {
         populated()

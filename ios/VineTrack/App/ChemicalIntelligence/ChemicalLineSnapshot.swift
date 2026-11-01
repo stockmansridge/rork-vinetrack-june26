@@ -133,6 +133,7 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         case activeIngredients = "active_ingredients"
         case activityGroupCodes = "activity_groups"
         case verificationStatus = "verification_status"
+        case resistanceClassificationState = "resistance_classification_state"
         case registrationIdentityKey = "registration_identity_key"
         case countryCode = "country_code"
         case schemaVersion = "schema_version"
@@ -176,6 +177,7 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         try c.encode(activeIngredients, forKey: .activeIngredients)
         try c.encode(activityGroupCodes, forKey: .activityGroupCodes)
         try c.encode(verificationStatus.rawValue, forKey: .verificationStatus)
+        try c.encodeIfPresent(resistanceClassificationState, forKey: .resistanceClassificationState)
         try c.encodeIfPresent(registrationIdentityKey, forKey: .registrationIdentityKey)
         try c.encodeIfPresent(countryCode, forKey: .countryCode)
         try c.encode(schemaVersion, forKey: .schemaVersion)
@@ -206,6 +208,7 @@ nonisolated struct ChemicalLineSnapshot: Codable, Sendable, Hashable {
         activityGroupCodes = try c.decodeIfPresent([String].self, forKey: .activityGroupCodes) ?? []
         let raw = try c.decodeIfPresent(String.self, forKey: .verificationStatus) ?? ""
         verificationStatus = ChemicalVerificationStatus(rawValue: raw) ?? .unverified
+        resistanceClassificationState = try c.decodeIfPresent(ChemicalResistanceState.self, forKey: .resistanceClassificationState)
         registrationIdentityKey = try c.decodeIfPresent(String.self, forKey: .registrationIdentityKey)
         countryCode = try c.decodeIfPresent(String.self, forKey: .countryCode)
         schemaVersion = try c.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 0
