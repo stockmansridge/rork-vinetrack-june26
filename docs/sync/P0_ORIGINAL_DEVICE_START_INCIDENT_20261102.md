@@ -21,3 +21,24 @@
 **Both:** Record exact submitted payload/revision, accepted server receipt and separately acknowledged dependent Tank actual values; do not clear operator-recorded data on RPC 2xx if server returned a different value. Complete same-handset Start -> Start Tank 1 -> actuals -> GPS/row -> End -> cross-device pull, in-place 3.1.8/3.1.9 updates and successful source/build linkage before public release.
 
 **Safety:** No uninstall, clearing local storage, silent archive, duplicate Trip, fabricated Tank, guessed original session, remote force-stop, bypass of original-owner permissions, or public deployment from this report. This is investigation/acceptance guidance, not a fix or passing test result.
+
+
+## 2 Nov follow-up — exact Android owner-ID diagnostic (supersedes "claim missing" as fact)
+
+Original Android device copied, for Trip `3bfb7f81-2ae2-4f33-8fd8-6666b2b45393`:
+```text
+Local active: true
+Device-owned Trip ID: 3bfb7f81-2ae2-4f33-8fd8-6666b2b45393
+Sessions: [empty]
+Actual tanks: [1]
+Planned tanks: [1]
+Tank reconciliation occurred: false
+Server completion displaced local state: false
+```
+Two Android Sync errors appeared after start; per-item diagnostic codes are still unknown. Live backend again confirmed `is_active=true`, `end_time=NULL`, zero sessions and no server actuals.
+
+**Correction:** Do NOT assume the original tracking claim is absent. `TripsScreen.kt:1003` uses `state.activeTrip`; `:1213` displays remote-device language whenever this calculation fails, regardless of why. `AppViewModel.kt:1059` requires exact `deviceActiveTripId` and `selectedVineyardId == trip.vineyardId`, local active/not-ended and `tripId !in locallyEndedTripIds`. Since the displayed Trip qualifies as active/not-ended (or the read-only branch would not render) and the device-owned ID matches, the remaining UI mismatch is **selected-vineyard scope mismatch (including string case/selection races)** or **locallyEndedTripIds contains the Trip**. The existing Copy Trip diagnostics does not expose either. Debug the actual predicate before rearchitecting server creation or weakening owner guards. `TripsScreen.kt:327,448` already offers "Return to Trip" on the list when persisted claim vineyard differs from selection — safe UI diagnostic, not an inferred cure.
+
+**Separate crucial fact:** The phone's "Actual tanks: [1]" derives from in-memory `state.sprayTankActuals`, not an independently confirmed server record; it reports Tank 1 actual data with no Trip tank sessions locally or on server. `commitInitialSprayActuals` requires a verified real session. Examine retained draft, actual `tankSessionId`, failed parent/session queue and selected-slice merge; preserve confirmed operator amounts, never fabricate a session or rewrite planned as actual.
+
+Request read-only predicate diagnostics: selectedVineyardId, trip.vineyardId (typed UUID equality), activeTrip?.id, locallyEnded membership, persisted `ActiveTripStore` trip/vineyard/owner-match booleans, trip.isActive, trip.endTime presence, `isDeviceTrip` reason. Request Android **Settings → Sync Status → each of 2 errors → Copy diagnostics**, including entityType, clientId, failure status, rawDetail and parent hold; verify original receipts before any retry. Gate release on same-device controlled first Tank and end-to-end server readback. New evidence posted to PR #37 discussion.
