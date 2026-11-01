@@ -14,7 +14,22 @@ import kotlinx.serialization.json.booleanOrNull
 /** Read-only, fail-closed validation of the existing cache contract, not authorship evidence. */
 internal object CleanExitCacheContract {
     private val json = Json { ignoreUnknownKeys = false; encodeDefaults = true }
-    private data class Group(val data: String, val timestamp: String, val serializer: KSerializer<*>, val scoped: Boolean = true)
+    private data class Group(val data: String, val timestamp: String, val serializer: KSerializer<*>, val scoped: Boolean = true) {
+        // Derived only from the fixed declarations below, never from a stored key or value.
+        val diagnostic: String get() = "DOMAIN_" + data.removeSuffix("_").removeSuffix("_json").uppercase(java.util.Locale.ROOT)
+    }
+    private enum class Purpose { CLEAN_EXIT, ORIGINAL_ACCOUNT_RECOVERY }
+
+    /** Keep parser messages, scoped keys and record contents out of copied diagnostics. */
+    private inline fun <T> domain(rule: String, count: Int? = null, block: () -> T): T =
+        try { block() } catch (failure: EvidenceContractFailure) { throw failure }
+        catch (_: Exception) { throw EvidenceContractFailure(RecoveryEvidenceDiagnostic(
+            "vinetrack_domain_cache", rule, recordCount = count,
+        )) }
+
+    private fun metadataOnly(key: String): Boolean =
+        key == "cache_owner_user_id" || key == "spray_target_outbox"
+
     private fun <T> group(data: String, timestamp: String, serializer: KSerializer<T>, scoped: Boolean = true) =
         Group(data, timestamp, ListSerializer(serializer), scoped)
     private val groups = listOf(
@@ -47,101 +62,135 @@ internal object CleanExitCacheContract {
         group("vineyard_rootstocks_", "vineyard_rootstocks_at_", VineyardRootstockRow.serializer()),
     ).sortedByDescending { it.data.length }
 
-    fun validate(values: Map<String, *>) {
+    /** Voluntary sign-out still refuses active trips; it is not the recovery policy. */
+    fun validate(values: Map<String, *>) = validateDomain(values, Purpose.CLEAN_EXIT)
+
+    private fun validateDomain(values: Map<String, *>, purpose: Purpose) {
         if (values.isEmpty()) return
         val known = mutableSetOf("cache_owner_user_id", "spray_target_outbox")
-        values["spray_target_outbox"]?.let {
-            check(it is String && (json.parseToJsonElement(it) as? JsonArray)?.isEmpty() == true)
+        domain("DOMAIN_TARGET_OUTBOX", values.size) {
+            values["spray_target_outbox"]?.let {
+                check(it is String && (json.parseToJsonElement(it) as? JsonArray)?.isEmpty() == true)
+            }
         }
-        val contentKeys = values.keys - known
-        if (contentKeys.isNotEmpty()) check((values["cache_owner_user_id"] as? String)?.isNotBlank() == true)
-        values["cache_owner_user_id"]?.let { check(it is String && it.isNotBlank()) }
+        domain("DOMAIN_CACHE_OWNER", values.size) {
+            val contentKeys = values.keys - known
+            if (contentKeys.isNotEmpty()) check((values["cache_owner_user_id"] as? String)?.isNotBlank() == true)
+            values["cache_owner_user_id"]?.let { check(it is String && it.isNotBlank()) }
+        }
         for ((key, raw) in values) {
             if (key.startsWith("quick_actions_v1_")) {
-                check(raw is String)
-                val snapshot = json.decodeFromString<com.rork.vinetrack.data.QuickActionOfflineSnapshot>(raw)
-                check(snapshot.userId == values["cache_owner_user_id"] && snapshot.vineyardId.isNotBlank() &&
-                    key == "quick_actions_v1_${snapshot.vineyardId}" && snapshot.identityEpoch >= 0 &&
-                    snapshot.members.orEmpty().all { it.vineyardId == snapshot.vineyardId })
+                domain("DOMAIN_QUICK_ACTIONS_SNAPSHOT") {
+                    check(raw is String)
+                    val snapshot = json.decodeFromString<com.rork.vinetrack.data.QuickActionOfflineSnapshot>(raw)
+                    check(snapshot.userId == values["cache_owner_user_id"] && snapshot.vineyardId.isNotBlank() &&
+                        key == "quick_actions_v1_${snapshot.vineyardId}" && snapshot.identityEpoch >= 0 &&
+                        snapshot.members.orEmpty().all { it.vineyardId == snapshot.vineyardId })
+                }
                 known.add(key)
             }
             if (key.startsWith("spray_tractors_")) {
-                check(key.removePrefix("spray_tractors_").isNotBlank() && raw is String)
-                json.decodeFromString(ListSerializer(com.rork.vinetrack.data.SprayJobTemplateRepository.SprayTractor.serializer()), raw)
+                domain("DOMAIN_SPRAY_TRACTORS_SCHEMA") {
+                    check(key.removePrefix("spray_tractors_").isNotBlank() && raw is String)
+                    json.decodeFromString(ListSerializer(com.rork.vinetrack.data.SprayJobTemplateRepository.SprayTractor.serializer()), raw)
+                }
                 known.add(key)
             }
             if (key in known || groups.any { if (it.scoped) key.startsWith(it.timestamp) else key == it.timestamp }) continue
             val group = groups.firstOrNull { if (it.scoped) key.startsWith(it.data) && !key.startsWith(it.timestamp) else key == it.data }
                 ?: continue
-            val suffix = if (group.scoped) key.removePrefix(group.data).also { check(it.isNotBlank()) } else ""
+            val suffix = domain(group.diagnostic + "_KEY_SCOPE") {
+                if (group.scoped) key.removePrefix(group.data).also { check(it.isNotBlank()) } else ""
+            }
+            val source = domain(group.diagnostic + "_VALUE_TYPE") { raw as? String ?: error("Invalid type") }
             val timestampKey = group.timestamp + suffix
-            check(raw is String && values[timestampKey] is Long && (values[timestampKey] as Long) > 0L)
-            val rows = if (group.data == "spray_job_templates_") {
-                runCatching {
-                    json.decodeFromString(ListSerializer(com.rork.vinetrack.data.SprayProgramTemplateCache.serializer()), raw)
-                        .map { it.record }
-                }.getOrElse { json.decodeFromString(ListSerializer(SprayRecord.serializer()), raw) }
-            } else json.decodeFromString(group.serializer, raw) as List<*>
+            domain(group.diagnostic + "_TIMESTAMP") {
+                check(values[timestampKey] is Long && (values[timestampKey] as Long) > 0L)
+            }
+            val rows = domain(group.diagnostic + "_DECODE_SCHEMA") {
+                if (group.data == "spray_job_templates_") {
+                    runCatching {
+                        json.decodeFromString(ListSerializer(com.rork.vinetrack.data.SprayProgramTemplateCache.serializer()), source)
+                            .map { it.record }
+                    }.getOrElse { json.decodeFromString(ListSerializer(SprayRecord.serializer()), source) }
+                } else json.decodeFromString(group.serializer, source) as List<*>
+            }
             rows.forEach { row ->
-                when (row) {
-                    is Trip -> check(row.id.isNotBlank() && row.vineyardId == suffix && !row.isActive)
-                    is Pin -> check(row.id.isNotBlank() && row.vineyardId == suffix)
-                    is Paddock -> check(row.id.isNotBlank() && row.vineyardId == suffix)
-                    is SprayRecord -> check(row.id.isNotBlank() && row.vineyardId == suffix)
+                domain(group.diagnostic + "_ROW_ID_SCOPE", rows.size) {
+                    when (row) {
+                        is Trip -> check(row.id.isNotBlank() && row.vineyardId == suffix)
+                        is Pin -> check(row.id.isNotBlank() && row.vineyardId == suffix)
+                        is Paddock -> check(row.id.isNotBlank() && row.vineyardId == suffix)
+                        is SprayRecord -> check(row.id.isNotBlank() && row.vineyardId == suffix)
+                    }
+                }
+                if (row is Trip && purpose == Purpose.CLEAN_EXIT) {
+                    domain("DOMAIN_TRIPS_ACTIVE_ON_CLEAN_EXIT", rows.size) { check(!row.isActive) }
                 }
             }
             known.add(key)
             known.add(timestampKey)
         }
-        check(values.keys.all { it in known })
+        domain("DOMAIN_UNKNOWN_OR_ORPHAN_KEY", values.size) { check(values.keys.all { it in known }) }
     }
 
-    /** Cache scope is privacy evidence only; it never supplies an operation's missing author. */
+    /**
+     * Same-principal cache recovery is NOT a sign-out. A cached active Trip is a
+     * list snapshot, not an active-device claim, a replay intent or proof of authorship.
+     * ActiveTripStore, retained outboxes and live membership retain their own checks.
+     * This function reads only; it never starts a trip, rewrites bytes or marks work synced.
+     */
     fun recoveryScopes(values: Map<String, *>, original: String): Set<String> {
-        validate(values)
         if (values.isEmpty()) return emptySet()
-        check(values["cache_owner_user_id"] == original)
+        domain("DOMAIN_CACHE_OWNER_MISMATCH", values.size) {
+            check(original.isNotBlank() && values["cache_owner_user_id"] == original)
+        }
+        validateDomain(values, Purpose.ORIGINAL_ACCOUNT_RECOVERY)
         val scopes = mutableSetOf<String>()
         val tasks = mutableMapOf<String, String>()
-        values.filterKeys { it.startsWith("worktask_") && !it.startsWith("worktask_at_") &&
-            !it.startsWith("worktask_labour_") && !it.startsWith("worktask_machine_") }.forEach { (key, raw) ->
-            json.decodeFromString(ListSerializer(WorkTask.serializer()), raw as String).forEach { task ->
-                check(task.id.isNotBlank() && task.vineyardId == key.removePrefix("worktask_"))
-                check(tasks.put(task.id, task.vineyardId) in setOf(null, task.vineyardId))
+        domain("DOMAIN_WORKTASK_PARENT_INDEX") {
+            values.filterKeys { it.startsWith("worktask_") && !it.startsWith("worktask_at_") &&
+                !it.startsWith("worktask_labour_") && !it.startsWith("worktask_machine_") }.forEach { (key, raw) ->
+                json.decodeFromString(ListSerializer(WorkTask.serializer()), raw as String).forEach { task ->
+                    check(task.id.isNotBlank() && task.vineyardId == key.removePrefix("worktask_"))
+                    check(tasks.put(task.id, task.vineyardId) in setOf(null, task.vineyardId))
+                }
             }
         }
         values.forEach { (key, raw) ->
+            // In particular, spray_target_outbox must not match the shorter spray_
+            // prefix and manufacture a vineyard called "target_outbox".
+            if (metadataOnly(key)) return@forEach
             if (key.startsWith("quick_actions_v1_")) {
                 scopes.add(key.removePrefix("quick_actions_v1_")); return@forEach
             }
             if (key.startsWith("spray_tractors_")) {
                 scopes.add(key.removePrefix("spray_tractors_")); return@forEach
             }
-            // A nested group's timestamp (e.g. yield_session_at_) must not be
-            // reinterpreted as a shorter group's row payload (yield_).
+            // Nested timestamp keys must not match a shorter data prefix.
             if (groups.any { if (it.scoped) key.startsWith(it.timestamp) else key == it.timestamp }) return@forEach
             val group = groups.firstOrNull { if (it.scoped) key.startsWith(it.data) && !key.startsWith(it.timestamp) else key == it.data }
                 ?: return@forEach
-            if (group.scoped) {
-                val child = group.data in setOf("worktask_labour_", "worktask_machine_")
-                val suffix = key.removePrefix(group.data)
-                val vineyard = if (child) checkNotNull(tasks[suffix]) else suffix
-                check(vineyard.isNotBlank())
-                scopes.add(vineyard)
-                // Validate explicit row scope too, including models not covered by the original
-                // clean-exit classifier. Child caches without vineyard fields remain key-scoped.
-                (json.parseToJsonElement(raw as String) as JsonArray).forEach { element ->
-                    val encoded = element as? JsonObject ?: error("Invalid cached row")
-                    val row = if (group.data == "spray_job_templates_" && "record" in encoded)
-                        encoded["record"] as? JsonObject ?: error("Invalid template record") else encoded
-                    if (child) check(row["work_task_id"]?.let { (it as? JsonPrimitive)?.content } == suffix)
-                    listOf("vineyard_id", "vineyardId").forEach { field ->
-                        row[field]?.let { check((it as? JsonPrimitive)?.content == vineyard) }
+            domain(group.diagnostic + "_RECOVERY_SCOPE") {
+                if (group.scoped) {
+                    val child = group.data in setOf("worktask_labour_", "worktask_machine_")
+                    val suffix = key.removePrefix(group.data)
+                    val vineyard = if (child) checkNotNull(tasks[suffix]) else suffix
+                    check(vineyard.isNotBlank())
+                    scopes.add(vineyard)
+                    (json.parseToJsonElement(raw as String) as JsonArray).forEach { element ->
+                        val encoded = element as? JsonObject ?: error("Invalid cached row")
+                        val row = if (group.data == "spray_job_templates_" && "record" in encoded)
+                            encoded["record"] as? JsonObject ?: error("Invalid template record") else encoded
+                        if (child) check(row["work_task_id"]?.let { (it as? JsonPrimitive)?.content } == suffix)
+                        listOf("vineyard_id", "vineyardId").forEach { field ->
+                            row[field]?.let { check((it as? JsonPrimitive)?.content == vineyard) }
+                        }
                     }
-                }
-            } else if (key == "vineyards_json") {
-                json.decodeFromString(ListSerializer(Vineyard.serializer()), raw as String).forEach {
-                    check(it.id.isNotBlank()); scopes.add(it.id)
+                } else if (key == "vineyards_json") {
+                    json.decodeFromString(ListSerializer(Vineyard.serializer()), raw as String).forEach {
+                        check(it.id.isNotBlank()); scopes.add(it.id)
+                    }
                 }
             }
         }
