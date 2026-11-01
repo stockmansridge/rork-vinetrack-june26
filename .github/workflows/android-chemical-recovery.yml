@@ -1,0 +1,86 @@
+name: Android chemical recovery validation
+on:
+  push:
+    branches: [fix/android-chemical-recovery-preflight-20261101]
+    paths: [.github/workflows/android-chemical-recovery.yml]
+permissions:
+  contents: read
+jobs:
+  reviewed-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      source: ${{ steps.apply.outputs.source }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - name: Apply exact reviewed delta on incident branch only
+        id: apply
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_NAME}" = fix/android-chemical-recovery-preflight-20261101
+          if test -f tools/chemical-recovery-review.patch; then
+            echo '9d1ade5def7d993835d1f847ae1ef418809dca09b920e3dfc65eb90cc1ed6a82  tools/chemical-recovery-review.patch' | sha256sum -c -
+            git apply --check tools/chemical-recovery-review.patch
+            git apply tools/chemical-recovery-review.patch
+            git diff --check
+            git rm tools/chemical-recovery-review.patch
+            git add android-vinetrack
+            git config user.name 'VineTrack recovery validation'
+            git config user.email 'noreply@github.com'
+            git commit -m 'fix: recover compatible saved chemicals and report all local blockers'
+            git push origin HEAD:fix/android-chemical-recovery-preflight-20261101
+          fi
+          echo "source=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  android:
+    needs: reviewed-source
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.reviewed-source.outputs.source }}
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Synthetic compile-only configuration, never committed or released
+        run: |
+          test ! -e android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt
+          printf '%s\n' 'package com.rork.vinetrack' 'object Config { val allValues: Map<String, String> = mapOf("EXPO_PUBLIC_SUPABASE_URL" to "https://recovery-test.invalid", "EXPO_PUBLIC_SUPABASE_ANON_KEY" to "synthetic-not-a-credential", "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID" to "synthetic.invalid") }' > android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt
+      - name: Real production serializers and debug application compilation
+        working-directory: android-vinetrack
+        run: |
+          set -euo pipefail
+          bash gradlew --no-daemon --max-workers=1 -Pkotlin.compiler.execution.strategy=in-process '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8' --init-script ../scripts/chemical-recovery-tests.init.gradle :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest > ../chemical-recovery-android.log 2>&1 || { grep -nE '^e:|error:|FAILED|failed' ../chemical-recovery-android.log | head -70; tail -n 50 ../chemical-recovery-android.log; exit 1; }
+          tail -n 70 ../chemical-recovery-android.log
+      - name: Enable emulator acceleration on the disposable runner
+        run: |
+          if test -e /dev/kvm; then sudo chmod 666 /dev/kvm; fi
+      - name: Execute populated multi-store recovery on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: cd android-vinetrack && bash gradlew --no-daemon --max-workers=1 '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m' :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.rork.vinetrack.data.auth.ChemicalRecoveryPreflightAndroidTest,com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest > ../chemical-recovery-emulator.log 2>&1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chemical-recovery-results
+          retention-days: 3
+          path: |
+            chemical-recovery-android.log
+            chemical-recovery-emulator.log
+            android-vinetrack/app/build/test-results
+            android-vinetrack/app/build/outputs/androidTest-results
