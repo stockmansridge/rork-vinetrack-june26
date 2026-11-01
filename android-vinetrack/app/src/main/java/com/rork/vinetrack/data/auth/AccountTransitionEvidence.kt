@@ -146,6 +146,9 @@ internal class AccountTransitionEvidence(private val context: Context) {
         if (RecoveryLocationContract.present(filesRoot)) RecoveryLocationContract.directory(filesRoot, "FILES_ROOT_TYPE").forEach { file ->
             // These mirrors contain shared public chemical/guide material, not private field work.
             when {
+                GoogleMapsRuntimeFiles.recognises(file.name, context.packageName) -> try {
+                    GoogleMapsRuntimeFiles.validate(file, filesRoot, context.packageName)
+                } catch (_: Exception) { location(false, "MAPS_RUNTIME_FILE_CONTRACT") }
                 file.name == ProfileInstallerSkipContract.FILE_NAME -> try { validateProfileInstallerSkip(file, filesRoot) }
                     catch (_: Exception) { location(false, "PROFILE_INSTALLER_MARKER_CONTRACT") }
                 file.name == "profileInstalled" -> try { validateProfileMarker(file, filesRoot) }
