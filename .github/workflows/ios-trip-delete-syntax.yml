@@ -1,0 +1,33 @@
+name: iOS trip-delete syntax guard
+on:
+  push:
+    branches: [fix/ios-trip-swipe-and-actual-handoff-inspection-20261102]
+    paths:
+      - '.github/workflows/ios-trip-delete-syntax.yml'
+permissions:
+  contents: read
+jobs:
+  focused-source:
+    runs-on: macos-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift parser and non-mutating swipe regression
+        run: |
+          set -euo pipefail
+          swiftc -frontend -parse ios/VineTrack/LegacyImported/Views/Trips/TripView.swift ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift ios/VineTrack/Backend/Sync/SprayTankActualStore.swift ios/VineTrack/App/BackendSettingsView.swift
+          python3 - <<'PY'
+          from pathlib import Path
+          trip=Path('ios/VineTrack/LegacyImported/Views/Trips/TripView.swift').read_text()
+          detail=Path('ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift').read_text()
+          actual=Path('ios/VineTrack/Backend/Sync/SprayTankActualStore.swift').read_text()
+          assert '.onDelete(perform:' not in trip
+          assert '.swipeActions(edge: .trailing, allowsFullSwipe: false)' in trip
+          assert 'showDeleteConfirmation = true' in trip
+          assert 'accessControl.canDeleteOperationalRecords' in trip
+          assert '!current.isActive' in trip
+          assert '!mayRecoverSavedOccurrenceSpray' in detail
+          assert 'HANDOFF_REAL_TANK_SESSION_NOT_VERIFIED' in actual
+          assert 'HANDOFF_ACTUAL_AMOUNTS_NOT_VERIFIED' in actual
+          print('Source-guard checks passed; does not replace native iOS UI tests')
+          PY
