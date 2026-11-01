@@ -1,0 +1,34 @@
+name: Canonical sync contract integrity
+on:
+  pull_request:
+    paths:
+      - 'docs/sync/**'
+      - 'docs/sync-concurrency-contract.md'
+      - 'ios/VineTrack/**'
+      - 'android-vinetrack/app/src/main/**'
+      - 'supabase/migrations/**'
+      - 'sql/**'
+      - 'scripts/audit_sync_inventory.py'
+      - 'scripts/validate_sync_contract.py'
+      - '.github/workflows/sync-contract-integrity.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contract-structure-and-inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate governance contract and unverified release declarations
+        run: python3 scripts/validate_sync_contract.py
+      - name: Detect unreviewed mobile sync callsites and API route drift
+        run: python3 scripts/audit_sync_inventory.py --verify-inventory --output /tmp/vinetrack-sync-inventory.json
+      - name: State evidence limitations
+        if: always()
+        run: |
+          echo 'Static checks are not serializer parity, device acceptance, full backend test, or proof of data safety.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Main branch must require this check through repository branch protection / ruleset; workflow alone cannot enforce merge restrictions.' >> "$GITHUB_STEP_SUMMARY"
