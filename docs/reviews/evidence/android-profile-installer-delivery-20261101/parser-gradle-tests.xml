@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-11-01T00:33:38.863Z" hostname="e2b.local" time="0.021">
+  <properties/>
+  <testcase name="acceptsPreviousInstallAfterInPlaceUpdate" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.002"/>
+  <testcase name="rejectsZeroTimestamp" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.0"/>
+  <testcase name="rejectsEmptyPayload" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.0"/>
+  <testcase name="rejectsLittleEndianTimestamp" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.013"/>
+  <testcase name="rejectsDifferentProfileVerifierFormat" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.001"/>
+  <testcase name="rejectsTrailingBytes" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.0"/>
+  <testcase name="acceptsLongBoundaryWithoutOverflow" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.0"/>
+  <testcase name="rejectsNegativePackageTimestamp" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.0"/>
+  <testcase name="acceptsOldestPositiveTimestamp" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.0"/>
+  <testcase name="rejectsEveryTruncation" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.0"/>
+  <testcase name="rejectsNegativeTimestamp" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.001"/>
+  <testcase name="rejectsFutureTimestamp" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.0"/>
+  <testcase name="acceptsCurrentInstallTimestamp" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.001"/>
+  <testcase name="rejectsUnknownPackageTimestamp" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.0"/>
+  <testcase name="rejectsMinimumLongTimestamp" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.0"/>
+  <testcase name="rejectsTextDisguisedAsMarker" classname="com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

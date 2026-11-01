@@ -1,0 +1,146 @@
+{
+  "exit": 0,
+  "seconds": 22.054,
+  "command": [
+    "./gradlew",
+    ":app:testDebugUnitTest",
+    "--init-script",
+    "/tmp/vinetrack-profile-installer-gradle-yn4xp4rb/profile-tests.init.gradle",
+    "--console=plain",
+    "-Dorg.gradle.jvmargs=-Xmx4096m -XX:+UseParallelGC",
+    "--tests",
+    "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest"
+  ],
+  "suites": [
+    {
+      "name": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "tests": "16",
+      "skipped": "0",
+      "failures": "0",
+      "errors": "0",
+      "timestamp": "2026-11-01T00:33:38.863Z",
+      "hostname": "e2b.local",
+      "time": "0.021"
+    }
+  ],
+  "cases": [
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "acceptsPreviousInstallAfterInPlaceUpdate",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "rejectsZeroTimestamp",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "rejectsEmptyPayload",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "rejectsLittleEndianTimestamp",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "rejectsDifferentProfileVerifierFormat",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "rejectsTrailingBytes",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "acceptsLongBoundaryWithoutOverflow",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "rejectsNegativePackageTimestamp",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "acceptsOldestPositiveTimestamp",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "rejectsEveryTruncation",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "rejectsNegativeTimestamp",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "rejectsFutureTimestamp",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "acceptsCurrentInstallTimestamp",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "rejectsUnknownPackageTimestamp",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "rejectsMinimumLongTimestamp",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.ProfileInstallerSkipContractTest",
+      "name": "rejectsTextDisguisedAsMarker",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    }
+  ],
+  "totals": {
+    "tests": 16,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+}
