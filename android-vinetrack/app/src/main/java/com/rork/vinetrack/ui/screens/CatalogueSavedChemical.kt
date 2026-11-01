@@ -31,9 +31,17 @@ internal fun CatalogueSavedChemical(chemical: SavedChemical, modifier: Modifier 
             // revision (e.g. approved rates added after the chemical was saved).
             // Read the current APPROVED revision for reference; do not silently
             // change the saved chemical, its rate basis or operator decisions.
-            newerApproved = chemical.chemicalV3ProductId
-                ?.let { repository.approvedRevisionForProduct(it) }
-                ?.takeIf { it.id != exactRevision.id }
+            try {
+                newerApproved = chemical.chemicalV3ProductId
+                    ?.let { repository.approvedRevisionForProduct(it) }
+                    ?.takeIf { it.id != exactRevision.id }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // A current-revision lookup is advisory. Its failure must not
+                // hide the existing pinned revision's label and evidence.
+                newerApproved = null
+            }
             frontLabelPath = repository.resolvedFrontLabelPath(exactRevision)
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -60,7 +68,7 @@ internal fun CatalogueSavedChemical(chemical: SavedChemical, modifier: Modifier 
                     Text(
                         if (showsDetails)
                             "Newer approved catalogue information is available, including any updated grapevine rate options. This vineyard copy still uses its older revision; update its catalogue link before applying rates."
-                        else "Newer approved catalogue revision available · refresh vineyard chemical",
+                        else "Newer approved catalogue revision available · not yet linked to this vineyard copy",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
                         maxLines = if (showsDetails) Int.MAX_VALUE else 2,
