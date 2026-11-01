@@ -19,8 +19,11 @@ import kotlinx.serialization.json.Json
  */
 class PruningYieldSettingsStore(context: Context) {
 
-    private val prefs = context.applicationContext
-        .getSharedPreferences("vinetrack_pruning_yield_settings", Context.MODE_PRIVATE)
+    // Recovery snapshots and credential admission use this same account-incarnation
+    // gate. A delayed read/save must not mutate a verified cache after admission.
+    private val prefs = com.rork.vinetrack.data.auth.FieldStoreAccess(context).preferences(
+        context.applicationContext.getSharedPreferences("vinetrack_pruning_yield_settings", Context.MODE_PRIVATE),
+    )
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val serializer = ListSerializer(PruningYieldSettings.serializer())
 

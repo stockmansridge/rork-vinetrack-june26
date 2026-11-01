@@ -75,7 +75,7 @@ class PopulatedCleanExitActivityTest {
             throw AssertionError("$stage: ${diagnostic()}", failure)
         }
     }
-    private val vineyard: String get() = if (account.get() == A) "vineyard-A" else "vineyard-B"
+    private val vineyard: String get() = if (account.get() == A) "33333333-3333-4333-8333-333333333333" else "44444444-4444-4444-8444-444444444444"
 
     @Before fun setup() {
         app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as CleanExitFixtureApplication
@@ -136,10 +136,10 @@ class PopulatedCleanExitActivityTest {
                 path == "/auth/v1/user" -> """{"id":"$uid","email":"synthetic@example.invalid"}"""
                 path == "/auth/v1/logout" -> { logouts.incrementAndGet(); "{}" }
                 path == "/rest/v1/vineyard_members" -> if (includeHistorical)
-                    """[{"vineyard_id":"$v","role":"operator","user_id":"$uid"},{"vineyard_id":"historical-vineyard","role":"operator","user_id":"$uid"}]"""
+                    """[{"vineyard_id":"$v","role":"operator","user_id":"$uid"},{"vineyard_id":"55555555-5555-4555-8555-555555555555","role":"operator","user_id":"$uid"}]"""
                     else """[{"vineyard_id":"$v","role":"operator","user_id":"$uid"}]"""
                 path == "/rest/v1/vineyards" -> if (includeHistorical)
-                    """[{"id":"$v","name":"Synthetic $v"},{"id":"historical-vineyard","name":"Historical fixture"}]"""
+                    """[{"id":"$v","name":"Synthetic $v"},{"id":"55555555-5555-4555-8555-555555555555","name":"Historical fixture"}]"""
                     else """[{"id":"$v","name":"Synthetic $v"}]"""
                 path == "/rest/v1/profiles" -> "[]"
                 path == "/rest/v1/saved_chemicals" && request.method == HttpMethod.Get ->
@@ -219,7 +219,7 @@ class PopulatedCleanExitActivityTest {
     }
 
     private fun retainDraft(): Map<String, *> {
-        val draft = WorkTaskPlanningDraft(null, "vineyard-A", A, date = "2026-11-05", taskType = "pruning",
+        val draft = WorkTaskPlanningDraft(null, "33333333-3333-4333-8333-333333333333", A, date = "2026-11-05", taskType = "pruning",
             assignmentName = "Greg Horner", durationText = "1", notes = "Need bamboo and loose tie onto it", creationId = "original-creation")
         WorkTaskPlanningDraftStore(app).save(draft)
         return app.getSharedPreferences("vinetrack_local_planning", 0).all.toMap()
@@ -227,9 +227,9 @@ class PopulatedCleanExitActivityTest {
 
     private fun retainProductionContracts() {
         includeHistorical = true
-        val draft = WorkTaskPlanningDraft("task-$A", "vineyard-A", A, date = "2026-11-05T00:00:00Z", taskType = "pruning",
+        val draft = WorkTaskPlanningDraft("task-$A", "33333333-3333-4333-8333-333333333333", A, date = "2026-11-05T00:00:00Z", taskType = "pruning",
             externalId = "original-greg-resource", assignmentName = "Greg Horner", durationText = "1", notes = "Need bamboo and loose tie onto it",
-            baselineJson = """{"id":"task-$A","vineyard_id":"vineyard-A","sync_version":1}""")
+            baselineJson = """{"id":"task-$A","vineyard_id":"33333333-3333-4333-8333-333333333333","sync_version":1}""")
         val drafts = WorkTaskPlanningDraftStore(app)
         drafts.save(draft)
         val intent = WorkTaskWriteContract.planning(draft, "task-$A", java.time.LocalDate.parse("2026-11-05"),
@@ -237,26 +237,26 @@ class PopulatedCleanExitActivityTest {
         drafts.saveIntent(intent)
         drafts.saveRecovery(TaskWriteRecovery(original = intent))
         val queue = PendingWriteRepository(app)
-        val write = PinCreateSync(queue).enqueue(PinRepository.PinInput("original-queued-pin", "historical-vineyard", createdBy = A))
+        val write = PinCreateSync(queue).enqueue(PinRepository.PinInput("original-queued-pin", "55555555-5555-4555-8555-555555555555", createdBy = A))
         queue.updateStatus(write.id, PendingWriteStatus.BLOCKED, "Synthetic retained review hold")
         val cache = DomainCacheRepository(app)
-        cache.savePins(A, "historical-vineyard", listOf(Pin("historical-pin", "historical-vineyard", createdBy = A)))
-        cache.saveTrips(A, "historical-vineyard", listOf(Trip("historical-trip", "historical-vineyard", operatorUserId = A)))
-        assertTrue(RecoverySnapshotStore.captureBeforeMutation(app, "historical-vineyard").isPreserved)
+        cache.savePins(A, "55555555-5555-4555-8555-555555555555", listOf(Pin("historical-pin", "55555555-5555-4555-8555-555555555555", createdBy = A)))
+        cache.saveTrips(A, "55555555-5555-4555-8555-555555555555", listOf(Trip("historical-trip", "55555555-5555-4555-8555-555555555555", operatorUserId = A)))
+        assertTrue(RecoverySnapshotStore.captureBeforeMutation(app, "55555555-5555-4555-8555-555555555555").isPreserved)
         val receipt = RecoverySnapshotStore.TombstoneReceipt(A,
             PendingWrite("historical-delete", "pin", "delete", "{\"pinId\":\"historical-deleted-pin\"}", "historical-deleted-pin", 1, 1, status = "blocked"),
-            PinDeleteSync.DeleteState("historical-deleted-pin", "historical-vineyard", "2026-10-30T00:00:00Z"))
+            PinDeleteSync.DeleteState("historical-deleted-pin", "55555555-5555-4555-8555-555555555555", "2026-10-30T00:00:00Z"))
         assertTrue(RecoverySnapshotStore(app).preserveTombstone(receipt))
         val image = android.graphics.Bitmap.createBitmap(2, 2, android.graphics.Bitmap.Config.ARGB_8888)
         val jpeg = java.io.ByteArrayOutputStream().also { image.compress(android.graphics.Bitmap.CompressFormat.JPEG, 90, it) }.toByteArray()
         image.recycle()
-        assertTrue(VineyardLogoCache(app).save("historical-vineyard", jpeg, "historical-vineyard/logos/original.jpg", null))
+        assertTrue(VineyardLogoCache(app).save("55555555-5555-4555-8555-555555555555", jpeg, "55555555-5555-4555-8555-555555555555/logos/original.jpg", null))
         retainedLogoBytes = logoBytes()
         retainedContractBytes = listOf("vinetrack_pending_writes", "vinetrack_recovery_snapshots_v2", "vinetrack_local_planning")
             .associateWith { app.getSharedPreferences(it, 0).all.toMap() }
     }
 
-    private fun logoBytes(): Map<String, List<Byte>> = java.io.File(app.filesDir, "vineyard_logos/historical-vineyard")
+    private fun logoBytes(): Map<String, List<Byte>> = java.io.File(app.filesDir, "vineyard_logos/55555555-5555-4555-8555-555555555555")
         .listFiles().orEmpty().associate { it.name to it.readBytes().toList() }
 
     private fun assertContractBytes() {
@@ -301,8 +301,8 @@ class PopulatedCleanExitActivityTest {
         awaitStage("recovery.loaded", timeoutMillis = 60_000) { pending.isEmpty() && checkpoints.count { it == "vineyard.load.published" } >= 2 }
         assertFalse(session.withAccountAccess(obsolete) { fail("Obsolete session authority returned") })
         assertEquals(draftBefore, app.getSharedPreferences("vinetrack_local_planning", 0).all)
-        assertEquals("original-creation", WorkTaskPlanningDraftStore(app).load(A, "vineyard-A", null)?.creationId)
-        assertEquals("block-$A", DomainCacheRepository(app).loadPaddocks(A, "vineyard-A")!!.single().id)
+        assertEquals("original-creation", WorkTaskPlanningDraftStore(app).load(A, "33333333-3333-4333-8333-333333333333", null)?.creationId)
+        assertEquals("block-$A", DomainCacheRepository(app).loadPaddocks(A, "33333333-3333-4333-8333-333333333333")!!.single().id)
         assertOriginalIdentityAndNoOperationalWrites()
         return draftBefore
     }
@@ -310,8 +310,8 @@ class PopulatedCleanExitActivityTest {
     private fun assertOriginalIdentityAndNoOperationalWrites() {
         assertContractBytes()
         assertEquals(A, SessionStore(app).userId)
-        assertEquals("task-$A", DomainCacheRepository(app).loadWorkTasks(A, "vineyard-A")!!.single().id)
-        assertEquals("trip-$A", DomainCacheRepository(app).loadTrips(A, "vineyard-A")!!.single().id)
+        assertEquals("task-$A", DomainCacheRepository(app).loadWorkTasks(A, "33333333-3333-4333-8333-333333333333")!!.single().id)
+        assertEquals("trip-$A", DomainCacheRepository(app).loadTrips(A, "33333333-3333-4333-8333-333333333333")!!.single().id)
         assertTrue("Unexpected operational writes: $operationalWrites", operationalWrites.isEmpty())
     }
 
@@ -385,7 +385,7 @@ class PopulatedCleanExitActivityTest {
         compose.onAllNodesWithText("Local work protected").assertCountEquals(0)
         assertEquals(before, app.getSharedPreferences("vinetrack_local_planning", 0).all)
         assertFalse(SessionStore(app).retentionGuard.isLocked)
-        assertEquals("block-$A", DomainCacheRepository(app).loadPaddocks(A, "vineyard-A")!!.single().id)
+        assertEquals("block-$A", DomainCacheRepository(app).loadPaddocks(A, "33333333-3333-4333-8333-333333333333")!!.single().id)
         assertOriginalIdentityAndNoOperationalWrites()
     }
 
@@ -459,8 +459,8 @@ class PopulatedCleanExitActivityTest {
         compose.onNodeWithText("Need bamboo and loose tie onto it", substring = false).assertExists()
         compose.onNode(hasText("1") and hasText("Duration (hours, optional)")).assertExists()
         assertContractBytes()
-        assertEquals("task-$A", WorkTaskPlanningDraftStore(app).load(A, "vineyard-A", "task-$A")?.taskId)
-        assertEquals(TaskWritePhase.UNKNOWN, WorkTaskPlanningDraftStore(app).loadIntent(A, "vineyard-A", "task-$A")?.let {
+        assertEquals("task-$A", WorkTaskPlanningDraftStore(app).load(A, "33333333-3333-4333-8333-333333333333", "task-$A")?.taskId)
+        assertEquals(TaskWritePhase.UNKNOWN, WorkTaskPlanningDraftStore(app).loadIntent(A, "33333333-3333-4333-8333-333333333333", "task-$A")?.let {
             WorkTaskPlanningDraftStore(app).recovery(it)?.phase
         })
         assertOriginalIdentityAndNoOperationalWrites()
@@ -490,12 +490,12 @@ class PopulatedCleanExitActivityTest {
         val session = SessionStore(app)
         val old = requireNotNull(session.accountAccess())
         val cache = DomainCacheRepository(app)
-        assertEquals("trip-$A", cache.loadTrips(A, "vineyard-A")!!.single().id)
-        assertEquals("pin-$A", cache.loadPins(A, "vineyard-A")!!.single().id)
+        assertEquals("trip-$A", cache.loadTrips(A, "33333333-3333-4333-8333-333333333333")!!.single().id)
+        assertEquals("pin-$A", cache.loadPins(A, "33333333-3333-4333-8333-333333333333")!!.single().id)
         val before = app.getSharedPreferences("vinetrack_domain_cache", 0).all.toMap()
         val devicePrefs = app.getSharedPreferences("vinetrack_app_prefs", 0).all.toMap()
         val chemicals = app.getSharedPreferences("vinetrack_saved_chemicals_local", 0).all.toMap()
-        assertEquals("chemical-$A", SavedChemicalLocalStore(app).load(A, "vineyard-A").single().id)
+        assertEquals("chemical-$A", SavedChemicalLocalStore(app).load(A, "33333333-3333-4333-8333-333333333333").single().id)
         settingsSignOut()
         awaitText("Email")
         assertFalse(session.hasSession)
@@ -515,17 +515,17 @@ class PopulatedCleanExitActivityTest {
         assertNull(SessionStore(app).selectedVineyardId)
         signIn()
         assertFalse(session.withAccountAccess(old) { fail("A authority was revived") })
-        assertEquals("chemical-$A", SavedChemicalLocalStore(app).load(A, "vineyard-A").single().id)
+        assertEquals("chemical-$A", SavedChemicalLocalStore(app).load(A, "33333333-3333-4333-8333-333333333333").single().id)
         settingsSignOut()
         awaitText("Email")
         account.set(B)
         signIn()
         val bCache = DomainCacheRepository(app)
-        assertNull(bCache.loadPins(B, "vineyard-A"))
-        assertNull(bCache.loadTrips(B, "vineyard-A"))
-        assertEquals("pin-$B", bCache.loadPins(B, "vineyard-B")!!.single().id)
-        assertTrue(SavedChemicalLocalStore(app).load(B, "vineyard-A").isEmpty())
-        assertEquals("chemical-$B", SavedChemicalLocalStore(app).load(B, "vineyard-B").single().id)
+        assertNull(bCache.loadPins(B, "33333333-3333-4333-8333-333333333333"))
+        assertNull(bCache.loadTrips(B, "33333333-3333-4333-8333-333333333333"))
+        assertEquals("pin-$B", bCache.loadPins(B, "44444444-4444-4444-8444-444444444444")!!.single().id)
+        assertTrue(SavedChemicalLocalStore(app).load(B, "33333333-3333-4333-8333-333333333333").isEmpty())
+        assertEquals("chemical-$B", SavedChemicalLocalStore(app).load(B, "44444444-4444-4444-8444-444444444444").single().id)
         chemicals.forEach { (key, raw) -> assertEquals(raw, app.getSharedPreferences("vinetrack_saved_chemicals_local", 0).all[key]) }
         compose.onAllNodesWithText("Private chemical $A").assertCountEquals(0)
         assertFalse(session.withAccountAccess(old) { fail("A callback reached B") })
@@ -583,7 +583,7 @@ class PopulatedCleanExitActivityTest {
         signIn()
         assertEquals(B, SessionStore(app).userId)
         assertEmptyPhotoEvidence()
-        assertNull(DomainCacheRepository(app).loadPins(B, "vineyard-A"))
+        assertNull(DomainCacheRepository(app).loadPins(B, "33333333-3333-4333-8333-333333333333"))
         compose.onAllNodesWithText("Private pin $A").assertCountEquals(0)
         assertFalse(session.withAccountAccess(old) { fail("A photo callback reached B") })
         assertEquals(2, logouts.get())

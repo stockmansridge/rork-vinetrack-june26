@@ -1,0 +1,543 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest:
+INSTRUMENTATION_STATUS: test=wrongOriginalAccountIsNotAdmitted
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=wrongOriginalAccountIsNotAdmitted
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=populatedPruningAndYieldRecoverTogetherWithoutReplacingBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=populatedPruningAndYieldRecoverTogetherWithoutReplacingBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=separateForeignActiveClaimRemainsProtected
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=separateForeignActiveClaimRemainsProtected
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=actualWriterOutputRecoversWithoutCreatingAnActiveDeviceClaim
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualWriterOutputRecoversWithoutCreatingAnActiveDeviceClaim
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=revokedVineyardAccessIsStillRejected
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=revokedVineyardAccessIsStillRejected
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=actualWriterOutputStillPreventsCleanExit
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualWriterOutputStillPreventsCleanExit
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=schemaDiagnosticContainsNoRetainedJsonOrIdentifiers
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=schemaDiagnosticContainsNoRetainedJsonOrIdentifiers
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=8
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=changedPopulatedSnapshotAndEpochRefuseAdmissionWithoutChangingBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=8
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=changedPopulatedSnapshotAndEpochRefuseAdmissionWithoutChangingBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=9
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=yieldWriterCannotInterleaveRecoveryOrRebindToRestoredIncarnation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=9
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=yieldWriterCannotInterleaveRecoveryOrRebindToRestoredIncarnation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=10
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=populatedCombinedProofCannotRestoreWrongAccountOrRevokedAccess
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=10
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=populatedCombinedProofCannotRestoreWrongAccountOrRevokedAccess
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=11
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.AuthRetentionAndroidTest:
+INSTRUMENTATION_STATUS: test=actualUnscopedLateTankAcknowledgementNowFailsAtDurableStorage
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=11
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualUnscopedLateTankAcknowledgementNowFailsAtDurableStorage
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=12
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=revokedPhotoReturnAndLostLiveTicketPreserveUncertainEvidenceWithoutRebinding
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=12
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=revokedPhotoReturnAndLostLiveTicketPreserveUncertainEvidenceWithoutRebinding
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=13
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=populatedReviewedCachesAndPreferencesExitWithoutEmptyingInstallation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=13
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=populatedReviewedCachesAndPreferencesExitWithoutEmptyingInstallation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=14
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=malformedUnknownOwnerAndMismatchedChemicalSnapshotsRefuseWithoutMutation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=14
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=malformedUnknownOwnerAndMismatchedChemicalSnapshotsRefuseWithoutMutation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=15
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=legitimateAdmissionContentionPersistsTripAndPhotoWithoutRevokingAuthority
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=15
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=legitimateAdmissionContentionPersistsTripAndPhotoWithoutRevokingAuthority
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=16
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=vintageDelayedReadRetainsOriginalPendingOperationAndRejectsPostRevocationPublication
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=16
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=vintageDelayedReadRetainsOriginalPendingOperationAndRejectsPostRevocationPublication
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=17
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=profileVerifierMarkerDoesNotBlockOwnedRecoveryAssessment
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=17
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=profileVerifierMarkerDoesNotBlockOwnedRecoveryAssessment
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=18
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=corruptActiveClaimCannotBeOverwrittenThroughProductionClaim
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=18
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=corruptActiveClaimCannotBeOverwrittenThroughProductionClaim
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=19
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=cacheScopeAndDraftAuthorFailuresRemainProtectedWithSpecificStage
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=19
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=cacheScopeAndDraftAuthorFailuresRemainProtectedWithSpecificStage
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=20
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=mixedInputDraftOwnersRemainProtectedEvenWhenOneMatchesOriginal
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=20
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=mixedInputDraftOwnersRemainProtectedEvenWhenOneMatchesOriginal
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=21
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=originalAccountCallbackScopeSurvivesRefreshButNotRevocationOrRecreation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=21
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=originalAccountCallbackScopeSurvivesRefreshButNotRevocationOrRecreation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=22
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=inconclusiveRefreshDenialsAndRateLimitsKeepProductionSession
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=22
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=inconclusiveRefreshDenialsAndRateLimitsKeepProductionSession
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=23
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=historicalTokenRemovalWithSurvivingContextLocksBeforeBusinessConstruction
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=23
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=historicalTokenRemovalWithSurvivingContextLocksBeforeBusinessConstruction
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=24
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=failedRealPhotoMetadataCommitRetainsPriorAttachmentAndBothCapturedByteSets
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=24
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=failedRealPhotoMetadataCommitRetainsPriorAttachmentAndBothCapturedByteSets
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=25
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=actualScoutPhotoWriteAndCleanupAfterRevocationRetainOriginalBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=25
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualScoutPhotoWriteAndCleanupAfterRevocationRetainOriginalBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=26
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=originalAccountRecoveryRestoresFreshSessionAndPreservesOwnedTripBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=26
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=199
+INSTRUMENTATION_STATUS: stack=com.rork.vinetrack.data.auth.AuthRecoveryFailure: RETAINED_EVIDENCE
+	at com.rork.vinetrack.data.auth.AuthRecoveryRepository$recover$2.invokeSuspend(AuthRecoveryRepository.kt:153)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.internal.ScopeCoroutine.afterResume(Scopes.kt:35)
+	at kotlinx.coroutines.AbstractCoroutine.resumeWith(AbstractCoroutine.kt:101)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:47)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:124)
+	at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:89)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:586)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:820)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:717)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:704)
+
+INSTRUMENTATION_STATUS: stream=
+Error in originalAccountRecoveryRestoresFreshSessionAndPreservesOwnedTripBytes(com.rork.vinetrack.data.auth.AuthRetentionAndroidTest):
+com.rork.vinetrack.data.auth.AuthRecoveryFailure: RETAIN
+... output truncated ...
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:75)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage$default(PopulatedCleanExitActivityTest.kt:69)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm(PopulatedCleanExitActivityTest.kt:300)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm$default(PopulatedCleanExitActivityTest.kt:267)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoveryFormPopulatedTaskEditorDiagnostic(PopulatedCleanExitActivityTest.kt:375)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 20000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:72)
+	... 71 more
+12) recoveryFormHomeBlocksAndReopenPreserveDraft(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.AssertionError: recovery.home: checkpoints=[fixture.reset.sameGuard.false, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, vineyard.load.begin, route.Main, complete.session.admitted, waiting.main.settings.ready, complete.main.settings.ready, waiting.vineyard.load.published, vineyard.load.published, vineyard.load.finished, complete.vineyard.load.published, waiting.cache.hydrated, complete.cache.hydrated, owner.disposing, owner.disposed, owner.attached, waiting.text.Local work protected, complete.text.Local work protected, waiting.recovery.wrong-account.IDENTITY, complete.recovery.wrong-account.IDENTITY, waiting.recovery.home]; session=false; identity=none; locked=true; finishing=false; epoch=1; files=[vineyard_logos/historical-vineyard/logo.jpg, vineyard_logos/historical-vineyard/metadata.json]; preferenceFiles=null; pending={}; responseCount=76; lastResponses=[POST /auth/v1/logout 200, POST /auth/v1/token 200, GET /auth/v1/user 200, GET /rest/v1/vineyard_members 200, GET /rest/v1/vineyards 200, POST /auth/v1/logout 200]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/pruning_yield_settings, GET /rest/v1/spray_tank_actuals, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings, GET /rest/v1/vineyard_trip_functions, POST /rest/v1/rpc/list_vineyard_spray_targets, GET /rest/v1/saved_inputs, GET /rest/v1/saved_spray_presets, GET /rest/v1/fuel_purchases, GET /rest/v1/equipment_items, GET /rest/v1/vineyard_button_configs, POST /rest/v1/rpc/list_vineyard_grape_varieties, POST /rest/v1/rpc/get_rootstock_catalog, POST /rest/v1/rpc/list_vineyard_grape_clones, POST /rest/v1/rpc/list_vineyard_rootstocks, POST /rest/v1/rpc/get_vineyard_season_settings, GET /rest/v1/vineyard_growth_stage_images, POST /rest/v1/rpc/get_vineyard_region_settings]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:75)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage$default(PopulatedCleanExitActivityTest.kt:69)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm(PopulatedCleanExitActivityTest.kt:300)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoveryFormHomeBlocksAndReopenPreserveDraft(PopulatedCleanExitActivityTest.kt:381)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 20000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:72)
+	... 70 more
+13) recoveredHomeWorkTaskSelectsExistingBlock(com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest)
+java.lang.AssertionError: recovery.home: checkpoints=[fixture.reset.sameGuard.false, fixture.beforeReset.locked.false.finishing.false.operations.false, activity.launch.begin, owner.attached, route.Restoring, activity.created.RESUMED, waiting.text.Email, route.Login, complete.text.Email, signin.submit.A, waiting.session.admitted, vineyard.load.begin, route.Main, complete.session.admitted, waiting.main.settings.ready, complete.main.settings.ready, waiting.vineyard.load.published, vineyard.load.published, vineyard.load.finished, complete.vineyard.load.published, waiting.cache.hydrated, complete.cache.hydrated, owner.disposing, owner.disposed, owner.attached, waiting.text.Local work protected, complete.text.Local work protected, waiting.recovery.home]; session=false; identity=none; locked=true; finishing=false; epoch=1; files=[vineyard_logos/historical-vineyard/logo.jpg, vineyard_logos/historical-vineyard/metadata.json]; preferenceFiles=null; pending={}; responseCount=73; lastResponses=[POST /rest/v1/rpc/get_pruning_vineyard_summary 503, POST /auth/v1/token 200, GET /auth/v1/user 200, GET /rest/v1/vineyard_members 200, GET /rest/v1/vineyards 200, POST /auth/v1/logout 200]; unhandled=[POST /rest/v1/rpc/get_app_release_policy, GET /rest/v1/vineyard_alerts, POST /rest/v1/rpc/get_canopy_reference_images_v1, POST /rest/v1/rpc/get_vineyard_team_members, POST /rest/v1/rpc/get_grape_clone_catalog, GET /rest/v1/pruning_yield_settings, GET /rest/v1/pruning_seasons, POST /rest/v1/rpc/get_pruning_vineyard_summary, POST /rest/v1/rpc/list_pruning_activities, POST /rest/v1/rpc/get_vineyard_yield_sampling_settings, GET /rest/v1/spray_tank_actuals, GET /rest/v1/vineyard_trip_functions, POST /rest/v1/rpc/list_vineyard_spray_targets, GET /rest/v1/saved_inputs, GET /rest/v1/saved_spray_presets, GET /rest/v1/fuel_purchases, GET /rest/v1/equipment_items, GET /rest/v1/vineyard_button_configs, POST /rest/v1/rpc/list_vineyard_grape_varieties, POST /rest/v1/rpc/get_rootstock_catalog, POST /rest/v1/rpc/list_vineyard_grape_clones, POST /rest/v1/rpc/list_vineyard_rootstocks, POST /rest/v1/rpc/get_vineyard_region_settings, GET /rest/v1/vineyard_growth_stage_images, POST /rest/v1/rpc/get_vineyard_season_settings]; uncaught=null; mainState=RUNNABLE; mainStack=android.os.MessageQueue.nativePollOnce(Native Method)
+android.os.MessageQueue.next(MessageQueue.java:387)
+android.os.Looper.loopOnce(Looper.java:189)
+android.os.Looper.loop(Looper.java:317)
+android.app.ActivityThread.main(ActivityThread.java:8934)
+java.lang.reflect.Method.invoke(Native Method)
+com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:75)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage$default(PopulatedCleanExitActivityTest.kt:69)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm(PopulatedCleanExitActivityTest.kt:300)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoverThroughForm$default(PopulatedCleanExitActivityTest.kt:267)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.recoveredHomeWorkTaskSelectsExistingBlock(PopulatedCleanExitActivityTest.kt:393)
+	... 66 trimmed
+Caused by: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 20000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest.awaitStage(PopulatedCleanExitActivityTest.kt:72)
+	... 71 more
+14) initializationError(com.rork.vinetrack.data.auth.PreparedRecoveryAndroidTest)
+java.lang.RuntimeException: Failed loading specified test class 'com.rork.vinetrack.data.auth.PreparedRecoveryAndroidTest'
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:50)
+	at androidx.test.internal.runner.TestLoader.getRunnersFor(TestLoader.java:64)
+	at androidx.test.internal.runner.TestRequestBuilder.build(TestRequestBuilder.java:842)
+	at androidx.test.runner.AndroidJUnitRunner.buildRequest(AndroidJUnitRunner.java:672)
+	at androidx.test.runner.AndroidJUnitRunner.onStart(AndroidJUnitRunner.java:453)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2606)
+Caused by: java.lang.ClassNotFoundException: com.rork.vinetrack.data.auth.PreparedRecoveryAndroidTest
+	at java.lang.Class.classForName(Native Method)
+	at java.lang.Class.forName(Class.java:607)
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:44)
+	... 5 more
+Caused by: java.lang.ClassNotFoundException: Didn't find class "com.rork.vinetrack.data.auth.PreparedRecoveryAndroidTest" on path: DexPathList[[zip file "/system/framework/android.test.runner.jar", zip file "/system/framework/android.test.mock.jar", zip file "/system/framework/android.test.base.jar", zip file "/data/app/~~o3tDP1Caaj1Oj4xWAISV8w==/com.rork.vinetrack.test-d0DHnBBK6C0vgcGCZZ39cQ==/base.apk", zip file "/data/app/~~EAfilz0IHRFcc1wHqUsBpQ==/com.rork.vinetrack-iLS9cGx-eTo95MeU2fXhjQ==/base.apk"],nativeLibraryDirectories=[/data/app/~~o3tDP1Caaj1Oj4xWAISV8w==/com.rork.vinetrack.test-d0DHnBBK6C0vgcGCZZ39cQ==/lib/x86_64, /data/app/~~EAfilz0IHRFcc1wHqUsBpQ==/com.rork.vinetrack-iLS9cGx-eTo95MeU2fXhjQ==/lib/x86_64, /data/app/~~o3tDP1Caaj1Oj4xWAISV8w==/com.rork.vinetrack.test-d0DHnBBK6C0vgcGCZZ39cQ==/base.apk!/lib/x86_64, /data/app/~~EAfilz0IHRFcc1wHqUsBpQ==/com.rork.vinetrack-iLS9cGx-eTo95MeU2fXhjQ==/base.apk!/lib/x86_64, /system/lib64]]
+	at dalvik.system.BaseDexClassLoader.findClass(BaseDexClassLoader.java:259)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:637)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:573)
+	... 8 more
+15) calculatorButtonBlockedReceiptShowsInspectionWithOriginalIdentity(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+java.lang.AssertionError: Failed to assert the following: (is enabled)
+Reason: Expected exactly '1' node but could not find any node that satisfies: ((Text + InputText + EditableText contains 'Start Trip' (ignoreCase: false)) && (OnClick is defined))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+	at androidx.compose.ui.test.AssertionsKt.assert(Assertions.kt:262)
+	at androidx.compose.ui.test.AssertionsKt.assert$default(Assertions.kt:254)
+	at androidx.compose.ui.test.AssertionsKt.assertIsEnabled(Assertions.kt:60)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart(SprayStartProductionAndroidTest.kt:333)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart$default(SprayStartProductionAndroidTest.kt:317)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonBlockedReceiptShowsInspectionWithOriginalIdentity(SprayStartProductionAndroidTest.kt:461)
+16) calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+java.lang.AssertionError: Failed to assert the following: (is enabled)
+Reason: Expected exactly '1' node but could not find any node that satisfies: ((Text + InputText + EditableText contains 'Start Trip' (ignoreCase: false)) && (OnClick is defined))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+	at androidx.compose.ui.test.AssertionsKt.assert(Assertions.kt:262)
+	at androidx.compose.ui.test.AssertionsKt.assert$default(Assertions.kt:254)
+	at androidx.compose.ui.test.AssertionsKt.assertIsEnabled(Assertions.kt:60)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart(SprayStartProductionAndroidTest.kt:333)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart$default(SprayStartProductionAndroidTest.kt:317)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption(SprayStartProductionAndroidTest.kt:437)
+17) calculatorButtonBlankHoursReachesTankThenRecording(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+java.lang.AssertionError: Failed to assert the following: (is enabled)
+Reason: Expected exactly '1' node but could not find any node that satisfies: ((Text + InputText + EditableText contains 'Start Trip' (ignoreCase: false)) && (OnClick is defined))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+	at androidx.compose.ui.test.AssertionsKt.assert(Assertions.kt:262)
+	at androidx.compose.ui.test.AssertionsKt.assert$default(Assertions.kt:254)
+	at androidx.compose.ui.test.AssertionsKt.assertIsEnabled(Assertions.kt:60)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart(SprayStartProductionAndroidTest.kt:333)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart$default(SprayStartProductionAndroidTest.kt:317)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonBlankHoursReachesTankThenRecording(SprayStartProductionAndroidTest.kt:357)
+18) calculatorButtonDelayedResultSurvivesDisposedUiWithoutReactivation(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+java.lang.AssertionError: Failed to perform text input.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (Text + InputText + EditableText contains 'Start engine hours (optional)' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+	at androidx.compose.ui.test.TextActionsKt.getNodeAndFocus(TextActions.kt:124)
+	at androidx.compose.ui.test.TextActionsKt.getNodeAndFocus$default(TextActions.kt:119)
+	at androidx.compose.ui.test.TextActionsKt.performTextInput(TextActions.kt:39)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart(SprayStartProductionAndroidTest.kt:330)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonDelayedResultSurvivesDisposedUiWithoutReactivation(SprayStartProductionAndroidTest.kt:389)
+19) calculatorButtonLostReceiptRetryPreservesOriginalAndNavigatesOnce(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+java.lang.AssertionError: Failed to perform text input.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (Text + InputText + EditableText contains 'Start engine hours (optional)' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+	at androidx.compose.ui.test.TextActionsKt.getNodeAndFocus(TextActions.kt:124)
+	at androidx.compose.ui.test.TextActionsKt.getNodeAndFocus$default(TextActions.kt:119)
+	at androidx.compose.ui.test.TextActionsKt.performTextInput(TextActions.kt:39)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart(SprayStartProductionAndroidTest.kt:330)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonLostReceiptRetryPreservesOriginalAndNavigatesOnce(SprayStartProductionAndroidTest.kt:375)
+20) calculatorButtonValidHoursAcceptedReloadFailureStillOpensOriginalTank(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+java.lang.AssertionError: Failed to perform text input.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (Text + InputText + EditableText contains 'Start engine hours (optional)' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+	at androidx.compose.ui.test.TextActionsKt.getNodeAndFocus(TextActions.kt:124)
+	at androidx.compose.ui.test.TextActionsKt.getNodeAndFocus$default(TextActions.kt:119)
+	at androidx.compose.ui.test.TextActionsKt.performTextInput(TextActions.kt:39)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart(SprayStartProductionAndroidTest.kt:330)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonValidHoursAcceptedReloadFailureStillOpensOriginalTank(SprayStartProductionAndroidTest.kt:367)
+21) calculatorButtonLostActivationRestoresSameTankDestination(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+java.lang.AssertionError: Failed to perform text input.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (Text + InputText + EditableText contains 'Start engine hours (optional)' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+	at androidx.compose.ui.test.TextActionsKt.getNodeAndFocus(TextActions.kt:124)
+	at androidx.compose.ui.test.TextActionsKt.getNodeAndFocus$default(TextActions.kt:119)
+	at androidx.compose.ui.test.TextActionsKt.performTextInput(TextActions.kt:39)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart(SprayStartProductionAndroidTest.kt:330)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonLostActivationRestoresSameTankDestination(SprayStartProductionAndroidTest.kt:412)
+
+FAILURES!!!
+Tests run: 199,  Failures: 21
+
+
+INSTRUMENTATION_CODE: -1

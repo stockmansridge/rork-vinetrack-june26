@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.SprayOperationalBundleTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-11-01T06:43:16.052Z" hostname="e2b.local" time="0.008">
+  <properties/>
+  <testcase name="repeatedRefreshesCoalesceButScopesAndOldLeaseCleanupStaySeparate" classname="com.rork.vinetrack.data.SprayOperationalBundleTest" time="0.001"/>
+  <testcase name="nonFiniteOrUnboundedTankAllocationsAreRejected" classname="com.rork.vinetrack.data.SprayOperationalBundleTest" time="0.001"/>
+  <testcase name="recipeEvidenceIgnoresGeneratedIdsButInvalidatesForChangedMix" classname="com.rork.vinetrack.data.SprayOperationalBundleTest" time="0.003"/>
+  <testcase name="actualConcentrationUsesTankQuantityAndBothStorageConventions" classname="com.rork.vinetrack.data.SprayOperationalBundleTest" time="0.001"/>
+  <testcase name="independentTankAllocationValues" classname="com.rork.vinetrack.data.SprayOperationalBundleTest" time="0.0"/>
+  <testcase name="advisoryMetadataCannotBlockActualRateConfirmation" classname="com.rork.vinetrack.data.SprayOperationalBundleTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

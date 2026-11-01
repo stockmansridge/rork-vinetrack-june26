@@ -58,12 +58,12 @@ class AuthRetentionAndroidTest {
         val owner = "00000000-0000-0000-0000-0000000000a1"
         SessionStore(context).save("old-access", "old-refresh", owner, null)
         val cache = com.rork.vinetrack.data.DomainCacheRepository(context)
-        cache.savePins(owner, "vineyard", listOf(com.rork.vinetrack.data.model.Pin("original-pin", "vineyard", createdBy = owner)))
-        assertTrue(com.rork.vinetrack.data.RecoverySnapshotStore.captureBeforeMutation(context, "vineyard").isPreserved)
+        cache.savePins(owner, "33333333-3333-4333-8333-333333333333", listOf(com.rork.vinetrack.data.model.Pin("original-pin", "33333333-3333-4333-8333-333333333333", createdBy = owner)))
+        assertTrue(com.rork.vinetrack.data.RecoverySnapshotStore.captureBeforeMutation(context, "33333333-3333-4333-8333-333333333333").isPreserved)
         val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
         val jpeg = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }.toByteArray()
         bitmap.recycle()
-        assertTrue(com.rork.vinetrack.data.VineyardLogoCache(context).save("vineyard", jpeg, "vineyard/logos/original.jpg", null))
+        assertTrue(com.rork.vinetrack.data.VineyardLogoCache(context).save("33333333-3333-4333-8333-333333333333", jpeg, "vineyard/logos/original.jpg", null))
         val files = root.walkTopDown().filter { it.isFile }.associate { it.relativeTo(root).path to it.readBytes().toList() }
         val retained = context.getSharedPreferences("vinetrack_recovery_snapshots_v2", 0).all.toMap()
         SessionStore(context).clear()
@@ -75,13 +75,13 @@ class AuthRetentionAndroidTest {
         assertFalse(SessionStore(context).retentionGuard.isLocked)
         assertEquals(files, root.walkTopDown().filter { it.isFile }.associate { it.relativeTo(root).path to it.readBytes().toList() })
         assertEquals(retained, context.getSharedPreferences("vinetrack_recovery_snapshots_v2", 0).all)
-        assertEquals("original-pin", cache.loadPins(owner, "vineyard")!!.single().id)
+        assertEquals("original-pin", cache.loadPins(owner, "33333333-3333-4333-8333-333333333333")!!.single().id)
     }
 
     @Test fun logoScopeStillRequiresCurrentMembershipAndCannotUnlockForeignVineyard() = runBlocking {
         val owner = "00000000-0000-0000-0000-0000000000a1"
         SessionStore(context).save("old", "old-refresh", owner, null)
-        assertTrue(com.rork.vinetrack.data.VineyardLogoCache(context).save("foreign-vineyard", logoJpeg(), "remote/logo.jpg", null))
+        assertTrue(com.rork.vinetrack.data.VineyardLogoCache(context).save("44444444-4444-4444-8444-444444444444", logoJpeg(), "remote/logo.jpg", null))
         val before = fileBytes()
         SessionStore(context).clear()
         assertTrue(runCatching { AuthRecoveryRepository { recoveryClient(owner) }.recover(SessionStore(context), "synthetic@example.invalid", "synthetic-password") }.isFailure)
@@ -566,7 +566,7 @@ class AuthRetentionAndroidTest {
         val foreign = "22222222-2222-4222-8222-222222222222"
         val session = SessionStore(context)
         session.save("access", "refresh", owner, null)
-        assertTrue(com.rork.vinetrack.data.SprayTankActualStore(context).saveInputDraft(actualInputDraft(owner)))
+        assertTrue(com.rork.vinetrack.data.SprayTankActualStore(context).saveInputDraft(actualInputDraft(owner).copy(vineyardId = "33333333-3333-4333-8333-333333333333")))
         val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
         val before = prefs.all.toMap()
         session.clear()
@@ -1292,10 +1292,10 @@ class AuthRetentionAndroidTest {
         val account = "11111111-1111-4111-8111-111111111111"
         session.save("original-access", "original-refresh", account, null)
         val snapshot = com.rork.vinetrack.data.ActiveTripStore(context)
-        assertTrue(snapshot.saveDurably(account, "vineyard", com.rork.vinetrack.data.model.Trip(id = "trip", vineyardId = "vineyard", isActive = true)))
+        assertTrue(snapshot.saveDurably(account, "33333333-3333-4333-8333-333333333333", com.rork.vinetrack.data.model.Trip(id = "trip", vineyardId = "33333333-3333-4333-8333-333333333333", isActive = true)))
         val evidence = context.getSharedPreferences("vinetrack_active_trip", 0).all.toMap()
         val tank = com.rork.vinetrack.data.model.SprayTankActual(
-            "actual", "vineyard", "spray", "trip", "tank", 1, waterVolumeL = 123.45,
+            "actual", "33333333-3333-4333-8333-333333333333", "spray", "trip", "tank", 1, waterVolumeL = 123.45,
             chemicals = emptyList(), confirmedAt = "2026-10-12T00:00:00Z", confirmedBy = account,
         )
         assertTrue(com.rork.vinetrack.data.SprayTankActualStore(context).save(tank))
@@ -1308,8 +1308,8 @@ class AuthRetentionAndroidTest {
             val body = when {
                 request.url.encodedPath.endsWith("/token") -> "{\"access_token\":\"returning-access\",\"refresh_token\":\"returning-refresh\"}"
                 request.url.encodedPath.endsWith("/user") -> "{\"id\":\"$account\"}"
-                request.url.encodedPath.endsWith("/vineyard_members") -> "[{\"vineyard_id\":\"vineyard\",\"role\":\"operator\"}]"
-                request.url.encodedPath.endsWith("/vineyards") -> "[{\"id\":\"vineyard\"}]"
+                request.url.encodedPath.endsWith("/vineyard_members") -> "[{\"vineyard_id\":\"33333333-3333-4333-8333-333333333333\",\"role\":\"operator\"}]"
+                request.url.encodedPath.endsWith("/vineyards") -> "[{\"id\":\"33333333-3333-4333-8333-333333333333\"}]"
                 request.url.encodedPath.endsWith("/logout") -> "{}"
                 else -> error("Unexpected recovery request")
             }
@@ -1379,8 +1379,8 @@ class AuthRetentionAndroidTest {
                     request.url.encodedPath.endsWith("/token") -> "{\"access_token\":\"new-access\",\"refresh_token\":\"new-refresh\"}"
                     request.url.encodedPath.endsWith("/user") -> "{\"id\":\"${if (scenario == "wrong-account") b else a}\"}"
                     request.url.encodedPath.endsWith("/vineyard_members") -> if (scenario == "missing-permission") "[]"
-                        else "[{\"vineyard_id\":\"vineyard\",\"role\":\"operator\"}]"
-                    request.url.encodedPath.endsWith("/vineyards") -> if (scenario == "deleted-vineyard") "[]" else "[{\"id\":\"vineyard\"}]"
+                        else "[{\"vineyard_id\":\"33333333-3333-4333-8333-333333333333\",\"role\":\"operator\"}]"
+                    request.url.encodedPath.endsWith("/vineyards") -> if (scenario == "deleted-vineyard") "[]" else "[{\"id\":\"33333333-3333-4333-8333-333333333333\"}]"
                     request.url.encodedPath.endsWith("/logout") -> { revoked = true; "{}" }
                     else -> error("Unexpected request")
                 }
@@ -1757,13 +1757,13 @@ class AuthRetentionAndroidTest {
         val session = SessionStore(context)
         session.save("old-access", "old-refresh", a, null)
         val cache = com.rork.vinetrack.data.DomainCacheRepository(context)
-        cache.saveVineyards(a, listOf(com.rork.vinetrack.data.model.Vineyard("vineyard", "Retained vineyard")))
-        cache.savePaddocks(a, "vineyard", listOf(com.rork.vinetrack.data.model.Paddock("block", "vineyard", "Retained block")))
-        assertTrue(com.rork.vinetrack.data.SavedChemicalLocalStore(context).save(a, "vineyard",
-            listOf(com.rork.vinetrack.data.model.SavedChemical("chemical", "vineyard", name = "Retained chemical"))))
+        cache.saveVineyards(a, listOf(com.rork.vinetrack.data.model.Vineyard("33333333-3333-4333-8333-333333333333", "Retained vineyard")))
+        cache.savePaddocks(a, "33333333-3333-4333-8333-333333333333", listOf(com.rork.vinetrack.data.model.Paddock("block", "33333333-3333-4333-8333-333333333333", "Retained block")))
+        assertTrue(com.rork.vinetrack.data.SavedChemicalLocalStore(context).save(a, "33333333-3333-4333-8333-333333333333",
+            listOf(com.rork.vinetrack.data.model.SavedChemical("chemical", "33333333-3333-4333-8333-333333333333", name = "Retained chemical"))))
         com.rork.vinetrack.data.AppPreferencesStore(context).save(com.rork.vinetrack.data.AppPreferences())
         File(root, "profileInstalled").writeBytes(profileMarkerBytes())
-        val draft = com.rork.vinetrack.data.model.WorkTaskPlanningDraft(null, "vineyard", a,
+        val draft = com.rork.vinetrack.data.model.WorkTaskPlanningDraft(null, "33333333-3333-4333-8333-333333333333", a,
             assignmentName = "Greg Horner", date = "2026-11-05", taskType = "pruning", blockIds = setOf("block"),
             durationText = "1", notes = "Need bamboo and loose tie onto it", creationId = "original-creation")
         com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context).save(draft)
@@ -1777,8 +1777,8 @@ class AuthRetentionAndroidTest {
         assertFalse(session.retentionGuard.isLocked)
         assertFalse(session.withAccountAccess(old) { fail("Obsolete authority returned") })
         before.forEach { (name, values) -> assertEquals(values, context.getSharedPreferences(name, 0).all) }
-        assertEquals(draft, com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context).load(a, "vineyard", null))
-        assertEquals("block", cache.loadPaddocks(a, "vineyard")?.single()?.id)
+        assertEquals(draft, com.rork.vinetrack.data.WorkTaskPlanningDraftStore(context).load(a, "33333333-3333-4333-8333-333333333333", null))
+        assertEquals("block", cache.loadPaddocks(a, "33333333-3333-4333-8333-333333333333")?.single()?.id)
         assertArrayEquals(profileMarkerBytes(), File(root, "profileInstalled").readBytes())
         val restarted = SessionStore(context)
         assertTrue(restarted.hasSession)
@@ -1927,8 +1927,8 @@ class AuthRetentionAndroidTest {
         val body = when {
             request.url.encodedPath.endsWith("/token") -> "{\"access_token\":\"returning-access\",\"refresh_token\":\"returning-refresh\"}"
             request.url.encodedPath.endsWith("/user") -> "{\"id\":\"$account\"}"
-            request.url.encodedPath.endsWith("/vineyard_members") -> if (member) "[{\"vineyard_id\":\"vineyard\",\"role\":\"operator\"}]" else "[]"
-            request.url.encodedPath.endsWith("/vineyards") -> "[{\"id\":\"vineyard\"}]"
+            request.url.encodedPath.endsWith("/vineyard_members") -> if (member) "[{\"vineyard_id\":\"33333333-3333-4333-8333-333333333333\",\"role\":\"operator\"}]" else "[]"
+            request.url.encodedPath.endsWith("/vineyards") -> "[{\"id\":\"33333333-3333-4333-8333-333333333333\"}]"
             request.url.encodedPath.endsWith("/logout") -> "{}"
             else -> error("Unexpected recovery request")
         }

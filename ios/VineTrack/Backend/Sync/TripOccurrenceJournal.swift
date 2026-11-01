@@ -50,17 +50,33 @@ import Foundation
     private let fileURL: URL
     private let authority: VineyardWriteAuthority
 
-    init(scope: Scope, directory: URL? = nil, authority: VineyardWriteAuthority = .shared) throws {
+    init(scope: Scope, directory: URL? = nil, authority: VineyardWriteAuthority = .shared,
+         createDirectoryIfMissing: Bool = true) throws {
         self.authority = authority
         guard [scope.ownerId, scope.vineyardId, scope.tripId].allSatisfy(TripOccurrenceCoverage.canonicalUUID) else { throw Failure.scopeConflict }
         self.scope = scope
-        let root = try directory ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let root = try directory ?? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: createDirectoryIfMissing)
             .appendingPathComponent("TripOccurrenceJournals", isDirectory: true)
         let scoped = root.appendingPathComponent(scope.ownerId, isDirectory: true)
             .appendingPathComponent(scope.vineyardId, isDirectory: true)
-        try FileManager.default.createDirectory(at: scoped, withIntermediateDirectories: true)
+        if createDirectoryIfMissing {
+            try FileManager.default.createDirectory(at: scoped, withIntermediateDirectories: true)
+        }
         fileURL = scoped.appendingPathComponent(scope.tripId + ".json")
     }
+    /// Content-free stage classification. A hold is not permission to replay,
+    /// and an empty journal does not mean the trip metadata was uploaded.
+    static func syncDiagnosticReason(_ state: Snapshot) -> String {
+        if state.heldReason != nil { return "OCCURRENCE_RECONCILIATION_HELD" }
+        switch state.pending.first?.rpc {
+        case "create_trip_with_occurrences_v1": return "OCCURRENCE_CREATE_PENDING"
+        case "activate_trip_occurrences_v1": return "OCCURRENCE_ACTIVATION_PENDING"
+        case "finalize_trip_occurrences_v1": return "OCCURRENCE_FINALISATION_PENDING"
+        case .some: return "OCCURRENCE_ACTION_PENDING"
+        case .none: return "TRIP_METADATA_UPLOAD_PENDING"
+        }
+    }
+
     /// Read-only discovery for a legacy deletion whose cache row has already gone.
     /// Both embedded scope and canonical journal path must agree; ambiguity stays held.
     static func originalDeletionEvidence(tripId: UUID) throws -> (TripDeletionJournal.Scope, Data)? {
@@ -338,8 +354,8 @@ import Foundation
               state.pending.count == 2,
               state.pending[0].rpc == "create_trip_with_occurrences_v1",
               state.pending[1].rpc == "activate_trip_occurrences_v1",
-              state.pending[0].params[occurrence: "p_trip"]?[occurrence: "id"] == .string(scope.tripId),
-              state.pending[0].params[occurrence: "p_trip"]?[occurrence: "vineyard_id"] == .string(scope.vineyardId),
+              state.pending[0].params[occurrence: "p_trip"]?[occurrence: "id"]?.occurrenceString?.lowercased() == scope.tripId,
+              state.pending[0].params[occurrence: "p_trip"]?[occurrence: "vineyard_id"]?.occurrenceString?.lowercased() == scope.vineyardId,
               state.pending[0].params[occurrence: "p_coverage"] == expectedCoverage,
               state.acknowledged == expectedCoverage,
               state.pending[1].params[occurrence: "p_trip_id"] == .string(scope.tripId),

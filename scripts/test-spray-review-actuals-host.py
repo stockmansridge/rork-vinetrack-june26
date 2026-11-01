@@ -63,12 +63,20 @@ import Foundation
 enum SprayCarrierBasis { case litresPerHectare, litresPer100Metres }
 struct SprayPassConfiguration { var rowEquivalents: Double = 1 }
 struct TankRowApplication: Codable, Hashable, Sendable { var startRow: Double; var endRow: Double }
+struct ChemicalLineSnapshot: Codable, Hashable, Sendable {
+    var capturedAt: Date?
+    static let capturedAtFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
+    }()
+    static func parseCapturedAt(_ raw: String) -> Date? { capturedAtFormatter.date(from: raw) }
+}
 struct SprayChemical: Codable, Hashable, Sendable {
     var id = UUID()
     var name: String
     var volumePerTank: Double
     var ratePerHa: Double = 1000
     var ratePer100L: Double = 0
+    var chemicalSnapshot: ChemicalLineSnapshot? = nil
     var quantityBasis: String? = nil
     var unit: ChemicalUnit
     var rateBasis: SprayProductRateBasis = .wholeBlockArea
@@ -236,6 +244,14 @@ struct HostFailure: Error { let message: String }
         let solid = SprayChemical(name: "Solid", volumePerTank: 700, unit: .kilograms)
         let liquid = SprayChemical(name: "Liquid", volumePerTank: 2000, unit: .litres)
         let tank = SprayTank(chemicals: [solid, liquid])
+        var preciseTank = tank
+        preciseTank.chemicals[0].chemicalSnapshot = ChemicalLineSnapshot(capturedAt: Date(timeIntervalSince1970: 1790000000.123456))
+        var millisecondTank = preciseTank
+        millisecondTank.chemicals[0].chemicalSnapshot?.capturedAt = ChemicalLineSnapshot.parseCapturedAt(ChemicalLineSnapshot.capturedAtFormatter.string(from: preciseTank.chemicals[0].chemicalSnapshot!.capturedAt!))
+        try check(preciseTank != millisecondTank, "snapshot date precision reproduces old equality rejection")
+        try check(SprayInitialTankAmounts.samePersistedRecipe(preciseTank, millisecondTank), "persisted timestamp precision does not create a different recipe")
+        millisecondTank.chemicals[0].volumePerTank += 0.001
+        try check(!SprayInitialTankAmounts.samePersistedRecipe(preciseTank, millisecondTank), "real quantity differences remain blocked")
         let originalTank = tank
         var secondTank = tank; secondTank.id = UUID(); secondTank.tankNumber = 2
         try check(SprayInitialTankAmounts.firstTank(in: [secondTank, tank]) == tank, "first tank follows lifecycle order")

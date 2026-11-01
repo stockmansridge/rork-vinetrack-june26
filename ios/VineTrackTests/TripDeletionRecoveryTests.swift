@@ -3,6 +3,58 @@ import Testing
 @testable import VineTrack
 
 @MainActor struct TripDeletionRecoveryTests {
+    @Test func pendingUploadInspectionIncludesQueueWithNoRecordedFailureAndPreservesIt() throws {
+        let disk = try persistence(), metadata = TripSyncMetadata(persistence: disk)
+        let id = UUID(), queued = Date(timeIntervalSince1970: 100)
+        metadata.markDirty(id, at: queued)
+        let store = MigratedDataStore(persistence: disk), auth = NewBackendAuthService()
+        let service = TripSyncService(repository: DeletionRegressionRepository(), metadata: metadata)
+        service.configure(store: store, auth: auth)
+        let report = service.pendingUploadDiagnostics
+        #expect(report.contains("queued_trip_uploads: 1"))
+        #expect(report.contains("queue_marked_failed: 0"))
+        #expect(report.contains("TRIP_ACCOUNT_NOT_VERIFIED: 1"))
+        #expect(!report.contains(id.uuidString))
+        #expect(metadata.pendingUpserts[id] == queued)
+        #expect(TripSyncMetadata(persistence: disk).pendingUpserts[id] == queued)
+    }
+
+    @Test func retryRetainsPreviousErrorUntilSyncSucceeds() async throws {
+        let disk = try persistence(), metadata = TripSyncMetadata(persistence: disk)
+        let store = MigratedDataStore(persistence: disk), auth = NewBackendAuthService()
+        let vineyard = UUID()
+        store.selectedVineyardId = vineyard
+        let repository = DeletionRegressionRepository()
+        let service = TripSyncService(repository: repository, metadata: metadata)
+        service.configure(store: store, auth: auth)
+        repository.fetchFailure = URLError(.notConnectedToInternet)
+        await service.sync(vineyardId: vineyard)
+        let previous = try #require(service.errorMessage)
+        #expect(service.syncStatus != .success)
+        repository.fetchFailure = nil
+        var observedRetry = false
+        repository.onFetchTrips = {
+            observedRetry = true
+            #expect(service.errorMessage == previous, "Retry must retain the prior failure until completion")
+            #expect(service.isSyncing)
+        }
+        await service.sync(vineyardId: vineyard)
+        repository.onFetchTrips = nil
+        #expect(observedRetry)
+        #expect(service.syncStatus == .success)
+        #expect(service.errorMessage == nil, "Only successful completion clears the prior error")
+    }
+
+    @Test func emptyUploadPassRefreshesStalePendingCount() async throws {
+        let disk = try persistence(), metadata = TripSyncMetadata(persistence: disk)
+        let store = MigratedDataStore(persistence: disk), auth = NewBackendAuthService()
+        let service = TripSyncService(repository: DeletionRegressionRepository(), metadata: metadata)
+        service.configure(store: store, auth: auth)
+        SyncIssueCenter.shared.notePending(entity: "Trips", count: 1)
+        try await service.pushLocalTrips(vineyardId: UUID())
+        #expect(SyncIssueCenter.shared.pendingByEntity["Trips"] == nil)
+    }
+
     @Test func filteredMissingRowNeverAcknowledgesLegacyDeletion() async throws {
         let disk = try persistence()
         let metadata = TripSyncMetadata(persistence: disk)
@@ -413,7 +465,13 @@ import Testing
 }
 
 @MainActor private final class DeletionRegressionRepository: TripSyncRepositoryProtocol {
-    func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip] { [] }
+    var fetchFailure: Error?
+    var onFetchTrips: (() -> Void)?
+    func fetchTrips(vineyardId: UUID, since: Date?) async throws -> [BackendTrip] {
+        onFetchTrips?()
+        if let fetchFailure { throw fetchFailure }
+        return []
+    }
     func fetchAllTrips(vineyardId: UUID) async throws -> [BackendTrip] { [] }
     func fetchAllAccessibleTrips() async throws -> [BackendTrip] { [] }
     func upsertTrip(_ trip: BackendTripUpsert) async throws {}

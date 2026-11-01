@@ -32,7 +32,7 @@ import org.junit.runner.RunWith
 
 /**
  * Synthetic layout regression, NOT a capture of the original installation or current Maps writer.
- * The two pruning tests document remaining blockers; passing them does NOT close the incident.
+ * Known empty pruning arrays are supported; populated recovery needs separate server proof.
  */
 @RunWith(AndroidJUnit4::class)
 class GoogleMapsRecoveryAndroidTest {
@@ -71,7 +71,7 @@ class GoogleMapsRecoveryAndroidTest {
         assertEquals(owner, session.userId)
         assertEquals(beforeFiles, filesSnapshot())
         assertEquals(beforeStores, retainedSnapshot())
-        assertEquals("original-pin", DomainCacheRepository(fixture).loadPins(owner, "vineyard")!!.single().id)
+        assertEquals("original-pin", DomainCacheRepository(fixture).loadPins(owner, "33333333-3333-4333-8333-333333333333")!!.single().id)
         assertTrue(SessionStore(fixture).hasSession)
     }
 
@@ -118,35 +118,33 @@ class GoogleMapsRecoveryAndroidTest {
         assertEquals("synthetic work", work.readText())
     }
 
-    @Test fun remainingBlockerEvenWriterProducedEmptyPruningCacheIsNotYetSupported() {
+    @Test fun writerProducedKnownEmptyPruningCacheCanBeAssessed() {
         val session = SessionStore(fixture)
         session.save("synthetic-access", "synthetic-refresh", owner, null)
-        PruningStore(fixture).saveEntries("vineyard", emptyList())
+        PruningStore(fixture).saveEntries("33333333-3333-4333-8333-333333333333", emptyList())
         writeSevenEntryLayout()
         val before = fixture.getSharedPreferences("vinetrack_pruning", 0).all.toMap()
         val inspector = AccountTransitionEvidence(fixture)
-        assertNull(inspector.inspect(owner))
-        assertEquals("vinetrack_pruning", inspector.failureCategory)
+        assertEquals(setOf("33333333-3333-4333-8333-333333333333"), inspector.inspect(owner)?.vineyards)
         assertEquals(before, fixture.getSharedPreferences("vinetrack_pruning", 0).all.toMap())
     }
 
-    @Test fun remainingBlockerEvenWriterProducedEmptyYieldSettingsIsNotYetSupported() {
+    @Test fun writerProducedKnownEmptyYieldSettingsCanBeAssessed() {
         val session = SessionStore(fixture)
         session.save("synthetic-access", "synthetic-refresh", owner, null)
-        PruningYieldSettingsStore(fixture).save("vineyard", emptyList())
+        PruningYieldSettingsStore(fixture).save("33333333-3333-4333-8333-333333333333", emptyList())
         writeSevenEntryLayout()
         val before = fixture.getSharedPreferences("vinetrack_pruning_yield_settings", 0).all.toMap()
         val inspector = AccountTransitionEvidence(fixture)
-        assertNull(inspector.inspect(owner))
-        assertEquals("vinetrack_pruning_yield_settings", inspector.failureCategory)
+        assertEquals(setOf("33333333-3333-4333-8333-333333333333"), inspector.inspect(owner)?.vineyards)
         assertEquals(before, fixture.getSharedPreferences("vinetrack_pruning_yield_settings", 0).all.toMap())
     }
 
     private fun populatedSession(): SessionStore {
         val session = SessionStore(fixture)
         session.save("synthetic-access", "synthetic-refresh", owner, null)
-        DomainCacheRepository(fixture).savePins(owner, "vineyard", listOf(Pin("original-pin", "vineyard", createdBy = owner)))
-        assertTrue(RecoverySnapshotStore.captureBeforeMutation(fixture, "vineyard").isPreserved)
+        DomainCacheRepository(fixture).savePins(owner, "33333333-3333-4333-8333-333333333333", listOf(Pin("original-pin", "33333333-3333-4333-8333-333333333333", createdBy = owner)))
+        assertTrue(RecoverySnapshotStore.captureBeforeMutation(fixture, "33333333-3333-4333-8333-333333333333").isPreserved)
         session.clear()
         return session
     }
@@ -175,8 +173,8 @@ class GoogleMapsRecoveryAndroidTest {
         val body = when {
             request.url.encodedPath.endsWith("/token") -> "{\"access_token\":\"returning-access\",\"refresh_token\":\"returning-refresh\"}"
             request.url.encodedPath.endsWith("/user") -> "{\"id\":\"$account\"}"
-            request.url.encodedPath.endsWith("/vineyard_members") -> if (member) "[{\"vineyard_id\":\"vineyard\",\"role\":\"operator\"}]" else "[]"
-            request.url.encodedPath.endsWith("/vineyards") -> "[{\"id\":\"vineyard\"}]"
+            request.url.encodedPath.endsWith("/vineyard_members") -> if (member) "[{\"vineyard_id\":\"33333333-3333-4333-8333-333333333333\",\"role\":\"operator\"}]" else "[]"
+            request.url.encodedPath.endsWith("/vineyards") -> "[{\"id\":\"33333333-3333-4333-8333-333333333333\"}]"
             request.url.encodedPath.endsWith("/logout") -> "{}"
             else -> error("Unexpected recovery request")
         }

@@ -31,6 +31,17 @@ final class SprayEditingAcceptanceUITests: XCTestCase {
         for _ in 0..<12 where !water.isHittable { app.scrollViews.firstMatch.swipeUp() }
         XCTAssertTrue(water.waitForExistence(timeout: 5))
         XCTAssertTrue(water.isEnabled, "Actual water must be editable before selecting a path")
+        XCTAssertGreaterThanOrEqual(water.frame.height, 44, "Actual entry keeps a field-sized touch target")
+        let actualHelp = app.buttons["Actual tank contents help"]
+        for _ in 0..<8 where !actualHelp.isHittable { app.scrollViews.firstMatch.swipeDown() }
+        XCTAssertTrue(actualHelp.isHittable); actualHelp.tap()
+        XCTAssertTrue(app.staticTexts["Actual tank contents"].waitForExistence(timeout: 5))
+        let helpText = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Enter 0 for a product you did not add.")).firstMatch
+        XCTAssertTrue(helpText.exists, "Actual-use help includes zero and later-tank guidance")
+        let done = app.buttons["Done"]
+        for _ in 0..<5 where !done.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(done.isHittable); done.tap()
+        for _ in 0..<8 where !water.isHittable { app.scrollViews.firstMatch.swipeUp() }
         XCTAssertTrue(["", "Enter amount"].contains(water.value as? String ?? ""), "Calculated water is a guide, not pre-entered actuals")
         water.tap(); water.typeText("875.5")
         app.buttons["keyboard.dismiss"].tap()
@@ -43,7 +54,7 @@ final class SprayEditingAcceptanceUITests: XCTestCase {
         app.buttons["keyboard.dismiss"].tap()
         XCTAssertEqual(water.value as? String, "875.5")
         XCTAssertEqual(chemical.value as? String, "637.25")
-        XCTAssertTrue(start.isEnabled, "Explicit actual quantities satisfy the mix gate independently of path selection")
+        XCTAssertFalse(start.isEnabled, "Valid actuals do not invent an explicit tracking-pattern choice")
 
         // Choose a route only AFTER entering different-from-calculated amounts.
         // This guards the reported ordering failure and any rebuild that erases

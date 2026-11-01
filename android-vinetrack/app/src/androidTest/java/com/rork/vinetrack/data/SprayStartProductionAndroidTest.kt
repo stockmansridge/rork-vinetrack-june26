@@ -314,11 +314,18 @@ class SprayStartProductionAndroidTest {
     }
 
     private fun tick() { compose.mainClock.advanceTimeBy(600); compose.waitForIdle() }
-    private fun pressCalculatorStart(hours: String? = null) {
+    private fun pressCalculatorStart(hours: String? = null, retainedPattern: Boolean = false) {
         compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Actual water (L)"))
         compose.onNodeWithText("Actual water (L)").performTextReplacement("415")
         compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Actual Snapshot fixture (g)"))
         compose.onNodeWithText("Actual Snapshot fixture (g)").performTextReplacement("1234.5")
+        tick()
+        // New setups intentionally have no default. Exercise the real explicit choice
+        // after entering actuals, before opening the production Start confirmation.
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText(com.rork.vinetrack.data.TrackingPattern.FREE_DRIVE.title))
+        val freeDrive = compose.onNodeWithText(com.rork.vinetrack.data.TrackingPattern.FREE_DRIVE.title)
+        if (retainedPattern) freeDrive.assertIsSelected()
+        else freeDrive.assertIsNotSelected().performClick().assertIsSelected()
         tick()
         try {
             compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Start Spray Trip", substring = true))
@@ -380,7 +387,7 @@ class SprayStartProductionAndroidTest {
         compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Inspect retained Start"))
         compose.onNodeWithText("Inspect retained Start").assertExists()
         mode = "accepted"; failReload = true
-        pressCalculatorStart("999"); awaitTankDestination(123.5)
+        pressCalculatorStart("999", retainedPattern = true); awaitTankDestination(123.5)
         assertEquals(1, creates); assertEquals(1, recoveries); assertEquals(1, navigationCallbacks); assertFrozen(original)
     }
 
@@ -448,7 +455,7 @@ class SprayStartProductionAndroidTest {
             .putString("attempts", Json { encodeDefaults = true }.encodeToString(kotlinx.serialization.builtins.ListSerializer(LegacySpraySaveStore.Attempt.serializer()), listOf(older))).commit()
         assertNull("Synthetic older fixture must decode", store.retainedStart(vineyard))
         assertEquals(listOf(older), store.olderAcceptedMatch(vineyard, older.input, older.trip.paddockIds, older.trip.trackingPattern))
-        pressCalculatorStart(); compose.waitUntil(20_000) { vm.calculatorStartOutcome.value?.message != null }; tick()
+        pressCalculatorStart(retainedPattern = true); compose.waitUntil(20_000) { vm.calculatorStartOutcome.value?.message != null }; tick()
         assertTrue("Expected older inspection: ${vm.calculatorStartOutcome.value}", vm.calculatorStartOutcome.value!!.inspectionTripIds.contains(older.trip.id))
         // The production inspection includes a heading and a return-path button with this copy.
         compose.onNode(hasText("Inspect retained Start") and hasClickAction()).assertExists()

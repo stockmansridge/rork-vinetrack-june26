@@ -92,6 +92,7 @@ struct SprayCalculatorView: View {
     // Trip setup
     @State private var numberOfFansJets: String = ""
     @State private var trackingPatternChoice: TrackingPattern = .freeDrive
+    @State private var hasChosenTrackingPattern = false
     /// Selected start path across the multi-block selection. Path X.5 sits
     /// between rows X and X+1; defaults snap to the first available path in
     /// `clampStartPath()` whenever the paddock selection changes.
@@ -518,7 +519,7 @@ struct SprayCalculatorView: View {
     private var qualifiedCandidates: [TripOccurrencePlanner.Candidate] { TripOccurrencePlanner.candidates(orderedSelectedPaddocks) }
     private var selectedCandidate: TripOccurrencePlanner.Candidate? { qualifiedCandidates.first { $0.id == startCandidateKey } ?? qualifiedCandidates.first }
     private var plannedCandidates: [TripOccurrencePlanner.Candidate] {
-        TripOccurrencePlanner.plan(qualifiedCandidates, pattern: trackingPatternChoice, startKey: selectedCandidate?.id, higherFirst: directionHigherFirst)
+        hasChosenTrackingPattern ? TripOccurrencePlanner.plan(qualifiedCandidates, pattern: trackingPatternChoice, startKey: selectedCandidate?.id, higherFirst: directionHigherFirst) : []
     }
     private var pathSequencePreview: [Double] { plannedCandidates.map(\.label) }
 
@@ -2340,7 +2341,10 @@ struct SprayCalculatorView: View {
             }
 
             // Start Path + Sequence Direction — matches Maintenance Trip.
-            if hasAnyRowGeometry, trackingPatternChoice != .freeDrive {
+            if !hasChosenTrackingPattern {
+                Text("Select a tracking pattern, including Free Drive when no planned route is needed.")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            } else if hasAnyRowGeometry, trackingPatternChoice != .freeDrive {
                 mixStartPathSection
                 mixProposedSequenceSection
             } else if trackingPatternChoice == .freeDrive {
@@ -2506,10 +2510,11 @@ struct SprayCalculatorView: View {
 
     /// Single pattern selection card matching `StartTripSheet.patternRow`.
     private func mixPatternRow(pattern: TrackingPattern) -> some View {
-        let isSelected = trackingPatternChoice == pattern
+        let isSelected = hasChosenTrackingPattern && trackingPatternChoice == pattern
         return Button {
             withAnimation(.snappy(duration: 0.2)) {
                 trackingPatternChoice = pattern
+                hasChosenTrackingPattern = true
             }
         } label: {
             HStack(spacing: 14) {
@@ -3126,7 +3131,7 @@ struct SprayCalculatorView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(VineyardTheme.olive)
-                        .disabled(isStartingJob || calculatorOperationalBlocker != nil || enteredInitialActuals == nil || !SprayStartRateReview.isReviewable(review.tanks) || !validStartEngineHours)
+                        .disabled(isStartingJob || !hasChosenTrackingPattern || calculatorOperationalBlocker != nil || enteredInitialActuals == nil || !SprayStartRateReview.isReviewable(review.tanks) || !validStartEngineHours)
                         .accessibilityIdentifier("spray.startTrip")
                         if let blocker = calculatorOperationalBlocker {
                             Text(blocker).font(.caption).foregroundStyle(.orange)
@@ -4658,6 +4663,10 @@ struct SprayCalculatorView: View {
     }
 
     private func confirmAndStartJob() async {
+        guard hasChosenTrackingPattern else {
+            errorMessage = "Select a tracking pattern before starting."
+            return
+        }
         if let blocker = flow.firstBlocker { errorMessage = blocker.message; return }
         if let blocker = calculatorOperationalBlocker { errorMessage = blocker; return }
         guard formIsValid, !isStartingJob else { return }

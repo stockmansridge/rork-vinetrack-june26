@@ -125,7 +125,7 @@ final class SprayTankActualStore {
         guard draft.amounts.isValid(for: draft.tank) else { throw SprayInitialTankError.invalidAmounts }
         let retained = initialMixDrafts.filter { $0.tripId == draft.tripId }
         if !retained.isEmpty {
-            guard retained.count == 1, retained.first == draft else { throw SprayInitialTankError.retainedMixConflict }
+            guard retained.count == 1, retained.first?.matchesPersistedHandoff(draft) == true else { throw SprayInitialTankError.retainedMixConflict }
             return
         }
         let next = initialMixDrafts + [draft]
@@ -142,8 +142,8 @@ final class SprayTankActualStore {
         guard draft.isRecorded(in: records, trip: trip) else { throw SprayInitialTankError.actualNotRecorded }
         let retained = initialMixDrafts.filter { $0.tripId == draft.tripId }
         guard !retained.isEmpty else { return }
-        guard retained.count == 1, retained.first == draft else { throw SprayInitialTankError.retainedMixConflict }
-        let next = initialMixDrafts.filter { $0 != draft }
+        guard retained.count == 1, retained.first?.matchesPersistedHandoff(draft) == true else { throw SprayInitialTankError.retainedMixConflict }
+        let next = initialMixDrafts.filter { !$0.matchesPersistedHandoff(draft) }
         try persistence.saveOrThrow(
             SprayTankActualCache(records: records, pendingIds: pendingIds, initialMixDrafts: next),
             key: Self.persistenceKey

@@ -1,0 +1,250 @@
+{
+  "startingManagedRevision": "2e4e539c8cdd5484d5d6a34a35414543203618ae",
+  "prHead": "7c344904de0c8b6c636b17935a5c77c04e84497a",
+  "productionCheckpoint": "43446a0ff85dac5d0a19ff9b35e2473fe765cf12",
+  "excluded": {
+    ".github/workflows/incident-source-review.yml": "Branch-only self-committing/pushing workflow and synthetic CI config; not appropriate for managed source or release validation."
+  },
+  "method": "All deltas dry-run with fuzz zero before mutation; additions absent-only; no baseline replacement.",
+  "changes": [
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayFieldLayoutAndroidTest.kt",
+      "beforeSha256": "6322cf589af6e62cfa2029680fbe0fb7833fc0f419e9ca9eab407a20c20789b4",
+      "afterSha256": "763062414d51aba504e35fcbd196452f0499a229e749f2c3916e3e18d2947830",
+      "prSnapshotSha256": "763062414d51aba504e35fcbd196452f0499a229e749f2c3916e3e18d2947830",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/DomainCacheRecoveryAndroidTest.kt",
+      "beforeSha256": "11fd6a38005b4f282f2aa1ed3022b23fde625beada5acc8f69007f84a857217a",
+      "afterSha256": "970ee6e6d3b213d70a7506430e4b6122336c9d7bc491724b367fb3fd0a599e99",
+      "prSnapshotSha256": "970ee6e6d3b213d70a7506430e4b6122336c9d7bc491724b367fb3fd0a599e99",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AccountTransitionEvidence.kt",
+      "beforeSha256": "01572b258bcf3ccde0b0dede1b378e6c9164259ae4d0c7682bfd681f47106a82",
+      "afterSha256": "5cdcb58f72f8a396e1e2a25709bfb4ad34adee69ec9b01abc6b32e3f73d49f8e",
+      "prSnapshotSha256": "5cdcb58f72f8a396e1e2a25709bfb4ad34adee69ec9b01abc6b32e3f73d49f8e",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AuthRecoveryRepository.kt",
+      "beforeSha256": "fac43dadb3a96012012fb67d565c7099963fb4245be4266be52a2f77522f4ba2",
+      "afterSha256": "6a2e9daa547cd70c5cd9f9f2c78ca9aa89bfac2da95c5acd91019def7f7d46ad",
+      "prSnapshotSha256": "6a2e9daa547cd70c5cd9f9f2c78ca9aa89bfac2da95c5acd91019def7f7d46ad",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/CleanExitCacheContract.kt",
+      "beforeSha256": "459b4f06ddf9b0660c1a07b2aa1b8c142affe663013362458cffeb902cd71728",
+      "afterSha256": "c305073c79bb9e658dc3e46d7f8893ce2cc581ddecda24ba7ebd2278c49dc26a",
+      "prSnapshotSha256": "c305073c79bb9e658dc3e46d7f8893ce2cc581ddecda24ba7ebd2278c49dc26a",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/PruningRecoveryVerifier.kt",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "cc205a01fc54bd12929031e08fefc793e9f0316f6a45004f5244fdab9f97ef87",
+      "prSnapshotSha256": "cc205a01fc54bd12929031e08fefc793e9f0316f6a45004f5244fdab9f97ef87",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/SessionStore.kt",
+      "beforeSha256": "aba1e5dc95d21d41ea7df7c15f8f87a204d268cfd4114c6f4fc7d6767de21920",
+      "afterSha256": "1dc64da083a762d31b3d8a401f4e7053e8ac7b59a36a8a3997e10f76cbbbd0b8",
+      "prSnapshotSha256": "1dc64da083a762d31b3d8a401f4e7053e8ac7b59a36a8a3997e10f76cbbbd0b8",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayGuidedComponents.kt",
+      "beforeSha256": "cb35839f4fce2068485c37b1f3e6427b9b5bdbe84f524af6c5a13e6901026e6b",
+      "afterSha256": "9ce5d42bdaf2d5de34fdf903b44271e82bd66b78c6ec3422059a719458864736",
+      "prSnapshotSha256": "9ce5d42bdaf2d5de34fdf903b44271e82bd66b78c6ec3422059a719458864736",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt",
+      "beforeSha256": "d13c24157015c4e31a337402af13f2884b423dc0eced4b735755a3d11eb6489f",
+      "afterSha256": "8eb48f63b675073e63fe7b3b72ca348d5bc3ecb5ad0b23543b98caffcc07b1a7",
+      "prSnapshotSha256": "8eb48f63b675073e63fe7b3b72ca348d5bc3ecb5ad0b23543b98caffcc07b1a7",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayStartActualFields.kt",
+      "beforeSha256": "11880bdee7c30f5cc19584bf9aa26d005d97ac28072f9bc181831668597cdb05",
+      "afterSha256": "b49d31c9250da1ef91cc9aee4be5a81f5ac98893bdb592ce05778ccb1d81ed05",
+      "prSnapshotSha256": "b49d31c9250da1ef91cc9aee4be5a81f5ac98893bdb592ce05778ccb1d81ed05",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/DomainCacheRecoveryContractTest.kt",
+      "beforeSha256": "b037981ffde9f94f417f72434288a335c5a55c2104ab3c8270be5e3833a17245",
+      "afterSha256": "b5cac2afa762f4b87ce77f9c5c6ad8ff5131811fc5c58d4daadbd6cd352dbcf9",
+      "prSnapshotSha256": "b5cac2afa762f4b87ce77f9c5c6ad8ff5131811fc5c58d4daadbd6cd352dbcf9",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/PruningRecoveryVerifierTest.kt",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "121a578315f3cc14ff2de4277d6b4cd1cfed64566e5780aa0b5491937c78cf95",
+      "prSnapshotSha256": "121a578315f3cc14ff2de4277d6b4cd1cfed64566e5780aa0b5491937c78cf95",
+      "snapshotParity": true
+    },
+    {
+      "path": "docs/reviews/ios-pending-trip-sync-status-20261101.md",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "28d52aafa471c6caa5bb1ec9c0875f079544945d26b1ba2804411fefd22aa528",
+      "prSnapshotSha256": "28d52aafa471c6caa5bb1ec9c0875f079544945d26b1ba2804411fefd22aa528",
+      "snapshotParity": true
+    },
+    {
+      "path": "docs/reviews/spray-start-yield-recovery-sync-20261101.md",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "8a491c0b855b6d66c3e5aa7a006c8191bcc81bf516dd6b4a68bb4e3c3bbca325",
+      "prSnapshotSha256": "8a491c0b855b6d66c3e5aa7a006c8191bcc81bf516dd6b4a68bb4e3c3bbca325",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrack/App/BackendSettingsView.swift",
+      "beforeSha256": "6d0dbdb836a6e8fb8d6c763296cee7e025cf12872e0f02ed3ad83e233a8f6452",
+      "afterSha256": "df061304c5b0ba2e24d29ad60bd706bf25652b6ad48d76e57647536705379341",
+      "prSnapshotSha256": "df061304c5b0ba2e24d29ad60bd706bf25652b6ad48d76e57647536705379341",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrack/App/ChemicalIntelligence/ChemicalLineSnapshot.swift",
+      "beforeSha256": "9274b9c499715d333f47f6370e6a328edd4744a435c3c5326ca3930d9e31eeae",
+      "afterSha256": "761581bdf84456adb50438ae49062b0e28837579f95d034154a9fb3597a942dc",
+      "prSnapshotSha256": "761581bdf84456adb50438ae49062b0e28837579f95d034154a9fb3597a942dc",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrack/App/SprayCalculatorView.swift",
+      "beforeSha256": "a087e388008ca1bd6d62c04fce3ab08dfde43ebd91d3fa80d201b99028424204",
+      "afterSha256": "a9a95f82c6a341c27c6edad377cd89433b8f9b018bf59879e5ea18eae201f6f0",
+      "prSnapshotSha256": "a9a95f82c6a341c27c6edad377cd89433b8f9b018bf59879e5ea18eae201f6f0",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrack/App/SprayStartRateReview.swift",
+      "beforeSha256": "4cbf1061301e99b22b1d2456420c92a0c0dc4a0a47f64c69741fbf9b4bf65a70",
+      "afterSha256": "bb8bac6ea6b8b334cb13049d6b90265b1cb48688525861959f1d5cdac644b70a",
+      "prSnapshotSha256": "bb8bac6ea6b8b334cb13049d6b90265b1cb48688525861959f1d5cdac644b70a",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/SprayTankActualStore.swift",
+      "beforeSha256": "df8fdc4fe98529d1e4e5a2e88b4b1581f78a0dae509ee6f972ca6c49ddf4275d",
+      "afterSha256": "ffe614ca27cc63b2935744db16beb995820670487b5b96bec0151786fcb45ace",
+      "prSnapshotSha256": "ffe614ca27cc63b2935744db16beb995820670487b5b96bec0151786fcb45ace",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/SyncQueueDiagnostics.swift",
+      "beforeSha256": "a8617a1041922d6e25338a6e0c56d2d94a4bee9f87eac1591f265ab7eb0a59e8",
+      "afterSha256": "e6e73a00ce432200a00523186ddf26e5e85a1f36c8872d72b097999408110b5c",
+      "prSnapshotSha256": "e6e73a00ce432200a00523186ddf26e5e85a1f36c8872d72b097999408110b5c",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift",
+      "beforeSha256": "93857e0596af7ef52071e2f713edae3abc2dd2798f789e28053cd94dc1a04663",
+      "afterSha256": "3b1ea228dc8c9e9918fdfa3fa7f978a1a588663aa51e8df4c9c53324363b236e",
+      "prSnapshotSha256": "3b1ea228dc8c9e9918fdfa3fa7f978a1a588663aa51e8df4c9c53324363b236e",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/TripSyncService.swift",
+      "beforeSha256": "1f0c04dc274b33d5e6e3d86fb0730e11458a19d6e5c61f963ba9c6b5325540c6",
+      "afterSha256": "255bdb79f81b3fb6fdf9aafb39353372929fea88f22bb6290b43e885ae8f3222",
+      "prSnapshotSha256": "255bdb79f81b3fb6fdf9aafb39353372929fea88f22bb6290b43e885ae8f3222",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Models/SprayInitialTankAmounts.swift",
+      "beforeSha256": "fc77899900ffd2c9d4eadfbc9a852f438a1aacc4637b4d34cc2dae4d450b52a3",
+      "afterSha256": "2dcbd3d1814e99cf3a609c904644a74cc080c1ba7beaca5a3f56d97dc814882d",
+      "prSnapshotSha256": "2dcbd3d1814e99cf3a609c904644a74cc080c1ba7beaca5a3f56d97dc814882d",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Services/TripTrackingService.swift",
+      "beforeSha256": "8d7668a5023cd54860c60278983ae54ba723f0103e7cf878d48ffc1067137b13",
+      "afterSha256": "d313f7df2924d0b2dfb4948607548360eb3c943c4c42a65eb28e2cf870d0a80c",
+      "prSnapshotSha256": "d313f7df2924d0b2dfb4948607548360eb3c943c4c42a65eb28e2cf870d0a80c",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Yield/FieldInfoButton.swift",
+      "beforeSha256": "4e1daae7f7f27734a9d8cf4463ccd419cbd89195c0f1d9001f75d1e849401bce",
+      "afterSha256": "4ad96ae9c4d52d0c0f8e4d06bf3252f2b4e3c653e4f871c278e7f17138ec91b7",
+      "prSnapshotSha256": "4ad96ae9c4d52d0c0f8e4d06bf3252f2b4e3c653e4f871c278e7f17138ec91b7",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrackTests/SprayInitialTankAmountsTests.swift",
+      "beforeSha256": "474e926b8853982c38bbe16e7a49619f911d7fbe37430b98e41a6d6189c4ecd6",
+      "afterSha256": "550d8f0f726dbda03ff654ded3c66c8fe6f55cf3ea1048e1409389ef607294cf",
+      "prSnapshotSha256": "550d8f0f726dbda03ff654ded3c66c8fe6f55cf3ea1048e1409389ef607294cf",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrackTests/SyncQueueRegressionTests.swift",
+      "beforeSha256": "dec0abaf702b82c40f8b89c50b50346fe83b450b383c3bdd9911061d463de2a2",
+      "afterSha256": "1623be999db3e0a68b1938358572e7f2b31762c2a99b0abe76550a02f8822451",
+      "prSnapshotSha256": "1623be999db3e0a68b1938358572e7f2b31762c2a99b0abe76550a02f8822451",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrackTests/TripDeletionRecoveryTests.swift",
+      "beforeSha256": "ff378c203b1eee11ba8bc2fb5b10ac78cf23dfda112dde16c3f5c3873b1d9b3e",
+      "afterSha256": "86d45a905d17c3d879d8f217aab3c03aba2e39ed6ee552f8d48640187ef19b34",
+      "prSnapshotSha256": "86d45a905d17c3d879d8f217aab3c03aba2e39ed6ee552f8d48640187ef19b34",
+      "snapshotParity": true
+    },
+    {
+      "path": "ios/VineTrackTests/TripOccurrenceJournalTests.swift",
+      "beforeSha256": "39a5ecb34a0c401f0992d5493f9a6574f6aeeede66807e54850b1ff7815e3407",
+      "afterSha256": "cf8f070c24715c51278c8e9233d11907d3ca8828d4bb1284c2ab95d993a2c41c",
+      "prSnapshotSha256": "cf8f070c24715c51278c8e9233d11907d3ca8828d4bb1284c2ab95d993a2c41c",
+      "snapshotParity": true
+    },
+    {
+      "path": "scripts/combined-recovery-spray-tests.init.gradle",
+      "beforeSha256": "b32f435e7d83048e5a51f54b50822dec4766cacb7c626769d47479515c469206",
+      "afterSha256": "1e570ef06aae8b3268123c2525252ada122e30e4657061f61affde1167ccf06d",
+      "prSnapshotSha256": "1e570ef06aae8b3268123c2525252ada122e30e4657061f61affde1167ccf06d",
+      "snapshotParity": true
+    },
+    {
+      "path": "scripts/test-spray-review-actuals-host.py",
+      "beforeSha256": "89a690e32b29387c7645151d86ab178ea6df04ae7a06c22b5769e4e43053f644",
+      "afterSha256": "0d5b3ebb09b76b740ec4e7ce5036126a3c5400ce3d2c0e0c67399b7d5e1aabd0",
+      "prSnapshotSha256": "0d5b3ebb09b76b740ec4e7ce5036126a3c5400ce3d2c0e0c67399b7d5e1aabd0",
+      "snapshotParity": true
+    },
+    {
+      "path": "scripts/test-spray-snapshot-roundtrip.py",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "d14f9a40463c3df43ac6ac9a474325a7f8c44c56d7690cc04082d978fdd888d3",
+      "prSnapshotSha256": "d14f9a40463c3df43ac6ac9a474325a7f8c44c56d7690cc04082d978fdd888d3",
+      "snapshotParity": true
+    },
+    {
+      "path": "scripts/test-trip-occurrence-authority.py",
+      "beforeSha256": "a751c720f82851d46bdea61fc103b32b1c02df8be8ff3eafa1920c59df94bbf8",
+      "afterSha256": "3b2c9e1d151bfd9b86c04846bcd8117ddc6212d100817a5bed89cbb56eebb1db",
+      "prSnapshotSha256": "3b2c9e1d151bfd9b86c04846bcd8117ddc6212d100817a5bed89cbb56eebb1db",
+      "snapshotParity": true
+    },
+    {
+      "path": "sql/occurrence_setup_uuid_case_identity.sql",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "a4b7cd176c228bc3e3e061d4bff4f00552a859764b2e4c60926b0dcd46490703",
+      "prSnapshotSha256": "a4b7cd176c228bc3e3e061d4bff4f00552a859764b2e4c60926b0dcd46490703",
+      "snapshotParity": true
+    }
+  ],
+  "protectedIosConfigSha256": "b7a7f3cdefd26ae5304d25ec293d7fa567bf62339b3ad9e35011097b9a3efa51"
+}

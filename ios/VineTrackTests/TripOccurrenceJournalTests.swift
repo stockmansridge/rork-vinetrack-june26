@@ -31,6 +31,38 @@ final class TripOccurrenceJournalTests: XCTestCase {
     }
     private func directory() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString) }
 
+    @MainActor func testReadOnlyInspectionDoesNotCreateMissingStoreOrChangeEvidence() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let absent = try TripOccurrenceJournal(scope: scope, directory: dir, createDirectoryIfMissing: false)
+        XCTAssertNil(try absent.load())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path))
+        let original = try journal(dir)
+        _ = try original.setStatus(a, status: "done")
+        let file = dir.appendingPathComponent(scope.ownerId).appendingPathComponent(scope.vineyardId).appendingPathComponent(scope.tripId + ".json")
+        let before = try Data(contentsOf: file)
+        let inspector = try TripOccurrenceJournal(scope: scope, directory: dir, createDirectoryIfMissing: false)
+        let state = try XCTUnwrap(inspector.load())
+        XCTAssertEqual(TripOccurrenceJournal.syncDiagnosticReason(state), "OCCURRENCE_ACTION_PENDING")
+        XCTAssertEqual(try Data(contentsOf: file), before)
+    }
+
+    @MainActor func testSyncDiagnosticDistinguishesRetainedCreateActivationAndMetadata() throws {
+        let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let j = try TripOccurrenceJournal(scope: scope, directory: dir)
+        let raw = try fixture()
+        let create = try j.prepareCreation(trip: .object(["id": .string(scope.tripId),
+            "vineyard_id": .string(scope.vineyardId), "is_active": .bool(false)]), coverage: raw)
+        let activation = try j.activate(.object(["startTime": .string("2026-11-01T04:48:00Z")]))
+        XCTAssertEqual(TripOccurrenceJournal.syncDiagnosticReason(try XCTUnwrap(j.load())), "OCCURRENCE_CREATE_PENDING")
+        try j.acknowledge(ack(create))
+        XCTAssertEqual(TripOccurrenceJournal.syncDiagnosticReason(try XCTUnwrap(j.load())), "OCCURRENCE_ACTIVATION_PENDING")
+        try j.acknowledge(ack(activation))
+        XCTAssertEqual(TripOccurrenceJournal.syncDiagnosticReason(try XCTUnwrap(j.load())), "TRIP_METADATA_UPLOAD_PENDING")
+        var held = try XCTUnwrap(j.load())
+        held.heldReason = "private-value-must-not-be-copied"
+        XCTAssertEqual(TripOccurrenceJournal.syncDiagnosticReason(held), "OCCURRENCE_RECONCILIATION_HELD")
+    }
+
     @MainActor func testEntitlementHoldPreservesJournalBytesButAllowsRealReceiptAndOriginalResume() throws {
         let dir = directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let authority = VineyardWriteAuthority(defaults: UserDefaults(suiteName: UUID().uuidString)!)
@@ -392,14 +424,14 @@ final class TripOccurrenceJournalTests: XCTestCase {
         let dir=directory(); defer { try? FileManager.default.removeItem(at: dir) }; let j=try journal(dir)
         try j.setStatus(a,status:"done"); XCTAssertEqual(try j.load()?.projected[occurrence:"extension"],try fixture()[occurrence:"extension"])
     }
-    @MainActor func testBackendUpgradeRetriesOriginalHeldCreateWithoutChangingFrozenIDs() throws {
+    @MainActor func testBackendUpgradeRetriesUppercaseOriginalHeldCreateWithoutChangingFrozenIDs() throws {
         let dir = directory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let journal = try TripOccurrenceJournal(scope: scope, directory: dir)
         let frozen = try fixture()
         let trip: TripOccurrenceCoverage.JSON = .object([
-            "id": .string(scope.tripId),
-            "vineyard_id": .string(scope.vineyardId),
+            "id": .string(scope.tripId.uppercased()),
+            "vineyard_id": .string(scope.vineyardId.uppercased()),
             "is_active": .bool(false)
         ])
         let create = try journal.prepareCreation(trip: trip, coverage: frozen)

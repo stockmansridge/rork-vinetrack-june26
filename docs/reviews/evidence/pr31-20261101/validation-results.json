@@ -1,0 +1,51 @@
+{
+  "date": "2026-11-01",
+  "scope": "PR31 integration and separately identified safety/acceptance corrections",
+  "evidence_policy": "Native successes are explicit tool-response transcriptions, not reconstructed raw logs or per-test discovery claims. Do not sum overlapping selections.",
+  "android_jvm_final": {
+    "passed": 93, "failed": 0, "errors": 0, "skipped": 0,
+    "raw_evidence": "jvm-final/combined-jvm.log and nine TEST-*.xml files",
+    "suites": {"DomainCacheRecoveryContractTest": 21, "PruningRecoveryVerifierTest": 13, "SprayStartActualAmountsTest": 12, "SprayActualInputDraftStoreTest": 5, "StartTankCommitCoordinatorTest": 16, "SprayTankActualTest": 7, "SprayOperationalBundleTest": 6, "SprayReportPayloadV1Test": 4, "GoogleMapsRuntimeFilesTest": 9}
+  },
+  "android_native_final": {
+    "passed": 202, "failed": 0, "skipped": 0, "durationSeconds": 176,
+    "basis": "Prior tool response retained in established conversation context; raw successful log unavailable. Checked mutable temporary log still contains preceding 200-pass/2-failure run and was not relabeled.",
+    "selection": ["com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest", "com.rork.vinetrack.data.auth.AuthRetentionAndroidTest", "com.rork.vinetrack.data.auth.GoogleMapsRecoveryAndroidTest", "com.rork.vinetrack.data.auth.ProfileInstallerRecoveryAndroidTest", "com.rork.vinetrack.data.auth.RecoveryStorageInventoryAndroidTest", "com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest", "com.rork.vinetrack.data.auth.RetainedStartupConstructionTest", "com.rork.vinetrack.data.PreparedRecoveryAndroidTest", "com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest", "com.rork.vinetrack.data.SprayStartProductionAndroidTest", "com.rork.vinetrack.data.SprayFieldLayoutAndroidTest"],
+    "prior_runs_not_additive": ["Focused populated recovery: 10 passed in14s", "178 passed/21 failed", "146 passed/8 failed", "Focused diagnostics/spray: 2 passed in21s", "200 passed/2 failed", "Focused retained-pattern retries: 2 passed in34s"]
+  },
+  "ios_native_model_final": {
+    "passed": 115, "failed": 0, "durationSeconds": 52,
+    "basis": "Observed swiftTest success response after Retry error-retention production correction. Temporary log remains the failing-before regression, not successful raw evidence.",
+    "selection": ["VineTrackTests/TripDeletionRecoveryTests", "VineTrackTests/TripJournalAbsenceIntegrationTests", "VineTrackTests/SyncQueueRegressionTests", "VineTrackTests/TripOccurrenceJournalTests", "VineTrackTests/SprayInitialTankAmountsTests"],
+    "supersedes_overlapping_earlier_88_pass_selection": true
+  },
+  "ios_ui_targeted": {
+    "passed": 1, "failed": 0, "durationSeconds": 167,
+    "selection": ["VineTrackUITests/SprayEditingAcceptanceUITests/testConfiguredByAreaReviewReachesEnabledStartInSameCalculator"],
+    "covers": ["Actual water/chemical entry before explicit pattern", "Water field touch target at least44 points", "Actual contents help opens, includes zero guidance and closes", "Start disabled before explicit pattern", "Changed actual text survives route selection", "Optional concentration warning does not alter admission"],
+    "does_not_cover": ["Original device", "VoiceOver interaction or maximum Dynamic Type", "Full start/pause/resume/end", "Saved Trip pattern restore", "Live server acknowledgement", "Exact294.7L/0.70kg plan versus300L/0.75kg actual"]
+  },
+  "genuine_failing_before": [
+    {"test": "PruningRecoveryVerifierTest.activityAuditCannotBeProvenByCopyingTheLocalDraft", "passed": 0, "failed": 1, "assertion": "Local audit values must have independent server evidence", "raw_evidence": "failing-before/"},
+    {"test": "TripDeletionRecoveryTests/retryRetainsPreviousErrorUntilSyncSucceeds()", "passed": 0, "failed": 1, "assertion": "service.errorMessage nil instead of previous failure during Retry", "raw_evidence": "failing-before/ios-retry-retention.log"}
+  ],
+  "normal_builds": {
+    "android": "PASS after final Android production/test corrections; real managed configuration, prior observed runChecks response",
+    "ios": "PASS after final Retry production correction; simulator build only; device/Release not verified",
+    "asset_address_advisories": "Two existing nonblocking advisories per platform, unchanged"
+  },
+  "coverage_gaps": ["SprayTankActualQueueAndroidTest absent", "SprayOperationalBundleAndroidTest absent", "Full cross-platform saved-pattern and lifecycle acceptance incomplete", "Full combined populated layout not certified by isolated verifier fixtures"],
+  "backend_metadata": {
+    "basis": "Transcription of observed SELECT-only metadata inspector result; not a deployment receipt",
+    "project_ref": "tbafuqwruefgkbyxrxyb",
+    "connected_role": "postgres", "function_owner": "vinetrack_occurrence_writer",
+    "inherits_owner": false, "may_set_owner_role": false,
+    "definition_md5": "b0e166d78be75c8ba770b2dccfd14256",
+    "old_comparison_present": true, "repaired_comparison_present": false,
+    "security_definer": true, "function_settings": ["search_path=pg_catalog, public"],
+    "execute_acl": "{vinetrack_occurrence_writer=X/vinetrack_occurrence_writer,authenticated=X/vinetrack_occurrence_writer}",
+    "sql_mutation": false, "migration_retried": false,
+    "blocked_until": "An already-authorised function-owner deployment path is available"
+  },
+  "delivery": {"new_signed_candidate": false, "counter_changed": false, "store_upload": false, "submission_receipt": null, "original_installations_accepted": false}
+}

@@ -80,7 +80,7 @@ class ProfileInstallerRecoveryAndroidTest {
         assertEquals(owner, session.userId)
         assertEquals(filesBefore, filesSnapshot())
         assertEquals(recordsBefore, retainedSnapshot())
-        assertEquals("original-pin", DomainCacheRepository(fixture).loadPins(owner, "vineyard")!!.single().id)
+        assertEquals("original-pin", DomainCacheRepository(fixture).loadPins(owner, "33333333-3333-4333-8333-333333333333")!!.single().id)
         assertTrue(SessionStore(fixture).hasSession)
         assertFalse(SessionStore(fixture).retentionGuard.isLocked)
     }
@@ -191,8 +191,8 @@ class ProfileInstallerRecoveryAndroidTest {
     private fun populatedLockedSession(): SessionStore {
         val session = SessionStore(fixture)
         session.save("synthetic-access", "synthetic-refresh", owner, null)
-        DomainCacheRepository(fixture).savePins(owner, "vineyard", listOf(Pin("original-pin", "vineyard", createdBy = owner)))
-        assertTrue(RecoverySnapshotStore.captureBeforeMutation(fixture, "vineyard").isPreserved)
+        DomainCacheRepository(fixture).savePins(owner, "33333333-3333-4333-8333-333333333333", listOf(Pin("original-pin", "33333333-3333-4333-8333-333333333333", createdBy = owner)))
+        assertTrue(RecoverySnapshotStore.captureBeforeMutation(fixture, "33333333-3333-4333-8333-333333333333").isPreserved)
         session.clear()
         assertTrue(session.retentionGuard.isLocked)
         return session
@@ -220,8 +220,8 @@ class ProfileInstallerRecoveryAndroidTest {
         val body = when {
             request.url.encodedPath.endsWith("/token") -> "{\"access_token\":\"returning-access\",\"refresh_token\":\"returning-refresh\"}"
             request.url.encodedPath.endsWith("/user") -> "{\"id\":\"$account\"}"
-            request.url.encodedPath.endsWith("/vineyard_members") -> if (member) "[{\"vineyard_id\":\"vineyard\",\"role\":\"operator\"}]" else "[]"
-            request.url.encodedPath.endsWith("/vineyards") -> "[{\"id\":\"vineyard\"}]"
+            request.url.encodedPath.endsWith("/vineyard_members") -> if (member) "[{\"vineyard_id\":\"33333333-3333-4333-8333-333333333333\",\"role\":\"operator\"}]" else "[]"
+            request.url.encodedPath.endsWith("/vineyards") -> "[{\"id\":\"33333333-3333-4333-8333-333333333333\"}]"
             request.url.encodedPath.endsWith("/logout") -> "{}"
             else -> error("Unexpected recovery request")
         }

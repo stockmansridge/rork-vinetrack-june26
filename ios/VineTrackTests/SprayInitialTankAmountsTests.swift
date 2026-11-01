@@ -247,4 +247,35 @@ final class SprayInitialTankAmountsTests: XCTestCase {
         try reloaded.clearInitialMix(f.draft, trip: store.trips[0])
         XCTAssertTrue(reloaded.initialMixDrafts.isEmpty)
     }
+    func testRealCatalogueSnapshotSurvivesSaveReloadWithoutFalseMixConflict() throws {
+        let f = try fixture()
+        var captured = f.draft.tank
+        captured.chemicals[0].chemicalSnapshot = ChemicalLineSnapshot(
+            productName: "Solid", activityGroupCodes: ["M1"],
+            resistanceClassificationState: .classified,
+            capturedAt: Date(timeIntervalSince1970: 1_790_000_000.123456))
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+        let reloaded = try decoder.decode(SprayTank.self, from: encoder.encode(captured))
+        XCTAssertNotEqual(captured, reloaded, "Native date precision reproduces the old handoff failure")
+        XCTAssertEqual(reloaded.chemicals[0].chemicalSnapshot?.resistanceClassificationState, .classified)
+        XCTAssertTrue(SprayInitialTankAmounts.samePersistedRecipe(captured, reloaded))
+        var changed = reloaded; changed.chemicals[0].volumePerTank += 0.001
+        XCTAssertFalse(SprayInitialTankAmounts.samePersistedRecipe(captured, changed))
+        changed = reloaded; changed.chemicals[0].chemicalSnapshot?.resistanceClassificationState = .unresolved
+        XCTAssertFalse(SprayInitialTankAmounts.samePersistedRecipe(captured, changed))
+        let original = SprayInitialTankDraft(ownerId: f.draft.ownerId, vineyardId: f.draft.vineyardId,
+            tripId: f.draft.tripId, sprayRecordId: f.draft.sprayRecordId, tank: captured, amounts: f.draft.amounts)
+        let saved = SprayInitialTankDraft(ownerId: f.draft.ownerId, vineyardId: f.draft.vineyardId,
+            tripId: f.draft.tripId, sprayRecordId: f.draft.sprayRecordId, tank: reloaded, amounts: f.draft.amounts)
+        XCTAssertTrue(original.matchesPersistedHandoff(saved))
+        let (directory, disk) = try persistence(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = SprayTankActualStore(persistence: disk)
+        try store.stageInitialMix(original)
+        try store.stageInitialMix(saved)
+        let reopened = SprayTankActualStore(persistence: disk)
+        try reopened.stageInitialMix(original)
+        XCTAssertEqual(reopened.initialMixDrafts.count, 1)
+    }
+
 }

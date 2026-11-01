@@ -1298,7 +1298,7 @@ final class TripTrackingService {
             let expected = SprayInitialTankDraft(ownerId: owner, vineyardId: trip.vineyardId,
                 tripId: trip.id, sprayRecordId: record.id, tank: tank, amounts: expectedAmounts)
             let retained = SprayTankActualStore.shared.initialMix(tripId: trip.id)
-            guard retained == expected || (retained == nil && expected.isRecorded(
+            guard retained?.matchesPersistedHandoff(expected) == true || (retained == nil && expected.isRecorded(
                 in: SprayTankActualStore.shared.records, trip: trip)) else {
                 errorMessage = "The entered actual mix has not been saved for this exact tank. Open the original trip to recover it."
                 return false
@@ -1319,8 +1319,8 @@ final class TripTrackingService {
               trip.vineyardId == draft.vineyardId,
               let record = TankMixPresentation.linkedRecord(for: trip.id, in: store.sprayRecords),
               record.id == draft.sprayRecordId,
-              SprayInitialTankAmounts.firstTank(in: record.tanks) == draft.tank else {
-            errorMessage = "The original actual tank mix is retained. Reopen its original account, vineyard and spray."
+              SprayInitialTankAmounts.samePersistedRecipe(SprayInitialTankAmounts.firstTank(in: record.tanks), draft.tank) else {
+            errorMessage = "The entered tank mix is retained. The active trip, saved recipe or account context no longer matches; reopen the original saved spray. No amounts have been discarded."
             return false
         }
         do {
@@ -1332,7 +1332,7 @@ final class TripTrackingService {
                 return true
             }
             guard let pending = pendingTankStart(), pending.record.id == draft.sprayRecordId,
-                  pending.tank == draft.tank,
+                  SprayInitialTankAmounts.samePersistedRecipe(pending.tank, draft.tank),
                   confirmAndStartTank(pending: pending, actualWaterLitres: draft.amounts.waterLitres,
                     actualChemicalBaseAmounts: draft.amounts.chemicalBaseAmounts),
                   let committed = activeTrip,
@@ -1436,7 +1436,7 @@ final class TripTrackingService {
         }
         if let retained = SprayTankActualStore.shared.initialMix(tripId: trip.id) {
             guard retained.ownerId == userId, retained.sprayRecordId == pending.record.id,
-                  retained.tank == plannedTank,
+                  SprayInitialTankAmounts.samePersistedRecipe(retained.tank, plannedTank),
                   retained.amounts.waterLitres == actualWaterLitres,
                   retained.amounts.chemicalBaseAmounts == actualChemicalBaseAmounts else {
                 errorMessage = "The original entered tank amounts are retained. Retry that saved mix."

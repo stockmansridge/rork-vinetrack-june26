@@ -1429,11 +1429,8 @@ struct SyncSettingsView: View {
                                     .foregroundStyle(.orange)
                             }
                             Button {
-                                issueCenter.clearIssues(
-                                    issueCenter.issues.values
-                                        .filter { $0.entity == summary.entity }
-                                        .map(\.id)
-                                )
+                                // Requesting a retry is not an upload acknowledgement. Keep the
+                                // last failure visible until the original record really succeeds.
                                 syncCenter.requestManualSync()
                             } label: {
                                 Label("Retry \(summary.entity)", systemImage: "arrow.clockwise")
@@ -1455,6 +1452,7 @@ struct SyncSettingsView: View {
 
                     Button {
                         UIPasteboard.general.string = issueCenter.diagnosticsText()
+                            + "\n\n" + tripSync.pendingUploadDiagnostics
                         didCopyDiagnostics = true
                     } label: {
                         Label(didCopyDiagnostics ? "Diagnostics copied" : "Copy diagnostics", systemImage: didCopyDiagnostics ? "checkmark" : "doc.on.doc")

@@ -10,6 +10,18 @@ import Foundation
 @MainActor
 struct SyncQueueRegressionTests {
 
+    @Test("A queued Trip without an HTTP failure is not reported as synced")
+    func pendingTripWithoutFailureExplainsReconciliation() {
+        SyncIssueCenter.shared.clearAll()
+        defer { SyncIssueCenter.shared.clearAll() }
+        SyncIssueCenter.shared.notePending(entity: "Trips", count: 1)
+        let summary = SyncIssueCenter.shared.summaries.first
+        #expect(summary?.waiting == 1)
+        #expect(summary?.permanent == 0 && summary?.retryable == 0)
+        #expect(summary?.reason.contains("reconciliation") == true)
+        #expect(SyncIssueCenter.shared.diagnosticsText().contains("Trips=1"))
+    }
+
     // MARK: - Fixtures
 
     /// Minimal stand-in for a real upsert payload.

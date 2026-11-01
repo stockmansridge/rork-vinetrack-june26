@@ -1,33 +1,35 @@
 import SwiftUI
 
-/// Small, unobtrusive inline help affordance: an info glyph that shows a
-/// short explanation in a native popover (arrow-anchored on iPhone too).
+/// Help stays readable at larger text sizes; compact devices use a scrollable sheet.
 struct FieldInfoButton: View {
     let title: String
     let message: String
     @State private var isPresented = false
 
     var body: some View {
-        Button {
-            isPresented = true
-        } label: {
+        Button { isPresented = true } label: {
             Image(systemName: "info.circle")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
         .popover(isPresented: $isPresented) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                    Text(message).font(.body).fixedSize(horizontal: false, vertical: true)
+                    Button("Done") { isPresented = false }
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding()
-            .frame(maxWidth: 300, alignment: .leading)
-            .presentationCompactAdaptation(.popover)
+            .frame(idealWidth: 340, idealHeight: 360)
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationCompactAdaptation(.sheet)
         }
         .accessibilityLabel("\(title) help")
     }

@@ -15,11 +15,11 @@ import uuid
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-BIN = Path('/usr/lib/postgresql/17/bin')
+BIN = Path(os.environ.get('PG_BIN', '/usr/lib/postgresql/17/bin'))
 ACTOR = '10000000-0000-4000-8000-000000000001'
 OTHER_ACTOR = '10000000-0000-4000-8000-000000000002'
 VINEYARD = '20000000-0000-4000-8000-000000000001'
-BLOCK = '30000000-0000-4000-8000-000000000001'
+BLOCK = '30abcdef-0000-4000-8000-000000000001'
 BLOCK_Y = '30000000-0000-4000-8000-000000000002'
 ENV = {k: v for k, v in os.environ.items() if not k.startswith('PG')}
 SOCKET = ''
@@ -406,6 +406,20 @@ class AuthorityTests(unittest.TestCase):
         finally:
             sql('drop trigger fixture_fail on public.trip_occurrence_operations; drop function public.fixture_fail_ledger();',role='super')
 
+    def test_ios_uppercase_selected_block_ids_preserve_request_and_idempotency(self):
+        d = document(); trip = str(uuid.uuid4()); op = str(uuid.uuid4())
+        fields = {'id':trip.upper(), 'vineyard_id':VINEYARD.upper(),
+                  'paddock_id':BLOCK.upper(), 'paddock_ids':[BLOCK.upper()], 'is_active':False}
+        request = f"select public.create_trip_with_occurrences_v1('{op}',{literal(fields)},{literal(d)});"
+        accepted = sql(request)
+        self.assertEqual(sql(request), accepted)
+        self.assertEqual(sql(f"select request->'trip' from public.trip_occurrence_operations where operation_id='{op}';"), fields)
+        self.assertEqual(sql(f"select occurrence_coverage from public.trips where id='{trip}';"), d)
+
+    def test_wrong_selected_block_still_denied_after_case_repair(self):
+        fields = {'id':str(uuid.uuid4()), 'vineyard_id':VINEYARD, 'paddock_ids':[BLOCK_Y.upper()]}
+        self.assert_error(f"select public.create_trip_with_occurrences_v1('{uuid.uuid4()}',{literal(fields)},{literal(document())});", 'OCCURRENCE_SETUP_SCOPE_CONFLICT')
+
     def test_setup_links_cannot_cross_vineyards(self):
         fields={'id':str(uuid.uuid4()),'vineyard_id':VINEYARD,'operator_user_id':OTHER_ACTOR}
         self.assert_error(f"select public.create_trip_with_occurrences_v1('{uuid.uuid4()}',{literal(fields)},{literal(document())});",'OCCURRENCE_SETUP_SCOPE_CONFLICT')
@@ -494,8 +508,16 @@ if __name__ == '__main__':
         subprocess.run([str(BIN/'initdb'),'-D',str(data),'-A','trust','--no-locale'],env=ENV,check=True,capture_output=True)
         subprocess.run([str(BIN/'pg_ctl'),'-D',str(data),'-l',str(log),'-o',f"-k {work} -p 55439 -c listen_addresses=''",'-w','start'],env=ENV,check=True,capture_output=True)
         try:
-            for file in ['sql/tests/276_trip_occurrence_bootstrap.sql','sql/276_trip_occurrence_authority_v1.sql','sql/277_trip_occurrence_reports_v2.sql','sql/278_trip_occurrence_recovery_v1.sql']:
-                run=subprocess.run([str(BIN/'psql'),'-X','-v','ON_ERROR_STOP=1','-h',work,'-p','55439','-d','postgres','-f',str(ROOT/file)],env=ENV,text=True,capture_output=True,timeout=30)
+            for file in ['sql/tests/276_trip_occurrence_bootstrap.sql','sql/276_trip_occurrence_authority_v1.sql','sql/277_trip_occurrence_reports_v2.sql','sql/278_trip_occurrence_recovery_v1.sql','sql/occurrence_setup_uuid_case_identity.sql']:
+                source = ROOT/file
+                if file.endswith('_bootstrap.sql'):
+                    # Keep psql meta-command semantics and resolve this fixture's
+                    # include from its original directory, not the temp directory.
+                    fixture = source.read_text().replace('30000000-0000-4000-8000-000000000001', BLOCK)
+                    fixture = fixture.replace(r"\ir ../006_trips_sync.sql", "\\ir " + str(ROOT/'sql/006_trips_sync.sql'))
+                    source = Path(work)/'bootstrap.sql'
+                    source.write_text(fixture)
+                run=subprocess.run([str(BIN/'psql'),'-X','-v','ON_ERROR_STOP=1','-h',work,'-p','55439','-d','postgres','-f',str(source)],env=ENV,text=True,capture_output=True,timeout=30)
                 if run.returncode:
                     raise RuntimeError(run.stderr)
             suite=unittest.defaultTestLoader.loadTestsFromTestCase(AuthorityTests)

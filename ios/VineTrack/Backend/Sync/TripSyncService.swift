@@ -171,8 +171,59 @@ final class TripSyncService {
             let deletes = intents.map { "delete trip=\($0.trip) account=\($0.scope?.account.uuidString ?? "unresolved") vineyard=\($0.scope?.vineyard.uuidString ?? "unresolved") revision=\($0.revision) creation=\($0.creationOutcome) review=\($0.reviewReason ?? "none") acknowledgement=\($0.acknowledgement ?? "none")" }
             let retained = retainedState
             let sprays = retained.sprays.map { "held spray record=\($0.record) trip=\($0.trip) review=\($0.reason)" }
-            return (["Current-scope spray jobs held locally: \(retained.sprays.count)", retained.inspectionError ?? "Retained inspection complete"] + sprays + ["Trip uploads (separate from deletion): \(uploads.count)"] + uploads + deletes).joined(separator: "\n")
+            var lines: [String] = [
+                "Current-scope spray jobs held locally: \(retained.sprays.count)",
+                retained.inspectionError ?? "Retained inspection complete"
+            ]
+            lines.append(contentsOf: sprays)
+            lines.append("Trip uploads (separate from deletion): \(uploads.count)")
+            lines.append(contentsOf: uploads)
+            lines.append(contentsOf: deletes)
+            return lines.joined(separator: "\n")
         } catch { return "Trip deletion evidence unreadable: \(error.localizedDescription)" }
+    }
+
+    /// Inspect the pending upload queue independently of the transient HTTP-error
+    /// registry. Counts and fixed stage codes only: no IDs, names, coordinates,
+    /// recipe amounts or raw parser/server messages are copied. Never replay here.
+    var pendingUploadDiagnostics: String {
+        let pending = metadata.pendingUpserts
+        var reasons: [String: Int] = [:]
+        for id in pending.keys {
+            let reason = pendingUploadDiagnosticReason(id)
+            reasons[reason, default: 0] += 1
+        }
+        return ([
+            "VineTrack pending Trip upload inspection v1",
+            "queued_trip_uploads: \(pending.count)",
+            "queue_marked_failed: \(pending.keys.filter { metadata.isUpsertFailed($0) }.count)",
+            "These are local queue stages, not proof of server acceptance or of data loss."
+        ] + reasons.sorted { $0.key < $1.key }.map { "  \($0.key): \($0.value)" }).joined(separator: "\n")
+    }
+
+    private func pendingUploadDiagnosticReason(_ id: UUID) -> String {
+        guard let store else { return "TRIP_STORE_UNAVAILABLE" }
+        guard let account = auth?.userId, auth?.isSignedIn == true,
+              store.currentUserIdProvider?() == account else { return "TRIP_ACCOUNT_NOT_VERIFIED" }
+        guard let vineyard = store.selectedVineyardId else { return "TRIP_VINEYARD_NOT_SELECTED" }
+        // Do not infer that a different vineyard's cached record is an orphan,
+        // and do not search another account's retained files for diagnostics.
+        guard let trip = store.trips.first(where: { $0.id == id }) else {
+            return "TRIP_SNAPSHOT_NOT_IN_SELECTED_SLICE"
+        }
+        guard trip.vineyardId == vineyard else { return "TRIP_NOT_IN_SELECTED_VINEYARD" }
+        do {
+            if try store.tripDeletionJournal.isCancelled(id) { return "TRIP_CANCELLATION_HELD" }
+            if try store.isLegacySpraySyncHeld(trip: id) { return "LEGACY_SPRAY_RECONCILIATION_HELD" }
+            if !VineyardWriteAuthority.shared.canWrite(vineyardId: vineyard.uuidString) { return "TRIP_WRITE_ACCESS_HELD" }
+            if !trip.isActive && shouldDeferEndedTrip(id) { return "TRIP_WAITING_FOR_ACTUAL_USE" }
+            if trip.coverageBasis == .legacy { return "LEGACY_TRIP_UPLOAD_PENDING" }
+            let journal = try TripOccurrenceJournal(scope: .init(
+                ownerId: account.uuidString.lowercased(), vineyardId: vineyard.uuidString.lowercased(),
+                tripId: id.uuidString.lowercased()), createDirectoryIfMissing: false)
+            guard let snapshot = try journal.load() else { return "OCCURRENCE_JOURNAL_NOT_FOUND" }
+            return TripOccurrenceJournal.syncDiagnosticReason(snapshot)
+        } catch { return "TRIP_EVIDENCE_INSPECTION_HELD" }
     }
 
     // MARK: - Work Task link
@@ -242,7 +293,8 @@ final class TripSyncService {
             return
         }
         syncStatus = .syncing
-        errorMessage = nil
+        // Retry is not an acknowledgement. Retain the last failure until the
+        // complete pass succeeds, or replace it with a current failure/hold.
         // No early return, cancellation or retained hold may leave a permanent spinner.
         defer {
             if syncStatus == .syncing { syncStatus = .failure("Trip sync interrupted. Retained work is unchanged; retry Sync Trips.") }
@@ -268,6 +320,7 @@ final class TripSyncService {
                 syncStatus = .held(held)
             } else {
                 lastSyncDate = Date()
+                errorMessage = nil
                 syncStatus = .success
             }
         } catch {
@@ -626,6 +679,9 @@ final class TripSyncService {
 
     func pushLocalTrips(vineyardId: UUID) async throws {
         guard let store else { return }
+        // Refresh even when a preflight throws or all work is held/reconciled.
+        // An old count must not survive merely because no payload was sent.
+        defer { SyncIssueCenter.shared.notePending(entity: "Trips", count: metadata.pendingUpserts.count) }
         // Import ID-only legacy deletes before ANY retained creation recovery runs.
         for (id, timestamp) in metadata.pendingDeletes {
             _ = try store.recoverTripDeletionIntent(id: id, queuedAt: timestamp, established: metadata.isParentEstablished(id))
@@ -637,6 +693,7 @@ final class TripSyncService {
         await store.recoverLegacySprayReceipts()
         let accepted = try store.unchangedAcceptedLegacySprays().map { $0.trip.id }
         metadata.clearDirty(accepted)
+        SyncIssueCenter.shared.clearIssues(accepted)
         metadata.markParentsEstablished(accepted)
         try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
         let createdBy = auth?.userId
@@ -734,7 +791,6 @@ final class TripSyncService {
                 metadata.markDirty(id, at: Date())
             }
             metadata.markUpsertsFailed(result.failed)
-            SyncIssueCenter.shared.notePending(entity: "Trips", count: metadata.pendingUpserts.count)
             firstUploadError = result.firstRetryableError
             #if DEBUG
             if !skipped.isEmpty {

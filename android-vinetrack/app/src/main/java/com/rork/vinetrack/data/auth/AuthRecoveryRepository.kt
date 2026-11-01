@@ -103,8 +103,32 @@ class AuthRecoveryRepository(
                     check(vineyards.status.isSuccess()) { "Current vineyard access could not be verified." }
                     val permitted = vineyards.body<List<LiveVineyard>>().map { it.id }.toSet() intersect memberVineyards
                     val refresh = token.refreshToken ?: error("Additional authentication is required.")
+                    stage = AuthRecoveryFailure.Stage.RETAINED_EVIDENCE
+                    val retained = session.pruningRecoverySnapshot(original, epoch)
+                    val pruningProof = try {
+                        PruningRecoveryVerifier.verify(original, epoch, retained, permitted,
+                            get = { path ->
+                                val read = client.get(SupabaseClient.restUrl(path)) {
+                                    headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $access") }
+                                }
+                                check(read.status.isSuccess())
+                                read.body<kotlinx.serialization.json.JsonElement>()
+                            },
+                            rpc = { name, parameters ->
+                                check(name == "get_pruning_activity") // read-only RPC allowlist
+                                val read = client.post(SupabaseClient.rpcUrl(name)) {
+                                    headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $access") }
+                                    contentType(ContentType.Application.Json)
+                                    setBody(parameters)
+                                }
+                                check(read.status.isSuccess())
+                                read.body<kotlinx.serialization.json.JsonElement>()
+                            })
+                    } catch (failure: EvidenceContractFailure) {
+                        throw AuthRecoveryFailure(stage, failure.diagnostic)
+                    }
                     stage = AuthRecoveryFailure.Stage.IN_FLIGHT
-                    restored = session.restoreOriginal(access, refresh, user, permitted, expectedEpoch = epoch)
+                    restored = session.restoreOriginal(access, refresh, user, permitted, expectedEpoch = epoch, pruningProof = pruningProof)
                     if (!restored) throw AuthRecoveryFailure(stage)
                     true
                 } finally {

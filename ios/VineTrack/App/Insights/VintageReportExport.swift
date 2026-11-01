@@ -10,12 +10,17 @@ import UIKit
         return date.map { formatter.formatDateTime($0) } ?? value
     }
     static func lines(_ revision: VintageReportRevision, vineyard: String, vintage: Int, formatter: RegionFormatter) -> [String] {
-        [vineyard, "Vintage \(VintageYearText.format(vintage)) — \(revision.evidence.seasonToDate == true ? "Season to date" : "Vintage Report")",
-         "Season \(formatter.formatDate(revision.evidence.seasonStart)) to \(formatter.formatDate(revision.evidence.seasonEnd)); report through \(formatter.formatDate(revision.reportThrough))",
-         "Revision \(revision.revision) • saved \(timestamp(revision.createdAt, formatter: formatter)) • evidence collected \(timestamp(revision.collectedAt, formatter: formatter))"]
-        + revision.content.narrative.components(separatedBy: "\n")
-        + ["Key-event timeline"] + revision.content.timeline
-        + ["Sources and coverage"] + revision.content.appendix
+        let reportKind = revision.evidence.seasonToDate == true ? "Season to date" : "Vintage Report"
+        var result: [String] = [vineyard]
+        result.append("Vintage \(VintageYearText.format(vintage)) — \(reportKind)")
+        result.append("Season \(formatter.formatDate(revision.evidence.seasonStart)) to \(formatter.formatDate(revision.evidence.seasonEnd)); report through \(formatter.formatDate(revision.reportThrough))")
+        result.append("Revision \(revision.revision) • saved \(timestamp(revision.createdAt, formatter: formatter)) • evidence collected \(timestamp(revision.collectedAt, formatter: formatter))")
+        result.append(contentsOf: revision.content.narrative.components(separatedBy: "\n"))
+        result.append("Key-event timeline")
+        result.append(contentsOf: revision.content.timeline)
+        result.append("Sources and coverage")
+        result.append(contentsOf: revision.content.appendix)
+        return result
     }
     static func export(_ revision: VintageReportRevision, vineyard: String, vintage: Int, logo: Data?, word: Bool, account: UUID, formatter: RegionFormatter) throws -> URL {
         let directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("VintageReports/\(account.uuidString)/exports", isDirectory: true)

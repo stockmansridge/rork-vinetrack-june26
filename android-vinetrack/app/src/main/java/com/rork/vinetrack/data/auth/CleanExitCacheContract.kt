@@ -27,6 +27,14 @@ internal object CleanExitCacheContract {
             "vinetrack_domain_cache", rule, recordCount = count,
         )) }
 
+    // UUID spelling is not identity. iOS Codable emits uppercase UUID strings;
+    // Android cache keys use lowercase. Do not rewrite any retained payload.
+    private val uuidPattern = Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+    internal fun identityKey(value: String): String =
+        if (uuidPattern.matches(value)) value.lowercase(java.util.Locale.ROOT) else value
+    internal fun sameIdentity(left: String?, right: String): Boolean =
+        left != null && identityKey(left) == identityKey(right)
+
     private fun metadataOnly(key: String): Boolean =
         key == "cache_owner_user_id" || key == "spray_target_outbox"
 
@@ -118,10 +126,10 @@ internal object CleanExitCacheContract {
             rows.forEach { row ->
                 domain(group.diagnostic + "_ROW_ID_SCOPE", rows.size) {
                     when (row) {
-                        is Trip -> check(row.id.isNotBlank() && row.vineyardId == suffix)
-                        is Pin -> check(row.id.isNotBlank() && row.vineyardId == suffix)
-                        is Paddock -> check(row.id.isNotBlank() && row.vineyardId == suffix)
-                        is SprayRecord -> check(row.id.isNotBlank() && row.vineyardId == suffix)
+                        is Trip -> check(row.id.isNotBlank() && sameIdentity(row.vineyardId, suffix))
+                        is Pin -> check(row.id.isNotBlank() && sameIdentity(row.vineyardId, suffix))
+                        is Paddock -> check(row.id.isNotBlank() && sameIdentity(row.vineyardId, suffix))
+                        is SprayRecord -> check(row.id.isNotBlank() && sameIdentity(row.vineyardId, suffix))
                     }
                 }
                 if (row is Trip && purpose == Purpose.CLEAN_EXIT) {
@@ -143,7 +151,7 @@ internal object CleanExitCacheContract {
     fun recoveryScopes(values: Map<String, *>, original: String): Set<String> {
         if (values.isEmpty()) return emptySet()
         domain("DOMAIN_CACHE_OWNER_MISMATCH", values.size) {
-            check(original.isNotBlank() && values["cache_owner_user_id"] == original)
+            check(original.isNotBlank() && sameIdentity(values["cache_owner_user_id"] as? String, original))
         }
         validateDomain(values, Purpose.ORIGINAL_ACCOUNT_RECOVERY)
         val scopes = mutableSetOf<String>()
@@ -152,8 +160,8 @@ internal object CleanExitCacheContract {
             values.filterKeys { it.startsWith("worktask_") && !it.startsWith("worktask_at_") &&
                 !it.startsWith("worktask_labour_") && !it.startsWith("worktask_machine_") }.forEach { (key, raw) ->
                 json.decodeFromString(ListSerializer(WorkTask.serializer()), raw as String).forEach { task ->
-                    check(task.id.isNotBlank() && task.vineyardId == key.removePrefix("worktask_"))
-                    check(tasks.put(task.id, task.vineyardId) in setOf(null, task.vineyardId))
+                    check(task.id.isNotBlank() && sameIdentity(task.vineyardId, key.removePrefix("worktask_")))
+                    check(tasks.put(identityKey(task.id), identityKey(task.vineyardId)) in setOf(null, identityKey(task.vineyardId)))
                 }
             }
         }
@@ -175,21 +183,21 @@ internal object CleanExitCacheContract {
                 if (group.scoped) {
                     val child = group.data in setOf("worktask_labour_", "worktask_machine_")
                     val suffix = key.removePrefix(group.data)
-                    val vineyard = if (child) checkNotNull(tasks[suffix]) else suffix
+                    val vineyard = if (child) checkNotNull(tasks[identityKey(suffix)]) else suffix
                     check(vineyard.isNotBlank())
-                    scopes.add(vineyard)
+                    scopes.add(identityKey(vineyard))
                     (json.parseToJsonElement(raw as String) as JsonArray).forEach { element ->
                         val encoded = element as? JsonObject ?: error("Invalid cached row")
                         val row = if (group.data == "spray_job_templates_" && "record" in encoded)
                             encoded["record"] as? JsonObject ?: error("Invalid template record") else encoded
-                        if (child) check(row["work_task_id"]?.let { (it as? JsonPrimitive)?.content } == suffix)
+                        if (child) check(sameIdentity(row["work_task_id"]?.let { (it as? JsonPrimitive)?.content }, suffix))
                         listOf("vineyard_id", "vineyardId").forEach { field ->
-                            row[field]?.let { check((it as? JsonPrimitive)?.content == vineyard) }
+                            row[field]?.let { check(sameIdentity((it as? JsonPrimitive)?.takeIf { value -> value.isString }?.content, vineyard)) }
                         }
                     }
                 } else if (key == "vineyards_json") {
                     json.decodeFromString(ListSerializer(Vineyard.serializer()), raw as String).forEach {
-                        check(it.id.isNotBlank()); scopes.add(it.id)
+                        check(it.id.isNotBlank()); scopes.add(identityKey(it.id))
                     }
                 }
             }
