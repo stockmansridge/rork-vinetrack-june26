@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-11-01T23:09:26.637Z" hostname="e2b.local" time="0.064">
+  <properties/>
+  <testcase name="claimForAnotherTripIsVerifiedReadOnly" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.036"/>
+  <testcase name="genuineVineyardMismatchOffersReturnAndIsNotOtherDevice" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.0"/>
+  <testcase name="vineyardMismatchWithoutMembershipDoesNotOfferReturn" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.0"/>
+  <testcase name="caseOnlyVineyardDifferenceIsFormatMismatchNotOwnership" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.0"/>
+  <testcase name="conflictingSessionKeepsLocalEvidenceUnchangedAndHolds" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.008"/>
+  <testcase name="noClaimIsVerifiedReadOnly" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.0"/>
+  <testcase name="persistedClaimNotYetLoadedIsNotOtherDevice" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.0"/>
+  <testcase name="serverRowAlreadyHoldingSessionNeedsNoReplay" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.01"/>
+  <testcase name="locallyEndedIsSeparateFromOwnership" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.0"/>
+  <testcase name="serverRowWithoutSessionsKeepsLocalTank1AndRequiresReplay" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.001"/>
+  <testcase name="vineyardMismatchWithForeignClaimDoesNotOfferReturn" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.0"/>
+  <testcase name="deviceTripWhenComputedActiveMatches" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.001"/>
+  <testcase name="unreadableClaimIsHeldNotOwnership" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.0"/>
+  <testcase name="localPauseIsNotDisplacedByServerRow" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.0"/>
+  <testcase name="noServerRowLeavesProjectionUnchanged" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.0"/>
+  <testcase name="serverOnlySessionIsRetainedNotDropped" classname="com.rork.vinetrack.data.P0DeviceTripRecoveryTest" time="0.005"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

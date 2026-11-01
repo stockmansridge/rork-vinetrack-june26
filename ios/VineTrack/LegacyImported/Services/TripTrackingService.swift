@@ -430,7 +430,7 @@ final class TripTrackingService {
                 guard plannedCandidates.allSatisfy({ resolvedIds.contains($0.blockId) }),
                       resolvedIds.allSatisfy({ block in plannedCandidates.contains { $0.blockId == block } }) else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                 // A retained uncertain start must be recovered, never replaced with newly minted IDs.
-                try requireResolvedOccurrenceStarts()
+                try requireResolvedOccurrenceStarts(vineyardId: vineyardId, blockIds: resolvedIds)
                 trip.occurrenceCoverage = try TripOccurrencePlanner.commit(plannedCandidates, vineyardId: vineyardId)
                 var inactive = trip; inactive.isActive = false
                 let repository = SupabaseTripSyncRepository()
@@ -2510,13 +2510,31 @@ final class TripTrackingService {
 
     /// A duplicate-start check is read-only: examining a remote historical trip must
     /// not manufacture an unresolved local journal and then block every new start.
-    func requireResolvedOccurrenceStarts() throws {
+    /// P0 3.1.9: only the same planned work or the device's own active Trip blocks.
+    /// An independent start first durably holds any unheld original create/activate
+    /// chain so it cannot later replay into a second active Trip. Nothing is discarded,
+    /// reminted or cleared; the original stays visible for individual reconciliation.
+    func requireResolvedOccurrenceStarts(vineyardId: UUID, blockIds: [UUID]) throws {
         guard let store else { throw TripOccurrenceCoverage.Failure.scopeConflict }
+        var toHold: [TripOccurrenceJournal] = []
         for saved in store.trips where saved.coverageBasis == .occurrence {
-            if try occurrenceJournal(for: saved, initializeIfMissing: false).inspectionSnapshot()?.creationConfirmed == false {
-                throw SprayPlanningAdmissionError(message: "An earlier planned trip (\(saved.paddockName), \(saved.startTime.formatted(date: .abbreviated, time: .shortened))) needs occurrence recovery. Its original saved actions are retained; recover that trip before starting another.")
+            let journal = try occurrenceJournal(for: saved, initializeIfMissing: false)
+            guard let state = try journal.inspectionSnapshot() else { continue }
+            let decision = OccurrenceStartAdmission.decide(.init(
+                tripId: saved.id, vineyardId: saved.vineyardId,
+                blockIds: Set(saved.paddockIds + [saved.paddockId].compactMap { $0 }),
+                isDeviceActiveTrip: store.deviceActiveTripId == saved.id,
+                creationConfirmed: state.creationConfirmed, heldReason: state.heldReason),
+                newVineyardId: vineyardId, newBlockIds: Set(blockIds))
+            switch decision {
+            case .unrelated, .independentAlreadyHeld: continue
+            case .holdBeforeIndependentStart: toHold.append(journal)
+            case .conflict(let code):
+                throw SprayPlanningAdmissionError(message: "An earlier planned trip (\(saved.paddockName), \(saved.startTime.formatted(date: .abbreviated, time: .shortened))) needs occurrence recovery (\(code)). Its original saved actions are retained; recover that trip before starting this work again.")
             }
         }
+        // Hold only after every retained start is admitted, so a refusal changes nothing.
+        for journal in toHold { try journal.hold(OccurrenceStartAdmission.supersededHoldCode) }
     }
 
     private func occurrenceJournal(for trip: Trip, initializeIfMissing: Bool = true) throws -> TripOccurrenceJournal {

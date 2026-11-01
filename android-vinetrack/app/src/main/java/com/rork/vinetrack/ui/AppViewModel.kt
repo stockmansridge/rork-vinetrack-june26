@@ -2856,6 +2856,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             }.onFailure { lines += "failure_code: OCCURRENCE_EVIDENCE_UNREADABLE; retained_no_retry" }
                     }
                     trip.tankSessions.forEach { lines += "tank_session_id: ${safeId(it.id)}; parent_trip: ${safeId(trip.id)}; local: retained; server_ack: unknown_not_independently_persisted" }
+                    if (trip.isActive && trip.endTime.isNullOrBlank()) {
+                        lines += com.rork.vinetrack.data.DeviceTripStatus.diagnosticLines(safeId(trip.id), deviceTripStatus(trip))
+                        lines += "  trip_tank_fields: sessions=${trip.tankSessions.size}; active_tank=${trip.activeTankNumber ?: "none"}; filling=${trip.isFillingTank}"
+                    }
+                    rows.filter { it.clientId == trip.id }.forEach { row ->
+                        lines += "  pending_item: entity=${row.entityType}; op=${row.opType}; status=${row.status}; attempts=${row.attemptCount}; code=${fixedErrorCode(row.rawDetail)}; parent_trip=${safeId(trip.id)}"
+                    }
                 }
                 state.sprayRecords.filter { it.vineyardId == vineyard }.forEach {
                     lines += "spray_record_id: ${safeId(it.id)}; parent_trip: ${safeId(it.tripId)}; server_ack: unknown_requires_queue_and_server_read"
@@ -2865,12 +2872,66 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }.onFailure { lines += "failure_code: LEGACY_EVIDENCE_INSPECTION_HELD; original_bytes_retained" }
                 runCatching { sprayTankActualStore.pendingOwned(access).filter { it.vineyardId == vineyard } }.onSuccess { actuals ->
                     lines += "owned_pending_actual_rows: ${actuals.size}; excludes_foreign_or_correction_evidence"
-                    actuals.forEach { lines += "actual_id: ${safeId(it.id)}; parent_trip: ${safeId(it.tripId)}; spray_id: ${safeId(it.sprayRecordId)}; tank_session_id: ${safeId(it.tankSessionId)}; local_stage: pending; server_ack: not_locally_acknowledged; dependencies: require_original_trip_spray_session; last_attempted: unknown_not_persisted; retry: requires_current_authority_and_parents" }
+                    val snapshotTrip = runCatching { activeTripStore.load() }.getOrNull()
+                        ?.takeIf { it.ownerUserId == access.userId }?.trip
+                    val startJournal = startTankCommitCoordinator.inspect()
+                    actuals.forEach { actual ->
+                        lines += "actual_id: ${safeId(actual.id)}; parent_trip: ${safeId(actual.tripId)}; spray_id: ${safeId(actual.sprayRecordId)}; tank_session_id: ${safeId(actual.tankSessionId)}; local_stage: pending; server_ack: not_locally_acknowledged; dependencies: require_original_trip_spray_session; last_attempted: unknown_not_persisted; retry: requires_current_authority_and_parents"
+                        val uiTrip = state.trips.firstOrNull { it.id == actual.tripId }
+                        val journalMatches = startJournal?.actualRecordId == actual.id
+                        lines += "  actual_evidence: tank=${actual.tankNumber}; water_recorded=${actual.waterVolumeL != null}; chemical_lines=${actual.chemicals.size}; amounts_retained_locally=true"
+                        lines += "  session_presence: ui_trip=${uiTrip?.tankSessions?.any { it.id == actual.tankSessionId } ?: "trip_absent"}; active_snapshot=${snapshotTrip?.takeIf { it.id == actual.tripId }?.tankSessions?.any { it.id == actual.tankSessionId } ?: "snapshot_other_or_absent"}; start_tank_journal=${if (journalMatches) "present_state_${startJournal?.state}_session_${startJournal?.updatedTrip?.tankSessions?.any { it.id == actual.tankSessionId }}" else "absent"}"
+                        val tripTankPending = state.pendingSyncItems.any { it.clientId == actual.tripId && it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK }
+                        lines += "  dependency: trip_tank_marker_unresolved=$tripTankPending; session_evidence=${when {
+                            uiTrip?.tankSessions?.any { it.id == actual.tankSessionId } == true -> "local_session_present"
+                            journalMatches -> "start_tank_journal_only_recoverable"
+                            else -> "actual_only_session_missing_held_no_fabrication"
+                        }}"
+                    }
                 }.onFailure { lines += "failure_code: ACTUAL_EVIDENCE_INSPECTION_HELD" }
                 report = lines.joinToString("\n")
             }
         }
         return report
+    }
+
+    /** Fixed upper-case error code from a raw sync error; never the raw message. */
+    private fun fixedErrorCode(raw: String?): String =
+        raw?.let { Regex("\\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\\b").find(it)?.value
+            ?: Regex("\\b(4\\d\\d|5\\d\\d)\\b").find(it)?.value?.let { code -> "HTTP_$code" } } ?: "none"
+
+    /**
+     * P0 3.1.9: read-only explanation of why [trip] is or is not operable here.
+     * Reads the persisted active-Trip claim without writing it. Grants nothing:
+     * controls still require the unchanged [AppUiState.activeTrip].
+     */
+    fun deviceTripStatus(trip: Trip): com.rork.vinetrack.data.DeviceTripStatus.Result {
+        val state = _ui.value
+        val claimRead = runCatching { activeTripStore.load() }
+        val claim = if (claimRead.isFailure) com.rork.vinetrack.data.DeviceTripStatus.PersistedClaim(readable = false)
+            else claimRead.getOrNull()?.let {
+                com.rork.vinetrack.data.DeviceTripStatus.PersistedClaim(
+                    readable = true, tripId = it.trip.id, vineyardId = it.vineyardId,
+                    ownerMatchesSession = it.ownerUserId == session.userId && session.userId != null,
+                    tripActive = it.trip.isActive,
+                )
+            } ?: com.rork.vinetrack.data.DeviceTripStatus.PersistedClaim(readable = true)
+        return com.rork.vinetrack.data.DeviceTripStatus.evaluate(com.rork.vinetrack.data.DeviceTripStatus.Input(
+            tripId = trip.id, tripVineyardId = trip.vineyardId, tripIsActive = trip.isActive, tripEndTime = trip.endTime,
+            selectedVineyardId = state.selectedVineyardId, deviceActiveTripId = state.deviceActiveTripId,
+            computedActiveTripId = state.activeTrip?.id, locallyEnded = trip.id in state.locallyEndedTripIds,
+            claim = claim, userHasTripVineyard = state.vineyards.any { it.id == trip.vineyardId },
+        ))
+    }
+
+    /** Copyable, private-safe predicate report for one Trip (no amounts, tokens or payloads). */
+    fun deviceTripDiagnostics(trip: Trip): String {
+        val info = supportDiagnostics()
+        return (listOf("VineTrack device Trip status v1", "platform: Android", "version: ${info.appVersion}", "build: ${info.appBuild}") +
+            com.rork.vinetrack.data.DeviceTripStatus.diagnosticLines(trip.id, deviceTripStatus(trip)) +
+            "trip_tank_fields: sessions=${trip.tankSessions.size}; active_tank=${trip.activeTankNumber ?: "none"}; filling=${trip.isFillingTank}" +
+            "start_tank_journal: ${startTankCommitCoordinator.inspect()?.takeIf { it.updatedTrip.id == trip.id }?.state ?: "absent"}"
+        ).joinToString("\n")
     }
 
     /** Submit an in-app support / feedback / feature request (mirrors iOS SupportRequestView). */
@@ -10157,6 +10218,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * has a real server id (start requires the server). A start that failed
      * before the server returned an id stores nothing — parked for Stage B.
      */
+    /**
+     * P0 3.1.9: a recovered Start Tank operation is durable in the active-Trip
+     * snapshot but was never republished, so the open Trip could show the
+     * actual without its session. Publish only the snapshot's own tank fields
+     * for the same owner/vineyard/Trip. Nothing is synthesised.
+     */
+    private fun publishRecoveredStartTank(journal: com.rork.vinetrack.data.StartTankCommitCoordinator.Journal) {
+        val snapshot = runCatching { activeTripStore.load() }.getOrNull() ?: return
+        if (snapshot.ownerUserId != journal.ownerUserId || snapshot.ownerUserId != session.userId ||
+            snapshot.vineyardId != journal.vineyardId || snapshot.trip.id != journal.updatedTrip.id) return
+        if (snapshot.trip.tankSessions.none { it.id == journal.tankSessionId }) return
+        _ui.update { st -> st.copy(trips = st.trips.map { existing ->
+            if (existing.id != snapshot.trip.id || existing.vineyardId != snapshot.vineyardId) existing
+            else existing.copy(
+                tankSessions = snapshot.trip.tankSessions,
+                activeTankNumber = snapshot.trip.activeTankNumber,
+                isFillingTank = snapshot.trip.isFillingTank,
+                fillingTankNumber = snapshot.trip.fillingTankNumber,
+            )
+        }) }
+    }
+
     private fun restoreActiveTrip(
         userId: String?,
         vineyardId: String,
@@ -10188,15 +10271,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     tracker?.stop(); tracker = null
                     _ui.update { it.copy(locallyEndedTripIds = it.locallyEndedTripIds + saved.id, isTracking = false) }
                 }
-                val projected = (occurrenceRemote ?: saved).withOccurrenceProjection(journal.projected(retained)).copy(
+                val serverProjected = (occurrenceRemote ?: saved).withOccurrenceProjection(journal.projected(retained)).copy(
                     pathPoints = if (saved.pathPoints.orEmpty().size > occurrenceRemote?.pathPoints.orEmpty().size) saved.pathPoints else occurrenceRemote?.pathPoints,
                     totalDistance = if (saved.pathPoints.orEmpty().size > occurrenceRemote?.pathPoints.orEmpty().size) saved.totalDistance else occurrenceRemote?.totalDistance,
                     isActive = !serverClosed && saved.isActive,
                 )
+                // P0 3.1.9: never let the server row displace locally committed tank
+                // sessions/scalars (Start Tank evidence) or local pause state.
+                val localProgress = com.rork.vinetrack.data.OccurrenceRestoreLocalProgress.apply(serverProjected, occurrenceRemote, saved)
+                val projected = localProgress.trip
                 if (serverClosed) { tracker?.stop(); tracker = null }
                 _ui.update { it.copy(deviceActiveTripId = if (serverClosed) null else saved.id,
-                    isTracking = if (serverClosed) false else it.isTracking, tripError = retained.heldReason) }
+                    isTracking = if (serverClosed) false else it.isTracking,
+                    tripError = retained.heldReason ?: if (localProgress.tankConflict)
+                        "Tank history differs from the server (${com.rork.vinetrack.data.OccurrenceRestoreLocalProgress.TANK_CONFLICT_CODE}). This device's tank records are kept unchanged." else null) }
                 check(activeTripStore.saveDurably(userId, vineyardId, projected))
+                if (!serverClosed && occurrenceRemote != null && localProgress.tankReplayRequired &&
+                    pendingWrites.list().none { it.clientId == saved.id &&
+                        it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK &&
+                        it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved }) {
+                    // Mirror the legacy branch: reconstruct a lost replay marker from the
+                    // durable local snapshot. Sessions are the device's own; none are synthesised.
+                    tripTankSync.enqueue(projected)
+                }
                 return if (occurrenceRemote == null) listOf(projected) + loadedTrips
                     else loadedTrips.map { if (it.id == saved.id) projected else it }
             } catch (_: Exception) {
@@ -18083,7 +18180,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         com.rork.vinetrack.data.VineyardSwitchPerformanceProbe.end("cached-snapshot-publication", publicationTiming)
-        startTankCommitCoordinator.recover()
+        startTankCommitCoordinator.recover()?.let { publishRecoveredStartTank(it) }
         if (hasCachedData) performanceCapture.mark(com.rork.vinetrack.data.AdminPerformanceCapture.Phase.CACHED_DATA_PUBLISHED)
         return prepared
     }
@@ -18815,7 +18912,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         if (pendingWrites.readIssue.value == null && pinEvidenceStore.readIssue.value == null) {
-            startTankCommitCoordinator.recover()
+            startTankCommitCoordinator.recover()?.let { publishRecoveredStartTank(it) }
         }
         if (_ui.value.isOnline && isCurrentLoad()) {
             com.rork.vinetrack.data.YieldMasterWeightRepository.get(getApplication())

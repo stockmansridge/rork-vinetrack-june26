@@ -40,6 +40,17 @@ result = {
     'androidInstrumentation': {'status': 'INFRA_FAILED', 'passed': 0, 'failed': 0, 'skipped': 0,
         'reason': 'Two distinct androidTest selections each timed out after 600 seconds: original class, then two new focused boundary methods. Both returned zero execution results. No further retry.',
         'newBoundaryFixtures': 'Two new production-entry regressions compiled with compileDebugAndroidTestKotlin; narrowed execution attempt also infrastructure-timed-out, so NOT VERIFIED on emulator/device'},
+    'p0RecoveryFixes': {
+        'android': ['Occurrence restore keeps locally committed tank sessions/scalars and local pause (union by session ID via TankSessionReplayMerge); conflicts keep local evidence and hold with OCCURRENCE_RESTORE_TANK_CONFLICT_HELD; reconstructs a lost TRIP_TANK marker only from the durable snapshot',
+            'Recovered Start Tank journal republishes the durable snapshot tank fields to the open Trip',
+            'DeviceTripStatus per-predicate evaluator: Return to Trip for verified own-claim vineyard mismatch, separate local-end-pending message, case-only UUID mismatch held without ownership wording; read-only ownership text only for verified no-claim/other-claim',
+            'Diagnostics: per-predicate lines, actual session presence in UI Trip/snapshot/Start Tank journal, per-Trip pending items with fixed codes'],
+        'ios': ['requireResolvedOccurrenceStarts narrowed: same planned work or device-active Trip still blocks; independent start first durably holds an unheld create/activate chain (pending/history/acknowledged retained; releasable via verified-absence path)',
+            'Diagnostics name each unattributed queued upload (TRIP_SNAPSHOT_NOT_IN_SELECTED_SLICE) with journal stage and local linked-spray presence'],
+        'notFixedHere': 'A Tank session already lost before this fix is recoverable only from a retained Start Tank journal; actual-only evidence is held, never fabricated.'},
+    'swiftP0Selected': {'status': 'PASS', 'aggregatePassed': 15, 'durationSeconds': 126,
+        'selectors': ['VineTrackTests/SprayOccurrenceRecoveryHotfixTests'],
+        'limit': 'Aggregate class result including two new gate tests; no per-case receipt or handset workflow.'},
     'swiftSelected': {'status': 'PASS', 'aggregatePassed': 3, 'durationSeconds': 108,
         'selectors': ['SprayOccurrenceRecoveryHotfixTests/testNewStartPreflightDoesNotMintJournalForHistoricalTripAndStillBlocksUncertainCreate',
                       'TripDeletionRecoveryTests/scopedIssueExportPreservesRegistryAndExcludesRawAndForeignEvidence()',
@@ -68,12 +79,12 @@ result = {
     'remainingGates': ['Authorised backend repair and live definition/security/ACL verification',
         'Original Cab Franc Trip/create/activate IDs and correlated authoritative records/receipts',
         'Production Android independent-start unchanged-journal execution (compiled, not run)',
-        'Safe iOS independent-start proof; unresolved-create gate remains fail-closed',
+        'iOS gate narrowed and covered by simulator unit tests only; original Cab Franc chain still needs individual reconciliation',
         'Complete retained operational/network/account/access matrix and both original handsets after reopen',
         'Final source-matched signed candidate identity and explicit acceptance before any upload'],
-    'safety': 'No customer mutation, journal removal, ownership/privilege change, quantity edits or store upload performed'
+    'safety': 'No customer mutation by this pass (the iOS hold happens only on a future explicit independent start), journal removal, ownership/privilege change, quantity edits or store upload performed'
 }
-for name in ['com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest', 'com.rork.vinetrack.data.VineyardWriteAuthorityTest']:
+for name in ['com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest', 'com.rork.vinetrack.data.VineyardWriteAuthorityTest', 'com.rork.vinetrack.data.P0DeviceTripRecoveryTest']:
     path = ROOT / 'android-vinetrack/app/build/test-results/testDebugUnitTest' / ('TEST-' + name + '.xml')
     if path.exists():
         suite = ET.parse(path).getroot()

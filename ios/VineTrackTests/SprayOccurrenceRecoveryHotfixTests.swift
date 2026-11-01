@@ -93,7 +93,7 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
         store.trips = [trip]
         let tracking = TripTrackingService()
         tracking.configure(store: store, locationService: LocationService())
-        try tracking.requireResolvedOccurrenceStarts()
+        try tracking.requireResolvedOccurrenceStarts(vineyardId: vineyard, blockIds: [block])
         XCTAssertFalse(FileManager.default.fileExists(atPath: journalRoot.path), "Read-only preflight must not create journal directories")
         let journal = try TripOccurrenceJournal(scope: .init(ownerId: owner.uuidString.lowercased(), vineyardId: vineyard.uuidString.lowercased(), tripId: trip.id.uuidString.lowercased()), createDirectoryIfMissing: false)
         XCTAssertNil(try journal.load(), "Duplicate checking must not fabricate unresolved evidence")
@@ -109,9 +109,74 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
         XCTAssertTrue(report.contains("last_attempted_operation: unknown_not_persisted"))
         XCTAssertFalse(report.contains("Historical"), "No operator text or request body is exported")
         XCTAssertEqual(try Data(contentsOf: file), bytes)
-        XCTAssertThrowsError(try tracking.requireResolvedOccurrenceStarts())
+        XCTAssertThrowsError(try tracking.requireResolvedOccurrenceStarts(vineyardId: vineyard, blockIds: [block]))
         XCTAssertEqual(try journal.load(), retained)
         XCTAssertEqual(store.trips, [trip])
+    }
+
+    // P0 3.1.9: an unrelated planned start is no longer blocked globally.
+    @MainActor func testIndependentStartHoldsOriginalChainWithoutDiscardingAndSameWorkStillBlocks() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let owner = UUID(), vineyard = UUID(), cabFranc = UUID(), gruner = UUID()
+        let journalRoot = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent("TripOccurrenceJournals").appendingPathComponent(owner.uuidString.lowercased())
+        defer { try? FileManager.default.removeItem(at: journalRoot) }
+        let store = MigratedDataStore(persistence: PersistenceStore(directory: root))
+        store.currentUserIdProvider = { owner }; store.selectedVineyardId = vineyard
+        let raw = try TripOccurrencePlanner.commit([
+            .init(vineyardId: vineyard, blockId: cabFranc, blockName: "Cab Franc", label: 1.5, rows: [])
+        ], vineyardId: vineyard)
+        let original = Trip(vineyardId: vineyard, paddockId: cabFranc, paddockName: "Cab Franc", paddockIds: [cabFranc],
+            isActive: false, rowSequence: [1.5], occurrenceCoverage: raw)
+        store.trips = [original]
+        try SupabaseTripSyncRepository().prepareOccurrenceCreation(BackendTrip.upsert(from: original, createdBy: owner, clientUpdatedAt: original.startTime), ownerId: owner)
+        let journal = try TripOccurrenceJournal(scope: .init(ownerId: owner.uuidString.lowercased(), vineyardId: vineyard.uuidString.lowercased(), tripId: original.id.uuidString.lowercased()))
+        try journal.activate(.object(["startTime": .string("2026-11-01T01:00:00Z")]))
+        let before = try XCTUnwrap(journal.load())
+        XCTAssertNil(before.heldReason)
+        let tracking = TripTrackingService()
+        tracking.configure(store: store, locationService: LocationService())
+
+        // Same planned work: still refused, and nothing changes.
+        XCTAssertThrowsError(try tracking.requireResolvedOccurrenceStarts(vineyardId: vineyard, blockIds: [cabFranc]))
+        XCTAssertEqual(try journal.load(), before)
+
+        // Independent block: admitted; the original chain is held, never discarded.
+        try tracking.requireResolvedOccurrenceStarts(vineyardId: vineyard, blockIds: [gruner])
+        let held = try XCTUnwrap(journal.load())
+        XCTAssertNotNil(held.heldReason)
+        XCTAssertEqual(held.pending, before.pending, "Original create/activate intents retained exactly")
+        XCTAssertEqual(held.history, before.history)
+        XCTAssertEqual(held.acknowledged, before.acknowledged)
+        XCTAssertEqual(held.creationConfirmed, false)
+        XCTAssertFalse(journal.canOperate(held), "Held chain cannot replay into a second active Trip")
+        XCTAssertEqual(store.trips, [original])
+
+        // Second independent start: already held, no further write.
+        try tracking.requireResolvedOccurrenceStarts(vineyardId: vineyard, blockIds: [gruner])
+        XCTAssertEqual(try journal.load(), held)
+        // The verified-absence release path can still lift the hold for original-ID recovery.
+        try journal.releaseHeldOriginalCreationAfterVerifiedServerAbsence(expectedCoverage: raw)
+        XCTAssertNil(try journal.load()?.heldReason)
+        XCTAssertEqual(try journal.load()?.pending, before.pending)
+    }
+
+    func testOccurrenceStartAdmissionDecisions() {
+        let v = UUID(), a = UUID(), b = UUID()
+        func retained(confirmed: Bool? = false, held: String? = nil, active: Bool = false, blocks: Set<UUID> = [], vineyard: UUID? = nil) -> OccurrenceStartAdmission.Retained {
+            .init(tripId: UUID(), vineyardId: vineyard ?? v, blockIds: blocks.isEmpty ? [a] : blocks, isDeviceActiveTrip: active,
+                  creationConfirmed: confirmed, heldReason: held)
+        }
+        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(confirmed: true), newVineyardId: v, newBlockIds: [a]), .unrelated)
+        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(confirmed: nil), newVineyardId: v, newBlockIds: [a]), .unrelated)
+        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(), newVineyardId: v, newBlockIds: [a, b]), .conflict("RETAINED_START_SAME_PLANNED_WORK"))
+        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(active: true), newVineyardId: v, newBlockIds: [b]), .conflict("RETAINED_START_IS_DEVICE_ACTIVE_TRIP"))
+        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(), newVineyardId: v, newBlockIds: []), .conflict("RETAINED_START_SAME_PLANNED_WORK"))
+        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(), newVineyardId: v, newBlockIds: [b]), .holdBeforeIndependentStart)
+        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(held: "x"), newVineyardId: v, newBlockIds: [b]), .independentAlreadyHeld)
+        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(vineyard: UUID()), newVineyardId: v, newBlockIds: [a]), .holdBeforeIndependentStart)
     }
 
     @MainActor func testSavedOccurrenceReachesDedicatedRecoveryRatherThanLegacyReceiptGate() async throws {

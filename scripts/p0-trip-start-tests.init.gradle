@@ -4,6 +4,7 @@ gradle.projectsEvaluated {
         setSource(app.fileTree('src/test/java') {
             include '**/IndependentQualifiedSprayStartTest.kt'
             include '**/VineyardWriteAuthorityTest.kt'
+            include '**/P0DeviceTripRecoveryTest.kt'
         })
     }
     app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {

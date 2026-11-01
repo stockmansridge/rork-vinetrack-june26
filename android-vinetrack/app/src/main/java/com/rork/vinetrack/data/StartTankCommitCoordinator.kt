@@ -94,6 +94,9 @@ class StartTankCommitCoordinator internal constructor(
         return finish(journal, currentOverride = sourceTrip) != null
     }
 
+    /** Read-only diagnostic view of any retained Start Tank journal. Never writes or completes it. */
+    fun inspect(): Journal? = runCatching { journalStorage.read() }.getOrNull()
+
     /** Completes the exact saved operation; every step is stable-ID idempotent. */
     fun recover(): Journal? {
         if (journalStorage.read() == null) return null

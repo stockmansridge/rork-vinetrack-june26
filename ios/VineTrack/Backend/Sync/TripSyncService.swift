@@ -283,6 +283,18 @@ final class TripSyncService {
         for spray in store.sprayRecords.filter({ $0.vineyardId == vineyard }) {
             lines += ["spray_record_id: \(spray.id.uuidString.lowercased()); parent_trip: \(spray.tripId.uuidString.lowercased()); server_ack: unknown_requires_spray_queue_and_server_read"]
         }
+        // P0 3.1.9: name each queued upload whose Trip snapshot is outside the
+        // visible slice. Read-only: no directory creation, replay or clearing.
+        for id in metadata.pendingUpserts.keys.filter({ !visiblePending.contains($0) }).sorted(by: { $0.uuidString < $1.uuidString }) {
+            let journalState: String
+            do {
+                let journal = try TripOccurrenceJournal(scope: .init(ownerId: account.uuidString.lowercased(),
+                    vineyardId: vineyard.uuidString.lowercased(), tripId: id.uuidString.lowercased()), createDirectoryIfMissing: false)
+                journalState = try journal.inspectionSnapshot().map { TripOccurrenceJournal.syncDiagnosticReason($0) } ?? "absent_in_selected_vineyard"
+            } catch { journalState = "OCCURRENCE_EVIDENCE_UNREADABLE" }
+            let linkedSpray = store.sprayRecords.contains(where: { $0.tripId == id }) ? "present_locally" : "absent_locally_server_state_unknown"
+            lines += ["", "unattributed_queue_entry: trip=\(id.uuidString.lowercased()); reason=\(pendingUploadDiagnosticReason(id)); queue_marked_failed=\(metadata.isUpsertFailed(id)); occurrence_journal_selected_vineyard=\(journalState); linked_spray=\(linkedSpray); action: individual_reconciliation_required_no_clear"]
+        }
         return lines.joined(separator: "\n")
     }
 

@@ -1,21 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.rork.vinetrack.data.VineyardWriteAuthorityTest" tests="18" skipped="0" failures="0" errors="0" timestamp="2026-11-01T16:09:30.145Z" hostname="e2b.local" time="0.098">
+<testsuite name="com.rork.vinetrack.data.VineyardWriteAuthorityTest" tests="18" skipped="0" failures="0" errors="0" timestamp="2026-11-01T23:09:26.707Z" hostname="e2b.local" time="0.057">
   <properties/>
-  <testcase name="missingCacheCannotReleaseDurableHold" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.014"/>
-  <testcase name="exactServerCodeHoldsWithoutInferringTrial" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.001"/>
+  <testcase name="missingCacheCannotReleaseDurableHold" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.008"/>
+  <testcase name="exactServerCodeHoldsWithoutInferringTrial" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.0"/>
   <testcase name="serverRejectionKeepsConfirmedTrialReason" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.0"/>
   <testcase name="diagnosticLookupDoesNotPersistCacheHoldOrChangeAdmissionState" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.001"/>
-  <testcase name="verifiedRestorationClaimsSameOriginalOperation" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.055"/>
-  <testcase name="accountSwitchNeitherLeaksNorErasesHold" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.0"/>
+  <testcase name="verifiedRestorationClaimsSameOriginalOperation" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.024"/>
+  <testcase name="accountSwitchNeitherLeaksNorErasesHold" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.001"/>
   <testcase name="blockedEnqueueCreatesNoNewOutboxItem" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.0"/>
   <testcase name="explicitVerifiedWriteRestoresScope" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.0"/>
   <testcase name="paidVineyardIsIndependentOfExpiredVineyard" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.0"/>
   <testcase name="retainedOriginalQueueIsNotClaimedOrRewrittenWhileHeld" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.001"/>
-  <testcase name="fileBackedHoldSurvivesAuthorityRecreationOffline" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.016"/>
+  <testcase name="fileBackedHoldSurvivesAuthorityRecreationOffline" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.014"/>
   <testcase name="explicitTrialCapabilityKeepsEntryButDeniesCommands" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.001"/>
   <testcase name="serverRejectionHoldsClaimWithoutBurningRetryBudget" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.002"/>
   <testcase name="failedOriginalRestoresExactTimestampsErrorAndAttemptsAcrossHoldAndRestart" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.003"/>
-  <testcase name="legacyWritableDefaultDoesNotReleaseKnownHold" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.001"/>
+  <testcase name="legacyWritableDefaultDoesNotReleaseKnownHold" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.0"/>
   <testcase name="entryDenialCannotReleaseHeldWork" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.0"/>
   <testcase name="staleAccountResponseCannotHoldAnotherAccount" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.0"/>
   <testcase name="unknownOldServerRemainsCompatible" classname="com.rork.vinetrack.data.VineyardWriteAuthorityTest" time="0.0"/>

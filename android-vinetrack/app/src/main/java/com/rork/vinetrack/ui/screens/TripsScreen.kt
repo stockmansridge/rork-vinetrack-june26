@@ -136,6 +136,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldColors
 import androidx.compose.material3.TextFieldDefaults
@@ -1210,10 +1212,7 @@ private fun TripDetailView(
                     onEndConfirmed = { ending = true },
                 )
             } else if (trip.isActive && trip.endTime.isNullOrBlank()) {
-                VineyardCard {
-                    Text("Active Trip · read-only on this device", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                    Text("This device does not hold the original tracking claim. Resume or end the Trip on its original device. If that device is unavailable, ask an Owner or Manager to arrange a verified reconciliation; remote completion is not available here. Retained GPS, tank actuals and pending work must be reconciled before any management action.", fontSize = 13.sp, color = vine.textSecondary)
-                }
+                DeviceTripStatusCard(vm = vm, state = state, trip = trip)
             }
 
             state.tankActualSyncNotice?.let { notice ->
@@ -5739,3 +5738,47 @@ private fun formatEngineHours(hours: Double): String {
 
 private fun com.rork.vinetrack.data.model.CoordinatePoint.toLatLng(): LatLng? =
     LatLng(latitude, longitude)
+
+
+/**
+ * P0 3.1.9: explains exactly why an active Trip has no live controls here.
+ * Only a verified absent/other claim is described as belonging elsewhere; a
+ * vineyard-selection mismatch offers Return to Trip, and a pending local end
+ * is shown separately. Never grants control, takeover or remote completion.
+ */
+@Composable
+private fun DeviceTripStatusCard(vm: AppViewModel, state: AppUiState, trip: Trip) {
+    val vine = LocalVineColors.current
+    val clipboard = LocalClipboardManager.current
+    val status = remember(trip.id, trip.vineyardId, trip.isActive, trip.endTime, state.selectedVineyardId,
+        state.deviceActiveTripId, state.locallyEndedTripIds, state.vineyards) { vm.deviceTripStatus(trip) }
+    val reason = status.reason
+    val (title, body) = when (reason) {
+        com.rork.vinetrack.data.DeviceTripStatus.Reason.SELECTED_VINEYARD_MISMATCH ->
+            "This device's Trip · different vineyard selected" to
+                if (status.canReturnToTrip) "This device holds this Trip, but another vineyard is selected. Return to the Trip's vineyard to continue tracking. Recorded GPS and tank amounts are kept."
+                else "This device holds this Trip, but another vineyard is selected and the Trip's vineyard could not be verified for this account. Recorded GPS and tank amounts are kept; do not start another Trip."
+        com.rork.vinetrack.data.DeviceTripStatus.Reason.LOCAL_END_PENDING ->
+            "Trip ended on this device · waiting to sync" to
+                "You ended this Trip here. Recording has stopped and the end is saved; it will finish on the server when sync completes. Recorded GPS and tank amounts are kept."
+        com.rork.vinetrack.data.DeviceTripStatus.Reason.NO_DEVICE_CLAIM,
+        com.rork.vinetrack.data.DeviceTripStatus.Reason.CLAIM_FOR_OTHER_TRIP ->
+            "Active Trip · read-only on this device" to
+                "This device does not hold this Trip's tracking claim. Resume or end the Trip on the device that started it. If that device is unavailable, ask an Owner or Manager to arrange a verified reconciliation; remote completion is not available here."
+        else ->
+            "This device's Trip · controls paused for verification" to
+                "This device has evidence that it holds this Trip, but live controls are paused while it is verified (${reason.code}). Recorded GPS and tank amounts are kept. Copy the Trip status and send it to support; do not start another Trip."
+    }
+    VineyardCard {
+        Text(title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+        Text(body, fontSize = 13.sp, color = vine.textSecondary)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (status.canReturnToTrip) {
+                Button(onClick = { vm.selectVineyard(trip.vineyardId) }) { Text("Return to Trip") }
+            }
+            TextButton(onClick = { clipboard.setText(AnnotatedString(vm.deviceTripDiagnostics(trip))) }) {
+                Text("Copy Trip status")
+            }
+        }
+    }
+}
