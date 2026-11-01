@@ -2,6 +2,7 @@ package com.rork.vinetrack.data.auth
 
 import com.rork.vinetrack.data.chemical.ChemicalLabelRateBasis
 import com.rork.vinetrack.data.model.SavedChemical
+import com.rork.vinetrack.data.spray.SprayTarget
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.*
 import org.junit.Assert.*
@@ -32,12 +33,20 @@ class RecoveryWriterCompatibilityTest {
         assertNull(active.concentrationUnit)
         assertEquals("%", active.unresolvedConcentrationUnit)
     }
-    @Test fun writerPreservedDiseaseTargetIsNotAnExecutableSprayTarget() {
-        val raw = written(""""registered_uses":[{"crop":"Synthetic crop","target_raw":"Synthetic target","target":"powdery_mildew","rates":[]}]""")
+    @Test fun writerPreservedUnknownTargetIsNotMappedToAKnownTarget() {
+        val raw = written(""""registered_uses":[{"crop":"Synthetic crop","target_raw":"Synthetic target","target":"synthetic_unmapped_target","rates":[]}]""")
         assertTrue(runCatching { strict.decodeFromString(serializer, raw) }.isFailure)
         val use = recover(raw).single().registeredUses!!.single()
         assertNull(use.target)
-        assertEquals(JsonPrimitive("powdery_mildew"), use.unknownFields["target"])
+        assertEquals(JsonPrimitive("synthetic_unmapped_target"), use.unknownFields["target"])
+    }
+    @Test fun knownDiseaseTargetRemainsRecognisedInBothCodecs() {
+        val raw = written(""""registered_uses":[{"crop":"Synthetic crop","target_raw":"Powdery mildew","target":"powdery_mildew","rates":[]}]""")
+        val strictUse = strict.decodeFromString(serializer, raw).single().registeredUses!!.single()
+        val recoveredUse = recover(raw).single().registeredUses!!.single()
+        assertEquals(SprayTarget.POWDERY_MILDEW, strictUse.target)
+        assertEquals(strictUse, recoveredUse)
+        assertFalse(recoveredUse.unknownFields.containsKey("target"))
     }
     @Test fun unsupportedRateBasisIsPreservedWithoutOfferingAnExecutableRate() {
         val raw = written(""""registered_uses":[{"crop":"Synthetic crop","rates":[{"basis":"future_per_vine","value":2,"unit":"mL","future_note":{"revision":1}}]}]""")
