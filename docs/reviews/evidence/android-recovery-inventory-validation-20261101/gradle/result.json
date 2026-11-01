@@ -1,0 +1,90 @@
+{
+  "exit": 0,
+  "seconds": 245.07,
+  "command": [
+    "./gradlew",
+    ":app:testDebugUnitTest",
+    "--init-script",
+    "/tmp/vinetrack-inventory-gradle-y4m5bpse/inventory-tests.init.gradle",
+    "--console=plain",
+    "-Dorg.gradle.jvmargs=-Xmx4096m -XX:+UseParallelGC",
+    "--tests",
+    "com.rork.vinetrack.data.auth.RecoveryStorageReportTest"
+  ],
+  "suites": [
+    {
+      "name": "com.rork.vinetrack.data.auth.RecoveryStorageReportTest",
+      "tests": "8",
+      "skipped": "0",
+      "failures": "0",
+      "errors": "0",
+      "timestamp": "2026-11-01T02:00:35.286Z",
+      "hostname": "e2b.local",
+      "time": "0.066"
+    }
+  ],
+  "cases": [
+    {
+      "class": "com.rork.vinetrack.data.auth.RecoveryStorageReportTest",
+      "name": "truncationIsExplicitAndDoesNotClaimCompleteListing",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.RecoveryStorageReportTest",
+      "name": "categoriesAreExactNamesNotPrefixes",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.RecoveryStorageReportTest",
+      "name": "safeSummaryNeverIncludesUnknownNames",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.RecoveryStorageReportTest",
+      "name": "allEntriesAreReportedInsteadOfOnlyFirstFailure",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.RecoveryStorageReportTest",
+      "name": "defaultSummaryDoesNotDisclosePreferenceNames",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.RecoveryStorageReportTest",
+      "name": "filenamesCannotForgeNewReportLines",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.RecoveryStorageReportTest",
+      "name": "absentUnreadableAndUnsafeRootsStayDistinct",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    },
+    {
+      "class": "com.rork.vinetrack.data.auth.RecoveryStorageReportTest",
+      "name": "labelsDoNotRepresentContentApproval",
+      "status": "PASS",
+      "message": null,
+      "stack": null
+    }
+  ],
+  "totals": {
+    "tests": 8,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  }
+}

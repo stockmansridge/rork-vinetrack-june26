@@ -1,0 +1,48 @@
+{
+  "date": "2026-11-01",
+  "evidenceKind": "Transcription of successful androidTest tool responses, not raw emulator logs or XML",
+  "appPath": "android-vinetrack",
+  "managedImportedRevision": "5d4e99e5e301c8ada3a4795d826cc537a3b0ccba",
+  "selections": [
+    {
+      "onlyTesting": ["com.rork.vinetrack.data.auth.RecoveryStorageInventoryAndroidTest"],
+      "passed": 8, "failed": 0, "skipped": 0, "seconds": 13,
+      "application": "CleanExitFixtureApplication; disposable redirected filesystem",
+      "filenameCompilation": "RecoveryStorageInventoryAndroidTest.kt compiled by the normal complete androidTest source set; no focused source exclusion"
+    },
+    {
+      "onlyTesting": ["com.rork.vinetrack.data.auth.AuthRetentionAndroidTest", "com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest"],
+      "passed": 84, "failed": 0, "skipped": 0, "seconds": 75,
+      "application": "CleanExitFixtureApplication; production Activity and recovery controls on test storage"
+    },
+    {
+      "onlyTesting": ["com.rork.vinetrack.data.auth.ShippingInventoryAcceptanceTest"],
+      "passed": 1, "failed": 0, "skipped": 0, "seconds": 13,
+      "application": "android.app.Application; actual target Context files/cache/shared_prefs roots; no fixture substitution or transport overrides",
+      "source": "scripts/fixtures/android-recovery-inventory/ShippingInventoryAcceptanceTest.kt",
+      "temporaryStaging": "Copied harness into app/src/androidTest/java/com/rork/vinetrack/data/auth/ and temporarily delegated runner newApplication to className. Restored runner exactly and removed staged class before normal build and Play attempt.",
+      "assertions": [
+        "Shipping default Application class and package identity; canonical Context data/files/cache roots, no clean_exit_fixture namespace",
+        "Shipping androidx.startup.InitializationProvider present; real normal Application/provider lifecycle, then first MainActivity launch",
+        "Two synthetic unknown top-level retained locations are both present in the rendered report before copy",
+        "Production SessionStore refuses unknown retained bytes; locked screen opens without credentials and restore remains disabled",
+        "Both credential fields stay empty; opening and closing report leave sentinel clipboard unchanged",
+        "Separate Copy reviewed inventory tap populates report containing both names but neither contents nor absolute data path",
+        "Probe bytes and all regular preference-file bytes remain identical across review/close/copy",
+        "Session preference values, guard lock, identity epoch, recovery principal and camera permission remain unchanged",
+        "Activity recreation remains locked"
+      ],
+      "limits": "Isolated emulator only. Not Jonathan's actual inventory, actual binary upgrade, physical-device acceptance or an OS process-death/relaunch test. Startup diagnostic logs were emitted but raw remote logs were not returned by the successful tool; no exact startup filename list is claimed here. Provider declaration assertion is not a separate SDK-specific initialization assertion. The normal framework provider lifecycle was not replaced."
+    },
+    {
+      "onlyTesting": ["com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest"],
+      "passed": 18, "failed": 0, "skipped": 0, "seconds": 12,
+      "application": "Restored CleanExitFixtureApplication runner"
+    }
+  ],
+  "disjointNativeTotal": {"passed": 111, "failed": 0, "skipped": 0},
+  "jvmSeparate": {"class": "com.rork.vinetrack.data.auth.RecoveryStorageReportTest", "passed": 8, "failures": 0, "errors": 0, "skipped": 0, "evidence": "gradle/", "explicitCompileInclude": "**/RecoveryStorageReportTest.kt"},
+  "historicalImportedHostDoubleChecks": "16 checks are historical, not added to fresh native or Gradle totals",
+  "normalBuild": {"tool": "runChecks", "appPath": "android-vinetrack", "result": "Checks passed. Build succeeded for android-vinetrack.", "warnings": "Two pre-existing nonblocking asset-address advisories; unrelated source left unchanged"},
+  "incident": "OPEN; latest original-device installed code1793493625 remains held at RETAINED_EVIDENCE/file_dependencies/FILES_UNREVIEWED_CONTENT"
+}

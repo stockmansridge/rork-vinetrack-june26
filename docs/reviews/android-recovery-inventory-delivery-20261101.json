@@ -1,0 +1,38 @@
+{
+  "date": "2026-11-01",
+  "purpose": "Diagnostic reviewed storage inventory; NOT a login fix",
+  "status": "BLOCKED_PENDING_MANAGED_SYNC",
+  "publicCommit": "7947edc7d52ee483288783525b54b112c11d1581",
+  "managedImportedRevision": "5d4e99e5e301c8ada3a4795d826cc537a3b0ccba",
+  "androidTree": "fb088acc24288469f653b6bb98ed761121564f1d",
+  "sourceHashLabel": "src_fb088acc24288469",
+  "sourceManifest": "docs/reviews/evidence/android-recovery-inventory-validation-20261101/source-manifest.json",
+  "sourceManifestSha256": "760ebc2d2b7417b415efe06c44de0adb5aecec25cf993825d38b4ecd8f33f4e6",
+  "playConnection": "setupGooglePlay returned connected:true",
+  "packageAccess": {"status": "ok", "packageName": "com.rork.vinetrack", "created": false},
+  "requestedTrack": "internal",
+  "requestedVersionName": "3.1.9",
+  "requiredManagedVersionCodeGreaterThan": 1793493625,
+  "latestListedOldBuildNotSelected": {
+    "runId": "44d03e3c-8146-493c-a1ed-7eec9e86587a",
+    "snapshotId": "7d281fd5686edc64b3fb903bf2637aecdd820bf5",
+    "sourceHash": "src_fe25989772f01ea4e",
+    "historicalPublishedCode": 1793493625,
+    "reasonNotSelected": "Old ProfileInstaller source; lacks reviewed inventory; original-device recovery failed"
+  },
+  "generatePlayAabAttempt": {
+    "params": {"snapshotId": "5d4e99e5e301c8ada3a4795d826cc537a3b0ccba", "sourceHash": "src_fb088acc24288469", "appPath": "android-vinetrack", "framework": "kotlin"},
+    "response": "The current project has unsynced source changes. Finish this turn, then retry publishing.",
+    "runId": null,
+    "newVersionCode": null
+  },
+  "newBuildCreated": false,
+  "newPlayValidation": false,
+  "newCommittedPublication": false,
+  "submissionId": null,
+  "unchangedRetryAttempted": false,
+  "productionOrIosPublication": false,
+  "next": "After automatic sync, verify Android manifest parity and unchanged tree, record current managed revision separately, prepare matching AAB, wait once, list exact run/snapshot/source/app/framework/package, validate then commit Internal Testing only at code greater than1793493625. Do not substitute an old listed bundle.",
+  "deviceNextAfterDelivery": "In-place Play update, then Review storage inventory -> review names -> Copy reviewed inventory. Keep report private; do not post personal filenames to public repository. No repeated sign-in required for inventory.",
+  "incidentAcceptance": "OPEN; obtain actual inventory, reproduce remaining dependency before any admission change; successful original-account recovery and retained-work/reopen acceptance remain unobserved"
+}

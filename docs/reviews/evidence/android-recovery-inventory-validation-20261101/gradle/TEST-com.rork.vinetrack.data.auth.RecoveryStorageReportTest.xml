@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.auth.RecoveryStorageReportTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-11-01T02:00:35.286Z" hostname="e2b.local" time="0.066">
+  <properties/>
+  <testcase name="truncationIsExplicitAndDoesNotClaimCompleteListing" classname="com.rork.vinetrack.data.auth.RecoveryStorageReportTest" time="0.061"/>
+  <testcase name="categoriesAreExactNamesNotPrefixes" classname="com.rork.vinetrack.data.auth.RecoveryStorageReportTest" time="0.0"/>
+  <testcase name="safeSummaryNeverIncludesUnknownNames" classname="com.rork.vinetrack.data.auth.RecoveryStorageReportTest" time="0.001"/>
+  <testcase name="allEntriesAreReportedInsteadOfOnlyFirstFailure" classname="com.rork.vinetrack.data.auth.RecoveryStorageReportTest" time="0.001"/>
+  <testcase name="defaultSummaryDoesNotDisclosePreferenceNames" classname="com.rork.vinetrack.data.auth.RecoveryStorageReportTest" time="0.0"/>
+  <testcase name="filenamesCannotForgeNewReportLines" classname="com.rork.vinetrack.data.auth.RecoveryStorageReportTest" time="0.001"/>
+  <testcase name="absentUnreadableAndUnsafeRootsStayDistinct" classname="com.rork.vinetrack.data.auth.RecoveryStorageReportTest" time="0.001"/>
+  <testcase name="labelsDoNotRepresentContentApproval" classname="com.rork.vinetrack.data.auth.RecoveryStorageReportTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
