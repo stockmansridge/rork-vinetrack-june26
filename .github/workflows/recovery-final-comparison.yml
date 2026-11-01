@@ -1,0 +1,127 @@
+name: Recovery final comparison
+on:
+  push:
+    branches: [fix/spray-review-recovery-contracts-20261101]
+    paths: [.github/workflows/recovery-final-comparison.yml]
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [baseline, repair]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c1a8075d0bbfa613efcd95f03bf683ee8fe218ee
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin comparison source
+        shell: bash
+        run: |
+          cp scripts/recovery-writer-tests.init.gradle /tmp/recovery-writer-tests.init.gradle
+          if [ '${{ matrix.variant }}' = baseline ]; then git checkout --detach a50b35caae65412a949688a2d0a03b5119b718d5; fi
+          git rev-parse HEAD
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Synthetic compile-only configuration, not release configuration
+        shell: bash
+        run: |
+          cat > android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt <<'EOF'
+          package com.rork.vinetrack
+          object Config {
+              val allValues: Map<String, String> = mapOf(
+                  "EXPO_PUBLIC_SUPABASE_URL" to "https://recovery-fixture.invalid",
+                  "EXPO_PUBLIC_SUPABASE_ANON_KEY" to "synthetic-no-live-access"
+              )
+          }
+          EOF
+      - name: JVM tests, retain failures while allowing independent native validation
+        id: jvm
+        continue-on-error: true
+        working-directory: android-vinetrack
+        shell: bash
+        run: |
+          if [ '${{ matrix.variant }}' = baseline ]; then
+            bash gradlew :app:testDebugUnitTest --tests 'com.rork.vinetrack.data.CropSilRateRegressionTest' --init-script /tmp/recovery-writer-tests.init.gradle --console=plain --max-workers=2 -Dorg.gradle.jvmargs=-Xmx5g
+          else
+            bash gradlew :app:testDebugUnitTest --init-script /tmp/recovery-writer-tests.init.gradle --console=plain --max-workers=2 -Dorg.gradle.jvmargs=-Xmx5g
+          fi
+      - name: Build debug application and instrumentation APKs
+        if: matrix.variant == 'repair'
+        working-directory: android-vinetrack
+        run: bash gradlew :app:assembleDebug :app:assembleDebugAndroidTest --console=plain --max-workers=2 -Dorg.gradle.jvmargs=-Xmx5g
+      - name: Enable emulator acceleration
+        if: matrix.variant == 'repair'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Combined populated-store recovery and refusals
+        if: matrix.variant == 'repair'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          disable-animations: true
+          script: cd android-vinetrack && bash gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.rork.vinetrack.data.auth.ChemicalRecoveryPreflightAndroidTest,com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest --console=plain --max-workers=2 -Dorg.gradle.jvmargs=-Xmx5g
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recovery-comparison-${{ matrix.variant }}
+          path: |
+            android-vinetrack/app/build/test-results
+            android-vinetrack/app/build/outputs/androidTest-results
+            android-vinetrack/app/build/reports
+          retention-days: 3
+      - name: Preserve failing JVM result as a failing job
+        if: always() && steps.jvm.outcome == 'failure'
+        run: exit 1
+  swift-syntax:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c1a8075d0bbfa613efcd95f03bf683ee8fe218ee
+          persist-credentials: false
+      - run: swiftc -frontend -parse ios/VineTrack/App/SprayStartRateReview.swift ios/VineTrack/App/SprayCalculatorView.swift ios/VineTrack/Backend/Sync/SprayTankActualStore.swift ios/VineTrack/App/NewMainTabView.swift ios/VineTrack/App/BackendSettingsView.swift ios/VineTrackTests/SprayInitialTankAmountsTests.swift
+  correct-evidence-note:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/spray-review-recovery-contracts-20261101
+      - name: Correct fixture explanation; remove temporary comparison workflow
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('docs/reviews/spray-review-and-recovery-writer-contracts-20261101.md')
+          s=p.read_text()
+          old='Examples are an unresolved concentration unit such as `%` and a retained disease target such as `powdery_mildew` (not an application-target enum). Read-only aggregate backend inspection corroborated these shapes; no customer\'s records are included in fixtures or this branch.'
+          new='A demonstrated example is an unresolved concentration unit such as `%`, which the normal writer preserves but the strict recovery decoder rejects. Read-only aggregate backend inspection corroborated this shape; no customer records are included in fixtures or this branch. Correction to the initial test explanation: `powdery_mildew` is a KNOWN disease target, not an unsupported token. The negative fixture now uses `synthetic_unmapped_target`, and a separate positive test protects the recognised disease target.'
+          assert old in s
+          s=s.replace(old,new)
+          s += '\n## Expanded validation update\n\nRun 41293007162 compiled Android production Kotlin and Java and executed 92 JVM tests: 89 passed, three failed. Native execution was skipped in that run. One failure was an incorrect assertion in the new test: it expected the recognised `powdery_mildew` token to fail strict decoding. Commit c1a8075d0bbfa613efcd95f03bf683ee8fe218ee corrects that fixture and adds a positive known-target test; production recovery code was not changed to accommodate the assertion. The two other failures are in unchanged CropSilRateRegressionTest: captured competing fixed rates expected two rows but received none; incompatible product-unit reference expected three rows but received none. They exercise the existing catalogue-rate path, not the recovery gate. Their tests and production rate-selection code have NOT been weakened, excluded or altered to obtain a green run. A comparison against baseline a50b35c and an independent native run are requested by the final-comparison workflow. Its results must be read before claiming baseline reproduction or native success. Full release readiness is not established.\n'
+          p.write_text(s)
+          PY
+          git rm .github/workflows/recovery-final-comparison.yml
+          git add docs/reviews/spray-review-and-recovery-writer-contracts-20261101.md
+          git diff --cached --check
+          git config user.name 'VineTrack incident source validation'
+          git config user.email 'noreply@users.noreply.github.com'
+          git commit -m 'docs: correct target fixture interpretation and record actual failing tests'
+          git push origin HEAD:fix/spray-review-recovery-contracts-20261101
