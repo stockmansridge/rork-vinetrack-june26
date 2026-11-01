@@ -509,7 +509,15 @@ if __name__ == '__main__':
         subprocess.run([str(BIN/'pg_ctl'),'-D',str(data),'-l',str(log),'-o',f"-k {work} -p 55439 -c listen_addresses=''",'-w','start'],env=ENV,check=True,capture_output=True)
         try:
             for file in ['sql/tests/276_trip_occurrence_bootstrap.sql','sql/276_trip_occurrence_authority_v1.sql','sql/277_trip_occurrence_reports_v2.sql','sql/278_trip_occurrence_recovery_v1.sql','sql/occurrence_setup_uuid_case_identity.sql']:
-                run=subprocess.run([str(BIN/'psql'),'-X','-v','ON_ERROR_STOP=1','-h',work,'-p','55439','-d','postgres','-c',(ROOT/file).read_text().replace('30000000-0000-4000-8000-000000000001', BLOCK) if file.endswith('_bootstrap.sql') else (ROOT/file).read_text()],env=ENV,text=True,capture_output=True,timeout=30)
+                source = ROOT/file
+                if file.endswith('_bootstrap.sql'):
+                    # Keep psql meta-command semantics and resolve this fixture's
+                    # include from its original directory, not the temp directory.
+                    fixture = source.read_text().replace('30000000-0000-4000-8000-000000000001', BLOCK)
+                    fixture = fixture.replace(r"\ir ../006_trips_sync.sql", "\\ir " + str(ROOT/'sql/006_trips_sync.sql'))
+                    source = Path(work)/'bootstrap.sql'
+                    source.write_text(fixture)
+                run=subprocess.run([str(BIN/'psql'),'-X','-v','ON_ERROR_STOP=1','-h',work,'-p','55439','-d','postgres','-f',str(source)],env=ENV,text=True,capture_output=True,timeout=30)
                 if run.returncode:
                     raise RuntimeError(run.stderr)
             suite=unittest.defaultTestLoader.loadTestsFromTestCase(AuthorityTests)

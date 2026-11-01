@@ -356,7 +356,9 @@ final class SyncIssueCenter {
             let retryable = entityIssues.filter { $0.kind == .retryable }
             let reason = permanent.first?.friendlyMessage
                 ?? retryable.first?.friendlyMessage
-                ?? "Waiting to upload."
+                ?? (entity == "Trips"
+                    ? "Upload or reconciliation is pending. Copy diagnostics for its current stage."
+                    : "Waiting to upload.")
             return CategorySummary(
                 entity: entity,
                 waiting: pendingByEntity[entity] ?? entityIssues.count,

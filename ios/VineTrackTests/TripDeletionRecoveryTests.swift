@@ -3,6 +3,32 @@ import Testing
 @testable import VineTrack
 
 @MainActor struct TripDeletionRecoveryTests {
+    @Test func pendingUploadInspectionIncludesQueueWithNoRecordedFailureAndPreservesIt() throws {
+        let disk = try persistence(), metadata = TripSyncMetadata(persistence: disk)
+        let id = UUID(), queued = Date(timeIntervalSince1970: 100)
+        metadata.markDirty(id, at: queued)
+        let store = MigratedDataStore(persistence: disk), auth = NewBackendAuthService()
+        let service = TripSyncService(repository: DeletionRegressionRepository(), metadata: metadata)
+        service.configure(store: store, auth: auth)
+        let report = service.pendingUploadDiagnostics
+        #expect(report.contains("queued_trip_uploads: 1"))
+        #expect(report.contains("queue_marked_failed: 0"))
+        #expect(report.contains("TRIP_ACCOUNT_NOT_VERIFIED: 1"))
+        #expect(!report.contains(id.uuidString))
+        #expect(metadata.pendingUpserts[id] == queued)
+        #expect(TripSyncMetadata(persistence: disk).pendingUpserts[id] == queued)
+    }
+
+    @Test func emptyUploadPassRefreshesStalePendingCount() async throws {
+        let disk = try persistence(), metadata = TripSyncMetadata(persistence: disk)
+        let store = MigratedDataStore(persistence: disk), auth = NewBackendAuthService()
+        let service = TripSyncService(repository: DeletionRegressionRepository(), metadata: metadata)
+        service.configure(store: store, auth: auth)
+        SyncIssueCenter.shared.notePending(entity: "Trips", count: 1)
+        try await service.pushLocalTrips(vineyardId: UUID())
+        #expect(SyncIssueCenter.shared.pendingByEntity["Trips"] == nil)
+    }
+
     @Test func filteredMissingRowNeverAcknowledgesLegacyDeletion() async throws {
         let disk = try persistence()
         let metadata = TripSyncMetadata(persistence: disk)
