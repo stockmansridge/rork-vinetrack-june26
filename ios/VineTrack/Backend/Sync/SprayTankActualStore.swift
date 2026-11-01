@@ -151,6 +151,55 @@ final class SprayTankActualStore {
         initialMixDrafts = next
     }
 
+    /// Retry only the final local handoff acknowledgement after an interrupted Start.
+    /// Never creates an actual, restarts a trip, or clears unmatched operator input.
+    func reconcileRecordedInitialMixes(ownerId: UUID, vineyardId: UUID, trips: [Trip], sprays: [SprayRecord]) throws {
+        for draft in initialMixDrafts where draft.ownerId == ownerId && draft.vineyardId == vineyardId {
+            let matchingTrips = trips.filter { $0.id == draft.tripId && $0.vineyardId == vineyardId }
+            let matchingSprays = sprays.filter {
+                $0.id == draft.sprayRecordId && $0.tripId == draft.tripId && $0.vineyardId == vineyardId
+            }
+            guard matchingTrips.count == 1, let trip = matchingTrips.first,
+                  matchingSprays.count == 1, let spray = matchingSprays.first,
+                  SprayInitialTankAmounts.samePersistedRecipe(SprayInitialTankAmounts.firstTank(in: spray.tanks), draft.tank),
+                  draft.isRecorded(in: records, trip: trip) else { continue }
+            try clearInitialMix(draft, trip: trip)
+        }
+    }
+
+    /// A response acknowledges the submitted revision, never a newer local edit.
+    @discardableResult
+    func acknowledgeUploaded(_ submitted: SprayTankActual) throws -> Bool {
+        guard records.first(where: { $0.id == submitted.id }) == submitted else { return false }
+        var pending = pendingIds
+        pending.remove(submitted.id)
+        try persistence.saveOrThrow(SprayTankActualCache(records: records, pendingIds: pending,
+            initialMixDrafts: initialMixDrafts), key: Self.persistenceKey)
+        pendingIds = pending
+        SyncIssueCenter.shared.clearIssues([submitted.id])
+        return true
+    }
+
+    /// Fixed stages/counts only. No recipe values, names, identifiers or server bodies.
+    func pendingUploadDiagnostics(tripSync: TripSyncService?, spraySync: SprayRecordSyncService?, vineyardId: UUID?) -> String {
+        guard let vineyardId else { return "VineTrack actual-use inspection v1\nACTUAL_USE_VINEYARD_NOT_SELECTED" }
+        let queued = records.filter { $0.vineyardId == vineyardId && pendingIds.contains($0.id) }
+        let drafts = initialMixDrafts.filter { $0.vineyardId == vineyardId }
+        var reasons: [String: Int] = [:]
+        for actual in queued {
+            let decision = SprayTankActualUploadGate.decide(
+                parentTripBlocked: tripSync?.isPendingParentCreation(actual.tripId) ?? true,
+                sprayRecordPending: spraySync?.isPendingUpsert(actual.sprayRecordId) ?? true)
+            let reason = decision == .upload ? "ACTUAL_USE_READY_TO_UPLOAD" :
+                (tripSync?.isPendingParentCreation(actual.tripId) != false ? "ACTUAL_USE_WAITING_FOR_TRIP_PARENT" : "ACTUAL_USE_WAITING_FOR_SPRAY_RECORD")
+            reasons[reason, default: 0] += 1
+        }
+        return (["VineTrack actual-use inspection v1", "pending_actual_rows: \(queued.count)",
+                 "retained_initial_mix_handoffs: \(drafts.count)",
+                 "Retained handoffs need an exact recorded tank session; retries never invent actual use."] +
+            reasons.sorted { $0.key < $1.key }.map { "  \($0.key): \($0.value)" }).joined(separator: "\n")
+    }
+
     /// Upserts by stable trip/session identity and durably queues before network activity.
     func saveLocally(_ actual: SprayTankActual) throws {
         var next = records
@@ -210,6 +259,11 @@ final class SprayTankActualStore {
 
     /// Replays only after parent trip and spray-record sync have had an opportunity to run.
     func syncPending(tripSync: TripSyncService?, spraySync: SprayRecordSyncService?, vineyardId: UUID) async {
+        defer {
+            let count = records.filter { $0.vineyardId == vineyardId && pendingIds.contains($0.id) }.count
+                + initialMixDrafts.filter { $0.vineyardId == vineyardId }.count
+            SyncIssueCenter.shared.notePending(entity: "Tank actuals", count: count)
+        }
         if tripSync?.isSyncing == true || spraySync?.isSyncing == true { return }
         guard SupabaseClientProvider.shared.isConfigured else { return }
         let queued = records
@@ -235,15 +289,19 @@ final class SprayTankActualStore {
                 try await SupabaseClientProvider.shared.client
                     .rpc("upsert_spray_tank_actual", params: SprayTankActualUpsertRequest(actual: actual))
                     .execute()
-                var pending = pendingIds
-                pending.remove(id)
-                try persistence.saveOrThrow(SprayTankActualCache(records: records, pendingIds: pending, initialMixDrafts: initialMixDrafts), key: Self.persistenceKey)
-                pendingIds = pending
+                try acknowledgeUploaded(actual)
                 // Releasing the Phase 5 gate is the caller's next stage: once
                 // this trip has no pending actuals, `hasPending` returns false
                 // and the queued final ended state uploads unchanged.
             } catch {
-                // Durable queue remains pending. A later app/sync cycle retries idempotently.
+                // Preserve the pending record and expose the real child failure instead of
+                // reporting only its parent Trip as waiting with failed_items = 0.
+                let classified = BackendErrorDiagnostics.classify(error, endpoint: "upsert_spray_tank_actual")
+                let safe = SyncFailureDetail(kind: classified.kind, reasonCode: classified.reasonCode,
+                    friendlyMessage: classified.friendlyMessage,
+                    technicalDetail: "endpoint: upsert_spray_tank_actual; code: \(classified.reasonCode); actual retained locally")
+                SyncIssueCenter.shared.recordFailure(id: id, entity: "Tank actuals", detail: safe,
+                    queuedAt: actual.clientUpdatedAt, payloadKeys: [], vineyardId: vineyardId)
             }
         }
     }

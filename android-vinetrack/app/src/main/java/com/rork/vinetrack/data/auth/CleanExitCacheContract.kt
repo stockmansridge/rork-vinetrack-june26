@@ -14,6 +14,10 @@ import kotlinx.serialization.json.booleanOrNull
 /** Read-only, fail-closed validation of the existing cache contract, not authorship evidence. */
 internal object CleanExitCacheContract {
     private val json = Json { ignoreUnknownKeys = false; encodeDefaults = true }
+    // SavedChemical's custom codecs preserve unsupported label evidence verbatim.
+    // Use the actual store reader, then prove that NO supplied field was lost.
+    // This is storage compatibility, not permission to execute an unknown rate.
+    private val chemicalJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private data class Group(val data: String, val timestamp: String, val serializer: KSerializer<*>, val scoped: Boolean = true) {
         // Derived only from the fixed declarations below, never from a stored key or value.
         val diagnostic: String get() = "DOMAIN_" + data.removeSuffix("_").removeSuffix("_json").uppercase(java.util.Locale.ROOT)
@@ -250,13 +254,13 @@ internal object CleanExitCacheContract {
                 json.parseToJsonElement(raw) as? JsonArray ?: error("Invalid chemical snapshot")
             }
             val rows = chemical("CHEMICAL_DECODE_SCHEMA", encoded.size) {
-                json.decodeFromJsonElement(serializer, encoded)
+                chemicalJson.decodeFromJsonElement(serializer, encoded)
             }
             // New nullable/default fields do not make an older snapshot invalid.
             // Preserve every supplied field/value: permissive codecs may not discard
             // malformed nested rates. Read only; never rewrite or mark these rows synced.
             chemical("CHEMICAL_SUPPLIED_FIELDS_CHANGED", rows.size) {
-                check(RetainedJsonFields.preserves(encoded, json.encodeToJsonElement(serializer, rows)))
+                check(RetainedJsonFields.preserves(encoded, chemicalJson.encodeToJsonElement(serializer, rows)))
             }
             chemical("CHEMICAL_DUPLICATE_RECORD_ID", rows.size) {
                 check(rows.map { it.id }.distinct().size == rows.size)
@@ -320,7 +324,9 @@ internal object CleanExitCacheContract {
                     "distance" -> value in setOf("metric", "imperial")
                     "spray_rate_area" -> value in setOf("hectare", "acre")
                     "date_format" -> value in setOf("DD/MM/YYYY", "MM/DD/YYYY", "YYYY-MM-DD")
-                    "terminology" -> value in setOf("au_nz", "us", "uk", "za")
+                    // The shared backend/iOS writes AU_NZ/US/UK/ZA; Android also writes
+                    // lowercase tokens. Compare only; never migrate stored bytes here.
+                    "terminology" -> value.lowercase(java.util.Locale.ROOT) in setOf("au_nz", "us", "uk", "za")
                     "sugar_unit" -> value in setOf("", "brix", "baume")
                     else -> false
                 }

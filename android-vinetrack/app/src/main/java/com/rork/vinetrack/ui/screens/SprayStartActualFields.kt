@@ -8,6 +8,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.MaterialTheme
+import com.rork.vinetrack.ui.theme.LocalVineColors
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -33,7 +40,7 @@ internal fun SprayStartActualFields(
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text("Tank ${tank.tankNumber} — Actual amounts added", fontWeight = FontWeight.Bold)
         SprayInfoHelp("Actual amounts", "Enter the water and each chemical you actually put in this tank. Calculated amounts are a guide. Your entries are saved separately with the spray record when you start. Record later tanks when you mix them.")
-        Text("Calculated water: ${region.formatVolume(tank.waterVolume)}")
+        CalculatedAmount("Water", region.formatVolume(tank.waterVolume))
         OutlinedTextField(
             value = draft["water"].orEmpty(),
             onValueChange = { onDraftChange(draft + ("water" to it)) },
@@ -43,10 +50,9 @@ internal fun SprayStartActualFields(
         )
         tank.chemicals.forEachIndexed { index, chemical ->
             HorizontalDivider()
-            Text(chemical.name, fontWeight = FontWeight.SemiBold)
             val planned = if (chemical.quantityBasis == "display") chemical.volumePerTank
                 else chemicalUnitFromBase(chemical.unit, chemical.volumePerTank)
-            Text("Calculated: ${SprayGuidedFormat.quantity(planned, chemical.unit)}")
+            CalculatedAmount(chemical.name, SprayGuidedFormat.quantity(planned, chemical.unit))
             OutlinedTextField(
                 value = draft["chemical:$index"].orEmpty(),
                 onValueChange = { onDraftChange(draft + ("chemical:$index" to it)) },
@@ -59,4 +65,15 @@ internal fun SprayStartActualFields(
         }
         if (tanks.size > 1) Text("Enter actual amounts for later tanks when you mix them.")
     }
+}
+
+/** A single wrapping text preserves reading order at large accessibility sizes. */
+@Composable
+private fun CalculatedAmount(name: String, amount: String) {
+    val highlight = if (LocalVineColors.current.isDark) Color(0xFF63D8FF) else Color(0xFF005BBB)
+    Text(buildAnnotatedString {
+        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(name) }
+        append("  Calculated - ")
+        withStyle(SpanStyle(color = highlight, fontSize = 20.sp, fontWeight = FontWeight.Bold)) { append(amount) }
+    }, style = MaterialTheme.typography.titleMedium)
 }

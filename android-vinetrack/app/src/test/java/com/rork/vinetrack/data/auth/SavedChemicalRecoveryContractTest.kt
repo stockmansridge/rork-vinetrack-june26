@@ -95,7 +95,7 @@ class SavedChemicalRecoveryContractTest {
         denied("CHEMICAL_DECODE_SCHEMA") { recover(mapOf("$owner|$vineyard" to "[{}]")) }
     }
     @Test fun unknownTopLevelFieldsRemainProtected() {
-        denied("CHEMICAL_DECODE_SCHEMA") {
+        denied("CHEMICAL_SUPPLIED_FIELDS_CHANGED") {
             recover(values(JsonObject(row() + ("future_private_value" to JsonPrimitive("PRIVATE_SENTINEL")))))
         }
     }

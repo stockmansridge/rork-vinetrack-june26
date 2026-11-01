@@ -98,8 +98,15 @@ class ChemicalRecoveryPreflightAndroidTest {
                 sampleSites = listOf(SampleSite("sample", "block", "Block", 1, -33.0, 149.0, 1,
                     BunchCountEntry(12.0, "2026-11-01T00:00:00Z", owner))))), 1L))
         }
-        check(SavedChemicalLocalStore(fixture).save(owner, vineyard,
-            listOf(SavedChemical("synthetic-product", vineyard, name = "Synthetic product", ratePerHa = 1.5))))
+        // Exercise the real writer's preserved label representations, not an empty/simple chemical.
+        val writerCodec = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        val chemical = writerCodec.decodeFromString(SavedChemical.serializer(), """{
+            "id":"synthetic-product","vineyard_id":"$vineyard","name":"Synthetic product","rate_per_ha":1.5,
+            "active_ingredients":[{"name":"Synthetic active","concentration_unit":"%"}],
+            "registered_uses":[{"crop":"Synthetic crop","target":"powdery_mildew","rates":[]}]
+        }""")
+        check(SavedChemicalLocalStore(fixture).save(owner, vineyard, listOf(chemical)))
+        RegionSettingsStore(fixture).save(vineyard, RegionSettings(terminologyRegion = "AU_NZ", timezone = "Australia/Sydney"))
         // Actual historical writer shape: remove only a later nullable field, not identity or quantity.
         val chemicals = prefs("vinetrack_saved_chemicals_local")
         val raw = chemicals.getString("$owner|$vineyard", null)!!

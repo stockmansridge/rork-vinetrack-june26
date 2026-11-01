@@ -510,6 +510,15 @@ struct NewMainTabView: View {
         if let vineyardId = store.selectedVineyardId {
             let performanceTanks = PerformanceCapture.shared.begin("sync Tank actuals and Trip final stage")
             defer { PerformanceCapture.shared.end(performanceTanks) }
+            if let owner = auth.userId, store.currentUserIdProvider?() == owner,
+               SprayTankActualStore.shared.initialMixDrafts.contains(where: { $0.ownerId == owner && $0.vineyardId == vineyardId }) {
+                // An ended trip must not stay held solely because the final local
+                // handoff clear was interrupted after its exact actual was saved.
+                // A failed disk write leaves the handoff in place for the next retry.
+                try? SprayTankActualStore.shared.reconcileRecordedInitialMixes(ownerId: owner,
+                    vineyardId: vineyardId, trips: store.tripRepo.load(for: vineyardId),
+                    sprays: store.sprayRepo.loadRecords(for: vineyardId))
+            }
             await SprayTankActualStore.shared.syncPending(
                 tripSync: tripSync,
                 spraySync: sprayRecordSync,
