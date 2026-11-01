@@ -1,0 +1,3651 @@
+{
+  "contract": "vinetrack.sync.live-public-schema-metadata",
+  "snapshot_version": 1,
+  "captured_on": "2026-11-02",
+  "project_ref": "tbafuqwruefgkbyxrxyb",
+  "disclaimer": "Read-only metadata. Not a full schema, RLS/policy proof, device serializer audit, or migration. Never auto-deploy from this file; compare with current schema before changes.",
+  "tables": {
+    "fertiliser_records": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "product_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "product_name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "form",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "calculation_mode",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "record_status",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "application_date",
+        "db_type": "date",
+        "nullable": false
+      },
+      {
+        "column": "block_names",
+        "db_type": "_text",
+        "nullable": false
+      },
+      {
+        "column": "total_area_ha",
+        "db_type": "numeric",
+        "nullable": false
+      },
+      {
+        "column": "total_vines",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "application_rate",
+        "db_type": "numeric",
+        "nullable": false
+      },
+      {
+        "column": "application_rate_unit",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "total_product_required",
+        "db_type": "numeric",
+        "nullable": false
+      },
+      {
+        "column": "product_unit",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "pack_size",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "pack_count",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "estimated_product_cost",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "labour_cost",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "machinery_cost",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "total_job_cost",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "notes",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "vine_count_basis",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "nutrient_contract_version",
+        "db_type": "int2",
+        "nullable": true
+      },
+      {
+        "column": "nutrient_key",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "nutrient_display_name",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "nutrient_declared_as",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "target_rate",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "target_rate_unit",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "nutrient_percent",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "nutrient_percent_source",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "analysis_basis",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "concentration_basis",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "product_density_kg_per_l",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "product_density_source",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "product_density_reference",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "product_analysis_snapshot",
+        "db_type": "jsonb",
+        "nullable": true
+      }
+    ],
+    "growth_stage_records": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "paddock_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "pin_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "stage_code",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "stage_label",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "variety",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "variety_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "observed_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "latitude",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "longitude",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "row_number",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "side",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "notes",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "photo_paths",
+        "db_type": "_text",
+        "nullable": false
+      },
+      {
+        "column": "recorded_by_name",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "origin",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "integration_client_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "integration_api_key_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by_integration_client_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "external_id",
+        "db_type": "text",
+        "nullable": true
+      }
+    ],
+    "maintenance_logs": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "item_name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "hours",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "work_completed",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "parts_used",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "parts_cost",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "labour_cost",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "date",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "photo_path",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "is_archived",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "archived_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "archived_by",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "is_finalized",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "finalized_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "finalized_by",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "machine_hours",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "equipment_source",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "equipment_ref_id",
+        "db_type": "uuid",
+        "nullable": true
+      }
+    ],
+    "paddocks": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "row_direction",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "row_width",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "row_offset",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "vine_spacing",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "vine_count_override",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "row_length_override",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "flow_per_emitter",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "emitter_spacing",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "budburst_date",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "flowering_date",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "veraison_date",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "harvest_date",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "planting_year",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "calculation_mode_override",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "reset_mode_override",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "polygon_points",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "rows",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "variety_allocations",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "intermediate_post_spacing",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "row_length_overrides",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "irrigation_efficiency_percent",
+        "db_type": "float8",
+        "nullable": true
+      }
+    ],
+    "picking_records": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "picked_at",
+        "db_type": "date",
+        "nullable": false
+      },
+      {
+        "column": "vintage",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "paddock_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "paddock_name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "variety_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "variety_key",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "variety_name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "clone",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "weight_kg",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "sugar_value",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "sugar_unit",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "ph",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "ta_g_l",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "purpose",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "sold",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "sold_to",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "price_per_tonne",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "grape_value",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "notes",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "planting_group_key",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "variety_allocation_ids",
+        "db_type": "_uuid",
+        "nullable": true
+      },
+      {
+        "column": "rootstock",
+        "db_type": "text",
+        "nullable": true
+      }
+    ],
+    "pins": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "paddock_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "trip_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "mode",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "category",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "priority",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "status",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "button_name",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "button_color",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "title",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "notes",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "latitude",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "longitude",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "heading",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "row_number",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "side",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "growth_stage_code",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "is_completed",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "completed_by",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "completed_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "photo_path",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "completed_by_user_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "driving_row_number",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "pin_row_number",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "pin_side",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "along_row_distance_m",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "snapped_latitude",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "snapped_longitude",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "snapped_to_row",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "location_scope",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "assigned_user_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "due_date",
+        "db_type": "date",
+        "nullable": true
+      },
+      {
+        "column": "linked_work_task_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "custom_type_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "location_enrichment_status",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "location_enrichment_revision",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "location_resolver_version",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "location_enriched_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "location_confirmation_revision",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "location_confirmed_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "location_confirmed_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "launcher_button_id",
+        "db_type": "uuid",
+        "nullable": true
+      }
+    ],
+    "pruning_entries": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "pruning_season_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "paddock_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "entry_date",
+        "db_type": "date",
+        "nullable": false
+      },
+      {
+        "column": "worker_or_crew",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "labour_hours",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "start_time",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "finish_time",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "pruning_method",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "notes",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "row_equivalents_completed",
+        "db_type": "numeric",
+        "nullable": false
+      },
+      {
+        "column": "estimated_vines_completed",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "work_task_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "vintage_year",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "pruning_activity_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "allocation_index",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "is_skipped",
+        "db_type": "bool",
+        "nullable": false
+      }
+    ],
+    "pruning_seasons": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "paddock_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "season_year",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "start_date",
+        "db_type": "date",
+        "nullable": true
+      },
+      {
+        "column": "due_date",
+        "db_type": "date",
+        "nullable": true
+      },
+      {
+        "column": "pruning_method",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "assigned_crew",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "working_days",
+        "db_type": "_int4",
+        "nullable": false
+      },
+      {
+        "column": "manual_row_count",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "estimated_labour_hours",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "notes",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "status",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "server_revision",
+        "db_type": "int8",
+        "nullable": false
+      },
+      {
+        "column": "base_revision",
+        "db_type": "int8",
+        "nullable": true
+      }
+    ],
+    "pruning_yield_settings": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "paddock_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "prune_method",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "bunches_per_bud",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "buds_per_spur",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "spurs_per_vine",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "buds_per_cane",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "canes_per_vine",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "vines_per_ha",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "bunch_weight_grams",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "server_revision",
+        "db_type": "int8",
+        "nullable": false
+      },
+      {
+        "column": "base_revision",
+        "db_type": "int8",
+        "nullable": true
+      }
+    ],
+    "resistance_plans": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "season_id",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "season_start_year",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "disease",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "jurisdiction",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "crop",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "block_ids",
+        "db_type": "_uuid",
+        "nullable": true
+      },
+      {
+        "column": "positions",
+        "db_type": "jsonb",
+        "nullable": false
+      },
+      {
+        "column": "notes",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "ruleset_id",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "ruleset_version",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "server_revision",
+        "db_type": "int8",
+        "nullable": false
+      },
+      {
+        "column": "base_revision",
+        "db_type": "int8",
+        "nullable": true
+      }
+    ],
+    "saved_chemicals": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "rate_per_ha",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "unit",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "chemical_group",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "use",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "manufacturer",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "restrictions",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "notes",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "crop",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "problem",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "active_ingredient",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "rates",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "purchase",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "label_url",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "mode_of_action",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "product_url",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "product_category",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "product_form",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "pack_size",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "pack_unit",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "price_per_pack",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "density",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "nitrogen_percent",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "phosphorus_percent",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "potassium_percent",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "analysis_basis",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "organic_certified",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "inventory_quantity",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "inventory_unit",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "application_notes",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "is_active",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "active_ingredients",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "activity_groups",
+        "db_type": "_text",
+        "nullable": true
+      },
+      {
+        "column": "activity_group_scheme",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "registration_country",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "registration_scheme",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "registration_number",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "registrant",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "registered_product_name",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "label_reference",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "label_version",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "verification_status",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "verification_sources",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "verification_conflicts",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "verification_unresolved_fields",
+        "db_type": "_text",
+        "nullable": true
+      },
+      {
+        "column": "verified_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "registered_uses",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "label_rate_bases",
+        "db_type": "_text",
+        "nullable": true
+      },
+      {
+        "column": "activity_group_table_version",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "intelligence_schema_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "master_chemical_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "master_source_revision",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "resistance_classification_state",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "default_rates",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "entry_source",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "chemical_v3_product_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "chemical_v3_revision_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "chemical_v3_review_status_snapshot",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "vineyard_preferred_rate",
+        "db_type": "jsonb",
+        "nullable": true
+      }
+    ],
+    "saved_spray_presets": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "water_volume",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "spray_rate_per_ha",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "concentration_factor",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      }
+    ],
+    "spray_equipment": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "tank_capacity_litres",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "serial_number",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "vin_number",
+        "db_type": "text",
+        "nullable": true
+      }
+    ],
+    "spray_job_paddocks": [
+      {
+        "column": "spray_job_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "paddock_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      }
+    ],
+    "spray_jobs": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "is_template",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "planned_date",
+        "db_type": "date",
+        "nullable": true
+      },
+      {
+        "column": "status",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "chemical_lines",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "water_volume",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "spray_rate_per_ha",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "operation_type",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "target",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "equipment_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "tractor_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "operator_user_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "notes",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "growth_stage_code",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "vsp_canopy_size",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "vsp_canopy_density",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "row_spacing_metres",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "concentration_factor",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "gross_area_ha",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "treated_area_ha",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "application_mode",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "treated_area_method",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "band_width_total_metres",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "band_width_left_metres",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "band_width_right_metres",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "canonical_row_length_metres",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "geometry_source",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "geometry_quality",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "carrier_volume_basis",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "dilute_litres_per_100m",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "applied_litres_per_100m",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "targets",
+        "db_type": "_text",
+        "nullable": true
+      },
+      {
+        "column": "spray_head_target",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "resistance_plan_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "resistance_position_id",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "resistance_position_snapshot",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "resistance_plan_source_revision",
+        "db_type": "int8",
+        "nullable": true
+      },
+      {
+        "column": "ground_application_target",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "carrier_area_basis",
+        "db_type": "text",
+        "nullable": true
+      }
+    ],
+    "spray_records": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "trip_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "date",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "start_time",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "end_time",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "temperature",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "wind_speed",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "wind_direction",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "humidity",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "spray_reference",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "notes",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "number_of_fans_jets",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "average_speed",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "equipment_type",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "tractor",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "tractor_gear",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "is_template",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "operation_type",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "tanks",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "spray_job_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "machine_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "tractor_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "spray_equipment_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "gross_area_ha",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "treated_area_ha",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "application_mode",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "treated_area_method",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "band_width_total_metres",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "band_width_left_metres",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "band_width_right_metres",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "canonical_row_length_metres",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "row_spacing_metres",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "geometry_source",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "geometry_quality",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "carrier_volume_basis",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "total_carrier_litres",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "carrier_litres_per_hectare",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "dilute_litres_per_100m",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "applied_litres_per_100m",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "concentration_factor",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "targets",
+        "db_type": "_text",
+        "nullable": true
+      },
+      {
+        "column": "spray_head_target",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "application_blocks",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "block_ids",
+        "db_type": "_uuid",
+        "nullable": true
+      },
+      {
+        "column": "entry_source",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "manual_entry_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "ground_application_target",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "carrier_area_basis",
+        "db_type": "text",
+        "nullable": true
+      }
+    ],
+    "spray_tank_actuals": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "spray_record_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "trip_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "tank_session_id",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "tank_number",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "water_volume_l",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "chemicals",
+        "db_type": "jsonb",
+        "nullable": false
+      },
+      {
+        "column": "confirmed_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "confirmed_by",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "correction_version",
+        "db_type": "int8",
+        "nullable": false
+      },
+      {
+        "column": "last_corrected_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      }
+    ],
+    "tractors": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "brand",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "model",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "model_year",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "fuel_usage_l_per_hour",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "serial_number",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "vin_number",
+        "db_type": "text",
+        "nullable": true
+      }
+    ],
+    "trip_occurrence_operations": [
+      {
+        "column": "operation_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "trip_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "actor_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "request",
+        "db_type": "jsonb",
+        "nullable": false
+      },
+      {
+        "column": "result",
+        "db_type": "jsonb",
+        "nullable": false
+      },
+      {
+        "column": "occurrence_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "previous_state",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "resulting_state",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "accepted_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      }
+    ],
+    "trips": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "paddock_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "paddock_ids",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "paddock_name",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "tracking_pattern",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "start_time",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "end_time",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "is_active",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "is_paused",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "total_distance",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "current_path_distance",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "current_row_number",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "next_row_number",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "sequence_index",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "row_sequence",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "path_points",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "completed_paths",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "skipped_paths",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "pin_ids",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "tank_sessions",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "active_tank_number",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "total_tanks",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "pause_timestamps",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "resume_timestamps",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "is_filling_tank",
+        "db_type": "bool",
+        "nullable": true
+      },
+      {
+        "column": "filling_tank_number",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "person_name",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "trip_function",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "trip_title",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "seeding_details",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "manual_correction_events",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "completion_notes",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "tractor_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "operator_user_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "worker_type_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "start_engine_hours",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "end_engine_hours",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "machine_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "work_task_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "entry_source",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "manual_entry_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "occurrence_coverage",
+        "db_type": "jsonb",
+        "nullable": true
+      }
+    ],
+    "vineyard_machines": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "machine_type",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "fuel_tracking_enabled",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "available_for_job_costing",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "fuel_usage_l_per_hour",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "notes",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "legacy_tractor_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "serial_number",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "vin_number",
+        "db_type": "text",
+        "nullable": true
+      }
+    ],
+    "vineyard_members": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "user_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "role",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "display_name",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "joined_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "worker_type_id",
+        "db_type": "uuid",
+        "nullable": true
+      }
+    ],
+    "vineyards": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "owner_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "country",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "logo_path",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "logo_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "forecast_provider",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "irrigation_recent_rain_lookback_hours",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "latitude",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "longitude",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "elevation_metres",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "timezone",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "country_code",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "currency_code",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "area_unit",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "volume_unit",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "distance_unit",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "fuel_unit",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "spray_rate_area_unit",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "date_format",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "terminology_region",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "season_start_month",
+        "db_type": "int2",
+        "nullable": false
+      },
+      {
+        "column": "season_start_day",
+        "db_type": "int2",
+        "nullable": false
+      },
+      {
+        "column": "sugar_measurement_unit",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "yield_samples_per_hectare",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "spray_compliance_profile",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "spray_carrier_volume_basis",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "current_observation_provider",
+        "db_type": "text",
+        "nullable": true
+      }
+    ],
+    "work_task_paddocks": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "work_task_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "paddock_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "area_ha",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      }
+    ],
+    "work_tasks": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "paddock_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "paddock_name",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "date",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "task_type",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "duration_hours",
+        "db_type": "float8",
+        "nullable": false
+      },
+      {
+        "column": "resources",
+        "db_type": "jsonb",
+        "nullable": true
+      },
+      {
+        "column": "notes",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "is_archived",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "archived_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "archived_by",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "is_finalized",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "finalized_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "finalized_by",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "start_date",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "end_date",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "area_ha",
+        "db_type": "float8",
+        "nullable": true
+      },
+      {
+        "column": "description",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "status",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "vintage_year",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "origin",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "integration_client_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "integration_api_key_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by_integration_client_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "external_id",
+        "db_type": "text",
+        "nullable": true
+      },
+      {
+        "column": "costing_method",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "piece_rate_per_vine",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "piece_vine_count",
+        "db_type": "int4",
+        "nullable": true
+      },
+      {
+        "column": "piece_rate_total_cost",
+        "db_type": "numeric",
+        "nullable": true
+      },
+      {
+        "column": "pruning_activity_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "assigned_to",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "completed_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "completed_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "assigned_external_resource_id",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "schedule_basis",
+        "db_type": "text",
+        "nullable": false
+      },
+      {
+        "column": "target_el_stage",
+        "db_type": "int4",
+        "nullable": true
+      }
+    ],
+    "yield_estimation_sessions": [
+      {
+        "column": "id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "vineyard_id",
+        "db_type": "uuid",
+        "nullable": false
+      },
+      {
+        "column": "payload",
+        "db_type": "jsonb",
+        "nullable": false
+      },
+      {
+        "column": "is_completed",
+        "db_type": "bool",
+        "nullable": false
+      },
+      {
+        "column": "completed_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "session_created_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "created_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "updated_by",
+        "db_type": "uuid",
+        "nullable": true
+      },
+      {
+        "column": "created_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "updated_at",
+        "db_type": "timestamptz",
+        "nullable": false
+      },
+      {
+        "column": "deleted_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "client_updated_at",
+        "db_type": "timestamptz",
+        "nullable": true
+      },
+      {
+        "column": "sync_version",
+        "db_type": "int4",
+        "nullable": false
+      },
+      {
+        "column": "vintage",
+        "db_type": "int4",
+        "nullable": false
+      }
+    ]
+  }
+}
