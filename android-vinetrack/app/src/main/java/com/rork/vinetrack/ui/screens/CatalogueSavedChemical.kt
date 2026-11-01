@@ -35,7 +35,8 @@ internal fun CatalogueSavedChemical(chemical: SavedChemical, modifier: Modifier 
             Column(Modifier.weight(1f).padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(revision?.text("product_name") ?: chemical.displayName, style = MaterialTheme.typography.titleMedium)
                 Text(CatalogueRow.compactManufacturer(revision?.text("manufacturer") ?: chemical.manufacturer), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(revision?.badge ?: "Catalogue information unavailable", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("✓ VineTrack catalogue", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(revision?.badge ?: "Basic details · catalogue rate details unavailable", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         val exact = revision

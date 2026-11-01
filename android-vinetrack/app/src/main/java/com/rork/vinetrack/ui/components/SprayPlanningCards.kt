@@ -49,7 +49,18 @@ fun SprayPlanningCards(
                     val choices = listOf<SprayPassConfiguration?>(null) + SprayPassConfiguration.entries
                     choices.forEachIndexed { index, pass ->
                         SegmentedButton(selected = configuration == pass, onClick = { onConfiguration(pass) },
-                            shape = SegmentedButtonDefaults.itemShape(index, choices.size)) { Text(pass?.title ?: "Not Set") }
+                            shape = SegmentedButtonDefaults.itemShape(index, choices.size)) {
+                            Text(
+                                when (pass) {
+                                    SprayPassConfiguration.STANDARD_PASS -> "Single Row"
+                                    SprayPassConfiguration.OVER_ROW -> "2 Row"
+                                    null -> "Not Set"
+                                },
+                                maxLines = 1,
+                                softWrap = false,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
                     }
                 }
                 if (configuration != null) {
