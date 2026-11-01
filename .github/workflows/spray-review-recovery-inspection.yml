@@ -1,0 +1,22 @@
+name: Spray review and recovery inspection
+on:
+  push:
+    branches: [fix/spray-review-recovery-contracts-20261101]
+    paths: [.github/workflows/spray-review-recovery-inspection.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a50b35caae65412a949688a2d0a03b5119b718d5
+          persist-credentials: false
+      - run: git archive --format=tar.gz HEAD -o /tmp/review-source-a50b35c.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-source-a50b35c
+          path: /tmp/review-source-a50b35c.tar.gz
+          retention-days: 1
