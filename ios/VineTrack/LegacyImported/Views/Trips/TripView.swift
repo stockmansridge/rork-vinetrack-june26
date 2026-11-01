@@ -24,8 +24,6 @@ struct TripView: View {
     @State private var tripMonthFilter: Int? = nil // 1...12, nil = all
     @State private var tripYearFilter: Int? = nil  // nil = all
     @State private var tripSearchText: String = ""
-    @State private var tripToDelete: Trip?
-    @State private var showDeleteConfirmation: Bool = false
     @State private var showStartTrip: Bool = false
     @State private var showTripChoice: Bool = false
     @State private var showSpraySetup: Bool = false
@@ -134,22 +132,6 @@ struct TripView: View {
             }
             .sheet(isPresented: $showSpraySetup) {
                 SprayTripSetupSheet()
-            }
-            .alert("Delete Trip", isPresented: $showDeleteConfirmation) {
-                Button("Delete", role: .destructive) {
-                    if let trip = tripToDelete,
-                       accessControl.canDeleteOperationalRecords,
-                       let current = store.trips.first(where: { $0.id == trip.id }),
-                       !current.isActive {
-                        store.deleteTrip(current.id)
-                    }
-                    tripToDelete = nil
-                }
-                Button("Cancel", role: .cancel) {
-                    tripToDelete = nil
-                }
-            } message: {
-                Text("Are you sure you want to delete this trip? This action cannot be undone.")
             }
         }
     }
@@ -348,22 +330,8 @@ struct TripView: View {
                             )
                         }
                         .accessibilityIdentifier("trip.history.\(trip.id.uuidString)")
-                        // UIKit expects an .onDelete edit to change the List item count
-                        // immediately. We deliberately require a confirmation alert,
-                        // so use an explicit, non-full-swipe action instead. Otherwise
-                        // confirming a swipe can abort inside UICollectionView batch updates.
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            if accessControl.canDeleteOperationalRecords && !trip.isActive {
-                                Button(role: .destructive) {
-                                    guard let current = store.trips.first(where: { $0.id == trip.id }),
-                                          !current.isActive else { return }
-                                    tripToDelete = current
-                                    showDeleteConfirmation = true
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
-                            }
-                        }
+                        // 3.1.9: history swipe-delete is intentionally unavailable until
+                        // native deletion verification is complete. Preserve all records.
                     }
                 } header: {
                     Label("Other Trips", systemImage: "road.lanes")

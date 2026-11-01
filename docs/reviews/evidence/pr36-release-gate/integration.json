@@ -1,0 +1,63 @@
+{
+  "pr": 36,
+  "upstreamHead": "8d36a996f8d39ad3d8c27422bd63ae8aec65f779",
+  "upstreamBase": "7ef10999975b18790f4940f1ac62f070a9a21d81",
+  "managedParent": "092fd21d70a2015076fdc5a1f3bb49daf8ef65c4",
+  "scope": "Exact two PR36 read-selector hunks plus authorised iOS history swipe-delete disablement",
+  "changes": [
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/VineyardRepository.kt",
+      "beforeSha256": "181b092bd06ae18283f8157c257cd116b631614933eda348e1373cfc44a99406",
+      "afterSha256": "a7c68ba2927b02866b9f42aea2067394e2095f5e3ec3271b80e85c207b5b861e"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Repositories/SupabaseManagementSyncRepositories.swift",
+      "beforeSha256": "e8bd0d9075b1108f5d49a129e5903c0ab71a5621ba7a4cc4bef0dc08440a99c6",
+      "afterSha256": "367b5d454e9ea7d2798783a287a69d48fd1477c7b582e742490a1c1587898578"
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Trips/TripView.swift",
+      "beforeSha256": "2452f075cdbc6b3ab8f089dd8d4ba92c4fe3463254e7cc7fa26062313564cefb",
+      "afterSha256": "73be12e15f37e96495e5843bbf70480a3b44e1ef7933113533899861e47d36f5"
+    }
+  ],
+  "protectedConfiguration": [
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt",
+      "protectedTemplateSha256": "c79d68f9e9dc96559263dee80de69190df5c3886eab29a2f613104989d78eab7",
+      "observedSha256": "a1da2e0589dbe2e6430459e36a7e32dc93c4b15c846e6bc7cccbc1499a4712e8",
+      "matchesPreviouslyObserved": true
+    },
+    {
+      "path": "android-vinetrack/app/build.gradle.kts",
+      "protectedTemplateSha256": "ab5e787d43d5a26d89c058b325ac0203addd188b24383dff0cf6f3e19ecdec80",
+      "observedSha256": "ab5e787d43d5a26d89c058b325ac0203addd188b24383dff0cf6f3e19ecdec80",
+      "matchesPreviouslyObserved": true
+    },
+    {
+      "path": "ios/VineTrack/App/AppConfig.swift",
+      "protectedTemplateSha256": "b7a7f3cdefd26ae5304d25ec293d7fa567bf62339b3ad9e35011097b9a3efa51",
+      "observedSha256": "b7a7f3cdefd26ae5304d25ec293d7fa567bf62339b3ad9e35011097b9a3efa51",
+      "matchesPreviouslyObserved": true
+    },
+    {
+      "path": "ios/VineTrack.xcodeproj/project.pbxproj",
+      "protectedTemplateSha256": "cc4157148a020c07dd33bb41ec054236613746bdbec9eeb2aa161d937cb6efc1",
+      "observedSha256": "cc4157148a020c07dd33bb41ec054236613746bdbec9eeb2aa161d937cb6efc1",
+      "matchesPreviouslyObserved": true
+    },
+    {
+      "path": "rork.json",
+      "protectedTemplateSha256": "4e7979864de6813bdd319aa288f50f23767e53d8f50bcbf08a16cffc9d25ca35",
+      "observedSha256": "4e7979864de6813bdd319aa288f50f23767e53d8f50bcbf08a16cffc9d25ca35",
+      "matchesPreviouslyObserved": true
+    }
+  ],
+  "writePathsUnchanged": true,
+  "historySwipeDeleteAvailable": false,
+  "limitations": [
+    "No signed-artifact/configuration equivalence established",
+    "No live view/RLS, populated device sync, spray journey or Portal acceptance established",
+    "Managed final commit is assigned after this receipt; hashes identify the checked source files"
+  ]
+}

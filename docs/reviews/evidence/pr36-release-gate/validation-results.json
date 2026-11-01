@@ -1,0 +1,52 @@
+{
+  "scope": "PR36 read parity and temporary iOS history swipe-delete disablement",
+  "decision": "NO_GO_PENDING_LIVE_ACCEPTANCE",
+  "builds": [
+    {
+      "appPath": "android-vinetrack",
+      "tool": "runChecks",
+      "result": "PASS",
+      "receipt": "Checks passed. Build succeeded for android-vinetrack.",
+      "signedReleaseAcceptance": false
+    },
+    {
+      "appPath": "ios",
+      "tool": "runChecks",
+      "result": "PASS",
+      "receipt": "Checks passed for ios. Simulator build succeeded.",
+      "deviceOrAppStoreReleaseVerified": false
+    }
+  ],
+  "sourceVerification": {
+    "command": "python scripts/record-pr36-source-verification.py",
+    "result": "PASS",
+    "receipt": "integration.json",
+    "checked": ["Exact PR36 selector hunks only in the two sync repositories", "Write selectors unchanged", "History swipe-delete and unused confirmation action absent", "Protected fingerprints match previously observed configuration"],
+    "diffWhitespaceCheck": "PASS: git diff HEAD --check"
+  },
+  "essentialLiveJourney": {
+    "result": "NOT_EXECUTED",
+    "required": ["Create spray in authorised acceptance vineyard", "Enter and retain actual chemical and water quantities", "Start Trip", "Finish Trip", "Sync with genuine server acknowledgement", "Confirm complete linked Portal record with exact entered actuals", "Confirm no new unresolved queue entry while preserving historical backlog"],
+    "blocker": "No established authenticated iOS acceptance account/device session and matching Portal session",
+    "minimalHandoff": "Provide an authorised signed-in acceptance session with Portal access, or perform this one journey on the existing signed-in installation and provide its Trip/spray identifiers, entered actuals, Portal record and before/after queue evidence. Do not send passwords in chat.",
+    "observedSprayFailure": false,
+    "syntheticSubstituteUsed": false
+  },
+  "otherAcceptance": {
+    "populatedDeviceChemicalSync": "NOT_EXECUTED on either platform",
+    "deployedEffectiveViewAndRLS": "Upstream description only; not independently verified in this turn",
+    "runtimeInteractions": "NOT_TESTED in this turn",
+    "priorEvidence": "Reuse previously recorded bounded PR35/PR34 checks; no broad suite rerun or overlapping pass totals"
+  },
+  "nonblockingFollowups": ["Historical deletion native verification before re-enabling swipe-delete", "Original retained-handoff recovery and acknowledgement", "Authorised audited stale active-Trip management"],
+  "delivery": {
+    "newSignedCandidatesPrepared": false,
+    "newStoreUploads": false,
+    "publicRelease": false,
+    "oldCandidates": "Build197 and prior Play candidate predate PR35/36; not release substitutes",
+    "nextGate": "Essential live journey PASS, then source-matched signed internal candidates with exact receipts; resolve uncertain Play outcome before mutation"
+  },
+  "customerMutationsPerformed": false,
+  "historicalRecordsAndQueuesPreserved": true,
+  "warnings": "Existing nonblocking asset URL advisories unchanged"
+}

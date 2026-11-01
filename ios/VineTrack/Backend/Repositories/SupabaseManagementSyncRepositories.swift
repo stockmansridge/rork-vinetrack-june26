@@ -36,7 +36,9 @@ final class SupabaseSavedChemicalSyncRepository: SavedChemicalSyncRepositoryProt
         var rows: [BackendSavedChemical] = []
         for page in 0..<20 {
             try Task.checkCancellation()
-            let q = provider.client.from("saved_chemicals").select().eq("vineyard_id", value: vineyardId.uuidString)
+            // The current APPROVED catalogue is authoritative on reads only.
+            // Keep writes, retained local work and pinned revision fences on saved_chemicals.
+            let q = provider.client.from("saved_chemicals_effective").select().eq("vineyard_id", value: vineyardId.uuidString)
             let batch: [BackendSavedChemical]
             if let since {
                 batch = try await q.gte("updated_at", value: iso(since)).order("id").range(from: page * 500, to: page * 500 + 499).execute().value
