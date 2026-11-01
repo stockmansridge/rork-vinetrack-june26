@@ -60,3 +60,19 @@ For each of at least iOS 3.1.8, Android 3.1.8, proposed 3.1.9 iOS, proposed 3.1.
 The newly added `Canonical sync contract integrity` workflow **run 41322413914** at audit branch commit `151a1ef12654e349860012a5bd921ca6f06d2402` completed FAILURE. Step "Validate governance contract and unverified release declarations" PASSED; step "Detect unreviewed mobile sync callsites and API route drift" FAILED. This is a meaningful detected discrepancy, **not** a claim that the new contract has passed. The run writes its detailed JSON under `/tmp` without publishing the artifact; the exact route-fingerprint drift is not yet triaged.
 
 **SYNC-017 — P1 unregistered sync surface:** Source parser on audit branch observes **38 iOS coordinator calls versus 37 registered**. The missing entry is `YieldMasterWeightCache.shared.synchronize` (current `ios/VineTrack/App/NewMainTabView.swift`, after maintenance and before yield sessions). Android pending discriminator inventory remains 38/38. This new synchronisation path catches errors without failing the entire sweep; status coverage for stale master weights and Android/Portal parity must be independently verified. Before changing the expected register, identify whether this surface is needed for full-sync success, the old/new serialization and account fencing, its failure diagnostics and signed-device behavior; then review route-signature changes rather than blindly accepting new hashes. Leave CI red until reviewed.
+
+
+## Historic source-era comparison: 3.1.8 version-bump commit -> present main
+
+GitHub commit `c8d09890a6a7fc46471649b27b8b2f9e84d8b389` explicitly changed iOS/Android version numbers to **3.1.8**. Its corresponding SHA is an important source-era comparison anchor, **not** a verified match for the actual distributed signed 3.1.8 builds. Comparing that commit with current `main@d5e9dd...` yields **90 subsequent commits** and at least **300 changed file entries** returned by the GitHub comparison API (300-entry response cap).
+
+Selected side-by-side source comparison shows the following issues already existed at that 3.1.8 source-era anchor:
+- **SYNC-001:** Android `ScopedTankActualSync.kt` has the **same file SHA** (`672a34dc35c5ce1fe7ad074d1d93aa26c55f5686`) at both anchors, still marks the actual synced after opaque RPC success; iOS then already called `upsert_spray_tank_actual` with no value-level acceptance proof (`SprayTankActualStore.swift` old lines 169-200).
+- **SYNC-005:** iOS `OperationsSyncServices.swift` at the old anchor already had eight `metadata.clearDirty(result.uploaded)` calls without the submitted revision comparison, including Work Task child entities.
+- **SYNC-006:** iOS Trip and Spray sync already compared pending dirty date with remote `client_updated_at`.
+- **SYNC-007:** iOS saved-chemical full update already called `.execute()` without verified returned row, while the specialised preference update returned a row.
+- **SYNC-008:** Android `AlertPreferencesRepository.kt` is **byte-identical** at both anchors (old/wrong table).
+- **SYNC-009:** Android VineyardRepository had unpaged Trips/Pins/Blocks/Work Tasks/Spray Records reads at the old anchor.
+- **SYNC-013:** The iOS chemical read selector at the old anchor was RAW `saved_chemicals`; current main instead reads `saved_chemicals_effective`, a genuine newer-source improvement **not yet proven in distributed builds**.
+
+**Conclusion:** These are not all fresh 3.1.9 regressions. Some sync contract defects persisted from at least the checked 3.1.8 source-era through the inspected current code. The actual 3.1.8 signed artifact/source fingerprint remains an evidence gap, so do not claim a particular installed binary exhibits every one without device proof.
