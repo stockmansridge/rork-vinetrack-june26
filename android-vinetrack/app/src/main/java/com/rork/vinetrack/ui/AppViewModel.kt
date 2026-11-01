@@ -12356,11 +12356,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (!admitTripVineyard(vineyardId)) { finish(false); return }
         startStage = "retained_start_recovery"
-        val retained = runCatching { legacySpraySaves.retainedStart(vineyardId) }
-        if (retained.isFailure) {
-            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; finish(false); return
+        // A newly authored occurrence-qualified route has a different, immutable
+        // parent identity from an older legacy REST/paired-create Save for Later.
+        // Do not read or mutate that unrelated legacy journal before this start:
+        // a corrupt/held historical entry must not prevent a distinct operation.
+        // Existing/parented jobs and Free Drive still use the original fail-closed
+        // receipt recovery. The device-active and occurrence replay guards below
+        // remain mandatory for every route.
+        val independentQualified = IndependentQualifiedSprayStart.isSeparateNewOperation(
+            parentTripId = input.tripId,
+            vineyardId = vineyardId,
+            selectedPaddockIds = paddockIds,
+            plan = rowPlan,
+        )
+        val original = if (independentQualified) {
+            android.util.Log.i("SprayStart", "stage=qualified_start separate_from_legacy_journal=true")
+            null
+        } else {
+            val retained = runCatching { legacySpraySaves.retainedStart(vineyardId) }
+            if (retained.isFailure) {
+                _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
+                finish(false); return
+            }
+            retained.getOrNull()
         }
-        val original = retained.getOrNull()
         val owned = runCatching { activeTripStore.load() }.getOrNull()
         if (original != null && owned != null && owned.ownerUserId == startOwner && owned.vineyardId == vineyardId && owned.trip.id == original.trip.id &&
             owned.trip.isActive && owned.trip.endTime == null) {
