@@ -1,0 +1,162 @@
+{
+  "schema": 1,
+  "createdAt": "2026-11-01T12:49:22.493370+00:00",
+  "managedParentNotFinalRevision": "88b0bc36746e18114747c06433f28854096bfbae",
+  "upstream": {
+    "pr34Head": "7ff419e392ebae3dba2294dcbee876f08398de21",
+    "pr33Head": "33fc6a20427f14250ced5ec1c4162e3dcac56cdc"
+  },
+  "changedApplicationAndTestFiles": {
+    "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayReleasePresentationAndroidTest.kt": "92592811690719638796a4f78bf0e7fe63e7ab6d87abc125c112694a23d4c2d4",
+    "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/TripOccurrencePersistenceAndroidTest.kt": "9cc230403af4d74a45fa43c39d2815ce19f3c023f03f79875444109118ae7dda",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayPlanningCards.kt": "f8dc3590ebe2eb1d62307c9843ecadae2f06275f75dd5e721d7df6ffab935c55",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CatalogueSavedChemical.kt": "76b0a3c6c2d83ba04f1e5964492625849cbd658d0461b0bc1e4d0903c6b888f6",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt": "b1011325a913761e4262ce047889a9e1632b6c0fed117f59b86687c890a16996",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayStartActualFields.kt": "49ae302c6a2023a58757ce49ee11dac4bd7c709f1e1b4a0814bb6f080f30aa1f",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt": "9960cfe256e81d3db9395df2d1aa87a57a74701394925df861940509257dc6ee",
+    "ios/VineTrack/App/SprayCalculatorView.swift": "b8dc9e77f97c03f903e731d7c33daf5bdb33e96d35b984325c514ff2925b5afc",
+    "ios/VineTrack/App/SprayStartRateReview.swift": "05f1d76d0df7f1a80cd7a523d0d6386970853758518d011ee0443242cc641ea6",
+    "ios/VineTrack/LegacyImported/Views/Trips/ActiveTripView.swift": "3d213006843ad59cacfb9e04d55528a0df4a01e54446cd699c6a4b0c74d34d16",
+    "ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift": "017e31eafb1334f8e1d64114a61dab407e630adb2455bcbb27cdb3f7a46aaebc",
+    "ios/VineTrackUITests/SprayEditingAcceptanceUITests.swift": "3048f1a986f406af8a2d5a1554888e4f7e31c54082a7c8327c51fa86e46e3e7a"
+  },
+  "protectedConfiguration": {
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt": {
+      "expectedSha256": "c79d68f9e9dc96559263dee80de69190df5c3886eab29a2f613104989d78eab7",
+      "observedSha256": "a1da2e0589dbe2e6430459e36a7e32dc93c4b15c846e6bc7cccbc1499a4712e8",
+      "matches": false
+    },
+    "android-vinetrack/app/build.gradle.kts": {
+      "expectedSha256": "ab5e787d43d5a26d89c058b325ac0203addd188b24383dff0cf6f3e19ecdec80",
+      "observedSha256": "ab5e787d43d5a26d89c058b325ac0203addd188b24383dff0cf6f3e19ecdec80",
+      "matches": true
+    },
+    "ios/VineTrack/App/AppConfig.swift": {
+      "expectedSha256": "b7a7f3cdefd26ae5304d25ec293d7fa567bf62339b3ad9e35011097b9a3efa51",
+      "observedSha256": "b7a7f3cdefd26ae5304d25ec293d7fa567bf62339b3ad9e35011097b9a3efa51",
+      "matches": true
+    },
+    "ios/VineTrack.xcodeproj/project.pbxproj": {
+      "expectedSha256": "cc4157148a020c07dd33bb41ec054236613746bdbec9eeb2aa161d937cb6efc1",
+      "observedSha256": "cc4157148a020c07dd33bb41ec054236613746bdbec9eeb2aa161d937cb6efc1",
+      "matches": true
+    },
+    "rork.json": {
+      "expectedSha256": "4e7979864de6813bdd319aa288f50f23767e53d8f50bcbf08a16cffc9d25ca35",
+      "observedSha256": "4e7979864de6813bdd319aa288f50f23767e53d8f50bcbf08a16cffc9d25ca35",
+      "matches": true
+    }
+  },
+  "managedResults": [
+    {
+      "tool": "androidTest",
+      "onlyTesting": [
+        "com.rork.vinetrack.data.SprayReleasePresentationAndroidTest"
+      ],
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 25,
+      "evidence": "Tool-result transcription; prior temporary log remained a 2-failure run. The later broad log also contains four named passing presentation cases."
+    },
+    {
+      "tool": "androidTest",
+      "onlyTesting": [
+        "com.rork.vinetrack.data.SprayReleasePresentationAndroidTest",
+        "com.rork.vinetrack.data.SprayFieldLayoutAndroidTest",
+        "com.rork.vinetrack.data.MobileSprayUXParityAndroidTest",
+        "com.rork.vinetrack.data.SprayStartProductionAndroidTest",
+        "com.rork.vinetrack.data.TripOccurrencePersistenceAndroidTest"
+      ],
+      "passed": 44,
+      "failed": 7,
+      "skipped": 0,
+      "evidence": "android-focused-initial.log (truncated middle; retain aggregate and failure list, not complete named discovery)",
+      "diagnosis": "Seven occurrence fixtures exposed shared files/cache/applicationInfo despite isolated preference names. Production admission correctly refused; production guard unchanged."
+    },
+    {
+      "tool": "androidTest",
+      "onlyTesting": [
+        "com.rork.vinetrack.data.TripOccurrencePersistenceAndroidTest"
+      ],
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 11,
+      "evidence": "Tool-result transcription after filesystem fixture correction. Temporary log remained the previous 51-case failure; no fresh success log exported."
+    },
+    {
+      "tool": "swiftTest",
+      "onlyTesting": [
+        "VineTrackUITests/SprayEditingAcceptanceUITests/testConfiguredByAreaReviewReachesEnabledStartInSameCalculator",
+        "VineTrackTests/DeviceTripOwnershipTests",
+        "VineTrackTests/SprayInitialTankAmountsTests",
+        "VineTrackTests/SprayApplicationGeometryTests",
+        "VineTrackTests/SprayTripPhase5FinalisationTests"
+      ],
+      "passed": 88,
+      "seconds": 200,
+      "failed": 0,
+      "skipped": null,
+      "namedPassingExport": false,
+      "evidence": "Aggregate managed tool result. Existing temporary log is an older TripDeletionRecovery failure, not this run. Screenshot attachment was requested by the UI test but not independently exported/inspected."
+    },
+    {
+      "tool": "runChecks",
+      "appPath": "android-vinetrack",
+      "result": "passed",
+      "evidence": "Normal Android build, separate from instrumentation; no candidate provenance/signing receipt supplied."
+    },
+    {
+      "tool": "runChecks",
+      "appPath": "ios",
+      "result": "passed",
+      "evidence": "Simulator build; device/Release and store delivery not verified."
+    }
+  ],
+  "jvmAndReleasePreflight": {
+    "command": "python3 scripts/pr33-preflight.py --run-jvm",
+    "exitCode": 1,
+    "jvmNamedPassed": 102,
+    "jvmRequired": 102,
+    "androidNamedRequiredPassed": 53,
+    "androidRequired": 238,
+    "iosNamedRequiredPassed": 0,
+    "iosRequired": 57,
+    "releaseGatePassed": false,
+    "blockerCount": 250,
+    "report": "../pr33-preflight/preflight.json"
+  },
+  "configurationObservation": "Ignored Android Config matched the protected hash at import. It differed after the native-tool interval. Current focused tests and normal builds left observed hash a1da2e0589dbe2e6430459e36a7e32dc93c4b15c846e6bc7cccbc1499a4712e8 unchanged. Origin and effective release equivalence are not attested; no expected hash was replaced and no values are disclosed.",
+  "activeTripManagement": {
+    "customerStateFetched": false,
+    "customerStateMutated": false,
+    "managementRpcImplemented": false,
+    "deploymentAttempted": false,
+    "status": "blocked_pending_verified_live_contract_and_authorised_deployment_path",
+    "boundary": "Read-only explanation only. No takeover, arbitrary deletion, tank closure, reopening, GPS deletion or completion from path counts."
+  },
+  "acceptanceStillUnverified": [
+    "Full-screen light/dark/enlarged-text and scrolling inspection on both platforms",
+    "Rendered occurrence-summary and foreign-vineyard geometry boundary scenarios",
+    "Fresh September24 JH Testing server Trip state and retained-work/tank reconciliation",
+    "Shared Android/iOS/Portal Owner/Manager audited idempotent management contract",
+    "Complete historical writer formats and named required native test receipts",
+    "Original Android populated in-place recovery and iOS actual-use queue drain",
+    "Final automatic GitHub revision/snapshot/sourceHash and effective configuration mapping",
+    "Signed candidate artifacts, iOS build/Android managed upload code and test-store delivery"
+  ],
+  "signedArtifact": null,
+  "iosDeliveryBuild": null,
+  "androidDeliveryCode": null,
+  "finalManagedRevision": null,
+  "sourceHash": null,
+  "publication": null,
+  "incident": "OPEN",
+  "releaseGatePassed": false,
+  "rawEvidence": {
+    "android-focused-initial.log": "2681ab1938711d3642d96aa1e37c902e076a32ec991e79a2ed831198bdba2795",
+    "android-layout-enlarged-failed.log": "ee71afd8787ac9f4c41f4c318a08ccefbb756490eece2061e0f10b52b2a1b709",
+    "android-layout-padding-failed.log": "d191d9296a5599f04690ce3098d44b7c40647460356b1cc383fb9186fa8be102"
+  }
+}

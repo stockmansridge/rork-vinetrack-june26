@@ -100,15 +100,15 @@ struct ActiveTripView: View {
     /// falling back to the trip's pinned/selected blocks.
     private var currentPaddock: Paddock? {
         if let liveId = tracking.currentPaddockId,
-           let paddock = store.paddocks.first(where: { $0.id == liveId }) {
+           let paddock = store.paddocks.first(where: { $0.id == liveId && $0.vineyardId == trip.vineyardId }) {
             return paddock
         }
         if let id = trip.paddockId,
-           let paddock = store.paddocks.first(where: { $0.id == id }) {
+           let paddock = store.paddocks.first(where: { $0.id == id && $0.vineyardId == trip.vineyardId }) {
             return paddock
         }
         for id in trip.paddockIds {
-            if let paddock = store.paddocks.first(where: { $0.id == id }) {
+            if let paddock = store.paddocks.first(where: { $0.id == id && $0.vineyardId == trip.vineyardId }) {
                 return paddock
             }
         }
@@ -120,7 +120,7 @@ struct ActiveTripView: View {
         if let id = trip.paddockId { ids.insert(id) }
         ids.formUnion(trip.paddockIds)
         if let liveId = tracking.currentPaddockId { ids.insert(liveId) }
-        return store.paddocks.filter { ids.contains($0.id) }
+        return store.paddocks.filter { $0.vineyardId == trip.vineyardId && ids.contains($0.id) }
     }
 
     private var displayPath: Double? {

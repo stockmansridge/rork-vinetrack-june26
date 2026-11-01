@@ -1,8 +1,30 @@
 # Spray review and recovery writer compatibility - 2026-11-01
 
-## Current managed preflight continuation — 1 November 2026
+## Current 3.1.9 consolidation — presentation integrated, release held, 1 November 2026
 
-The sections below retain the upstream handoff as historical context, not a claim that every described UI change was imported. Managed integration excluded unrelated review/calculator presentation files. Current evidence is in `evidence/pr33-preflight/` and the cumulative acceptance report.
+PR #34 `7ff419e392ebae3dba2294dcbee876f08398de21` and the two remaining PR #33 iOS presentation files are now selectively consolidated onto managed parent `88b0bc36746e18114747c06433f28854096bfbae`. Earlier presentation exclusions below are historical. Exact import, source fingerprints and separate execution-result transcriptions are under `evidence/pr34-consolidation/`; the cumulative acceptance report contains current qualification.
+
+Android rendered segment regression:4 cases pass after reproducing clipping and correcting equal-height single-line accessibility scrolling. Focused broader run44 pass/7 fail/0 skip; all seven occurrence-fixture failures were diagnosed to unisolated filesystem roots, corrected in tests only, then the class passed7/0/0. Preserve the broad failure; do not sum overlapping results. iOS selected actual-entry/route journey plus ownership/amounts/geometry/finalisation:88 aggregate passes. Separate Android normal and iOS simulator builds pass; fresh JVM run102 named passes. The fixed release preflight still fails with250 blockers; current normal build configuration remains fingerprint-mismatched. No candidate or store delivery.
+
+### Active Trip management — required contract, NOT implemented or deployed
+
+Both mobile detail screens explain read-only status when no original tracking claim exists. Device-owned controls remain restricted. This does not establish that another device is online, recover a tracking claim or confirm the fresh September24 JH Testing server state. No customer record was mutated and no new deployment was attempted.
+
+The checked-in `006_trips_sync.sql` broad update policies and `soft_delete_trip` cannot be used as a remote-completion workaround. They are baseline source, not verification of live permissions or deployment. A safe shared Portal/iOS/Android management route requires all of the following before implementation/delivery:
+
+- Authenticate the original actor and check current Owner/Manager membership for the exact Trip vineyard on the server; no client role assertion, Supervisor/Operator fallback or broad direct update.
+- Read fresh Trip/tank/actual/occurrence/GPS/deletion/queue state. Obtain original-device pending-work reconciliation evidence; absence of locally retained work cannot be inferred from the server. If the original device is unavailable and unresolved retained work cannot be ruled out, refuse completion and retain a review hold.
+- Use an explicit reviewed action/reason and idempotency key, with expected server revision/state and original identity. Lock and recheck in one transaction; stale versions, active dependencies, account changes and already-ended Trips fail closed without reopening or retimestamping.
+- Require exact reconciled tank and actual-use acknowledgements before closure; never infer amounts, delete GPS, discard pending operations, replace request/record IDs, adopt ownership or mark all planned paths complete. A read-only planned path count is not coverage or geometry proof.
+- Write an immutable actor/action/reason/before/after/reconciliation/version audit atomically with any approved state change. Reusing the same idempotency key returns its original result; conflicting reuse is refused.
+- Share the same request/response/refusal semantics across Portal and both apps. Verify permission denial, stale/concurrent requests, lost-response retry, retained-work/tank holds and ended-Trip refusal before exposing an action.
+- Obtain an already-authorised deployment path and verify live definitions/access controls without changing ownership or granting new privileges. The prior function-owner denial remains unresolved; do not retry it unchanged.
+
+Current geometry corrections only fence lookup to the selected/Trip vineyard and use occurrence-aware Android summary counts. They do not invent or persist coordinates, infer geometry from saved path counts, or complete missing geometry. Full rendered boundary scenarios and original-phone acceptance remain open.
+
+## Preceding managed preflight continuation — 1 November 2026
+
+This preceding phase initially excluded unrelated review/calculator presentation files; the later consolidation above explicitly integrates them. Preserve this phase's results as historical context, not a claim of current release readiness. Its evidence is in `evidence/pr33-preflight/` and the cumulative acceptance report.
 
 Current executed results:102 explicit JVM passes (original two catalogue failures reproduced and narrowly corrected); Android broad run236 pass/1 fail followed by2 focused passes after diagnosing a stale full-replacement-versus-sparse-note fixture; selected iOS suites57 aggregate passes. Separate normal Android and iOS simulator builds pass. Available native raw logs do not prove all required named methods; the repeatable preflight intentionally FAILS rather than infer execution. Do not sum overlapping runs or relabel the broad run green.
 

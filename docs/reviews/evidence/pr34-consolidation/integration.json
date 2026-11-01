@@ -1,0 +1,74 @@
+{
+  "startingManagedRevision": "88b0bc36746e18114747c06433f28854096bfbae",
+  "pr34Head": "7ff419e392ebae3dba2294dcbee876f08398de21",
+  "pr33Head": "33fc6a20427f14250ced5ec1c4162e3dcac56cdc",
+  "protectedHashes": {
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt": "c79d68f9e9dc96559263dee80de69190df5c3886eab29a2f613104989d78eab7",
+    "android-vinetrack/app/build.gradle.kts": "ab5e787d43d5a26d89c058b325ac0203addd188b24383dff0cf6f3e19ecdec80",
+    "ios/VineTrack/App/AppConfig.swift": "b7a7f3cdefd26ae5304d25ec293d7fa567bf62339b3ad9e35011097b9a3efa51",
+    "ios/VineTrack.xcodeproj/project.pbxproj": "cc4157148a020c07dd33bb41ec054236613746bdbec9eeb2aa161d937cb6efc1",
+    "rork.json": "4e7979864de6813bdd319aa288f50f23767e53d8f50bcbf08a16cffc9d25ca35"
+  },
+  "scope": "Six presentation files only; earlier recovery/sync integration preserved",
+  "changes": [
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayPlanningCards.kt",
+      "beforeSha256": "1ad65d15670d42af27a7f636c2812bc3a54aa7014ee425c90675dad2ffbe401a",
+      "afterSha256": "76585f7dea93eb12d4615e0b42eab761628357d440ad81a8c6566934b65684bb",
+      "hunks": [
+        "applied_exact_unique_context"
+      ]
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CatalogueSavedChemical.kt",
+      "beforeSha256": "0a7fb7c325c1ac7636639087660f323d887f92223f68b1ad32cd4a55a9095fd6",
+      "afterSha256": "169c987aec5244091e75d6fdbe263a0df70aebfde4623ae7648d05d38c8fdaa4",
+      "hunks": [
+        "applied_exact_unique_context"
+      ]
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt",
+      "beforeSha256": "8eb48f63b675073e63fe7b3b72ca348d5bc3ecb5ad0b23543b98caffcc07b1a7",
+      "afterSha256": "947dd8835e86c9a594959ea811e90d307f46c4940d11d538b7e07275de3d125e",
+      "hunks": [
+        "applied_exact_unique_context",
+        "applied_exact_unique_context",
+        "applied_exact_unique_context",
+        "applied_exact_unique_context"
+      ]
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayStartActualFields.kt",
+      "beforeSha256": "b49d31c9250da1ef91cc9aee4be5a81f5ac98893bdb592ce05778ccb1d81ed05",
+      "afterSha256": "da4cc7b52cccd4bcb94ea38b90fd462329721b8ee010dfe9c2142ef389fac01a",
+      "hunks": [
+        "applied_exact_unique_context",
+        "applied_exact_unique_context",
+        "applied_exact_unique_context",
+        "applied_exact_unique_context"
+      ]
+    },
+    {
+      "path": "ios/VineTrack/App/SprayCalculatorView.swift",
+      "beforeSha256": "a9a95f82c6a341c27c6edad377cd89433b8f9b018bf59879e5ea18eae201f6f0",
+      "afterSha256": "99d6f552a9a37c017781803bcba321b4d3b2e4d119529be3f631fb253c7abbe4",
+      "hunks": [
+        "applied_exact_unique_context",
+        "applied_exact_unique_context",
+        "applied_exact_unique_context",
+        "applied_exact_unique_context"
+      ]
+    },
+    {
+      "path": "ios/VineTrack/App/SprayStartRateReview.swift",
+      "beforeSha256": "bb8bac6ea6b8b334cb13049d6b90265b1cb48688525861959f1d5cdac644b70a",
+      "afterSha256": "7c922b5f7e7c2c4d03d6a98a171d47995306b476fd9626f40e534eaa7cb17a6e",
+      "hunks": [
+        "applied_exact_unique_context",
+        "applied_exact_unique_context",
+        "applied_exact_unique_context"
+      ]
+    }
+  ]
+}

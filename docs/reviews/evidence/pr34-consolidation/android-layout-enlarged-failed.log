@@ -1,0 +1,105 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.SprayReleasePresentationAndroidTest:
+INSTRUMENTATION_STATUS: test=lightDefault
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=lightDefault
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=darkDefault
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=darkDefault
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=lightLargeText
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Pass label clipped: Single Row scale=1.5; size=148 x 42 width=false height=true lines=1 bottom=42.0 constraints=Constraints(minWidth = 0, maxWidth = 148, minHeight = 0, maxHeight = 42)
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.lightLargeText(SprayReleasePresentationAndroidTest.kt:31)
+
+INSTRUMENTATION_STATUS: stream=
+Error in lightLargeText(com.rork.vinetrack.data.SprayReleasePresentationAndroidTest):
+java.lang.AssertionError: Pass label clipped: Single Row scale=1.5; size=148 x 42 width=false height=true lines=1 bottom=42.0 constraints=Constraints(minWidth = 0, maxWidth = 148, minHeight = 0, maxHeight = 42)
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.lightLargeText(SprayReleasePresentationAndroidTest.kt:31)
+
+INSTRUMENTATION_STATUS: test=lightLargeText
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=darkLargeText
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Pass label clipped: Single Row scale=1.5; size=148 x 42 width=false height=true lines=1 bottom=42.0 constraints=Constraints(minWidth = 0, maxWidth = 148, minHeight = 0, maxHeight = 42)
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.darkLargeText(SprayReleasePresentationAndroidTest.kt:32)
+
+INSTRUMENTATION_STATUS: stream=
+Error in darkLargeText(com.rork.vinetrack.data.SprayReleasePresentationAndroidTest):
+java.lang.AssertionError: Pass label clipped: Single Row scale=1.5; size=148 x 42 width=false height=true lines=1 bottom=42.0 constraints=Constraints(minWidth = 0, maxWidth = 148, minHeight = 0, maxHeight = 42)
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.darkLargeText(SprayReleasePresentationAndroidTest.kt:32)
+
+INSTRUMENTATION_STATUS: test=darkLargeText
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 9.669
+There were 2 failures:
+1) lightLargeText(com.rork.vinetrack.data.SprayReleasePresentationAndroidTest)
+java.lang.AssertionError: Pass label clipped: Single Row scale=1.5; size=148 x 42 width=false height=true lines=1 bottom=42.0 constraints=Constraints(minWidth = 0, maxWidth = 148, minHeight = 0, maxHeight = 42)
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.lightLargeText(SprayReleasePresentationAndroidTest.kt:31)
+2) darkLargeText(com.rork.vinetrack.data.SprayReleasePresentationAndroidTest)
+java.lang.AssertionError: Pass label clipped: Single Row scale=1.5; size=148 x 42 width=false height=true lines=1 bottom=42.0 constraints=Constraints(minWidth = 0, maxWidth = 148, minHeight = 0, maxHeight = 42)
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.darkLargeText(SprayReleasePresentationAndroidTest.kt:32)
+
+FAILURES!!!
+Tests run: 4,  Failures: 2
+
+
+INSTRUMENTATION_CODE: -1

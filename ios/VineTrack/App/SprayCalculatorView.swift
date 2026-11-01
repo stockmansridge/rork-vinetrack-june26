@@ -368,7 +368,7 @@ struct SprayCalculatorView: View {
     private var phenologyStages: [PhenologyStage] { PhenologyStage.allStages }
 
     private var selectedPaddocks: [Paddock] {
-        store.paddocks.filter { selectedPaddockIds.contains($0.id) }
+        store.paddocks.filter { $0.vineyardId == store.selectedVineyardId && selectedPaddockIds.contains($0.id) }
     }
 
     private var totalAreaHectares: Double {
@@ -2955,7 +2955,7 @@ struct SprayCalculatorView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Weather captured automatically")
                         .font(.subheadline.weight(.semibold))
-                    Text("Temperature, wind and humidity will be recorded when the job starts.")
+                    Text("Temperature, wind and humidity are captured at the start, every hour during spraying, and at the end when available.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -3092,7 +3092,7 @@ struct SprayCalculatorView: View {
                         Image(systemName: "cloud.sun.fill")
                             .foregroundStyle(.blue)
                         Text("Automatic weather capture").font(.caption)
-                        FieldInfoButton(title: "Weather capture", message: "Weather data is captured separately at the start, during the spray and when the Trip ends. Unavailable weather is recorded honestly and never prevents a valid Trip from starting.")
+                        FieldInfoButton(title: "Weather capture", message: "Weather data is captured at the start, every hour during spraying, and when the Trip ends. Unavailable weather is recorded honestly and never prevents a valid Trip from starting.")
                         Spacer()
                     }
                     .padding(12)
@@ -3112,8 +3112,6 @@ struct SprayCalculatorView: View {
                     }
 
                     VStack(spacing: 8) {
-                        SprayConcentrationWarningView(products: SprayPlanningOperationalGate.warningProducts(
-                            guidedInputs.products.filter { $0.basis == .per100Litres }.map(\.name)))
                         Button {
                             Task { await confirmAndStartJob() }
                         } label: {
@@ -4142,32 +4140,8 @@ struct SprayCalculatorView: View {
                     }
                 }
             }
-            if let intent = guidedInputs.planningIntent {
-                GuidedReviewGroup(title: "Selected Physical Work", help: SprayWorkAreaSelection.routeAdmissionMessage) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Button("Select Work Area") { showingWorkArea = true }
-                            .disabled(intent.configuration == nil)
-                            .frame(minHeight: 44).accessibilityIdentifier("spray.selectWorkArea")
-                        Text(selectedPhysicalWork.isEmpty ? "Work area not selected — an admitted unbound save will not create an executable Trip." : "\(selectedPhysicalWork.count) whole travel passes selected")
-                        ForEach(selectedPhysicalWork) { item in
-                            Text(item.title).font(.caption)
-                            if !SprayWorkAreaSelection.retained(item, choices: SprayWorkAreaSelection.choices(plannedCandidates), configuration: intent.configuration) {
-                                Text("Retained selection is stale or unavailable. Re-select explicitly.").font(.caption).foregroundStyle(.orange)
-                            }
-                        }
-                        Text("Known selected treatment area: not certified").font(.caption)
-                    }
-                }
-                .sheet(isPresented: $showingWorkArea) {
-                    SprayWorkAreaSelectionView(choices: SprayWorkAreaSelection.choices(plannedCandidates),
-                        configuration: intent.configuration ?? .standardPass, selected: $selectedPhysicalWork)
-                }
-                GuidedReviewGroup(title: "Actual Spray Coverage", help: "Only genuine tracked and recorded operations establish spray coverage. Selecting a planned area is not a record of completed treatment.") {
-                    Text("Not yet recorded").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            SprayConcentrationWarningView(products: SprayPlanningOperationalGate.warningProducts(
-                guidedInputs.products.filter { $0.basis == .per100Litres }.map(\.name)))
+            // Work-area binding and actual coverage are not review-stage controls.
+            // Keep planning, route admission and actual-entry validation unchanged.
             GuidedReviewGroup(title: "Application", onEdit: { toggle(.application) }) {
                 VStack(alignment: .leading, spacing: 6) {
                     GuidedReviewRow(label: "Method", value: operationType.rawValue)

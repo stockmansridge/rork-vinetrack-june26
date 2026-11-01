@@ -72,15 +72,13 @@ final class SprayEditingAcceptanceUITests: XCTestCase {
         XCTAssertEqual(chemical.value as? String, "637.25", "Selecting a path must retain actual chemical amount")
         for _ in 0..<12 where !start.isHittable { app.scrollViews.firstMatch.swipeUp() }
         XCTAssertTrue(start.isEnabled, "Entered valid mix starts without acknowledging advisory warnings")
-        let warnings = app.buttons.matching(identifier: "spray.concentrationWarning")
-        guard let warning = warnings.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
-            XCTFail("Optional orange CF warning must be visible beside enabled Start in Mixing: \(app.debugDescription)")
-            return
-        }
-        warning.tap()
-        XCTAssertTrue(app.navigationBars["Concentration / Label Warning"].waitForExistence(timeout: 5))
-        app.buttons["Close"].tap()
-        XCTAssertTrue(start.isEnabled, "Opening or dismissing the optional warning never changes admission")
+        XCTAssertFalse(app.buttons["spray.concentrationWarning"].exists, "Generic review warning is hidden; actual-entry and route gates still apply")
+        XCTAssertFalse(app.staticTexts["Selected Physical Work"].exists)
+        XCTAssertFalse(app.staticTexts["Actual Spray Coverage"].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "PR34 mixing review with entered actuals and explicit route"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
         // No real account/receipt transport is installed in this isolated presentation fixture.
         app.buttons["Cancel"].firstMatch.tap()
         for _ in 0..<12 where !review.isHittable { app.scrollViews.firstMatch.swipeUp() }

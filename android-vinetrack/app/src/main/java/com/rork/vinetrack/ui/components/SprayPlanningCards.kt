@@ -2,6 +2,9 @@ package com.rork.vinetrack.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -45,11 +48,32 @@ fun SprayPlanningCards(
                     SprayInfoHelp("Optional pass setup",
                         "Single Row treats the two facing vine faces; 2 Row treats both sides of two complete rows from an aisle pass. Leaving it unset retains normal Tank Mixing and Trip. This does not select a true over-row driving route.")
                 }
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                // Keep one-line equal-height segments. At accessibility sizes the row
+                // scrolls as a unit instead of clipping or shrinking the chosen label.
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val minimumWidth = 300.dp * LocalDensity.current.fontScale
+                    SingleChoiceSegmentedButtonRow(Modifier.horizontalScroll(rememberScrollState())
+                        .width(maxOf(maxWidth, minimumWidth))) {
                     val choices = listOf<SprayPassConfiguration?>(null) + SprayPassConfiguration.entries
                     choices.forEachIndexed { index, pass ->
                         SegmentedButton(selected = configuration == pass, onClick = { onConfiguration(pass) },
-                            shape = SegmentedButtonDefaults.itemShape(index, choices.size)) { Text(pass?.title ?: "Not Set") }
+                            shape = SegmentedButtonDefaults.itemShape(index, choices.size),
+                            icon = {},
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+                        ) {
+                            Text(
+                                when (pass) {
+                                    SprayPassConfiguration.STANDARD_PASS -> "Single Row"
+                                    SprayPassConfiguration.OVER_ROW -> "2 Row"
+                                    null -> "Not Set"
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                maxLines = 1,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
                     }
                 }
                 if (configuration != null) {

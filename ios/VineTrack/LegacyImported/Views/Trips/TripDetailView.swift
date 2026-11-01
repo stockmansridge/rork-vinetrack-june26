@@ -422,6 +422,14 @@ struct TripDetailView: View {
                     .font(.headline)
                     .frame(maxWidth: .infinity)
             }
+        } else if currentTrip.isActive && currentTrip.endTime == nil {
+            Section {
+                Label("Active Trip · read-only on this device", systemImage: "info.circle")
+                    .font(.headline)
+                Text("This device does not hold the original tracking claim. Resume or end the Trip on its original device. If that device is unavailable, ask an Owner or Manager to arrange a verified reconciliation; remote completion is not available here. Retained GPS, tank actuals and pending work must be reconciled before any management action.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

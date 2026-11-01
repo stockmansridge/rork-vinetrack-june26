@@ -17,6 +17,7 @@ internal fun CatalogueSavedChemical(chemical: SavedChemical, modifier: Modifier 
     val repository = remember(context) { CatalogueRepository(context) }
     var revision by remember(chemical.chemicalV3RevisionId) { mutableStateOf<CatalogueRow?>(null) }
     var frontLabelPath by remember(chemical.chemicalV3RevisionId) { mutableStateOf<String?>(null) }
+    var loading by remember(chemical.chemicalV3RevisionId) { mutableStateOf(chemical.chemicalV3RevisionId != null) }
     LaunchedEffect(chemical.chemicalV3RevisionId) {
         val id = chemical.chemicalV3RevisionId ?: return@LaunchedEffect
         try {
@@ -27,6 +28,8 @@ internal fun CatalogueSavedChemical(chemical: SavedChemical, modifier: Modifier 
             throw cancelled
         } catch (_: Exception) {
             // Keep loaded exact facts even if the image fallback is unavailable.
+        } finally {
+            loading = false
         }
     }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -35,7 +38,9 @@ internal fun CatalogueSavedChemical(chemical: SavedChemical, modifier: Modifier 
             Column(Modifier.weight(1f).padding(start = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(revision?.text("product_name") ?: chemical.displayName, style = MaterialTheme.typography.titleMedium)
                 Text(CatalogueRow.compactManufacturer(revision?.text("manufacturer") ?: chemical.manufacturer), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(revision?.badge ?: "Catalogue information unavailable", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("VineTrack catalogue · linked", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                Text(revision?.badge ?: if (loading) "Loading linked catalogue details…" else "Basic details · linked revision unavailable. Reconnect and reopen to retry.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (showsDetails) Text("Catalogue linkage is not label approval. Follow the current product label and registered-use conditions.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         val exact = revision

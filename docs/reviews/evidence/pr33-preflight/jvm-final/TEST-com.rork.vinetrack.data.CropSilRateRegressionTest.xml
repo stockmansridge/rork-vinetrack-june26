@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.rork.vinetrack.data.CropSilRateRegressionTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-11-01T10:39:24.133Z" hostname="e2b.local" time="0.467">
+<testsuite name="com.rork.vinetrack.data.CropSilRateRegressionTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-11-01T12:47:15.341Z" hostname="e2b.local" time="0.241">
   <properties/>
-  <testcase name="only explicit equivalent notations are accepted" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.057"/>
-  <testcase name="REST decoding cache codecs edit and outbound projection preserve rate evidence" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.317"/>
-  <testcase name="catalogue nullable bounds preserve evidence but never authorize contradictory amounts" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.036"/>
-  <testcase name="chosen rate quantity and condition remain frozen in spray record" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.016"/>
+  <testcase name="only explicit equivalent notations are accepted" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.033"/>
+  <testcase name="REST decoding cache codecs edit and outbound projection preserve rate evidence" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.129"/>
+  <testcase name="catalogue nullable bounds preserve evidence but never authorize contradictory amounts" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.027"/>
+  <testcase name="chosen rate quantity and condition remain frozen in spray record" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.013"/>
   <testcase name="unresolved captured concentration units must not be discarded or inferred" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.006"/>
   <testcase name="manual and chosen quantities are correct on separate bases" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.005"/>
-  <testcase name="captured competing fixed rates never choose on basis alone" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.007"/>
+  <testcase name="captured competing fixed rates never choose on basis alone" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.006"/>
   <testcase name="normalization keeps evidence and rejects contradictory stored data" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.001"/>
   <testcase name="both bases retain correct display and deliberate presets" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.004"/>
-  <testcase name="old labels separate conditions and unrecognized evidence round trip" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.002"/>
-  <testcase name="captured incompatible product unit requires independent review" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.011"/>
+  <testcase name="old labels separate conditions and unrecognized evidence round trip" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.003"/>
+  <testcase name="captured incompatible product unit requires independent review" classname="com.rork.vinetrack.data.CropSilRateRegressionTest" time="0.013"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

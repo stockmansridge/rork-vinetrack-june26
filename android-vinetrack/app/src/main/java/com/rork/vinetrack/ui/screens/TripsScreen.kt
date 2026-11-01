@@ -1209,6 +1209,11 @@ private fun TripDetailView(
                     tracking = state.isTracking,
                     onEndConfirmed = { ending = true },
                 )
+            } else if (trip.isActive && trip.endTime.isNullOrBlank()) {
+                VineyardCard {
+                    Text("Active Trip · read-only on this device", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Text("This device does not hold the original tracking claim. Resume or end the Trip on its original device. If that device is unavailable, ask an Owner or Manager to arrange a verified reconciliation; remote completion is not available here. Retained GPS, tank actuals and pending work must be reconciled before any management action.", fontSize = 13.sp, color = vine.textSecondary)
+                }
             }
 
             state.tankActualSyncNotice?.let { notice ->
@@ -1316,10 +1321,11 @@ private fun TripDetailView(
                             ),
                         )
                     }
-                    if (trip.rowSequence.isNotEmpty()) {
+                    if (trip.plannedPathCount > 0) {
+                        val occurrenceBased = trip.coverageBasis != com.rork.vinetrack.data.model.TripOccurrenceCoverage.Basis.LEGACY
                         val pattern = TrackingPattern.fromRaw(trip.trackingPattern)
                         add(TripStatRow(Icons.Filled.Timeline, "Pattern", pattern.title, VineColors.Indigo))
-                        if (pattern == TrackingPattern.EVERY_SECOND_ROW) {
+                        if (!occurrenceBased && pattern == TrackingPattern.EVERY_SECOND_ROW) {
                             trip.rowSequence.firstOrNull()?.let { startMidrow ->
                                 val lowerRow = kotlin.math.floor(startMidrow).toInt()
                                 val midrowText = if (startMidrow % 1.0 == 0.0) "%.0f".format(startMidrow) else "%.1f".format(startMidrow)
@@ -1333,20 +1339,20 @@ private fun TripDetailView(
                                 )
                             }
                         }
-                        add(TripStatRow(Icons.Filled.Route, "Paths planned", trip.rowSequence.size.toString(), VineColors.Cyan))
+                        add(TripStatRow(Icons.Filled.Route, "Paths planned", trip.plannedPathCount.toString(), VineColors.Cyan))
                         add(
                             TripStatRow(
                                 Icons.Filled.CheckCircle,
                                 "Complete",
-                                trip.rowSequence.count { it in donePaths }.toString(),
+                                (if (occurrenceBased) trip.completedRowCount else trip.rowSequence.count { it in donePaths }).toString(),
                                 VineColors.LeafGreen,
                             ),
                         )
-                        val skippedCount = trip.rowSequence.count { it in skippedPathsSet && it !in donePaths }
+                        val skippedCount = if (occurrenceBased) trip.skippedRowCount else trip.rowSequence.count { it in skippedPathsSet && it !in donePaths }
                         if (skippedCount > 0) {
                             add(TripStatRow(Icons.Filled.SkipNext, "Skipped", skippedCount.toString(), VineColors.Orange))
                         }
-                        val notDoneCount = trip.rowSequence.count { it !in donePaths && it !in skippedPathsSet }
+                        val notDoneCount = trip.notCompletedRowCount
                         if (notDoneCount > 0) {
                             add(TripStatRow(Icons.Filled.Close, "Not complete", notDoneCount.toString(), VineColors.Destructive))
                         }

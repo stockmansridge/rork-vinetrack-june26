@@ -244,5 +244,5 @@ TankActualRecoveryVerifierTest > currentMembershipRequiredBeforeAnyHistoryReques
 
 TankActualRecoveryVerifierTest > unknownLocalAndServerFieldsStayProtected PASSED
 
-BUILD SUCCESSFUL in 36s
+BUILD SUCCESSFUL in 27s
 26 actionable tasks: 3 executed, 23 up-to-date

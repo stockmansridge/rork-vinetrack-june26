@@ -124,6 +124,7 @@ struct SprayInitialTankActualsEditor: View {
     let tankCount: Int
     let formatter: RegionFormatter
     @Binding var input: SprayInitialTankInput
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -132,18 +133,14 @@ struct SprayInitialTankActualsEditor: View {
                 FieldInfoButton(title: "Actual tank contents", message: "The calculator is your guide. Enter the water and each chemical you actually put in this tank. These amounts are saved as the tank's actual-use record when you start. Enter 0 for a product you did not add. Later tanks are recorded when you fill them. Path selection does not change these amounts.")
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("Water").font(.subheadline.weight(.semibold))
-                Text("Calculated: \(formatter.formatVolume(litres: tank.waterVolume))")
-                    .font(.caption).foregroundStyle(.secondary)
+                calculatedAmount("Water", amount: formatter.formatVolume(litres: tank.waterVolume))
                 actualField("Actual water", unit: formatter.volumeUnitAbbreviation,
                     text: $input.waterText, identifier: "spray.actualWater")
             }
             ForEach(tank.chemicals) { chemical in
                 Divider()
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(chemical.name).font(.subheadline.weight(.semibold))
-                    Text("Calculated: \(SprayInitialTankInput.plannedDisplayAmount(chemical).formatted(.number.precision(.fractionLength(0...3)))) \(chemical.unitLabel)")
-                        .font(.caption).foregroundStyle(.secondary)
+                    calculatedAmount(chemical.name, amount: "\(SprayInitialTankInput.plannedDisplayAmount(chemical).formatted(.number.precision(.fractionLength(0...3)))) \(chemical.unitLabel)")
                     actualField("Actual amount added", unit: chemical.unitLabel,
                         text: Binding(get: { input.chemicalTexts[chemical.id] ?? "" },
                             set: { input.chemicalTexts[chemical.id] = $0 }),
@@ -166,6 +163,27 @@ struct SprayInitialTankActualsEditor: View {
         .padding(14)
         .background(Color(.secondarySystemGroupedBackground))
         .clipShape(.rect(cornerRadius: 12))
+    }
+
+    private func calculatedAmount(_ title: String, amount: String) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title).font(.headline).fixedSize()
+                Spacer(minLength: 8)
+                calculatedValue(amount).fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                calculatedValue(amount)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func calculatedValue(_ amount: String) -> some View {
+        (Text("Calculated – ").font(.subheadline.weight(.semibold)) +
+            Text(amount).font(.title3.weight(.bold)))
+            .foregroundStyle(colorScheme == .dark ? Color.cyan : Color.blue)
     }
 
     private func actualField(_ title: String, unit: String, text: Binding<String>, identifier: String) -> some View {

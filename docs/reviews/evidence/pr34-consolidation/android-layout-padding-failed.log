@@ -1,0 +1,143 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.SprayReleasePresentationAndroidTest:
+INSTRUMENTATION_STATUS: test=lightDefault
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Pass label clipped: Not Set scale=1.0
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.lightDefault(SprayReleasePresentationAndroidTest.kt:29)
+
+INSTRUMENTATION_STATUS: stream=
+Error in lightDefault(com.rork.vinetrack.data.SprayReleasePresentationAndroidTest):
+java.lang.AssertionError: Pass label clipped: Not Set scale=1.0
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.lightDefault(SprayReleasePresentationAndroidTest.kt:29)
+
+INSTRUMENTATION_STATUS: test=lightDefault
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=darkDefault
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Pass label clipped: Not Set scale=1.0
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.darkDefault(SprayReleasePresentationAndroidTest.kt:30)
+
+INSTRUMENTATION_STATUS: stream=
+Error in darkDefault(com.rork.vinetrack.data.SprayReleasePresentationAndroidTest):
+java.lang.AssertionError: Pass label clipped: Not Set scale=1.0
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.darkDefault(SprayReleasePresentationAndroidTest.kt:30)
+
+INSTRUMENTATION_STATUS: test=darkDefault
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=lightLargeText
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Pass label clipped: Not Set scale=1.5
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.lightLargeText(SprayReleasePresentationAndroidTest.kt:31)
+
+INSTRUMENTATION_STATUS: stream=
+Error in lightLargeText(com.rork.vinetrack.data.SprayReleasePresentationAndroidTest):
+java.lang.AssertionError: Pass label clipped: Not Set scale=1.5
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.lightLargeText(SprayReleasePresentationAndroidTest.kt:31)
+
+INSTRUMENTATION_STATUS: test=lightLargeText
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=darkLargeText
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayReleasePresentationAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=4
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Pass label clipped: Not Set scale=1.5
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.darkLargeText(SprayReleasePresentationAndroidTest.kt:32)
+
+INSTRUMENTATION_STATUS: stream=
+Error in darkLargeText(com.rork.vinetrack.data.SprayReleasePresentationAndroidTest):
+java.lang.AssertionError: Pass label clipped: Not Set scale=1.5
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.darkLargeText(SprayReleasePresentationAndroidTest.kt:32)
+
+INSTRUMENTATION_STATUS: test=darkLargeText
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 4.367
+There were 4 failures:
+1) lightDefault(com.rork.vinetrack.data.SprayReleasePresentationAndroidTest)
+java.lang.AssertionError: Pass label clipped: Not Set scale=1.0
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.lightDefault(SprayReleasePresentationAndroidTest.kt:29)
+2) darkDefault(com.rork.vinetrack.data.SprayReleasePresentationAndroidTest)
+java.lang.AssertionError: Pass label clipped: Not Set scale=1.0
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.darkDefault(SprayReleasePresentationAndroidTest.kt:30)
+3) lightLargeText(com.rork.vinetrack.data.SprayReleasePresentationAndroidTest)
+java.lang.AssertionError: Pass label clipped: Not Set scale=1.5
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.lightLargeText(SprayReleasePresentationAndroidTest.kt:31)
+4) darkLargeText(com.rork.vinetrack.data.SprayReleasePresentationAndroidTest)
+java.lang.AssertionError: Pass label clipped: Not Set scale=1.5
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.verify(SprayReleasePresentationAndroidTest.kt:62)
+	at com.rork.vinetrack.data.SprayReleasePresentationAndroidTest.darkLargeText(SprayReleasePresentationAndroidTest.kt:32)
+
+FAILURES!!!
+Tests run: 4,  Failures: 4
+
+
+INSTRUMENTATION_CODE: -1

@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.rork.vinetrack.data.SprayStartActualAmountsTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-11-01T10:39:24.636Z" hostname="e2b.local" time="0.03">
+<testsuite name="com.rork.vinetrack.data.SprayStartActualAmountsTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-11-01T12:47:15.624Z" hostname="e2b.local" time="0.034">
   <properties/>
-  <testcase name="blankActualsCannotConfirmCalculatedAmounts" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.004"/>
+  <testcase name="blankActualsCannotConfirmCalculatedAmounts" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.006"/>
   <testcase name="importedDisplayQuantitiesDoNotCauseActualDoubleConversion" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.002"/>
-  <testcase name="recipeChangeOrProductChangeRejectsStaleActuals" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.0"/>
-  <testcase name="onlyMatchingCanonicalOrRegionBoundRawInputCanBeConsumed" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.012"/>
+  <testcase name="recipeChangeOrProductChangeRejectsStaleActuals" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.001"/>
+  <testcase name="onlyMatchingCanonicalOrRegionBoundRawInputCanBeConsumed" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.008"/>
   <testcase name="invalidTextNeverEnablesStarting" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.002"/>
   <testcase name="enteredAmountsAreSeparateFromPlanAndOnlyCoverTheTankMixedNow" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.001"/>
   <testcase name="explicitZeroChemicalIsRecordedAndMissingIsNotZero" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.001"/>
-  <testcase name="retainedDraftRoundTripKeepsAmountsAndRejectsMissingOrChangedRecipe" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.003"/>
-  <testcase name="regeneratedPreviewIdsRemapOnlyTheIdenticalOrderedRecipe" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.002"/>
-  <testcase name="regionWaterAndLocaleDecimalConvertExactlyOnce" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.0"/>
-  <testcase name="productOrderAndDuplicateIdsCannotMisattributeActuals" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.0"/>
+  <testcase name="retainedDraftRoundTripKeepsAmountsAndRejectsMissingOrChangedRecipe" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.005"/>
+  <testcase name="regeneratedPreviewIdsRemapOnlyTheIdenticalOrderedRecipe" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.003"/>
+  <testcase name="regionWaterAndLocaleDecimalConvertExactlyOnce" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.002"/>
+  <testcase name="productOrderAndDuplicateIdsCannotMisattributeActuals" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.001"/>
   <testcase name="firstTankUsesPositiveNumberOrderAndRejectsAmbiguousIdentities" classname="com.rork.vinetrack.data.SprayStartActualAmountsTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>

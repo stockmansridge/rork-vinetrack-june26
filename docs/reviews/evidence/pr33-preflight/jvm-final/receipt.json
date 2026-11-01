@@ -1,15 +1,15 @@
 {
   "returnCode": 0,
   "reports": {
-    "TEST-com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest.xml": "4f5c7a82353b0664b29a030f33e531bae53813c04773c60dcc9e4b284b13e6d5",
-    "TEST-com.rork.vinetrack.data.SprayStartActualAmountsTest.xml": "dbd85aa5c69b8f3bf69e16f6027c532d190893fb4daa2fc85a35e8e6b8cd8a12",
-    "TEST-com.rork.vinetrack.data.SprayTankActualTest.xml": "db3fd245a35bdbdccad8e7407f9f22046623e0c2c52884b02f8c280df74a5526",
-    "TEST-com.rork.vinetrack.data.auth.RecoveryWriterCompatibilityTest.xml": "fa55cdd9fff430f9ac9dc2d5e21f0b71cb745070fc48b67fbe8ab869f96f8818",
-    "TEST-com.rork.vinetrack.data.RetainedPlanningContractTest.xml": "f92814fd3fd64827797f16e3d75d7041efda04c5f5642557848796bf9a60490d",
-    "TEST-com.rork.vinetrack.data.auth.TankActualRecoveryVerifierTest.xml": "caa7a37d0b3fc1fd297e34014f2f2c884dd06361139760782a870adf9913705f",
-    "TEST-com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest.xml": "086e88ebb83d81ff1772717d12531fb894f57ca08a8b009d3b3790c1c9e07e92",
-    "TEST-com.rork.vinetrack.data.CropSilRateRegressionTest.xml": "10c2cba79d6d531e836b2f1fbddf5f5f446125c0715bf1f75b0497b0ce33b998",
-    "TEST-com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest.xml": "c57645fe15077b6ec24ab8478b5d5ab967e4bd78f300d8c16f5a282d31a38c3e"
+    "TEST-com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest.xml": "7aa7c63c38f7776def62a7ab6f86834cc5e429326fbb10b0f8555bd6478ce09b",
+    "TEST-com.rork.vinetrack.data.SprayStartActualAmountsTest.xml": "5f3a26eb8150e0f74faa2e7e6b7046968d3da55e7f29a55e496e6c44119e9b29",
+    "TEST-com.rork.vinetrack.data.SprayTankActualTest.xml": "a375fa94c50509d1f6db2d7bcdf5a3d7d32f3ab1c0477158f6ff1f347d75eeca",
+    "TEST-com.rork.vinetrack.data.auth.RecoveryWriterCompatibilityTest.xml": "805b1e36e9619cc8fb954d73bd55b3b3cb3c0950daf771e923e9055d7ee2c649",
+    "TEST-com.rork.vinetrack.data.RetainedPlanningContractTest.xml": "84875a2960c131d936aa16b39704111c93a8a09b95207d235ad8ff77bdb8e1ae",
+    "TEST-com.rork.vinetrack.data.auth.TankActualRecoveryVerifierTest.xml": "fab1ed9d69f3d998725bf2658ffe6ba35c9dde0b05871446c86840e55f77582b",
+    "TEST-com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest.xml": "f8ee34d92263c8665fdccc3d1be9de204708c0d5af24b91bd6400b8bdea411be",
+    "TEST-com.rork.vinetrack.data.CropSilRateRegressionTest.xml": "912993786ab96d997cae24057af282e3acca25b95832d3ce4c2818b17ca665b2",
+    "TEST-com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest.xml": "dea75ffcdd83b42484f8a3fdfaf93e2415c31471e58112d36201dd0830f3e6fe"
   },
-  "sourceInventorySha256": "89f452e9ee2ea75b79ea29616ca623ee8aaa26f89cdf8839a6a92fdd838780e9"
+  "sourceInventorySha256": "9c86c0b73ab3b85ce46e479a43a0ba49b242b2bffd06a22f5500fc372d3f0869"
 }

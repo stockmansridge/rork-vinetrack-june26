@@ -164,7 +164,6 @@ import com.rork.vinetrack.data.spray.SprayVolumeChoice
 import com.rork.vinetrack.data.spray.SprayVolumeHelp
 import com.rork.vinetrack.ui.components.SprayInfoHelp
 import com.rork.vinetrack.ui.components.SprayPlanningCards
-import com.rork.vinetrack.ui.components.SprayConcentrationWarning
 import com.rork.vinetrack.ui.components.SprayLabelRateSheet
 import com.rork.vinetrack.data.spray.SprayPlanningIntent
 import com.rork.vinetrack.data.spray.SprayPlanningInputProvenance
@@ -629,8 +628,8 @@ fun SprayCalculatorScreen(
             } }, confirmButton = { TextButton(onClick = { inspectingStart = false }) { Text("Return to retained setup") } })
     }
 
-    val selectedPaddocks = remember(selectedPaddockIds.toList(), state.paddocks) {
-        state.paddocks.filter { selectedPaddockIds.contains(it.id) }
+    val selectedPaddocks = remember(selectedPaddockIds.toList(), state.paddocks, state.selectedVineyardId) {
+        state.paddocks.filter { it.vineyardId == state.selectedVineyardId && selectedPaddockIds.contains(it.id) }
     }
     val totalArea = selectedPaddocks.sumOf { it.areaHectares }
     val totalRows = selectedPaddocks.sumOf { it.rows.orEmpty().size }
@@ -2463,29 +2462,7 @@ fun SprayCalculatorScreen(
                         }
                     }
 
-                    guidedFlow.inputs.planningIntent?.let { intent ->
-                        val workChoices = SprayWorkAreaSelection.choices(plannedCandidates)
-                        GuidedReviewGroup(title = "Selected Physical Work", accent = VineColors.Olive, help = SprayWorkAreaSelection.ROUTE_MESSAGE) {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(onClick = { showingWorkArea = true }, enabled = intent.configuration != null) { Text("Select Work Area") }
-                                Text(if (selectedPhysicalWork.isEmpty()) "Work area not selected — an admitted unbound save will not create an executable Trip."
-                                    else "${selectedPhysicalWork.size} whole travel passes selected")
-                                selectedPhysicalWork.forEach { item ->
-                                    Text(item.title, style = MaterialTheme.typography.bodySmall)
-                                    if (!SprayWorkAreaSelection.retained(item, workChoices, intent.configuration))
-                                        Text("Retained selection is stale or unavailable. Re-select explicitly.", color = VineColors.Warning)
-                                }
-                                Text("Known selected treatment area: not certified", style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                        GuidedReviewGroup(title = "Actual Spray Coverage", accent = VineColors.Olive, help = "Only genuine tracked and recorded operations establish spray coverage. Selecting a planned area is not a record of completed treatment.") {
-                            Text("Not yet recorded", style = MaterialTheme.typography.bodySmall)
-                        }
-                        if (showingWorkArea) SprayWorkAreaSelectionSheet(workChoices, intent.configuration ?: SprayPassConfiguration.STANDARD_PASS,
-                            selectedPhysicalWork.toList(), onChange = { selectedPhysicalWork.clear(); selectedPhysicalWork.addAll(it) }, onDismiss = { showingWorkArea = false })
-                    }
-                    SprayConcentrationWarning(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.warningProducts(
-                        guidedFlow.inputs.products.filter { it.basis == com.rork.vinetrack.data.spray.SprayProductRateBasis.PER_100_LITRES }.map { it.name }))
+                    // Review-stage presentation only; route and actual-use gates remain unchanged.
                     GuidedReviewGroup(
                         title = "Application",
                         accent = VineColors.Olive,
@@ -4771,7 +4748,7 @@ private fun SprayTankMixReview(
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Automatic weather capture", modifier = Modifier.weight(1f), color = vine.textSecondary)
-                    SprayInfoHelp("Weather capture", "Weather data is captured separately at the start, during the spray and when the Trip ends. Unavailable weather is recorded honestly and does not prevent a valid Trip from starting.")
+                    SprayInfoHelp("Weather capture", "Weather data is captured at the start, every hour during spraying, and when the Trip ends. Unavailable weather is recorded honestly and does not prevent a valid Trip from starting.")
                 }
             }
 
@@ -4794,8 +4771,6 @@ private fun SprayTankMixReview(
                     onInspectStart?.let { inspect ->
                         OutlinedButton(onClick = inspect, modifier = Modifier.fillMaxWidth()) { Text("Inspect retained Start") }
                     }
-                    SprayConcentrationWarning(com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.warningProducts(
-                        result.chemicalResults.filter { it.basis == SprayCalculator.RateBasis.PER_100L }.map { it.name }))
                     Button(
                         onClick = onStart,
                         enabled = !saving && hasChosenTrackingPattern && !hasActiveTrip && operationalBlocker == null && actualsReady,

@@ -4,6 +4,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
+import android.content.pm.ApplicationInfo
+import java.io.File
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.runner.RunWith
 import org.junit.After
@@ -20,12 +22,19 @@ class TripOccurrencePersistenceAndroidTest {
     private class Installation(base: Context) : ContextWrapper(base) {
         private val prefix = "occurrence_${UUID.randomUUID()}_"
         private val names = mutableSetOf<String>()
+        private val root = File(base.cacheDir, prefix).apply { mkdirs() }
         override fun getApplicationContext(): Context = this
+        override fun getApplicationInfo(): ApplicationInfo = ApplicationInfo(baseContext.applicationInfo).apply { dataDir = root.absolutePath }
+        override fun getFilesDir(): File = File(root, "files").apply { mkdirs() }
+        override fun getCacheDir(): File = File(root, "cache").apply { mkdirs() }
         override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
             names.add(name)
             return baseContext.getSharedPreferences(prefix + name, mode)
         }
-        fun dispose() { names.forEach { baseContext.deleteSharedPreferences(prefix + it) } }
+        fun dispose() {
+            names.forEach { baseContext.deleteSharedPreferences(prefix + it) }
+            root.deleteRecursively()
+        }
     }
     private val context = Installation(InstrumentationRegistry.getInstrumentation().targetContext)
     @After fun dispose() { context.dispose() }
