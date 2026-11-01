@@ -129,7 +129,7 @@ class VineyardRepository(private val session: SessionStore) {
         kotlinx.coroutines.withTimeout(30_000) {
             val rows = mutableListOf<SavedChemical>()
             for (page in 0 until 20) {
-                val batch: List<SavedChemical> = get("saved_chemicals?select=*&vineyard_id=eq.$vineyardId&order=id.asc&limit=500&offset=${page * 500}")
+                val batch: List<SavedChemical> = get("saved_chemicals_effective?select=*&vineyard_id=eq.$vineyardId&order=id.asc&limit=500&offset=${page * 500}")
                 rows.addAll(batch)
                 if (batch.size < 500) return@withTimeout rows.toList()
             }
