@@ -137,8 +137,11 @@ struct TripView: View {
             }
             .alert("Delete Trip", isPresented: $showDeleteConfirmation) {
                 Button("Delete", role: .destructive) {
-                    if let trip = tripToDelete {
-                        store.deleteTrip(trip.id)
+                    if let trip = tripToDelete,
+                       accessControl.canDeleteOperationalRecords,
+                       let current = store.trips.first(where: { $0.id == trip.id }),
+                       !current.isActive {
+                        store.deleteTrip(current.id)
                     }
                     tripToDelete = nil
                 }
@@ -344,13 +347,23 @@ struct TripView: View {
                                 displayTitle: tripDisplayName(trip)
                             )
                         }
+                        // UIKit expects an .onDelete edit to change the List item count
+                        // immediately. We deliberately require a confirmation alert,
+                        // so use an explicit, non-full-swipe action instead. Otherwise
+                        // confirming a swipe can abort inside UICollectionView batch updates.
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            if accessControl.canDeleteOperationalRecords && !trip.isActive {
+                                Button(role: .destructive) {
+                                    guard let current = store.trips.first(where: { $0.id == trip.id }),
+                                          !current.isActive else { return }
+                                    tripToDelete = current
+                                    showDeleteConfirmation = true
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                        }
                     }
-                    .onDelete(perform: accessControl.canDeleteOperationalRecords ? { offsets in
-                        let trips = filteredAndSortedTrips
-                        guard let index = offsets.first, !trips[index].isActive else { return }
-                        tripToDelete = trips[index]
-                        showDeleteConfirmation = true
-                    } : nil)
                 } header: {
                     Label("Other Trips", systemImage: "road.lanes")
                         .foregroundStyle(Color.accentColor)
