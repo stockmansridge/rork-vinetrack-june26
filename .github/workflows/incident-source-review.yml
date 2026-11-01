@@ -6,88 +6,54 @@ on:
 permissions:
   contents: read
 jobs:
-  publish:
+  source:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: write
-    outputs:
-      source: ${{ steps.commit.outputs.source }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
-      - name: Verify exact reviewed patch, then commit to incident branch only
-        id: commit
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import base64, gzip, hashlib, pathlib
-          encoded = ''.join(pathlib.Path('tools/incident-repair.part'+str(i)).read_text().strip() for i in (1,2,3))
-          # Correct two transport transcription characters; the reviewed byte hash remains mandatory.
-          encoded = encoded.replace('3HSWW1xs', '3HSW1xs').replace('t3Z4H4OLg', 't3Z4OLg')
-          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
-          assert hashlib.sha256(patch).hexdigest() == '84d01c42915406231e88b812298964cb911361a26b0e0a97e520be90650802b6'
-          pathlib.Path('/tmp/incident.patch').write_bytes(patch)
-          PY
-          git apply --check /tmp/incident.patch
-          git apply /tmp/incident.patch
-          git diff --check
-          git rm tools/incident-repair.part1 tools/incident-repair.part2 tools/incident-repair.part3
-          git add android-vinetrack ios scripts sql/occurrence_setup_uuid_case_identity.sql
-          git config user.name 'VineTrack repair validation'
-          git config user.email 'noreply@github.com'
-          git commit -m 'fix: preserve spray identities and verify populated recovery evidence'
-          git push origin HEAD:fix/spray-start-yield-recovery-20261101
-          echo "source=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-  database:
-    needs: publish
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.publish.outputs.source }}
           persist-credentials: false
-      - run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y postgresql
-          PG_BIN=$(dirname "$(find /usr/lib/postgresql -path '*/bin/initdb' | sort -V | tail -1)") python3 scripts/test-trip-occurrence-authority.py
+      - run: git archive --format=tar.gz --output=incident-current.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: incident-current
+          path: incident-current.tar.gz
+          retention-days: 1
   android:
-    needs: publish
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.publish.outputs.source }}
           persist-credentials: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
       - name: Normal application build, real serializer JVM checks, native test compilation
         working-directory: android-vinetrack
         run: |
           set -euo pipefail
-          bash gradlew --no-daemon --max-workers=1 -Pkotlin.compiler.execution.strategy=in-process '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' --init-script ../scripts/combined-recovery-spray-tests.init.gradle :app:assembleDebug :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin
+          bash gradlew --no-daemon --max-workers=1 -Pkotlin.compiler.execution.strategy=in-process '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' --init-script ../scripts/combined-recovery-spray-tests.init.gradle :app:assembleDebug :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin > ../native-android.log 2>&1 || { tail -n 120 ../native-android.log; exit 1; }
+          tail -n 80 ../native-android.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: incident-android-results
-          path: android-vinetrack/app/build/test-results
+          path: |
+            android-vinetrack/app/build/test-results
+            native-android.log
           retention-days: 3
   ios:
-    needs: publish
     runs-on: macos-15
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.publish.outputs.source }}
           persist-credentials: false
       - name: Select installed current Xcode
         run: |
@@ -99,12 +65,12 @@ jobs:
           PY
           xcodebuild -version
       - name: Production snapshot codec checks
-        run: python3 scripts/test-spray-snapshot-roundtrip.py --swiftc "$(xcrun -f swiftc)"
+        run: SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" python3 scripts/test-spray-snapshot-roundtrip.py --swiftc "$(xcrun --sdk macosx -f swiftc)"
       - name: Native app and focused XCTest
         run: |
           set -euo pipefail
           DEST=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for k,v in d["devices"].items() if "iOS" in k for x in v if "iPhone" in x["name"]))')
-          xcodebuild -project ios/VineTrack.xcodeproj -scheme VineTrack -destination "platform=iOS Simulator,id=$DEST" -derivedDataPath /tmp/incident-derived CODE_SIGNING_ALLOWED=NO -only-testing:VineTrackTests/SprayInitialTankAmountsTests -only-testing:VineTrackTests/TripOccurrenceJournalTests test > native-ios.log 2>&1 || { tail -n 150 native-ios.log; exit 1; }
+          xcodebuild -project ios/VineTrack.xcodeproj -scheme VineTrack -destination "platform=iOS Simulator,id=$DEST" -derivedDataPath /tmp/incident-derived CODE_SIGNING_ALLOWED=NO -only-testing:VineTrackTests/SprayInitialTankAmountsTests -only-testing:VineTrackTests/TripOccurrenceJournalTests test > native-ios.log 2>&1 || { tail -n 120 native-ios.log; exit 1; }
           tail -n 80 native-ios.log
       - uses: actions/upload-artifact@v4
         if: always()
