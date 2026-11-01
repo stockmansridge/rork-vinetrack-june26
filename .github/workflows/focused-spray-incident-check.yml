@@ -14,7 +14,7 @@ jobs:
       - name: Swift parsing and source invariants
         run: |
           set -euo pipefail
-          swiftc -frontend -parse ios/VineTrack/LegacyImported/Views/Trips/TripView.swift ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift ios/VineTrack/Backend/Sync/SprayTankActualStore.swift ios/VineTrack/App/BackendSettingsView.swift
+          swiftc -frontend -parse ios/VineTrack/LegacyImported/Views/Trips/TripView.swift ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift ios/VineTrack/Backend/Sync/SprayTankActualStore.swift ios/VineTrack/App/BackendSettingsView.swift ios/VineTrack/App/ChemicalIntelligence/CatalogueRepository.swift ios/VineTrack/App/ChemicalIntelligence/CatalogueSavedChemicalView.swift ios/VineTrack/Backend/Repositories/SupabaseManagementSyncRepositories.swift
           python3 - <<'PY'
           from pathlib import Path
           trip=Path('ios/VineTrack/LegacyImported/Views/Trips/TripView.swift').read_text()
@@ -22,7 +22,13 @@ jobs:
           assert '.swipeActions(edge: .trailing, allowsFullSwipe: false)' in trip
           assert '!current.isActive' in trip
           assert 'HANDOFF_REAL_TANK_SESSION_NOT_VERIFIED' in Path('ios/VineTrack/Backend/Sync/SprayTankActualStore.swift').read_text()
-          print('Swift parse and source checks passed (native UI testing still required)')
+          ios_repo=Path('ios/VineTrack/Backend/Repositories/SupabaseManagementSyncRepositories.swift').read_text()
+          kotlin_repo=Path('android-vinetrack/app/src/main/java/com/rork/vinetrack/data/VineyardRepository.kt').read_text()
+          assert 'client.from("saved_chemicals_effective").select()' in ios_repo
+          assert 'client.from("saved_chemicals").update(' in ios_repo
+          assert 'get("saved_chemicals_effective?select=*' in kotlin_repo
+          assert 'from("saved_chemicals_effective").update(' not in ios_repo
+          print('Focused live-catalogue read/write separation and Swift parsing passed')
           PY
   android-compile:
     runs-on: ubuntu-latest
