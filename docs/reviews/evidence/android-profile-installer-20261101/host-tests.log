@@ -1,0 +1,40 @@
+PASS acceptsCurrentInstallTimestamp
+PASS acceptsLongBoundaryWithoutOverflow
+PASS acceptsOldestPositiveTimestamp
+PASS acceptsPreviousInstallAfterInPlaceUpdate
+PASS rejectsDifferentProfileVerifierFormat
+PASS rejectsEmptyPayload
+PASS rejectsEveryTruncation
+PASS rejectsFutureTimestamp
+PASS rejectsLittleEndianTimestamp
+PASS rejectsMinimumLongTimestamp
+PASS rejectsNegativePackageTimestamp
+PASS rejectsNegativeTimestamp
+PASS rejectsTextDisguisedAsMarker
+PASS rejectsTrailingBytes
+PASS rejectsUnknownPackageTimestamp
+PASS rejectsZeroTimestamp
+PARSER_TESTS: 16 passed, 0 failed. Kotlin/JVM; local JUnit-compatible assertions; not Android instrumentation.
+PASS BEFORE reproduces exact FILES_UNREVIEWED_CONTENT; AFTER accepts unchanged bytes
+PASS original empty install remains admissible
+PASS fresh admission and clean-exit file scan accept runtime marker
+PASS previous-install timestamp survives in-place update
+PASS both AndroidX runtime markers coexist
+PASS existing verifier validation remains strict
+PASS invalid marker length 0 stays unchanged
+PASS invalid marker length 7 stays unchanged
+PASS invalid marker length 9 stays unchanged
+PASS invalid marker length 24 stays unchanged
+PASS invalid timestamp 0 stays protected
+PASS invalid timestamp -1 stays protected
+PASS invalid timestamp 101 stays protected
+PASS symbolic link rejected without touching target
+PASS dangling symbolic link retained
+PASS hard link rejected without touching target
+PASS directory with marker name cannot conceal work
+PASS unknown sibling still blocks
+PASS backup lookalike not admitted
+PASS pending photos remain protected
+PASS camera cache remains protected
+PASS trusted Context files-root alias still supported
+FILESYSTEM_HARNESS: 22 passed, 0 failed. Exact production file-scan methods; JVM Android API doubles, not device acceptance.

@@ -1,0 +1,22 @@
+{
+  "baseline": "74b0fa32e3bec3c7292be124cd844d2b207554a1",
+  "reported_android_version_code": 1793489340,
+  "scope": "Android exact ProfileInstaller runtime marker; no iOS or backend changes",
+  "parser_tests": {"passed": 16, "failed": 0, "runner": "Kotlin/JVM; local JUnit-compatible annotation/assertions, not Gradle"},
+  "filesystem_checks": {"passed": 22, "failed": 0, "runner": "verbatim file-scan methods with JVM Android API doubles and temporary Linux filesystem"},
+  "before_rule": "FILES_UNREVIEWED_CONTENT",
+  "after_valid_marker": "accepted with byte preservation",
+  "native_test_methods_added": 10,
+  "native_tests_executed": false,
+  "full_android_build_executed": false,
+  "signed_build_delivered": false,
+  "original_device_accepted": false,
+  "private_phone_file_identified": false,
+  "ios_modified": false,
+  "files": [
+    {"path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/ProfileInstallerRecoveryAndroidTest.kt", "git_blob": "33fa56521bf488a90ee2620dcaf8880c7f4d7cfe", "sha256": "da068602834e676cdb310789da57f4cec0ce57cc746fa9145c940ca0cab927a3"},
+    {"path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AccountTransitionEvidence.kt", "git_blob": "69afd815dccc0d81097014cb45b11c1832dc029d", "sha256": "d3a691c7d863b580f3370de15fe57877d14707a0fe4f9a5313a001fde09e6a06"},
+    {"path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/ProfileInstallerSkipContract.kt", "git_blob": "e93960644efe7ab4526ff870beecafbac2ec3592", "sha256": "720bda649c6f86536528c252acbcf6b92898de8f66c97dd1e6503638ee1cfac7"},
+    {"path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/ProfileInstallerSkipContractTest.kt", "git_blob": "79c4bed480b3ac98dde832d997a9de01c0b0ec9f", "sha256": "eb460257f2f45088f9ae3693603ee93943e89ef1aa46ac4486a1176a8e60f966"}
+  ]
+}

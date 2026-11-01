@@ -146,6 +146,8 @@ internal class AccountTransitionEvidence(private val context: Context) {
         if (RecoveryLocationContract.present(filesRoot)) RecoveryLocationContract.directory(filesRoot, "FILES_ROOT_TYPE").forEach { file ->
             // These mirrors contain shared public chemical/guide material, not private field work.
             when {
+                file.name == ProfileInstallerSkipContract.FILE_NAME -> try { validateProfileInstallerSkip(file, filesRoot) }
+                    catch (_: Exception) { location(false, "PROFILE_INSTALLER_MARKER_CONTRACT") }
                 file.name == "profileInstalled" -> try { validateProfileMarker(file, filesRoot) }
                     catch (_: Exception) { location(false, "PROFILE_MARKER_CONTRACT") }
                 file.name == "vineyard_logos" && allowLogoCache -> vineyards.addAll(RecoveryLocationContract.logos(file))
@@ -154,6 +156,29 @@ internal class AccountTransitionEvidence(private val context: Context) {
         }
         RecoveryLocationContract.emptyTree(File(context.cacheDir.canonicalFile, "camera-captures"), "CACHE_LEGACY_CAMERA_CAPTURE_RETAINED")
         return vineyards
+    }
+
+    /** Distinct from profileInstalled: AndroidX also persists this eight-byte installer marker. */
+    private fun validateProfileInstallerSkip(file: File, filesRoot: File) {
+        check(file.absoluteFile == File(filesRoot, ProfileInstallerSkipContract.FILE_NAME) &&
+            file.canonicalFile == file.absoluteFile)
+        val before = Os.lstat(file.path)
+        check(OsConstants.S_ISREG(before.st_mode) && before.st_size == ProfileInstallerSkipContract.BYTE_COUNT.toLong() &&
+            before.st_nlink == 1L)
+        val descriptor = Os.open(file.path, OsConstants.O_RDONLY or OsConstants.O_NOFOLLOW or OsConstants.O_NONBLOCK, 0)
+        DataInputStream(FileInputStream(descriptor)).use { input ->
+            val opened = Os.fstat(descriptor)
+            check(OsConstants.S_ISREG(opened.st_mode) && opened.st_dev == before.st_dev && opened.st_ino == before.st_ino &&
+                opened.st_size == before.st_size && opened.st_nlink == 1L)
+            val bytes = ByteArray(ProfileInstallerSkipContract.BYTE_COUNT)
+            input.readFully(bytes)
+            check(input.read() == -1)
+            check(ProfileInstallerSkipContract.accepts(bytes,
+                context.packageManager.getPackageInfo(context.packageName, 0).lastUpdateTime))
+            val after = Os.lstat(file.path)
+            check(OsConstants.S_ISREG(after.st_mode) && after.st_dev == opened.st_dev && after.st_ino == opened.st_ino &&
+                after.st_size == opened.st_size && after.st_mtime == opened.st_mtime && after.st_nlink == 1L)
+        }
     }
 
     /** AndroidX ProfileVerifier Cache schema 1: two ints and two longs, never business evidence. */
