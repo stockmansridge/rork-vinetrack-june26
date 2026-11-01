@@ -212,8 +212,8 @@ internal object CleanExitCacheContract {
         validateSavedChemicals(values, emptyMap<String, Any>())
         return values.keys.mapTo(mutableSetOf()) { key ->
             val scope = key.split('|')
-            chemical("CHEMICAL_ORIGINAL_ACCOUNT_MISMATCH") { check(sameIdentity(scope[0], original)) }
-            identityKey(scope[1])
+            chemical("CHEMICAL_ORIGINAL_ACCOUNT_MISMATCH") { check(scope[0] == original) }
+            scope[1]
         }
     }
 
@@ -259,11 +259,11 @@ internal object CleanExitCacheContract {
                 check(RetainedJsonFields.preserves(encoded, json.encodeToJsonElement(serializer, rows)))
             }
             chemical("CHEMICAL_DUPLICATE_RECORD_ID", rows.size) {
-                check(rows.map { identityKey(it.id) }.distinct().size == rows.size)
+                check(rows.map { it.id }.distinct().size == rows.size)
             }
             rows.forEach { row ->
                 chemical("CHEMICAL_RECORD_SCOPE", rows.size) {
-                    check(row.id.isNotBlank() && row.id == row.id.trim() && sameIdentity(row.vineyardId, scope[1]))
+                    check(row.id.isNotBlank() && row.id == row.id.trim() && row.vineyardId == scope[1])
                 }
                 chemical("CHEMICAL_PREFERRED_RATE_INVALID", rows.size) {
                     check(row.vineyardPreferredRate?.isValid != false)

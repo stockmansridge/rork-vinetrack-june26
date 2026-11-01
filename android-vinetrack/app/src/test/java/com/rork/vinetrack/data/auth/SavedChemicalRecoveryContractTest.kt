@@ -62,13 +62,17 @@ class SavedChemicalRecoveryContractTest {
         val before = input.toMap()
         assertEquals(setOf(vineyard), recover(input)); assertEquals(before, input)
     }
-    @Test fun uuidCaseDoesNotCreateADifferentAccountOrVineyard() {
-        val input = values(row(vineyard.uppercase()), "${owner.uppercase()}|$vineyard")
-        val before = input.toMap()
-        assertEquals(setOf(vineyard), recover(input)); assertEquals(before, input)
+    @Test fun storageAccountNamespaceIsNotSilentlyRedirected() {
+        // The store's load/save keys are exact. Do not admit an alias namespace
+        // without separately proving that ordinary reads address that namespace.
+        denied("CHEMICAL_ORIGINAL_ACCOUNT_MISMATCH") {
+            recover(values(row(), "${owner.uppercase()}|$vineyard"))
+        }
     }
-    @Test fun uppercaseKeyScopeReturnsCanonicalMembershipIdentity() {
-        assertEquals(setOf(vineyard), recover(values(row(), "$owner|${vineyard.uppercase()}")))
+    @Test fun storageVineyardNamespaceRemainsExact() {
+        denied("CHEMICAL_RECORD_SCOPE") {
+            recover(values(row(), "$owner|${vineyard.uppercase()}"))
+        }
     }
     @Test fun differentAccountIsStillRefused() {
         denied("CHEMICAL_ORIGINAL_ACCOUNT_MISMATCH") { recover(values(row()), other) }
@@ -79,8 +83,8 @@ class SavedChemicalRecoveryContractTest {
     @Test fun arbitraryNonUuidCaseIsNotNormalised() {
         denied("CHEMICAL_RECORD_SCOPE") { recover(values(row("Vineyard"), "$owner|vineyard")) }
     }
-    @Test fun duplicateIdsAndUuidAliasesAreRefused() {
-        val alias = JsonObject(row() + ("id" to JsonPrimitive(id.uppercase())))
+    @Test fun duplicateRecordIdsAreRefused() {
+        val alias = row()
         val input = mapOf("$owner|$vineyard" to JsonArray(listOf(row(), alias)).toString())
         denied("CHEMICAL_DUPLICATE_RECORD_ID") { recover(input) }
     }
