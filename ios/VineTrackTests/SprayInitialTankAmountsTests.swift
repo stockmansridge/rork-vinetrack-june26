@@ -346,4 +346,24 @@ final class SprayInitialTankAmountsTests: XCTestCase {
         XCTAssertTrue(reopened.pendingIds.contains(newer.id))
     }
 
+    func testActualRPCAlwaysIncludesWaterArgumentWithoutInventingAQuantity() throws {
+        let f = try fixture()
+        for water: Double? in [nil, 0, 294.7] {
+            let actual = try SprayTankActual(id: f.actual.id, vineyardId: f.actual.vineyardId,
+                sprayRecordId: f.actual.sprayRecordId, tripId: f.actual.tripId,
+                tankSessionId: f.actual.tankSessionId, tankNumber: f.actual.tankNumber,
+                waterVolumeL: water, chemicals: f.actual.chemicals, confirmedAt: f.actual.confirmedAt,
+                confirmedBy: f.actual.confirmedBy, clientUpdatedAt: f.actual.clientUpdatedAt)
+            let data = try JSONEncoder().encode(SprayTankActualUpsertRequest(actual: actual))
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertTrue(body.keys.contains("p_water_volume_l"))
+            if let water {
+                XCTAssertEqual((body["p_water_volume_l"] as? NSNumber)?.doubleValue, water)
+            } else {
+                XCTAssertTrue(body["p_water_volume_l"] is NSNull)
+            }
+            XCTAssertEqual(actual.waterVolumeL, water)
+        }
+    }
+
 }

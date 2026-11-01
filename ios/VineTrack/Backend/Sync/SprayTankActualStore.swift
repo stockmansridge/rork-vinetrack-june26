@@ -49,7 +49,7 @@ nonisolated private struct BackendSprayTankActual: Decodable, Sendable {
     }
 }
 
-nonisolated private struct SprayTankActualUpsertRequest: Encodable, Sendable {
+nonisolated struct SprayTankActualUpsertRequest: Encodable, Sendable {
     let actual: SprayTankActual
 
     enum CodingKeys: String, CodingKey {
@@ -67,7 +67,12 @@ nonisolated private struct SprayTankActualUpsertRequest: Encodable, Sendable {
         try container.encode(actual.tripId, forKey: .tripId)
         try container.encode(actual.tankSessionId, forKey: .tankSessionId)
         try container.encode(actual.tankNumber, forKey: .tankNumber)
-        try container.encodeIfPresent(actual.waterVolumeL, forKey: .waterVolumeL)
+        // Required RPC argument; null means Not recorded, not an omitted parameter or zero.
+        if let water = actual.waterVolumeL {
+            try container.encode(water, forKey: .waterVolumeL)
+        } else {
+            try container.encodeNil(forKey: .waterVolumeL)
+        }
         try container.encode(actual.chemicals, forKey: .chemicals)
         try container.encode(actual.confirmedAt, forKey: .confirmedAt)
         try container.encode(actual.clientUpdatedAt, forKey: .clientUpdatedAt)

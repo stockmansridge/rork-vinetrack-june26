@@ -43,6 +43,8 @@ An older upload completion now acknowledges only the unchanged submitted local r
 
 The handset report does not distinguish an RPC failure from an unmatched handoff or parent dependency. These changes address concrete code gaps and improve that distinction; they do not prove the specific pending handset Trip has cleared.
 
+The live actual-use RPC requires p_water_volume_l with no default, while its database column explicitly permits null. The iOS request previously omitted nil water via encodeIfPresent. It now always sends that argument, preserving Not recorded as null and explicit zero as zero. This fixes a demonstrated legacy-data API contract defect without inventing quantities or relaxing new-spray entry validation. Its exact contribution to the handset pending Trip remains unverified.
+
 ## Validation boundary
 
 Local `git diff --check` and Swift parsing passed. macOS Actions Swift parsing passed; parsing is NOT native compilation, type checking, UI verification or execution of XCTest.
@@ -51,11 +53,11 @@ Initial Actions run 41292850182 applied the exact checksum-verified patch and pa
 
 Replacement Actions run 41293007162 explicitly installs platform-tools and checks out the exact correction `f1a5115eb7ff15538a612817c5992d09110ca22f`. Its final result must be read before quoting pass counts. The workflow uses a synthetic, uncommitted Config.kt with no live backend access. Even a successful result cannot certify production configuration, signed packaging or actual credentials.
 
-The explicit Gradle init script includes RecoveryWriterCompatibilityTest and the affected chemical/domain/pruning/planning/tank/rate/actual-entry suites, because the normal repository JVM test source filter does not automatically compile every new test. The emulator selection includes ChemicalRecoveryPreflightAndroidTest and DomainCacheRecoveryAndroidTest. Four new iOS handoff/revision tests require native execution by Rork.
+The explicit Gradle init script includes RecoveryWriterCompatibilityTest and the affected chemical/domain/pruning/planning/tank/rate/actual-entry suites, because the normal repository JVM test source filter does not automatically compile every new test. The emulator selection includes ChemicalRecoveryPreflightAndroidTest and DomainCacheRecoveryAndroidTest. Five new iOS handoff/revision/RPC-encoding tests require native execution by Rork.
 
 ## Rork integration and release checks
 
-Reconcile the correction onto current managed source without reverting newer changes. Remove the temporary patch transport file and branch-specific validation workflow before merging; they are not runtime code. Do not import the synthetic CI Config.kt.
+Reconcile the correction onto current managed source without reverting newer changes. Temporary patch transport and branch-specific workflows were removed after their jobs started; their exact-source validation receipts remain in Actions history. Do not import the synthetic CI Config.kt.
 
 Complete normal iOS and Android builds. Explicitly run the new JVM tests and iOS SprayInitialTankAmountsTests, affected sync/start tests and combined populated recovery tests. Render the two review screens in light/dark mode and large text. Confirm actual entry remains before and independent of tracking-pattern selection.
 
