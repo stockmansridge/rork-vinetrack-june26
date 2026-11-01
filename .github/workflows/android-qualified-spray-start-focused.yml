@@ -4,6 +4,10 @@ on:
     branches: [fix/android-qualified-spray-start-legacy-journal-isolation-20261102]
     paths:
       - '.github/workflows/android-qualified-spray-start-focused.yml'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/IndependentQualifiedSprayStart.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/ui/IndependentQualifiedSprayStartTest.kt'
 permissions:
   contents: read
 jobs:
