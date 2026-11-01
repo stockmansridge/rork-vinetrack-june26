@@ -6,58 +6,22 @@ on:
 permissions:
   contents: read
 jobs:
-  reviewed-source:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    outputs:
-      source: ${{ steps.apply.outputs.source }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_name }}
-          fetch-depth: 0
-      - name: Apply exact reviewed source on incident branch only
-        id: apply
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REF_NAME" = "fix/spray-review-recovery-contracts-20261101"
-          git merge-base --is-ancestor a50b35caae65412a949688a2d0a03b5119b718d5 HEAD
-          python3 - <<'PY'
-          import base64,gzip,hashlib,pathlib
-          raw=gzip.decompress(base64.b64decode(pathlib.Path('scripts/incident-spray-recovery.patch.b64').read_text()))
-          assert hashlib.sha256(raw).hexdigest()=='341e28e2fbbb244f97c37ecef8947220420ea65c1db2e6752d44fd0697135fc5'
-          pathlib.Path('/tmp/reviewed.patch').write_bytes(raw)
-          PY
-          if git apply --reverse --check /tmp/reviewed.patch 2>/dev/null; then
-            echo 'Reviewed delta is already present'
-          else
-            git apply --check /tmp/reviewed.patch
-            git apply /tmp/reviewed.patch
-            git add android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/CleanExitCacheContract.kt android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/RetainedJsonFields.kt android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayStartActualFields.kt android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/RecoveryWriterCompatibilityTest.kt android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/SavedChemicalRecoveryContractTest.kt android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/ChemicalRecoveryPreflightAndroidTest.kt scripts/recovery-writer-tests.init.gradle ios/VineTrack/App/BackendSettingsView.swift ios/VineTrack/App/NewMainTabView.swift ios/VineTrack/App/SprayCalculatorView.swift ios/VineTrack/App/SprayStartRateReview.swift ios/VineTrack/Backend/Sync/SprayTankActualStore.swift ios/VineTrackTests/SprayInitialTankAmountsTests.swift
-            git diff --cached --check
-            git config user.name 'VineTrack incident source validation'
-            git config user.email 'noreply@users.noreply.github.com'
-            git commit -m 'fix: preserve writer-shaped recovery evidence and clarify spray actual-use flow'
-            git push origin HEAD:"$GITHUB_REF_NAME"
-          fi
-          echo "source=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
   android:
-    needs: reviewed-source
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.reviewed-source.outputs.source }}
+          ref: f1a5115eb7ff15538a612817c5992d09110ca22f
           persist-credentials: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
       - name: Synthetic compile-only configuration, never committed or released
         shell: bash
         run: |
@@ -96,13 +60,12 @@ jobs:
             android-vinetrack/app/build/reports
           retention-days: 3
   swift-syntax:
-    needs: reviewed-source
     runs-on: macos-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.reviewed-source.outputs.source }}
+          ref: f1a5115eb7ff15538a612817c5992d09110ca22f
           persist-credentials: false
       - name: Parse edited Swift files, not a native app build
         run: swiftc -frontend -parse ios/VineTrack/App/SprayStartRateReview.swift ios/VineTrack/App/SprayCalculatorView.swift ios/VineTrack/Backend/Sync/SprayTankActualStore.swift ios/VineTrack/App/NewMainTabView.swift ios/VineTrack/App/BackendSettingsView.swift ios/VineTrackTests/SprayInitialTankAmountsTests.swift
