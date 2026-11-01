@@ -27,12 +27,11 @@ final class CatalogueRepository: CatalogueBackendProtocol {
     /// rewrite a vineyard's product rate or any historical spray by itself.
     func approvedRevisionId(productId: UUID) async throws -> String? {
         let row: CatalogueWire = try await client.from("chemical_v3_products")
-            .select("id,approved_revision_id")
+            .select("id,status,approved_revision_id")
             .eq("id", value: productId.uuidString)
             .single().execute().value
-        guard row.id.lowercased() == productId.uuidString.lowercased() else {
-            throw BackendRepositoryError.emptyResponse
-        }
+        guard row.id.lowercased() == productId.uuidString.lowercased(),
+              row.text("status") == "approved" else { return nil }
         return row.text("approved_revision_id")
     }
 
