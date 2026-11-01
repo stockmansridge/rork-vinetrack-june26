@@ -1,0 +1,122 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.SprayStartProductionAndroidTest:
+INSTRUMENTATION_STATUS: test=calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but found '2' nodes that satisfy: (Text + InputText + EditableText contains 'Inspect retained Start' (ignoreCase: false))
+Nodes found:
+1) Node #1445 at (l=28.0, t=1483.0, r=692.0, b=1553.0)px
+Focused = 'false'
+Role = 'Button'
+Shape = 'RoundedCornerShape(topStart = CornerSize(size = 50.0%), topEnd = CornerSize(size = 50.0%), bottomEnd = CornerSize(size = 50.0%), bottomStart = CornerSize(size = 50.0%))'
+Text = '[Inspect retained Start]'
+Actions = [ClearTextSubstitution, GetTextLayoutResult, OnClick, RequestFocus, SetTextSubstitution, ShowTextSubstitution]
+MergeDescendants = 'true'
+Has 7 siblings
+2) Node #1421 at (l=42.0, t=42.0, r=443.0, b=98.0)px
+Text = '[Inspect retained Start]'
+Actions = [ClearTextSubstitution, GetTextLayoutResult, SetTextSubstitution, ShowTextSubstitution]
+Has 4 siblings
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption(SprayStartProductionAndroidTest.kt:431)
+
+INSTRUMENTATION_STATUS: stream=
+Error in calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption(com.rork.vinetrack.data.SprayStartProductionAndroidTest):
+java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but found '2' nodes that satisfy: (Text + InputText + EditableText contains 'Inspect retained Start' (ignoreCase: false))
+Nodes found:
+1) Node #1445 at (l=28.0, t=1483.0, r=692.0, b=1553.0)px
+Focused = 'false'
+Role = 'Button'
+Shape = 'RoundedCornerShape(topStart = CornerSize(size = 50.0%), topEnd = CornerSize(size = 50.0%), bottomEnd = CornerSize(size = 50.0%), bottomStart = CornerSize(size = 50.0%))'
+Text = '[Inspect retained Start]'
+Actions = [ClearTextSubstitution, GetTextLayoutResult, OnClick, RequestFocus, SetTextSubstitution, ShowTextSubstitution]
+MergeDescendants = 'true'
+Has 7 siblings
+2) Node #1421 at (l=42.0, t=42.0, r=443.0, b=98.0)px
+Text = '[Inspect retained Start]'
+Actions = [ClearTextSubstitution, GetTextLayoutResult, SetTextSubstitution, ShowTextSubstitution]
+Has 4 siblings
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption(SprayStartProductionAndroidTest.kt:431)
+
+INSTRUMENTATION_STATUS: test=calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=calculatorButtonLostActivationRestoresSameTankDestination
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stack=androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 20000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonLostActivationRestoresSameTankDestination(SprayStartProductionAndroidTest.kt:392)
+
+INSTRUMENTATION_STATUS: stream=
+Error in calculatorButtonLostActivationRestoresSameTankDestination(com.rork.vinetrack.data.SprayStartProductionAndroidTest):
+androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 20000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonLostActivationRestoresSameTankDestination(SprayStartProductionAndroidTest.kt:392)
+
+INSTRUMENTATION_STATUS: test=calculatorButtonLostActivationRestoresSameTankDestination
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 37.789
+There were 2 failures:
+1) calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but found '2' nodes that satisfy: (Text + InputText + EditableText contains 'Inspect retained Start' (ignoreCase: false))
+Nodes found:
+1) Node #1445 at (l=28.0, t=1483.0, r=692.0, b=1553.0)px
+Focused = 'false'
+Role = 'Button'
+Shape = 'RoundedCornerShape(topStart = CornerSize(size = 50.0%), topEnd = CornerSize(size = 50.0%), bottomEnd = CornerSize(size = 50.0%), bottomStart = CornerSize(size = 50.0%))'
+Text = '[Inspect retained Start]'
+Actions = [ClearTextSubstitution, GetTextLayoutResult, OnClick, RequestFocus, SetTextSubstitution, ShowTextSubstitution]
+MergeDescendants = 'true'
+Has 7 siblings
+2) Node #1421 at (l=42.0, t=42.0, r=443.0, b=98.0)px
+Text = '[Inspect retained Start]'
+Actions = [ClearTextSubstitution, GetTextLayoutResult, SetTextSubstitution, ShowTextSubstitution]
+Has 4 siblings
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption(SprayStartProductionAndroidTest.kt:431)
+2) calculatorButtonLostActivationRestoresSameTankDestination(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 20000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonLostActivationRestoresSameTankDestination(SprayStartProductionAndroidTest.kt:392)
+
+FAILURES!!!
+Tests run: 2,  Failures: 2
+
+
+INSTRUMENTATION_CODE: -1

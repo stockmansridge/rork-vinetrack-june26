@@ -19,6 +19,7 @@ import com.rork.vinetrack.data.auth.SessionStore
 import com.rork.vinetrack.data.auth.SessionPhase
 import com.rork.vinetrack.data.model.*
 import com.rork.vinetrack.data.spray.*
+import com.rork.vinetrack.ui.AppRoute
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -65,6 +66,7 @@ class SprayStartProductionAndroidTest {
     private var failReload = false
     private var loseActivationResponse = false
     private var activationRequests = 0
+    private val tripRequests = java.util.concurrent.CopyOnWriteArrayList<String>()
     private var mode = "accepted"
     private var hold: CompletableDeferred<Unit>? = null
 
@@ -89,9 +91,20 @@ class SprayStartProductionAndroidTest {
         client = HttpClient(MockEngine { request ->
             val path = request.url.encodedPath
             val jsonHeaders = headersOf(HttpHeaders.ContentType, "application/json")
+            if (path.endsWith("/trips")) {
+                tripRequests.add("${request.method.value} ${request.url.encodedQuery} ${(request.body as? TextContent)?.text.orEmpty()}")
+            }
             when {
+                forCalculatorUi && path == "/auth/v1/token" -> respond(
+                    """{"access_token":"synthetic-access","refresh_token":"synthetic-refresh","user":{"id":"$actor","email":"synthetic@example.invalid"}}""", HttpStatusCode.OK, jsonHeaders)
+                forCalculatorUi && path == "/auth/v1/user" -> respond(
+                    """{"id":"$actor","email":"synthetic@example.invalid"}""", HttpStatusCode.OK, jsonHeaders)
                 forCalculatorUi && path.endsWith("/vineyard_members") -> respond("[{\"vineyard_id\":\"$vineyard\",\"user_id\":\"$actor\",\"role\":\"manager\"}]", HttpStatusCode.OK, jsonHeaders)
                 forCalculatorUi && path.endsWith("/vineyards") -> respond("[{\"id\":\"$vineyard\",\"name\":\"Fixture\",\"timezone\":\"Australia/Sydney\"}]", HttpStatusCode.OK, jsonHeaders)
+                forCalculatorUi && path.endsWith("/rpc/get_my_vinetrack_access") -> respond(
+                    """[{"has_supabase_access":true,"can_use_android_app":true,"access_source":"team","solo_check_required":false}]""", HttpStatusCode.OK, jsonHeaders)
+                forCalculatorUi && path.endsWith("/rpc/get_my_vineyard_access_matrix") -> respond(
+                    """{"account":{"has_any_accessible_vineyard":true},"vineyards":[{"vineyard_id":"$vineyard","has_vineyard_access":true,"membership_role":"manager"}]}""", HttpStatusCode.OK, jsonHeaders)
                 path.endsWith("/rpc/save_legacy_spray_pair_v1") || path.endsWith("/rpc/recover_legacy_spray_pair_v1") -> {
                     val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
                     if (path.endsWith("/save_legacy_spray_pair_v1")) {
@@ -134,11 +147,19 @@ class SprayStartProductionAndroidTest {
         }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
         SupabaseClient.installInstrumentationTransport(client)
         instrumentation.runOnMainSync {
+            if (forCalculatorUi) OnboardingStore(app).markCompleted()
             if (forCalculatorUi) SessionStore(app).apply {
                 save("synthetic-access", "synthetic-refresh", actor, null)
                 selectedVineyardId = vineyard
             }
             vm = AppViewModel(app); models.put("start", vm)
+        }
+        if (forCalculatorUi) {
+            // Await ordinary bootstrap/access before mounting the calculator. An
+            // unhandled [] entitlement response legitimately redirects to Paywall.
+            compose.waitUntil(20_000) {
+                vm.ui.value.sessionPhase == SessionPhase.AuthenticatedOnline && vm.ui.value.route == AppRoute.Main
+            }
         }
         if (!forCalculatorUi) {
             // Finish the genuine signed-out restore before installing this test's synthetic
@@ -148,7 +169,8 @@ class SprayStartProductionAndroidTest {
         instrumentation.runOnMainSync {
             session().save("synthetic-access", "synthetic-refresh", actor, null)
             session().selectedVineyardId = vineyard
-            state().value = AppUiState(selectedVineyardId = vineyard, currentUserId = actor, isOnline = true,
+            val initial = if (forCalculatorUi) state().value else AppUiState()
+            state().value = initial.copy(selectedVineyardId = vineyard, currentUserId = actor, isOnline = true,
                 members = listOf(VineyardMember(vineyardId = vineyard, userId = actor, role = "manager")))
         }
     }
@@ -274,7 +296,11 @@ class SprayStartProductionAndroidTest {
             compose.onNode(matcher).assertIsEnabled().performClick()
             tick()
         }
-        compose.onNodeWithText("Operation type").performClick()
+        // The label can be near the IME/viewport edge. Invoke the actual menu anchor's
+        // accessibility action, as for Start Trip, instead of tapping its label bounds.
+        compose.onNode(hasText("Operation type") and hasClickAction())
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+        tick()
         compose.onNode(hasText("Foliar Spray") and hasAnyAncestor(isPopup())).performClick()
         continueWith("Continue to Blocks →")
         continueWith("Continue to Target →")
@@ -379,8 +405,18 @@ class SprayStartProductionAndroidTest {
 
     @Test(timeout = 90_000) fun calculatorButtonLostActivationRestoresSameTankDestination() {
         openCalculatorJourney(); loseActivationResponse = true
+        val replayAdmission = AppViewModel::class.java.getDeclaredMethod("automaticReplayIdentity").let {
+            it.isAccessible = true; it.invoke(vm)
+        }
+        assertNotNull("Synthetic signed-in fixture did not reach replay admission: phase=${vm.ui.value.sessionPhase}; route=${vm.ui.value.route}; online=${vm.ui.value.isOnline}; vineyards=${vm.ui.value.vineyards.map { it.id }}; actorMatches=${vm.ui.value.currentUserId == actor}", replayAdmission)
         pressCalculatorStart("123.5"); awaitTankDestination(123.5)
-        compose.waitUntil(20_000) { activationRequests == 1 }; tick()
+        try {
+            compose.waitUntil(20_000) { activationRequests == 1 }
+        } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
+            val pending = AppViewModel::class.java.getDeclaredField("pendingWrites").let { it.isAccessible = true; it.get(vm) as PendingWriteRepository }
+            throw AssertionError("Activation not dispatched; phase=${vm.ui.value.sessionPhase}; route=${vm.ui.value.route}; online=${vm.ui.value.isOnline}; vineyards=${vm.ui.value.vineyards.map { it.id }}; actorMatches=${vm.ui.value.currentUserId == actor}; requests=$tripRequests; pending=${pending.list()}; error=${vm.ui.value.sprayError}; preservation=${vm.ui.value.tripError}; pinError=${vm.ui.value.pinError}", failure)
+        }
+        tick()
         val id = requireNotNull(work.selectedTripId.value)
         val original = storedAttempts().single()
         compose.runOnUiThread { uiGeneration++ }; tick()
@@ -414,7 +450,8 @@ class SprayStartProductionAndroidTest {
         assertEquals(listOf(older), store.olderAcceptedMatch(vineyard, older.input, older.trip.paddockIds, older.trip.trackingPattern))
         pressCalculatorStart(); compose.waitUntil(20_000) { vm.calculatorStartOutcome.value?.message != null }; tick()
         assertTrue("Expected older inspection: ${vm.calculatorStartOutcome.value}", vm.calculatorStartOutcome.value!!.inspectionTripIds.contains(older.trip.id))
-        compose.onNodeWithText("Inspect retained Start").assertExists()
+        // The production inspection includes a heading and a return-path button with this copy.
+        compose.onNode(hasText("Inspect retained Start") and hasClickAction()).assertExists()
         compose.onNodeWithText("Trip: ${older.trip.id}").assertExists()
         assertNull(work.selectedTripId.value); assertNull(ActiveTripStore(app).load())
         assertEquals(1, creates); assertEquals(listOf(older), storedAttempts())

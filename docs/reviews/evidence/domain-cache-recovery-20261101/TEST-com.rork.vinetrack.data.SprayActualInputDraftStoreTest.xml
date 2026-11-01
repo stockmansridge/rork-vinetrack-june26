@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.SprayActualInputDraftStoreTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-11-01T04:20:02.425Z" hostname="e2b.local" time="0.108">
+  <properties/>
+  <testcase name="malformedCacheIsPreservedWhenNewInputCannotBeSafelyMerged" classname="com.rork.vinetrack.data.SprayActualInputDraftStoreTest" time="0.067"/>
+  <testcase name="exactTripDraftAndMalformedIdentitiesAreDistinguished" classname="com.rork.vinetrack.data.SprayActualInputDraftStoreTest" time="0.018"/>
+  <testcase name="failedWriteKeepsPreviousEnteredValues" classname="com.rork.vinetrack.data.SprayActualInputDraftStoreTest" time="0.006"/>
+  <testcase name="oldCacheLoadsAndDraftSurvivesRecordAndSyncWrites" classname="com.rork.vinetrack.data.SprayActualInputDraftStoreTest" time="0.015"/>
+  <testcase name="staleAcknowledgementCannotClearNewerEdit" classname="com.rork.vinetrack.data.SprayActualInputDraftStoreTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

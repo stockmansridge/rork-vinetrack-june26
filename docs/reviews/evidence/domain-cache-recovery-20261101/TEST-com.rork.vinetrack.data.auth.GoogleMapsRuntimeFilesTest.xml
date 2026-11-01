@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.auth.GoogleMapsRuntimeFilesTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-11-01T04:20:02.680Z" hostname="e2b.local" time="0.005">
+  <properties/>
+  <testcase name="noBroadPrefixOrExtensionExemption" classname="com.rork.vinetrack.data.auth.GoogleMapsRuntimeFilesTest" time="0.001"/>
+  <testcase name="parameterCacheRequiresExactCurrentPackage" classname="com.rork.vinetrack.data.auth.GoogleMapsRuntimeFilesTest" time="0.001"/>
+  <testcase name="backupAndReplacementNamesRemainUnknown" classname="com.rork.vinetrack.data.auth.GoogleMapsRuntimeFilesTest" time="0.001"/>
+  <testcase name="caseChangesAreNotRecognised" classname="com.rork.vinetrack.data.auth.GoogleMapsRuntimeFilesTest" time="0.0"/>
+  <testcase name="fieldStoreAndPhotoNamesAreNotRuntimeFiles" classname="com.rork.vinetrack.data.auth.GoogleMapsRuntimeFilesTest" time="0.001"/>
+  <testcase name="historicUnobservedParameterNamesAreNotSilentlyAdded" classname="com.rork.vinetrack.data.auth.GoogleMapsRuntimeFilesTest" time="0.0"/>
+  <testcase name="invalidPackageInputIsRejected" classname="com.rork.vinetrack.data.auth.GoogleMapsRuntimeFilesTest" time="0.0"/>
+  <testcase name="recognisesAllThreeObservedNames" classname="com.rork.vinetrack.data.auth.GoogleMapsRuntimeFilesTest" time="0.0"/>
+  <testcase name="pathsAndTraversalAreNotBasenames" classname="com.rork.vinetrack.data.auth.GoogleMapsRuntimeFilesTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

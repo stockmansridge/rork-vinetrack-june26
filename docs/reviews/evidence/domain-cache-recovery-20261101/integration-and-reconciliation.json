@@ -1,0 +1,49 @@
+{
+  "reportedInstalledCode": 1793504699,
+  "startingManagedRevision": "194d71fcc916e5c22dd0675905ada858fad8bc35",
+  "androidTree": "19b29f94226c46f010c3a05ef126b669db3f8bca",
+  "completedManagedBuild": {
+    "runId": "a181d5f1-0d78-4e45-9df8-d4d00adb9308",
+    "snapshotId": "5jro96dg5cnmlhixk43ev",
+    "sourceHash": "src_19b29f94226c46f01",
+    "packageName": "com.rork.vinetrack",
+    "status": "completed"
+  },
+  "mappingBoundary": "Completed build sourceHash exactly matches managed Android tree. Tools expose no version code or committed submission for this run, so linkage to reported installed1793504699 remains unverified. No manual push; managed sync only.",
+  "publicCheckpoint": "292cd8da2b089ee7729b32537793c8f55549d362",
+  "androidFilesCompared": 1243,
+  "mismatches": [],
+  "pruningAtCheckpoint": "Empty-only admission remains; no completed pruning implementation found in current managed source.",
+  "repair": "b43fcdd17e9ba439edd8aa9947d58be1e2975bde",
+  "method": "Dry-run then apply exact textual delta with fuzz zero; additions only when absent. No branch swap or baseline overwrite.",
+  "changes": [
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/DomainCacheRecoveryAndroidTest.kt",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "11fd6a38005b4f282f2aa1ed3022b23fde625beada5acc8f69007f84a857217a",
+      "integratedSha256": "11fd6a38005b4f282f2aa1ed3022b23fde625beada5acc8f69007f84a857217a"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/CleanExitCacheContract.kt",
+      "status": "modified",
+      "beforeSha256": "d5bdf167771ed6828e1ae40b2711cdad548349e728858ea2a81342c8d4caca48",
+      "repairSha256": "459b4f06ddf9b0660c1a07b2aa1b8c142affe663013362458cffeb902cd71728",
+      "integratedSha256": "459b4f06ddf9b0660c1a07b2aa1b8c142affe663013362458cffeb902cd71728"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/DomainCacheRecoveryContractTest.kt",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "b037981ffde9f94f417f72434288a335c5a55c2104ab3c8270be5e3833a17245",
+      "integratedSha256": "b037981ffde9f94f417f72434288a335c5a55c2104ab3c8270be5e3833a17245"
+    },
+    {
+      "path": "docs/reviews/android-domain-cache-recovery-20261101.md",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "07f73248a9c299014e387764cbf44c04968bff2708d3a2fab86a410dca29f067",
+      "integratedSha256": "07f73248a9c299014e387764cbf44c04968bff2708d3a2fab86a410dca29f067"
+    }
+  ]
+}
