@@ -12,11 +12,17 @@ package com.rork.vinetrack.ui
 internal object IndependentQualifiedSprayStart {
     fun isSeparateNewOperation(
         parentTripId: String?,
+        sourceSavedRecordId: String?,
+        sourceProgramJobId: String?,
         vineyardId: String,
         selectedPaddockIds: List<String>,
         plan: SprayJobRowPlan?,
     ): Boolean {
-        if (parentTripId != null || plan == null || plan.trackingPattern == "freeDrive") return false
+        // A prefilled saved recipe or program job may represent the SAME prior
+        // operation. Never skip its receipt gate merely because the calculator
+        // re-created the input with tripId = null.
+        if (parentTripId != null || sourceSavedRecordId != null || sourceProgramJobId != null ||
+            plan == null || plan.trackingPattern == "freeDrive") return false
         if (vineyardId.isBlank() || selectedPaddockIds.isEmpty() || plan.rowSequence.isEmpty()) return false
         if (!plan.rowSequence.all(Double::isFinite) ||
             plan.candidates.size != plan.rowSequence.size ||

@@ -12296,6 +12296,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         rowPlan: SprayJobRowPlan? = null,
         startEngineHours: Double? = null,
         startActuals: com.rork.vinetrack.data.spray.SprayStartActualAmounts? = null,
+        sourceSavedRecordId: String? = null,
         onResult: (com.rork.vinetrack.data.SprayStartOutcome) -> Unit,
     ) {
         if (calculatorStartInFlight) {
@@ -12365,6 +12366,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // remain mandatory for every route.
         val independentQualified = IndependentQualifiedSprayStart.isSeparateNewOperation(
             parentTripId = input.tripId,
+            sourceSavedRecordId = sourceSavedRecordId,
+            sourceProgramJobId = input.sprayJobId,
             vineyardId = vineyardId,
             selectedPaddockIds = paddockIds,
             plan = rowPlan,

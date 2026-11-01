@@ -20,8 +20,9 @@ class IndependentQualifiedSprayStartTest {
         candidates = listOf(candidate(blockA, 35.5), candidate(blockB, 36.5), candidate(blockA, 37.5)),
     )
     private fun independent(plan: SprayJobRowPlan? = planned, parent: String? = null,
+                            savedRecordId: String? = null, programJobId: String? = null,
                             blocks: List<String> = listOf(blockA, blockB), vineyardId: String = vineyard) =
-        IndependentQualifiedSprayStart.isSeparateNewOperation(parent, vineyardId, blocks, plan)
+        IndependentQualifiedSprayStart.isSeparateNewOperation(parent, savedRecordId, programJobId, vineyardId, blocks, plan)
 
     @Test fun newBoundPathRouteDoesNotDependOnUnreadableUnrelatedLegacyJournal() {
         assertTrue(independent())
@@ -30,6 +31,8 @@ class IndependentQualifiedSprayStartTest {
 
     @Test fun parentLinkedRequestNeverSkipsLegacyRecovery() {
         assertFalse(independent(parent = "e0000000-0000-4000-8000-000000000099"))
+        assertFalse(independent(savedRecordId = "e0000000-0000-4000-8000-000000000098"))
+        assertFalse(independent(programJobId = "e0000000-0000-4000-8000-000000000097"))
     }
 
     @Test fun freeDriveAndMissingPlanRemainFailClosed() {
