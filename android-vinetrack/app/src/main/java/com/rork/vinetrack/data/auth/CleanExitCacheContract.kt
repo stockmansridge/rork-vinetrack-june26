@@ -212,7 +212,7 @@ internal object CleanExitCacheContract {
         validateSavedChemicals(values, emptyMap<String, Any>())
         return values.keys.mapTo(mutableSetOf()) { key ->
             val scope = key.split('|')
-            check(scope[0] == original)
+            chemical("CHEMICAL_ORIGINAL_ACCOUNT_MISMATCH") { check(scope[0] == original) }
             scope[1]
         }
     }
@@ -222,28 +222,52 @@ internal object CleanExitCacheContract {
      * preference UPDATE writers commit to the shared outbox before overlaying the snapshot.
      * Any retained outbox row (including unreadable/unknown operations) therefore prevents exit.
      */
+    private inline fun <T> chemical(rule: String, count: Int? = null, block: () -> T): T =
+        try { block() } catch (failure: EvidenceContractFailure) { throw failure }
+        catch (_: Exception) { throw EvidenceContractFailure(RecoveryEvidenceDiagnostic(
+            "vinetrack_saved_chemicals_local", rule, recordCount = count,
+        )) }
+
     fun validateSavedChemicals(values: Map<String, *>, pending: Map<String, *>) {
-        check(pending.keys.all { it == "pending_writes_json" })
-        pending.values.forEach { raw ->
-            check(raw is String && (json.parseToJsonElement(raw) as? JsonArray)?.isEmpty() == true)
+        chemical("CHEMICAL_PENDING_WRITES_HELD") {
+            check(pending.keys.all { it == "pending_writes_json" })
+            pending.values.forEach { raw ->
+                check(raw is String && (json.parseToJsonElement(raw) as? JsonArray)?.isEmpty() == true)
+            }
         }
         val serializer = ListSerializer(SavedChemical.serializer())
         values.forEach { (key, raw) ->
-            val scope = key.split('|')
-            check(scope.size == 2)
-            val (account, vineyard) = scope
-            check(account.isNotBlank() && java.util.UUID.fromString(account).toString() == account.lowercase(java.util.Locale.ROOT))
-            check(vineyard.isNotBlank() && vineyard == vineyard.trim() && vineyard.none { it.isISOControl() })
-            check(raw is String)
-            val encoded = json.parseToJsonElement(raw) as? JsonArray ?: error("Invalid chemical snapshot")
-            val rows = json.decodeFromJsonElement(serializer, encoded)
-            // Some legacy field codecs are permissive. Require lossless canonical store round-trip
-            // so malformed/unknown nested content cannot disappear during classification.
-            check(json.encodeToJsonElement(serializer, rows) == encoded)
-            check(rows.map { it.id }.distinct().size == rows.size)
+            val scope = chemical("CHEMICAL_KEY_SCOPE") {
+                val parts = key.split('|')
+                check(parts.size == 2)
+                val (account, vineyard) = parts
+                check(account.isNotBlank() && java.util.UUID.fromString(account).toString() == account.lowercase(java.util.Locale.ROOT))
+                check(vineyard.isNotBlank() && vineyard == vineyard.trim() && vineyard.none { it.isISOControl() })
+                parts
+            }
+            val encoded = chemical("CHEMICAL_JSON_SCHEMA") {
+                check(raw is String)
+                json.parseToJsonElement(raw) as? JsonArray ?: error("Invalid chemical snapshot")
+            }
+            val rows = chemical("CHEMICAL_DECODE_SCHEMA", encoded.size) {
+                json.decodeFromJsonElement(serializer, encoded)
+            }
+            // New nullable/default fields do not make an older snapshot invalid.
+            // Preserve every supplied field/value: permissive codecs may not discard
+            // malformed nested rates. Read only; never rewrite or mark these rows synced.
+            chemical("CHEMICAL_SUPPLIED_FIELDS_CHANGED", rows.size) {
+                check(RetainedJsonFields.preserves(encoded, json.encodeToJsonElement(serializer, rows)))
+            }
+            chemical("CHEMICAL_DUPLICATE_RECORD_ID", rows.size) {
+                check(rows.map { it.id }.distinct().size == rows.size)
+            }
             rows.forEach { row ->
-                check(row.id.isNotBlank() && row.id == row.id.trim() && row.vineyardId == vineyard)
-                check(row.vineyardPreferredRate?.isValid != false)
+                chemical("CHEMICAL_RECORD_SCOPE", rows.size) {
+                    check(row.id.isNotBlank() && row.id == row.id.trim() && row.vineyardId == scope[1])
+                }
+                chemical("CHEMICAL_PREFERRED_RATE_INVALID", rows.size) {
+                    check(row.vineyardPreferredRate?.isValid != false)
+                }
             }
         }
     }

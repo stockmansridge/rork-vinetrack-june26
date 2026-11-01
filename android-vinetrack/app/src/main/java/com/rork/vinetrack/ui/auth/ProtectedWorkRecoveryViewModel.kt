@@ -22,11 +22,11 @@ class ProtectedWorkRecoveryViewModel internal constructor(
             session.retentionGuard.serialized {
                 val inspector = com.rork.vinetrack.data.auth.AccountTransitionEvidence(context.applicationContext)
                 if (session.retentionGuard.isLocked) inspector.inspect(session.recoveryPrincipal)
-                inspector.failureDiagnostic
+                inspector.failureDiagnostics
             }
         }
     }
-    private var diagnosticProvider: (() -> com.rork.vinetrack.data.auth.RecoveryEvidenceDiagnostic?)? = null
+    private var diagnosticProvider: (() -> List<com.rork.vinetrack.data.auth.RecoveryEvidenceDiagnostic>)? = null
     private var lastFailure: com.rork.vinetrack.data.auth.AuthRecoveryFailure? = null
     private val mutableState = MutableStateFlow(RecoveryUiState())
     val state = mutableState.asStateFlow()
@@ -35,10 +35,11 @@ class ProtectedWorkRecoveryViewModel internal constructor(
         if (mutableState.value.isBusy) return
         viewModelScope.launch {
             val failure = lastFailure
-            val evidence = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                failure?.evidence ?: runCatching { diagnosticProvider?.invoke() }.getOrNull()
+            val blockers = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { diagnosticProvider?.invoke() }.getOrNull().orEmpty()
             }
-            copy(com.rork.vinetrack.data.auth.RecoveryDiagnostics.format(failure?.stage?.name ?: "LOCKED", evidence))
+            copy(com.rork.vinetrack.data.auth.RecoveryDiagnostics.format(
+                failure?.stage?.name ?: "LOCKED", failure?.evidence ?: blockers.firstOrNull(), blockers))
         }
     }
 

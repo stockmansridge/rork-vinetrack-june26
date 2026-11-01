@@ -1,0 +1,84 @@
+{
+  "date": "2026-11-01",
+  "incident": "OPEN",
+  "scope": "Android PR32 follow-up; no iOS/backend changes or delivery",
+  "startingManagedRevisionNotFinalRepair": "1973aa4c44b947b43c149660a8f7380a8b5aa5c1",
+  "prHead": "dd021b953c284b61f5d334051a5fa18254048c71",
+  "productionCheckpoint": "f511b0a9e96518f4ee3176775b2f812b2e927a44",
+  "latestReportedHandset": {"versionName": "3.1.9", "versionCode": 1793518944, "stage": "RETAINED_EVIDENCE", "category": "vinetrack_saved_chemicals_local", "rule": "STORE_CONTRACT", "preferenceEntryCountNotRowCount": 1},
+  "jvm": {
+    "status": "passed", "tests": 62, "failures": 0, "errors": 0, "skipped": 0,
+    "evidence": "Actual Gradle log and five XML reports in jvm-final/",
+    "productionConfiguration": "Real managed Config.kt used, not synthetic CI configuration. Final on-disk hash differs from import receipt; validation-time equivalence is not established.",
+    "selection": {"SavedChemicalRecoveryContractTest": 18, "DomainCacheRecoveryContractTest": 21, "PruningRecoveryVerifierTest": 13, "RetainedPlanningContractTest": 3, "SprayTankActualTest": 7},
+    "compilation": "Complete production application compilation, five explicitly selected JVM files via chemical-recovery-tests.init.gradle"
+  },
+  "native": {
+    "evidenceType": "Observed androidTest tool-result transcriptions, not raw success logs",
+    "rawSuccessLogsAvailable": false,
+    "staleLog": "stale-tool-log-not-pr32/prior-pr31-202-tests-2-failures.log is historical PR31 failure evidence; mutable tool log did not update on successful PR32 runs",
+    "overlappingNotAdditive": true,
+    "runs": [
+      {"selection": ["com.rork.vinetrack.data.auth.ChemicalRecoveryPreflightAndroidTest"], "status": "passed", "passed": 4, "failed": 0, "skipped": 0, "seconds": 11, "sourceStage": "Strengthened combined populated production-writer fixture with isolated auth and membership path"},
+      {"selection": ["com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest#combinedChemicalYieldPruningSnapshotAndActualsRecoverThroughFormAndReopen"], "status": "passed", "passed": 1, "failed": 0, "skipped": 0, "seconds": 18},
+      {
+        "selection": [
+          "com.rork.vinetrack.data.auth.ChemicalRecoveryPreflightAndroidTest",
+          "com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest",
+          "com.rork.vinetrack.data.auth.AuthRetentionAndroidTest",
+          "com.rork.vinetrack.data.auth.PopulatedCleanExitActivityTest",
+          "com.rork.vinetrack.data.auth.GoogleMapsRecoveryAndroidTest",
+          "com.rork.vinetrack.data.auth.GoogleMapsRuntimeFilesAndroidTest",
+          "com.rork.vinetrack.data.auth.ProfileInstallerRecoveryAndroidTest",
+          "com.rork.vinetrack.data.auth.RecoveryStorageInventoryAndroidTest",
+          "com.rork.vinetrack.data.auth.RetainedStartupConstructionTest",
+          "com.rork.vinetrack.data.PreparedRecoveryAndroidTest",
+          "com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest",
+          "com.rork.vinetrack.data.SprayFieldLayoutAndroidTest",
+          "com.rork.vinetrack.data.SprayStartProductionAndroidTest",
+          "com.rork.vinetrack.data.SprayPhase1CalculatorAndroidTest",
+          "com.rork.vinetrack.data.MobileSprayUXParityAndroidTest",
+          "com.rork.vinetrack.data.SprayReleaseGateAndroidTest",
+          "com.rork.vinetrack.data.SavedChemicalDecodeMemoAndroidTest",
+          "com.rork.vinetrack.ui.GuardedSheetStateAndroidTest",
+          "com.rork.vinetrack.data.HomeHydrationAndroidTest",
+          "com.rork.vinetrack.data.WorkTaskWriteRecoveryAndroidTest"
+        ],
+        "status": "passed", "passed": 255, "failed": 0, "skipped": 0, "seconds": 250,
+        "sourceStage": "Final broad run before adding one more explicit unknown-chemical isolated-auth refusal and original-user reopen assertion; no production change afterward"
+      },
+      {"selection": ["com.rork.vinetrack.data.auth.ChemicalRecoveryPreflightAndroidTest"], "status": "passed", "passed": 5, "failed": 0, "skipped": 0, "seconds": 10, "sourceStage": "Final test source including unknown-chemical refusal and reopened original identity assertion"}
+    ],
+    "verified": [
+      "Populated old chemicals, yield, pruning setups/entries/activities/labour/settings, nonempty recovery snapshot, actual water/chemical quantities and exact operator draft",
+      "Production AuthRecoveryRepository using isolated intercepted token/user/current membership/live-vineyard and independent pruning projections",
+      "Wrong account and revoked membership remain locked; failed replacement credentials revoked locally; exact retained maps unchanged",
+      "Unknown chemical fields refuse even after independent pruning verification; no restored ordinary credentials or retained-data mutation",
+      "Multiple independent local blockers reported with fixed private-safe codes; unsafe locations stop preference-content inspection",
+      "Rendered recovery form, wrong-account retry, Home and Activity close/relaunch preserve historical entries, quantities, drafts, held queues, receipts and logo; no operational writes",
+      "Pending actuals covered in repository fixture; acknowledged actual fixture used in rendered journey"
+    ],
+    "notEstablished": ["Killed-process restart", "Original handset or in-place binary update acceptance", "Live customer authentication/backend acknowledgement", "Every historical cross-platform spray lifecycle/export/actuals gate", "Missing historical SprayTankActualQueueAndroidTest and SprayOperationalBundleAndroidTest classes"]
+  },
+  "normalManagedBuild": {"tool": "runChecks", "appPath": "android-vinetrack", "status": "passed", "runs": 2, "finalRunAfterLastTestSourceChange": true, "existingNonblockingAssetAddressAdvisories": 2, "testsExecutedByBuildTool": false},
+  "upstreamActions": {
+    "runId": 41287674297, "status": "completed", "conclusion": "success", "updatedAt": "2026-11-01T09:22:08Z",
+    "workflowHead": "7165f01827089d864ab193eb2189b0ca8a2e3a09",
+    "reviewedSourceJob": "success", "androidJob": "success", "androidUsesReviewedSourceOutput": true,
+    "resolvedCheckoutShaIndependentlyRetrieved": false, "rawReportsIndependentlyRetrieved": false,
+    "configuration": "Synthetic compile/test-only; not managed release configuration",
+    "evidence": ["actions-run.json", "actions-jobs.json"]
+  },
+  "delivery": {
+    "preflightStatus": "blocked_build_or_signing",
+    "googlePlayConnected": true, "packageAccess": "ok", "packageName": "com.rork.vinetrack", "target": "existing internal testing only",
+    "latestListedPriorBuild": {"runId": "af4d3cb4-565b-4dd9-9378-e5580f9f1e84", "snapshotId": "gb6o6s0sl76qu43wrbvwr", "sourceHash": "src_f585f2a5e1a3ada9a", "matchesRepairedCheckpointVerified": false},
+    "blocker": "Final Config.kt hash differs from import receipt; cause and validation-time equivalence unverified. Also final automatic source synchronization and exact repaired-source-to-managed-snapshot/sourceHash/AAB mapping unavailable. No identifiers invented or old artifact substituted.",
+    "generatePlayAabCalled": false, "counterAllocated": false, "signedPlayCandidateCreated": false, "uploaded": false, "publishValidationCalled": false, "publicationCommitted": false, "submissionId": null,
+    "requiredNextCode": "Managed code greater than 1793518944 and every later upload, not source code12",
+    "signingPackageVersionConfigurationChanged": false,
+    "protectedRuntimeConfigurationVerified": false,
+    "runtimeConfigurationMismatch": {"path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt", "expectedImportSha256": "c79d68f9e9dc96559263dee80de69190df5c3886eab29a2f613104989d78eab7", "observedFinalSha256": "a1da2e0589dbe2e6430459e36a7e32dc93c4b15c846e6bc7cccbc1499a4712e8", "causeVerified": false, "valuesDisclosed": false, "restorationAttempted": false},
+    "handsetAcceptance": "OPEN; update original installation in place only, no uninstall/storage clear/ownership adoption/task or queue recreation"
+  }
+}

@@ -14,6 +14,8 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.*
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.*
@@ -30,6 +32,26 @@ class PopulatedCleanExitActivityTest {
     private val account = AtomicReference(A)
     private val logouts = AtomicInteger(0)
     private var includeHistorical = false
+    private var combinedRecovery = false
+    private var historicalBytes: Map<String, Map<String, *>>? = null
+    private val historical = "55555555-5555-4555-8555-555555555555"
+    private val season = "77777777-7777-4777-8777-777777777777"
+    private val block = "88888888-8888-4888-8888-888888888888"
+    private val entry = "99999999-9999-4999-8999-999999999999"
+    private val codec = kotlinx.serialization.json.Json { encodeDefaults = true }
+    private val seasonRow get() = PruningSyncRepository.SeasonRow(season, historical, block, seasonYear = 2026)
+    private val settingsRow get() = PruningYieldSettings(season, historical, block, bunchesPerBud = 1.7)
+    private val entryRow get() = PruningSyncRepository.EntryRow(entry, historical, season, block,
+        entryDate = "2026-08-10", createdBy = A, createdAt = "2026-08-10T00:00:00Z",
+        updatedAt = "2026-08-10T01:00:00Z", notes = "original entry")
+    private val segmentRow get() = PruningSyncRepository.SegmentRow(
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", season, rowNumber = 1, segmentNumber = 2,
+        completed = true, pruningEntryId = entry)
+    private val labourRow get() = PruningActivityLabourLine(entry, entry, historical, workerCount = 2, hoursPerWorker = 3.0)
+    private val canonical get() = PruningActivityCanonical(activity = PruningActivityCanonical.CanonicalActivity(
+        id = entry, vineyardId = historical, entryDate = "2026-08-10", workerOrCrew = "Crew", method = "spur",
+        notes = "original activity", seasonYear = 2026, createdBy = A,
+        createdAt = "2026-08-10T00:00:00Z", updatedAt = "2026-08-10T01:00:00Z", isReversed = false))
     private var retainedContractBytes: Map<String, Map<String, *>>? = null
     private var retainedLogoBytes: Map<String, List<Byte>>? = null
     private val requests = java.util.Collections.synchronizedSet(mutableSetOf<String>())
@@ -138,6 +160,14 @@ class PopulatedCleanExitActivityTest {
                 path == "/rest/v1/vineyard_members" -> if (includeHistorical)
                     """[{"vineyard_id":"$v","role":"operator","user_id":"$uid"},{"vineyard_id":"55555555-5555-4555-8555-555555555555","role":"operator","user_id":"$uid"}]"""
                     else """[{"vineyard_id":"$v","role":"operator","user_id":"$uid"}]"""
+                combinedRecovery && path == "/rest/v1/vineyards" && request.url.parameters["id"] == "eq.$historical" ->
+                    """[{"id":"$historical","timezone":"Australia/Sydney"}]"""
+                combinedRecovery && path == "/rest/v1/pruning_seasons" && request.url.parameters["vineyard_id"] == "eq.$historical" -> codec.encodeToString(listOf(seasonRow))
+                combinedRecovery && path == "/rest/v1/pruning_entries" && request.url.parameters["vineyard_id"] == "eq.$historical" -> codec.encodeToString(listOf(entryRow))
+                combinedRecovery && path == "/rest/v1/pruning_row_segments" -> codec.encodeToString(listOf(segmentRow))
+                combinedRecovery && path == "/rest/v1/pruning_activity_labour_lines" && request.url.parameters["vineyard_id"] == "eq.$historical" -> codec.encodeToString(listOf(labourRow))
+                combinedRecovery && path == "/rest/v1/pruning_yield_settings" && request.url.parameters["vineyard_id"] == "eq.$historical" -> codec.encodeToString(listOf(settingsRow))
+                combinedRecovery && path == "/rest/v1/rpc/get_pruning_activity" -> codec.encodeToString(canonical)
                 path == "/rest/v1/vineyards" -> if (includeHistorical)
                     """[{"id":"$v","name":"Synthetic $v"},{"id":"55555555-5555-4555-8555-555555555555","name":"Historical fixture"}]"""
                     else """[{"id":"$v","name":"Synthetic $v"}]"""
@@ -260,20 +290,70 @@ class PopulatedCleanExitActivityTest {
         .listFiles().orEmpty().associate { it.name to it.readBytes().toList() }
 
     private fun assertContractBytes() {
+        historicalBytes?.forEach { (name, values) -> values.forEach { (key, raw) ->
+            assertEquals("$name historical entry changed", raw, app.getSharedPreferences(name, 0).all[key])
+        } }
         retainedContractBytes?.forEach { (name, values) -> assertEquals(name, values, app.getSharedPreferences(name, 0).all) }
         retainedLogoBytes?.let { assertEquals("Retained production logo changed", it, logoBytes()) }
     }
 
-    private fun recoverThroughForm(wrongAccountFirst: Boolean = false, productionContracts: Boolean = false): Map<String, *> {
+    private fun retainCombinedStores() {
+        combinedRecovery = true
+        check(SavedChemicalLocalStore(app).save(A, historical,
+            listOf(SavedChemical("historical-chemical", historical, name = "Retained chemical", ratePerHa = 1.5))))
+        val chemicals = app.getSharedPreferences("vinetrack_saved_chemicals_local", 0)
+        val old = JsonArray(codec.parseToJsonElement(chemicals.getString("$A|$historical", null)!!).jsonArray.map {
+            JsonObject(it.jsonObject - "vineyard_preferred_rate")
+        })
+        check(chemicals.edit().putString("$A|$historical", old.toString()).commit())
+        check(DomainCacheStore(app).saveYieldSessions(historical, listOf(YieldEstimationSession(
+            "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", historical, "2026-11-01T00:00:00Z",
+            sampleSites = listOf(SampleSite("sample", block, "Retained block", 1, -33.0, 149.0, 1,
+                BunchCountEntry(12.0, "2026-11-01T00:00:00Z", A))))), 1L))
+        PruningStore(app).apply {
+            saveSetups(historical, listOf(seasonRow.toModel()))
+            saveEntries(historical, listOf(entryRow.toModel(listOf(PruningSegment(1, 2)), 2026,
+                java.time.ZoneId.of("Australia/Sydney"))))
+            saveActivities(historical, listOf(PruningAllocationEditor.adoptCanonical(
+                PruningActivityDraft(entry, historical, "2026-08-10", enteredBy = A,
+                    createdAtMs = java.time.Instant.parse("2026-08-10T00:00:00Z").toEpochMilli(),
+                    updatedAtMs = java.time.Instant.parse("2026-08-10T01:00:00Z").toEpochMilli()),
+                canonical, java.time.ZoneId.of("Australia/Sydney"))))
+            saveLabourLines(historical, listOf(labourRow))
+        }
+        PruningYieldSettingsStore(app).save(historical, listOf(settingsRow))
+        val actuals = SprayTankActualStore(app)
+        val actual = SprayTankActual(id = "historical-actual", vineyardId = historical, sprayRecordId = "historical-spray",
+            tripId = "historical-trip", tankSessionId = "historical-tank", tankNumber = 1, waterVolumeL = 343.8,
+            chemicals = listOf(SprayTankActualChemical("line", name = "Retained chemical", actualAmountBase = 700.0, unit = "Kg")),
+            confirmedAt = "2026-11-01T00:00:00Z", confirmedBy = A)
+        check(actuals.save(actual))
+        // Synthetic already-acknowledged fixture; pending confirmations are checked separately by the repository test.
+        check(actuals.markSynced(actual.id))
+        check(actuals.saveInputDraft(SprayActualInputDraft("tank:historical-trip:historical-tank", A, historical,
+            mapOf("water" to "343.8", "line" to "0.700"), "historical-trip", "historical-tank", "historical-spray")))
+        retainedContractBytes = retainedContractBytes.orEmpty() + listOf("vinetrack_pruning", "vinetrack_pruning_yield_settings", "vinetrack_spray_tank_actuals")
+            .associateWith { app.getSharedPreferences(it, 0).all.toMap() }
+        historicalBytes = listOf("vinetrack_domain_cache", "vinetrack_saved_chemicals_local").associateWith { name ->
+            app.getSharedPreferences(name, 0).all.filterKeys { it.contains(historical) }
+        }
+        assertTrue(historicalBytes!!.values.all { it.isNotEmpty() })
+    }
+
+    private fun recoverThroughForm(wrongAccountFirst: Boolean = false, productionContracts: Boolean = false, combined: Boolean = false): Map<String, *> {
         signIn()
         val session = SessionStore(app)
         val obsolete = requireNotNull(session.accountAccess())
         retainDraft()
         if (productionContracts) retainProductionContracts()
+        if (combined) { check(productionContracts); retainCombinedStores() }
         val draftBefore = app.getSharedPreferences("vinetrack_local_planning", 0).all.toMap()
         val evidence = AccountTransitionEvidence(app)
         val assessment = evidence.inspect(A)
-        assertNotNull("Populated recovery rejected at ${evidence.failureCategory}; keys=${app.getSharedPreferences(evidence.failureCategory, 0).all.keys}; files=${app.filesDir.walkTopDown().filter { it.isFile }.map { it.relativeTo(app.filesDir).path }.toList()}", assessment)
+        if (combined) {
+            assertNull("Local-only inspection must not substitute for server pruning proof", assessment)
+            assertEquals("PRUNING_SERVER_CONFIRMATION_REQUIRED", evidence.failureDiagnostic?.rule)
+        } else assertNotNull("Populated recovery rejected at ${evidence.failureCategory}; keys=${app.getSharedPreferences(evidence.failureCategory, 0).all.keys}; files=${app.filesDir.walkTopDown().filter { it.isFile }.map { it.relativeTo(app.filesDir).path }.toList()}", assessment)
         scenario.close()
         session.clear()
         scenario = ActivityScenario.launch(MainActivity::class.java)
@@ -387,6 +467,29 @@ class PopulatedCleanExitActivityTest {
         assertFalse(SessionStore(app).retentionGuard.isLocked)
         assertEquals("block-$A", DomainCacheRepository(app).loadPaddocks(A, "33333333-3333-4333-8333-333333333333")!!.single().id)
         assertOriginalIdentityAndNoOperationalWrites()
+    }
+
+    @Test fun combinedChemicalYieldPruningSnapshotAndActualsRecoverThroughFormAndReopen() {
+        recoverThroughForm(wrongAccountFirst = true, productionContracts = true, combined = true)
+        scenario.close()
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        awaitStage("combined.reopen.home") { compose.onAllNodes(hasText("Home") and hasClickAction()).fetchSemanticsNodes().isNotEmpty() }
+        awaitStage("combined.reopen.loaded", timeoutMillis = 60_000) { pending.isEmpty() && checkpoints.count { it == "vineyard.load.published" } >= 3 }
+        compose.onAllNodesWithText("Local work protected").assertCountEquals(0)
+        assertOriginalIdentityAndNoOperationalWrites()
+        assertEquals(1.5, SavedChemicalLocalStore(app).load(A, historical).single().ratePerHa!!, 0.0)
+        assertEquals(12.0, DomainCacheStore(app).loadYieldSessions(historical).single().sampleSites.single().bunchCountEntry!!.bunchesPerVine, 0.0)
+        assertEquals(1, PruningStore(app).loadEntries(historical).size)
+        assertEquals(1, PruningStore(app).loadActivities(historical).size)
+        assertEquals(listOf(labourRow), PruningStore(app).loadLabourLines(historical))
+        assertEquals(listOf(settingsRow), PruningYieldSettingsStore(app).load(historical))
+        assertEquals("historical-trip", RecoverySnapshotStore(app).load(historical)!!.cachedTrips.single().id)
+        val actuals = SprayTankActualStore(app)
+        assertEquals(343.8, actuals.load().single().waterVolumeL!!, 0.0)
+        assertEquals(700.0, actuals.load().single().chemicals.single().actualAmountBase!!, 0.0)
+        assertEquals("0.700", actuals.inputDraft(A, historical, "tank:historical-trip:historical-tank")!!.text["line"])
+        assertTrue(requests.contains("/rest/v1/rpc/get_pruning_activity"))
+        assertContractBytes()
     }
 
     @Test fun recoveredHomeWorkTaskSelectsExistingBlock() {
@@ -659,7 +762,7 @@ class PopulatedCleanExitActivityTest {
         private val readOnlyRpcs = setOf("is_system_admin", "get_system_feature_flags", "get_my_vinetrack_access",
             "get_my_vineyard_access_matrix", "get_my_operational_tool_preferences", "get_app_release_policy",
             "get_canopy_reference_images_v1", "get_vineyard_team_members", "get_grape_clone_catalog",
-            "get_pruning_vineyard_summary", "list_pruning_activities", "get_vineyard_yield_sampling_settings",
+            "get_pruning_vineyard_summary", "get_pruning_activity", "list_pruning_activities", "get_vineyard_yield_sampling_settings",
             "list_vineyard_spray_targets", "list_vineyard_grape_varieties", "get_rootstock_catalog",
             "list_vineyard_grape_clones", "list_vineyard_rootstocks", "get_vineyard_region_settings",
             "get_vineyard_season_settings").map { "/rest/v1/rpc/$it" }.toSet()

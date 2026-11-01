@@ -1,0 +1,765 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest:
+INSTRUMENTATION_STATUS: test=wrongOriginalAccountIsNotAdmitted
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=wrongOriginalAccountIsNotAdmitted
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=populatedPruningAndYieldRecoverTogetherWithoutReplacingBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=populatedPruningAndYieldRecoverTogetherWithoutReplacingBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=separateForeignActiveClaimRemainsProtected
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=separateForeignActiveClaimRemainsProtected
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=actualWriterOutputRecoversWithoutCreatingAnActiveDeviceClaim
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualWriterOutputRecoversWithoutCreatingAnActiveDeviceClaim
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=revokedVineyardAccessIsStillRejected
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=revokedVineyardAccessIsStillRejected
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=actualWriterOutputStillPreventsCleanExit
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualWriterOutputStillPreventsCleanExit
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=schemaDiagnosticContainsNoRetainedJsonOrIdentifiers
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=schemaDiagnosticContainsNoRetainedJsonOrIdentifiers
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=8
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=changedPopulatedSnapshotAndEpochRefuseAdmissionWithoutChangingBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=8
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=changedPopulatedSnapshotAndEpochRefuseAdmissionWithoutChangingBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=9
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=yieldWriterCannotInterleaveRecoveryOrRebindToRestoredIncarnation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=9
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=yieldWriterCannotInterleaveRecoveryOrRebindToRestoredIncarnation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=10
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=populatedCombinedProofCannotRestoreWrongAccountOrRevokedAccess
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.DomainCacheRecoveryAndroidTest
+INSTRUMENTATION_STATUS: current=10
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=populatedCombinedProofCannotRestoreWrongAccountOrRevokedAccess
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=11
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.AuthRetentionAndroidTest:
+INSTRUMENTATION_STATUS: test=actualUnscopedLateTankAcknowledgementNowFailsAtDurableStorage
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=11
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualUnscopedLateTankAcknowledgementNowFailsAtDurableStorage
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=12
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=revokedPhotoReturnAndLostLiveTicketPreserveUncertainEvidenceWithoutRebinding
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=12
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=revokedPhotoReturnAndLostLiveTicketPreserveUncertainEvidenceWithoutRebinding
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=13
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=populatedReviewedCachesAndPreferencesExitWithoutEmptyingInstallation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=13
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=populatedReviewedCachesAndPreferencesExitWithoutEmptyingInstallation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=14
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=malformedUnknownOwnerAndMismatchedChemicalSnapshotsRefuseWithoutMutation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=14
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=malformedUnknownOwnerAndMismatchedChemicalSnapshotsRefuseWithoutMutation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=15
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=legitimateAdmissionContentionPersistsTripAndPhotoWithoutRevokingAuthority
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=15
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=legitimateAdmissionContentionPersistsTripAndPhotoWithoutRevokingAuthority
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=16
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=vintageDelayedReadRetainsOriginalPendingOperationAndRejectsPostRevocationPublication
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=16
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=vintageDelayedReadRetainsOriginalPendingOperationAndRejectsPostRevocationPublication
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=17
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=profileVerifierMarkerDoesNotBlockOwnedRecoveryAssessment
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=17
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=profileVerifierMarkerDoesNotBlockOwnedRecoveryAssessment
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=18
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=corruptActiveClaimCannotBeOverwrittenThroughProductionClaim
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=18
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=corruptActiveClaimCannotBeOverwrittenThroughProductionClaim
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=19
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=cacheScopeAndDraftAuthorFailuresRemainProtectedWithSpecificStage
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=19
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=cacheScopeAndDraftAuthorFailuresRemainProtectedWithSpecificStage
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=20
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=mixedInputDraftOwnersRemainProtectedEvenWhenOneMatchesOriginal
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=20
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=mixedInputDraftOwnersRemainProtectedEvenWhenOneMatchesOriginal
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=21
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=originalAccountCallbackScopeSurvivesRefreshButNotRevocationOrRecreation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=21
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=originalAccountCallbackScopeSurvivesRefreshButNotRevocationOrRecreation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=22
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=inconclusiveRefreshDenialsAndRateLimitsKeepProductionSession
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=22
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=inconclusiveRefreshDenialsAndRateLimitsKeepProductionSession
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=23
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=historicalTokenRemovalWithSurvivingContextLocksBeforeBusinessConstruction
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=23
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=historicalTokenRemovalWithSurvivingContextLocksBeforeBusinessConstruction
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=24
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=failedRealPhotoMetadataCommitRetainsPriorAttachmentAndBothCapturedByteSets
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=24
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=failedRealPhotoMetadataCommitRetainsPriorAttachmentAndBothCapturedByteSets
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=25
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=actualScoutPhotoWriteAndCleanupAfterRevocationRetainOriginalBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=25
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=actualScoutPhotoWriteAndCleanupAfterRevocationRetainOriginalBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=26
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=originalAccountRecoveryRestoresFreshSessionAndPreservesOwnedTripBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=26
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=originalAccountRecoveryRestoresFreshSessionAndPreservesOwnedTripBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=27
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=trustedAndroidRootAliasAdmitsLogoButNestedDanglingLinkStaysHeld
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=27
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=trustedAndroidRootAliasAdmitsLogoButNestedDanglingLinkStaysHeld
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: current=28
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=editAdmittedBeforeRevocationCannotCommitAfterItAndPreservesDraftBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.AuthRetentionAndroidTest
+INSTRUMENTATION_STATUS: cur
+... output truncated ...
+: stream=
+INSTRUMENTATION_STATUS: test=calculatorButtonLostReceiptRetryPreservesOriginalAndNavigatesOnce
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=182
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Failed to assert the following: (Selected = 'false')
+Semantics of the node:
+Node #19445 at (l=56.0, t=862.0, r=664.0, b=974.0)px
+Focused = 'false'
+Selected = 'true'
+Shape = 'RoundedCornerShape(topStart = CornerSize(size = 12.0.dp), topEnd = CornerSize(size = 12.0.dp), bottomEnd = CornerSize(size = 12.0.dp), bottomStart = CornerSize(size = 12.0.dp))'
+Text = '[Free Drive, No planned path — detect rows live]'
+Actions = [ClearTextSubstitution, GetTextLayoutResult, OnClick, RequestFocus, SetTextSubstitution, ShowTextSubstitution]
+MergeDescendants = 'true'
+Has 8 siblings
+Selector used: (Text + InputText + EditableText contains 'Free Drive' (ignoreCase: false))
+
+	at androidx.compose.ui.test.AssertionsKt.assert(Assertions.kt:264)
+	at androidx.compose.ui.test.AssertionsKt.assert$default(Assertions.kt:254)
+	at androidx.compose.ui.test.AssertionsKt.assertIsNotSelected(Assertions.kt:96)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart(SprayStartProductionAndroidTest.kt:327)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonLostReceiptRetryPreservesOriginalAndNavigatesOnce(SprayStartProductionAndroidTest.kt:389)
+
+INSTRUMENTATION_STATUS: stream=
+Error in calculatorButtonLostReceiptRetryPreservesOriginalAndNavigatesOnce(com.rork.vinetrack.data.SprayStartProductionAndroidTest):
+java.lang.AssertionError: Failed to assert the following: (Selected = 'false')
+Semantics of the node:
+Node #19445 at (l=56.0, t=862.0, r=664.0, b=974.0)px
+Focused = 'false'
+Selected = 'true'
+Shape = 'RoundedCornerShape(topStart = CornerSize(size = 12.0.dp), topEnd = CornerSize(size = 12.0.dp), bottomEnd = CornerSize(size = 12.0.dp), bottomStart = CornerSize(size = 12.0.dp))'
+Text = '[Free Drive, No planned path — detect rows live]'
+Actions = [ClearTextSubstitution, GetTextLayoutResult, OnClick, RequestFocus, SetTextSubstitution, ShowTextSubstitution]
+MergeDescendants = 'true'
+Has 8 siblings
+Selector used: (Text + InputText + EditableText contains 'Free Drive' (ignoreCase: false))
+
+	at androidx.compose.ui.test.AssertionsKt.assert(Assertions.kt:264)
+	at androidx.compose.ui.test.AssertionsKt.assert$default(Assertions.kt:254)
+	at androidx.compose.ui.test.AssertionsKt.assertIsNotSelected(Assertions.kt:96)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart(SprayStartProductionAndroidTest.kt:327)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonLostReceiptRetryPreservesOriginalAndNavigatesOnce(SprayStartProductionAndroidTest.kt:389)
+
+INSTRUMENTATION_STATUS: test=calculatorButtonLostReceiptRetryPreservesOriginalAndNavigatesOnce
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=183
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=timestampedCalculatorOlderAcceptedIsInspectionNotIdentityProof
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=183
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=timestampedCalculatorOlderAcceptedIsInspectionNotIdentityProof
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=184
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=olderAcceptedUsesParentIdentityAndVineyardDayWithoutRewritingHistory
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=184
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=olderAcceptedUsesParentIdentityAndVineyardDayWithoutRewritingHistory
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=185
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=timestampedCalculatorAcceptedReloadFailureStartsFrozenOriginal
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=185
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=timestampedCalculatorAcceptedReloadFailureStartsFrozenOriginal
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=186
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=retainedActiveClaimBlocksAnotherStartWithoutTouchingItsEvidence
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=186
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=retainedActiveClaimBlocksAnotherStartWithoutTouchingItsEvidence
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=187
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=repeatedPressesShareOneOriginalRequest
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=187
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=repeatedPressesShareOneOriginalRequest
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=188
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=acceptedButReloadFailedStartsVerifiedOriginalWithoutAnotherCreate
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=188
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=acceptedButReloadFailedStartsVerifiedOriginalWithoutAnotherCreate
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=189
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=blankHoursActivateOriginalAndKeepFirstTankGpsSafetyGate
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=189
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=blankHoursActivateOriginalAndKeepFirstTankGpsSafetyGate
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=190
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=calculatorButtonValidHoursAcceptedReloadFailureStillOpensOriginalTank
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=190
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=calculatorButtonValidHoursAcceptedReloadFailureStillOpensOriginalTank
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=191
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=viewModelRecreationRecoversLostOriginalFromNativeStoreWithoutCreateReplay
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=191
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=viewModelRecreationRecoversLostOriginalFromNativeStoreWithoutCreateReplay
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=192
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=offlineStartKeepsDraftAndExplainsOnlineRequirement
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=192
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=offlineStartKeepsDraftAndExplainsOnlineRequirement
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=193
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=olderAcceptedGenuineRecipeChangesAreNotMisidentifiedAsOriginal
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=193
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=olderAcceptedGenuineRecipeChangesAreNotMisidentifiedAsOriginal
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=194
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=expiredCalculatorStartDoesNotPrepareOrSendReplacementWork
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=194
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=expiredCalculatorStartDoesNotPrepareOrSendReplacementWork
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=195
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=calculatorButtonLostActivationRestoresSameTankDestination
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=195
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=calculatorButtonLostActivationRestoresSameTankDestination
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=196
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.SprayFieldLayoutAndroidTest:
+INSTRUMENTATION_STATUS: test=metricNarrowDefaultFont
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=196
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=metricNarrowDefaultFont
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=197
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=metricHandsetLargeFont
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=197
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=metricHandsetLargeFont
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=198
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=imperialNarrowLargeFont
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=198
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=imperialNarrowLargeFont
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=199
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=newSprayRequiresExplicitPatternIncludingFreeDrive
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=199
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=newSprayRequiresExplicitPatternIncludingFreeDrive
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=200
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=engineHoursBlankAndEnteredCallbacksAndInvalidInput
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=200
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=engineHoursBlankAndEnteredCallbacksAndInvalidInput
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=201
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=imperialHandsetDefaultFont
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=201
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=imperialHandsetDefaultFont
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=202
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=enteredActualsSurvivePathSelectionButResetWhenRecipeChanges
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=202
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=202
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=enteredActualsSurvivePathSelectionButResetWhenRecipeChanges
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 162.129
+There were 2 failures:
+1) calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+java.lang.AssertionError: Failed to assert the following: (Selected = 'false')
+Semantics of the node:
+Node #15398 at (l=56.0, t=862.0, r=664.0, b=974.0)px
+Focused = 'false'
+Selected = 'true'
+Shape = 'RoundedCornerShape(topStart = CornerSize(size = 12.0.dp), topEnd = CornerSize(size = 12.0.dp), bottomEnd = CornerSize(size = 12.0.dp), bottomStart = CornerSize(size = 12.0.dp))'
+Text = '[Free Drive, No planned path — detect rows live]'
+Actions = [ClearTextSubstitution, GetTextLayoutResult, OnClick, RequestFocus, SetTextSubstitution, ShowTextSubstitution]
+MergeDescendants = 'true'
+Has 8 siblings
+Selector used: (Text + InputText + EditableText contains 'Free Drive' (ignoreCase: false))
+
+	at androidx.compose.ui.test.AssertionsKt.assert(Assertions.kt:264)
+	at androidx.compose.ui.test.AssertionsKt.assert$default(Assertions.kt:254)
+	at androidx.compose.ui.test.AssertionsKt.assertIsNotSelected(Assertions.kt:96)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart(SprayStartProductionAndroidTest.kt:327)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart$default(SprayStartProductionAndroidTest.kt:317)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption(SprayStartProductionAndroidTest.kt:457)
+2) calculatorButtonLostReceiptRetryPreservesOriginalAndNavigatesOnce(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+java.lang.AssertionError: Failed to assert the following: (Selected = 'false')
+Semantics of the node:
+Node #19445 at (l=56.0, t=862.0, r=664.0, b=974.0)px
+Focused = 'false'
+Selected = 'true'
+Shape = 'RoundedCornerShape(topStart = CornerSize(size = 12.0.dp), topEnd = CornerSize(size = 12.0.dp), bottomEnd = CornerSize(size = 12.0.dp), bottomStart = CornerSize(size = 12.0.dp))'
+Text = '[Free Drive, No planned path — detect rows live]'
+Actions = [ClearTextSubstitution, GetTextLayoutResult, OnClick, RequestFocus, SetTextSubstitution, ShowTextSubstitution]
+MergeDescendants = 'true'
+Has 8 siblings
+Selector used: (Text + InputText + EditableText contains 'Free Drive' (ignoreCase: false))
+
+	at androidx.compose.ui.test.AssertionsKt.assert(Assertions.kt:264)
+	at androidx.compose.ui.test.AssertionsKt.assert$default(Assertions.kt:254)
+	at androidx.compose.ui.test.AssertionsKt.assertIsNotSelected(Assertions.kt:96)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.pressCalculatorStart(SprayStartProductionAndroidTest.kt:327)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonLostReceiptRetryPreservesOriginalAndNavigatesOnce(SprayStartProductionAndroidTest.kt:389)
+
+FAILURES!!!
+Tests run: 202,  Failures: 2
+
+
+INSTRUMENTATION_CODE: -1

@@ -31,6 +31,10 @@ internal class AccountTransitionEvidence(private val context: Context) {
     var failureDiagnostic: RecoveryEvidenceDiagnostic? = null
         private set
 
+    /** All independent local store blockers, with no raw keys, values or parser text. */
+    var failureDiagnostics: List<RecoveryEvidenceDiagnostic> = emptyList()
+        private set
+
     fun inspect(original: String? = null, pruningProof: PruningRecoveryVerifier.Proof? = null, epoch: Long = -1L): Assessment? =
         assess(original, cleanExit = false, pruningProof = pruningProof, epoch = epoch)
 
@@ -39,11 +43,18 @@ internal class AccountTransitionEvidence(private val context: Context) {
 
     private fun assess(original: String?, cleanExit: Boolean, pruningProof: PruningRecoveryVerifier.Proof? = null, epoch: Long = -1L): Assessment? = runCatching {
         failureDiagnostic = null
+        failureDiagnostics = emptyList()
         failureCategory = "file dependencies"
         failureDiagnostic = RecoveryEvidenceDiagnostic("file_dependencies", "LOCATION_CONTRACT")
         val vineyards = inspectLocations(allowLogoCache = !cleanExit && original != null).toMutableSet()
+        // Locations have passed before any preference contents are read. Once safe,
+        // inspect every independent store rather than shipping a fix for one at a time.
+        // Any failure still denies admission; no successful partial assessment is returned.
+        val blockers = mutableListOf<RecoveryEvidenceDiagnostic>()
         businessPreferences.forEach { name ->
             failureCategory = name
+            failureDiagnostic = RecoveryEvidenceDiagnostic(name, "STORE_READ")
+            try {
             val values = context.getSharedPreferences(name, Context.MODE_PRIVATE).all
             failureDiagnostic = RecoveryEvidenceDiagnostic(name, "STORE_CONTRACT", recordCount = values.size)
             when {
@@ -134,11 +145,24 @@ internal class AccountTransitionEvidence(private val context: Context) {
                 }
                 else -> check(values.isEmpty())
             }
+            } catch (failure: Exception) {
+                if (failure is kotlinx.coroutines.CancellationException) throw failure
+                blockers.add(if (failure is EvidenceContractFailure) failure.diagnostic
+                    else checkNotNull(failureDiagnostic))
+            }
         }
-        failureDiagnostic = null
-        Assessment(vineyards)
+        failureDiagnostics = blockers.toList()
+        if (blockers.isNotEmpty()) {
+            failureDiagnostic = blockers.first()
+            failureCategory = blockers.first().category
+            null
+        } else {
+            failureDiagnostic = null
+            Assessment(vineyards)
+        }
     }.onFailure { failure ->
         if (failure is EvidenceContractFailure) failureDiagnostic = failure.diagnostic
+        failureDiagnostics = listOfNotNull(failureDiagnostic)
     }.getOrNull()
 
     private fun inspectLocations(allowLogoCache: Boolean): Set<String> {

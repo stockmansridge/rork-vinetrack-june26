@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.RetainedPlanningContractTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-11-01T08:20:58.666Z" hostname="e2b.local" time="0.127">
+  <properties/>
+  <testcase name="originalDraftAndUncertainIntentAreReadOnlyAdmissionNotAcknowledgement" classname="com.rork.vinetrack.data.RetainedPlanningContractTest" time="0.114"/>
+  <testcase name="originalByteHistoryKeyIsValidatedWithoutRewriting" classname="com.rork.vinetrack.data.RetainedPlanningContractTest" time="0.007"/>
+  <testcase name="foreignMalformedUnknownAndConflictingLifecycleRemainHeld" classname="com.rork.vinetrack.data.RetainedPlanningContractTest" time="0.005"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

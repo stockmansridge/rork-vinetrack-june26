@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-11-01T08:20:58.885Z" hostname="e2b.local" time="0.111">
+  <properties/>
+  <testcase name="revokedMembershipRemainsLocked" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.035"/>
+  <testcase name="acknowledgedPopulatedActivityStillRequiresExactBusinessFields" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.051"/>
+  <testcase name="uppercaseIdentityInPopulatedSetupDoesNotChangeValues" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.006"/>
+  <testcase name="duplicateRecordsRemainProtected" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.001"/>
+  <testcase name="unknownVersionAndMalformedRowsRemainProtected" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.0"/>
+  <testcase name="activityAuditCannotBeProvenByCopyingTheLocalDraft" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.002"/>
+  <testcase name="changedBytesBetweenReadAndAdmissionCannotUseProof" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.001"/>
+  <testcase name="emptyKnownArraysCanBeAssessedButPopulatedRowsNeedServerProof" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.001"/>
+  <testcase name="wrongOriginalAccountCannotUseProof" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.001"/>
+  <testcase name="populatedEntryAndLabourUseRealServerProjections" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.009"/>
+  <testcase name="changedEpochCannotUseProof" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.001"/>
+  <testcase name="populatedSetupsAndYieldSettingsNeedNoWritesOrDiscard" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.001"/>
+  <testcase name="locallyModifiedSetupIsNotAttributedByAccountOrMembership" classname="com.rork.vinetrack.data.auth.PruningRecoveryVerifierTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

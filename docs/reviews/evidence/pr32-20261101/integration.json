@@ -1,0 +1,79 @@
+{
+  "startingManagedRevision": "1973aa4c44b947b43c149660a8f7380a8b5aa5c1",
+  "prHead": "dd021b953c284b61f5d334051a5fa18254048c71",
+  "productionCheckpoint": "f511b0a9e96518f4ee3176775b2f812b2e927a44",
+  "excluded": {
+    ".github/workflows/android-chemical-recovery.yml": "Branch-specific workflow and synthetic configuration are not managed release validation"
+  },
+  "method": "All modified deltas dry-run with fuzz zero; absent-only additions, no source tree replacement",
+  "changes": [
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/ChemicalRecoveryPreflightAndroidTest.kt",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "ef55bdce2b9b3b303a26bad116b61cd77dca58cd08fa327b1a006c7bcee85266",
+      "prSnapshotSha256": "ef55bdce2b9b3b303a26bad116b61cd77dca58cd08fa327b1a006c7bcee85266",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AccountTransitionEvidence.kt",
+      "beforeSha256": "5cdcb58f72f8a396e1e2a25709bfb4ad34adee69ec9b01abc6b32e3f73d49f8e",
+      "afterSha256": "7a9acbc87b02d05462b754b65ee6cc2eefda29e5d108a4e8a3f11fe366bfb323",
+      "prSnapshotSha256": "7a9acbc87b02d05462b754b65ee6cc2eefda29e5d108a4e8a3f11fe366bfb323",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/CleanExitCacheContract.kt",
+      "beforeSha256": "c305073c79bb9e658dc3e46d7f8893ce2cc581ddecda24ba7ebd2278c49dc26a",
+      "afterSha256": "f5e1529a3266b290cf7567f6cd5639f48ca5376816969fd5abe0d872e6b51a08",
+      "prSnapshotSha256": "f5e1529a3266b290cf7567f6cd5639f48ca5376816969fd5abe0d872e6b51a08",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/RecoveryDiagnostics.kt",
+      "beforeSha256": "81edba6e0a7639aaf8dec80d74d71eb6dd4ebfa9257e94a540ce0b3c5549c9f8",
+      "afterSha256": "0037ad38cac54da002c2ec15df94d2bc712685eab77b0b7146df33c63798225f",
+      "prSnapshotSha256": "0037ad38cac54da002c2ec15df94d2bc712685eab77b0b7146df33c63798225f",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/RetainedJsonFields.kt",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "478fd45af7526a1d9ee2330a2b6ff3fd8fdf3a360364d6074d245b73f4a1721c",
+      "prSnapshotSha256": "478fd45af7526a1d9ee2330a2b6ff3fd8fdf3a360364d6074d245b73f4a1721c",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/auth/ProtectedWorkRecoveryViewModel.kt",
+      "beforeSha256": "003510744d31064450ca81f109f2e9c3a197c1f2b8ab69af544d93d04dda875a",
+      "afterSha256": "fa43e2bbc6dab7c43d9f2d162cbe508743efc1394429e72776f85085dfed08d2",
+      "prSnapshotSha256": "fa43e2bbc6dab7c43d9f2d162cbe508743efc1394429e72776f85085dfed08d2",
+      "snapshotParity": true
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/SavedChemicalRecoveryContractTest.kt",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "527962896b074787d82d7345d46b266b1728dfa06c3402f0733ea79005ba9ce2",
+      "prSnapshotSha256": "527962896b074787d82d7345d46b266b1728dfa06c3402f0733ea79005ba9ce2",
+      "snapshotParity": true
+    },
+    {
+      "path": "docs/reviews/android-chemical-recovery-preflight-20261101.md",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "4bdd68a05391182b3027194d1b3c5f2edd44513fa48df98b7973ad92dd5bb672",
+      "prSnapshotSha256": "4bdd68a05391182b3027194d1b3c5f2edd44513fa48df98b7973ad92dd5bb672",
+      "snapshotParity": true
+    },
+    {
+      "path": "scripts/chemical-recovery-tests.init.gradle",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "13379b4c873ce478b92d664bb21b4f95ce247e14d2f9abaa8f1701e829140253",
+      "prSnapshotSha256": "13379b4c873ce478b92d664bb21b4f95ce247e14d2f9abaa8f1701e829140253",
+      "snapshotParity": true
+    }
+  ],
+  "protectedConfigurationHashes": {
+    "ios/VineTrack/App/AppConfig.swift": "b7a7f3cdefd26ae5304d25ec293d7fa567bf62339b3ad9e35011097b9a3efa51",
+    "android-vinetrack/app/build.gradle.kts": "ab5e787d43d5a26d89c058b325ac0203addd188b24383dff0cf6f3e19ecdec80",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt": "c79d68f9e9dc96559263dee80de69190df5c3886eab29a2f613104989d78eab7"
+  }
+}

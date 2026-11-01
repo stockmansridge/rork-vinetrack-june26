@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" tests="21" skipped="0" failures="0" errors="0" timestamp="2026-11-01T08:20:58.823Z" hostname="e2b.local" time="0.058">
+  <properties/>
+  <testcase name="nonemptyOutboxStillBlocksRecovery" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.04"/>
+  <testcase name="nestedTimestampDoesNotCreateASpuriousScope" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.001"/>
+  <testcase name="futureUnknownFieldsRemainProtected" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.003"/>
+  <testcase name="unknownPreferenceKeyRemainsProtected" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.001"/>
+  <testcase name="emptyOutboxNeverInventsAVineyard" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.001"/>
+  <testcase name="wrongCacheOwnerIsRejectedEvenForInactiveTrips" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.0"/>
+  <testcase name="signOutStillRefusesAnActiveTrip" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.0"/>
+  <testcase name="completedTripsStillRecoverAndAllowCleanExit" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.001"/>
+  <testcase name="emptyCacheHasNoRecoveryScopes" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.0"/>
+  <testcase name="iosUppercaseYieldSessionRecoversWithoutChangingEvidence" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.001"/>
+  <testcase name="mixedFortyFourKeyFixtureKeepsExactScopesAndBytes" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.003"/>
+  <testcase name="wrongRowScopeIsRejected" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.0"/>
+  <testcase name="missingChildParentDoesNotAcquireTheTaskIdAsVineyard" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.0"/>
+  <testcase name="orphanTimestampRemainsProtected" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.001"/>
+  <testcase name="malformedJsonIsNotTreatedAsAnEmptyCache" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.0"/>
+  <testcase name="stringTimestampDoesNotPassAsALong" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.001"/>
+  <testcase name="missingTimestampHasDatasetSpecificDiagnostic" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.001"/>
+  <testcase name="nonUuidCaseDifferencesAreNotTreatedAsIdentity" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.0"/>
+  <testcase name="originalAccountCanRecoverAnActiveTripListSnapshotWithoutRewritingIt" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.0"/>
+  <testcase name="differentYieldVineyardStillRejected" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.001"/>
+  <testcase name="missingCacheOwnerIsNotManufactured" classname="com.rork.vinetrack.data.auth.DomainCacheRecoveryContractTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
