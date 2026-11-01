@@ -186,7 +186,10 @@ final class SprayTankActualStore {
     }
 
     /// Fixed stages/counts only. No recipe values, names, identifiers or server bodies.
-    func pendingUploadDiagnostics(tripSync: TripSyncService?, spraySync: SprayRecordSyncService?, vineyardId: UUID?) -> String {
+    func pendingUploadDiagnostics(
+        tripSync: TripSyncService?, spraySync: SprayRecordSyncService?, vineyardId: UUID?,
+        ownerId: UUID? = nil, trips: [Trip] = [], sprays: [SprayRecord] = []
+    ) -> String {
         guard let vineyardId else { return "VineTrack actual-use inspection v1\nACTUAL_USE_VINEYARD_NOT_SELECTED" }
         let queued = records.filter { $0.vineyardId == vineyardId && pendingIds.contains($0.id) }
         let drafts = initialMixDrafts.filter { $0.vineyardId == vineyardId }
@@ -198,6 +201,46 @@ final class SprayTankActualStore {
             let reason = decision == .upload ? "ACTUAL_USE_READY_TO_UPLOAD" :
                 (tripSync?.isPendingParentCreation(actual.tripId) != false ? "ACTUAL_USE_WAITING_FOR_TRIP_PARENT" : "ACTUAL_USE_WAITING_FOR_SPRAY_RECORD")
             reasons[reason, default: 0] += 1
+        }
+        // Read-only triage of retained first-tank handoffs. A handoff is not
+        // an actual-use record. These fixed codes reveal what proof is missing,
+        // but never create a session, discard input or acknowledge a Trip.
+        for draft in drafts {
+            guard let ownerId else {
+                reasons["HANDOFF_ACCOUNT_NOT_VERIFIED", default: 0] += 1
+                continue
+            }
+            guard draft.ownerId == ownerId else {
+                reasons["HANDOFF_OTHER_OWNER_PROTECTED", default: 0] += 1
+                continue
+            }
+            let matches = trips.filter { $0.id == draft.tripId && $0.vineyardId == vineyardId }
+            guard matches.count == 1, let trip = matches.first else {
+                reasons["HANDOFF_TRIP_SNAPSHOT_NOT_IN_SELECTED_SLICE", default: 0] += 1
+                continue
+            }
+            let linked = sprays.filter {
+                $0.id == draft.sprayRecordId && $0.tripId == draft.tripId && $0.vineyardId == vineyardId
+            }
+            guard linked.count == 1, let spray = linked.first else {
+                reasons["HANDOFF_SPRAY_RECORD_NOT_IN_SELECTED_SLICE", default: 0] += 1
+                continue
+            }
+            guard SprayInitialTankAmounts.samePersistedRecipe(
+                SprayInitialTankAmounts.firstTank(in: spray.tanks), draft.tank
+            ) else {
+                reasons["HANDOFF_RECIPE_OR_IDENTITY_REVIEW_REQUIRED", default: 0] += 1
+                continue
+            }
+            guard trip.tankSessions.filter({ $0.tankNumber == draft.tank.tankNumber }).count == 1 else {
+                reasons["HANDOFF_REAL_TANK_SESSION_NOT_VERIFIED", default: 0] += 1
+                continue
+            }
+            if draft.isRecorded(in: records, trip: trip) {
+                reasons["HANDOFF_RECORDED_AWAITING_LOCAL_ACK", default: 0] += 1
+            } else {
+                reasons["HANDOFF_ACTUAL_AMOUNTS_NOT_VERIFIED", default: 0] += 1
+            }
         }
         return (["VineTrack actual-use inspection v1", "pending_actual_rows: \(queued.count)",
                  "retained_initial_mix_handoffs: \(drafts.count)",

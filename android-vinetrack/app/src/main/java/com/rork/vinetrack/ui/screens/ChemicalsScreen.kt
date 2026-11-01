@@ -97,6 +97,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
@@ -606,7 +607,7 @@ private fun ChemicalRow(
                     CatalogueSavedChemical(chemical)
                     chemical.vineyardPreferredRate?.takeIf { it.isValid }?.let { Text("Preferred vineyard rate: ${it.text}", style = MaterialTheme.typography.bodySmall) }
                     ChemicalVerificationBadge(chemical, storeTitle = assessment.title)
-                    assessment.attentionReasons.firstOrNull()?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = VineColors.Warning) }
+                    assessment.attentionReasons.firstOrNull()?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = VineColors.Warning, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 }
             }
             else {
@@ -624,7 +625,7 @@ private fun ChemicalRow(
                     )
                     ChemicalVerificationBadge(chemical, storeTitle = assessment.title)
                 }
-                assessment.attentionReasons.firstOrNull()?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = VineColors.Warning) }
+                assessment.attentionReasons.firstOrNull()?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = VineColors.Warning, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 // A verified FOREIGN registration must never read as verified
                 // for this vineyard: its label facts belong to another country's
                 // law. Identity and chemistry still stand — only label authority
@@ -639,7 +640,7 @@ private fun ChemicalRow(
                 chemical.vineyardPreferredRate?.takeIf { it.isValid }?.let { Text("Preferred vineyard rate: ${it.text}", style = MaterialTheme.typography.bodySmall) }
                 if (chemical.manufacturer.isNotBlank()) Text(chemical.manufacturer, fontSize = 13.sp, color = vine.textSecondary)
                 val usedFor = com.rork.vinetrack.data.chemical.CatalogueRow.manualTargets(chemical.problem, chemical.use)
-                if (usedFor.isNotBlank()) Text("Used for: $usedFor", fontSize = 13.sp, color = vine.textSecondary)
+                if (usedFor.isNotBlank()) Text("Used for: $usedFor", fontSize = 13.sp, color = vine.textSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 // Category / group / target-problem chips. The group chip is
                 // DERIVED from structured actives whenever they exist; the legacy
                 // free-text column is only a fallback for records that have not

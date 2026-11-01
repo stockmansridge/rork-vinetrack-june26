@@ -323,6 +323,11 @@ struct TripDetailView: View {
         }
         .alert("Delete Trip", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
+                // Recheck the live state: a Trip may have changed after the alert opened.
+                guard accessControl.canDeleteOperationalRecords,
+                      currentTrip.id == trip.id,
+                      !currentTrip.isActive,
+                      !mayRecoverSavedOccurrenceSpray else { return }
                 store.deleteTrip(trip.id)
                 dismiss()
             }

@@ -122,6 +122,8 @@ struct VineTrackApp: App {
                         SyntheticSwitchPerformanceView()
                     } else if CommandLine.arguments.contains("--target-nutrient-validation") {
                         TargetNutrientValidationView()
+                    } else if CommandLine.arguments.contains("--trip-delete-validation") {
+                        TripDeletionValidationView()
                     } else if CommandLine.arguments.contains("--yield-trip-validation") {
                         YieldTripValidationView()
                     } else if CommandLine.arguments.contains("--offline-quick-actions-validation") {

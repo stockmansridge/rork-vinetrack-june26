@@ -346,6 +346,66 @@ final class SprayInitialTankAmountsTests: XCTestCase {
         XCTAssertTrue(reopened.pendingIds.contains(newer.id))
     }
 
+    func testRetainedHandoffDiagnosticsArePrivateReadOnlyAndFailClosed() throws {
+        let f = try fixture()
+        let (directory, disk) = try persistence(); defer { try? FileManager.default.removeItem(at: directory) }
+        let actuals = SprayTankActualStore(persistence: disk)
+        try actuals.stageInitialMix(f.draft)
+        let spray = SprayRecord(id: f.draft.sprayRecordId, tripId: f.draft.tripId,
+            vineyardId: f.draft.vineyardId, tanks: [f.draft.tank])
+        var changed = spray; changed.tanks[0].waterVolume += 1
+        let cases: [(UUID?, [Trip], [SprayRecord], String)] = [
+            (nil, [f.startedTrip], [spray], "HANDOFF_ACCOUNT_NOT_VERIFIED"),
+            (UUID(), [f.startedTrip], [spray], "HANDOFF_OTHER_OWNER_PROTECTED"),
+            (f.draft.ownerId, [], [spray], "HANDOFF_TRIP_SNAPSHOT_NOT_IN_SELECTED_SLICE"),
+            (f.draft.ownerId, [f.startedTrip, f.startedTrip], [spray], "HANDOFF_TRIP_SNAPSHOT_NOT_IN_SELECTED_SLICE"),
+            (f.draft.ownerId, [f.startedTrip], [], "HANDOFF_SPRAY_RECORD_NOT_IN_SELECTED_SLICE"),
+            (f.draft.ownerId, [f.startedTrip], [changed], "HANDOFF_RECIPE_OR_IDENTITY_REVIEW_REQUIRED"),
+            (f.draft.ownerId, [f.sourceTrip], [spray], "HANDOFF_REAL_TANK_SESSION_NOT_VERIFIED"),
+            (f.draft.ownerId, [f.startedTrip], [spray], "HANDOFF_ACTUAL_AMOUNTS_NOT_VERIFIED")
+        ]
+        let cache = directory.appendingPathComponent("vinetrack_spray_tank_actuals_v1.json")
+        let bytes = try Data(contentsOf: cache)
+        for (owner, trips, sprays, code) in cases {
+            let report = actuals.pendingUploadDiagnostics(tripSync: nil, spraySync: nil,
+                vineyardId: f.draft.vineyardId, ownerId: owner, trips: trips, sprays: sprays)
+            XCTAssertTrue(report.contains("\(code): 1"), report)
+            XCTAssertTrue(report.contains("pending_actual_rows: 0"))
+            XCTAssertFalse(report.contains(f.draft.tripId.uuidString))
+            XCTAssertFalse(report.contains(f.draft.ownerId.uuidString))
+            XCTAssertFalse(report.contains("300"))
+            try actuals.reconcileRecordedInitialMixes(ownerId: owner ?? UUID(), vineyardId: f.draft.vineyardId,
+                trips: trips, sprays: sprays)
+            XCTAssertEqual(try Data(contentsOf: cache), bytes)
+            XCTAssertEqual(SprayTankActualStore(persistence: disk).initialMixDrafts, [f.draft])
+            XCTAssertTrue(actuals.records.isEmpty)
+        }
+    }
+
+    func testVerifiedHandoffReconcilesDurablyWithoutPretendingServerAcknowledgement() throws {
+        let f = try fixture()
+        let (directory, disk) = try persistence(); defer { try? FileManager.default.removeItem(at: directory) }
+        let actuals = SprayTankActualStore(persistence: disk)
+        try actuals.stageInitialMix(f.draft)
+        try actuals.saveLocally(f.actual)
+        let spray = SprayRecord(id: f.draft.sprayRecordId, tripId: f.draft.tripId,
+            vineyardId: f.draft.vineyardId, tanks: [f.draft.tank])
+        let report = actuals.pendingUploadDiagnostics(tripSync: nil, spraySync: nil,
+            vineyardId: f.draft.vineyardId, ownerId: f.draft.ownerId, trips: [f.startedTrip], sprays: [spray])
+        XCTAssertTrue(report.contains("HANDOFF_RECORDED_AWAITING_LOCAL_ACK: 1"))
+        for _ in 0..<2 {
+            try actuals.reconcileRecordedInitialMixes(ownerId: f.draft.ownerId, vineyardId: f.draft.vineyardId,
+                trips: [f.startedTrip], sprays: [spray])
+        }
+        let reopened = SprayTankActualStore(persistence: disk)
+        XCTAssertTrue(reopened.initialMixDrafts.isEmpty)
+        XCTAssertEqual(reopened.records, [f.actual])
+        XCTAssertEqual(reopened.pendingIds, [f.actual.id], "Local reconciliation is not a server receipt")
+        XCTAssertEqual(f.startedTrip.tankSessions.count, 1)
+        XCTAssertEqual(reopened.records.first?.waterVolumeL, 300)
+        XCTAssertEqual(reopened.records.first?.chemicals.first?.actualAmountBase, 750)
+    }
+
     func testActualRPCAlwaysIncludesWaterArgumentWithoutInventingAQuantity() throws {
         let f = try fixture()
         for water: Double? in [nil, 0, 294.7] {

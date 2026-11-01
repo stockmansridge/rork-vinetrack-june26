@@ -1,0 +1,56 @@
+{
+  "pr": 35,
+  "head": "38e0485aeea7d8504f068151a469be6d78f08179",
+  "base": "70e06f3b914618748626eabda3ca9ab6fdebd13e",
+  "managedParent": "7d5d95927298b3184a9e334c6d164ae481505161",
+  "protectedConfiguration": {
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt": "c79d68f9e9dc96559263dee80de69190df5c3886eab29a2f613104989d78eab7",
+    "android-vinetrack/app/build.gradle.kts": "ab5e787d43d5a26d89c058b325ac0203addd188b24383dff0cf6f3e19ecdec80",
+    "ios/VineTrack/App/AppConfig.swift": "b7a7f3cdefd26ae5304d25ec293d7fa567bf62339b3ad9e35011097b9a3efa51",
+    "ios/VineTrack.xcodeproj/project.pbxproj": "cc4157148a020c07dd33bb41ec054236613746bdbec9eeb2aa161d937cb6efc1",
+    "rork.json": "4e7979864de6813bdd319aa288f50f23767e53d8f50bcbf08a16cffc9d25ca35"
+  },
+  "excluded": "Two branch-only CI workflows with synthetic build configuration",
+  "changes": [
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/chemical/CatalogueRepository.kt",
+      "beforeSha256": "5a1b248c776216e043b28bc29658ba4bd4f931383cc56fac53ba68ad44f4023f",
+      "afterSha256": "c8480ae256b57ba92298845c2265e178ccfda55957329b362a7fccfb5f3a4a1d"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/CatalogueSavedChemical.kt",
+      "beforeSha256": "76b0a3c6c2d83ba04f1e5964492625849cbd658d0461b0bc1e4d0903c6b888f6",
+      "afterSha256": "856e59bd484f3f7b297ac2eccfc7ca4694c8ee4a64f20d52b5f174e9d586c80e"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ChemicalsScreen.kt",
+      "beforeSha256": "a607e298bd403be541576cdab425d69405d78e173f3e57d79ff5ca6a224bae77",
+      "afterSha256": "eed69e3b8a230093c8d34749c44fbb024a9318c45c74ca0097608cafb57047ad"
+    },
+    {
+      "path": "docs/reviews/ios-trip-delete-catalogue-actual-use-20261102.md",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "37f26ff82840d36e0bd1cb26c57e9a3771499d484cb2ba03e634576cf8cf0527"
+    },
+    {
+      "path": "ios/VineTrack/App/BackendSettingsView.swift",
+      "beforeSha256": "03e804718decd0228b02cd6e981ee801d36c42092a9259a59e629a3a1b1b5c27",
+      "afterSha256": "737793d7841457485d3d3a87343ab621b587100322b767c138048e6ca8166315"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/SprayTankActualStore.swift",
+      "beforeSha256": "f0f42996cdac259f0c28d7cc7a11d36fe6a0a66cdf527ca6c3cc054db2cc1bde",
+      "afterSha256": "d46f9e249635e9165f535b87232d15094a0cdddc217188282b9eaabee96de15e"
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift",
+      "beforeSha256": "017e31eafb1334f8e1d64114a61dab407e630adb2455bcbb27cdb3f7a46aaebc",
+      "afterSha256": "5f6d55e52b9edfe3525f260029776255c26c952c56ad05509ecc4654a37d8127"
+    },
+    {
+      "path": "ios/VineTrack/LegacyImported/Views/Trips/TripView.swift",
+      "beforeSha256": "228d7de92ea7c6fb0bb81e295ea92327048701b76ee0dded27556caf6c41daf2",
+      "afterSha256": "342684f81fa88a97455ee7e6e6c73f54bdefdcafe382856e1cd918fcd78d8e5a"
+    }
+  ]
+}

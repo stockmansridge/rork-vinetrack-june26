@@ -1,0 +1,76 @@
+{
+  "scope": "PR35 focused hotfix; no historical suite or broad preflight rerun",
+  "date": "2026-11-01",
+  "upstreamHead": "38e0485aeea7d8504f068151a469be6d78f08179",
+  "managedParentAtValidation": "7d5d95927298b3184a9e334c6d164ae481505161",
+  "sourceIdentityLimit": "Validation includes uncommitted managed-workspace changes. Parent is not the final synchronised revision or a signed-artifact mapping.",
+  "ios": {
+    "firstRun": {
+      "selection": ["VineTrackTests/SprayInitialTankAmountsTests", "VineTrackUITests/TripSwipeDeletionUITests"],
+      "passed": 22,
+      "failed": 1,
+      "complete": false,
+      "failure": "VineTrackUITests.TripSwipeDeletionUITests/testSwipeCancelConfirmAndActiveRefusalKeepExactRows: XCTAssertTrue failed",
+      "runnerError": "Simulator device failed to terminate app.rork.nt0v48tayl7v8noxcfe74. found nothing to terminate",
+      "receiptLimit": "Aggregate passing count only; no named passing-case receipt. Do not relabel this run as success or claim individual actual-use cases from the count."
+    },
+    "fixtureCorrection": [
+      "Provide isolated TripSyncService metadata required by the shipping TripHistoryRow environment.",
+      "Use deterministic synthetic UUID row selectors and assertion-stage messages; stop on the first failure."
+    ],
+    "correctedFocusedRun": {
+      "selection": ["VineTrackUITests/TripSwipeDeletionUITests"],
+      "passed": 0,
+      "failed": 1,
+      "complete": false,
+      "testBuildSucceeded": true,
+      "failure": "Failed to get matching snapshot: Application app.rork.nt0v48tayl7v8noxcfe74 is not running",
+      "runnerError": "Simulator device failed to terminate app.rork.nt0v48tayl7v8noxcfe74. found nothing to terminate",
+      "diagnosticLimit": "Available test log provides no crash stack, assertion line or completed interaction receipt. Project runtime log query returned no entries. Cause remains unresolved; no unchanged retry.",
+      "acceptance": "NOT VERIFIED: swipe, Cancel, confirmed deletion, active refusal, no duplicate deletion and no crash"
+    },
+    "normalBuild": {
+      "tool": "runChecks",
+      "appPath": "ios",
+      "result": "PASS: simulator build",
+      "deviceReleaseVerified": false
+    }
+  },
+  "android": {
+    "selection": [
+      "com.rork.vinetrack.data.CatalogueApprovedRevisionAndroidTest",
+      "com.rork.vinetrack.data.CatalogueCompactPresentationAndroidTest"
+    ],
+    "receipt": "androidTest tool result",
+    "passed": 3,
+    "failed": 0,
+    "skipped": 0,
+    "durationSeconds": 16,
+    "checks": [
+      "Production GET-only reader accepts an exact approved product/revision with two Per100L options; range remains a range, not an automatic dose.",
+      "Missing, foreign, nonapproved and mismatched identities are refused; scoped saved chemical, pinned revision, explicit preference, notes and inventory survive unchanged in preferences and after cache recreation.",
+      "Shipping linked catalogue renderer at 320dp in light/default and dark/1.5x text shows two-line ellipsised target summaries and full untruncated target text on fixture detail toggle, plus both rate options and exact-dose instruction."
+    ],
+    "limits": "Synthetic transport and emulator only; no live catalogue update, full Chemical Store screen navigation, manual-card rendering or original-device acceptance. JVM tests not run. Passing tool receipt is authoritative; temporary raw Android log is stale and not claimed as this run.",
+    "normalBuild": {"tool": "runChecks", "appPath": "android-vinetrack", "result": "PASS"}
+  },
+  "configuration": {
+    "androidExpectedTemplateSha256": "c79d68f9e9dc96559263dee80de69190df5c3886eab29a2f613104989d78eab7",
+    "androidObservedGeneratedSha256": "a1da2e0589dbe2e6430459e36a7e32dc93c4b15c846e6bc7cccbc1499a4712e8",
+    "interpretation": "Observed hash matches the previously recorded injected generated configuration, not the protected empty template. Expected fingerprint not replaced. Effective signed-artifact configuration remains unattested.",
+    "otherProtectedHashesMatchIntegration": true,
+    "packageSigningVersionsIsolationChanged": false
+  },
+  "blockers": [
+    "iOS deletion native UI gate remains failed/incomplete; no new candidate may be delivered.",
+    "Authorised optimistic-version Portal operation to update the existing JH Testing chemical remains unestablished. Focused local SQL/mobile contract searches found no chemical_v3 refresh/relink operation; this is not proof about uninspected external Portal code or live function definitions.",
+    "Original-device private-safe handoff diagnostics, original IDs/session/recipe/entered quantities and genuine server acknowledgement are unavailable.",
+    "Play operation outcome and final source/effective-configuration/signed-artifact mapping remain unresolved."
+  ],
+  "customerMutation": false,
+  "newInternalCandidateOrUpload": false,
+  "priorBuild197AndPlayCandidateContainPR35": false,
+  "originalAndroidIncident": "OPEN",
+  "originalIOSIncident": "OPEN",
+  "september24ActiveTrip": "UNCHANGED"
+}

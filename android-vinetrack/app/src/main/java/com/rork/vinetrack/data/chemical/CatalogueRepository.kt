@@ -41,6 +41,19 @@ class CatalogueRepository(context: Context) {
         put("p_query", query); put("p_country_code", country.takeIf { it.isNotBlank() }?.let(::JsonPrimitive) ?: JsonNull); put("p_limit", 20)
     }))
     suspend fun revision(id: String): CatalogueRow = rows(get("chemical_v3_product_revisions?id=eq.$id&select=*")).single().also { check(it.id == id) }
+
+    /** Read-only approved catalogue reference for a saved chemical's PRODUCT.
+     *  Never rewrites its pinned revision, preferred vineyard rate or historic use. */
+    suspend fun approvedRevisionForProduct(productId: String): CatalogueRow? {
+        val product = UUID.fromString(productId).toString()
+        val catalogue = rows(get("chemical_v3_products?id=eq.$product&select=id,status,approved_revision_id")).singleOrNull()
+            ?: return null
+        if (catalogue.text("id") != product || catalogue.text("status") != "approved") return null
+        val approvedId = catalogue.text("approved_revision_id") ?: return null
+        return revision(approvedId).takeIf {
+            it.text("product_id") == product && it.text("review_status") == "approved"
+        }
+    }
     /** Image-only fallback; no saved-chemical writes or catalogue-field substitution. */
     suspend fun resolvedFrontLabelPath(exactRevision: CatalogueRow): String? =
         CatalogueFrontLabelResolver.resolve(exactRevision,
