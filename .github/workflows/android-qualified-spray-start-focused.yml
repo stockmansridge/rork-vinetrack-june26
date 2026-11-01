@@ -1,0 +1,45 @@
+name: Android qualified spray start focused
+on:
+  push:
+    branches: [fix/android-qualified-spray-start-legacy-journal-isolation-20261102]
+    paths:
+      - '.github/workflows/android-qualified-spray-start-focused.yml'
+permissions:
+  contents: read
+jobs:
+  targeted-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: CI-only synthetic configuration, never release
+        run: |
+          set -eu
+          test ! -e android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt
+          cat > android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt <<'EOF'
+          package com.rork.vinetrack
+          object Config {
+              val allValues: Map<String, String> = mapOf(
+                  "EXPO_PUBLIC_SUPABASE_URL" to "https://synthetic.invalid",
+                  "EXPO_PUBLIC_SUPABASE_ANON_KEY" to "not-a-live-credential")
+          }
+          EOF
+      - name: Four focused guard tests and Android Kotlin compile
+        working-directory: android-vinetrack
+        run: |
+          bash gradlew :app:testDebugUnitTest --tests 'com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest' :app:compileDebugKotlin --no-daemon --max-workers=1 -Pkotlin.compiler.execution.strategy=in-process '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' > ../qualified-start-test.log 2>&1 || { grep -nE '^e:|error:|FAILED|FAILURE' ../qualified-start-test.log | head -50 || true; tail -n 75 ../qualified-start-test.log; exit 1; }
+          tail -n 28 ../qualified-start-test.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: qualified-start-focused-log
+          path: qualified-start-test.log
+          retention-days: 2
