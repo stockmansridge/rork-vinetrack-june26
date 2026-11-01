@@ -6,7 +6,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
- * Read-only compatibility check AFTER strict production decoding. New optional
+ * Read-only compatibility check AFTER production decoding with preservation-aware codecs. New optional
  * model defaults may be present in the encoding but absent in an older snapshot.
  * Every supplied field, array position, type and value must survive; custom
  * serializers must not silently replace malformed rate evidence with an empty list.

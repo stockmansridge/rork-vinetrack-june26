@@ -35,13 +35,17 @@ internal class AccountTransitionEvidence(private val context: Context) {
     var failureDiagnostics: List<RecoveryEvidenceDiagnostic> = emptyList()
         private set
 
-    fun inspect(original: String? = null, pruningProof: PruningRecoveryVerifier.Proof? = null, epoch: Long = -1L): Assessment? =
-        assess(original, cleanExit = false, pruningProof = pruningProof, epoch = epoch)
+    fun inspect(original: String? = null, pruningProof: PruningRecoveryVerifier.Proof? = null, epoch: Long = -1L,
+        actualProof: TankActualRecoveryVerifier.Proof? = null): Assessment? =
+        assess(original, cleanExit = false, pruningProof = pruningProof, epoch = epoch, actualProof = actualProof)
+
+    internal fun requireSafeLocations() { inspectLocations(allowLogoCache = true) }
 
     /** Clean exit may retain read caches but never unfinished operations. */
     fun inspectCleanExit(): Assessment? = assess(original = null, cleanExit = true)
 
-    private fun assess(original: String?, cleanExit: Boolean, pruningProof: PruningRecoveryVerifier.Proof? = null, epoch: Long = -1L): Assessment? = runCatching {
+    private fun assess(original: String?, cleanExit: Boolean, pruningProof: PruningRecoveryVerifier.Proof? = null, epoch: Long = -1L,
+        actualProof: TankActualRecoveryVerifier.Proof? = null): Assessment? = runCatching {
         failureDiagnostic = null
         failureDiagnostics = emptyList()
         failureCategory = "file dependencies"
@@ -105,28 +109,9 @@ internal class AccountTransitionEvidence(private val context: Context) {
                         vineyards.add(snapshot.vineyardId)
                     }
                 }
-                name == "vinetrack_spray_tank_actuals" -> {
-                    check(values.keys.all { it == "cache" })
-                    values["cache"]?.let { raw ->
-                        check(raw is String)
-                        val cache = codec.decodeFromString(ActualCache.serializer(), raw)
-                        check(cache.records.map { it.id }.distinct().size == cache.records.size)
-                        check(cache.pendingIds.all { id -> cache.records.any { it.id == id } })
-                        check(cache.inputDrafts.all { it.hasValidIdentity() })
-                        check(cache.inputDrafts.map { Triple(it.ownerUserId, it.vineyardId, it.key) }.distinct().size == cache.inputDrafts.size)
-                        if (original == null) check(cache.records.isEmpty() && cache.pendingIds.isEmpty() && cache.inputDrafts.isEmpty())
-                        else cache.records.forEach { actual ->
-                            check(actual.id.isNotBlank() && actual.vineyardId.isNotBlank() &&
-                                actual.confirmedBy == original && actual.correctionVersion == 0L &&
-                                actual.lastCorrectedAt == null && actual.clientUpdatedAt == actual.confirmedAt)
-                            vineyards.add(actual.vineyardId)
-                        }
-                        cache.inputDrafts.forEach { draft ->
-                            check(draft.ownerUserId == original)
-                            vineyards.add(draft.vineyardId)
-                        }
-                    }
-                }
+                name == TankActualRecoveryVerifier.STORE -> vineyards.addAll(
+                    if (!cleanExit && actualProof != null) actualProof.inspect(values, checkNotNull(original), epoch)
+                    else TankActualRecoveryVerifier.inspectWithoutProof(values, original))
                 !cleanExit && name in PruningRecoveryVerifier.stores -> {
                     if (pruningProof != null) {
                         vineyards.addAll(pruningProof.inspect(name, values, checkNotNull(original), epoch))

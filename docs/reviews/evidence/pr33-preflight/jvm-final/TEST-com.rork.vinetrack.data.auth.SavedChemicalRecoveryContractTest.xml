@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" tests="18" skipped="0" failures="0" errors="0" timestamp="2026-11-01T10:39:24.906Z" hostname="e2b.local" time="0.06">
+  <properties/>
+  <testcase name="olderSnapshotMissingNewOptionalFieldRecoversWithoutBackfillingIt" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.003"/>
+  <testcase name="differentAccountIsStillRefused" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.001"/>
+  <testcase name="currentWriterEncodingRecoversWithoutChangingSource" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.001"/>
+  <testcase name="oldOmittedDefaultsAreNotClassifiedAsLostData" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.0"/>
+  <testcase name="invalidPreferredRateStillRefuses" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.004"/>
+  <testcase name="lossyLegacyRateParserCannotEraseMalformedEvidence" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.003"/>
+  <testcase name="storageVineyardNamespaceRemainsExact" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.002"/>
+  <testcase name="unresolvedWritesStillBlockCleanExit" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.001"/>
+  <testcase name="unknownTopLevelFieldsRemainProtected" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.002"/>
+  <testcase name="differentVineyardIsStillRefused" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.001"/>
+  <testcase name="arbitraryNonUuidCaseIsNotNormalised" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.002"/>
+  <testcase name="duplicateRecordIdsAreRefused" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.001"/>
+  <testcase name="suppliedFieldsAndArrayOrderMayNotDisappear" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.0"/>
+  <testcase name="storageAccountNamespaceIsNotSilentlyRedirected" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.001"/>
+  <testcase name="populatedMixedLegacyAndCurrentChemicalListSurvivesUnchanged" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.031"/>
+  <testcase name="legacyRateWithoutUiIdRetainsQuantityAndBasis" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.002"/>
+  <testcase name="malformedAndUnscopedSnapshotsAreNotEmptyCaches" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.003"/>
+  <testcase name="numericFormattingMayDifferButNotNumericValue" classname="com.rork.vinetrack.data.auth.SavedChemicalRecoveryContractTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

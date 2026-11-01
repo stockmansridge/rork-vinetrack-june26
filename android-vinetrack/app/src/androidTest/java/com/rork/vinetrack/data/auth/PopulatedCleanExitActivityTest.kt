@@ -168,6 +168,7 @@ class PopulatedCleanExitActivityTest {
                 combinedRecovery && path == "/rest/v1/pruning_activity_labour_lines" && request.url.parameters["vineyard_id"] == "eq.$historical" -> codec.encodeToString(listOf(labourRow))
                 combinedRecovery && path == "/rest/v1/pruning_yield_settings" && request.url.parameters["vineyard_id"] == "eq.$historical" -> codec.encodeToString(listOf(settingsRow))
                 combinedRecovery && path == "/rest/v1/rpc/get_pruning_activity" -> codec.encodeToString(canonical)
+                combinedRecovery && path == "/rest/v1/spray_tank_actuals" && request.url.parameters["vineyard_id"] == "eq.$historical" -> codec.encodeToString(listOf(historicalActual))
                 path == "/rest/v1/vineyards" -> if (includeHistorical)
                     """[{"id":"$v","name":"Synthetic $v"},{"id":"55555555-5555-4555-8555-555555555555","name":"Historical fixture"}]"""
                     else """[{"id":"$v","name":"Synthetic $v"}]"""
@@ -297,6 +298,11 @@ class PopulatedCleanExitActivityTest {
         retainedLogoBytes?.let { assertEquals("Retained production logo changed", it, logoBytes()) }
     }
 
+    private val historicalActual get() = SprayTankActual(id = "historical-actual", vineyardId = historical, sprayRecordId = "historical-spray",
+        tripId = "historical-trip", tankSessionId = "historical-tank", tankNumber = 1, waterVolumeL = 343.8,
+        chemicals = listOf(SprayTankActualChemical("line", name = "Retained chemical", actualAmountBase = 700.0, unit = "Kg")),
+        confirmedAt = "2026-11-01T00:00:00Z", confirmedBy = A)
+
     private fun retainCombinedStores() {
         combinedRecovery = true
         check(SavedChemicalLocalStore(app).save(A, historical,
@@ -323,10 +329,7 @@ class PopulatedCleanExitActivityTest {
         }
         PruningYieldSettingsStore(app).save(historical, listOf(settingsRow))
         val actuals = SprayTankActualStore(app)
-        val actual = SprayTankActual(id = "historical-actual", vineyardId = historical, sprayRecordId = "historical-spray",
-            tripId = "historical-trip", tankSessionId = "historical-tank", tankNumber = 1, waterVolumeL = 343.8,
-            chemicals = listOf(SprayTankActualChemical("line", name = "Retained chemical", actualAmountBase = 700.0, unit = "Kg")),
-            confirmedAt = "2026-11-01T00:00:00Z", confirmedBy = A)
+        val actual = historicalActual
         check(actuals.save(actual))
         // Synthetic already-acknowledged fixture; pending confirmations are checked separately by the repository test.
         check(actuals.markSynced(actual.id))
@@ -351,8 +354,9 @@ class PopulatedCleanExitActivityTest {
         val evidence = AccountTransitionEvidence(app)
         val assessment = evidence.inspect(A)
         if (combined) {
-            assertNull("Local-only inspection must not substitute for server pruning proof", assessment)
-            assertEquals("PRUNING_SERVER_CONFIRMATION_REQUIRED", evidence.failureDiagnostic?.rule)
+            assertNull("Local-only inspection must not substitute for server proofs", assessment)
+            assertTrue(evidence.failureDiagnostics.any { it.rule == "PRUNING_SERVER_CONFIRMATION_REQUIRED" })
+            assertTrue(evidence.failureDiagnostics.any { it.rule == "ACTUAL_SERVER_VERIFICATION_REQUIRED" })
         } else assertNotNull("Populated recovery rejected at ${evidence.failureCategory}; keys=${app.getSharedPreferences(evidence.failureCategory, 0).all.keys}; files=${app.filesDir.walkTopDown().filter { it.isFile }.map { it.relativeTo(app.filesDir).path }.toList()}", assessment)
         scenario.close()
         session.clear()

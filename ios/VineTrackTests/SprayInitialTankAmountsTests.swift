@@ -278,4 +278,92 @@ final class SprayInitialTankAmountsTests: XCTestCase {
         XCTAssertEqual(reopened.initialMixDrafts.count, 1)
     }
 
+    func testEndedTripReconcilesOnlyAlreadyRecordedInitialMixWithoutReopeningIt() throws {
+        let f = try fixture()
+        let (directory, disk) = try persistence(); defer { try? FileManager.default.removeItem(at: directory) }
+        let actuals = SprayTankActualStore(persistence: disk)
+        try actuals.stageInitialMix(f.draft)
+        try actuals.saveLocally(f.actual)
+        var ended = f.startedTrip; ended.isActive = false; ended.endTime = Date()
+        let spray = SprayRecord(id: f.draft.sprayRecordId, tripId: f.draft.tripId,
+            vineyardId: f.draft.vineyardId, tanks: [f.draft.tank])
+        try actuals.reconcileRecordedInitialMixes(ownerId: f.draft.ownerId, vineyardId: f.draft.vineyardId,
+            trips: [ended], sprays: [spray])
+        XCTAssertNil(actuals.initialMix(tripId: ended.id))
+        XCTAssertEqual(actuals.records, [f.actual])
+        XCTAssertTrue(actuals.pendingIds.contains(f.actual.id))
+        XCTAssertFalse(ended.isActive)
+        XCTAssertNotNil(ended.endTime)
+        XCTAssertNil(SprayTankActualStore(persistence: disk).initialMix(tripId: ended.id))
+    }
+
+    func testUnmatchedAccountOrUnrecordedMixIsNotConsumedBySync() throws {
+        let f = try fixture()
+        let (directory, disk) = try persistence(); defer { try? FileManager.default.removeItem(at: directory) }
+        let actuals = SprayTankActualStore(persistence: disk)
+        try actuals.stageInitialMix(f.draft)
+        let spray = SprayRecord(id: f.draft.sprayRecordId, tripId: f.draft.tripId,
+            vineyardId: f.draft.vineyardId, tanks: [f.draft.tank])
+        try actuals.reconcileRecordedInitialMixes(ownerId: f.draft.ownerId, vineyardId: f.draft.vineyardId,
+            trips: [f.startedTrip], sprays: [spray])
+        XCTAssertEqual(actuals.initialMix(tripId: f.draft.tripId), f.draft)
+        try actuals.saveLocally(f.actual)
+        try actuals.reconcileRecordedInitialMixes(ownerId: UUID(), vineyardId: f.draft.vineyardId,
+            trips: [f.startedTrip], sprays: [spray])
+        XCTAssertEqual(actuals.initialMix(tripId: f.draft.tripId), f.draft)
+        try actuals.reconcileRecordedInitialMixes(ownerId: f.draft.ownerId, vineyardId: f.draft.vineyardId,
+            trips: [f.sourceTrip], sprays: [spray])
+        XCTAssertEqual(actuals.initialMix(tripId: f.draft.tripId), f.draft)
+    }
+
+    func testActualUploadAcknowledgementDoesNotDiscardRetainedHandoff() throws {
+        let f = try fixture()
+        let (directory, disk) = try persistence(); defer { try? FileManager.default.removeItem(at: directory) }
+        let actuals = SprayTankActualStore(persistence: disk)
+        try actuals.stageInitialMix(f.draft)
+        try actuals.saveLocally(f.actual)
+        XCTAssertTrue(try actuals.acknowledgeUploaded(f.actual))
+        XCTAssertTrue(actuals.pendingIds.isEmpty)
+        XCTAssertEqual(actuals.initialMix(tripId: f.draft.tripId), f.draft)
+        XCTAssertEqual(actuals.records, [f.actual])
+    }
+
+    func testOlderUploadResponseCannotAcknowledgeNewerLocalActual() throws {
+        let f = try fixture()
+        let (directory, disk) = try persistence(); defer { try? FileManager.default.removeItem(at: directory) }
+        let actuals = SprayTankActualStore(persistence: disk)
+        try actuals.saveLocally(f.actual)
+        let newer = try SprayTankActual(id: f.actual.id, vineyardId: f.actual.vineyardId,
+            sprayRecordId: f.actual.sprayRecordId, tripId: f.actual.tripId,
+            tankSessionId: f.actual.tankSessionId, tankNumber: f.actual.tankNumber,
+            waterVolumeL: 310, chemicals: f.actual.chemicals, confirmedAt: f.actual.confirmedAt,
+            confirmedBy: f.actual.confirmedBy, clientUpdatedAt: f.actual.clientUpdatedAt.addingTimeInterval(1))
+        try actuals.saveLocally(newer)
+        XCTAssertFalse(try actuals.acknowledgeUploaded(f.actual))
+        XCTAssertTrue(actuals.pendingIds.contains(newer.id))
+        let reopened = SprayTankActualStore(persistence: disk)
+        XCTAssertEqual(reopened.records, [newer])
+        XCTAssertTrue(reopened.pendingIds.contains(newer.id))
+    }
+
+    func testActualRPCAlwaysIncludesWaterArgumentWithoutInventingAQuantity() throws {
+        let f = try fixture()
+        for water: Double? in [nil, 0, 294.7] {
+            let actual = try SprayTankActual(id: f.actual.id, vineyardId: f.actual.vineyardId,
+                sprayRecordId: f.actual.sprayRecordId, tripId: f.actual.tripId,
+                tankSessionId: f.actual.tankSessionId, tankNumber: f.actual.tankNumber,
+                waterVolumeL: water, chemicals: f.actual.chemicals, confirmedAt: f.actual.confirmedAt,
+                confirmedBy: f.actual.confirmedBy, clientUpdatedAt: f.actual.clientUpdatedAt)
+            let data = try JSONEncoder().encode(SprayTankActualUpsertRequest(actual: actual))
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertTrue(body.keys.contains("p_water_volume_l"))
+            if let water {
+                XCTAssertEqual((body["p_water_volume_l"] as? NSNumber)?.doubleValue, water)
+            } else {
+                XCTAssertTrue(body["p_water_volume_l"] is NSNull)
+            }
+            XCTAssertEqual(actual.waterVolumeL, water)
+        }
+    }
+
 }

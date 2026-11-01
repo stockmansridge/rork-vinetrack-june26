@@ -1453,6 +1453,8 @@ struct SyncSettingsView: View {
                     Button {
                         UIPasteboard.general.string = issueCenter.diagnosticsText()
                             + "\n\n" + tripSync.pendingUploadDiagnostics
+                            + "\n\n" + SprayTankActualStore.shared.pendingUploadDiagnostics(
+                                tripSync: tripSync, spraySync: sprayRecordSync, vineyardId: store.selectedVineyardId)
                         didCopyDiagnostics = true
                     } label: {
                         Label(didCopyDiagnostics ? "Diagnostics copied" : "Copy diagnostics", systemImage: didCopyDiagnostics ? "checkmark" : "doc.on.doc")

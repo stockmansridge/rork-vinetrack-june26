@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "recordKind": "transcription_of_observed_managed_tool_results_not_raw_execution_export",
+  "startingManagedRevision": "fc064fa294d4b6d7010234b3ee37378938dc8dd7",
+  "androidRuns": [
+    {
+      "selection": ["ChemicalRecoveryPreflightAndroidTest", "PopulatedCleanExitActivityTest#combinedChemicalYieldPruningSnapshotAndActualsRecoverThroughFormAndReopen", "DomainCacheRecoveryAndroidTest"],
+      "passed": 18, "failed": 1, "skipped": 0,
+      "failure": "Rendered combined fixture expected pruning to be the first diagnostic; actual history now independently requires server proof. Changed test to require BOTH diagnostics; no production admission bypass.",
+      "rawLog": "native-intermediate/run.log"
+    },
+    {
+      "selectionManifest": "scripts/pr33-required-tests.json:android (20 classes)",
+      "passed": 236, "failed": 1, "skipped": 0,
+      "failure": "ChemicalConditionPersistenceAndroidTest#capturedThreeStructuresSurviveRESTDiskEditAndFrozenReplay expected 3 reference rows after constructing a manual replacement with rates=emptyList(). Updated fixture to shipping sparse updateNotes writer, requiring exact notes/client_updated_at keys and unchanged revision/catalogue evidence.",
+      "rawLog": "native-broad-before/run.log",
+      "rawLogBoundary": "Available log does not include named completion records for all reported 237 cases; do not infer missing named results from aggregate counts. Manifest records 238 source-declared Android methods and deliberately remains failed pending reconciliation."
+    },
+    {
+      "selection": ["ChemicalConditionPersistenceAndroidTest"],
+      "passed": 2, "failed": 0, "skipped": 0, "durationSeconds": 11,
+      "rawLog": "native-condition-final/run.log"
+    }
+  ],
+  "iosRuns": [
+    {
+      "selection": ["VineTrackTests/SprayInitialTankAmountsTests", "VineTrackTests/SprayTripPhase5FinalisationTests", "VineTrackTests/SprayTankActualTests", "VineTrackTests/StartTankCommitCoordinatorTests", "VineTrackTests/SprayFinalisationDiagnosticsTests"],
+      "passed": 57, "failed": 0, "durationSeconds": 147,
+      "boundary": "Managed tool returned aggregate success, not named passing-case export or skip count. Source declares 57 methods in this selection. Named discovery is not certified. Existing /tmp/rork-swift-test-ios.log is stale earlier TripDeletionRecovery failure, NOT this success; it is not copied or relabeled. No fresh-process or original-device queue-drain acceptance."
+    }
+  ],
+  "normalBuilds": {
+    "android-vinetrack": "runChecks PASS; build succeeded. Separate from tests and Play signed-delivery/upgrade acceptance.",
+    "ios": "runChecks PASS; simulator build succeeded. Device/Release signing not verified."
+  },
+  "delivery": {"candidateCreated": false, "uploaded": false, "managedSnapshot": null, "managedSourceHash": null, "artifactChecksum": null, "submissionReceipt": null},
+  "incident": "OPEN"
+}

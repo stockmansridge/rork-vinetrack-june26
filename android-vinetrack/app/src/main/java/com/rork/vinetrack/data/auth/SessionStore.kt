@@ -254,10 +254,18 @@ class SessionStore(context: Context) {
         retentionGuard.serialized {
             if (!retentionGuard.isLocked || original != recoveryPrincipal || expectedEpoch != retentionGuard.identityEpoch.value)
                 throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.IN_FLIGHT)
+            AccountTransitionEvidence(appContext).requireSafeLocations()
             PruningRecoveryVerifier.Snapshot(PruningRecoveryVerifier.stores.associateWith { name ->
                 appContext.getSharedPreferences(name, android.content.Context.MODE_PRIVATE).all.toMap()
             })
         }
+
+    internal fun actualRecoverySnapshot(original: String, expectedEpoch: Long): Map<String, *> = retentionGuard.serialized {
+        if (!retentionGuard.isLocked || original != recoveryPrincipal || expectedEpoch != retentionGuard.identityEpoch.value)
+            throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.IN_FLIGHT)
+        AccountTransitionEvidence(appContext).requireSafeLocations()
+        appContext.getSharedPreferences(TankActualRecoveryVerifier.STORE, android.content.Context.MODE_PRIVATE).all.toMap()
+    }
 
     /** Caller must first verify /auth/user and current memberships using the isolated recovery client. */
     internal fun restoreOriginal(
@@ -267,12 +275,13 @@ class SessionStore(context: Context) {
         permittedVineyards: Set<String>,
         expectedEpoch: Long = retentionGuard.identityEpoch.value,
         pruningProof: PruningRecoveryVerifier.Proof? = null,
+        actualProof: TankActualRecoveryVerifier.Proof? = null,
     ): Boolean = retentionGuard.recoverIfIdle {
         if (expectedEpoch != retentionGuard.identityEpoch.value) throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.IN_FLIGHT)
         if (user.id != recoveryPrincipal || accessToken.isBlank() || refreshToken.isBlank())
             throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.IDENTITY)
         val inspector = AccountTransitionEvidence(appContext)
-        val evidence = inspector.inspect(user.id, pruningProof, expectedEpoch)
+        val evidence = inspector.inspect(user.id, pruningProof, expectedEpoch, actualProof)
             ?: throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.RETAINED_EVIDENCE, inspector.failureDiagnostic)
         if (!permittedVineyards.containsAll(evidence.vineyards))
             throw AuthRecoveryFailure(AuthRecoveryFailure.Stage.VINEYARD_ACCESS)

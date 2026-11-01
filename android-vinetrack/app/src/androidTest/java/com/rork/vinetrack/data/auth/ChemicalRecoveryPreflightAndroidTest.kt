@@ -66,6 +66,9 @@ class ChemicalRecoveryPreflightAndroidTest {
         notes = "original activity", seasonYear = 2026, createdBy = owner,
         createdAt = "2026-08-10T00:00:00Z", updatedAt = "2026-08-10T01:00:00Z", isReversed = false))
     private val requests = mutableListOf<Pair<HttpMethod, String>>()
+    private var actualHistory: List<SprayTankActual> = emptyList()
+    private var historyStatus = HttpStatusCode.OK
+    private var historyNetworkFailure = false
     private fun recoveryClient(account: String = owner, member: Boolean = true) = HttpClient(MockEngine { request ->
         val path = request.url.encodedPath.substringAfterLast('/')
         requests.add(request.method to path)
@@ -80,12 +83,19 @@ class ChemicalRecoveryPreflightAndroidTest {
             "pruning_activity_labour_lines" -> codec.encodeToString(listOf(labour))
             "pruning_yield_settings" -> codec.encodeToString(listOf(settings))
             "get_pruning_activity" -> codec.encodeToString(canonical)
+            "spray_tank_actuals" -> {
+                assertEquals(TankActualRecoveryVerifier.COLUMNS, request.url.parameters["select"])
+                assertEquals("is.null", request.url.parameters["deleted_at"])
+                assertEquals("2", request.url.parameters["limit"])
+                if (historyNetworkFailure) throw java.io.IOException("PRIVATE_NETWORK_DETAIL")
+                codec.encodeToString(actualHistory)
+            }
             "logout" -> "{}"
             else -> error("Unexpected recovery request: $path")
         }
         if (path !in setOf("token", "logout", "get_pruning_activity")) assertEquals(HttpMethod.Get, request.method)
         if (path != "token") assertEquals("Bearer replacement-access", request.headers[HttpHeaders.Authorization])
-        respond(body, HttpStatusCode.OK, headersOf("Content-Type", "application/json"))
+        respond(body, if (path == "spray_tank_actuals") historyStatus else HttpStatusCode.OK, headersOf("Content-Type", "application/json"))
     }) { install(ContentNegotiation) { json(SupabaseClient.json) } }
     private fun populate(): SessionStore {
         val session = SessionStore(fixture)
@@ -98,8 +108,15 @@ class ChemicalRecoveryPreflightAndroidTest {
                 sampleSites = listOf(SampleSite("sample", "block", "Block", 1, -33.0, 149.0, 1,
                     BunchCountEntry(12.0, "2026-11-01T00:00:00Z", owner))))), 1L))
         }
-        check(SavedChemicalLocalStore(fixture).save(owner, vineyard,
-            listOf(SavedChemical("synthetic-product", vineyard, name = "Synthetic product", ratePerHa = 1.5))))
+        // Exercise the real writer's preserved label representations, not an empty/simple chemical.
+        val writerCodec = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+        val chemical = writerCodec.decodeFromString(SavedChemical.serializer(), """{
+            "id":"synthetic-product","vineyard_id":"$vineyard","name":"Synthetic product","rate_per_ha":1.5,
+            "active_ingredients":[{"name":"Synthetic active","concentration_unit":"%"}],
+            "registered_uses":[{"crop":"Synthetic crop","target":"powdery_mildew","rates":[]}]
+        }""")
+        check(SavedChemicalLocalStore(fixture).save(owner, vineyard, listOf(chemical)))
+        RegionSettingsStore(fixture).save(vineyard, RegionSettings(terminologyRegion = "AU_NZ", timezone = "Australia/Sydney"))
         // Actual historical writer shape: remove only a later nullable field, not identity or quantity.
         val chemicals = prefs("vinetrack_saved_chemicals_local")
         val raw = chemicals.getString("$owner|$vineyard", null)!!
@@ -161,6 +178,59 @@ class ChemicalRecoveryPreflightAndroidTest {
         assertFalse(requests.any { it.second == "logout" })
         unchanged(before)
         assertNull(ActiveTripStore(fixture).load())
+    }
+    @Test fun serverCorrectedAndSharedHistoryRecoverWithoutBecomingPendingWrites() = runBlocking {
+        val session = populate()
+        val store = SprayTankActualStore(fixture)
+        val original = store.load().single()
+        actualHistory = listOf(original.copy(id = "shared-history", tripId = "shared-trip", confirmedBy = other,
+            correctionVersion = 2, lastCorrectedAt = "2026-11-01T01:00:00Z", clientUpdatedAt = "2026-11-01T01:00:00Z"))
+        check(store.mergeRemote(actualHistory))
+        session.clear(); val before = snapshot()
+        assertTrue(AuthRecoveryRepository { recoveryClient() }.recover(session, "synthetic@example.invalid", "synthetic-password"))
+        unchanged(before)
+        assertEquals(listOf(original), SprayTankActualStore(fixture).pending())
+        assertEquals(actualHistory.single(), SprayTankActualStore(fixture).load().single { it.id == "shared-history" })
+        assertEquals(owner, SessionStore(fixture).userId)
+    }
+    @Test fun missingConflictingDeniedAndOfflineHistoryPreserveEveryStoreAndCredentials(): Unit = runBlocking {
+        val session = populate()
+        val store = SprayTankActualStore(fixture)
+        val original = store.load().single()
+        val historical = original.copy(id = "shared-history", tripId = "shared-trip", confirmedBy = other,
+            correctionVersion = 2, lastCorrectedAt = "2026-11-01T01:00:00Z", clientUpdatedAt = "2026-11-01T01:00:00Z")
+        check(store.mergeRemote(listOf(historical)))
+        session.clear(); val before = snapshot()
+        val cases = listOf("ACTUAL_SERVER_HISTORY_NOT_VERIFIED", "ACTUAL_SERVER_HISTORY_MISMATCH",
+            "SERVER_ACCESS_REFUSED", "SERVER_REQUEST_NOT_COMPLETED", "SERVER_NETWORK_UNAVAILABLE")
+        for ((index, rule) in cases.withIndex()) {
+            actualHistory = if (index == 0) emptyList() else listOf(historical.copy(waterVolumeL = 999.0))
+            historyStatus = when(index) { 2 -> HttpStatusCode.Forbidden; 3 -> HttpStatusCode.ServiceUnavailable; else -> HttpStatusCode.OK }
+            historyNetworkFailure = index == 4
+            val failure = runCatching { AuthRecoveryRepository { recoveryClient() }.recover(session, "synthetic@example.invalid", "synthetic-password") }.exceptionOrNull()
+            assertTrue(failure is AuthRecoveryFailure)
+            assertEquals(rule, (failure as AuthRecoveryFailure).evidence?.rule)
+            assertEquals(TankActualRecoveryVerifier.STORE, failure.evidence?.category)
+            assertFalse(RecoveryDiagnostics.format(failure.stage.name, failure.evidence).contains("PRIVATE_NETWORK_DETAIL"))
+            unchanged(before)
+            assertFalse(SessionStore(fixture).hasSession)
+            assertTrue(SessionStore(fixture).retentionGuard.isLocked)
+            assertEquals(listOf(original), SprayTankActualStore(fixture).pending())
+        }
+    }
+    @Test fun pendingCorrectionIsNotAdoptedAsDownloadedHistory(): Unit = runBlocking {
+        val session = populate()
+        val store = SprayTankActualStore(fixture)
+        val edited = store.load().single().copy(correctionVersion = 1, lastCorrectedAt = "2026-11-01T02:00:00Z", clientUpdatedAt = "2026-11-01T02:00:00Z")
+        check(store.save(edited))
+        session.clear(); val before = snapshot()
+        val failure = runCatching { AuthRecoveryRepository { recoveryClient() }.recover(session, "synthetic@example.invalid", "synthetic-password") }.exceptionOrNull()
+        assertEquals("ACTUAL_PENDING_EDIT_REQUIRES_REVIEW", (failure as AuthRecoveryFailure).evidence?.rule)
+        assertFalse(requests.any { it.second == "spray_tank_actuals" })
+        unchanged(before)
+        assertEquals(listOf(edited), SprayTankActualStore(fixture).pending())
+        assertTrue(SessionStore(fixture).retentionGuard.isLocked)
+        assertFalse(SessionStore(fixture).hasSession)
     }
     @Test fun multipleStoresAreReportedTogetherWithoutGrantingAccessOrChangingBytes() {
         val session = populate()

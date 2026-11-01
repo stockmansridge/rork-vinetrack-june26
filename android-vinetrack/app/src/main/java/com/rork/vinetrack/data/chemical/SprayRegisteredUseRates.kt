@@ -105,10 +105,13 @@ object SprayRegisteredUseRates {
         if (hasCatalogueEvidence(chemical)) {
             if (chemical.chemicalV3ReviewStatusSnapshot != "approved" || chemical.chemicalV3RevisionId == null) return emptyList()
             val entries = (chemical.rates as? CatalogueRateEvidence)?.selectableRates().orEmpty()
-                .filter { compatibleUnit(it.unit, chemical.unit) }
+                .map { entry ->
+                    if (compatibleUnit(entry.unit, chemical.unit)) entry
+                    else entry.copy(amount = SprayRateAmount.Unresolved, labelRange = null, labelRangeText = null)
+                }
             return entries.flatMap { entry ->
                 val range = entry.amount as? SprayRateAmount.Range
-                if (range == null || entries.count { it.basis == entry.basis } != 1) listOf(entry)
+                if (range == null || entries.count { it.isSelectable && it.basis == entry.basis } != 1) listOf(entry)
                 else listOf(entry) + presetPoints(range.minimum, range.maximum).map { (preset, value) ->
                     entry.copy(id = stableId("${entry.id}|${preset.raw}"), amount = SprayRateAmount.Fixed(value),
                         displayText = "$value ${entry.unit}${basisSuffix(entry.basis)}", preset = preset)

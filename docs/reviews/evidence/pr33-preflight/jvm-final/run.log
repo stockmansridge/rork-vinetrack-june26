@@ -1,0 +1,248 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:compileDebugKotlin UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac UP-TO-DATE
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar UP-TO-DATE
+
+> Task :app:compileDebugUnitTestKotlin
+w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/CropSilRateRegressionTest.kt:82:131 Unnecessary non-null assertion (!!) on a non-null receiver of type 'List<ChemicalRegisteredUse>'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/CropSilRateRegressionTest.kt:141:81 Unnecessary non-null assertion (!!) on a non-null receiver of type 'ChemicalLineSnapshot'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/CropSilRateRegressionTest.kt:155:46 Unnecessary non-null assertion (!!) on a non-null receiver of type 'List<ChemicalActiveIngredient>'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/CropSilRateRegressionTest.kt:190:42 Unnecessary non-null assertion (!!) on a non-null receiver of type 'ChemicalLabelRate'.
+w: file:///home/user/rork-app/android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/SavedChemicalRecoveryContractTest.kt:53:19 Redundant creation of Json format. Creating instances for each usage can be slow.
+
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:processDebugUnitTestJavaRes UP-TO-DATE
+
+> Task :app:testDebugUnitTest
+
+CropSilRateRegressionTest > only explicit equivalent notations are accepted PASSED
+
+CropSilRateRegressionTest > REST decoding cache codecs edit and outbound projection preserve rate evidence PASSED
+
+CropSilRateRegressionTest > catalogue nullable bounds preserve evidence but never authorize contradictory amounts PASSED
+
+CropSilRateRegressionTest > chosen rate quantity and condition remain frozen in spray record PASSED
+
+CropSilRateRegressionTest > unresolved captured concentration units must not be discarded or inferred PASSED
+
+CropSilRateRegressionTest > manual and chosen quantities are correct on separate bases PASSED
+
+CropSilRateRegressionTest > captured competing fixed rates never choose on basis alone PASSED
+
+CropSilRateRegressionTest > normalization keeps evidence and rejects contradictory stored data PASSED
+
+CropSilRateRegressionTest > both bases retain correct display and deliberate presets PASSED
+
+CropSilRateRegressionTest > old labels separate conditions and unrecognized evidence round trip PASSED
+
+CropSilRateRegressionTest > captured incompatible product unit requires independent review PASSED
+
+RetainedPlanningContractTest > originalDraftAndUncertainIntentAreReadOnlyAdmissionNotAcknowledgement PASSED
+
+RetainedPlanningContractTest > originalByteHistoryKeyIsValidatedWithoutRewriting PASSED
+
+RetainedPlanningContractTest > foreignMalformedUnknownAndConflictingLifecycleRemainHeld PASSED
+
+SprayStartActualAmountsTest > blankActualsCannotConfirmCalculatedAmounts PASSED
+
+SprayStartActualAmountsTest > importedDisplayQuantitiesDoNotCauseActualDoubleConversion PASSED
+
+SprayStartActualAmountsTest > recipeChangeOrProductChangeRejectsStaleActuals PASSED
+
+SprayStartActualAmountsTest > onlyMatchingCanonicalOrRegionBoundRawInputCanBeConsumed PASSED
+
+SprayStartActualAmountsTest > invalidTextNeverEnablesStarting PASSED
+
+SprayStartActualAmountsTest > enteredAmountsAreSeparateFromPlanAndOnlyCoverTheTankMixedNow PASSED
+
+SprayStartActualAmountsTest > explicitZeroChemicalIsRecordedAndMissingIsNotZero PASSED
+
+SprayStartActualAmountsTest > retainedDraftRoundTripKeepsAmountsAndRejectsMissingOrChangedRecipe PASSED
+
+SprayStartActualAmountsTest > regeneratedPreviewIdsRemapOnlyTheIdenticalOrderedRecipe PASSED
+
+SprayStartActualAmountsTest > regionWaterAndLocaleDecimalConvertExactlyOnce PASSED
+
+SprayStartActualAmountsTest > productOrderAndDuplicateIdsCannotMisattributeActuals PASSED
+
+SprayStartActualAmountsTest > firstTankUsesPositiveNumberOrderAndRejectsAmbiguousIdentities PASSED
+
+SprayTankActualTest > sharedRepositoryChemicalFixtureDecodesCompleteContract PASSED
+
+SprayTankActualTest > strictLocaleParserConsumesTheEntireEnglishInput PASSED
+
+SprayTankActualTest > signedDifferenceKeepsMissingDistinctFromExplicitZero PASSED
+
+SprayTankActualTest > strictLocaleParserAcceptsOnlyTheDeviceDecimalSeparator PASSED
+
+SprayTankActualTest > sharedChemicalJsonDecodesConfirmedZero PASSED
+
+SprayTankActualTest > completenessRequiresWaterAndExactIdentityButAcceptsAdditionalAndSubstitutionLines PASSED
+
+SprayTankActualTest > liquidAndSolidConversionsPreserveBaseValues PASSED
+
+DomainCacheRecoveryContractTest > nonemptyOutboxStillBlocksRecovery PASSED
+
+DomainCacheRecoveryContractTest > nestedTimestampDoesNotCreateASpuriousScope PASSED
+
+DomainCacheRecoveryContractTest > futureUnknownFieldsRemainProtected PASSED
+
+DomainCacheRecoveryContractTest > unknownPreferenceKeyRemainsProtected PASSED
+
+DomainCacheRecoveryContractTest > emptyOutboxNeverInventsAVineyard PASSED
+
+DomainCacheRecoveryContractTest > wrongCacheOwnerIsRejectedEvenForInactiveTrips PASSED
+
+DomainCacheRecoveryContractTest > signOutStillRefusesAnActiveTrip PASSED
+
+DomainCacheRecoveryContractTest > completedTripsStillRecoverAndAllowCleanExit PASSED
+
+DomainCacheRecoveryContractTest > emptyCacheHasNoRecoveryScopes PASSED
+
+DomainCacheRecoveryContractTest > iosUppercaseYieldSessionRecoversWithoutChangingEvidence PASSED
+
+DomainCacheRecoveryContractTest > mixedFortyFourKeyFixtureKeepsExactScopesAndBytes PASSED
+
+DomainCacheRecoveryContractTest > wrongRowScopeIsRejected PASSED
+
+DomainCacheRecoveryContractTest > missingChildParentDoesNotAcquireTheTaskIdAsVineyard PASSED
+
+DomainCacheRecoveryContractTest > orphanTimestampRemainsProtected PASSED
+
+DomainCacheRecoveryContractTest > malformedJsonIsNotTreatedAsAnEmptyCache PASSED
+
+DomainCacheRecoveryContractTest > stringTimestampDoesNotPassAsALong PASSED
+
+DomainCacheRecoveryContractTest > missingTimestampHasDatasetSpecificDiagnostic PASSED
+
+DomainCacheRecoveryContractTest > nonUuidCaseDifferencesAreNotTreatedAsIdentity PASSED
+
+DomainCacheRecoveryContractTest > originalAccountCanRecoverAnActiveTripListSnapshotWithoutRewritingIt PASSED
+
+DomainCacheRecoveryContractTest > differentYieldVineyardStillRejected PASSED
+
+DomainCacheRecoveryContractTest > missingCacheOwnerIsNotManufactured PASSED
+
+PruningRecoveryVerifierTest > revokedMembershipRemainsLocked PASSED
+
+PruningRecoveryVerifierTest > acknowledgedPopulatedActivityStillRequiresExactBusinessFields PASSED
+
+PruningRecoveryVerifierTest > uppercaseIdentityInPopulatedSetupDoesNotChangeValues PASSED
+
+PruningRecoveryVerifierTest > duplicateRecordsRemainProtected PASSED
+
+PruningRecoveryVerifierTest > unknownVersionAndMalformedRowsRemainProtected PASSED
+
+PruningRecoveryVerifierTest > activityAuditCannotBeProvenByCopyingTheLocalDraft PASSED
+
+PruningRecoveryVerifierTest > changedBytesBetweenReadAndAdmissionCannotUseProof PASSED
+
+PruningRecoveryVerifierTest > emptyKnownArraysCanBeAssessedButPopulatedRowsNeedServerProof PASSED
+
+PruningRecoveryVerifierTest > wrongOriginalAccountCannotUseProof PASSED
+
+PruningRecoveryVerifierTest > populatedEntryAndLabourUseRealServerProjections PASSED
+
+PruningRecoveryVerifierTest > changedEpochCannotUseProof PASSED
+
+PruningRecoveryVerifierTest > populatedSetupsAndYieldSettingsNeedNoWritesOrDiscard PASSED
+
+PruningRecoveryVerifierTest > locallyModifiedSetupIsNotAttributedByAccountOrMembership PASSED
+
+RecoveryWriterCompatibilityTest > writerPreservedConcentrationWordingIsNotALoginBlocker PASSED
+
+RecoveryWriterCompatibilityTest > writerPreservedUnknownTargetIsNotMappedToAKnownTarget PASSED
+
+RecoveryWriterCompatibilityTest > unsupportedRateBasisIsPreservedWithoutOfferingAnExecutableRate PASSED
+
+RecoveryWriterCompatibilityTest > twentySevenWriterShapedRowsPreserveEverySuppliedField PASSED
+
+RecoveryWriterCompatibilityTest > unknownRegionTokenAndNonStringStillRefuse PASSED
+
+RecoveryWriterCompatibilityTest > opaqueTopLevelAndLossyNestedFieldsAreStillRefused PASSED
+
+RecoveryWriterCompatibilityTest > serverAndAndroidTerminologyTokensBothValidateWithoutRewriting PASSED
+
+RecoveryWriterCompatibilityTest > knownDiseaseTargetRemainsRecognisedInBothCodecs PASSED
+
+RecoveryWriterCompatibilityTest > typeChangesAndMissingIdentityRemainRefused PASSED
+
+SavedChemicalRecoveryContractTest > olderSnapshotMissingNewOptionalFieldRecoversWithoutBackfillingIt PASSED
+
+SavedChemicalRecoveryContractTest > differentAccountIsStillRefused PASSED
+
+SavedChemicalRecoveryContractTest > currentWriterEncodingRecoversWithoutChangingSource PASSED
+
+SavedChemicalRecoveryContractTest > oldOmittedDefaultsAreNotClassifiedAsLostData PASSED
+
+SavedChemicalRecoveryContractTest > invalidPreferredRateStillRefuses PASSED
+
+SavedChemicalRecoveryContractTest > lossyLegacyRateParserCannotEraseMalformedEvidence PASSED
+
+SavedChemicalRecoveryContractTest > storageVineyardNamespaceRemainsExact PASSED
+
+SavedChemicalRecoveryContractTest > unresolvedWritesStillBlockCleanExit PASSED
+
+SavedChemicalRecoveryContractTest > unknownTopLevelFieldsRemainProtected PASSED
+
+SavedChemicalRecoveryContractTest > differentVineyardIsStillRefused PASSED
+
+SavedChemicalRecoveryContractTest > arbitraryNonUuidCaseIsNotNormalised PASSED
+
+SavedChemicalRecoveryContractTest > duplicateRecordIdsAreRefused PASSED
+
+SavedChemicalRecoveryContractTest > suppliedFieldsAndArrayOrderMayNotDisappear PASSED
+
+SavedChemicalRecoveryContractTest > storageAccountNamespaceIsNotSilentlyRedirected PASSED
+
+SavedChemicalRecoveryContractTest > populatedMixedLegacyAndCurrentChemicalListSurvivesUnchanged PASSED
+
+SavedChemicalRecoveryContractTest > legacyRateWithoutUiIdRetainsQuantityAndBasis PASSED
+
+SavedChemicalRecoveryContractTest > malformedAndUnscopedSnapshotsAreNotEmptyCaches PASSED
+
+SavedChemicalRecoveryContractTest > numericFormattingMayDifferButNotNumericValue PASSED
+
+TankActualRecoveryVerifierTest > sharedCorrectedHistoryRequiresExactServerProofWithoutChangingCache PASSED
+
+TankActualRecoveryVerifierTest > duplicateLocalRowsAndOrphanPendingIdsRemainHeld PASSED
+
+TankActualRecoveryVerifierTest > pendingConfirmationHasIndependentAuthorshipAndNeverNeedsHistoryRequest PASSED
+
+TankActualRecoveryVerifierTest > invalidTimestampsHaveFixedLocalOrServerDiagnostics PASSED
+
+TankActualRecoveryVerifierTest > missingDuplicateOrConflictingServerRowsNeverGrantAdmission PASSED
+
+TankActualRecoveryVerifierTest > changedEpochOwnerOrPreferenceMapInvalidatesProof PASSED
+
+TankActualRecoveryVerifierTest > currentMembershipRequiredBeforeAnyHistoryRequest PASSED
+
+TankActualRecoveryVerifierTest > unknownLocalAndServerFieldsStayProtected PASSED
+
+BUILD SUCCESSFUL in 36s
+26 actionable tasks: 3 executed, 23 up-to-date

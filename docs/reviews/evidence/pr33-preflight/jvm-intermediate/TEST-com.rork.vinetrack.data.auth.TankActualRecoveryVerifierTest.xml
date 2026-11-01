@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.auth.TankActualRecoveryVerifierTest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-11-01T10:22:08.946Z" hostname="e2b.local" time="0.048">
+  <properties/>
+  <testcase name="sharedCorrectedHistoryRequiresExactServerProofWithoutChangingCache" classname="com.rork.vinetrack.data.auth.TankActualRecoveryVerifierTest" time="0.014"/>
+  <testcase name="duplicateLocalRowsAndOrphanPendingIdsRemainHeld" classname="com.rork.vinetrack.data.auth.TankActualRecoveryVerifierTest" time="0.003"/>
+  <testcase name="pendingConfirmationHasIndependentAuthorshipAndNeverNeedsHistoryRequest" classname="com.rork.vinetrack.data.auth.TankActualRecoveryVerifierTest" time="0.005"/>
+  <testcase name="invalidTimestampsHaveFixedLocalOrServerDiagnostics" classname="com.rork.vinetrack.data.auth.TankActualRecoveryVerifierTest" time="0.004"/>
+  <testcase name="missingDuplicateOrConflictingServerRowsNeverGrantAdmission" classname="com.rork.vinetrack.data.auth.TankActualRecoveryVerifierTest" time="0.012"/>
+  <testcase name="changedEpochOwnerOrPreferenceMapInvalidatesProof" classname="com.rork.vinetrack.data.auth.TankActualRecoveryVerifierTest" time="0.004"/>
+  <testcase name="currentMembershipRequiredBeforeAnyHistoryRequest" classname="com.rork.vinetrack.data.auth.TankActualRecoveryVerifierTest" time="0.002"/>
+  <testcase name="unknownLocalAndServerFieldsStayProtected" classname="com.rork.vinetrack.data.auth.TankActualRecoveryVerifierTest" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

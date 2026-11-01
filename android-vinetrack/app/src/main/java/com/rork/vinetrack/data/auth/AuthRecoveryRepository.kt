@@ -53,6 +53,20 @@ class AuthRecoveryRepository(
         val role: String,
     )
 
+    /** Fixed diagnostic codes only; never include a URL, response body or transport exception. */
+    private suspend fun readProof(category: String, request: suspend () -> io.ktor.client.statement.HttpResponse): kotlinx.serialization.json.JsonElement {
+        fun refuse(rule: String): Nothing = throw EvidenceContractFailure(RecoveryEvidenceDiagnostic(category, rule))
+        val response = try { request() }
+            catch (_: kotlinx.coroutines.TimeoutCancellationException) { refuse("SERVER_NETWORK_UNAVAILABLE") }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { refuse("SERVER_NETWORK_UNAVAILABLE") }
+        if (response.status.value in setOf(401, 403)) refuse("SERVER_ACCESS_REFUSED")
+        if (!response.status.isSuccess()) refuse("SERVER_REQUEST_NOT_COMPLETED")
+        return try { response.body<kotlinx.serialization.json.JsonElement>() }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { refuse("SERVER_RESPONSE_SCHEMA") }
+    }
+
     /** Uses /user identity and current membership, never typed email or cached vineyard membership. */
     suspend fun recover(session: SessionStore, email: String, password: String): Boolean = withContext(Dispatchers.IO) {
         val (original, epoch) = session.retentionGuard.serialized {
@@ -108,27 +122,31 @@ class AuthRecoveryRepository(
                     val pruningProof = try {
                         PruningRecoveryVerifier.verify(original, epoch, retained, permitted,
                             get = { path ->
-                                val read = client.get(SupabaseClient.restUrl(path)) {
+                                readProof("vinetrack_pruning") { client.get(SupabaseClient.restUrl(path)) {
                                     headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $access") }
-                                }
-                                check(read.status.isSuccess())
-                                read.body<kotlinx.serialization.json.JsonElement>()
+                                } }
                             },
                             rpc = { name, parameters ->
                                 check(name == "get_pruning_activity") // read-only RPC allowlist
-                                val read = client.post(SupabaseClient.rpcUrl(name)) {
+                                readProof("vinetrack_pruning") { client.post(SupabaseClient.rpcUrl(name)) {
                                     headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $access") }
                                     contentType(ContentType.Application.Json)
                                     setBody(parameters)
-                                }
-                                check(read.status.isSuccess())
-                                read.body<kotlinx.serialization.json.JsonElement>()
+                                } }
                             })
                     } catch (failure: EvidenceContractFailure) {
                         throw AuthRecoveryFailure(stage, failure.diagnostic)
                     }
+                    val actualProof = try {
+                        TankActualRecoveryVerifier.verify(original, epoch, session.actualRecoverySnapshot(original, epoch), permitted) { path ->
+                            readProof(TankActualRecoveryVerifier.STORE) { client.get(SupabaseClient.restUrl(path)) {
+                                headers { append("apikey", SupabaseClient.anonKey); append("Authorization", "Bearer $access") }
+                            } }
+                        }
+                    } catch (failure: EvidenceContractFailure) { throw AuthRecoveryFailure(stage, failure.diagnostic) }
                     stage = AuthRecoveryFailure.Stage.IN_FLIGHT
-                    restored = session.restoreOriginal(access, refresh, user, permitted, expectedEpoch = epoch, pruningProof = pruningProof)
+                    restored = session.restoreOriginal(access, refresh, user, permitted, expectedEpoch = epoch,
+                        pruningProof = pruningProof, actualProof = actualProof)
                     if (!restored) throw AuthRecoveryFailure(stage)
                     true
                 } finally {

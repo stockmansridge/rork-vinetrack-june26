@@ -1,0 +1,86 @@
+{
+  "startingManagedRevision": "fc064fa294d4b6d7010234b3ee37378938dc8dd7",
+  "prHead": "33fc6a20427f14250ced5ec1c4162e3dcac56cdc",
+  "testedUpstreamCheckpoint": "c1a8075d0bbfa613efcd95f03bf683ee8fe218ee",
+  "excludedCosmeticFiles": [
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayStartActualFields.kt",
+    "ios/VineTrack/App/SprayCalculatorView.swift",
+    "ios/VineTrack/App/SprayStartRateReview.swift"
+  ],
+  "changes": [
+    {
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/ChemicalRecoveryPreflightAndroidTest.kt",
+      "beforeSha256": "8a7eadf0e5722a5f0d4657634a37759f511bc67e9f2a11efc9f79bd1dcae346f",
+      "afterSha256": "24ac58652f58635648d3d20c675dea7f3ef2490c43bfb0d178dc574959af18ec",
+      "upstreamSha256": "24ac58652f58635648d3d20c675dea7f3ef2490c43bfb0d178dc574959af18ec"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/CleanExitCacheContract.kt",
+      "beforeSha256": "f5e1529a3266b290cf7567f6cd5639f48ca5376816969fd5abe0d872e6b51a08",
+      "afterSha256": "ba8ca223c05c3f0ec45b64dd662d6ca671e09c3a508f265df49eb0e049c717ea",
+      "upstreamSha256": "ba8ca223c05c3f0ec45b64dd662d6ca671e09c3a508f265df49eb0e049c717ea"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/RetainedJsonFields.kt",
+      "beforeSha256": "478fd45af7526a1d9ee2330a2b6ff3fd8fdf3a360364d6074d245b73f4a1721c",
+      "afterSha256": "b37d2255ab09536d1384ceb1424a62d88b287999effacfb3c08962d0761b258f",
+      "upstreamSha256": "b37d2255ab09536d1384ceb1424a62d88b287999effacfb3c08962d0761b258f"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/RecoveryWriterCompatibilityTest.kt",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "53ee27ee3268bf8e2ebf749db84cebc7e40da96e27f273f2c729f91795742c65",
+      "upstreamSha256": "53ee27ee3268bf8e2ebf749db84cebc7e40da96e27f273f2c729f91795742c65"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/SavedChemicalRecoveryContractTest.kt",
+      "beforeSha256": "527962896b074787d82d7345d46b266b1728dfa06c3402f0733ea79005ba9ce2",
+      "afterSha256": "a73144f02e5458613808938c3401eeb6507d757ab3fa82036c34405ece1e8dc2",
+      "upstreamSha256": "a73144f02e5458613808938c3401eeb6507d757ab3fa82036c34405ece1e8dc2"
+    },
+    {
+      "path": "docs/reviews/spray-review-and-recovery-writer-contracts-20261101.md",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "a402fced91804684aef842351e8d3c5b822c190a60061047454f14ac20e65519",
+      "upstreamSha256": "a402fced91804684aef842351e8d3c5b822c190a60061047454f14ac20e65519"
+    },
+    {
+      "path": "ios/VineTrack/App/BackendSettingsView.swift",
+      "beforeSha256": "df061304c5b0ba2e24d29ad60bd706bf25652b6ad48d76e57647536705379341",
+      "afterSha256": "03e804718decd0228b02cd6e981ee801d36c42092a9259a59e629a3a1b1b5c27",
+      "upstreamSha256": "03e804718decd0228b02cd6e981ee801d36c42092a9259a59e629a3a1b1b5c27"
+    },
+    {
+      "path": "ios/VineTrack/App/NewMainTabView.swift",
+      "beforeSha256": "c8c51581d49cf4e528c65f46fd0bf86c9e20a6497e6f70cfb0402fcbb3d570f8",
+      "afterSha256": "ed7c9b627604da01caacf52a18d2c91e71bba48432ad59128a7a1e891caf4a4e",
+      "upstreamSha256": "ed7c9b627604da01caacf52a18d2c91e71bba48432ad59128a7a1e891caf4a4e"
+    },
+    {
+      "path": "ios/VineTrack/Backend/Sync/SprayTankActualStore.swift",
+      "beforeSha256": "ffe614ca27cc63b2935744db16beb995820670487b5b96bec0151786fcb45ace",
+      "afterSha256": "f0f42996cdac259f0c28d7cc7a11d36fe6a0a66cdf527ca6c3cc054db2cc1bde",
+      "upstreamSha256": "f0f42996cdac259f0c28d7cc7a11d36fe6a0a66cdf527ca6c3cc054db2cc1bde"
+    },
+    {
+      "path": "ios/VineTrackTests/SprayInitialTankAmountsTests.swift",
+      "beforeSha256": "550d8f0f726dbda03ff654ded3c66c8fe6f55cf3ea1048e1409389ef607294cf",
+      "afterSha256": "334140706b6885330ab6ecf061b327b918dcac18fc9e824b125ed7592a42aeb8",
+      "upstreamSha256": "334140706b6885330ab6ecf061b327b918dcac18fc9e824b125ed7592a42aeb8"
+    },
+    {
+      "path": "scripts/recovery-writer-tests.init.gradle",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "31922fe2e986fbe088bd1e72c9f0d77e232b68db6eab72847f965813cb4a476b",
+      "upstreamSha256": "31922fe2e986fbe088bd1e72c9f0d77e232b68db6eab72847f965813cb4a476b"
+    }
+  ],
+  "protectedHashes": {
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt": "c79d68f9e9dc96559263dee80de69190df5c3886eab29a2f613104989d78eab7",
+    "android-vinetrack/app/build.gradle.kts": "ab5e787d43d5a26d89c058b325ac0203addd188b24383dff0cf6f3e19ecdec80",
+    "ios/VineTrack/App/AppConfig.swift": "b7a7f3cdefd26ae5304d25ec293d7fa567bf62339b3ad9e35011097b9a3efa51",
+    "ios/VineTrack.xcodeproj/project.pbxproj": "cc4157148a020c07dd33bb41ec054236613746bdbec9eeb2aa161d937cb6efc1",
+    "rork.json": "4e7979864de6813bdd319aa288f50f23767e53d8f50bcbf08a16cffc9d25ca35"
+  }
+}

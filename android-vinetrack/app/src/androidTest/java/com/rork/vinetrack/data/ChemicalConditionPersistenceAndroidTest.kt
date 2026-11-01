@@ -90,19 +90,21 @@ class ChemicalConditionPersistenceAndroidTest {
                     val draft = ChemicalManualEntry.draft(reopened, "AU").copy(productName = "Unrelated display edit")
                     val intelligence = ChemicalManualEntry.intelligenceForManualSave(draft)
                     assertEquals(originalUses, intelligence.registeredUses)
-                    val input = SavedChemicalRepository.ChemicalInput(name = chemical.name, unit = chemical.unit,
-                        ratePerHa = null, rates = emptyList(), activeIngredient = null, chemicalGroup = null,
-                        use = null, problem = null, manufacturer = null, notes = "Unrelated note",
-                        modeOfAction = null, labelUrl = null, productUrl = null, purchase = null, intelligence = intelligence)
-                    val response = SavedChemicalRepository(session).update(chemical.id, input)
-                    assertEquals(originalUses, SupabaseClient.json.decodeFromJsonElement(ListSerializer(ChemicalRegisteredUse.serializer()), chemicalPatch!!["registered_uses"]!!))
+                    // Catalogue notes use the shipping sparse editor, not a manual replacement
+                    // with rates=emptyList(), which explicitly erases the catalogue projection.
+                    val response = SavedChemicalRepository(session).updateNotes(reopened, "Unrelated note")
+                    assertEquals(setOf("notes", "client_updated_at"), chemicalPatch!!.keys)
+                    assertEquals(chemical.chemicalV3RevisionId, response.chemicalV3RevisionId)
+                    assertEquals((chemical.rates as CatalogueRateEvidence).original, (response.rates as CatalogueRateEvidence).original)
                     assertEquals(originalUses, response.registeredUses)
                     assertEquals("Litres", response.unit)
                     if (chemical.id == "ae9a8166-a052-41d4-af07-d7bc4de01c9a") {
                         assertEquals(listOf("% (±1%)", "%", null, null), response.activeIngredients!!.map { it.unresolvedConcentrationUnit })
                         assertEquals(listOf("% (±1%)", "%", null, null), chemical.activeIngredients!!.map { it.unresolvedConcentrationUnit })
-                        assertEquals("% (±1%)", chemicalPatch!!["active_ingredients"]!!.jsonArray[0].jsonObject["concentration_unit"]!!.jsonPrimitive.content)
-                        assertEquals("%", chemicalPatch!!["active_ingredients"]!!.jsonArray[1].jsonObject["concentration_unit"]!!.jsonPrimitive.content)
+                        assertFalse(chemicalPatch!!.containsKey("active_ingredients"))
+                        val encoded = SupabaseClient.json.encodeToJsonElement(SavedChemical.serializer(), response).jsonObject
+                        assertEquals("% (±1%)", encoded["active_ingredients"]!!.jsonArray[0].jsonObject["concentration_unit"]!!.jsonPrimitive.content)
+                        assertEquals("%", encoded["active_ingredients"]!!.jsonArray[1].jsonObject["concentration_unit"]!!.jsonPrimitive.content)
                         assertNotNull(SprayRegisteredUseRates.concentrationUnitReviewMessage(response))
                     }
                     assertTrue(SavedChemicalLocalStore(context).save(owner, vineyard, chemicals.map { if (it.id == response.id) response else it }))

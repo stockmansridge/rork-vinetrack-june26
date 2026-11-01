@@ -178,6 +178,30 @@ class CropSilRateRegressionTest {
         assertTrue(rates.all { !it.isSelectable && it.appliedValue == null })
     }
 
+    @Test fun `catalogue nullable bounds preserve evidence but never authorize contradictory amounts`() {
+        val original = captured()[1]
+        fun withOption(option: String) = original.copy(rates = CatalogueRateEvidence(
+            Json.parseToJsonElement("""{"per_100_litres":[$option]}""").jsonObject))
+        val valid = """{"basis":"per_100_litres","unit":"mL/100 L","value":40,"min_value":null,"max_value":null,"condition":"Original condition","raw_text":"40mL/100L","future_evidence":{"keep":true}}"""
+        val chemical = withOption(valid)
+        val rate = SprayRegisteredUseRates.vineyardRates(chemical).single()
+        assertEquals(40.0, rate.appliedValue!!, 0.0)
+        assertEquals("40mL/100L", rate.registeredRate!!.rawText)
+        assertNotNull(rate.registeredRate!!.unknownFields["future_evidence"])
+        assertTrue(SprayRegisteredUseRates.vineyardRates(chemical.copy(chemicalV3ReviewStatusSnapshot = "pending")).isEmpty())
+        assertTrue(SprayRegisteredUseRates.vineyardRates(chemical.copy(chemicalV3RevisionId = null)).isEmpty())
+        for (invalid in listOf(
+            valid.replace("\"min_value\":null", "\"min_value\":1"),
+            valid.replace("\"max_value\":null", "\"max_value\":\"private-invalid\""),
+            valid.replace("\"value\":40", "\"value\":0"),
+            valid.replace("\"basis\":\"per_100_litres\"", "\"basis\":\"per_hectare\""),
+            valid.replace("\"basis\":\"per_100_litres\"", "\"basis\":\"range_per_100_litres\""),
+            valid.replace("\"value\":40", "\"value\":null").replace("\"min_value\":null", "\"min_value\":20")
+        )) assertTrue(SprayRegisteredUseRates.vineyardRates(withOption(invalid)).isEmpty())
+        val reopened = SupabaseClient.json.decodeFromString<SavedChemical>(SupabaseClient.json.encodeToString(chemical))
+        assertEquals((chemical.rates as CatalogueRateEvidence).original, (reopened.rates as CatalogueRateEvidence).original)
+    }
+
     @Test fun `only explicit equivalent notations are accepted`() {
         for (text in listOf("500–1000 mL/100 L water", "500–1000 mL per 100 litres of water", "500–1000 mL / 100\tL water")) {
             assertEquals(ChemicalLabelRateBasis.RANGE_PER_100_LITRES, ChemicalLabelRateNormalizer.parse(text)?.basis)
