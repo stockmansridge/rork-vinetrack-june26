@@ -1,0 +1,603 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.RetainedStartupConstructionTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.RetainedStartupConstructionTest:
+INSTRUMENTATION_STATUS: test=expiredTankPreviewAndCommandsKeepOriginalDiskDraftAndReconciliationMarker
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.RetainedStartupConstructionTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertFalse(Assert.java:65)
+	at org.junit.Assert.assertFalse(Assert.java:75)
+	at com.rork.vinetrack.data.auth.RetainedStartupConstructionTest.expiredTankPreviewAndCommandsKeepOriginalDiskDraftAndReconciliationMarker$lambda$0$0(RetainedStartupConstructionTest.kt:116)
+	at com.rork.vinetrack.data.auth.RetainedStartupConstructionTest.$r8$lambda$5tMyyP1k1AEuCKYAqzUYqmHMlzM(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.RetainedStartupConstructionTest$$ExternalSyntheticLambda23.run(D8$$SyntheticClass:0)
+	at java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524)
+	at java.util.concurrent.FutureTask.run(FutureTask.java:317)
+	at android.app.Instrumentation$SyncRunnable.run(Instrumentation.java:2624)
+	at android.os.Handler.handleCallback(Handler.java:991)
+	at android.os.Handler.dispatchMessage(Handler.java:102)
+	at android.os.Looper.loopOnce(Looper.java:232)
+	at android.os.Looper.loop(Looper.java:317)
+	at android.app.ActivityThread.main(ActivityThread.java:8934)
+	at java.lang.reflect.Method.invoke(Native Method)
+	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+
+INSTRUMENTATION_STATUS: stream=
+Error in expiredTankPreviewAndCommandsKeepOriginalDiskDraftAndReconciliationMarker(com.rork.vinetrack.data.auth.RetainedStartupConstructionTest):
+java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertFalse(Assert.java:65)
+	at org.junit.Assert.assertFalse(Assert.java:75)
+	at com.rork.vinetrack.data.auth.RetainedStartupConstructionTest.expiredTankPreviewAndCommandsKeepOriginalDiskDraftAndReconciliationMarker$lambda$0$0(RetainedStartupConstructionTest.kt:116)
+	at com.rork.vinetrack.data.auth.RetainedStartupConstructionTest.$r8$lambda$5tMyyP1k1AEuCKYAqzUYqmHMlzM(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.RetainedStartupConstructionTest$$ExternalSyntheticLambda23.run(D8$$SyntheticClass:0)
+	at java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524)
+	at java.util.concurrent.FutureTask.run(FutureTask.java:317)
+	at android.app.Instrumentation$SyncRunnable.run(Instrumentation.java:2624)
+	at android.os.Handler.handleCallback(Handler.java:991)
+	at android.os.Handler.dispatchMessage(Handler.java:102)
+	at android.os.Looper.loopOnce(Looper.java:232)
+	at android.os.Looper.loop(Looper.java:317)
+	at android.app.ActivityThread.main(ActivityThread.java:8934)
+	at java.lang.reflect.Method.invoke(Native Method)
+	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+
+INSTRUMENTATION_STATUS: test=expiredTankPreviewAndCommandsKeepOriginalDiskDraftAndReconciliationMarker
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest:
+INSTRUMENTATION_STATUS: test=signOutRefusesAcceptedDeferredSaveAndOriginalOperationCompletesDurably
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=signOutRefusesAcceptedDeferredSaveAndOriginalOperationCompletesDurably
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=interruptedJpegWriteRetainsExactJournalAndRecoversBytesAndMetadata
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=interruptedJpegWriteRetainsExactJournalAndRecoversBytesAndMetadata
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=revokedChemicalReconciliationCannotRunOrReplaceRetainedBytes
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=revokedChemicalReconciliationCannotRunOrReplaceRetainedBytes
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=earlierSessionPhotoJournalCannotBeReboundToCurrentSameAccount
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=earlierSessionPhotoJournalCannotBeReboundToCurrentSameAccount
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=revocationDuringDeferralRejectsOriginalTripPhotoAndPinWithoutWriting
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=signedOutUnlistablePhotoLocationIsNotTreatedAsAnEmptyDirectory
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=signedOutUnlistablePhotoLocationIsNotTreatedAsAnEmptyDirectory
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=8
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=photoDeferralDoesNotHoldRepositoryMonitorNeededByAdmissionHolder
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=8
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=photoDeferralDoesNotHoldRepositoryMonitorNeededByAdmissionHolder
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=9
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=domainCacheWaitsBeforePreferencesAndPreservesOriginalBlock
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=9
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=domainCacheWaitsBeforePreferencesAndPreservesOriginalBlock
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=10
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=corruptInterruptedPhotoIntentRefusesRecoveryWithoutDiscardingEvidence
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=10
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=corruptInterruptedPhotoIntentRefusesRecoveryWithoutDiscardingEvidence
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=11
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=chemicalReconciliationAdmitsBeforeLeafStoresAndPreservesOriginalDuringContention
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=11
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=chemicalReconciliationAdmitsBeforeLeafStoresAndPreservesOriginalDuringContention
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=12
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=coordinatedTankStartSurvivesContentionWithActualSnapshotAndSingleMarker
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=12
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=coordinatedTankStartSurvivesContentionWithActualSnapshotAndSingleMarker
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=13
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=signedOutUnfinishedJournalNeverReplaysOrDiscardsOriginalAccountEvidence
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=13
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=signedOutUnfinishedJournalNeverReplaysOrDiscardsOriginalAccountEvidence
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=14
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=workTaskHeaderDraftAndMaterialWritesStayDurableAfterContention
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=14
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=workTaskHeaderDraftAndMaterialWritesStayDurableAfterContention
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=15
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=interruptedMetadataCannotOverwriteNewerCaptureOnRecreation
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=15
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=interruptedMetadataCannotOverwriteNewerCaptureOnRecreation
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=16
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=failedMetadataWithUpdatedPreferenceMemoryStillRequiresDurableRecommit
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=16
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=failedMetadataWithUpdatedPreferenceMemoryStillRequiresDurableRecommit
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=17
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=mainThreadTimeoutIsExplicitBoundedAndSameIntentCanStillBeSaved
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=17
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=mainThreadTimeoutIsExplicitBoundedAndSameIntentCanStillBeSaved
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=18
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=revokedDeferredDomainCacheCannotChangeOriginalBytesOrBindToLaterAccount
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=18
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=revokedDeferredDomainCacheCannotChangeOriginalBytesOrBindToLaterAccount
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=19
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=signedOutCorruptPhotoJournalRemainsProtectedWithoutMetadataReplacement
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.auth.FieldSaveContentionAndroidTest
+INSTRUMENTATION_STATUS: current=19
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=signedOutCorruptPhotoJournalRemainsProtectedWithoutMetadataReplacement
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=20
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.SprayStartProductionAndroidTest:
+INSTRUMENTATION_STATUS: test=validHoursActivateOriginalAndPreserveValue
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=20
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=validHoursActivateOriginalAndPreserveValue
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=21
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=heldHistoricalGpsMarkerAloneDoesNotBlockStartOrLoseItsPayload
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=21
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=heldHistoricalGpsMarkerAloneDoesNotBlockStartOrLoseItsPayload
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=22
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=calculatorButtonBlockedReceiptShowsInspectionWithOriginalIdentity
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=22
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=calculatorButtonBlockedReceiptShowsInspectionWithOriginalIdentity
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=23
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayStartProductionAndroidTest
+INSTRUMENTATION_STATUS: current=23
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Failed to inject touch input.
+Reason: Expected exactly '1' node but could not find any node that satisfies: ((Text + InputText + EditableText contains 'Foliar Spray' (ignoreCase: false)) && (hasAnyAncestorThat(IsPopup is defined)))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(Semanti
+... output truncated ...
+US: current=52
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=imperialNarrowLargeFont
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=53
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=engineHoursBlankAndEnteredCallbacksAndInvalidInput
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=53
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=engineHoursBlankAndEnteredCallbacksAndInvalidInput
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=54
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=imperialHandsetDefaultFont
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=54
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=imperialHandsetDefaultFont
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=55
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=enteredActualsSurvivePathSelectionButResetWhenRecipeChanges
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayFieldLayoutAndroidTest
+INSTRUMENTATION_STATUS: current=55
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=enteredActualsSurvivePathSelectionButResetWhenRecipeChanges
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayTankActualQueueAndroidTest
+INSTRUMENTATION_STATUS: current=56
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.SprayTankActualQueueAndroidTest:
+INSTRUMENTATION_STATUS: test=initializationError
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayTankActualQueueAndroidTest
+INSTRUMENTATION_STATUS: current=56
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stack=java.lang.RuntimeException: Failed loading specified test class 'com.rork.vinetrack.data.SprayTankActualQueueAndroidTest'
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:50)
+	at androidx.test.internal.runner.TestLoader.getRunnersFor(TestLoader.java:64)
+	at androidx.test.internal.runner.TestRequestBuilder.build(TestRequestBuilder.java:842)
+	at androidx.test.runner.AndroidJUnitRunner.buildRequest(AndroidJUnitRunner.java:672)
+	at androidx.test.runner.AndroidJUnitRunner.onStart(AndroidJUnitRunner.java:453)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2606)
+Caused by: java.lang.ClassNotFoundException: com.rork.vinetrack.data.SprayTankActualQueueAndroidTest
+	at java.lang.Class.classForName(Native Method)
+	at java.lang.Class.forName(Class.java:607)
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:44)
+	... 5 more
+Caused by: java.lang.ClassNotFoundException: Didn't find class "com.rork.vinetrack.data.SprayTankActualQueueAndroidTest" on path: DexPathList[[zip file "/system/framework/android.test.runner.jar", zip file "/system/framework/android.test.mock.jar", zip file "/system/framework/android.test.base.jar", zip file "/data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/base.apk", zip file "/data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/base.apk"],nativeLibraryDirectories=[/data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/lib/x86_64, /data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/lib/x86_64, /data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/base.apk!/lib/x86_64, /data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/base.apk!/lib/x86_64, /system/lib64]]
+	at dalvik.system.BaseDexClassLoader.findClass(BaseDexClassLoader.java:259)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:637)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:573)
+	... 8 more
+
+INSTRUMENTATION_STATUS: stream=
+Error in initializationError(com.rork.vinetrack.data.SprayTankActualQueueAndroidTest):
+java.lang.RuntimeException: Failed loading specified test class 'com.rork.vinetrack.data.SprayTankActualQueueAndroidTest'
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:50)
+	at androidx.test.internal.runner.TestLoader.getRunnersFor(TestLoader.java:64)
+	at androidx.test.internal.runner.TestRequestBuilder.build(TestRequestBuilder.java:842)
+	at androidx.test.runner.AndroidJUnitRunner.buildRequest(AndroidJUnitRunner.java:672)
+	at androidx.test.runner.AndroidJUnitRunner.onStart(AndroidJUnitRunner.java:453)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2606)
+Caused by: java.lang.ClassNotFoundException: com.rork.vinetrack.data.SprayTankActualQueueAndroidTest
+	at java.lang.Class.classForName(Native Method)
+	at java.lang.Class.forName(Class.java:607)
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:44)
+	... 5 more
+Caused by: java.lang.ClassNotFoundException: Didn't find class "com.rork.vinetrack.data.SprayTankActualQueueAndroidTest" on path: DexPathList[[zip file "/system/framework/android.test.runner.jar", zip file "/system/framework/android.test.mock.jar", zip file "/system/framework/android.test.base.jar", zip file "/data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/base.apk", zip file "/data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/base.apk"],nativeLibraryDirectories=[/data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/lib/x86_64, /data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/lib/x86_64, /data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/base.apk!/lib/x86_64, /data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/base.apk!/lib/x86_64, /system/lib64]]
+	at dalvik.system.BaseDexClassLoader.findClass(BaseDexClassLoader.java:259)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:637)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:573)
+	... 8 more
+
+INSTRUMENTATION_STATUS: test=initializationError
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayOperationalBundleAndroidTest
+INSTRUMENTATION_STATUS: current=57
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.SprayOperationalBundleAndroidTest:
+INSTRUMENTATION_STATUS: test=initializationError
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.SprayOperationalBundleAndroidTest
+INSTRUMENTATION_STATUS: current=57
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=57
+INSTRUMENTATION_STATUS: stack=java.lang.RuntimeException: Failed loading specified test class 'com.rork.vinetrack.data.SprayOperationalBundleAndroidTest'
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:50)
+	at androidx.test.internal.runner.TestLoader.getRunnersFor(TestLoader.java:64)
+	at androidx.test.internal.runner.TestRequestBuilder.build(TestRequestBuilder.java:842)
+	at androidx.test.runner.AndroidJUnitRunner.buildRequest(AndroidJUnitRunner.java:672)
+	at androidx.test.runner.AndroidJUnitRunner.onStart(AndroidJUnitRunner.java:453)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2606)
+Caused by: java.lang.ClassNotFoundException: com.rork.vinetrack.data.SprayOperationalBundleAndroidTest
+	at java.lang.Class.classForName(Native Method)
+	at java.lang.Class.forName(Class.java:607)
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:44)
+	... 5 more
+Caused by: java.lang.ClassNotFoundException: Didn't find class "com.rork.vinetrack.data.SprayOperationalBundleAndroidTest" on path: DexPathList[[zip file "/system/framework/android.test.runner.jar", zip file "/system/framework/android.test.mock.jar", zip file "/system/framework/android.test.base.jar", zip file "/data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/base.apk", zip file "/data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/base.apk"],nativeLibraryDirectories=[/data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/lib/x86_64, /data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/lib/x86_64, /data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/base.apk!/lib/x86_64, /data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/base.apk!/lib/x86_64, /system/lib64]]
+	at dalvik.system.BaseDexClassLoader.findClass(BaseDexClassLoader.java:259)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:637)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:573)
+	... 8 more
+
+INSTRUMENTATION_STATUS: stream=
+Error in initializationError(com.rork.vinetrack.data.SprayOperationalBundleAndroidTest):
+java.lang.RuntimeException: Failed loading specified test class 'com.rork.vinetrack.data.SprayOperationalBundleAndroidTest'
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:50)
+	at androidx.test.internal.runner.TestLoader.getRunnersFor(TestLoader.java:64)
+	at androidx.test.internal.runner.TestRequestBuilder.build(TestRequestBuilder.java:842)
+	at androidx.test.runner.AndroidJUnitRunner.buildRequest(AndroidJUnitRunner.java:672)
+	at androidx.test.runner.AndroidJUnitRunner.onStart(AndroidJUnitRunner.java:453)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2606)
+Caused by: java.lang.ClassNotFoundException: com.rork.vinetrack.data.SprayOperationalBundleAndroidTest
+	at java.lang.Class.classForName(Native Method)
+	at java.lang.Class.forName(Class.java:607)
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:44)
+	... 5 more
+Caused by: java.lang.ClassNotFoundException: Didn't find class "com.rork.vinetrack.data.SprayOperationalBundleAndroidTest" on path: DexPathList[[zip file "/system/framework/android.test.runner.jar", zip file "/system/framework/android.test.mock.jar", zip file "/system/framework/android.test.base.jar", zip file "/data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/base.apk", zip file "/data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/base.apk"],nativeLibraryDirectories=[/data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/lib/x86_64, /data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/lib/x86_64, /data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/base.apk!/lib/x86_64, /data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/base.apk!/lib/x86_64, /system/lib64]]
+	at dalvik.system.BaseDexClassLoader.findClass(BaseDexClassLoader.java:259)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:637)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:573)
+	... 8 more
+
+INSTRUMENTATION_STATUS: test=initializationError
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 107.161
+There were 5 failures:
+1) expiredTankPreviewAndCommandsKeepOriginalDiskDraftAndReconciliationMarker(com.rork.vinetrack.data.auth.RetainedStartupConstructionTest)
+java.lang.AssertionError
+	at org.junit.Assert.fail(Assert.java:87)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertFalse(Assert.java:65)
+	at org.junit.Assert.assertFalse(Assert.java:75)
+	at com.rork.vinetrack.data.auth.RetainedStartupConstructionTest.expiredTankPreviewAndCommandsKeepOriginalDiskDraftAndReconciliationMarker$lambda$0$0(RetainedStartupConstructionTest.kt:116)
+	at com.rork.vinetrack.data.auth.RetainedStartupConstructionTest.$r8$lambda$5tMyyP1k1AEuCKYAqzUYqmHMlzM(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.RetainedStartupConstructionTest$$ExternalSyntheticLambda23.run(D8$$SyntheticClass:0)
+	at java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:524)
+	at java.util.concurrent.FutureTask.run(FutureTask.java:317)
+	at android.app.Instrumentation$SyncRunnable.run(Instrumentation.java:2624)
+	at android.os.Handler.handleCallback(Handler.java:991)
+	at android.os.Handler.dispatchMessage(Handler.java:102)
+	at android.os.Looper.loopOnce(Looper.java:232)
+	at android.os.Looper.loop(Looper.java:317)
+	at android.app.ActivityThread.main(ActivityThread.java:8934)
+	at java.lang.reflect.Method.invoke(Native Method)
+	at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:591)
+	at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:911)
+2) calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+java.lang.AssertionError: Failed to inject touch input.
+Reason: Expected exactly '1' node but could not find any node that satisfies: ((Text + InputText + EditableText contains 'Foliar Spray' (ignoreCase: false)) && (hasAnyAncestorThat(IsPopup is defined)))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchSemanticsNode(SemanticsNodeInteraction.kt:84)
+	at androidx.compose.ui.test.ActionsKt.performTouchInput(Actions.kt:402)
+	at androidx.compose.ui.test.AndroidActions.performClickImpl(Actions.android.kt:23)
+	at androidx.compose.ui.test.ActionsKt.performClick(Actions.kt:60)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.openCalculatorJourney(SprayStartProductionAndroidTest.kt:278)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonOlderAcceptedOpensInspectionWithoutAdoption(SprayStartProductionAndroidTest.kt:401)
+3) calculatorButtonLostActivationRestoresSameTankDestination(com.rork.vinetrack.data.SprayStartProductionAndroidTest)
+androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 20000 ms
+	at androidx.compose.ui.test.AndroidComposeUiTestEnvironment$AndroidComposeUiTestImpl.waitUntil(ComposeUiTest.android.kt:809)
+	at androidx.compose.ui.test.junit4.AndroidComposeTestRule.waitUntil(AndroidComposeTestRule.android.kt:378)
+	at com.rork.vinetrack.data.SprayStartProductionAndroidTest.calculatorButtonLostActivationRestoresSameTankDestination(SprayStartProductionAndroidTest.kt:383)
+4) initializationError(com.rork.vinetrack.data.SprayTankActualQueueAndroidTest)
+java.lang.RuntimeException: Failed loading specified test class 'com.rork.vinetrack.data.SprayTankActualQueueAndroidTest'
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:50)
+	at androidx.test.internal.runner.TestLoader.getRunnersFor(TestLoader.java:64)
+	at androidx.test.internal.runner.TestRequestBuilder.build(TestRequestBuilder.java:842)
+	at androidx.test.runner.AndroidJUnitRunner.buildRequest(AndroidJUnitRunner.java:672)
+	at androidx.test.runner.AndroidJUnitRunner.onStart(AndroidJUnitRunner.java:453)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2606)
+Caused by: java.lang.ClassNotFoundException: com.rork.vinetrack.data.SprayTankActualQueueAndroidTest
+	at java.lang.Class.classForName(Native Method)
+	at java.lang.Class.forName(Class.java:607)
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:44)
+	... 5 more
+Caused by: java.lang.ClassNotFoundException: Didn't find class "com.rork.vinetrack.data.SprayTankActualQueueAndroidTest" on path: DexPathList[[zip file "/system/framework/android.test.runner.jar", zip file "/system/framework/android.test.mock.jar", zip file "/system/framework/android.test.base.jar", zip file "/data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/base.apk", zip file "/data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/base.apk"],nativeLibraryDirectories=[/data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/lib/x86_64, /data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/lib/x86_64, /data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/base.apk!/lib/x86_64, /data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/base.apk!/lib/x86_64, /system/lib64]]
+	at dalvik.system.BaseDexClassLoader.findClass(BaseDexClassLoader.java:259)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:637)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:573)
+	... 8 more
+5) initializationError(com.rork.vinetrack.data.SprayOperationalBundleAndroidTest)
+java.lang.RuntimeException: Failed loading specified test class 'com.rork.vinetrack.data.SprayOperationalBundleAndroidTest'
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:50)
+	at androidx.test.internal.runner.TestLoader.getRunnersFor(TestLoader.java:64)
+	at androidx.test.internal.runner.TestRequestBuilder.build(TestRequestBuilder.java:842)
+	at androidx.test.runner.AndroidJUnitRunner.buildRequest(AndroidJUnitRunner.java:672)
+	at androidx.test.runner.AndroidJUnitRunner.onStart(AndroidJUnitRunner.java:453)
+	at android.app.Instrumentation$InstrumentationThread.run(Instrumentation.java:2606)
+Caused by: java.lang.ClassNotFoundException: com.rork.vinetrack.data.SprayOperationalBundleAndroidTest
+	at java.lang.Class.classForName(Native Method)
+	at java.lang.Class.forName(Class.java:607)
+	at androidx.test.internal.runner.DirectTestLoader.doCreateRunner(DirectTestLoader.java:44)
+	... 5 more
+Caused by: java.lang.ClassNotFoundException: Didn't find class "com.rork.vinetrack.data.SprayOperationalBundleAndroidTest" on path: DexPathList[[zip file "/system/framework/android.test.runner.jar", zip file "/system/framework/android.test.mock.jar", zip file "/system/framework/android.test.base.jar", zip file "/data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/base.apk", zip file "/data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/base.apk"],nativeLibraryDirectories=[/data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/lib/x86_64, /data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/lib/x86_64, /data/app/~~qEBeH0f3Z4lCjtjBQeK8cg==/com.rork.vinetrack.test-EB16HkNSkW9EGvEpS1TyDg==/base.apk!/lib/x86_64, /data/app/~~1Ibs_EtSHJr_xw4dQEV3zQ==/com.rork.vinetrack-2iL7IGX9fZcKwS0c69S4Ww==/base.apk!/lib/x86_64, /system/lib64]]
+	at dalvik.system.BaseDexClassLoader.findClass(BaseDexClassLoader.java:259)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:637)
+	at java.lang.ClassLoader.loadClass(ClassLoader.java:573)
+	... 8 more
+
+FAILURES!!!
+Tests run: 57,  Failures: 5
+
+
+INSTRUMENTATION_CODE: -1

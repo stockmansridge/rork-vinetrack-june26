@@ -1,0 +1,383 @@
+{
+  "basePublicMain": "f8d36eec3298071b92cb0d653e3b74d0d27ecc12",
+  "startingManagedRevision": "05a93a94c7ae2288d2cb7e8a32e7a4b97c3adef1",
+  "method": "Exact GitHub API hunks with fuzz zero; no checkout, wholesale branch overwrite, reset, cherry-pick, commit or push. AccountTransitionEvidence retains both disjoint deltas.",
+  "changes": [
+    {
+      "repair": "d3b7f7ace498de5d4b24b83891815833765024e0",
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/GoogleMapsRecoveryAndroidTest.kt",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "c84620dfc310242f7177ae5e0bd21ce7bccbca751a7fcfe4dfc144cc9556e645",
+      "integratedSha256": "c84620dfc310242f7177ae5e0bd21ce7bccbca751a7fcfe4dfc144cc9556e645"
+    },
+    {
+      "repair": "d3b7f7ace498de5d4b24b83891815833765024e0",
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/GoogleMapsRuntimeFilesAndroidTest.kt",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "17cbdfa8b87b995f664455e0a1a88970a56e912e8659c3400f656af12a5c6508",
+      "integratedSha256": "17cbdfa8b87b995f664455e0a1a88970a56e912e8659c3400f656af12a5c6508"
+    },
+    {
+      "repair": "d3b7f7ace498de5d4b24b83891815833765024e0",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AccountTransitionEvidence.kt",
+      "status": "modified",
+      "beforeSha256": "d3a691c7d863b580f3370de15fe57877d14707a0fe4f9a5313a001fde09e6a06",
+      "repairSha256": "710d06f9e4dbc323858146dae812e469648fc186522bc3eb22c255b799fecab0",
+      "integratedSha256": "710d06f9e4dbc323858146dae812e469648fc186522bc3eb22c255b799fecab0"
+    },
+    {
+      "repair": "d3b7f7ace498de5d4b24b83891815833765024e0",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/GoogleMapsRuntimeFiles.kt",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "8101fe2922751a3ef392d8be118a9dd8cfef58090548269ceb43622d60b47af0",
+      "integratedSha256": "8101fe2922751a3ef392d8be118a9dd8cfef58090548269ceb43622d60b47af0"
+    },
+    {
+      "repair": "d3b7f7ace498de5d4b24b83891815833765024e0",
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/GoogleMapsRuntimeFilesTest.kt",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "cc9dfc4771f3706ca426b572f2c899bd8723f0d81ab2c480b78fc31f7a7d0408",
+      "integratedSha256": "cc9dfc4771f3706ca426b572f2c899bd8723f0d81ab2c480b78fc31f7a7d0408"
+    },
+    {
+      "repair": "d3b7f7ace498de5d4b24b83891815833765024e0",
+      "path": "docs/reviews/android-maps-recovery-20261101.md",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "7189366b6bf814da060257fb3c97c1e69e95e537272dc94d9a5a47597d0fe396",
+      "integratedSha256": "7189366b6bf814da060257fb3c97c1e69e95e537272dc94d9a5a47597d0fe396"
+    },
+    {
+      "repair": "d3b7f7ace498de5d4b24b83891815833765024e0",
+      "path": "docs/reviews/evidence/android-maps-recovery-20261101/host-tests.log",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "cc7a98ac3f609b0ee38df84c62a2f31797221f69dacf0a1d3a35eded9a31a25d",
+      "integratedSha256": "cc7a98ac3f609b0ee38df84c62a2f31797221f69dacf0a1d3a35eded9a31a25d"
+    },
+    {
+      "repair": "d3b7f7ace498de5d4b24b83891815833765024e0",
+      "path": "scripts/test-android-maps-runtime-host.py",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "c29af27d153fcd0b68a726adb3db6fda2eab3089c808209a09c1599052e0f74e",
+      "integratedSha256": "c29af27d153fcd0b68a726adb3db6fda2eab3089c808209a09c1599052e0f74e"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayFieldLayoutAndroidTest.kt",
+      "status": "modified",
+      "beforeSha256": "d7a1d7970891a9239c45661a4b6391106776a6797dd3e5f93ed66e618d0b7da9",
+      "repairSha256": "6322cf589af6e62cfa2029680fbe0fb7833fc0f419e9ca9eab407a20c20789b4",
+      "integratedSha256": "6322cf589af6e62cfa2029680fbe0fb7833fc0f419e9ca9eab407a20c20789b4"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayStartProductionAndroidTest.kt",
+      "status": "modified",
+      "beforeSha256": "850c8a8c04526e3ce3715130ec1705f88ba7a36dcbaeecf343c225f288f4e778",
+      "repairSha256": "e8e2013f5eb5c7f2352630c6243d9c8e6ca7a2488199eee23f6b6db25a35bc13",
+      "integratedSha256": "e8e2013f5eb5c7f2352630c6243d9c8e6ca7a2488199eee23f6b6db25a35bc13"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/AuthRetentionAndroidTest.kt",
+      "status": "modified",
+      "beforeSha256": "ac94811837c14f9e6979ce23df640f7d9653d6d70d597982062bbdb6dfac5123",
+      "repairSha256": "dfc35e14e22dbb59daff4f07389230038ee45d7198e499366b7960ebef42f821",
+      "integratedSha256": "dfc35e14e22dbb59daff4f07389230038ee45d7198e499366b7960ebef42f821"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SprayTankActualStore.kt",
+      "status": "modified",
+      "beforeSha256": "db4a0feb92a5a015316aaa2236dde588b8b2528f1f6a17f77c4f956dd982adb4",
+      "repairSha256": "41adc5e42550fb49dfaaea7534d5c3bdcd279d262cf18b1617863c1a4168bcea",
+      "integratedSha256": "41adc5e42550fb49dfaaea7534d5c3bdcd279d262cf18b1617863c1a4168bcea"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/StartTankCommitCoordinator.kt",
+      "status": "modified",
+      "beforeSha256": "368622901261cf9733f170d715108b5474eedae8c6d4278b613950134ef3dbc0",
+      "repairSha256": "195092930690dbac0f1441ca80c61f6fc877d483e9f630e67a2087148ab043cf",
+      "integratedSha256": "195092930690dbac0f1441ca80c61f6fc877d483e9f630e67a2087148ab043cf"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AccountTransitionEvidence.kt",
+      "status": "modified",
+      "beforeSha256": "710d06f9e4dbc323858146dae812e469648fc186522bc3eb22c255b799fecab0",
+      "repairSha256": "3d782597d1164041f808696bd4098d1570c68bb10568387e86072bc3de3c8042",
+      "integratedSha256": "01572b258bcf3ccde0b0dede1b378e6c9164259ae4d0c7682bfd681f47106a82"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/SprayActualInputDraft.kt",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "c3a21bfaf7a808ec3e8e8fa5d27554c0938f189c7a8c69cd8660bd58417f091b",
+      "integratedSha256": "c3a21bfaf7a808ec3e8e8fa5d27554c0938f189c7a8c69cd8660bd58417f091b"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/spray/SprayStartActualAmounts.kt",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "420df90ef668fae4a0e9632af88f841e91557dedfb090e0191072ea0f80b9565",
+      "integratedSha256": "420df90ef668fae4a0e9632af88f841e91557dedfb090e0191072ea0f80b9565"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt",
+      "status": "modified",
+      "beforeSha256": "7eb43ca0520912cea0801bdd8618dc12468c4867d38e25ec8b1fc1aad3a30d66",
+      "repairSha256": "2e3bc026642d3497a05a249470a79bda77d2c9262d6b83d633499e9304270683",
+      "integratedSha256": "2e3bc026642d3497a05a249470a79bda77d2c9262d6b83d633499e9304270683"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt",
+      "status": "modified",
+      "beforeSha256": "0e66a296b648163128b4c3579b013eba36819885d239c557c5f539b87ee22af2",
+      "repairSha256": "d13c24157015c4e31a337402af13f2884b423dc0eced4b735755a3d11eb6489f",
+      "integratedSha256": "d13c24157015c4e31a337402af13f2884b423dc0eced4b735755a3d11eb6489f"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayStartActualFields.kt",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "11880bdee7c30f5cc19584bf9aa26d005d97ac28072f9bc181831668597cdb05",
+      "integratedSha256": "11880bdee7c30f5cc19584bf9aa26d005d97ac28072f9bc181831668597cdb05"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayTripSetupScreen.kt",
+      "status": "modified",
+      "beforeSha256": "c3b7d90b863814e5f3d94a95fdec86b306bc74b4afd67e219a930928a338798d",
+      "repairSha256": "4507456a32f10a9d5fb10474e4ac28950bcb355515ee60b9056963ea092c4d2f",
+      "integratedSha256": "4507456a32f10a9d5fb10474e4ac28950bcb355515ee60b9056963ea092c4d2f"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayTripStartConfirmation.kt",
+      "status": "modified",
+      "beforeSha256": "958cdd07c8cdaa22ba3c5396882a1659095362b25a70ec4866efb02aad6f7c69",
+      "repairSha256": "83b2e2f1b4fdd9fa4a12ccc5bde2b786a5c28a9d27e6a533eb2dc84179b16aca",
+      "integratedSha256": "83b2e2f1b4fdd9fa4a12ccc5bde2b786a5c28a9d27e6a533eb2dc84179b16aca"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt",
+      "status": "modified",
+      "beforeSha256": "cf82d86fbcbe68a5786fe510b3078da7f94fa4e7321eb97ce3380a9aecdde3f0",
+      "repairSha256": "bec43e27ea703ee28961cd38eb9def237726bf3a14fcdd129ed39ea879eebae6",
+      "integratedSha256": "bec43e27ea703ee28961cd38eb9def237726bf3a14fcdd129ed39ea879eebae6"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TankMixDialog.kt",
+      "status": "modified",
+      "beforeSha256": "c298e02e3e6da9f6a727f389e00b3b400db87b2ceb73216af938b982f685a9eb",
+      "repairSha256": "5ba95c9ed0085f59ef59326d45acd5c157f1f7f14ca94203a36a9aff41bd4d2e",
+      "integratedSha256": "5ba95c9ed0085f59ef59326d45acd5c157f1f7f14ca94203a36a9aff41bd4d2e"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayActualInputDraftStoreTest.kt",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "22f480b87b004d598278762e1d09bb645e468a9f8028d56d296adddbdbc292a2",
+      "integratedSha256": "22f480b87b004d598278762e1d09bb645e468a9f8028d56d296adddbdbc292a2"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayStartActualAmountsTest.kt",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "ba6f4a462f9ca949077701e44f704db96c48f2133404ad10ce7e7a24e3fb8006",
+      "integratedSha256": "ba6f4a462f9ca949077701e44f704db96c48f2133404ad10ce7e7a24e3fb8006"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/StartTankCommitCoordinatorTest.kt",
+      "status": "modified",
+      "beforeSha256": "5176549c0a23048daedcec2777ecfc48743d930079409fb8b2fada98df74f022",
+      "repairSha256": "e9eddb2d50278eaeee80505214202d5965845ca4d298cacaec3736d5a218b795",
+      "integratedSha256": "e9eddb2d50278eaeee80505214202d5965845ca4d298cacaec3736d5a218b795"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "docs/spray-review-actuals-resume-2026-11-01.md",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "eb0116259afdfc251b39ca3b8d61accef3dc42b41033edf69aebec05cc75791d",
+      "integratedSha256": "eb0116259afdfc251b39ca3b8d61accef3dc42b41033edf69aebec05cc75791d"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrack/App/SprayCalculatorView.swift",
+      "status": "modified",
+      "beforeSha256": "9ba2c05eb01b5fb47f74f9697551c9b5203700e09aed9a6e46573a06d9a0e55c",
+      "repairSha256": "a087e388008ca1bd6d62c04fce3ab08dfde43ebd91d3fa80d201b99028424204",
+      "integratedSha256": "a087e388008ca1bd6d62c04fce3ab08dfde43ebd91d3fa80d201b99028424204"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrack/App/SprayProgram/SprayProgramResumeRoute.swift",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "ea7df89c647a063bd315eac424c446b4dd2e0fb72b295a0f3c6f58593ff27f17",
+      "integratedSha256": "ea7df89c647a063bd315eac424c446b4dd2e0fb72b295a0f3c6f58593ff27f17"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrack/App/SprayStartRateReview.swift",
+      "status": "modified",
+      "beforeSha256": "62d8ab4d8095d6b6d97222b1c312f4ced095785ec7509e04c280ae8faeaf2012",
+      "repairSha256": "4cbf1061301e99b22b1d2456420c92a0c0dc4a0a47f64c69741fbf9b4bf65a70",
+      "integratedSha256": "4cbf1061301e99b22b1d2456420c92a0c0dc4a0a47f64c69741fbf9b4bf65a70"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrack/App/SprayTripSetupSheet.swift",
+      "status": "modified",
+      "beforeSha256": "88fabe3dafdcd024a37e2c1befc247c8583762e02e388712b9244555157edac7",
+      "repairSha256": "e2b78ad8825c732629ae0c6a9f179b06bb4a7e3ec021e21b4d1a1b0b0ecd2f10",
+      "integratedSha256": "e2b78ad8825c732629ae0c6a9f179b06bb4a7e3ec021e21b4d1a1b0b0ecd2f10"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrack/App/SprayTripStartConfirmationSheet.swift",
+      "status": "modified",
+      "beforeSha256": "727cb2c16b514d02fc8374fdc5c6e8b44fc82ee3873b4d2e0c88379d99b4e258",
+      "repairSha256": "04d7a352626b2b585348769973381873feba6b957bcff3661373e59db0703e16",
+      "integratedSha256": "04d7a352626b2b585348769973381873feba6b957bcff3661373e59db0703e16"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrack/Backend/Sync/SprayTankActualStore.swift",
+      "status": "modified",
+      "beforeSha256": "9a79033d0a4f47919822cb7b0c346df22ff3f2228c2cee563157bb2fe2964573",
+      "repairSha256": "df8fdc4fe98529d1e4e5a2e88b4b1581f78a0dae509ee6f972ca6c49ddf4275d",
+      "integratedSha256": "df8fdc4fe98529d1e4e5a2e88b4b1581f78a0dae509ee6f972ca6c49ddf4275d"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrack/LegacyImported/Models/SprayInitialTankAmounts.swift",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "fc77899900ffd2c9d4eadfbc9a852f438a1aacc4637b4d34cc2dae4d450b52a3",
+      "integratedSha256": "fc77899900ffd2c9d4eadfbc9a852f438a1aacc4637b4d34cc2dae4d450b52a3"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrack/LegacyImported/Services/TripTrackingService.swift",
+      "status": "modified",
+      "beforeSha256": "2a9419a0aed2397dd54632d330cdd15fdd12c7bf75045b3e673c40a9b005c951",
+      "repairSha256": "8d7668a5023cd54860c60278983ae54ba723f0103e7cf878d48ffc1067137b13",
+      "integratedSha256": "8d7668a5023cd54860c60278983ae54ba723f0103e7cf878d48ffc1067137b13"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrack/LegacyImported/Views/Trips/ActiveTripView.swift",
+      "status": "modified",
+      "beforeSha256": "88e4c3f24e78fb51158b2d3fe474f4ef019ef2e2dc47fbf1a0b015920a7f33f4",
+      "repairSha256": "b603229bdf8498d867688d922413bf95da3081da34cb793b0ab1579db134a0f5",
+      "integratedSha256": "b603229bdf8498d867688d922413bf95da3081da34cb793b0ab1579db134a0f5"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrack/LegacyImported/Views/Trips/ConfirmActualTankMixView.swift",
+      "status": "modified",
+      "beforeSha256": "fb8521e2fa7a98c38f8fb5dd397e9e2e3267ea1c4c9e6ca85e64d9446164987d",
+      "repairSha256": "37feb180437bf9f50c07c8715320cc810645e653af188d7f66de73872869d824",
+      "integratedSha256": "37feb180437bf9f50c07c8715320cc810645e653af188d7f66de73872869d824"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift",
+      "status": "modified",
+      "beforeSha256": "33408770bdc5ad8ffa6d06b89f74a640a1e9764bf4a7db06fa9cb86b09ac0ecb",
+      "repairSha256": "21c6ec4a0de974deabe335e4dfce1df4f025ceb00d1c7ad7a9ffe8fa6ffc347e",
+      "integratedSha256": "21c6ec4a0de974deabe335e4dfce1df4f025ceb00d1c7ad7a9ffe8fa6ffc347e"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrackTests/SprayInitialTankAmountsTests.swift",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "474e926b8853982c38bbe16e7a49619f911d7fbe37430b98e41a6d6189c4ecd6",
+      "integratedSha256": "474e926b8853982c38bbe16e7a49619f911d7fbe37430b98e41a6d6189c4ecd6"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrackTests/SprayProgramResumeRouteTests.swift",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "90177b5787abb8f182c2a2e28c5ef34b0f2ff10ce3e8e24eedac7fa999a331d7",
+      "integratedSha256": "90177b5787abb8f182c2a2e28c5ef34b0f2ff10ce3e8e24eedac7fa999a331d7"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrackUITests/MobileSprayUXParityUITests.swift",
+      "status": "modified",
+      "beforeSha256": "0c0aa38d42403e6a688e68548a4fb7cadaf067ab1e48aaa5ad40a36127334e88",
+      "repairSha256": "7622715fdb4a393a54d0ab5217f03603111586b635c968006e5072a23f71f77c",
+      "integratedSha256": "7622715fdb4a393a54d0ab5217f03603111586b635c968006e5072a23f71f77c"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "ios/VineTrackUITests/SprayEditingAcceptanceUITests.swift",
+      "status": "modified",
+      "beforeSha256": "b75ff3086531969c8fb0e94d90f56724872e11a3ec50920b78ac5505a4e14197",
+      "repairSha256": "c4779b688500056393b7be82a153b4390d3d3f4ec0ff200dce93444760170e69",
+      "integratedSha256": "c4779b688500056393b7be82a153b4390d3d3f4ec0ff200dce93444760170e69"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "scripts/test-spray-actuals-host.py",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "cea826a471520bf8e3c6f222ff4c268eb7277fe8689c0e0aef5ce221e71887e8",
+      "integratedSha256": "cea826a471520bf8e3c6f222ff4c268eb7277fe8689c0e0aef5ce221e71887e8"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "scripts/test-spray-draft-recovery-host.py",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "bd55a137ab02bb8f90d04e2f5b025488e788c4ebd2e8a5bb675e88607aa591d7",
+      "integratedSha256": "bd55a137ab02bb8f90d04e2f5b025488e788c4ebd2e8a5bb675e88607aa591d7"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "scripts/test-spray-review-actuals-host.py",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "89a690e32b29387c7645151d86ab178ea6df04ae7a06c22b5769e4e43053f644",
+      "integratedSha256": "89a690e32b29387c7645151d86ab178ea6df04ae7a06c22b5769e4e43053f644"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "scripts/tests/test_spray_resume_routing.py",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "53e6c704171368688393ca22368e707bf6c76b8c3545363fc50d0abd30feac02",
+      "integratedSha256": "53e6c704171368688393ca22368e707bf6c76b8c3545363fc50d0abd30feac02"
+    },
+    {
+      "repair": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "path": "scripts/tests/test_spray_review_actuals_wiring.py",
+      "status": "added",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "repairSha256": "3cf33d1d89f8fea325acd5a3835160acb4c5833e53f63e0d65ec8067243bacd1",
+      "integratedSha256": "3cf33d1d89f8fea325acd5a3835160acb4c5833e53f63e0d65ec8067243bacd1"
+    }
+  ]
+}

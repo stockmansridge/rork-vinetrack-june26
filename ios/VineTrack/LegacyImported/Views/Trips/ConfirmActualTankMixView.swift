@@ -13,6 +13,7 @@ struct ConfirmActualTankMixView: View {
     private var fmt: RegionFormatter { inputFormatter ?? store.settings.regionFormatter }
     @State private var waterText: String
     @State private var chemicalTexts: [UUID: String]
+    @State private var retainedInitialAmounts: SprayInitialTankAmounts?
     @State private var isSaving: Bool = false
     @State private var errorMessage: String?
 
@@ -23,7 +24,7 @@ struct ConfirmActualTankMixView: View {
         self.onConfirm = onConfirm
         _waterText = State(initialValue: Self.input(tank.waterVolume))
         _chemicalTexts = State(initialValue: Dictionary(uniqueKeysWithValues: tank.chemicals.map {
-            ($0.id, Self.input($0.unit.fromBase($0.volumePerTank)))
+            ($0.id, Self.input(SprayInitialTankInput.plannedDisplayAmount($0)))
         }))
     }
 
@@ -45,7 +46,7 @@ struct ConfirmActualTankMixView: View {
                     ForEach(tank.chemicals) { chemical in
                         VStack(alignment: .leading, spacing: 8) {
                             Text(chemical.name.isEmpty ? "Unnamed chemical" : chemical.name).font(.headline)
-                            LabeledContent("Planned", value: "\(TankMixDetailsView.number(chemical.displayVolume)) \(chemical.unitLabel)")
+                            LabeledContent("Planned", value: "\(TankMixDetailsView.number(SprayInitialTankInput.plannedDisplayAmount(chemical))) \(chemical.unitLabel)")
                             actualInputRow(
                                 text: Binding(
                                     get: { chemicalTexts[chemical.id] ?? "" },
@@ -55,7 +56,7 @@ struct ConfirmActualTankMixView: View {
                                 accessibilityName: "Actual \(chemical.name.isEmpty ? "chemical" : chemical.name)"
                             )
                             let actual = parsed(chemicalTexts[chemical.id] ?? "")
-                            difference(planned: chemical.displayVolume, actual: actual, unit: chemical.unitLabel)
+                            difference(planned: SprayInitialTankInput.plannedDisplayAmount(chemical), actual: actual, unit: chemical.unitLabel)
                             if actual == 0 {
                                 Label("This product will be recorded as not added.", systemImage: "exclamationmark.triangle.fill")
                                     .font(.caption).foregroundStyle(.orange)
@@ -63,6 +64,9 @@ struct ConfirmActualTankMixView: View {
                         }
                         .padding(.vertical, 4)
                     }
+                }
+                if retainedInitialAmounts != nil {
+                    Section { Text("Your actual amounts from Review are retained for this tank.").font(.caption) }
                 }
                 if let errorMessage { Section { Text(errorMessage).foregroundStyle(.red) } }
             }
@@ -82,6 +86,15 @@ struct ConfirmActualTankMixView: View {
             inputFormatter = formatter
             waterSeed = Self.input(formatter.volumeValue(litres: tank.waterVolume))
             waterText = waterSeed
+            if let tripId = record.canonicalTripId,
+               let retained = SprayTankActualStore.shared.initialMix(tripId: tripId),
+               retained.ownerId == store.currentUserIdProvider?(),
+               retained.sprayRecordId == record.id, retained.tank == tank {
+                retainedInitialAmounts = retained.amounts
+                let input = SprayInitialTankInput(amounts: retained.amounts, tank: tank, formatter: formatter)
+                waterText = input.waterText
+                chemicalTexts = input.chemicalTexts
+            }
         }
         .interactiveDismissDisabled(isSaving)
     }
@@ -95,6 +108,14 @@ struct ConfirmActualTankMixView: View {
     }
 
     private func confirm() {
+        if let retainedInitialAmounts {
+            isSaving = true
+            if onConfirm(retainedInitialAmounts.waterLitres, retainedInitialAmounts.chemicalBaseAmounts) {
+                dismiss()
+            } else { errorMessage = "The entered actual mix is still retained. Retry the original tank." }
+            isSaving = false
+            return
+        }
         guard let displayWater = parsed(waterText), isValid else { return }
         let water = waterText == waterSeed ? tank.waterVolume : fmt.volumeToCanonical(displayWater)
         isSaving = true
@@ -117,6 +138,7 @@ struct ConfirmActualTankMixView: View {
                 .foregroundStyle(VineyardTheme.olive)
             Spacer(minLength: 12)
             TextField("0", text: text)
+                .disabled(retainedInitialAmounts != nil)
                 .keyboardType(.decimalPad)
                 .multilineTextAlignment(.trailing)
                 .font(.body.weight(.semibold).monospacedDigit())

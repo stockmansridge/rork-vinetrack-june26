@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-11-01T03:29:03.122Z" hostname="e2b.local" time="0.014">
+  <properties/>
+  <testcase name="preparedRecoveryCannotEstablishBlockedRecipeAndRetainsExactJournal" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.008"/>
+  <testcase name="crashBeforeJournalClearIsRecoveredIdempotently" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.0"/>
+  <testcase name="fillOnlySessionIdentityIsTransitionedRatherThanMistakenForCompletedStart" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.001"/>
+  <testcase name="endedOrTankConflictedTripRefusesOperation" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.0"/>
+  <testcase name="laterTankConflictIsPreservedAndUnresolvedJournalIsNotOverwritten" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.0"/>
+  <testcase name="recoveryAfterTripSaveCompletesMarker" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.0"/>
+  <testcase name="alreadyDurableActualRecoveryIsFactualNotNewRecipeAdmission" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.0"/>
+  <testcase name="sameScreenRetryResumesFrozenJournalWithoutReplacingValues" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.0"/>
+  <testcase name="firstCommitRequiresAndVerifiesDurableTripWrite" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.0"/>
+  <testcase name="entitlementHoldRetainsInterruptedTankAndResumesOriginalAfterVerification" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.002"/>
+  <testcase name="firstCommitMergesLiveRouteAheadOfStoredSnapshotAndRelaunchRetainsIt" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.001"/>
+  <testcase name="recoveryAfterActualSaveKeepsNewerRouteAndStableIds" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.0"/>
+  <testcase name="gpsProgressDuringConfirmationIsRetainedByTankOperationMerge" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.0"/>
+  <testcase name="repeatedRecoveryFromEachIncompleteStoreStateNeverDuplicates" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.0"/>
+  <testcase name="editedActualAmountsCannotResumeOrAdvanceAnEarlierFrozenConfirmation" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.001"/>
+  <testcase name="failedJournalWriteMutatesNothing" classname="com.rork.vinetrack.data.StartTankCommitCoordinatorTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -65,6 +65,48 @@ class PreparedRecoveryAndroidTest {
         }
     }
 
+    @Test fun preparedSnapshotWaitsBeforeStorageForSameAccountContention() = runBlocking {
+        val session = SessionStore(context)
+        session.save("synthetic", "synthetic", owner, null)
+        DomainCacheStore(context).savePins(vineyard, listOf(Pin("retained-original", vineyard)), 1)
+        val held = java.util.concurrent.CountDownLatch(1)
+        val attempted = java.util.concurrent.CountDownLatch(1)
+        val holderFailure = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
+        val previous = com.rork.vinetrack.data.auth.CleanExitDiagnostics.observer
+        val prefs = context.getSharedPreferences("vinetrack_recovery_snapshots_v2", Context.MODE_PRIVATE)
+        com.rork.vinetrack.data.auth.CleanExitDiagnostics.observer = {
+            if (held.count == 0L && (it == "field.commit.waiting" || it == "field.commit.contended")) attempted.countDown()
+        }
+        // Coordinate the real lock boundary, not Compose's scheduler or a timed UI retry.
+        val holder = Thread {
+            try {
+                session.retentionGuard.serialized {
+                    held.countDown()
+                    check(attempted.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                    check(prefs.all.isEmpty()) { "Snapshot published before admission" }
+                }
+            } catch (failure: Throwable) { holderFailure.set(failure) }
+        }
+        try {
+            val result = withContext(Dispatchers.Main) {
+                RecoverySnapshotStore.captureBeforeMutationPrepared(context, vineyard) {
+                    holder.start()
+                    check(held.await(3, java.util.concurrent.TimeUnit.SECONDS))
+                }
+            }
+            holder.join(4_000)
+            assertFalse("Authority holder deadlocked", holder.isAlive)
+            assertNull(holderFailure.get())
+            assertTrue("Same-account contention must not discard prepared preservation", result.isPreserved)
+            assertEquals(listOf("retained-original"), RecoverySnapshotStore(context).load(vineyard)!!.cachedPins.map { it.id })
+            assertFalse(session.retentionGuard.isLocked)
+        } finally {
+            attempted.countDown()
+            holder.join(4_000)
+            com.rork.vinetrack.data.auth.CleanExitDiagnostics.observer = previous
+        }
+    }
+
     @Test fun rejectedAccountTransitionRevokesPreparedCommit() = runBlocking {
         withTimeout(10_000) {
             val session = SessionStore(context)

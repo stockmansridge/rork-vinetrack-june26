@@ -5,6 +5,9 @@ import Supabase
 nonisolated private struct SprayTankActualCache: Codable, Sendable {
     var records: [SprayTankActual] = []
     var pendingIds: Set<UUID> = []
+    // Optional so archives written before the Review actual-entry flow decode
+    // unchanged. Every cache write preserves these exact activation handoffs.
+    var initialMixDrafts: [SprayInitialTankDraft]? = nil
 }
 
 nonisolated private struct BackendSprayTankActual: Decodable, Sendable {
@@ -80,6 +83,7 @@ final class SprayTankActualStore {
 
     private(set) var records: [SprayTankActual]
     private(set) var pendingIds: Set<UUID>
+    private(set) var initialMixDrafts: [SprayInitialTankDraft]
     private let persistence: PersistenceStore
 
     convenience init() {
@@ -91,21 +95,60 @@ final class SprayTankActualStore {
         let cache: SprayTankActualCache? = persistence.load(key: Self.persistenceKey)
         records = cache?.records ?? []
         pendingIds = cache?.pendingIds ?? []
+        initialMixDrafts = cache?.initialMixDrafts ?? []
     }
 
     func hasPending(tripId: UUID) -> Bool {
-        records.contains { $0.tripId == tripId && pendingIds.contains($0.id) }
+        records.contains { $0.tripId == tripId && pendingIds.contains($0.id) } ||
+            initialMixDrafts.contains { $0.tripId == tripId }
     }
 
     /// Number of actual-use rows still queued for a trip. Used for finalisation
     /// diagnostics.
     func pendingCount(tripId: UUID) -> Int {
-        records.filter { $0.tripId == tripId && pendingIds.contains($0.id) }.count
+        records.filter { $0.tripId == tripId && pendingIds.contains($0.id) }.count +
+            initialMixDrafts.filter { $0.tripId == tripId }.count
     }
 
     func actual(tripId: UUID, tankNumber: Int) -> SprayTankActual? {
         records.filter { $0.tripId == tripId && $0.tankNumber == tankNumber }
             .max { $0.clientUpdatedAt < $1.clientUpdatedAt }
+    }
+
+    func initialMix(tripId: UUID) -> SprayInitialTankDraft? {
+        initialMixDrafts.first { $0.tripId == tripId }
+    }
+
+    /// Save operator input before async Trip activation. A retry can reuse the
+    /// same evidence but cannot silently replace an uncertain first-tank mix.
+    func stageInitialMix(_ draft: SprayInitialTankDraft) throws {
+        guard draft.amounts.isValid(for: draft.tank) else { throw SprayInitialTankError.invalidAmounts }
+        let retained = initialMixDrafts.filter { $0.tripId == draft.tripId }
+        if !retained.isEmpty {
+            guard retained.count == 1, retained.first == draft else { throw SprayInitialTankError.retainedMixConflict }
+            return
+        }
+        let next = initialMixDrafts + [draft]
+        try persistence.saveOrThrow(
+            SprayTankActualCache(records: records, pendingIds: pendingIds, initialMixDrafts: next),
+            key: Self.persistenceKey
+        )
+        initialMixDrafts = next
+    }
+
+    /// An upload, planned recipe or partial coordinator save cannot consume
+    /// this draft. Require the corresponding actual and real Trip session.
+    func clearInitialMix(_ draft: SprayInitialTankDraft, trip: Trip) throws {
+        guard draft.isRecorded(in: records, trip: trip) else { throw SprayInitialTankError.actualNotRecorded }
+        let retained = initialMixDrafts.filter { $0.tripId == draft.tripId }
+        guard !retained.isEmpty else { return }
+        guard retained.count == 1, retained.first == draft else { throw SprayInitialTankError.retainedMixConflict }
+        let next = initialMixDrafts.filter { $0 != draft }
+        try persistence.saveOrThrow(
+            SprayTankActualCache(records: records, pendingIds: pendingIds, initialMixDrafts: next),
+            key: Self.persistenceKey
+        )
+        initialMixDrafts = next
     }
 
     /// Upserts by stable trip/session identity and durably queues before network activity.
@@ -119,7 +162,7 @@ final class SprayTankActualStore {
         guard next.contains(where: { $0.id == actual.id }) else { return }
         var pending = Set(pendingIds.filter { id in next.contains(where: { $0.id == id }) })
         pending.insert(actual.id)
-        try persistence.saveOrThrow(SprayTankActualCache(records: next, pendingIds: pending), key: Self.persistenceKey)
+        try persistence.saveOrThrow(SprayTankActualCache(records: next, pendingIds: pending, initialMixDrafts: initialMixDrafts), key: Self.persistenceKey)
         records = next
         pendingIds = pending
     }
@@ -128,7 +171,7 @@ final class SprayTankActualStore {
         let next = records.filter { $0.id != id }
         var pending = pendingIds
         pending.remove(id)
-        try persistence.saveOrThrow(SprayTankActualCache(records: next, pendingIds: pending), key: Self.persistenceKey)
+        try persistence.saveOrThrow(SprayTankActualCache(records: next, pendingIds: pending, initialMixDrafts: initialMixDrafts), key: Self.persistenceKey)
         records = next
         pendingIds = pending
     }
@@ -157,7 +200,7 @@ final class SprayTankActualStore {
                     merged.append(remote)
                 }
             }
-            try persistence.saveOrThrow(SprayTankActualCache(records: merged, pendingIds: pending), key: Self.persistenceKey)
+            try persistence.saveOrThrow(SprayTankActualCache(records: merged, pendingIds: pending, initialMixDrafts: initialMixDrafts), key: Self.persistenceKey)
             records = merged
             pendingIds = pending
         } catch {
@@ -194,7 +237,7 @@ final class SprayTankActualStore {
                     .execute()
                 var pending = pendingIds
                 pending.remove(id)
-                try persistence.saveOrThrow(SprayTankActualCache(records: records, pendingIds: pending), key: Self.persistenceKey)
+                try persistence.saveOrThrow(SprayTankActualCache(records: records, pendingIds: pending, initialMixDrafts: initialMixDrafts), key: Self.persistenceKey)
                 pendingIds = pending
                 // Releasing the Phase 5 gate is the caller's next stage: once
                 // this trip has no pending actuals, `hasPending` returns false

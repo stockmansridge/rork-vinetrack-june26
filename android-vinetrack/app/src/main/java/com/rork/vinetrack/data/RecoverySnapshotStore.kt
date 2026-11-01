@@ -282,14 +282,20 @@ class RecoverySnapshotStore internal constructor(
                     afterFreeze()
                     val timing = VineyardSwitchPerformanceProbe.begin()
                     try {
-                        if (!store.hasUnprovenWrite(vineyardId)) {
-                            when (val existing = store.loadResult(vineyardId)) {
-                                is LoadResult.Valid -> return@withContext SaveResult.Existing(existing.snapshot)
-                                is LoadResult.Unreadable -> return@withContext SaveResult.ExistingUnreadable(existing.originalBytes)
-                                LoadResult.Missing -> Unit
+                        val snapshot = frozen()
+                        // Admit the complete synchronous preservation before store monitors.
+                        // Leaf commits remain nonblocking and revalidate this original handle;
+                        // ordinary auth contention must not discard the frozen first evidence.
+                        access.admitted {
+                            if (!store.hasUnprovenWrite(vineyardId)) {
+                                when (val existing = store.loadResult(vineyardId)) {
+                                    is LoadResult.Valid -> return@admitted SaveResult.Existing(existing.snapshot)
+                                    is LoadResult.Unreadable -> return@admitted SaveResult.ExistingUnreadable(existing.originalBytes)
+                                    LoadResult.Missing -> Unit
+                                }
                             }
+                            store.saveIfAbsent(snapshot)
                         }
-                        store.saveIfAbsent(frozen())
                     } finally { VineyardSwitchPerformanceProbe.end("recovery-preservation-worker", timing) }
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {

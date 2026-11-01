@@ -1341,7 +1341,9 @@ fun SprayCalculatorScreen(
         }
     }
 
-    fun startJobNow(startEngineHours: Double?, reviewedInput: SprayRecordRepository.SprayInput) {
+    fun startJobNow(startEngineHours: Double?, reviewedInput: SprayRecordRepository.SprayInput,
+        actuals: com.rork.vinetrack.data.spray.SprayStartActualAmounts,
+        actualDraft: com.rork.vinetrack.data.model.SprayActualInputDraft?) {
         calculatorOperationalBlocker?.let { errorMessage = it; return }
         val r = runCalculation() ?: return
         val currentInput = buildInput()
@@ -1362,11 +1364,13 @@ fun SprayCalculatorScreen(
             paddockName = paddockNames,
             rowPlan = buildRowPlan(r.totalTanks),
             startEngineHours = startEngineHours,
+            startActuals = actuals,
         ) { outcome ->
             if (!startScreenAlive.get()) return@startSprayJobNow
             saving = false
             val startedId = outcome.tripId
             if (outcome.isStarted && startedId != null) {
+                actualDraft?.let(vm::clearSprayReviewDraft)
                 if (onJobStarted != null) {
                     onJobStarted.invoke(startedId)
                     showReview = false
@@ -1394,6 +1398,23 @@ fun SprayCalculatorScreen(
     val reviewResult = result
     if (showReview && reviewResult != null) {
         BackHandler { if (!saving) showReview = false }
+        val currentReviewInput = buildInput()
+        val actualRegion = LocalRegionFormatter.current
+        // Route selection cannot erase quantities already entered for this unchanged recipe.
+        val actualScope = listOf(state.currentUserId, state.selectedVineyardId,
+            currentReviewInput.applicationGeometry, selectedPaddocks.map { it.id }, tractorId, selectedEquipment?.id,
+            prefillRecord?.id, originSprayJobId, sprayName, actualRegion.settings, java.util.Locale.getDefault().toLanguageTag(),
+            com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(currentReviewInput.tanks))
+        val reviewedInput = remember(actualScope) { currentReviewInput }
+        val actualDraftKey = "review:" + com.rork.vinetrack.data.spray.SprayStartActualAmounts.key(actualScope.map { it.toString() })
+        var actualDraft by remember(actualDraftKey) { mutableStateOf(vm.sprayReviewDraft(actualDraftKey)?.text.orEmpty()) }
+        var actualDraftSaved by remember(actualDraftKey) { mutableStateOf(true) }
+        val actualAmounts = com.rork.vinetrack.data.spray.SprayStartActualAmounts.parse(reviewedInput.tanks, actualDraft, actualRegion::volumeToCanonical)
+        val updateActualDraft: (Map<String, String>) -> Boolean = {
+            actualDraft = it
+            actualDraftSaved = vm.saveSprayReviewDraft(actualDraftKey, it)
+            actualDraftSaved
+        }
         SprayTankMixReview(
             state = state,
             result = reviewResult,
@@ -1418,20 +1439,17 @@ fun SprayCalculatorScreen(
             saving = saving,
             hasActiveTrip = state.activeTrip?.let { it.isActive && it.endTime.isNullOrBlank() } == true,
             operationalBlocker = calculatorOperationalBlocker,
-            onStart = { if (calculatorOperationalBlocker == null) showOperationalStartConfirmation = true },
+            actualAmounts = {
+                SprayStartActualFields(reviewedInput.tanks, actualDraft, { updateActualDraft(it) }, enabled = !saving)
+                if (!actualDraftSaved) Text("Actual amounts could not be retained on this device. Retry before starting.")
+            },
+            actualsReady = actualAmounts != null && actualDraftSaved,
+            onStart = { if (calculatorOperationalBlocker == null && actualAmounts != null && actualDraftSaved) showOperationalStartConfirmation = true },
             onCancel = { if (!saving) showReview = false },
             modifier = modifier,
         )
         if (showOperationalStartConfirmation) {
-            val currentReviewInput = buildInput()
-            // Bind the reviewed snapshot and consent to the full operational scope.
-            // Ignore regenerated tank IDs/timestamps, but never silently adopt changed geometry.
-            val reviewScope = listOf(
-                com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(currentReviewInput.tanks),
-                currentReviewInput.applicationGeometry, selectedPaddocks.map { it.id },
-                tractorId, selectedEquipment?.id, buildRowPlan(reviewResult.totalTanks),
-            )
-            val reviewedInput = remember(reviewScope) { currentReviewInput }
+            val reviewScope = listOf(actualScope, buildRowPlan(reviewResult.totalTanks))
             val machine = state.machines.firstOrNull { it.id == tractorId || it.legacyTractorId == tractorId }
             val latestHours = state.fuelLogs.asSequence()
                 .filter { log ->
@@ -1444,12 +1462,15 @@ fun SprayCalculatorScreen(
                 machineName = selectedTractor?.displayName ?: "Not selected",
                 latestEngineHours = latestHours,
                 tanks = reviewedInput.tanks,
-                scopeKey = "${state.currentUserId}|${state.selectedVineyardId}|new-spray",
+                scopeKey = "${state.currentUserId}|${state.selectedVineyardId}|new-spray|$actualDraftKey",
                 scopeEvidence = reviewScope,
                 onDismiss = { showOperationalStartConfirmation = false },
-                onStart = { hours ->
+                initialDraft = actualDraft,
+                onDraftChange = updateActualDraft,
+                showActualFields = false,
+                onStart = { hours, entered ->
                     showOperationalStartConfirmation = false
-                    startJobNow(hours, reviewedInput)
+                    startJobNow(hours, reviewedInput, entered, vm.sprayReviewDraft(actualDraftKey))
                 },
             )
         }
@@ -4443,6 +4464,8 @@ private fun SprayTankMixReview(
     saving: Boolean,
     hasActiveTrip: Boolean,
     operationalBlocker: String?,
+    actualAmounts: @Composable () -> Unit,
+    actualsReady: Boolean,
     onStart: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
@@ -4610,6 +4633,8 @@ private fun SprayTankMixReview(
                 item { CostingCard(result) }
             }
 
+            item { VineyardCard { actualAmounts() } }
+
             item { SectionHeader("Equipment", onLight = true) }
             item {
                 VineyardCard {
@@ -4765,7 +4790,7 @@ private fun SprayTankMixReview(
                         result.chemicalResults.filter { it.basis == SprayCalculator.RateBasis.PER_100L }.map { it.name }))
                     Button(
                         onClick = onStart,
-                        enabled = !saving && !hasActiveTrip && operationalBlocker == null,
+                        enabled = !saving && !hasActiveTrip && operationalBlocker == null && actualsReady,
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
                     ) {
@@ -4777,6 +4802,7 @@ private fun SprayTankMixReview(
                             Text("  Start Spray Trip", fontWeight = FontWeight.SemiBold)
                         }
                     }
+                    if (!actualsReady) Text("Enter actual water and chemical amounts above before starting.", color = vine.textSecondary)
                     if (hasActiveTrip) {
                         Text(
                             "Finish the active trip before starting this spray job.",

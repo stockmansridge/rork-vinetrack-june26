@@ -42,7 +42,7 @@ class RetainedStartupConstructionTest {
         app.immediateOnlineWithoutNetworkManager = true
         val session = SessionStore(app)
         session.accessToken = "synthetic-not-a-live-token"
-        session.userId = "synthetic-owner"
+        session.userId = "55555555-5555-4555-8555-555555555555"
         // No refresh token: restoration resolves locally, without a live auth request.
         lateinit var vm: AppViewModel
         instrumentation.runOnMainSync {
@@ -57,7 +57,11 @@ class RetainedStartupConstructionTest {
         try {
             runBlocking { withTimeout(15_000) { vm.ui.first { it.route == AppRoute.Login && it.isOnline } } }
             assertEquals(SessionPhase.SignedOut, vm.ui.value.sessionPhase)
-            assertEquals("synthetic-owner", session.userId)
+            assertTrue("Incomplete credentials must retain the recovery lock", session.retentionGuard.isLocked)
+            assertNull(session.userId)
+            assertNull(session.accessToken)
+            assertFalse(session.hasSession)
+            assertEquals("55555555-5555-4555-8555-555555555555", session.recoveryPrincipal)
         } finally {
             instrumentation.runOnMainSync { vm.viewModelScope.cancel() }
             app.immediateOnlineWithoutNetworkManager = false
@@ -68,12 +72,11 @@ class RetainedStartupConstructionTest {
         constructAndAwaitLogin { vm ->
             instrumentation.runOnMainSync {
                 val session = AppViewModel::class.java.getDeclaredField("session").apply { isAccessible = true }.get(vm) as SessionStore
-                session.accessToken = "synthetic-not-a-live-token"
-                session.userId = "tank-fixture-owner"
+                session.save("synthetic-not-a-live-token", "synthetic-not-a-live-refresh", "tank-fixture-owner", null)
                 val owner = requireNotNull(session.userId)
                 val vineyard = "tank-fixture-vineyard-a"
                 val original = com.rork.vinetrack.data.model.Trip(
-                    id = "tank-fixture-trip", vineyardId = vineyard, paddockName = "Fixture",
+                    id = "tank-fixture-trip", vineyardId = vineyard, paddockName = "Fixture", tripFunction = "spraying",
                     startTime = "2026-10-24T00:00:00Z", isActive = true, activeTankNumber = 1,
                     tankSessions = listOf(com.rork.vinetrack.data.model.TankSession(
                         "original-session", 1, "2026-10-24T00:01:00Z", endTime = "2026-10-24T00:02:00Z")),
@@ -84,17 +87,26 @@ class RetainedStartupConstructionTest {
                 @Suppress("UNCHECKED_CAST")
                 val state = AppViewModel::class.java.getDeclaredField("_ui").apply { isAccessible = true }
                     .get(vm) as kotlinx.coroutines.flow.MutableStateFlow<com.rork.vinetrack.ui.AppUiState>
+                val record = com.rork.vinetrack.data.model.SprayRecord(
+                    "original-spray", vineyard, tripId = original.id,
+                    tanks = listOf(com.rork.vinetrack.data.model.SprayTank("original-tank", 1, waterVolume = 420.0)))
                 state.value = state.value.copy(selectedVineyardId = vineyard, currentUserId = owner,
-                    deviceActiveTripId = original.id, trips = listOf(original), isOnline = false,
+                    deviceActiveTripId = original.id, trips = listOf(original), sprayRecords = listOf(record), isOnline = false,
                     lastReconciledTankTripId = null)
                 val previousAuthority = com.rork.vinetrack.data.OperationalWrites.authority
-                var ledger = emptyMap<String, String>()
-                val gate = com.rork.vinetrack.data.VineyardWriteAuthority({ session.userId }, { ledger }, { ledger = it })
-                com.rork.vinetrack.data.OperationalWrites.authority = gate
                 try {
+                    assertTrue(com.rork.vinetrack.data.TankMixDraftStore(app).save(owner, vineyard, original.id,
+                        "original-tank", mapOf("water" to "legacy-original")))
                     assertTrue(vm.saveTankMixDraft(original.id, "original-tank", mapOf("water" to "420")))
+                    assertEquals(mapOf("water" to "420"), vm.tankMixDraft(original.id, "original-tank"))
+                    val actualPrefs = app.getSharedPreferences("vinetrack_spray_tank_actuals", Context.MODE_PRIVATE)
+                    val retainedActualInput = actualPrefs.all.toMap()
+                    assertFalse(retainedActualInput.isEmpty())
                     val draftPrefs = app.getSharedPreferences("actual_tank_mix_drafts_v1", Context.MODE_PRIVATE)
                     val originalDraft = draftPrefs.all.toMap()
+                    // Lazy production stores construct SessionStore adapters. Use the
+                    // durable production hold so those adapters cannot lose this refusal.
+                    val gate = requireNotNull(com.rork.vinetrack.data.OperationalWrites.authority)
                     gate.handleServerCode("VT_READ_ONLY", vineyard)
                     assertNull(vm.pendingTankStart(original.id))
                     vm.startTankWithoutRecordedMix(original.id)
@@ -106,10 +118,14 @@ class RetainedStartupConstructionTest {
                     assertEquals(frozen, disk.load())
                     assertNull(vm.ui.value.lastReconciledTankTripId)
                     assertEquals(originalDraft, draftPrefs.all)
+                    assertEquals(retainedActualInput, actualPrefs.all)
                     gate.verified("tank-fixture-vineyard-b", com.rork.vinetrack.data.VineyardOperationalAccess(true, true), true)
                     assertNull(vm.pendingTankStart(original.id))
                     assertEquals(original, vm.ui.value.activeTrip)
                     assertEquals(frozen, disk.load())
+                    assertEquals(originalDraft, draftPrefs.all)
+                    assertEquals(retainedActualInput, actualPrefs.all)
+                    assertEquals(listOf(record), vm.ui.value.sprayRecords)
                 } finally {
                     com.rork.vinetrack.data.OperationalWrites.authority = previousAuthority
                 }
@@ -121,8 +137,7 @@ class RetainedStartupConstructionTest {
         constructAndAwaitLogin { vm ->
             instrumentation.runOnMainSync {
                 val session = AppViewModel::class.java.getDeclaredField("session").apply { isAccessible = true }.get(vm) as SessionStore
-                session.accessToken = "synthetic-not-a-live-token"
-                session.userId = "44444444-4444-4444-8444-444444444444"
+                session.save("synthetic-not-a-live-token", "synthetic-not-a-live-refresh", "44444444-4444-4444-8444-444444444444", null)
                 val a = "11111111-1111-4111-8111-111111111111"
                 val b = "22222222-2222-4222-8222-222222222222"
                 val id = "33333333-3333-4333-8333-333333333333"
@@ -167,8 +182,7 @@ class RetainedStartupConstructionTest {
     @Test fun maintenanceExpiryDuringOwnershipReadRetainsOriginalAndPublishesNoSuccess() {
         constructAndAwaitLogin { vm ->
             val session = AppViewModel::class.java.getDeclaredField("session").apply { isAccessible = true }.get(vm) as SessionStore
-            session.accessToken = "synthetic-not-a-live-token"
-            session.userId = "44444444-4444-4444-8444-444444444444"
+            session.save("synthetic-not-a-live-token", "synthetic-not-a-live-refresh", "44444444-4444-4444-8444-444444444444", null)
             val a = "11111111-1111-4111-8111-111111111111"
             val id = "33333333-3333-4333-8333-333333333333"
             val input = com.rork.vinetrack.data.MaintenanceLogRepository.MaintenanceInput(
@@ -234,8 +248,7 @@ class RetainedStartupConstructionTest {
             val session = AppViewModel::class.java.getDeclaredField("session").apply { isAccessible = true }.get(vm) as SessionStore
             val owner = "44444444-4444-4444-8444-444444444444"
             val vineyard = "11111111-1111-4111-8111-111111111111"
-            session.accessToken = "synthetic-not-a-live-token"
-            session.userId = owner
+            session.save("synthetic-not-a-live-token", "synthetic-not-a-live-refresh", owner, null)
             val input = com.rork.vinetrack.data.MaintenanceLogRepository.MaintenanceInput(
                 "Synthetic maintenance", null, null, 0.0, null, "", "", 0.0, 0.0, "2026-10-27T00:00:00Z")
             @Suppress("UNCHECKED_CAST")
@@ -323,8 +336,7 @@ class RetainedStartupConstructionTest {
             val owner = "44444444-4444-4444-8444-444444444444"
             val vineyard = "11111111-1111-4111-8111-111111111111"
             val id = "33333333-3333-4333-8333-333333333333"
-            session.accessToken = "synthetic-not-a-live-token"
-            session.userId = owner
+            session.save("synthetic-not-a-live-token", "synthetic-not-a-live-refresh", owner, null)
             val input = com.rork.vinetrack.data.MaintenanceLogRepository.MaintenanceInput(
                 "Recovered edit", null, null, 0.0, null, "", "", 0.0, 0.0, "2026-10-27T00:00:00Z")
             val original = com.rork.vinetrack.data.model.MaintenanceLog(id = id, vineyardId = vineyard, itemName = "Original", date = input.date)
@@ -398,8 +410,7 @@ class RetainedStartupConstructionTest {
     @Test fun maintenanceCreateReceiptDuringExpiryCannotDuplicateStableDraftOnRetry() {
         constructAndAwaitLogin { vm ->
             val session = AppViewModel::class.java.getDeclaredField("session").apply { isAccessible = true }.get(vm) as SessionStore
-            session.accessToken = "synthetic-not-a-live-token"
-            session.userId = "44444444-4444-4444-8444-444444444444"
+            session.save("synthetic-not-a-live-token", "synthetic-not-a-live-refresh", "44444444-4444-4444-8444-444444444444", null)
             val a = "11111111-1111-4111-8111-111111111111"
             val input = com.rork.vinetrack.data.MaintenanceLogRepository.MaintenanceInput(
                 "Original draft", null, null, 2.0, null, "Retain", "", 1.0, 3.0, "2026-10-24T00:00:00Z")
@@ -449,8 +460,7 @@ class RetainedStartupConstructionTest {
     @Test fun staleMaintenanceSuccessCannotOverwriteNextAccountOrPublishSuccess() {
         constructAndAwaitLogin { vm ->
             val session = AppViewModel::class.java.getDeclaredField("session").apply { isAccessible = true }.get(vm) as SessionStore
-            session.accessToken = "synthetic-not-a-live-token"
-            session.userId = "44444444-4444-4444-8444-444444444444"
+            session.save("synthetic-not-a-live-token", "synthetic-not-a-live-refresh", "44444444-4444-4444-8444-444444444444", null)
             val a = "11111111-1111-4111-8111-111111111111"
             val b = "22222222-2222-4222-8222-222222222222"
             val id = "33333333-3333-4333-8333-333333333333"
@@ -496,7 +506,7 @@ class RetainedStartupConstructionTest {
         val session = SessionStore(app)
         // Incomplete persisted credentials: restore MUST resolve SignedOut without an auth request.
         session.accessToken = "synthetic-not-a-live-token"
-        session.userId = "synthetic-owner"
+        session.userId = "55555555-5555-4555-8555-555555555555"
         val pending = app.getSharedPreferences("vinetrack_pending_writes", Context.MODE_PRIVATE)
         val pins = app.getSharedPreferences("vinetrack_pin_capture_evidence", Context.MODE_PRIVATE)
         val pendingRaw = "[{\"id\":\"retained-original\","
@@ -508,7 +518,13 @@ class RetainedStartupConstructionTest {
         constructAndAwaitLogin { vm ->
             assertEquals(SessionPhase.SignedOut, vm.ui.value.sessionPhase)
             assertNotNull(vm.pendingSyncReadIssue.value)
-            assertNotNull(vm.pinEvidenceReadIssue.value)
+            assertTrue(SessionStore(app).retentionGuard.isLocked)
+            assertNull(SessionStore(app).userId)
+            assertEquals("55555555-5555-4555-8555-555555555555", SessionStore(app).recoveryPrincipal)
+            // Locked startup must not force account-bound capture readers. An explicit
+            // recovery read still reports the hold without replacing any original bytes.
+            val captureRead = com.rork.vinetrack.data.PinCaptureEvidenceStore(app).loadForRecovery()
+            assertNotNull(captureRead.issue)
             assertEquals(pendingRaw, pending.getString("pending_writes_json", null))
             assertEquals(pinRaw, pins.getString("pin_capture_evidence_json", null))
             assertEquals(before, backup.readBytes().toList())

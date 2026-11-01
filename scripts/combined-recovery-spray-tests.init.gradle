@@ -1,0 +1,20 @@
+// Explicitly include the repair's new JVM files; the costing filter excludes them.
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    app.tasks.named('compileDebugUnitTestKotlin').configure {
+        setSource(app.fileTree('src/test/java') {
+            include '**/SprayStartActualAmountsTest.kt'
+            include '**/SprayActualInputDraftStoreTest.kt'
+            include '**/StartTankCommitCoordinatorTest.kt'
+            include '**/SprayTankActualTest.kt'
+            include '**/SprayOperationalBundleTest.kt'
+            include '**/SprayReportPayloadV1Test.kt'
+            include '**/GoogleMapsRuntimeFilesTest.kt'
+        })
+    }
+    app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        testLogging { events 'passed', 'failed', 'skipped' }
+    }
+}

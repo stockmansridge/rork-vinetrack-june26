@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.SprayTankActualTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-11-01T03:29:03.110Z" hostname="e2b.local" time="0.009">
+  <properties/>
+  <testcase name="sharedRepositoryChemicalFixtureDecodesCompleteContract" classname="com.rork.vinetrack.data.SprayTankActualTest" time="0.004"/>
+  <testcase name="strictLocaleParserConsumesTheEntireEnglishInput" classname="com.rork.vinetrack.data.SprayTankActualTest" time="0.003"/>
+  <testcase name="signedDifferenceKeepsMissingDistinctFromExplicitZero" classname="com.rork.vinetrack.data.SprayTankActualTest" time="0.0"/>
+  <testcase name="strictLocaleParserAcceptsOnlyTheDeviceDecimalSeparator" classname="com.rork.vinetrack.data.SprayTankActualTest" time="0.0"/>
+  <testcase name="sharedChemicalJsonDecodesConfirmedZero" classname="com.rork.vinetrack.data.SprayTankActualTest" time="0.0"/>
+  <testcase name="completenessRequiresWaterAndExactIdentityButAcceptsAdditionalAndSubstitutionLines" classname="com.rork.vinetrack.data.SprayTankActualTest" time="0.0"/>
+  <testcase name="liquidAndSolidConversionsPreserveBaseValues" classname="com.rork.vinetrack.data.SprayTankActualTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -2,6 +2,7 @@ package com.rork.vinetrack.data
 
 import android.content.Context
 import com.rork.vinetrack.data.model.SprayTankActual
+import com.rork.vinetrack.data.model.SprayActualInputDraft
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +29,7 @@ class SprayTankActualStore internal constructor(
     @Serializable private data class Cache(
         val records: List<SprayTankActual> = emptyList(),
         val pendingIds: Set<String> = emptySet(),
+        val inputDrafts: List<SprayActualInputDraft> = emptyList(),
     )
 
     private var accountProvider: (() -> com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess?)? = null
@@ -47,7 +49,9 @@ class SprayTankActualStore internal constructor(
     @Synchronized fun hasReadableSyncEvidence(): Boolean = runCatching {
         val decoded = readBytes()?.let { SupabaseClient.json.decodeFromString(Cache.serializer(), it) } ?: Cache()
         val identities = decoded.records.map { it.id }
-        identities.distinct().size == identities.size && decoded.pendingIds.all { it in identities }
+        identities.distinct().size == identities.size && decoded.pendingIds.all { it in identities } &&
+            decoded.inputDrafts.all { it.hasValidIdentity() } &&
+            decoded.inputDrafts.map { Triple(it.ownerUserId, it.vineyardId, it.key) }.distinct().size == decoded.inputDrafts.size
     }.getOrDefault(false)
 
     /** A server read cannot consume foreign, edited or unattributed pending confirmation evidence. */
@@ -93,6 +97,39 @@ class SprayTankActualStore internal constructor(
 
     @Synchronized fun load(): List<SprayTankActual> = _records.value
 
+    /** Only the authenticated original actor can inspect or change retained operator input. */
+    fun inputDraft(owner: String, vineyard: String, key: String): SprayActualInputDraft? {
+        val read = { synchronized(this) { cache().inputDrafts.singleOrNull {
+            it.ownerUserId == owner && it.vineyardId == vineyard && it.key == key
+        } } }
+        return if (fieldAccess == null) read() else fieldAccess.admittedForOwner(owner, read)
+    }
+
+    fun saveInputDraft(draft: SprayActualInputDraft): Boolean {
+        if (!draft.hasValidIdentity()) return false
+        val save = { synchronized(this) {
+            if (!hasReadableSyncEvidence()) false else {
+                val current = cache()
+                write(current.copy(inputDrafts = current.inputDrafts.filterNot {
+                    it.ownerUserId == draft.ownerUserId && it.vineyardId == draft.vineyardId && it.key == draft.key
+                } + draft))
+            }
+        } }
+        return try { if (fieldAccess == null) save() else fieldAccess.admittedForOwner(draft.ownerUserId, save) }
+            catch (_: com.rork.vinetrack.data.auth.FieldAccessRevoked) { false }
+    }
+
+    /** A late completion cannot remove text edited after its frozen confirmation. */
+    fun clearInputDraft(expected: SprayActualInputDraft): Boolean {
+        val clear = { synchronized(this) {
+            val current = cache()
+            if (expected !in current.inputDrafts) false
+            else write(current.copy(inputDrafts = current.inputDrafts - expected))
+        } }
+        return try { if (fieldAccess == null) clear() else fieldAccess.admittedForOwner(expected.ownerUserId, clear) }
+            catch (_: com.rork.vinetrack.data.auth.FieldAccessRevoked) { false }
+    }
+
     @Synchronized fun actual(tripId: String, tankNumber: Int): SprayTankActual? =
         cache().records.filter { it.tripId == tripId && it.tankNumber == tankNumber }
             .maxByOrNull { it.clientUpdatedAt }
@@ -122,7 +159,7 @@ class SprayTankActualStore internal constructor(
             records[index] = actual
         } else records.add(actual)
         val validIds = records.mapTo(mutableSetOf()) { it.id }
-        return write(Cache(records, (current.pendingIds intersect validIds) + actual.id))
+        return write(current.copy(records = records, pendingIds = (current.pendingIds intersect validIds) + actual.id))
     }
 
     /** Removes a just-created local row when a coordinated trip commit fails. */

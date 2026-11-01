@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.reporting.SprayReportPayloadV1Test" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-11-01T03:29:03.146Z" hostname="e2b.local" time="0.149">
+  <properties/>
+  <testcase name="projection preserves canonical row tank and quantities" classname="com.rork.vinetrack.data.reporting.SprayReportPayloadV1Test" time="0.032"/>
+  <testcase name="base quantities convert exactly once for report display" classname="com.rork.vinetrack.data.reporting.SprayReportPayloadV1Test" time="0.0"/>
+  <testcase name="repeated canonical report reads never invoke recovery" classname="com.rork.vinetrack.data.reporting.SprayReportPayloadV1Test" time="0.101"/>
+  <testcase name="filename uses canonical Android suffix and stable trip fragment" classname="com.rork.vinetrack.data.reporting.SprayReportPayloadV1Test" time="0.015"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

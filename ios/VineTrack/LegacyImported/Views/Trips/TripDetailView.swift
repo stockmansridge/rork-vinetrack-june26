@@ -14,6 +14,13 @@ enum SavedOccurrenceSprayStartEligibility {
 }
 
 struct TripDetailView: View {
+    private struct SavedMixReview: Identifiable {
+        let id = UUID()
+        let trip: Trip
+        let recipe: SprayRecord
+        let owner: UUID
+        let formatter: RegionFormatter
+    }
     let trip: Trip
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
@@ -29,9 +36,7 @@ struct TripDetailView: View {
     @State private var verifiedOrphanCandidate: BackendSprayRecord?
     @State private var showRecoveredTankMix = false
     @State private var recoveredMixReviewed = false
-    @State private var pendingRateReviewTrip: Trip?
-    @State private var pendingRateReviewRecipe: SprayRecord?
-    @State private var pendingRateReviewOwner: UUID?
+    @State private var pendingMixReview: SavedMixReview?
     @State private var showDeleteConfirmation: Bool = false
     @State private var position: MapCameraPosition = .automatic
     @State private var isExporting: Bool = false
@@ -249,21 +254,26 @@ struct TripDetailView: View {
 
     private var tripDetailEditingSheets: some View {
         tripDetailSheets
-        .sheet(item: $pendingRateReviewTrip, onDismiss: {
-            pendingRateReviewRecipe = nil
-            pendingRateReviewOwner = nil
-        }) { original in
+        .sheet(item: $pendingMixReview) { review in
+            let original = review.trip
             SprayTripStartConfirmationSheet(
                 machineName: original.tractorId.flatMap { id in
                     store.currentTractors.first(where: { $0.id == id })?.displayName
-                } ?? pendingRateReviewRecipe?.tractor ?? "Not Set",
+                } ?? review.recipe.tractor,
                 latestEngineHours: original.tractorId.flatMap { id in
                     store.currentTractorFuelLogs.filter { $0.tractorId == id && $0.engineHours?.isFinite == true }
                         .max(by: { $0.fillDateTime < $1.fillDateTime })?.engineHours
                 },
-                tanks: pendingRateReviewRecipe?.tanks ?? []
-            ) { hours in
-                activateRateReviewedOriginal(original, startEngineHours: hours)
+                tanks: review.recipe.tanks,
+                formatter: review.formatter,
+                retainedActuals: SprayTankActualStore.shared.initialMix(tripId: original.id).flatMap {
+                    $0.ownerId == review.owner && $0.vineyardId == store.selectedVineyardId &&
+                    $0.sprayRecordId == review.recipe.id
+                        ? $0.amounts : nil
+                }
+            ) { hours, amounts, completion in
+                activateRateReviewedOriginal(review, startEngineHours: hours,
+                    initialTankActuals: amounts, completion: completion)
             }
         }
         .sheet(isPresented: $showEditCostingLinks) {
@@ -832,31 +842,52 @@ struct TripDetailView: View {
             savedSprayRecoveryError = "The account or vineyard changed. Reopen the original spray."
             return
         }
-        pendingRateReviewOwner = owner
-        pendingRateReviewRecipe = recipe
-        pendingRateReviewTrip = original
+        pendingMixReview = SavedMixReview(trip: original, recipe: recipe, owner: owner,
+            formatter: store.settings.regionFormatter)
     }
 
-    private func activateRateReviewedOriginal(_ original: Trip, startEngineHours: Double?) {
-        guard let owner = pendingRateReviewOwner,
-              store.currentUserIdProvider?() == owner,
+    private func activateRateReviewedOriginal(_ review: SavedMixReview, startEngineHours: Double?,
+        initialTankActuals: SprayInitialTankAmounts, completion: @escaping (String?) -> Void) {
+        let original = review.trip
+        let reviewed = review.recipe
+        guard store.currentUserIdProvider?() == review.owner,
               store.selectedVineyardId == original.vineyardId,
-              store.trips.first(where: { $0.id == original.id }) == original,
-              let reviewed = pendingRateReviewRecipe,
+              let currentTrip = store.trips.first(where: { $0.id == original.id }),
               let current = store.sprayRecords.first(where: { $0.id == reviewed.id }),
               current.canonicalTripId == original.id,
               current.hasSameRecipeEvidence(as: reviewed),
               accessControl.canCreateOperationalRecords else {
-            pendingRateReviewTrip = nil
-            savedSprayRecoveryError = "The saved spray changed. Reopen it to confirm its actual rates."
+            savedSprayRecoveryError = "The saved spray changed. Reopen it to enter its actual tank contents."
+            completion(savedSprayRecoveryError)
             return
         }
-        pendingRateReviewTrip = nil
+        if currentTrip.isActive {
+            if tracking.retryInitialSprayStart(tripId: original.id,
+                expectedAmounts: initialTankActuals, expectedRecordId: current.id) {
+                completion(nil)
+                pendingMixReview = nil
+                verifiedOrphanCandidate = nil
+                dismiss()
+            } else { completion(tracking.errorMessage ?? "The original active Trip needs recovery.") }
+            return
+        }
+        guard currentTrip == original else {
+            completion("The saved Trip changed. Reopen the original spray; your entered amounts are retained.")
+            return
+        }
         isRecoveringSavedSpray = true
-        tracking.activateSavedTrip(original, startEngineHours: startEngineHours) { started in
+        tracking.activateSavedTrip(original, startEngineHours: startEngineHours,
+            initialTankActuals: initialTankActuals) { started in
             isRecoveringSavedSpray = false
-            if started { verifiedOrphanCandidate = nil; dismiss() }
-            else { savedSprayRecoveryError = tracking.errorMessage ?? "The original Trip is retained; start was not confirmed." }
+            if started {
+                completion(nil)
+                pendingMixReview = nil
+                verifiedOrphanCandidate = nil
+                dismiss()
+            } else {
+                savedSprayRecoveryError = tracking.errorMessage ?? "The original Trip is retained; start was not confirmed."
+                completion(savedSprayRecoveryError)
+            }
         }
     }
 

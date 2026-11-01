@@ -431,6 +431,170 @@ class AuthRetentionAndroidTest {
         assertFalse(SessionStore(context).withAccountAccess(access) { recreated.markSyncedIfCurrent(actual) })
     }
 
+    @Test fun legacyActualCacheWithoutInputDraftsStillUsesExactConfirmationOwner() {
+        val owner = "11111111-1111-4111-8111-111111111111"
+        val actual = com.rork.vinetrack.data.model.SprayTankActual(
+            "actual", "vineyard", "spray", "trip", "tank-session", 1,
+            waterVolumeL = 120.0, chemicals = emptyList(),
+            confirmedAt = "2026-11-01T00:00:00Z", confirmedBy = owner)
+        val encoded = SupabaseClient.json.encodeToString(com.rork.vinetrack.data.model.SprayTankActual.serializer(), actual)
+        val bytes = """{"records":[$encoded],"pendingIds":["actual"]}"""
+        val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
+        check(prefs.edit().putString("cache", bytes).commit())
+        val inspector = AccountTransitionEvidence(context)
+        assertEquals(setOf("vineyard"), inspector.inspect(owner)?.vineyards)
+        assertNull(inspector.inspect("22222222-2222-4222-8222-222222222222"))
+        assertNull(inspector.inspectCleanExit())
+        assertEquals(bytes, prefs.getString("cache", null))
+    }
+
+    @Test fun absentAndExplicitlyEmptyInputDraftsRetainCleanExitCompatibility() {
+        val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
+        listOf("""{"records":[],"pendingIds":[]}""",
+            """{"records":[],"pendingIds":[],"inputDrafts":[]}""").forEach { bytes ->
+            check(prefs.edit().putString("cache", bytes).commit())
+            assertNotNull(AccountTransitionEvidence(context).inspectCleanExit())
+            assertNotNull(AccountTransitionEvidence(context).inspect())
+            assertEquals(bytes, prefs.getString("cache", null))
+        }
+    }
+
+    @Test fun productionReviewInputDraftIsRetainedForItsOriginalOwnerOnly() {
+        val owner = "11111111-1111-4111-8111-111111111111"
+        SessionStore(context).save("access", "refresh", owner, null)
+        val draft = actualInputDraft(owner)
+        assertTrue(com.rork.vinetrack.data.SprayTankActualStore(context).saveInputDraft(draft))
+        val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
+        val before = prefs.all.toMap()
+        val inspector = AccountTransitionEvidence(context)
+        assertEquals(setOf("vineyard"), inspector.inspect(owner)?.vineyards)
+        assertNull(inspector.inspect("22222222-2222-4222-8222-222222222222"))
+        assertNull(inspector.inspect())
+        assertNull(inspector.inspectCleanExit())
+        assertEquals(before, prefs.all)
+        assertEquals(draft, com.rork.vinetrack.data.SprayTankActualStore(context)
+            .inputDraft(owner, "vineyard", draft.key))
+    }
+
+    @Test fun productionTankInputDraftPreservesExactTripAndTankWithoutBecomingConfirmedActual() {
+        val owner = "11111111-1111-4111-8111-111111111111"
+        SessionStore(context).save("access", "refresh", owner, null)
+        val draft = actualInputDraft(owner).copy(key = "tank:original-trip:original-tank",
+            tripId = "original-trip", tankId = "original-tank", sprayRecordId = "original-spray")
+        val store = com.rork.vinetrack.data.SprayTankActualStore(context)
+        assertTrue(store.saveInputDraft(draft))
+        val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
+        val before = prefs.all.toMap()
+        assertEquals(setOf("vineyard"), AccountTransitionEvidence(context).inspect(owner)?.vineyards)
+        assertTrue(store.load().isEmpty())
+        assertTrue(store.pending().isEmpty())
+        assertEquals(before, prefs.all)
+    }
+
+    @Test fun inputDraftScopesIncludeEveryVineyardForMembershipVerification() {
+        val owner = "11111111-1111-4111-8111-111111111111"
+        val drafts = listOf(actualInputDraft(owner), actualInputDraft(owner).copy(vineyardId = "second-vineyard"))
+        val bytes = actualInputDraftCache(drafts)
+        val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
+        check(prefs.edit().putString("cache", bytes).commit())
+        assertEquals(setOf("vineyard", "second-vineyard"), AccountTransitionEvidence(context).inspect(owner)?.vineyards)
+        assertEquals(bytes, prefs.getString("cache", null))
+    }
+
+    @Test fun mixedInputDraftOwnersRemainProtectedEvenWhenOneMatchesOriginal() {
+        val owner = "11111111-1111-4111-8111-111111111111"
+        val foreign = "22222222-2222-4222-8222-222222222222"
+        val bytes = actualInputDraftCache(listOf(actualInputDraft(owner), actualInputDraft(foreign)))
+        val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
+        check(prefs.edit().putString("cache", bytes).commit())
+        assertNull(AccountTransitionEvidence(context).inspect(owner))
+        assertNull(AccountTransitionEvidence(context).inspect(foreign))
+        assertEquals(bytes, prefs.getString("cache", null))
+    }
+
+    @Test fun duplicateScopedInputDraftsCannotBeSilentlyChosenOrDeduplicated() {
+        val owner = "11111111-1111-4111-8111-111111111111"
+        val original = actualInputDraft(owner)
+        val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
+        listOf(original, original.copy(text = mapOf("water" to "999"))).forEach { duplicate ->
+            val bytes = actualInputDraftCache(listOf(original, duplicate))
+            check(prefs.edit().putString("cache", bytes).commit())
+            assertNull(AccountTransitionEvidence(context).inspect(owner))
+            assertEquals(bytes, prefs.getString("cache", null))
+        }
+    }
+
+    @Test fun malformedInputDraftIdentitiesAreHeldWithoutChangingTheSavedBytes() {
+        val owner = "11111111-1111-4111-8111-111111111111"
+        val draft = actualInputDraft(owner)
+        val variants = listOf(
+            draft.copy(key = "review:short"), draft.copy(key = ""),
+            draft.copy(ownerUserId = ""), draft.copy(vineyardId = " "),
+            draft.copy(tripId = "trip"), draft.copy(tankId = "tank"), draft.copy(sprayRecordId = "spray"),
+            draft.copy(key = "tank:trip:tank", tripId = "other", tankId = "tank", sprayRecordId = "spray"),
+            draft.copy(key = "tank:trip:tank", tripId = "trip", tankId = "tank", sprayRecordId = ""),
+        )
+        val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
+        variants.forEach { variant ->
+            val bytes = actualInputDraftCache(listOf(variant))
+            check(prefs.edit().putString("cache", bytes).commit())
+            assertNull(AccountTransitionEvidence(context).inspect(owner))
+            assertEquals(bytes, prefs.getString("cache", null))
+        }
+    }
+
+    @Test fun inputDraftExtensionDoesNotRelaxUnknownKeyOrMalformedPayloadChecks() {
+        val owner = "11111111-1111-4111-8111-111111111111"
+        val valid = actualInputDraftCache(listOf(actualInputDraft(owner)))
+        val variants = listOf(
+            valid.replace("\"inputDrafts\":", "\"unreviewed\":true,\"inputDrafts\":"),
+            valid.replace("\"ownerUserId\":", "\"unreviewed\":true,\"ownerUserId\":"),
+            """{"records":[],"pendingIds":[],"inputDrafts":null}""",
+            """{"records":[],"pendingIds":[],"inputDrafts":[{}]}""",
+            """{"records":[],"pendingIds":[],"inputDrafts":{}}""",
+        )
+        val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
+        variants.forEach { bytes ->
+            check(prefs.edit().putString("cache", bytes).commit())
+            assertNull(AccountTransitionEvidence(context).inspect(owner))
+            assertEquals(bytes, prefs.getString("cache", null))
+        }
+    }
+
+    @Test fun retainedActualInputRecoveryRequiresOriginalAccountAndCurrentMembership() = runBlocking {
+        val owner = "11111111-1111-4111-8111-111111111111"
+        val foreign = "22222222-2222-4222-8222-222222222222"
+        val session = SessionStore(context)
+        session.save("access", "refresh", owner, null)
+        assertTrue(com.rork.vinetrack.data.SprayTankActualStore(context).saveInputDraft(actualInputDraft(owner)))
+        val prefs = context.getSharedPreferences("vinetrack_spray_tank_actuals", 0)
+        val before = prefs.all.toMap()
+        session.clear()
+        assertTrue(session.retentionGuard.isLocked)
+        assertTrue(runCatching { AuthRecoveryRepository { recoveryClient(foreign) }
+            .recover(session, "synthetic@example.invalid", "synthetic-password") }.isFailure)
+        assertTrue(session.retentionGuard.isLocked)
+        assertTrue(runCatching { AuthRecoveryRepository { recoveryClient(owner, member = false) }
+            .recover(session, "synthetic@example.invalid", "synthetic-password") }.isFailure)
+        assertTrue(session.retentionGuard.isLocked)
+        assertEquals(before, prefs.all)
+        assertTrue(AuthRecoveryRepository { recoveryClient(owner) }
+            .recover(session, "synthetic@example.invalid", "synthetic-password"))
+        assertFalse(session.retentionGuard.isLocked)
+        assertEquals(before, prefs.all)
+    }
+
+    private fun actualInputDraft(owner: String) = com.rork.vinetrack.data.model.SprayActualInputDraft(
+        key = "review:" + "a".repeat(64), ownerUserId = owner, vineyardId = "vineyard",
+        text = mapOf("water" to "", "chemical" to "0.63"))
+
+    private fun actualInputDraftCache(drafts: List<com.rork.vinetrack.data.model.SprayActualInputDraft>): String {
+        val entries = drafts.joinToString(",") {
+            SupabaseClient.json.encodeToString(com.rork.vinetrack.data.model.SprayActualInputDraft.serializer(), it)
+        }
+        return """{"records":[],"pendingIds":[],"inputDrafts":[$entries]}"""
+    }
+
     @Test fun rejectionAtomicallyRetainsOriginalSupabaseUuidAndNeverAdoptsCacheOwner() {
         val original = "11111111-1111-4111-8111-111111111111"
         val session = SessionStore(context)

@@ -355,6 +355,8 @@ final class TripTrackingService {
         startEngineHours: Double? = nil,
         seedingDetails: SeedingDetails? = nil,
         sprayRecord: SprayRecord? = nil,
+        initialTankActuals: SprayInitialTankAmounts? = nil,
+        onPreparationStarted: () -> Void = {},
         onStarted: @escaping (Bool) -> Void = { _ in }
     ) {
         guard let store else { onStarted(false); return }
@@ -432,6 +434,7 @@ final class TripTrackingService {
                 trip.occurrenceCoverage = try TripOccurrencePlanner.commit(plannedCandidates, vineyardId: vineyardId)
                 var inactive = trip; inactive.isActive = false
                 let repository = SupabaseTripSyncRepository()
+                onPreparationStarted()
                 try repository.prepareOccurrenceCreation(BackendTrip.upsert(from: inactive, createdBy: owner, clientUpdatedAt: inactive.startTime), ownerId: owner)
                 let journal = try occurrenceJournal(for: trip)
                 var start: [String: TripOccurrenceCoverage.JSON] = ["startTime": .string(ISO8601DateFormatter().string(from: trip.startTime))]
@@ -440,6 +443,7 @@ final class TripTrackingService {
                 if isSpray, var record = sprayRecord {
                     record.linkToOperationalTrip(trip.id)
                     try store.saveSprayForLater(record: record, trip: inactive)
+                    try stageInitialTankMix(initialTankActuals, record: record, trip: inactive)
                 } else { try store.savePlannedTripOrThrow(inactive) }
                 finishPlannedActivation(trip, owner: owner, onStarted: onStarted)
             } catch { errorMessage = "Planned start retained for recovery. \(error.localizedDescription)"; onStarted(false) }
@@ -450,7 +454,9 @@ final class TripTrackingService {
             var inactive = trip
             inactive.isActive = false
             do {
+                onPreparationStarted()
                 try store.saveSprayForLater(record: record, trip: inactive)
+                try stageInitialTankMix(initialTankActuals, record: record, trip: inactive)
             } catch {
                 errorMessage = "Couldn't durably save the spray recipe. No spray has started."
                 onStarted(false); return
@@ -512,6 +518,7 @@ final class TripTrackingService {
         }
         store.claimDeviceTrip(trip.id)
         errorMessage = nil
+        guard completeInitialTankMix(tripId: trip.id) else { onStarted(false); return }
         beginSprayWeatherCapture(for: trip)
         beginTracking()
         onStarted(true)
@@ -598,6 +605,7 @@ final class TripTrackingService {
                 try store.updateTripOrThrow(ready)
                 store.claimDeviceTrip(ready.id)
                 errorMessage = NetworkMonitor.shared.isOnline ? nil : "Locally activated · server sync pending. Coverage actions await confirmation."
+                guard completeInitialTankMix(tripId: ready.id) else { onStarted(false); return }
                 beginSprayWeatherCapture(for: ready)
                 beginTracking()
                 onStarted(true)
@@ -617,6 +625,7 @@ final class TripTrackingService {
     func activateSavedTrip(
         _ savedTrip: Trip,
         startEngineHours: Double? = nil,
+        initialTankActuals: SprayInitialTankAmounts? = nil,
         at activationTime: Date = Date(),
         onStarted: @escaping (Bool) -> Void = { _ in }
     ) {
@@ -678,6 +687,12 @@ final class TripTrackingService {
                 errorMessage = "Saved spray acceptance needs recovery; original evidence retained."
                 onStarted(false); return
             }
+        }
+        do {
+            try stageInitialTankMix(initialTankActuals, record: recipe, trip: savedTrip)
+        } catch {
+            errorMessage = "The actual tank mix could not be saved. \(error.localizedDescription)"
+            onStarted(false); return
         }
         if savedTrip.coverageBasis != .legacy {
             isLegacySprayStartPending = true
@@ -794,9 +809,13 @@ final class TripTrackingService {
             errorMessage = record.operationalPlanningBlocker ?? "Couldn't save the spray start. Keep this screen open and retry."
             onStarted(false); return
         }
-        store.updateTrip(activated)
+        do { try store.updateTripOrThrow(activated) } catch {
+            errorMessage = "Couldn't save the Trip start. Your actual tank amounts are retained for retry."
+            onStarted(false); return
+        }
         store.claimDeviceTrip(activated.id)
         errorMessage = nil
+        guard completeInitialTankMix(tripId: activated.id) else { onStarted(false); return }
         beginSprayWeatherCapture(for: activated)
         beginTracking()
         onStarted(true)
@@ -1244,6 +1263,91 @@ final class TripTrackingService {
 
     // MARK: - Tank workflow
 
+    /// Retain the operator's first-tank entries before activation can await a
+    /// network response. This uses the existing account-scoped actuals cache.
+    private func stageInitialTankMix(_ amounts: SprayInitialTankAmounts?, record: SprayRecord, trip: Trip) throws {
+        guard let amounts else { return }
+        guard let owner = authService?.userId,
+              record.vineyardId == trip.vineyardId,
+              record.canonicalTripId == trip.id,
+              let tank = SprayInitialTankAmounts.firstTank(in: record.tanks),
+              amounts.isValid(for: tank) else { throw SprayInitialTankError.invalidAmounts }
+        try SprayTankActualStore.shared.stageInitialMix(SprayInitialTankDraft(
+            ownerId: owner, vineyardId: trip.vineyardId, tripId: trip.id,
+            sprayRecordId: record.id, tank: tank, amounts: amounts))
+    }
+
+    /// A failed actual commit must retry the original active Trip. It must
+    /// never return through the new-trip constructor or open Tank 2.
+    @discardableResult
+    func retryInitialSprayStart(tripId: UUID, expectedAmounts: SprayInitialTankAmounts? = nil,
+        expectedRecordId: UUID? = nil) -> Bool {
+        guard let trip = activeTrip, trip.id == tripId, admitTripChange(trip) else {
+            errorMessage = "Open the original saved spray on the device and account that started it."
+            return false
+        }
+        if let expectedAmounts {
+            guard let owner = authService?.userId,
+                  let record = TankMixPresentation.linkedRecord(for: trip.id, in: store?.sprayRecords ?? []),
+                  expectedRecordId == record.id,
+                  let tank = SprayInitialTankAmounts.firstTank(in: record.tanks),
+                  expectedAmounts.isValid(for: tank) else {
+                errorMessage = "The original tank recipe changed. Open the saved spray to review it."
+                return false
+            }
+            let expected = SprayInitialTankDraft(ownerId: owner, vineyardId: trip.vineyardId,
+                tripId: trip.id, sprayRecordId: record.id, tank: tank, amounts: expectedAmounts)
+            let retained = SprayTankActualStore.shared.initialMix(tripId: trip.id)
+            guard retained == expected || (retained == nil && expected.isRecorded(
+                in: SprayTankActualStore.shared.records, trip: trip)) else {
+                errorMessage = "The entered actual mix has not been saved for this exact tank. Open the original trip to recover it."
+                return false
+            }
+        }
+        guard completeInitialTankMix(tripId: tripId) else { return false }
+        if !trip.isPaused { beginTracking() }
+        return true
+    }
+
+    @discardableResult
+    private func completeInitialTankMix(tripId: UUID) -> Bool {
+        let actuals = SprayTankActualStore.shared
+        guard let draft = actuals.initialMix(tripId: tripId) else { return true }
+        guard let store, let trip = activeTrip, trip.id == tripId,
+              authService?.userId == draft.ownerId,
+              store.selectedVineyardId == draft.vineyardId,
+              trip.vineyardId == draft.vineyardId,
+              let record = TankMixPresentation.linkedRecord(for: trip.id, in: store.sprayRecords),
+              record.id == draft.sprayRecordId,
+              SprayInitialTankAmounts.firstTank(in: record.tanks) == draft.tank else {
+            errorMessage = "The original actual tank mix is retained. Reopen its original account, vineyard and spray."
+            return false
+        }
+        do {
+            // A prior partial commit owns its session/actual IDs. Complete it
+            // before asking the lifecycle for another session.
+            _ = startTankCommitCoordinator.recover(store: store)
+            if let current = activeTrip, draft.isRecorded(in: actuals.records, trip: current) {
+                try actuals.clearInitialMix(draft, trip: current)
+                return true
+            }
+            guard let pending = pendingTankStart(), pending.record.id == draft.sprayRecordId,
+                  pending.tank == draft.tank,
+                  confirmAndStartTank(pending: pending, actualWaterLitres: draft.amounts.waterLitres,
+                    actualChemicalBaseAmounts: draft.amounts.chemicalBaseAmounts),
+                  let committed = activeTrip,
+                  draft.isRecorded(in: actuals.records, trip: committed) else {
+                errorMessage = "Trip saved; the entered tank amounts are retained. Retry the original trip to finish saving its actual mix."
+                return false
+            }
+            try actuals.clearInitialMix(draft, trip: committed)
+            return true
+        } catch {
+            errorMessage = "The actual tank mix is retained for retry. \(error.localizedDescription)"
+            return false
+        }
+    }
+
     /// Index of the current open tank session (no endTime). nil if none.
     private func openSessionIndex(in trip: Trip) -> Int? {
         trip.tankSessions.lastIndex(where: { $0.endTime == nil })
@@ -1323,6 +1427,22 @@ final class TripTrackingService {
             return false
         }
         let plannedTank = pending.tank
+        guard actualWaterLitres.isFinite, actualWaterLitres >= 0,
+              Set(plannedTank.chemicals.map(\.id)).count == plannedTank.chemicals.count,
+              Set(actualChemicalBaseAmounts.keys) == Set(plannedTank.chemicals.map(\.id)),
+              actualChemicalBaseAmounts.values.allSatisfy({ $0.isFinite && $0 >= 0 }) else {
+            errorMessage = "Enter actual water and an amount for every chemical. Calculated amounts are not recorded as actuals."
+            return false
+        }
+        if let retained = SprayTankActualStore.shared.initialMix(tripId: trip.id) {
+            guard retained.ownerId == userId, retained.sprayRecordId == pending.record.id,
+                  retained.tank == plannedTank,
+                  retained.amounts.waterLitres == actualWaterLitres,
+                  retained.amounts.chemicalBaseAmounts == actualChemicalBaseAmounts else {
+                errorMessage = "The original entered tank amounts are retained. Retry that saved mix."
+                return false
+            }
+        }
         let currentRecord = TankMixPresentation.linkedRecord(for: trip.id, in: store?.sprayRecords ?? [])
         if let blocker = SprayPlanningOperationalGate.tankConfirmationBlocker(current: currentRecord, captured: pending.record) {
             errorMessage = blocker
@@ -1358,7 +1478,7 @@ final class TripTrackingService {
                     plannedChemicalId: chemical.id,
                     savedChemicalId: chemical.savedChemicalId,
                     name: chemical.name,
-                    actualAmountBase: actualChemicalBaseAmounts[chemical.id] ?? chemical.volumePerTank,
+                    actualAmountBase: actualChemicalBaseAmounts[chemical.id]!,
                     unit: chemical.unit
                 )
             }
@@ -1503,6 +1623,7 @@ final class TripTrackingService {
     func resumeIfNeeded() {
         guard let trip = activeTrip, !isTracking else { return }
         guard store?.operationalWriteAuthority.canWrite(vineyardId: trip.vineyardId.uuidString) == true else { return }
+        guard completeInitialTankMix(tripId: trip.id) else { return }
         let repaired = TankSessionLifecycle.reconciled(trip)
         if repaired != trip {
             do {
@@ -1524,6 +1645,7 @@ final class TripTrackingService {
 
     private func beginTracking() {
         guard let active = activeTrip, store?.operationalWriteAuthority.canWrite(vineyardId: active.vineyardId.uuidString) == true else { return }
+        guard completeInitialTankMix(tripId: active.id) else { return }
         if let trip = activeTrip, trip.coverageBasis != .legacy {
             do {
                 let d = try TripOccurrenceCoverage.requireDocument(trip.occurrenceCoverage ?? .null)

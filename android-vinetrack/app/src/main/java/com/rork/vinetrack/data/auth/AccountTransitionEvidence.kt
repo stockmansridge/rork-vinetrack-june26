@@ -2,6 +2,7 @@ package com.rork.vinetrack.data.auth
 
 import android.content.Context
 import com.rork.vinetrack.data.ActiveTripStore
+import com.rork.vinetrack.data.model.SprayActualInputDraft
 import com.rork.vinetrack.data.model.SprayTankActual
 import java.io.File
 import java.io.DataInputStream
@@ -20,6 +21,7 @@ internal class AccountTransitionEvidence(private val context: Context) {
     @Serializable private data class ActualCache(
         val records: List<SprayTankActual> = emptyList(),
         val pendingIds: Set<String> = emptySet(),
+        val inputDrafts: List<SprayActualInputDraft> = emptyList(),
     )
 
     data class Assessment(val vineyards: Set<String>)
@@ -98,12 +100,18 @@ internal class AccountTransitionEvidence(private val context: Context) {
                         val cache = codec.decodeFromString(ActualCache.serializer(), raw)
                         check(cache.records.map { it.id }.distinct().size == cache.records.size)
                         check(cache.pendingIds.all { id -> cache.records.any { it.id == id } })
-                        if (original == null) check(cache.records.isEmpty() && cache.pendingIds.isEmpty())
+                        check(cache.inputDrafts.all { it.hasValidIdentity() })
+                        check(cache.inputDrafts.map { Triple(it.ownerUserId, it.vineyardId, it.key) }.distinct().size == cache.inputDrafts.size)
+                        if (original == null) check(cache.records.isEmpty() && cache.pendingIds.isEmpty() && cache.inputDrafts.isEmpty())
                         else cache.records.forEach { actual ->
                             check(actual.id.isNotBlank() && actual.vineyardId.isNotBlank() &&
                                 actual.confirmedBy == original && actual.correctionVersion == 0L &&
                                 actual.lastCorrectedAt == null && actual.clientUpdatedAt == actual.confirmedAt)
                             vineyards.add(actual.vineyardId)
+                        }
+                        cache.inputDrafts.forEach { draft ->
+                            check(draft.ownerUserId == original)
+                            vineyards.add(draft.vineyardId)
                         }
                     }
                 }
@@ -146,6 +154,9 @@ internal class AccountTransitionEvidence(private val context: Context) {
         if (RecoveryLocationContract.present(filesRoot)) RecoveryLocationContract.directory(filesRoot, "FILES_ROOT_TYPE").forEach { file ->
             // These mirrors contain shared public chemical/guide material, not private field work.
             when {
+                GoogleMapsRuntimeFiles.recognises(file.name, context.packageName) -> try {
+                    GoogleMapsRuntimeFiles.validate(file, filesRoot, context.packageName)
+                } catch (_: Exception) { location(false, "MAPS_RUNTIME_FILE_CONTRACT") }
                 file.name == ProfileInstallerSkipContract.FILE_NAME -> try { validateProfileInstallerSkip(file, filesRoot) }
                     catch (_: Exception) { location(false, "PROFILE_INSTALLER_MARKER_CONTRACT") }
                 file.name == "profileInstalled" -> try { validateProfileMarker(file, filesRoot) }

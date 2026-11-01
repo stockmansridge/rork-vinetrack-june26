@@ -1740,20 +1740,31 @@ private fun SprayDetailView(
     if (showStartConfirmation) {
         val trip = resolveSprayTrip(record, state.trips)
         if (trip != null) {
+            val actualDraftKey = "review:" + com.rork.vinetrack.data.spray.SprayStartActualAmounts.key(
+                listOf(trip.id, record.id, state.regionFormatter.settings.toString(), java.util.Locale.getDefault().toLanguageTag()) + com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(record.tanks.orEmpty()))
             SprayTripStartConfirmation(
                 tanks = record.tanks.orEmpty(),
+                initialDraft = vm.sprayReviewDraft(actualDraftKey)?.text.orEmpty(),
+                busy = starting,
+                errorMessage = state.sprayError,
+                onDraftChange = { vm.saveSprayReviewDraft(actualDraftKey, it) },
                 scopeKey = "${state.currentUserId}|${state.selectedVineyardId}|${trip.id}|${record.id}",
                 scopeEvidence = listOf(trip, record),
                 machineName = sprayTripMachineName(trip, state.machines),
                 latestEngineHours = latestSprayTripEngineHours(trip, state.machines, state.fuelLogs),
                 onDismiss = { showStartConfirmation = false },
-                onStart = { startHours ->
-                    showStartConfirmation = false
-                    starting = true
-                    vm.startSprayJob(trip.id, startHours, com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(record.tanks.orEmpty())) { ok ->
-                        starting = false
-                        Toast.makeText(context, if (ok) "Spray job started — tracking your trip." else state.sprayError ?: "Couldn't start the spray job.", Toast.LENGTH_SHORT).show()
-                        if (ok) onJobStarted?.invoke(trip.id)
+                onStart = { startHours, actuals ->
+                    if (!starting) {
+                        starting = true
+                        val frozenDraft = vm.sprayReviewDraft(actualDraftKey)
+                        vm.startReviewedSprayJob(trip.id, startHours, actuals) { ok ->
+                            starting = false
+                            if (ok) {
+                                frozenDraft?.let(vm::clearSprayReviewDraft)
+                                showStartConfirmation = false
+                                onJobStarted?.invoke(trip.id)
+                            }
+                        }
                     }
                 },
             )

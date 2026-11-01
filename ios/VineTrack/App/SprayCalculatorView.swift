@@ -1,6 +1,17 @@
 import SwiftUI
 import CoreLocation
 
+/// Present the recipe as the sheet item itself. A separate Boolean previously
+/// presented the sheet before its pending tanks were visible on first render.
+private struct SprayMixReview: Identifiable {
+    let id = UUID()
+    let tanks: [SprayTank]
+    let geometry: SprayApplicationSnapshot?
+    let vineyardId: UUID
+    let userId: UUID?
+    let formatter: RegionFormatter
+}
+
 /// Backend-safe Spray Calculator.
 ///
 /// Restores the original spray-job setup workflow visually and functionally:
@@ -185,18 +196,34 @@ struct SprayCalculatorView: View {
     @State private var showResults: Bool = false
     @State private var showSummary: Bool = false
     @State private var summaryMode: SprayCalculationSummaryMode = .savedForLater
-    @State private var pendingTanks: [SprayTank] = []
+    @State private var pendingMixReview: SprayMixReview?
+    @State private var initialTankInput = SprayInitialTankInput()
+    @State private var retainedStartActuals: SprayInitialTankAmounts?
+    @State private var retainedStartRecord: SprayRecord?
+    @State private var retainedStartReview: SprayMixReview?
+    @State private var hasAttemptedStart = false
     @State private var savedFeedback: Bool = false
     @State private var pendingLaterSave: (record: SprayRecord, trip: Trip)? = nil
     @State private var errorMessage: String?
-    @State private var showStartConfirmation: Bool = false
-    @State private var confirmedActualRates: Bool = false
-    @State private var reviewedGeometry: SprayApplicationSnapshot?
-    @State private var reviewedVineyardId: UUID?
-    @State private var reviewedUserId: UUID?
     @State private var startEngineHoursText: String = ""
     @State private var isStartingJob: Bool = false
     @State private var showWeatherDataSettings: Bool = false
+
+    private var pendingTanks: [SprayTank] { pendingMixReview?.tanks ?? [] }
+    private var reviewedGeometry: SprayApplicationSnapshot? { pendingMixReview?.geometry }
+    private var reviewedVineyardId: UUID? { pendingMixReview?.vineyardId }
+    private var reviewedUserId: UUID? { pendingMixReview?.userId }
+    private var enteredInitialActuals: SprayInitialTankAmounts? {
+        guard let review = pendingMixReview, let tank = SprayInitialTankAmounts.firstTank(in: review.tanks) else { return nil }
+        if let retainedStartActuals { return retainedStartActuals.isValid(for: tank) ? retainedStartActuals : nil }
+        return initialTankInput.resolved(tank: tank, formatter: review.formatter)
+    }
+
+    private var retainedStartTrip: Trip? {
+        guard let recordId = retainedStartRecord?.id,
+              let tripId = store.sprayRecords.first(where: { $0.id == recordId })?.canonicalTripId else { return nil }
+        return store.trips.first { $0.id == tripId }
+    }
 
     // Prefill (duplicate / template)
     private let prefillRecord: SprayRecord?
@@ -1192,8 +1219,8 @@ struct SprayCalculatorView: View {
                     ChemicalMatchFlowView(onSaved: { saved in appendChemicalLine(for: saved) })
                 }
             }
-            .sheet(isPresented: $showStartConfirmation) {
-                startConfirmationSheet
+            .sheet(item: $pendingMixReview) { review in
+                startConfirmationSheet(review)
             }
             .sheet(isPresented: $showAddChemicalPicker) {
                 NavigationStack {
@@ -2979,7 +3006,7 @@ struct SprayCalculatorView: View {
     }
 
     @ViewBuilder
-    private var startConfirmationSheet: some View {
+    private func startConfirmationSheet(_ review: SprayMixReview) -> some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
@@ -2989,7 +3016,7 @@ struct SprayCalculatorView: View {
                             .foregroundStyle(VineyardTheme.olive)
                         Text("Spray Tank Mixing")
                             .font(.title2.bold())
-                        Text("Review the tank mix and trip setup before starting.")
+                        Text("Enter what you loaded, then choose your path and start.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -3021,10 +3048,15 @@ struct SprayCalculatorView: View {
                     .padding(.horizontal)
 
                     tankMixPreviewSection
-                    SprayActualRateConfirmation(tanks: pendingTanks, confirmed: $confirmedActualRates)
-                        .padding(.horizontal)
+                    if let firstTank = SprayInitialTankAmounts.firstTank(in: review.tanks) {
+                        SprayInitialTankActualsEditor(tank: firstTank, tankCount: review.tanks.count,
+                            formatter: review.formatter, input: $initialTankInput)
+                            .disabled(isStartingJob || retainedStartActuals != nil)
+                            .padding(.horizontal)
+                    }
 
                     confirmTripSetup
+                        .disabled(isStartingJob || retainedStartRecord != nil)
                         .padding(.horizontal)
 
                     if !pathSequencePreview.isEmpty {
@@ -3094,14 +3126,14 @@ struct SprayCalculatorView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(VineyardTheme.olive)
-                        .disabled(isStartingJob || calculatorOperationalBlocker != nil || !confirmedActualRates || !SprayStartRateReview.isReviewable(pendingTanks) || !validStartEngineHours)
+                        .disabled(isStartingJob || calculatorOperationalBlocker != nil || enteredInitialActuals == nil || !SprayStartRateReview.isReviewable(review.tanks) || !validStartEngineHours)
                         .accessibilityIdentifier("spray.startTrip")
                         if let blocker = calculatorOperationalBlocker {
                             Text(blocker).font(.caption).foregroundStyle(.orange)
                         }
 
                         Button("Cancel") {
-                            showStartConfirmation = false
+                            pendingMixReview = nil
                         }
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -4583,6 +4615,12 @@ struct SprayCalculatorView: View {
     }
 
     private func saveAndStartJob() {
+        if let review = retainedStartReview {
+            // Closing and reopening Review must not mint another start or
+            // discard the quantities retained by a previous attempt.
+            pendingMixReview = review
+            return
+        }
         if let blocker = flow.firstBlocker { errorMessage = blocker.message; return }
         guard formIsValid else { return }
         guard !accessControl.isLoading else { return }
@@ -4603,14 +4641,20 @@ struct SprayCalculatorView: View {
         // Mixing screen before tapping Start Spray Trip.
         performCalculation()
         if let equipId = selectedEquipmentId,
-           let equip = store.sprayEquipment.first(where: { $0.id == equipId }) {
-            pendingTanks = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
+           let equip = store.sprayEquipment.first(where: { $0.id == equipId }),
+           let vineyardId = store.selectedVineyardId {
+            let tanks = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
+            guard SprayStartRateReview.isReviewable(tanks) else {
+                errorMessage = "The calculated mix is incomplete. Check water and products before reviewing the tank."
+                return
+            }
+            initialTankInput = SprayInitialTankInput()
+            retainedStartActuals = nil
+            retainedStartRecord = nil
+            hasAttemptedStart = false
+            pendingMixReview = SprayMixReview(tanks: tanks, geometry: flow.snapshot,
+                vineyardId: vineyardId, userId: auth.userId, formatter: region)
         }
-        reviewedGeometry = flow.snapshot
-        reviewedVineyardId = store.selectedVineyardId
-        reviewedUserId = auth.userId
-        confirmedActualRates = false
-        showStartConfirmation = true
     }
 
     private func confirmAndStartJob() async {
@@ -4623,13 +4667,13 @@ struct SprayCalculatorView: View {
             errorMessage = "No vineyard selected."
             return
         }
-        if tracking.activeTrip != nil {
+        if let active = tracking.activeTrip, active.id != retainedStartTrip?.id {
             errorMessage = "A trip is already in progress. End it before starting a new spray."
             return
         }
-        guard confirmedActualRates, validStartEngineHours,
+        guard enteredInitialActuals != nil, validStartEngineHours,
               SprayStartRateReview.isReviewable(pendingTanks) else {
-            errorMessage = "Confirm the actual chemical rates and check the engine hours."
+            errorMessage = "Enter the actual water and every chemical amount, and check the engine hours."
             return
         }
         guard store.selectedVineyardId == reviewedVineyardId, auth.userId == reviewedUserId else {
@@ -4639,10 +4683,8 @@ struct SprayCalculatorView: View {
         let currentTanks = buildSprayTanks(tankCapacity: equip.tankCapacityLitres)
         guard SprayStartRateReview.evidence(currentTanks) == SprayStartRateReview.evidence(pendingTanks),
               flow.snapshot == reviewedGeometry else {
-            pendingTanks = currentTanks
-            reviewedGeometry = flow.snapshot
-            confirmedActualRates = false
-            errorMessage = "The mix changed. Confirm the updated actual rates."
+            // Do not discard entered amounts or rebind them to regenerated IDs.
+            errorMessage = "The calculated mix changed. Your entries are still shown; reopen Review to enter actuals for the updated mix."
             return
         }
         errorMessage = nil
@@ -4671,10 +4713,10 @@ struct SprayCalculatorView: View {
     }
 
     private func finalizeStartFromMixSummary() {
-        guard confirmedActualRates, validStartEngineHours,
+        guard let amounts = enteredInitialActuals, validStartEngineHours,
               SprayStartRateReview.isReviewable(pendingTanks),
               store.selectedVineyardId == reviewedVineyardId, auth.userId == reviewedUserId else {
-            errorMessage = "Confirm the actual chemical rates before starting this Trip."
+            errorMessage = "Enter the actual tank contents before starting this Trip."
             isStartingJob = false
             return
         }
@@ -4686,7 +4728,7 @@ struct SprayCalculatorView: View {
             isStartingJob = false
             return
         }
-        if tracking.activeTrip != nil {
+        if let active = tracking.activeTrip, active.id != retainedStartTrip?.id {
             errorMessage = "A trip is already in progress."
             isStartingJob = false
             return
@@ -4714,7 +4756,7 @@ struct SprayCalculatorView: View {
             store.currentTractors.first(where: { $0.id == id })?.displayName
         } ?? ""
 
-        let record = SprayRecord(
+        let record = retainedStartRecord ?? SprayRecord(
             vineyardId: vineyardId,
             date: Date(),
             startTime: Date(),
@@ -4736,6 +4778,42 @@ struct SprayCalculatorView: View {
             // Job-originated completion: the record fulfils this spray job.
             sprayJobId: originSprayJobId
         )
+        retainedStartRecord = record
+        retainedStartActuals = amounts
+        retainedStartReview = pendingMixReview
+        let finished: (Bool) -> Void = { success in
+            isStartingJob = false
+            guard success else {
+                errorMessage = tracking.errorMessage ?? "The original saved spray needs recovery; your actual tank amounts are retained."
+                if !hasAttemptedStart {
+                    // A definitive preflight refusal has not prepared a
+                    // persistent operation. Keep the text editable for retry.
+                    retainedStartRecord = nil
+                    retainedStartActuals = nil
+                    retainedStartReview = nil
+                }
+                return
+            }
+            savedFeedback.toggle()
+            showSummary = false
+            pendingMixReview = nil
+            dismiss()
+        }
+        if let original = retainedStartTrip {
+            if original.isActive {
+                finished(tracking.retryInitialSprayStart(tripId: original.id,
+                    expectedAmounts: amounts, expectedRecordId: record.id))
+            } else {
+                tracking.activateSavedTrip(original, startEngineHours: parsedStartEngineHours,
+                    initialTankActuals: amounts, onStarted: finished)
+            }
+            return
+        }
+        guard !hasAttemptedStart else {
+            isStartingJob = false
+            errorMessage = "The original spray start needs recovery. Your entries are retained here; sync and open the original saved job before retrying."
+            return
+        }
         tracking.startTrip(
             type: .spray,
             primaryPaddockId: firstPaddock?.id,
@@ -4756,14 +4834,9 @@ struct SprayCalculatorView: View {
             operatorCategoryId: accessControl.loadedVineyardId == vineyardId ? accessControl.currentWorkerTypeId : nil,
             startEngineHours: parsedStartEngineHours,
             sprayRecord: record,
-            onStarted: { success in
-                isStartingJob = false
-                guard success else { errorMessage = tracking.errorMessage ?? "Planned start needs recovery."; return }
-                savedFeedback.toggle()
-                showSummary = false
-                showStartConfirmation = false
-                dismiss()
-            }
+            initialTankActuals: amounts,
+            onPreparationStarted: { hasAttemptedStart = true },
+            onStarted: finished
         )
     }
 

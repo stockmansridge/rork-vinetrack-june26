@@ -140,18 +140,33 @@ internal fun ConfirmActualTankMixDialog(
     initialDraft: Map<String, String> = emptyMap(),
     onDraftChange: (Map<String, String>) -> Boolean = { true },
 ) {
-    val formatter = remember { NumberFormat.getNumberInstance(Locale.getDefault()) }
+    val inputLocale = remember(tank.id) { initialDraft["@locale"]?.let(Locale::forLanguageTag) ?: Locale.getDefault() }
+    val formatter = remember(tank.id) { NumberFormat.getNumberInstance(inputLocale).apply {
+        maximumFractionDigits = 340
+        isGroupingUsed = false
+    } }
     val currentRegion = com.rork.vinetrack.ui.LocalRegionFormatter.current
-    val region = remember(tank.id) { currentRegion }
-    val waterSeed = remember(tank.id) { formatter.format(region.volumeValue(tank.waterVolume)) }
+    val region = remember(tank.id) { com.rork.vinetrack.data.RegionFormatter(
+        currentRegion.settings.copy(volumeUnit = initialDraft["@volumeUnit"] ?: currentRegion.settings.volumeUnit)) }
+    // Tank 1 must contain entered values; later fills retain their established editable workflow.
+    val isFirstTank = record.tanks.orEmpty().minByOrNull { it.tankNumber }?.id == tank.id
+    val canonicalWater = initialDraft[com.rork.vinetrack.data.spray.SprayStartActualAmounts.WATER_LITRES]?.toDoubleOrNull()
+    val waterSeed = remember(tank.id) { (canonicalWater ?: tank.waterVolume.takeIf { !isFirstTank })?.let { formatter.format(region.volumeValue(it)) }.orEmpty() }
     var waterText by remember(tank.id) { mutableStateOf(initialDraft["water"] ?: waterSeed) }
     val chemicalTexts = remember(tank.id) { mutableStateMapOf<String, String>().apply {
-        tank.chemicals.forEach { put(it.id, initialDraft[it.id] ?: formatter.format(chemicalUnitFromBase(it.unit, it.volumePerTank))) }
+        tank.chemicals.forEach { chemical ->
+            val retained = initialDraft[com.rork.vinetrack.data.spray.SprayStartActualAmounts.CHEMICAL_PREFIX + chemical.id]?.toDoubleOrNull()
+            val seed = retained?.let { formatter.format(chemicalUnitFromBase(chemical.unit, it)) }
+                ?: if (isFirstTank) "" else formatter.format(if (chemical.quantityBasis == "display") chemical.volumePerTank else chemicalUnitFromBase(chemical.unit, chemical.volumePerTank))
+            put(chemical.id, initialDraft[chemical.id] ?: seed)
+        }
     } }
     var saving by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     fun saveDraft() {
-        if (!onDraftChange(chemicalTexts.toMap() + ("water" to waterText))) error = "Actual draft could not be retained on this device. Retry before leaving."
+        if (!onDraftChange(chemicalTexts.toMap() + mapOf("water" to waterText,
+                "@locale" to inputLocale.toLanguageTag(), "@volumeUnit" to region.settings.volumeUnit,
+                "@volumeToLitres" to region.volumeToCanonical(1.0).toString()))) error = "Actual draft could not be retained on this device. Retry before leaving."
         else error = null
     }
     fun parse(value: String): Double? = parseLocalizedNonNegativeDecimal(value, formatter)
@@ -196,7 +211,7 @@ internal fun ConfirmActualTankMixDialog(
                         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(chemical.name.ifBlank { "Unnamed chemical" }, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                             PlannedTankAmountRow(
-                                com.rork.vinetrack.ui.components.SprayGuidedFormat.quantity(chemicalUnitFromBase(chemical.unit, chemical.volumePerTank), chemical.unit)
+                                com.rork.vinetrack.ui.components.SprayGuidedFormat.quantity(if (chemical.quantityBasis == "display") chemical.volumePerTank else chemicalUnitFromBase(chemical.unit, chemical.volumePerTank), chemical.unit)
                             )
                             ActualTankAmountRow(
                                 value = chemicalTexts[chemical.id].orEmpty(),
@@ -205,7 +220,7 @@ internal fun ConfirmActualTankMixDialog(
                             )
                             actualPlannedDifference(
                                 parse(chemicalTexts[chemical.id].orEmpty()),
-                                chemicalUnitFromBase(chemical.unit, chemical.volumePerTank),
+                                if (chemical.quantityBasis == "display") chemical.volumePerTank else chemicalUnitFromBase(chemical.unit, chemical.volumePerTank),
                             )?.let { difference -> LiveDifferenceRow(difference, chemical.unit) }
                             if (parse(chemicalTexts[chemical.id].orEmpty()) == 0.0) {
                                 Text("This product will be recorded as not added.", color = VineColors.Orange, fontSize = 12.sp)
@@ -213,13 +228,22 @@ internal fun ConfirmActualTankMixDialog(
                         }
                     }
                 }
+                if (canonicalWater != null) TextButton(onClick = {
+                    waterText = waterSeed
+                    tank.chemicals.forEach { chemical ->
+                        initialDraft[com.rork.vinetrack.data.spray.SprayStartActualAmounts.CHEMICAL_PREFIX + chemical.id]?.toDoubleOrNull()?.let {
+                            chemicalTexts[chemical.id] = formatter.format(chemicalUnitFromBase(chemical.unit, it))
+                        }
+                    }
+                    saveDraft()
+                }) { Text("Restore retained amounts") }
                 error?.let { Text(it, color = VineColors.Orange) }
             }
         },
         confirmButton = {
             TextButton(enabled = valid && !saving, onClick = {
                 val displayWater = parse(waterText) ?: return@TextButton
-                val water = if (waterText == waterSeed) tank.waterVolume else region.volumeToCanonical(displayWater)
+                val water = if (waterText == waterSeed && (canonicalWater != null || !isFirstTank)) canonicalWater ?: tank.waterVolume else region.volumeToCanonical(displayWater)
                 saving = true
                 val amounts = tank.chemicals.associate { chemical ->
                     chemical.id to com.rork.vinetrack.data.model.chemicalUnitToBase(
@@ -451,7 +475,7 @@ private fun PlannedChemicalCard(
 ) {
     val vine = LocalVineColors.current
     val formatter = LocalRegionFormatter.current
-    val displayAmount = chemicalUnitFromBase(chemical.unit, chemical.volumePerTank)
+    val displayAmount = if (chemical.quantityBasis == "display") chemical.volumePerTank else chemicalUnitFromBase(chemical.unit, chemical.volumePerTank)
     val basis = chemical.resolvedRateBasis
     val rateBase = if (basis == SprayProductRateBasis.PER_100_LITRES) chemical.ratePer100L else chemical.ratePerHa
     val displayRate = chemicalUnitFromBase(chemical.unit, rateBase)
