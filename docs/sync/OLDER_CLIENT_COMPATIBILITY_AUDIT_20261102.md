@@ -53,3 +53,10 @@ For each of at least iOS 3.1.8, Android 3.1.8, proposed 3.1.9 iOS, proposed 3.1.
 8. **Success:** exact source/build/backend RPC hash and original device receipts for full start, real tank amounts, end, server readback, and other-device convergence.
 
 **No claim of fixed production behaviour follows from this audit.** This report belongs to governance PR #38 and should be cross-checked against any newer managed-source commit before applying fixes.
+
+
+## Follow-up: governance CI executed and failed closed
+
+The newly added `Canonical sync contract integrity` workflow **run 41322413914** at audit branch commit `151a1ef12654e349860012a5bd921ca6f06d2402` completed FAILURE. Step "Validate governance contract and unverified release declarations" PASSED; step "Detect unreviewed mobile sync callsites and API route drift" FAILED. This is a meaningful detected discrepancy, **not** a claim that the new contract has passed. The run writes its detailed JSON under `/tmp` without publishing the artifact; the exact route-fingerprint drift is not yet triaged.
+
+**SYNC-017 — P1 unregistered sync surface:** Source parser on audit branch observes **38 iOS coordinator calls versus 37 registered**. The missing entry is `YieldMasterWeightCache.shared.synchronize` (current `ios/VineTrack/App/NewMainTabView.swift`, after maintenance and before yield sessions). Android pending discriminator inventory remains 38/38. This new synchronisation path catches errors without failing the entire sweep; status coverage for stale master weights and Android/Portal parity must be independently verified. Before changing the expected register, identify whether this surface is needed for full-sync success, the old/new serialization and account fencing, its failure diagnostics and signed-device behavior; then review route-signature changes rather than blindly accepting new hashes. Leave CI red until reviewed.
