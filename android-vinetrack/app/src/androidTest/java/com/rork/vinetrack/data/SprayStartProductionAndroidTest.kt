@@ -66,6 +66,7 @@ class SprayStartProductionAndroidTest {
     private var failReload = false
     private var loseActivationResponse = false
     private var activationRequests = 0
+    private var qualifiedCreateRequests = 0
     private val tripRequests = java.util.concurrent.CopyOnWriteArrayList<String>()
     private var mode = "accepted"
     private var hold: CompletableDeferred<Unit>? = null
@@ -105,6 +106,10 @@ class SprayStartProductionAndroidTest {
                     """[{"has_supabase_access":true,"can_use_android_app":true,"access_source":"team","solo_check_required":false}]""", HttpStatusCode.OK, jsonHeaders)
                 forCalculatorUi && path.endsWith("/rpc/get_my_vineyard_access_matrix") -> respond(
                     """{"account":{"has_any_accessible_vineyard":true},"vineyards":[{"vineyard_id":"$vineyard","has_vineyard_access":true,"membership_role":"manager"}]}""", HttpStatusCode.OK, jsonHeaders)
+                path.endsWith("/rpc/create_trip_with_occurrences_v1") -> {
+                    qualifiedCreateRequests++
+                    respond("{\"code\":\"synthetic_network_failure\"}", HttpStatusCode.ServiceUnavailable, jsonHeaders)
+                }
                 path.endsWith("/rpc/save_legacy_spray_pair_v1") || path.endsWith("/rpc/recover_legacy_spray_pair_v1") -> {
                     val body = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
                     if (path.endsWith("/save_legacy_spray_pair_v1")) {
@@ -534,6 +539,60 @@ class SprayStartProductionAndroidTest {
         assertEquals(original.trip.pathPoints.orEmpty(), returned.trip.pathPoints.orEmpty())
         assertEquals(original.trip.tankSessions, returned.trip.tankSessions)
         assertEquals(1, creates) // Returning to an already-owned trip is not another activation or tracker.
+    }
+
+    @Test fun independentQualifiedStartReachesTransportDespiteUnreadableLegacyWithoutChangingItsBytes() {
+        setup()
+        val prefs = app.getSharedPreferences(LegacySpraySaveStore.PREFERENCES, Context.MODE_PRIVATE)
+        val retained = "original-unreadable-legacy-evidence-not-a-receipt"
+        assertTrue(prefs.edit().putString("attempts", retained).commit())
+        val before = prefs.all.toMap()
+        val result = qualifiedStart()
+        assertFalse("Synthetic transport intentionally fails; not a successful lifecycle", result.isStarted)
+        assertEquals("Independent route must reach occurrence transport", 1, qualifiedCreateRequests)
+        assertEquals(0, creates); assertEquals(0, recoveries)
+        assertEquals(before, prefs.all)
+        assertEquals(1, vm.ui.value.trips.count { it.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE })
+        val trip = vm.ui.value.trips.single { it.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE }
+        val journal = TripOccurrenceNativeStore(app).journal(TripOccurrenceJournal.Scope(actor, vineyard, trip.id))
+        val pending = requireNotNull(journal.load())
+        assertFalse(pending.creationConfirmed)
+        assertTrue(pending.pending.any { it.rpc == "create_trip_with_occurrences_v1" })
+        // Interrupted/uncertain qualified create must block another mint even though legacy is unrelated.
+        assertFalse(qualifiedStart().isStarted)
+        assertEquals(1, qualifiedCreateRequests)
+        assertEquals(pending, journal.load())
+        assertEquals(before, prefs.all)
+    }
+
+    @Test fun savedSourceCannotBypassUnreadableLegacyAndDiagnosticsDoNotMutateIt() {
+        setup()
+        val prefs = app.getSharedPreferences(LegacySpraySaveStore.PREFERENCES, Context.MODE_PRIVATE)
+        assertTrue(prefs.edit().putString("attempts", "private-marker-do-not-export").commit())
+        val before = prefs.all.toMap()
+        assertFalse(qualifiedStart(source = UUID.randomUUID().toString()).isStarted)
+        assertEquals(0, qualifiedCreateRequests)
+        val journalPrefs = app.getSharedPreferences("trip_occurrence_journals_v1", Context.MODE_PRIVATE)
+        val journalsBefore = journalPrefs.all.toMap()
+        val report = vm.retainedOperationDiagnostics()
+        assertTrue(report.contains("LEGACY_EVIDENCE_INSPECTION_HELD"))
+        assertFalse(report.contains("private-marker-do-not-export"))
+        assertTrue(report.contains("source_revision: unknown"))
+        assertEquals(before, prefs.all)
+        assertEquals(journalsBefore, journalPrefs.all)
+        assertEquals(0, creates); assertEquals(0, recoveries); assertEquals(0, qualifiedCreateRequests)
+    }
+
+    private fun qualifiedStart(source: String? = null): SprayStartOutcome {
+        val done = CountDownLatch(1); val result = AtomicReference<SprayStartOutcome>()
+        val plan = com.rork.vinetrack.ui.SprayJobRowPlan("sequential", listOf(1.5), 1,
+            candidates = listOf(TripOccurrencePlanner.Candidate(vineyard, blockId, "Synthetic", 1.5, emptyList())))
+        instrumentation.runOnMainSync {
+            vm.startSprayJobNow(input(), blockId, listOf(blockId), "Synthetic", rowPlan = plan,
+                sourceSavedRecordId = source) { result.set(it); done.countDown() }
+        }
+        assertTrue("Qualified callback did not finish", done.await(20, TimeUnit.SECONDS))
+        return requireNotNull(result.get())
     }
 
     @Test fun changedRouteCannotEscapeAnUncertainOriginalLegacyStart() {

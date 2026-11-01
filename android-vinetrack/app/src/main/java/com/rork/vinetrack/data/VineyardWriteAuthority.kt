@@ -26,6 +26,12 @@ class VineyardWriteAuthority(
         }
         return null
     }
+    /** Diagnostic lookup must not persist a cache-derived hold or change deniedVineyardId. */
+    @Synchronized fun inspectionCanWrite(vineyardId: String): Boolean {
+        val user = owner() ?: return false
+        val key = scope(vineyardId) ?: return false
+        return load()[key] == null && cached(user, vineyardId)?.isTrialExpiredReadOnly != true
+    }
     fun canWrite(vineyardId: String): Boolean = heldReason(vineyardId) == null
     fun admit(vineyardId: String): Boolean = canWrite(vineyardId).also { if (!it) deniedVineyardId = vineyardId }
     fun requireWrite(vineyardId: String) {
@@ -51,6 +57,7 @@ class VineyardWriteAuthority(
 object OperationalWrites {
     @Volatile var authority: VineyardWriteAuthority? = null
     fun requireWrite(vineyardId: String) { authority?.requireWrite(vineyardId) }
+    fun inspectionCanWrite(vineyardId: String): Boolean = authority?.inspectionCanWrite(vineyardId) ?: false
     fun canWrite(vineyardId: String): Boolean = authority?.canWrite(vineyardId) ?: true
     fun admit(vineyardId: String): Boolean = authority?.admit(vineyardId) ?: true
 

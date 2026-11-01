@@ -1451,8 +1451,17 @@ struct SyncSettingsView: View {
                     .disabled(syncCenter.isSyncing || !network.isOnline)
 
                     Button {
-                        UIPasteboard.general.string = issueCenter.diagnosticsText()
+                        let scopedIssues: String
+                        if tripSync.verifiedDiagnosticsOwner != nil, let vineyard = store.selectedVineyardId {
+                            let trips = store.trips.filter { $0.vineyardId == vineyard }
+                            let sprays = store.sprayRecords.filter { $0.vineyardId == vineyard }
+                            let actuals = SprayTankActualStore.shared.records.filter { $0.vineyardId == vineyard }
+                            let ids = Set(trips.map(\.id) + sprays.map(\.id) + actuals.map(\.id))
+                            scopedIssues = issueCenter.privateSafeDiagnosticsText(vineyardId: vineyard, visibleIds: ids)
+                        } else { scopedIssues = "Issue identifiers protected: account/vineyard access not verified." }
+                        UIPasteboard.general.string = scopedIssues
                             + "\n\n" + tripSync.pendingUploadDiagnostics
+                            + "\n\n" + tripSync.retainedOperationDiagnostics
                             + "\n\n" + SprayTankActualStore.shared.pendingUploadDiagnostics(
                                 tripSync: tripSync, spraySync: sprayRecordSync,
                                 vineyardId: store.selectedVineyardId,

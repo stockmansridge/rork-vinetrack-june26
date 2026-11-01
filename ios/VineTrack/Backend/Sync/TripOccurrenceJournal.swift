@@ -77,6 +77,26 @@ import Foundation
         }
     }
 
+    /// Original IDs only, never operation payloads or raw hold text. History stores
+    /// intents (and recovered reversible actions), not a durable transport-attempt log.
+    static func inspectionLines(_ state: Snapshot) -> [String] {
+        func id(_ value: String) -> String { UUID(uuidString: value)?.uuidString.lowercased() ?? "INVALID_ID_PROTECTED" }
+        let pending = state.pending.map { "\($0.rpc):\(id($0.id))" }.joined(separator: ",")
+        return [
+            "trip_id: \(id(state.scope.tripId))",
+            "local_stage: \(syncDiagnosticReason(state))",
+            "creation_confirmed_local_evidence: \(state.creationConfirmed.map(String.init) ?? "unknown")",
+            "server_existence_now: unknown_requires_authoritative_read",
+            "server_active_last_local_evidence: \(state.serverActive.map(String.init) ?? "unknown")",
+            "pending_operations: \(pending.isEmpty ? "none" : pending)",
+            "last_retained_intent: \(state.history.last.map { "\($0.rpc):\(id($0.id))" } ?? "unknown")",
+            "last_attempted_operation: unknown_not_persisted",
+            "last_acknowledged_operation: unknown_not_persisted",
+            "reconciliation: \(state.heldReason == nil ? "no_local_hold_recorded" : "held_original_evidence_required")",
+            "retry: original_ids_only_requires_current_authority_and_server_reconciliation"
+        ]
+    }
+
     /// Read-only discovery for a legacy deletion whose cache row has already gone.
     /// Both embedded scope and canonical journal path must agree; ambiguity stays held.
     static func originalDeletionEvidence(tripId: UUID) throws -> (TripDeletionJournal.Scope, Data)? {
@@ -101,12 +121,19 @@ import Foundation
         return matches.first
     }
 
-    func load() throws -> Snapshot? {
+    func load() throws -> Snapshot? { try readSnapshot(recordDecodeEvidence: true) }
+
+    /// Diagnostic reads must not write even decode-failure evidence to another store.
+    func inspectionSnapshot() throws -> Snapshot? { try readSnapshot(recordDecodeEvidence: false) }
+
+    private func readSnapshot(recordDecodeEvidence: Bool) throws -> Snapshot? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
         let state: Snapshot
         do { state = try JSONDecoder().decode(Snapshot.self, from: Data(contentsOf: fileURL)) }
         catch {
-            RecoveryDecodeEvidence.record(error, source: "local_occurrence_journal", operation: "TripOccurrenceJournal.load")
+            if recordDecodeEvidence {
+                RecoveryDecodeEvidence.record(error, source: "local_occurrence_journal", operation: "TripOccurrenceJournal.load")
+            }
             throw error
         }
         guard state.scope == scope else { throw Failure.scopeConflict }

@@ -17,6 +17,20 @@ class VineyardWriteAuthorityTest {
     private fun authority() = VineyardWriteAuthority({ owner }, { disk }, { disk = it.toMap() })
     @After fun detach() { OperationalWrites.authority = null }
 
+    @Test fun diagnosticLookupDoesNotPersistCacheHoldOrChangeAdmissionState() {
+        var writes = 0
+        val gate = VineyardWriteAuthority({ owner }, { disk }, { writes++; disk = it }, { _, _ -> expired })
+        val before = disk.toMap()
+        assertFalse(gate.inspectionCanWrite("A"))
+        assertEquals(before, disk)
+        assertEquals(0, writes)
+        assertNull(gate.deniedVineyardId)
+        owner = null
+        assertFalse(gate.inspectionCanWrite("A"))
+        assertEquals(0, writes)
+        assertNull(gate.deniedVineyardId)
+    }
+
     @Test fun unknownOldServerRemainsCompatible() {
         assertTrue(authority().canWrite("A"))
     }

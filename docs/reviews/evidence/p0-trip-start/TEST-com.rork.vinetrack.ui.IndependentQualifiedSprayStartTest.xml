@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-11-01T16:09:30.245Z" hostname="e2b.local" time="0.002">
+  <properties/>
+  <testcase name="incorrectCandidateBindingDoesNotSkipLegacyRecovery" classname="com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest" time="0.001"/>
+  <testcase name="newBoundPathRouteDoesNotDependOnUnreadableUnrelatedLegacyJournal" classname="com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest" time="0.0"/>
+  <testcase name="freeDriveAndMissingPlanRemainFailClosed" classname="com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest" time="0.0"/>
+  <testcase name="parentLinkedRequestNeverSkipsLegacyRecovery" classname="com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

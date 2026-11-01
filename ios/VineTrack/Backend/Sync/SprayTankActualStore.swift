@@ -194,13 +194,20 @@ final class SprayTankActualStore {
         let queued = records.filter { $0.vineyardId == vineyardId && pendingIds.contains($0.id) }
         let drafts = initialMixDrafts.filter { $0.vineyardId == vineyardId }
         var reasons: [String: Int] = [:]
+        var details: [String] = []
         for actual in queued {
             let decision = SprayTankActualUploadGate.decide(
-                parentTripBlocked: tripSync?.isPendingParentCreation(actual.tripId) ?? true,
+                parentTripBlocked: tripSync?.inspectionParentPending(actual.tripId) ?? true,
                 sprayRecordPending: spraySync?.isPendingUpsert(actual.sprayRecordId) ?? true)
             let reason = decision == .upload ? "ACTUAL_USE_READY_TO_UPLOAD" :
-                (tripSync?.isPendingParentCreation(actual.tripId) != false ? "ACTUAL_USE_WAITING_FOR_TRIP_PARENT" : "ACTUAL_USE_WAITING_FOR_SPRAY_RECORD")
+                (tripSync?.inspectionParentPending(actual.tripId) != false ? "ACTUAL_USE_WAITING_FOR_TRIP_PARENT" : "ACTUAL_USE_WAITING_FOR_SPRAY_RECORD")
             reasons[reason, default: 0] += 1
+            if let ownerId, tripSync?.verifiedDiagnosticsOwner == ownerId, actual.confirmedBy == ownerId,
+               trips.contains(where: { $0.id == actual.tripId && $0.vineyardId == vineyardId }) {
+                details += ["actual_id: \(actual.id.uuidString.lowercased()); trip_id: \(actual.tripId.uuidString.lowercased()); spray_id: \(actual.sprayRecordId.uuidString.lowercased()); tank_session_id: \(UUID(uuidString: actual.tankSessionId)?.uuidString.lowercased() ?? "INVALID_ID_PROTECTED")",
+                    "local_stage: queued; pending_reason: \(reason); account: original_confirmer_matches_correction_authority_not_inferred; vineyard: matches_selected",
+                    "server_existence: unknown; server_ack: not_locally_acknowledged; retry: requires_original_authority_and_parents; last_attempted: unknown_not_persisted; last_acknowledged: unknown_not_persisted"]
+            }
         }
         // Read-only triage of retained first-tank handoffs. A handoff is not
         // an actual-use record. These fixed codes reveal what proof is missing,
@@ -213,6 +220,9 @@ final class SprayTankActualStore {
             guard draft.ownerId == ownerId else {
                 reasons["HANDOFF_OTHER_OWNER_PROTECTED", default: 0] += 1
                 continue
+            }
+            if tripSync?.verifiedDiagnosticsOwner == ownerId {
+                details.append("handoff_trip_id: \(draft.tripId.uuidString.lowercased()); spray_id: \(draft.sprayRecordId.uuidString.lowercased()); local_stage: retained_initial_mix; server_ack: unknown; retry: exact_original_session_and_amounts_required")
             }
             let matches = trips.filter { $0.id == draft.tripId && $0.vineyardId == vineyardId }
             guard matches.count == 1, let trip = matches.first else {
@@ -245,7 +255,8 @@ final class SprayTankActualStore {
         return (["VineTrack actual-use inspection v1", "pending_actual_rows: \(queued.count)",
                  "retained_initial_mix_handoffs: \(drafts.count)",
                  "Retained handoffs need an exact recorded tank session; retries never invent actual use."] +
-            reasons.sorted { $0.key < $1.key }.map { "  \($0.key): \($0.value)" }).joined(separator: "\n")
+            reasons.sorted { $0.key < $1.key }.map { "  \($0.key): \($0.value)" } +
+            ["Counts distinguish actual rows from retained handoffs; a handoff and actual can share a Trip and are not two Trips."] + details).joined(separator: "\n")
     }
 
     /// Upserts by stable trip/session identity and durably queues before network activity.

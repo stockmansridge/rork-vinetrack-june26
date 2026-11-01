@@ -2813,6 +2813,66 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
+    /** Local-only evidence export. No write admission, retry, recovery, receipt promotion
+     * or network calls. Unknown outcomes stay unknown; raw errors/payloads never leave here. */
+    fun retainedOperationDiagnostics(): String {
+        val info = supportDiagnostics()
+        val header = listOf("VineTrack retained operation inspection v2", "platform: Android",
+            "version: ${info.appVersion}", "build: ${info.appBuild}",
+            "source_revision: unknown_no_verified_build_receipt",
+            "last_full_sync: unknown_no_durable_full_sweep_receipt",
+            "upload_cleared_acknowledgement: unknown_not_persisted",
+            "inspection: local_read_only_no_network_no_retry")
+        val access = session.accountAccess() ?: return (header + "scope: ACCOUNT_NOT_VERIFIED; identifiers protected").joinToString("\n")
+        var report = (header + "scope: ACCESS_CHANGED; identifiers protected").joinToString("\n")
+        session.withAccountAccess(access) {
+            val state = _ui.value
+            val vineyard = state.selectedVineyardId
+            if (vineyard == null || state.currentUserId != access.userId ||
+                state.members.none { it.vineyardId == vineyard && it.userId == access.userId } ||
+                !com.rork.vinetrack.data.OperationalWrites.inspectionCanWrite(vineyard)) {
+                report = (header + "scope: ACCOUNT_VINEYARD_OR_ACCESS_NOT_VERIFIED; identifiers protected").joinToString("\n")
+            } else {
+                fun safeId(value: String?): String = value?.let { runCatching { java.util.UUID.fromString(it).toString() }.getOrNull() } ?: "unknown_or_invalid_protected"
+                val trips = state.trips.filter { it.vineyardId == vineyard }
+                val tripIds = trips.map { it.id }.toSet()
+                val rows = state.pendingSyncItems.filter { it.clientId in tripIds && it.entityType.startsWith("trip") }
+                val lines = header.toMutableList()
+                lines += listOf("account: matches_current_session", "vineyard_id: ${safeId(vineyard)}",
+                    "visible_trip_queue_issues: ${rows.size}", "unique_visible_queued_trips: ${rows.map { it.clientId }.toSet().size}",
+                    "outbox_operation_count: ${state.pendingSyncCount}; not_unique_record_count",
+                    "counts: legacy_journals_actuals_and_outbox_overlap; no_global_total_inferred")
+                trips.sortedBy { it.id }.forEach { trip ->
+                    lines += "trip_id: ${safeId(trip.id)}; local: retained; queue_issues: ${rows.count { it.clientId == trip.id }}; server_existence_now: unknown"
+                    if (trip.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE) {
+                        runCatching { occurrenceStore.journal(TripOccurrenceJournal.Scope(access.userId, vineyard, trip.id)).load() }
+                            .onSuccess { journal ->
+                                if (journal == null) lines += "occurrence_journal: absent; server_ack: unknown"
+                                else {
+                                    lines += "local_stage: ${if (journal.heldReason != null) "RECONCILIATION_HELD" else if (journal.pending.isNotEmpty()) "OPERATION_PENDING" else "NO_PENDING_OCCURRENCE_INTENT"}; creation_confirmed_local_evidence: ${journal.creationConfirmed}; server_active_last_local_evidence: ${journal.serverActive ?: "unknown"}"
+                                    journal.pending.forEach { lines += "pending_operation: ${it.rpc}:${safeId(it.id)}" }
+                                    lines += "last_attempted_operation: unknown_not_persisted; last_acknowledged_operation: unknown_not_persisted; retry: original_ids_only_requires_authority_and_reconciliation"
+                                }
+                            }.onFailure { lines += "failure_code: OCCURRENCE_EVIDENCE_UNREADABLE; retained_no_retry" }
+                    }
+                    trip.tankSessions.forEach { lines += "tank_session_id: ${safeId(it.id)}; parent_trip: ${safeId(trip.id)}; local: retained; server_ack: unknown_not_independently_persisted" }
+                }
+                state.sprayRecords.filter { it.vineyardId == vineyard }.forEach {
+                    lines += "spray_record_id: ${safeId(it.id)}; parent_trip: ${safeId(it.tripId)}; server_ack: unknown_requires_queue_and_server_read"
+                }
+                runCatching { legacySpraySaves.inspectionAttempts(vineyard) }.onSuccess { attempts ->
+                    attempts.forEach { item -> lines += "legacy_trip_id: ${safeId(item.trip.id)}; spray_record_id: ${safeId(item.recordId)}; operation_id: ${safeId(item.rpc?.operation)}; local_stage: ${item.stage}; start_requested: ${item.startRequested}; start_completed: ${item.startCompleted}; verified_receipt: ${item.verified?.status ?: "unknown"}; original_epoch_matches: ${item.identityEpoch == session.retentionGuard.identityEpoch.value}; retry: reconcile_original_only; last_attempted: unknown_not_persisted" }
+                }.onFailure { lines += "failure_code: LEGACY_EVIDENCE_INSPECTION_HELD; original_bytes_retained" }
+                runCatching { sprayTankActualStore.pendingOwned(access).filter { it.vineyardId == vineyard } }.onSuccess { actuals ->
+                    lines += "owned_pending_actual_rows: ${actuals.size}; excludes_foreign_or_correction_evidence"
+                    actuals.forEach { lines += "actual_id: ${safeId(it.id)}; parent_trip: ${safeId(it.tripId)}; spray_id: ${safeId(it.sprayRecordId)}; tank_session_id: ${safeId(it.tankSessionId)}; local_stage: pending; server_ack: not_locally_acknowledged; dependencies: require_original_trip_spray_session; last_attempted: unknown_not_persisted; retry: requires_current_authority_and_parents" }
+                }.onFailure { lines += "failure_code: ACTUAL_EVIDENCE_INSPECTION_HELD" }
+                report = lines.joinToString("\n")
+            }
+        }
+        return report
+    }
+
     /** Submit an in-app support / feedback / feature request (mirrors iOS SupportRequestView). */
     suspend fun submitSupportRequest(
         category: SupportRequestCategory,
@@ -3183,13 +3243,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             appendLine("Display state: ${displayState.label}")
             appendLine("Entity type: $entityType")
             appendLine("Operation: $opType")
-            appendLine("Related id: $clientId")
+            appendLine("Related id: ${runCatching { java.util.UUID.fromString(clientId).toString() }.getOrDefault("INVALID_ID_PROTECTED")}")
             appendLine("Status: $status")
             appendLine("Attempts: $attemptCount of $MAX_DISPLAY_ATTEMPTS")
             appendLine("Created: ${ts(createdAt)}")
             appendLine("Updated: ${ts(updatedAt)}")
-            appendLine("Detail: ${friendly ?: "—"}")
-            append("Diagnostic: ${raw ?: "—"}")
+            appendLine("Pending reason: ${displayState.name}")
+            appendLine("Failure code: ${if (lastError.isNullOrBlank()) "NONE_RECORDED" else "SYNC_FAILURE_REQUIRES_PRIVATE_REVIEW"}")
+            appendLine("Server existence/acknowledgement: unknown; pending is not proof of absence")
+            appendLine("Last attempted operation: ${if (attemptCount > 0) "$opType; exact transport receipt not persisted" else "unknown"}")
+            append("Last acknowledged operation: unknown_not_persisted; raw errors and payloads excluded")
         }
     }
 

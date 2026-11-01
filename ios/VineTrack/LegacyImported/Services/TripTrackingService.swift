@@ -2513,7 +2513,7 @@ final class TripTrackingService {
     func requireResolvedOccurrenceStarts() throws {
         guard let store else { throw TripOccurrenceCoverage.Failure.scopeConflict }
         for saved in store.trips where saved.coverageBasis == .occurrence {
-            if try occurrenceJournal(for: saved, initializeIfMissing: false).load()?.creationConfirmed == false {
+            if try occurrenceJournal(for: saved, initializeIfMissing: false).inspectionSnapshot()?.creationConfirmed == false {
                 throw SprayPlanningAdmissionError(message: "An earlier planned trip (\(saved.paddockName), \(saved.startTime.formatted(date: .abbreviated, time: .shortened))) needs occurrence recovery. Its original saved actions are retained; recover that trip before starting another.")
             }
         }
@@ -2523,7 +2523,8 @@ final class TripTrackingService {
         guard let account = store?.currentUserIdProvider?() else { throw TripOccurrenceCoverage.Failure.scopeConflict }
         let journal = try TripOccurrenceJournal(scope: .init(ownerId: account.uuidString.lowercased(),
             vineyardId: trip.vineyardId.uuidString.lowercased(), tripId: trip.id.uuidString.lowercased()),
-            authority: store?.operationalWriteAuthority ?? .shared)
+            authority: store?.operationalWriteAuthority ?? .shared,
+            createDirectoryIfMissing: initializeIfMissing)
         if initializeIfMissing, try journal.load() == nil {
             try (store?.operationalWriteAuthority ?? .shared).requireWrite(vineyardId: trip.vineyardId.uuidString)
             guard let raw = trip.occurrenceCoverage else { throw TripOccurrenceCoverage.Failure.updateRequired }

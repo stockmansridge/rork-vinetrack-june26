@@ -172,6 +172,9 @@ fun SyncStatusScreen(
                 title = { Text("Sync Status") },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 actions = {
+                    TextButton(onClick = {
+                        clipboard.setText(AnnotatedString(vm.retainedOperationDiagnostics()))
+                    }) { Text("Copy diagnostics") }
                     SyncStatusRefreshAction(online, state.isLoadingVineyardData, vm::refresh)
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),

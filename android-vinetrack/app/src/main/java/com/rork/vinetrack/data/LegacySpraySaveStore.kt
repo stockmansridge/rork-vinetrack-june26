@@ -221,6 +221,11 @@ class LegacySpraySaveStore(context: Context) {
         write(items.map { if (it.recordId == item.recordId) current.copy(startCompleted = true) else it })
     } }
 
+    /** Inspection never reconciles receipts, adopts an epoch, or changes retained bytes. */
+    fun inspectionAttempts(vineyardId: String): List<Attempt> = access.admitted { synchronized(this) {
+        read().filter { it.actorId == access.ownerUserId && it.trip.vineyardId == vineyardId }
+    } }
+
     /** Uncertain REST outcomes remain contained until immutable acceptance can be verified. */
     fun pending(vineyardId: String): List<Attempt> = access.admitted { synchronized(this) {
         read().filter { it.actorId == access.ownerUserId && it.trip.vineyardId == vineyardId && it.isHeld }

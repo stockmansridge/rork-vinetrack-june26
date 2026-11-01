@@ -213,17 +213,77 @@ final class TripSyncService {
         }
         guard trip.vineyardId == vineyard else { return "TRIP_NOT_IN_SELECTED_VINEYARD" }
         do {
-            if try store.tripDeletionJournal.isCancelled(id) { return "TRIP_CANCELLATION_HELD" }
-            if try store.isLegacySpraySyncHeld(trip: id) { return "LEGACY_SPRAY_RECONCILIATION_HELD" }
+            // Inspect metadata only; operational recovery/deletion readers may write
+            // decode evidence or create directories and must not run in an export.
+            if metadata.pendingDeletes[id] != nil { return "TRIP_CANCELLATION_HELD" }
             if !VineyardWriteAuthority.shared.canWrite(vineyardId: vineyard.uuidString) { return "TRIP_WRITE_ACCESS_HELD" }
-            if !trip.isActive && shouldDeferEndedTrip(id) { return "TRIP_WAITING_FOR_ACTUAL_USE" }
             if trip.coverageBasis == .legacy { return "LEGACY_TRIP_UPLOAD_PENDING" }
             let journal = try TripOccurrenceJournal(scope: .init(
                 ownerId: account.uuidString.lowercased(), vineyardId: vineyard.uuidString.lowercased(),
                 tripId: id.uuidString.lowercased()), createDirectoryIfMissing: false)
-            guard let snapshot = try journal.load() else { return "OCCURRENCE_JOURNAL_NOT_FOUND" }
+            guard let snapshot = try journal.inspectionSnapshot() else { return "OCCURRENCE_JOURNAL_NOT_FOUND" }
             return TripOccurrenceJournal.syncDiagnosticReason(snapshot)
         } catch { return "TRIP_EVIDENCE_INSPECTION_HELD" }
+    }
+
+    /// Local metadata dependency only, not a fresh server-existence check.
+    func inspectionParentPending(_ id: UUID) -> Bool {
+        metadata.pendingDeletes[id] != nil || !metadata.isParentEstablished(id)
+    }
+
+    var verifiedDiagnosticsOwner: UUID? {
+        guard let store, let account = auth?.userId, auth?.isSignedIn == true,
+              store.currentUserIdProvider?() == account, let vineyard = store.selectedVineyardId,
+              VineyardWriteAuthority.shared.canWrite(vineyardId: vineyard.uuidString) else { return nil }
+        return account
+    }
+
+    /// Explicitly scoped, read-only P0 evidence. Cached existence and queued work
+    /// are not server receipts. Foreign/unverified slices never expose record IDs.
+    var retainedOperationDiagnostics: String {
+        let bundle = Bundle.main
+        var lines = ["VineTrack retained operation inspection v2", "platform: iOS",
+            "version: \(bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown")",
+            "build: \(bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")",
+            "source_revision: unknown_no_verified_build_receipt",
+            "last_trip_sync_local: \(lastSyncDate?.ISO8601Format() ?? "unknown")",
+            "last_full_sync: unknown_no_durable_full_sweep_receipt",
+            "upload_cleared_acknowledgement: unknown_not_persisted",
+            "inspection: local_read_only_no_network_no_retry"]
+        guard let store, let account = auth?.userId, auth?.isSignedIn == true,
+              store.currentUserIdProvider?() == account, let vineyard = store.selectedVineyardId else {
+            return (lines + ["scope: ACCOUNT_OR_VINEYARD_NOT_VERIFIED; identifiers protected"]).joined(separator: "\n")
+        }
+        guard VineyardWriteAuthority.shared.canWrite(vineyardId: vineyard.uuidString) else {
+            return (lines + ["scope: CURRENT_WRITE_ACCESS_NOT_VERIFIED; identifiers protected"]).joined(separator: "\n")
+        }
+        let trips = store.trips.filter { $0.vineyardId == vineyard }
+        let visiblePending = Set(trips.filter { metadata.pendingUpserts[$0.id] != nil }.map(\.id))
+        lines += ["account: matches_current_store", "vineyard_id: \(vineyard.uuidString.lowercased())",
+            "unique_visible_queued_trips: \(visiblePending.count)",
+            "unattributed_queue_entries: \(metadata.pendingUpserts.count - visiblePending.count)",
+            "counts: queue_records_not_issue_count; journals_and_tanks_may_share_a_trip; no_global_total_inferred"]
+        for trip in trips.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            lines += ["", "trip_id: \(trip.id.uuidString.lowercased())",
+                "metadata_upload_pending: \(metadata.pendingUpserts[trip.id] != nil)",
+                "parent_previously_established_local_evidence: \(metadata.isParentEstablished(trip.id))",
+                "pending_reason: \(pendingUploadDiagnosticReason(trip.id))"]
+            if trip.coverageBasis == .occurrence {
+                do {
+                    let journal = try TripOccurrenceJournal(scope: .init(ownerId: account.uuidString.lowercased(),
+                        vineyardId: vineyard.uuidString.lowercased(), tripId: trip.id.uuidString.lowercased()), createDirectoryIfMissing: false)
+                    if let state = try journal.inspectionSnapshot() { lines += TripOccurrenceJournal.inspectionLines(state) }
+                    else { lines.append("occurrence_journal: absent; server_outcome: unknown") }
+                } catch { lines.append("failure_code: OCCURRENCE_EVIDENCE_UNREADABLE; original evidence retained") }
+            }
+            for session in trip.tankSessions {
+                lines += ["tank_session_id: \(session.id.uuidString.lowercased()); parent_trip: \(trip.id.uuidString.lowercased()); local: retained; server_ack: unknown_not_independently_persisted"]
+            }
+        }
+        for spray in store.sprayRecords.filter({ $0.vineyardId == vineyard }) {
+            lines += ["spray_record_id: \(spray.id.uuidString.lowercased()); parent_trip: \(spray.tripId.uuidString.lowercased()); server_ack: unknown_requires_spray_queue_and_server_read"]
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - Work Task link

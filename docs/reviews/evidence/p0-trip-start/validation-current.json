@@ -1,0 +1,261 @@
+{
+  "recordedAtUTC": "2026-11-01T16:34:18.743435+00:00",
+  "incident": "OPEN",
+  "release": "BLOCKED_NO_UPLOAD_OR_PUBLIC_RELEASE",
+  "managedBaseCommit": "5912b86ef29726bcff656f77bfcb2bf1df3cc100",
+  "sourceIdentityNote": "Working-tree hashes identify the changed source; base commit is not a claim that uncommitted edits are already installed or published.",
+  "sourceSha256": {
+    "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayStartProductionAndroidTest.kt": "2dfbaf05e571b2f031b7d78ff0e7ce5eced7137e9a936dcbb5d832a228078bfa",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/LegacySpraySaveStore.kt": "57ab060068f504d54ebc1f6c9e1b81f23b0c9b9255aac450467f2c7fd0327951",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/VineyardWriteAuthority.kt": "5d589bbba311c1132995e9532251883f08c3a963bad18243be4d8be0ad66c39c",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt": "e53417988687a5ec93610e64d5d5bc40de705eed1e870605f6aa894df6171fc7",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/IndependentQualifiedSprayStart.kt": "c3bd5e33fb4942304ba18f03aaefa64b64524185d12d48fdc3c64869a161d9ab",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt": "3375fcd07854c28e5fa6d8132b0d3f7c59f1b46fb1cafd86af171576991d6463",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SyncStatusScreen.kt": "2a4bf174b2e598c3e2280c4034f28a1f0e67d126807ca351ce4f85033e9f23d9",
+    "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/VineyardWriteAuthorityTest.kt": "1566ddac85d513896c887e4dd23c9670832479f331de07e8e17ec4e65c641eac",
+    "ios/VineTrack/App/BackendSettingsView.swift": "ba2c34f5f9787e5e94765ac5fa1b9aeee9854a932421681f77b0fe241c370739",
+    "ios/VineTrack/Backend/Sync/SprayTankActualStore.swift": "80cfde910135e945143802aab1f33f054e3a9b78e66e72bea38b89e893e4f758",
+    "ios/VineTrack/Backend/Sync/SyncQueueDiagnostics.swift": "bd75681bead893d710a15d35bdbdc1d590fb76e69d7ba066c6f7ace30988c1a6",
+    "ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift": "4cac5cf4fc10ceff5671597cba695a320fb3e78df99fc9d2312f648d0649f1c8",
+    "ios/VineTrack/Backend/Sync/TripSyncService.swift": "9f584b08260cd0eee481814cb16637b3611600dfe744957f0f34222a71358c2d",
+    "ios/VineTrack/LegacyImported/Services/TripTrackingService.swift": "b6b87f48f55ced5adf9f8a4d1ebc54811581519888d9ed8117504ceb81a4e05c",
+    "ios/VineTrackTests/SprayOccurrenceRecoveryHotfixTests.swift": "834c2cec5af6a3323046c08254f012c4325d0ec9fe4c7dee3536188752559d14",
+    "ios/VineTrackTests/TripDeletionRecoveryTests.swift": "c67610af9af33ed397e7cdd5e7e1ff65517604796dfad689d4721aa29a2f11af",
+    "sql/occurrence_setup_uuid_case_identity.sql": "a4b7cd176c228bc3e3e061d4bff4f00552a859764b2e4c60926b0dcd46490703",
+    "sql/occurrence_setup_uuid_case_identity_verify.sql": "6e9342e9cde6e297d5d006c209ad0555dfc3bf6d69ef1a2c98b556c97a8f4aac"
+  },
+  "installedBuildToSource": "UNVERIFIED_BOTH_PLATFORMS",
+  "builds": {
+    "android": "runChecks PASS; no signed candidate/build receipt returned",
+    "ios": "runChecks simulator PASS; device/Release build not verified"
+  },
+  "androidInstrumentation": {
+    "status": "INFRA_FAILED",
+    "passed": 0,
+    "failed": 0,
+    "skipped": 0,
+    "reason": "Two distinct androidTest selections each timed out after 600 seconds: original class, then two new focused boundary methods. Both returned zero execution results. No further retry.",
+    "newBoundaryFixtures": "Two new production-entry regressions compiled with compileDebugAndroidTestKotlin; narrowed execution attempt also infrastructure-timed-out, so NOT VERIFIED on emulator/device"
+  },
+  "swiftSelected": {
+    "status": "PASS",
+    "aggregatePassed": 3,
+    "durationSeconds": 108,
+    "selectors": [
+      "SprayOccurrenceRecoveryHotfixTests/testNewStartPreflightDoesNotMintJournalForHistoricalTripAndStillBlocksUncertainCreate",
+      "TripDeletionRecoveryTests/scopedIssueExportPreservesRegistryAndExcludesRawAndForeignEvidence()",
+      "TripDeletionRecoveryTests/pendingUploadInspectionIncludesQueueWithNoRecordedFailureAndPreservesIt()"
+    ],
+    "limit": "Aggregate tool receipt only, not per-case xcresult export, no handset workflow. Earlier one-pass selection overlaps; do not sum."
+  },
+  "androidHostSuites": [
+    {
+      "attributes": {
+        "name": "com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest",
+        "tests": "4",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-01T16:09:30.245Z",
+        "hostname": "e2b.local",
+        "time": "0.002"
+      },
+      "cases": [
+        {
+          "name": "incorrectCandidateBindingDoesNotSkipLegacyRecovery",
+          "classname": "com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest",
+          "time": "0.001"
+        },
+        {
+          "name": "newBoundPathRouteDoesNotDependOnUnreadableUnrelatedLegacyJournal",
+          "classname": "com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest",
+          "time": "0.0"
+        },
+        {
+          "name": "freeDriveAndMissingPlanRemainFailClosed",
+          "classname": "com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest",
+          "time": "0.0"
+        },
+        {
+          "name": "parentLinkedRequestNeverSkipsLegacyRecovery",
+          "classname": "com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest",
+          "time": "0.0"
+        }
+      ]
+    },
+    {
+      "attributes": {
+        "name": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+        "tests": "18",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-01T16:09:30.145Z",
+        "hostname": "e2b.local",
+        "time": "0.098"
+      },
+      "cases": [
+        {
+          "name": "missingCacheCannotReleaseDurableHold",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.014"
+        },
+        {
+          "name": "exactServerCodeHoldsWithoutInferringTrial",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.001"
+        },
+        {
+          "name": "serverRejectionKeepsConfirmedTrialReason",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.0"
+        },
+        {
+          "name": "diagnosticLookupDoesNotPersistCacheHoldOrChangeAdmissionState",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.001"
+        },
+        {
+          "name": "verifiedRestorationClaimsSameOriginalOperation",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.055"
+        },
+        {
+          "name": "accountSwitchNeitherLeaksNorErasesHold",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.0"
+        },
+        {
+          "name": "blockedEnqueueCreatesNoNewOutboxItem",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.0"
+        },
+        {
+          "name": "explicitVerifiedWriteRestoresScope",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.0"
+        },
+        {
+          "name": "paidVineyardIsIndependentOfExpiredVineyard",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.0"
+        },
+        {
+          "name": "retainedOriginalQueueIsNotClaimedOrRewrittenWhileHeld",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.001"
+        },
+        {
+          "name": "fileBackedHoldSurvivesAuthorityRecreationOffline",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.016"
+        },
+        {
+          "name": "explicitTrialCapabilityKeepsEntryButDeniesCommands",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.001"
+        },
+        {
+          "name": "serverRejectionHoldsClaimWithoutBurningRetryBudget",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.002"
+        },
+        {
+          "name": "failedOriginalRestoresExactTimestampsErrorAndAttemptsAcrossHoldAndRestart",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.003"
+        },
+        {
+          "name": "legacyWritableDefaultDoesNotReleaseKnownHold",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.001"
+        },
+        {
+          "name": "entryDenialCannotReleaseHeldWork",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.0"
+        },
+        {
+          "name": "staleAccountResponseCannotHoldAnotherAccount",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.0"
+        },
+        {
+          "name": "unknownOldServerRemainsCompatible",
+          "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
+          "time": "0.0"
+        }
+      ]
+    }
+  ],
+  "backend": {
+    "project": "tbafuqwruefgkbyxrxyb",
+    "repairSourceSha256": "a4b7cd176c228bc3e3e061d4bff4f00552a859764b2e4c60926b0dcd46490703",
+    "deployment": "NOT_ATTEMPTED_THIS_PASS; existing authorised function-owner path required",
+    "verificationHandoff": "sql/occurrence_setup_uuid_case_identity_verify.sql is read-only source, NOT EXECUTED; capture before/after owner-authorised repair and compare owner/security/ACL/search-path",
+    "liveDefinitionMD5": "NOT_FRESHLY_READ; user reports b0e166d78be75c8ba770b",
+    "originalTripOperationReceipts": "UNKNOWN; one earlier logged rejected call cannot establish all retained outcomes"
+  },
+  "diagnosticCoverage": {
+    "status": "PARTIAL",
+    "implemented": [
+      "Scoped Trip/spray/session/actual IDs and retained occurrence operation IDs",
+      "Explicit unknown source/current-server/last-ack states; no inferred receipts",
+      "Separate visible unique queued Trips from outbox/issues/handoffs; no false global sum",
+      "No journal-directory creation in iOS preflight or inspection",
+      "No decode-evidence writes in occurrence inspection",
+      "Scoped fixed-code issue export with observed failure timestamps; no raw errors/payloads",
+      "Android access inspection does not persist cache-derived holds"
+    ],
+    "remaining": [
+      "Complete orphan-journal discovery without changing evidence",
+      "All saved-job/actual-draft/correction queues per-record coverage",
+      "Exact cross-category global reconciliation on both original installations",
+      "Verified immutable build-to-source receipts in exports",
+      "Authoritative original server existence/receipt correlation",
+      "Full transport-attempt/ack history where existing formats did not persist it"
+    ]
+  },
+  "remainingGates": [
+    "Authorised backend repair and live definition/security/ACL verification",
+    "Original Cab Franc Trip/create/activate IDs and correlated authoritative records/receipts",
+    "Production Android independent-start unchanged-journal execution (compiled, not run)",
+    "Safe iOS independent-start proof; unresolved-create gate remains fail-closed",
+    "Complete retained operational/network/account/access matrix and both original handsets after reopen",
+    "Final source-matched signed candidate identity and explicit acceptance before any upload"
+  ],
+  "safety": "No customer mutation, journal removal, ownership/privilege change, quantity edits or store upload performed",
+  "publicMainObserved": "d5e9dd58499dbe3fc5eb79ab8e01389c9ee8e570",
+  "pullRequestsObserved": [
+    {
+      "number": 29,
+      "head": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "base": "f8d36eec3298071b92cb0d653e3b74d0d27ecc12",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "number": 31,
+      "head": "7c344904de0c8b6c636b17935a5c77c04e84497a",
+      "base": "2047a0e48f2d4b9c1a0d9f1c47eccef2cc849afd",
+      "state": "open",
+      "merged": false
+    },
+    {
+      "number": 33,
+      "head": "33fc6a20427f14250ced5ec1c4162e3dcac56cdc",
+      "base": "a50b35caae65412a949688a2d0a03b5119b718d5",
+      "state": "open",
+      "merged": false
+    }
+  ],
+  "publicRefreshFailure": "HTTPError",
+  "overlapReview": [
+    "Earlier file-equality audit remains historical; it is not a complete hunk audit or installed-build receipt.",
+    "PR29 start-actual validation and commit survive the PR37 start routing hunk; saved source is explicitly passed by calculator.",
+    "PR37 only skips legacy retainedStart lookup for new qualified routes; account/vineyard, unresolved occurrence and device-active guards remain.",
+    "iOS retains PR31 initial-mix/recovery flow and PR33 explicit-null water and exact-revision acknowledgement; newest edits affect inspection and preflight directory side effects, not receipt admission.",
+    "SQL repair source matches reviewed PR31; deployment is not established by source equality.",
+    "Exhaustive hunk equivalence and final public-main equality still require a completed final source comparison."
+  ]
+}

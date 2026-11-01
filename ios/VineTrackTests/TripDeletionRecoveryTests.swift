@@ -19,6 +19,29 @@ import Testing
         #expect(TripSyncMetadata(persistence: disk).pendingUpserts[id] == queued)
     }
 
+    @Test func scopedIssueExportPreservesRegistryAndExcludesRawAndForeignEvidence() {
+        let center = SyncIssueCenter.shared
+        let visible = UUID(), foreign = UUID(), vineyard = UUID()
+        defer { center.clearIssues([visible, foreign]) }
+        let detail = SyncFailureDetail(kind: .retryable, reasonCode: "network_offline",
+            friendlyMessage: "private-fixture-text", technicalDetail: "Bearer secret-fixture-token")
+        center.recordFailure(id: visible, entity: "Trips", operation: "upsert", detail: detail,
+            queuedAt: nil, payloadKeys: ["private_payload_key"], vineyardId: vineyard)
+        center.recordFailure(id: foreign, entity: "Trips", operation: "upsert", detail: detail,
+            queuedAt: nil, payloadKeys: [], vineyardId: UUID())
+        let before = center.issues[visible]?.attemptCount
+        let report = center.privateSafeDiagnosticsText(vineyardId: vineyard, visibleIds: [visible, foreign])
+        #expect(report.contains(visible.uuidString.lowercased()))
+        #expect(!report.contains(foreign.uuidString.lowercased()))
+        #expect(report.contains("visible_failed_records: 1"))
+        #expect(report.contains("last_failed_attempt_at:"))
+        #expect(!report.contains("secret-fixture-token"))
+        #expect(!report.contains("private_payload_key"))
+        #expect(!report.contains("private-fixture-text"))
+        #expect(center.issues[visible]?.attemptCount == before)
+        #expect(center.issues[foreign] != nil)
+    }
+
     @Test func retryRetainsPreviousErrorUntilSyncSucceeds() async throws {
         let disk = try persistence(), metadata = TripSyncMetadata(persistence: disk)
         let store = MigratedDataStore(persistence: disk), auth = NewBackendAuthService()

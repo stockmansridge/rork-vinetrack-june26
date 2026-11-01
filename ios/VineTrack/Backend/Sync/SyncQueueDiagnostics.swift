@@ -375,6 +375,30 @@ final class SyncIssueCenter {
         }
     }
 
+    /// Scoped support export: never copy raw technical messages, payload keys,
+    /// foreign records or category totals from an unverified account slice.
+    func privateSafeDiagnosticsText(vineyardId: UUID, visibleIds: Set<UUID>) -> String {
+        let selected = issues.values.filter { $0.vineyardId == vineyardId && visibleIds.contains($0.id) }
+        let entities: Set<String> = ["Trips", "Spray Records", "Tank Actuals", "Spray Tank Actuals"]
+        let operations: Set<String> = ["upsert", "create", "update", "delete", "activate", "finalize"]
+        let codes: Set<String> = ["network_offline", "network_timeout", "OCCURRENCE_SETUP_SCOPE_CONFLICT",
+            "OCCURRENCE_REVISION_CONFLICT", "VT_READ_ONLY", "23502", "23503", "23505", "42501", "PGRST204"]
+        var lines = ["VineTrack scoped issue inspection v2",
+            "visible_failed_records: \(Set(selected.map(\.id)).count)",
+            "visible_issue_entries: \(selected.count)",
+            "Issue registry is transient and keyed by record ID, not an operation receipt log.",
+            "Queue counts and issue entries overlap; do not add these totals."]
+        for issue in selected.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+            lines += ["record_id: \(issue.id.uuidString.lowercased())",
+                "entity: \(entities.contains(issue.entity) ? issue.entity : "OTHER_VERIFIED_ENTITY")",
+                "last_failed_operation: \(operations.contains(issue.operation) ? issue.operation : "OTHER_OPERATION")",
+                "last_failed_attempt_at: \(issue.lastAttemptAt.ISO8601Format()); observed_attempts: \(issue.attemptCount)",
+                "failure_code: \(codes.contains(issue.reasonCode) ? issue.reasonCode : "UNCLASSIFIED_FAILURE_REQUIRES_PRIVATE_REVIEW")",
+                "retry_classification: \(issue.kind.rawValue); server_ack: unknown_requires_receipt"]
+        }
+        return lines.joined(separator: "\n")
+    }
+
     /// Full sanitised dump for the "Copy diagnostics" action. One block per
     /// queued item: queue id, entity, operation, queued/attempt timestamps,
     /// retry count, reason code, payload KEY NAMES only, vineyard id.
