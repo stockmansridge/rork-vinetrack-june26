@@ -1,0 +1,29 @@
+{
+  "pr": 37,
+  "head": "7b52089b946bc5af22cc6afb6a3cb37d83db308e",
+  "managedParent": "9ef8e371f54254285e246fa12f2566ef1a93687e",
+  "changes": [
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt",
+      "beforeSha256": "2e3bc026642d3497a05a249470a79bda77d2c9262d6b83d633499e9304270683",
+      "afterSha256": "de6c732472b973b189558092f89655eeb37422bbb8d5ab532ec5b788b60e1973"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/IndependentQualifiedSprayStart.kt",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "c3bd5e33fb4942304ba18f03aaefa64b64524185d12d48fdc3c64869a161d9ab"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt",
+      "beforeSha256": "b1011325a913761e4262ce047889a9e1632b6c0fed117f59b86687c890a16996",
+      "afterSha256": "3375fcd07854c28e5fa6d8132b0d3f7c59f1b46fb1cafd86af171576991d6463"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/ui/IndependentQualifiedSprayStartTest.kt",
+      "beforeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "afterSha256": "28c4a85b34aa462efeae1a44a9a49869963c763148df7b4fdbaf06df84b06212"
+    }
+  ],
+  "excluded": "Branch-only synthetic CI workflow",
+  "limits": "Integration is not proof of original-device recovery or live backend acknowledgement; subsequent safety refinements recorded separately"
+}

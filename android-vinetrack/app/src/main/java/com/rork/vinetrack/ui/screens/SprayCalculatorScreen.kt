@@ -1366,6 +1366,7 @@ fun SprayCalculatorScreen(
             rowPlan = buildRowPlan(r.totalTanks),
             startEngineHours = startEngineHours,
             startActuals = actuals,
+            sourceSavedRecordId = prefillRecordId,
         ) { outcome ->
             if (!startScreenAlive.get()) return@startSprayJobNow
             saving = false

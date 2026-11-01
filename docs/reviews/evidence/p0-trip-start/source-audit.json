@@ -1,0 +1,898 @@
+{
+  "managedHead": "9ef8e371f54254285e246fa12f2566ef1a93687e",
+  "publicMain": "b45f909ad658fc2dc96f0e5736129d2c646b5d55",
+  "prs": [
+    {
+      "number": 29,
+      "head": "dc603d8c4ad445da502ce9610f19dd30ecfbb681",
+      "base": "f8d36eec3298071b92cb0d653e3b74d0d27ecc12",
+      "merged": false,
+      "files": [
+        {
+          "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayFieldLayoutAndroidTest.kt",
+          "managedExists": true,
+          "managedSha256": "763062414d51aba504e35fcbd196452f0499a229e749f2c3916e3e18d2947830",
+          "prSha256": "6322cf589af6e62cfa2029680fbe0fb7833fc0f419e9ca9eab407a20c20789b4",
+          "publicMainSha256": "763062414d51aba504e35fcbd196452f0499a229e749f2c3916e3e18d2947830",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayStartProductionAndroidTest.kt",
+          "managedExists": true,
+          "managedSha256": "e8a01b57ea69985903d411c7185eaf1df1fcab6491cadd5d8ca2f6462751ef61",
+          "prSha256": "e8e2013f5eb5c7f2352630c6243d9c8e6ca7a2488199eee23f6b6db25a35bc13",
+          "publicMainSha256": "e8a01b57ea69985903d411c7185eaf1df1fcab6491cadd5d8ca2f6462751ef61",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/AuthRetentionAndroidTest.kt",
+          "managedExists": true,
+          "managedSha256": "47b42a9cc87db754effa2e28cc7712b2a2f79f80fdc21be168f3a95dc5f4b87f",
+          "prSha256": "dfc35e14e22dbb59daff4f07389230038ee45d7198e499366b7960ebef42f821",
+          "publicMainSha256": "47b42a9cc87db754effa2e28cc7712b2a2f79f80fdc21be168f3a95dc5f4b87f",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SprayTankActualStore.kt",
+          "managedExists": true,
+          "managedSha256": "41adc5e42550fb49dfaaea7534d5c3bdcd279d262cf18b1617863c1a4168bcea",
+          "prSha256": "41adc5e42550fb49dfaaea7534d5c3bdcd279d262cf18b1617863c1a4168bcea",
+          "publicMainSha256": "41adc5e42550fb49dfaaea7534d5c3bdcd279d262cf18b1617863c1a4168bcea",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/StartTankCommitCoordinator.kt",
+          "managedExists": true,
+          "managedSha256": "195092930690dbac0f1441ca80c61f6fc877d483e9f630e67a2087148ab043cf",
+          "prSha256": "195092930690dbac0f1441ca80c61f6fc877d483e9f630e67a2087148ab043cf",
+          "publicMainSha256": "195092930690dbac0f1441ca80c61f6fc877d483e9f630e67a2087148ab043cf",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AccountTransitionEvidence.kt",
+          "managedExists": true,
+          "managedSha256": "bca8409722cd3f5a7686fca5b4e30c33fe880deb75812efa1dbca8cee1d8af20",
+          "prSha256": "3d782597d1164041f808696bd4098d1570c68bb10568387e86072bc3de3c8042",
+          "publicMainSha256": "bca8409722cd3f5a7686fca5b4e30c33fe880deb75812efa1dbca8cee1d8af20",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/SprayActualInputDraft.kt",
+          "managedExists": true,
+          "managedSha256": "c3a21bfaf7a808ec3e8e8fa5d27554c0938f189c7a8c69cd8660bd58417f091b",
+          "prSha256": "c3a21bfaf7a808ec3e8e8fa5d27554c0938f189c7a8c69cd8660bd58417f091b",
+          "publicMainSha256": "c3a21bfaf7a808ec3e8e8fa5d27554c0938f189c7a8c69cd8660bd58417f091b",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/spray/SprayStartActualAmounts.kt",
+          "managedExists": true,
+          "managedSha256": "420df90ef668fae4a0e9632af88f841e91557dedfb090e0191072ea0f80b9565",
+          "prSha256": "420df90ef668fae4a0e9632af88f841e91557dedfb090e0191072ea0f80b9565",
+          "publicMainSha256": "420df90ef668fae4a0e9632af88f841e91557dedfb090e0191072ea0f80b9565",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt",
+          "managedExists": true,
+          "managedSha256": "2e3bc026642d3497a05a249470a79bda77d2c9262d6b83d633499e9304270683",
+          "prSha256": "2e3bc026642d3497a05a249470a79bda77d2c9262d6b83d633499e9304270683",
+          "publicMainSha256": "2e3bc026642d3497a05a249470a79bda77d2c9262d6b83d633499e9304270683",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt",
+          "managedExists": true,
+          "managedSha256": "b1011325a913761e4262ce047889a9e1632b6c0fed117f59b86687c890a16996",
+          "prSha256": "d13c24157015c4e31a337402af13f2884b423dc0eced4b735755a3d11eb6489f",
+          "publicMainSha256": "b1011325a913761e4262ce047889a9e1632b6c0fed117f59b86687c890a16996",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayStartActualFields.kt",
+          "managedExists": true,
+          "managedSha256": "49ae302c6a2023a58757ce49ee11dac4bd7c709f1e1b4a0814bb6f080f30aa1f",
+          "prSha256": "11880bdee7c30f5cc19584bf9aa26d005d97ac28072f9bc181831668597cdb05",
+          "publicMainSha256": "49ae302c6a2023a58757ce49ee11dac4bd7c709f1e1b4a0814bb6f080f30aa1f",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayTripSetupScreen.kt",
+          "managedExists": true,
+          "managedSha256": "4507456a32f10a9d5fb10474e4ac28950bcb355515ee60b9056963ea092c4d2f",
+          "prSha256": "4507456a32f10a9d5fb10474e4ac28950bcb355515ee60b9056963ea092c4d2f",
+          "publicMainSha256": "4507456a32f10a9d5fb10474e4ac28950bcb355515ee60b9056963ea092c4d2f",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayTripStartConfirmation.kt",
+          "managedExists": true,
+          "managedSha256": "83b2e2f1b4fdd9fa4a12ccc5bde2b786a5c28a9d27e6a533eb2dc84179b16aca",
+          "prSha256": "83b2e2f1b4fdd9fa4a12ccc5bde2b786a5c28a9d27e6a533eb2dc84179b16aca",
+          "publicMainSha256": "83b2e2f1b4fdd9fa4a12ccc5bde2b786a5c28a9d27e6a533eb2dc84179b16aca",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SpraysScreen.kt",
+          "managedExists": true,
+          "managedSha256": "bec43e27ea703ee28961cd38eb9def237726bf3a14fcdd129ed39ea879eebae6",
+          "prSha256": "bec43e27ea703ee28961cd38eb9def237726bf3a14fcdd129ed39ea879eebae6",
+          "publicMainSha256": "bec43e27ea703ee28961cd38eb9def237726bf3a14fcdd129ed39ea879eebae6",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TankMixDialog.kt",
+          "managedExists": true,
+          "managedSha256": "5ba95c9ed0085f59ef59326d45acd5c157f1f7f14ca94203a36a9aff41bd4d2e",
+          "prSha256": "5ba95c9ed0085f59ef59326d45acd5c157f1f7f14ca94203a36a9aff41bd4d2e",
+          "publicMainSha256": "5ba95c9ed0085f59ef59326d45acd5c157f1f7f14ca94203a36a9aff41bd4d2e",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayActualInputDraftStoreTest.kt",
+          "managedExists": true,
+          "managedSha256": "22f480b87b004d598278762e1d09bb645e468a9f8028d56d296adddbdbc292a2",
+          "prSha256": "22f480b87b004d598278762e1d09bb645e468a9f8028d56d296adddbdbc292a2",
+          "publicMainSha256": "22f480b87b004d598278762e1d09bb645e468a9f8028d56d296adddbdbc292a2",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayStartActualAmountsTest.kt",
+          "managedExists": true,
+          "managedSha256": "ba6f4a462f9ca949077701e44f704db96c48f2133404ad10ce7e7a24e3fb8006",
+          "prSha256": "ba6f4a462f9ca949077701e44f704db96c48f2133404ad10ce7e7a24e3fb8006",
+          "publicMainSha256": "ba6f4a462f9ca949077701e44f704db96c48f2133404ad10ce7e7a24e3fb8006",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/StartTankCommitCoordinatorTest.kt",
+          "managedExists": true,
+          "managedSha256": "e9eddb2d50278eaeee80505214202d5965845ca4d298cacaec3736d5a218b795",
+          "prSha256": "e9eddb2d50278eaeee80505214202d5965845ca4d298cacaec3736d5a218b795",
+          "publicMainSha256": "e9eddb2d50278eaeee80505214202d5965845ca4d298cacaec3736d5a218b795",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "docs/spray-review-actuals-resume-2026-11-01.md",
+          "managedExists": true,
+          "managedSha256": "eb0116259afdfc251b39ca3b8d61accef3dc42b41033edf69aebec05cc75791d",
+          "prSha256": "eb0116259afdfc251b39ca3b8d61accef3dc42b41033edf69aebec05cc75791d",
+          "publicMainSha256": null,
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "ios/VineTrack/App/SprayCalculatorView.swift",
+          "managedExists": true,
+          "managedSha256": "b8dc9e77f97c03f903e731d7c33daf5bdb33e96d35b984325c514ff2925b5afc",
+          "prSha256": "a087e388008ca1bd6d62c04fce3ab08dfde43ebd91d3fa80d201b99028424204",
+          "publicMainSha256": "b8dc9e77f97c03f903e731d7c33daf5bdb33e96d35b984325c514ff2925b5afc",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/App/SprayProgram/SprayProgramResumeRoute.swift",
+          "managedExists": true,
+          "managedSha256": "ea7df89c647a063bd315eac424c446b4dd2e0fb72b295a0f3c6f58593ff27f17",
+          "prSha256": "ea7df89c647a063bd315eac424c446b4dd2e0fb72b295a0f3c6f58593ff27f17",
+          "publicMainSha256": "ea7df89c647a063bd315eac424c446b4dd2e0fb72b295a0f3c6f58593ff27f17",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/App/SprayStartRateReview.swift",
+          "managedExists": true,
+          "managedSha256": "05f1d76d0df7f1a80cd7a523d0d6386970853758518d011ee0443242cc641ea6",
+          "prSha256": "4cbf1061301e99b22b1d2456420c92a0c0dc4a0a47f64c69741fbf9b4bf65a70",
+          "publicMainSha256": "05f1d76d0df7f1a80cd7a523d0d6386970853758518d011ee0443242cc641ea6",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/App/SprayTripSetupSheet.swift",
+          "managedExists": true,
+          "managedSha256": "e2b78ad8825c732629ae0c6a9f179b06bb4a7e3ec021e21b4d1a1b0b0ecd2f10",
+          "prSha256": "e2b78ad8825c732629ae0c6a9f179b06bb4a7e3ec021e21b4d1a1b0b0ecd2f10",
+          "publicMainSha256": "e2b78ad8825c732629ae0c6a9f179b06bb4a7e3ec021e21b4d1a1b0b0ecd2f10",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/App/SprayTripStartConfirmationSheet.swift",
+          "managedExists": true,
+          "managedSha256": "04d7a352626b2b585348769973381873feba6b957bcff3661373e59db0703e16",
+          "prSha256": "04d7a352626b2b585348769973381873feba6b957bcff3661373e59db0703e16",
+          "publicMainSha256": "04d7a352626b2b585348769973381873feba6b957bcff3661373e59db0703e16",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/Backend/Sync/SprayTankActualStore.swift",
+          "managedExists": true,
+          "managedSha256": "d46f9e249635e9165f535b87232d15094a0cdddc217188282b9eaabee96de15e",
+          "prSha256": "df8fdc4fe98529d1e4e5a2e88b4b1581f78a0dae509ee6f972ca6c49ddf4275d",
+          "publicMainSha256": "d46f9e249635e9165f535b87232d15094a0cdddc217188282b9eaabee96de15e",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/LegacyImported/Models/SprayInitialTankAmounts.swift",
+          "managedExists": true,
+          "managedSha256": "2dcbd3d1814e99cf3a609c904644a74cc080c1ba7beaca5a3f56d97dc814882d",
+          "prSha256": "fc77899900ffd2c9d4eadfbc9a852f438a1aacc4637b4d34cc2dae4d450b52a3",
+          "publicMainSha256": "2dcbd3d1814e99cf3a609c904644a74cc080c1ba7beaca5a3f56d97dc814882d",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/LegacyImported/Services/TripTrackingService.swift",
+          "managedExists": true,
+          "managedSha256": "d313f7df2924d0b2dfb4948607548360eb3c943c4c42a65eb28e2cf870d0a80c",
+          "prSha256": "8d7668a5023cd54860c60278983ae54ba723f0103e7cf878d48ffc1067137b13",
+          "publicMainSha256": "d313f7df2924d0b2dfb4948607548360eb3c943c4c42a65eb28e2cf870d0a80c",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/LegacyImported/Views/Trips/ActiveTripView.swift",
+          "managedExists": true,
+          "managedSha256": "3d213006843ad59cacfb9e04d55528a0df4a01e54446cd699c6a4b0c74d34d16",
+          "prSha256": "b603229bdf8498d867688d922413bf95da3081da34cb793b0ab1579db134a0f5",
+          "publicMainSha256": "3d213006843ad59cacfb9e04d55528a0df4a01e54446cd699c6a4b0c74d34d16",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/LegacyImported/Views/Trips/ConfirmActualTankMixView.swift",
+          "managedExists": true,
+          "managedSha256": "37feb180437bf9f50c07c8715320cc810645e653af188d7f66de73872869d824",
+          "prSha256": "37feb180437bf9f50c07c8715320cc810645e653af188d7f66de73872869d824",
+          "publicMainSha256": "37feb180437bf9f50c07c8715320cc810645e653af188d7f66de73872869d824",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift",
+          "managedExists": true,
+          "managedSha256": "5f6d55e52b9edfe3525f260029776255c26c952c56ad05509ecc4654a37d8127",
+          "prSha256": "21c6ec4a0de974deabe335e4dfce1df4f025ceb00d1c7ad7a9ffe8fa6ffc347e",
+          "publicMainSha256": "5f6d55e52b9edfe3525f260029776255c26c952c56ad05509ecc4654a37d8127",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrackTests/SprayInitialTankAmountsTests.swift",
+          "managedExists": true,
+          "managedSha256": "3d1223da11a1316a3d8876315841bdf376f23611f81a99afd8e72677242362fe",
+          "prSha256": "474e926b8853982c38bbe16e7a49619f911d7fbe37430b98e41a6d6189c4ecd6",
+          "publicMainSha256": "3d1223da11a1316a3d8876315841bdf376f23611f81a99afd8e72677242362fe",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrackTests/SprayProgramResumeRouteTests.swift",
+          "managedExists": true,
+          "managedSha256": "90177b5787abb8f182c2a2e28c5ef34b0f2ff10ce3e8e24eedac7fa999a331d7",
+          "prSha256": "90177b5787abb8f182c2a2e28c5ef34b0f2ff10ce3e8e24eedac7fa999a331d7",
+          "publicMainSha256": "90177b5787abb8f182c2a2e28c5ef34b0f2ff10ce3e8e24eedac7fa999a331d7",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrackUITests/MobileSprayUXParityUITests.swift",
+          "managedExists": true,
+          "managedSha256": "7622715fdb4a393a54d0ab5217f03603111586b635c968006e5072a23f71f77c",
+          "prSha256": "7622715fdb4a393a54d0ab5217f03603111586b635c968006e5072a23f71f77c",
+          "publicMainSha256": "7622715fdb4a393a54d0ab5217f03603111586b635c968006e5072a23f71f77c",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrackUITests/SprayEditingAcceptanceUITests.swift",
+          "managedExists": true,
+          "managedSha256": "3048f1a986f406af8a2d5a1554888e4f7e31c54082a7c8327c51fa86e46e3e7a",
+          "prSha256": "c4779b688500056393b7be82a153b4390d3d3f4ec0ff200dce93444760170e69",
+          "publicMainSha256": "3048f1a986f406af8a2d5a1554888e4f7e31c54082a7c8327c51fa86e46e3e7a",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "scripts/test-spray-actuals-host.py",
+          "managedExists": true,
+          "managedSha256": "cea826a471520bf8e3c6f222ff4c268eb7277fe8689c0e0aef5ce221e71887e8",
+          "prSha256": "cea826a471520bf8e3c6f222ff4c268eb7277fe8689c0e0aef5ce221e71887e8",
+          "publicMainSha256": null,
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "scripts/test-spray-draft-recovery-host.py",
+          "managedExists": true,
+          "managedSha256": "bd55a137ab02bb8f90d04e2f5b025488e788c4ebd2e8a5bb675e88607aa591d7",
+          "prSha256": "bd55a137ab02bb8f90d04e2f5b025488e788c4ebd2e8a5bb675e88607aa591d7",
+          "publicMainSha256": null,
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "scripts/test-spray-review-actuals-host.py",
+          "managedExists": true,
+          "managedSha256": "0d5b3ebb09b76b740ec4e7ce5036126a3c5400ce3d2c0e0c67399b7d5e1aabd0",
+          "prSha256": "89a690e32b29387c7645151d86ab178ea6df04ae7a06c22b5769e4e43053f644",
+          "publicMainSha256": null,
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "scripts/tests/test_spray_resume_routing.py",
+          "managedExists": true,
+          "managedSha256": "53e6c704171368688393ca22368e707bf6c76b8c3545363fc50d0abd30feac02",
+          "prSha256": "53e6c704171368688393ca22368e707bf6c76b8c3545363fc50d0abd30feac02",
+          "publicMainSha256": null,
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "scripts/tests/test_spray_review_actuals_wiring.py",
+          "managedExists": true,
+          "managedSha256": "3cf33d1d89f8fea325acd5a3835160acb4c5833e53f63e0d65ec8067243bacd1",
+          "prSha256": "3cf33d1d89f8fea325acd5a3835160acb4c5833e53f63e0d65ec8067243bacd1",
+          "publicMainSha256": null,
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": false
+        }
+      ]
+    },
+    {
+      "number": 31,
+      "head": "7c344904de0c8b6c636b17935a5c77c04e84497a",
+      "base": "2047a0e48f2d4b9c1a0d9f1c47eccef2cc849afd",
+      "merged": false,
+      "files": [
+        {
+          "path": ".github/workflows/incident-source-review.yml",
+          "managedExists": false,
+          "managedSha256": null,
+          "prSha256": "27f8d2d7349a24a8ce5a28c1f0ff4088462a628483c97f5b9fe72e431c1e4617",
+          "publicMainSha256": null,
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/SprayFieldLayoutAndroidTest.kt",
+          "managedExists": true,
+          "managedSha256": "763062414d51aba504e35fcbd196452f0499a229e749f2c3916e3e18d2947830",
+          "prSha256": "763062414d51aba504e35fcbd196452f0499a229e749f2c3916e3e18d2947830",
+          "publicMainSha256": "763062414d51aba504e35fcbd196452f0499a229e749f2c3916e3e18d2947830",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/DomainCacheRecoveryAndroidTest.kt",
+          "managedExists": true,
+          "managedSha256": "c426805e17aacc32044b6e12080e07f01ee3ee57d079193c38d95f8ef1b075b0",
+          "prSha256": "970ee6e6d3b213d70a7506430e4b6122336c9d7bc491724b367fb3fd0a599e99",
+          "publicMainSha256": "c426805e17aacc32044b6e12080e07f01ee3ee57d079193c38d95f8ef1b075b0",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AccountTransitionEvidence.kt",
+          "managedExists": true,
+          "managedSha256": "bca8409722cd3f5a7686fca5b4e30c33fe880deb75812efa1dbca8cee1d8af20",
+          "prSha256": "5cdcb58f72f8a396e1e2a25709bfb4ad34adee69ec9b01abc6b32e3f73d49f8e",
+          "publicMainSha256": "bca8409722cd3f5a7686fca5b4e30c33fe880deb75812efa1dbca8cee1d8af20",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AuthRecoveryRepository.kt",
+          "managedExists": true,
+          "managedSha256": "de19e9824cf7d57296fd23971af21fba46696c23247d979ffbe360bef013e9f7",
+          "prSha256": "6a2e9daa547cd70c5cd9f9f2c78ca9aa89bfac2da95c5acd91019def7f7d46ad",
+          "publicMainSha256": "de19e9824cf7d57296fd23971af21fba46696c23247d979ffbe360bef013e9f7",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/CleanExitCacheContract.kt",
+          "managedExists": true,
+          "managedSha256": "ba8ca223c05c3f0ec45b64dd662d6ca671e09c3a508f265df49eb0e049c717ea",
+          "prSha256": "c305073c79bb9e658dc3e46d7f8893ce2cc581ddecda24ba7ebd2278c49dc26a",
+          "publicMainSha256": "ba8ca223c05c3f0ec45b64dd662d6ca671e09c3a508f265df49eb0e049c717ea",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/PruningRecoveryVerifier.kt",
+          "managedExists": true,
+          "managedSha256": "d03bf38572bb6447db4bd68f5dcfca87073654d90da060425a891d0c2a21065d",
+          "prSha256": "cc205a01fc54bd12929031e08fefc793e9f0316f6a45004f5244fdab9f97ef87",
+          "publicMainSha256": "d03bf38572bb6447db4bd68f5dcfca87073654d90da060425a891d0c2a21065d",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/SessionStore.kt",
+          "managedExists": true,
+          "managedSha256": "cc8649554145a4ca5d445c36e96a178bb594f564fe22bda13e23e2be5d08a15e",
+          "prSha256": "1dc64da083a762d31b3d8a401f4e7053e8ac7b59a36a8a3997e10f76cbbbd0b8",
+          "publicMainSha256": "cc8649554145a4ca5d445c36e96a178bb594f564fe22bda13e23e2be5d08a15e",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayGuidedComponents.kt",
+          "managedExists": true,
+          "managedSha256": "9ce5d42bdaf2d5de34fdf903b44271e82bd66b78c6ec3422059a719458864736",
+          "prSha256": "9ce5d42bdaf2d5de34fdf903b44271e82bd66b78c6ec3422059a719458864736",
+          "publicMainSha256": "9ce5d42bdaf2d5de34fdf903b44271e82bd66b78c6ec3422059a719458864736",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt",
+          "managedExists": true,
+          "managedSha256": "b1011325a913761e4262ce047889a9e1632b6c0fed117f59b86687c890a16996",
+          "prSha256": "8eb48f63b675073e63fe7b3b72ca348d5bc3ecb5ad0b23543b98caffcc07b1a7",
+          "publicMainSha256": "b1011325a913761e4262ce047889a9e1632b6c0fed117f59b86687c890a16996",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayStartActualFields.kt",
+          "managedExists": true,
+          "managedSha256": "49ae302c6a2023a58757ce49ee11dac4bd7c709f1e1b4a0814bb6f080f30aa1f",
+          "prSha256": "b49d31c9250da1ef91cc9aee4be5a81f5ac98893bdb592ce05778ccb1d81ed05",
+          "publicMainSha256": "49ae302c6a2023a58757ce49ee11dac4bd7c709f1e1b4a0814bb6f080f30aa1f",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/DomainCacheRecoveryContractTest.kt",
+          "managedExists": true,
+          "managedSha256": "b5cac2afa762f4b87ce77f9c5c6ad8ff5131811fc5c58d4daadbd6cd352dbcf9",
+          "prSha256": "b5cac2afa762f4b87ce77f9c5c6ad8ff5131811fc5c58d4daadbd6cd352dbcf9",
+          "publicMainSha256": "b5cac2afa762f4b87ce77f9c5c6ad8ff5131811fc5c58d4daadbd6cd352dbcf9",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/PruningRecoveryVerifierTest.kt",
+          "managedExists": true,
+          "managedSha256": "79922bac884c8f6ea5d4b7e9527ccaaa5d0af2f87e80f55dc1d3ade701bbb46a",
+          "prSha256": "121a578315f3cc14ff2de4277d6b4cd1cfed64566e5780aa0b5491937c78cf95",
+          "publicMainSha256": "79922bac884c8f6ea5d4b7e9527ccaaa5d0af2f87e80f55dc1d3ade701bbb46a",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "docs/reviews/ios-pending-trip-sync-status-20261101.md",
+          "managedExists": true,
+          "managedSha256": "cbcf90e5f3fe4ab751246ddedde75b812cd780f1f465c26f1be943d491e29cb7",
+          "prSha256": "28d52aafa471c6caa5bb1ec9c0875f079544945d26b1ba2804411fefd22aa528",
+          "publicMainSha256": null,
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "docs/reviews/spray-start-yield-recovery-sync-20261101.md",
+          "managedExists": true,
+          "managedSha256": "6ccf162d3cba72f8a71e1b1b6c746b65ed65106332194b4a9c6adb3cf4dff947",
+          "prSha256": "8a491c0b855b6d66c3e5aa7a006c8191bcc81bf516dd6b4a68bb4e3c3bbca325",
+          "publicMainSha256": null,
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "ios/VineTrack/App/BackendSettingsView.swift",
+          "managedExists": true,
+          "managedSha256": "737793d7841457485d3d3a87343ab621b587100322b767c138048e6ca8166315",
+          "prSha256": "df061304c5b0ba2e24d29ad60bd706bf25652b6ad48d76e57647536705379341",
+          "publicMainSha256": "737793d7841457485d3d3a87343ab621b587100322b767c138048e6ca8166315",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/App/ChemicalIntelligence/ChemicalLineSnapshot.swift",
+          "managedExists": true,
+          "managedSha256": "761581bdf84456adb50438ae49062b0e28837579f95d034154a9fb3597a942dc",
+          "prSha256": "761581bdf84456adb50438ae49062b0e28837579f95d034154a9fb3597a942dc",
+          "publicMainSha256": "761581bdf84456adb50438ae49062b0e28837579f95d034154a9fb3597a942dc",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/App/SprayCalculatorView.swift",
+          "managedExists": true,
+          "managedSha256": "b8dc9e77f97c03f903e731d7c33daf5bdb33e96d35b984325c514ff2925b5afc",
+          "prSha256": "a9a95f82c6a341c27c6edad377cd89433b8f9b018bf59879e5ea18eae201f6f0",
+          "publicMainSha256": "b8dc9e77f97c03f903e731d7c33daf5bdb33e96d35b984325c514ff2925b5afc",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/App/SprayStartRateReview.swift",
+          "managedExists": true,
+          "managedSha256": "05f1d76d0df7f1a80cd7a523d0d6386970853758518d011ee0443242cc641ea6",
+          "prSha256": "bb8bac6ea6b8b334cb13049d6b90265b1cb48688525861959f1d5cdac644b70a",
+          "publicMainSha256": "05f1d76d0df7f1a80cd7a523d0d6386970853758518d011ee0443242cc641ea6",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/Backend/Sync/SprayTankActualStore.swift",
+          "managedExists": true,
+          "managedSha256": "d46f9e249635e9165f535b87232d15094a0cdddc217188282b9eaabee96de15e",
+          "prSha256": "ffe614ca27cc63b2935744db16beb995820670487b5b96bec0151786fcb45ace",
+          "publicMainSha256": "d46f9e249635e9165f535b87232d15094a0cdddc217188282b9eaabee96de15e",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/Backend/Sync/SyncQueueDiagnostics.swift",
+          "managedExists": true,
+          "managedSha256": "e6e73a00ce432200a00523186ddf26e5e85a1f36c8872d72b097999408110b5c",
+          "prSha256": "e6e73a00ce432200a00523186ddf26e5e85a1f36c8872d72b097999408110b5c",
+          "publicMainSha256": "e6e73a00ce432200a00523186ddf26e5e85a1f36c8872d72b097999408110b5c",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift",
+          "managedExists": true,
+          "managedSha256": "3b1ea228dc8c9e9918fdfa3fa7f978a1a588663aa51e8df4c9c53324363b236e",
+          "prSha256": "3b1ea228dc8c9e9918fdfa3fa7f978a1a588663aa51e8df4c9c53324363b236e",
+          "publicMainSha256": "3b1ea228dc8c9e9918fdfa3fa7f978a1a588663aa51e8df4c9c53324363b236e",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/Backend/Sync/TripSyncService.swift",
+          "managedExists": true,
+          "managedSha256": "4c8c6402b957c483437ae030868bbb88a3630eb76ece1d299f20b679be921b0c",
+          "prSha256": "255bdb79f81b3fb6fdf9aafb39353372929fea88f22bb6290b43e885ae8f3222",
+          "publicMainSha256": "4c8c6402b957c483437ae030868bbb88a3630eb76ece1d299f20b679be921b0c",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/LegacyImported/Models/SprayInitialTankAmounts.swift",
+          "managedExists": true,
+          "managedSha256": "2dcbd3d1814e99cf3a609c904644a74cc080c1ba7beaca5a3f56d97dc814882d",
+          "prSha256": "2dcbd3d1814e99cf3a609c904644a74cc080c1ba7beaca5a3f56d97dc814882d",
+          "publicMainSha256": "2dcbd3d1814e99cf3a609c904644a74cc080c1ba7beaca5a3f56d97dc814882d",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/LegacyImported/Services/TripTrackingService.swift",
+          "managedExists": true,
+          "managedSha256": "d313f7df2924d0b2dfb4948607548360eb3c943c4c42a65eb28e2cf870d0a80c",
+          "prSha256": "d313f7df2924d0b2dfb4948607548360eb3c943c4c42a65eb28e2cf870d0a80c",
+          "publicMainSha256": "d313f7df2924d0b2dfb4948607548360eb3c943c4c42a65eb28e2cf870d0a80c",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/LegacyImported/Views/Yield/FieldInfoButton.swift",
+          "managedExists": true,
+          "managedSha256": "4ad96ae9c4d52d0c0f8e4d06bf3252f2b4e3c653e4f871c278e7f17138ec91b7",
+          "prSha256": "4ad96ae9c4d52d0c0f8e4d06bf3252f2b4e3c653e4f871c278e7f17138ec91b7",
+          "publicMainSha256": "4ad96ae9c4d52d0c0f8e4d06bf3252f2b4e3c653e4f871c278e7f17138ec91b7",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrackTests/SprayInitialTankAmountsTests.swift",
+          "managedExists": true,
+          "managedSha256": "3d1223da11a1316a3d8876315841bdf376f23611f81a99afd8e72677242362fe",
+          "prSha256": "550d8f0f726dbda03ff654ded3c66c8fe6f55cf3ea1048e1409389ef607294cf",
+          "publicMainSha256": "3d1223da11a1316a3d8876315841bdf376f23611f81a99afd8e72677242362fe",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrackTests/SyncQueueRegressionTests.swift",
+          "managedExists": true,
+          "managedSha256": "1623be999db3e0a68b1938358572e7f2b31762c2a99b0abe76550a02f8822451",
+          "prSha256": "1623be999db3e0a68b1938358572e7f2b31762c2a99b0abe76550a02f8822451",
+          "publicMainSha256": "1623be999db3e0a68b1938358572e7f2b31762c2a99b0abe76550a02f8822451",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrackTests/TripDeletionRecoveryTests.swift",
+          "managedExists": true,
+          "managedSha256": "df5f8f6423a78c9146378cbb3c0fdaeaffd182eabb6b4dd0c58506020e740c99",
+          "prSha256": "86d45a905d17c3d879d8f217aab3c03aba2e39ed6ee552f8d48640187ef19b34",
+          "publicMainSha256": "df5f8f6423a78c9146378cbb3c0fdaeaffd182eabb6b4dd0c58506020e740c99",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrackTests/TripOccurrenceJournalTests.swift",
+          "managedExists": true,
+          "managedSha256": "cf8f070c24715c51278c8e9233d11907d3ca8828d4bb1284c2ab95d993a2c41c",
+          "prSha256": "cf8f070c24715c51278c8e9233d11907d3ca8828d4bb1284c2ab95d993a2c41c",
+          "publicMainSha256": "cf8f070c24715c51278c8e9233d11907d3ca8828d4bb1284c2ab95d993a2c41c",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "scripts/combined-recovery-spray-tests.init.gradle",
+          "managedExists": true,
+          "managedSha256": "1e570ef06aae8b3268123c2525252ada122e30e4657061f61affde1167ccf06d",
+          "prSha256": "1e570ef06aae8b3268123c2525252ada122e30e4657061f61affde1167ccf06d",
+          "publicMainSha256": null,
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "scripts/test-spray-review-actuals-host.py",
+          "managedExists": true,
+          "managedSha256": "0d5b3ebb09b76b740ec4e7ce5036126a3c5400ce3d2c0e0c67399b7d5e1aabd0",
+          "prSha256": "0d5b3ebb09b76b740ec4e7ce5036126a3c5400ce3d2c0e0c67399b7d5e1aabd0",
+          "publicMainSha256": null,
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "scripts/test-spray-snapshot-roundtrip.py",
+          "managedExists": true,
+          "managedSha256": "d14f9a40463c3df43ac6ac9a474325a7f8c44c56d7690cc04082d978fdd888d3",
+          "prSha256": "d14f9a40463c3df43ac6ac9a474325a7f8c44c56d7690cc04082d978fdd888d3",
+          "publicMainSha256": null,
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "scripts/test-trip-occurrence-authority.py",
+          "managedExists": true,
+          "managedSha256": "3b2c9e1d151bfd9b86c04846bcd8117ddc6212d100817a5bed89cbb56eebb1db",
+          "prSha256": "3b2c9e1d151bfd9b86c04846bcd8117ddc6212d100817a5bed89cbb56eebb1db",
+          "publicMainSha256": null,
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "sql/occurrence_setup_uuid_case_identity.sql",
+          "managedExists": true,
+          "managedSha256": "a4b7cd176c228bc3e3e061d4bff4f00552a859764b2e4c60926b0dcd46490703",
+          "prSha256": "a4b7cd176c228bc3e3e061d4bff4f00552a859764b2e4c60926b0dcd46490703",
+          "publicMainSha256": "a4b7cd176c228bc3e3e061d4bff4f00552a859764b2e4c60926b0dcd46490703",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        }
+      ]
+    },
+    {
+      "number": 33,
+      "head": "33fc6a20427f14250ced5ec1c4162e3dcac56cdc",
+      "base": "a50b35caae65412a949688a2d0a03b5119b718d5",
+      "merged": false,
+      "files": [
+        {
+          "path": "android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/auth/ChemicalRecoveryPreflightAndroidTest.kt",
+          "managedExists": true,
+          "managedSha256": "67a8af7904a93f462a2be5fd64f7ee2d4b9b2dde86db0221f17a57c24d8478ea",
+          "prSha256": "24ac58652f58635648d3d20c675dea7f3ef2490c43bfb0d178dc574959af18ec",
+          "publicMainSha256": "67a8af7904a93f462a2be5fd64f7ee2d4b9b2dde86db0221f17a57c24d8478ea",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/CleanExitCacheContract.kt",
+          "managedExists": true,
+          "managedSha256": "ba8ca223c05c3f0ec45b64dd662d6ca671e09c3a508f265df49eb0e049c717ea",
+          "prSha256": "ba8ca223c05c3f0ec45b64dd662d6ca671e09c3a508f265df49eb0e049c717ea",
+          "publicMainSha256": "ba8ca223c05c3f0ec45b64dd662d6ca671e09c3a508f265df49eb0e049c717ea",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/RetainedJsonFields.kt",
+          "managedExists": true,
+          "managedSha256": "b37d2255ab09536d1384ceb1424a62d88b287999effacfb3c08962d0761b258f",
+          "prSha256": "b37d2255ab09536d1384ceb1424a62d88b287999effacfb3c08962d0761b258f",
+          "publicMainSha256": "b37d2255ab09536d1384ceb1424a62d88b287999effacfb3c08962d0761b258f",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt",
+          "managedExists": true,
+          "managedSha256": "b1011325a913761e4262ce047889a9e1632b6c0fed117f59b86687c890a16996",
+          "prSha256": "947dd8835e86c9a594959ea811e90d307f46c4940d11d538b7e07275de3d125e",
+          "publicMainSha256": "b1011325a913761e4262ce047889a9e1632b6c0fed117f59b86687c890a16996",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayStartActualFields.kt",
+          "managedExists": true,
+          "managedSha256": "49ae302c6a2023a58757ce49ee11dac4bd7c709f1e1b4a0814bb6f080f30aa1f",
+          "prSha256": "da4cc7b52cccd4bcb94ea38b90fd462329721b8ee010dfe9c2142ef389fac01a",
+          "publicMainSha256": "49ae302c6a2023a58757ce49ee11dac4bd7c709f1e1b4a0814bb6f080f30aa1f",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/RecoveryWriterCompatibilityTest.kt",
+          "managedExists": true,
+          "managedSha256": "53ee27ee3268bf8e2ebf749db84cebc7e40da96e27f273f2c729f91795742c65",
+          "prSha256": "53ee27ee3268bf8e2ebf749db84cebc7e40da96e27f273f2c729f91795742c65",
+          "publicMainSha256": "53ee27ee3268bf8e2ebf749db84cebc7e40da96e27f273f2c729f91795742c65",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/auth/SavedChemicalRecoveryContractTest.kt",
+          "managedExists": true,
+          "managedSha256": "a73144f02e5458613808938c3401eeb6507d757ab3fa82036c34405ece1e8dc2",
+          "prSha256": "a73144f02e5458613808938c3401eeb6507d757ab3fa82036c34405ece1e8dc2",
+          "publicMainSha256": "a73144f02e5458613808938c3401eeb6507d757ab3fa82036c34405ece1e8dc2",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "docs/reviews/spray-review-and-recovery-writer-contracts-20261101.md",
+          "managedExists": true,
+          "managedSha256": "47db6ea6ff16a813e5dbe68e8da3613b915b9c6c6eb8431ecda5eb0bea3319c2",
+          "prSha256": "a402fced91804684aef842351e8d3c5b822c190a60061047454f14ac20e65519",
+          "publicMainSha256": null,
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "ios/VineTrack/App/BackendSettingsView.swift",
+          "managedExists": true,
+          "managedSha256": "737793d7841457485d3d3a87343ab621b587100322b767c138048e6ca8166315",
+          "prSha256": "03e804718decd0228b02cd6e981ee801d36c42092a9259a59e629a3a1b1b5c27",
+          "publicMainSha256": "737793d7841457485d3d3a87343ab621b587100322b767c138048e6ca8166315",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/App/NewMainTabView.swift",
+          "managedExists": true,
+          "managedSha256": "ed7c9b627604da01caacf52a18d2c91e71bba48432ad59128a7a1e891caf4a4e",
+          "prSha256": "ed7c9b627604da01caacf52a18d2c91e71bba48432ad59128a7a1e891caf4a4e",
+          "publicMainSha256": "ed7c9b627604da01caacf52a18d2c91e71bba48432ad59128a7a1e891caf4a4e",
+          "managedEqualsPR": true,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/App/SprayCalculatorView.swift",
+          "managedExists": true,
+          "managedSha256": "b8dc9e77f97c03f903e731d7c33daf5bdb33e96d35b984325c514ff2925b5afc",
+          "prSha256": "99d6f552a9a37c017781803bcba321b4d3b2e4d119529be3f631fb253c7abbe4",
+          "publicMainSha256": "b8dc9e77f97c03f903e731d7c33daf5bdb33e96d35b984325c514ff2925b5afc",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/App/SprayStartRateReview.swift",
+          "managedExists": true,
+          "managedSha256": "05f1d76d0df7f1a80cd7a523d0d6386970853758518d011ee0443242cc641ea6",
+          "prSha256": "7c922b5f7e7c2c4d03d6a98a171d47995306b476fd9626f40e534eaa7cb17a6e",
+          "publicMainSha256": "05f1d76d0df7f1a80cd7a523d0d6386970853758518d011ee0443242cc641ea6",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrack/Backend/Sync/SprayTankActualStore.swift",
+          "managedExists": true,
+          "managedSha256": "d46f9e249635e9165f535b87232d15094a0cdddc217188282b9eaabee96de15e",
+          "prSha256": "f0f42996cdac259f0c28d7cc7a11d36fe6a0a66cdf527ca6c3cc054db2cc1bde",
+          "publicMainSha256": "d46f9e249635e9165f535b87232d15094a0cdddc217188282b9eaabee96de15e",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "ios/VineTrackTests/SprayInitialTankAmountsTests.swift",
+          "managedExists": true,
+          "managedSha256": "3d1223da11a1316a3d8876315841bdf376f23611f81a99afd8e72677242362fe",
+          "prSha256": "334140706b6885330ab6ecf061b327b918dcac18fc9e824b125ed7592a42aeb8",
+          "publicMainSha256": "3d1223da11a1316a3d8876315841bdf376f23611f81a99afd8e72677242362fe",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "scripts/recovery-writer-tests.init.gradle",
+          "managedExists": true,
+          "managedSha256": "1f72b7d10659960078a656b496512d2b7c8d2fa3650bdd979c80c64421fe71ed",
+          "prSha256": "31922fe2e986fbe088bd1e72c9f0d77e232b68db6eab72847f965813cb4a476b",
+          "publicMainSha256": null,
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": false
+        }
+      ]
+    },
+    {
+      "number": 37,
+      "head": "7b52089b946bc5af22cc6afb6a3cb37d83db308e",
+      "base": "b45f909ad658fc2dc96f0e5736129d2c646b5d55",
+      "merged": false,
+      "files": [
+        {
+          "path": ".github/workflows/android-qualified-spray-start-focused.yml",
+          "managedExists": false,
+          "managedSha256": null,
+          "prSha256": "bf5109f4fb8aa02a1111c8d7c42047ec11fb6995cc1a80bb946a05987b22d4a6",
+          "publicMainSha256": null,
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt",
+          "managedExists": true,
+          "managedSha256": "2e3bc026642d3497a05a249470a79bda77d2c9262d6b83d633499e9304270683",
+          "prSha256": "de6c732472b973b189558092f89655eeb37422bbb8d5ab532ec5b788b60e1973",
+          "publicMainSha256": "2e3bc026642d3497a05a249470a79bda77d2c9262d6b83d633499e9304270683",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/IndependentQualifiedSprayStart.kt",
+          "managedExists": false,
+          "managedSha256": null,
+          "prSha256": "c3bd5e33fb4942304ba18f03aaefa64b64524185d12d48fdc3c64869a161d9ab",
+          "publicMainSha256": null,
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": false
+        },
+        {
+          "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt",
+          "managedExists": true,
+          "managedSha256": "b1011325a913761e4262ce047889a9e1632b6c0fed117f59b86687c890a16996",
+          "prSha256": "3375fcd07854c28e5fa6d8132b0d3f7c59f1b46fb1cafd86af171576991d6463",
+          "publicMainSha256": "b1011325a913761e4262ce047889a9e1632b6c0fed117f59b86687c890a16996",
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": true
+        },
+        {
+          "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/ui/IndependentQualifiedSprayStartTest.kt",
+          "managedExists": false,
+          "managedSha256": null,
+          "prSha256": "28c4a85b34aa462efeae1a44a9a49869963c763148df7b4fdbaf06df84b06212",
+          "publicMainSha256": null,
+          "managedEqualsPR": false,
+          "managedEqualsPublicMain": false
+        }
+      ]
+    }
+  ],
+  "downloadFailures": [
+    {
+      "revision": "b45f909ad658fc2dc96f0e5736129d2c646b5d55",
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/IndependentQualifiedSprayStart.kt",
+      "error": "HTTPError"
+    },
+    {
+      "revision": "b45f909ad658fc2dc96f0e5736129d2c646b5d55",
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/ui/IndependentQualifiedSprayStartTest.kt",
+      "error": "HTTPError"
+    }
+  ],
+  "installedSourceMapping": "UNVERIFIED: current installed build receipts/identifiers not provided",
+  "note": "Exact equality is strong evidence only for that file. Divergence can preserve/adapt hunks; it is not evidence a repair is missing. Open PR status is not build inclusion."
+}
