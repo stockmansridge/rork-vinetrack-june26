@@ -270,14 +270,44 @@ class TripOccurrenceJournal(private val storage: Storage, private val scope: Sco
             save(state.copy(heldReason = "Another update needs review. Pending occurrence actions have been retained."))
         } else save(state.copy(acknowledged = remote))
     }
+    /**
+     * P0 3.1.9: durable tank-conflict hold. Appended to any existing hold rather than
+     * replacing it, and kept across later holds (see [save]) so tank gating cannot be
+     * lost when another reason is recorded. Returns true when newly recorded.
+     */
+    @Synchronized fun holdTankConflict(): Boolean {
+        val state = load() ?: error("Occurrence journal missing.")
+        if (isTankConflictHeld(state)) return false
+        save(state.copy(heldReason = listOfNotNull(state.heldReason, TANK_CONFLICT_HOLD).joinToString(" ")))
+        return true
+    }
+    /** Removes only the tank-conflict hold; any other recorded hold stays. */
+    @Synchronized fun releaseTankConflict(): Boolean {
+        val state = load() ?: error("Occurrence journal missing.")
+        if (!isTankConflictHeld(state)) return false
+        val remaining = state.heldReason.orEmpty().replace(TANK_CONFLICT_HOLD, "").trim().ifEmpty { null }
+        save(state.copy(heldReason = remaining), releaseTankConflict = true)
+        return true
+    }
     @Synchronized fun hold(code: String) {
         val state = load() ?: error("Occurrence journal missing.")
         save(state.copy(heldReason = if (code.contains("UPDATE_REQUIRED") || code.contains("UNSUPPORTED"))
             "Update required. This trip cannot use numeric coverage; saved occurrence work is retained."
             else "Occurrence sync needs reconciliation ($code). Saved actions are retained."))
     }
-    private fun save(state: Snapshot) {
-        check(storage.commit(json.encodeToString(Snapshot.serializer(), state))) { "Occurrence action was not saved. Retry before leaving this trip." }
+    private fun save(state: Snapshot, releaseTankConflict: Boolean = false) {
+        // A tank-conflict hold is cleared only by [releaseTankConflict]. Other holds
+        // (recovery, acknowledgement mismatch, rejection) keep it appended.
+        val prior = if (releaseTankConflict) null else storage.read()?.let { runCatching { json.decodeFromString<Snapshot>(it) }.getOrNull() }
+        val kept = if (isTankConflictHeld(prior) && !isTankConflictHeld(state))
+            state.copy(heldReason = listOfNotNull(state.heldReason, TANK_CONFLICT_HOLD).joinToString(" ")) else state
+        check(storage.commit(json.encodeToString(Snapshot.serializer(), kept))) { "Occurrence action was not saved. Retry before leaving this trip." }
+    }
+    companion object {
+        const val TANK_CONFLICT_CODE = "OCCURRENCE_RESTORE_TANK_CONFLICT_HELD"
+        const val TANK_CONFLICT_HOLD = "Tank history differs from the server ($TANK_CONFLICT_CODE). " +
+            "This device's tank records are retained unchanged; tank changes, tank sync and finishing are paused until reconciled."
+        fun isTankConflictHeld(state: Snapshot?): Boolean = state?.heldReason?.contains(TANK_CONFLICT_CODE) == true
     }
     private fun reduce(d: TripOccurrenceCoverage.Document, action: JsonObject, operationId: String, history: List<Operation>): JsonObject {
         val fields = d.raw.toMutableMap()

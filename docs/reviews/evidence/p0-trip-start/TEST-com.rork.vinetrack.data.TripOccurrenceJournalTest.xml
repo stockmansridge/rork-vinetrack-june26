@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.TripOccurrenceJournalTest" tests="32" skipped="0" failures="0" errors="0" timestamp="2026-11-01T23:43:31.091Z" hostname="e2b.local" time="0.483">
+  <properties/>
+  <testcase name="v2ReportRowsRetainPassIdentityAndDisplayContext" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.007"/>
+  <testcase name="reinstallRecoversActualUndoFromServerLedger" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.055"/>
+  <testcase name="replacementRetiresDoneEvidenceAndNeverInheritsCoverage" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.021"/>
+  <testcase name="rowSnapshotsSeparateStoredGeometryFromLegacyCandidateContext" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.01"/>
+  <testcase name="finalisationFreezesExactOccurrenceReviewAndRetainsPendingActionOrder" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.014"/>
+  <testcase name="snapshotWithoutDurableActivationRequiresAuthoritativeRecovery" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.015"/>
+  <testcase name="reorderedIDsAndStatesSurvive" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.003"/>
+  <testcase name="creationAndActivationNeedExactDurableAcknowledgement" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.006"/>
+  <testcase name="bDoneLeavesAIncomplete" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.001"/>
+  <testcase name="aDoneLeavesBIncomplete" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.001"/>
+  <testcase name="heldCreationLeavesNoJournalDocument" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.002"/>
+  <testcase name="plannerRejectsCrossVineyardCommit" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.0"/>
+  <testcase name="failedDurableWritePublishesNoAction" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.001"/>
+  <testcase name="blockQualifiedPlannerKeepsFourSameLabelPassesAndSubset" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.014"/>
+  <testcase name="heldLocalActivationCannotBeBypassedOrMutated" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.008"/>
+  <testcase name="entitlementHoldPreservesJournalBytesButAllowsRealReceiptAndOriginalResume" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.004"/>
+  <testcase name="restartDoneSkipUndoRestoresDone" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.005"/>
+  <testcase name="unknownFieldsSurviveJournalProjection" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.001"/>
+  <testcase name="doneSkipAndUndoRemainIndependent" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.004"/>
+  <testcase name="offlineLifecycleAllowsOrderedActionsUndoAndFinalReviewBeforeAnyReceipt" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.051"/>
+  <testcase name="offlineCreateActivationChainRetainsExactIDsAfterRecreationAndProjection" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.007"/>
+  <testcase name="guardRejectionHeldAndNeverNumericSuccess" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.002"/>
+  <testcase name="delayedDuplicateAcknowledgementPreservesNewerLocalAction" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.004"/>
+  <testcase name="sameLabelsDifferentBlocksStaySeparate" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.001"/>
+  <testcase name="uncertainAcceptedActionRecoveredByExactReceipt" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.018"/>
+  <testcase name="sharedPostgresTranscriptSurvivesKotlinRecoveryUndoAndFinalReload" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.2"/>
+  <testcase name="linkedRecipeCannotReplayBeforeOccurrenceParentConfirmation" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.009"/>
+  <testcase name="unverifiedReceiptCannotClearPendingWork" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.004"/>
+  <testcase name="remoteConflictHoldsWithoutRebaseOrLoss" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.003"/>
+  <testcase name="tripRoundTripAndUnsupportedPreserveRawWithoutNumericFallback" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.002"/>
+  <testcase name="skipToDoneChangesOnlySelectedOccurrence" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.005"/>
+  <testcase name="uncertainRetryRetainsExactWireAfterRecreation" classname="com.rork.vinetrack.data.TripOccurrenceJournalTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

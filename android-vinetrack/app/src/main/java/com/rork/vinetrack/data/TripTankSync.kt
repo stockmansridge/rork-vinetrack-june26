@@ -58,6 +58,8 @@ class TripTankSync(
     private val activeTripStore: ActiveTripStore,
     private val fetchTrip: (suspend (String) -> Trip?)? = null,
     private val saveTankSessions: (suspend (String, List<TankSession>, Int?, Boolean, Int?) -> Trip)? = null,
+    /** P0 3.1.9: (owner, vineyard, trip) is under a durable occurrence tank-conflict hold. */
+    private val isTankHeld: (String, String, String) -> Boolean = { _, _, _ -> false },
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -155,6 +157,8 @@ class TripTankSync(
                 if (snapshot.ownerUserId != originalScope.userId || snapshot.trip.id != candidatePayload.tripId ||
                     snapshot.vineyardId != snapshot.trip.vineyardId) continue
                 val local = snapshot.trip
+                // Held tank conflict: leave the marker unclaimed and unchanged; no network IO.
+                if (isTankHeld(snapshot.ownerUserId, snapshot.vineyardId, candidatePayload.tripId)) continue
                 val write = pending.claimReplay(candidate, permittedWrites) ?: continue
                 val payload = runCatching {
                     json.decodeFromString(Payload.serializer(), write.payloadJson)

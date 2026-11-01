@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.AccountScopedTankSafetyTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-11-01T23:43:30.681Z" hostname="e2b.local" time="0.27">
+  <properties/>
+  <testcase name="revocationBetweenSaveAdmissionAndCommitCannotWriteAnActual" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.038"/>
+  <testcase name="revokedTripResponseKeepsExactClaimAndNeverPublishes" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.145"/>
+  <testcase name="actualReplacementIsNotAcknowledgedByEarlierSuccess" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.024"/>
+  <testcase name="actualSuccessAfterRevocationRetainsFrozenValuesAndPendingAcrossRestart" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.011"/>
+  <testcase name="unchangedOriginalConfirmationReplaysForReturningActorAfterRestart" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.006"/>
+  <testcase name="authenticatedIdentityAloneCannotUnlockLegacyHoldOrReuseOldIncarnation" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.002"/>
+  <testcase name="corruptActualNoticeIsNotAnEmptySuccessAndLeavesRawBytesUnchanged" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.002"/>
+  <testcase name="corruptActualEvidenceIsHeldWithoutFetchMergeOrReset" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.003"/>
+  <testcase name="actualNoticeExplainsPendingDependencyAndAcknowledgementWithoutWriting" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.003"/>
+  <testcase name="absentCorruptOrMismatchedSnapshotNeverConsumesMarker" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.004"/>
+  <testcase name="authorlessOrLaterCorrectedActualsAreNotAdoptedFromConfirmedBy" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.006"/>
+  <testcase name="sameVineyardRemoteCorrectionCannotConsumeAnotherActorsPendingActual" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.005"/>
+  <testcase name="delayedRemoteActualsCannotMergeAfterRevocation" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.004"/>
+  <testcase name="serverVineyardConflictBlocksExactClaimWithoutStrandingOrSending" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.004"/>
+  <testcase name="unknownForeignOrCorrectedActualNoticeNeverDisclosesContent" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.003"/>
+  <testcase name="foreignSnapshotRefusedBeforeClaimProbeOrSendAcrossRestart" classname="com.rork.vinetrack.data.AccountScopedTankSafetyTest" time="0.007"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

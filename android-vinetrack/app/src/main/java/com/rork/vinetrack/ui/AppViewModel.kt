@@ -2583,7 +2583,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * and after a successful vineyard load, separately from the other replay
      * coordinators.
      */
-    private val tripTankSync = TripTankSync(tripRepo, pendingWrites, activeTripStore)
+    private val tripTankSync = TripTankSync(tripRepo, pendingWrites, activeTripStore,
+        isTankHeld = { owner, vineyard, trip -> tankConflictHeld(owner, vineyard, trip) })
+
+    /**
+     * P0 3.1.9: durable occurrence tank-conflict hold (stored in the Trip's own
+     * occurrence journal, so it survives restart). Legacy/non-UUID Trips have no
+     * journal and are never held; an unreadable journal for this Trip fails closed.
+     */
+    private fun tankConflictHeld(ownerId: String?, vineyardId: String, tripId: String): Boolean {
+        val owner = ownerId ?: return false
+        val journal = runCatching { occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, vineyardId, tripId)) }.getOrNull()
+        return com.rork.vinetrack.data.OccurrenceTankConflictGate.isHeld(journal)
+    }
+
+    private fun tankConflictHeld(trip: Trip): Boolean = tankConflictHeld(session.userId, trip.vineyardId, trip.id)
+
+    /** Refuses a tank/finish change while held; local evidence is untouched. */
+    private fun refuseHeldTankChange(trip: Trip): Boolean {
+        if (!tankConflictHeld(trip)) return false
+        _ui.update { it.copy(tripError = TripOccurrenceJournal.TANK_CONFLICT_HOLD) }
+        return true
+    }
     private val sprayTankActualStore = com.rork.vinetrack.data.SprayTankActualStore(app)
     private val sprayTankActualRepo = com.rork.vinetrack.data.SprayTankActualRepository(session)
     private val startTankCommitCoordinator = com.rork.vinetrack.data.StartTankCommitCoordinator(
@@ -2596,6 +2617,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             session.userId == actual.confirmedBy && state.selectedVineyardId == actual.vineyardId &&
                 record != null && com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(record.applicationGeometry, record.tanks.orEmpty()) == null
         },
+        isTankHeld = { owner, vineyard, trip -> tankConflictHeld(owner, vineyard, trip) },
     )
 
     /**
@@ -2930,6 +2952,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return (listOf("VineTrack device Trip status v1", "platform: Android", "version: ${info.appVersion}", "build: ${info.appBuild}") +
             com.rork.vinetrack.data.DeviceTripStatus.diagnosticLines(trip.id, deviceTripStatus(trip)) +
             "trip_tank_fields: sessions=${trip.tankSessions.size}; active_tank=${trip.activeTankNumber ?: "none"}; filling=${trip.isFillingTank}" +
+            "tank_conflict_hold: ${if (tankConflictHeld(trip)) TripOccurrenceJournal.TANK_CONFLICT_CODE else "none"}" +
             "start_tank_journal: ${startTankCommitCoordinator.inspect()?.takeIf { it.updatedTrip.id == trip.id }?.state ?: "absent"}"
         ).joinToString("\n")
     }
@@ -3830,6 +3853,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     sprayTankActualStore, session::withAccountAccess,
                     { actual, access -> sprayTankActualRepo.upsert(actual, access) },
                     { vineyardId, access -> sprayTankActualRepo.fetch(vineyardId, access) },
+                    isTankHeld = { actual, access -> tankConflictHeld(access.userId, actual.vineyardId, actual.tripId) },
                 ).replay(tankAccountAccess, tankVineyardId, { actual ->
                     TripStartSync.hasUnresolvedStart(pendingWrites, actual.tripId) ||
                         pendingWrites.list().any { write ->
@@ -9264,6 +9288,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (!admitTripChange(trip)) { onResult(false); return }
         if (trip.coverageBasis != TripOccurrenceCoverage.Basis.LEGACY) {
+            // Finishing would close the server Trip and make tank reconciliation impossible.
+            if (refuseHeldTankChange(trip)) { onResult(false); return }
             endOccurrenceTrip(trip, notes, endEngineHours, onResult)
             return
         }
@@ -10280,13 +10306,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // sessions/scalars (Start Tank evidence) or local pause state.
                 val localProgress = com.rork.vinetrack.data.OccurrenceRestoreLocalProgress.apply(serverProjected, occurrenceRemote, saved)
                 val projected = localProgress.trip
+                // P0 3.1.9: a tank conflict becomes a durable, fail-closed journal hold before
+                // anything is saved or replayed. Released only by a fresh, conflict-free server row.
+                val tankGate = com.rork.vinetrack.data.OccurrenceTankConflictGate.onRestore(
+                    journal, localProgress, freshServerRow = tripsFromServer && occurrenceRemote != null)
+                val heldReason = journal.load()?.heldReason
                 if (serverClosed) { tracker?.stop(); tracker = null }
                 _ui.update { it.copy(deviceActiveTripId = if (serverClosed) null else saved.id,
                     isTracking = if (serverClosed) false else it.isTracking,
-                    tripError = retained.heldReason ?: if (localProgress.tankConflict)
-                        "Tank history differs from the server (${com.rork.vinetrack.data.OccurrenceRestoreLocalProgress.TANK_CONFLICT_CODE}). This device's tank records are kept unchanged." else null) }
+                    tripError = heldReason) }
                 check(activeTripStore.saveDurably(userId, vineyardId, projected))
-                if (!serverClosed && occurrenceRemote != null && localProgress.tankReplayRequired &&
+                if (!serverClosed && occurrenceRemote != null &&
+                    com.rork.vinetrack.data.OccurrenceTankConflictGate.replayAllowed(localProgress, tankGate) &&
                     pendingWrites.list().none { it.clientId == saved.id &&
                         it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK &&
                         it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved }) {
@@ -13227,6 +13258,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (_ui.value.activeTrip?.id != pending.sourceTrip.id) return false
         val trip = _ui.value.trips.firstOrNull { it.id == pending.sourceTrip.id && it.isActive } ?: return false
         if (!admitTripChange(trip)) return false
+        if (refuseHeldTankChange(trip)) return false
         val selectedVineyardId = _ui.value.selectedVineyardId
         val currentRecord = TankMixPresentation.linkedRecord(trip.id, _ui.value.sprayRecords)
         val currentTank = currentRecord?.tanks.orEmpty().firstOrNull { it.tankNumber == pending.result.tankNumber }
@@ -13347,6 +13379,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun startTankWithoutRecordedMix(tripId: String) {
         if (_ui.value.activeTrip?.id != tripId) return
         if (!admitTripChange(_ui.value.activeTrip)) return
+        _ui.value.activeTrip?.let { if (refuseHeldTankChange(it)) return }
         val trip = reconciledTankTripForStart(tripId) ?: return
         val record = TankMixPresentation.linkedRecord(trip.id, _ui.value.sprayRecords)
         com.rork.vinetrack.data.spray.SprayPlanningOperationalGate.blocker(record?.applicationGeometry, record?.tanks.orEmpty())?.let { blocker ->
@@ -13374,6 +13407,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         if (!admitTripChange(trip)) return
+        if (refuseHeldTankChange(trip)) return
         val updated = TankSessionLifecycle.end(
             trip = trip,
             timestamp = java.time.Instant.now().toString(),
@@ -13404,6 +13438,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         if (!admitTripChange(trip)) return
+        if (refuseHeldTankChange(trip)) return
         if (trip.isFillingTank) return
         val now = java.time.Instant.now().toString()
         val sessions = trip.tankSessions.toMutableList()
@@ -13446,6 +13481,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         if (!admitTripChange(trip)) return
+        if (refuseHeldTankChange(trip)) return
         val now = java.time.Instant.now().toString()
         val sessions = trip.tankSessions.toMutableList()
         val fillIndex = sessions.indexOfLast { it.fillStartTime != null && it.fillEndTime == null }
@@ -13474,6 +13510,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (tripId in _ui.value.locallyEndedTripIds || _ui.value.activeTrip?.id != tripId) return
         val current = _ui.value.trips.firstOrNull { it.id == tripId } ?: return
         if (!admitTripChange(current)) return
+        if (refuseHeldTankChange(current)) return
         val ownerId = session.userId ?: return
         val vineyardId = current.vineyardId
         val durable = current.copy(

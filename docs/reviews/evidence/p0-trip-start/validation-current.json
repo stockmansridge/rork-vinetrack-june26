@@ -1,22 +1,20 @@
 {
-  "recordedAtUTC": "2026-11-01T23:24:39.603148+00:00",
+  "recordedAtUTC": "2026-11-01T23:51:03.705709+00:00",
   "incident": "OPEN",
   "release": "BLOCKED_NO_UPLOAD_OR_PUBLIC_RELEASE",
-  "managedBaseCommit": "51359f7acfbebef977b05378424e50d9b1d65619",
+  "managedBaseCommit": "b5c384d5ff897a1809c4a24abd5d85c8565661da",
   "sourceIdentityNote": "Working-tree hashes identify the changed source; base commit is not a claim that uncommitted edits are already installed or published.",
   "sourceSha256": {
-    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/DeviceTripStatus.kt": "82dd65f67e25d11a651f5138dc65d524ce3d192923b062a6d3651b3517299370",
-    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/OccurrenceRestoreLocalProgress.kt": "84143684a9d3793412d5f16c80a6b9c67f8f6e3816db6e8d866cc9b11d6f4c13",
-    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/StartTankCommitCoordinator.kt": "89f95166fad0e3e37ff56a207798e1bf7f70e53a9c9a6b19d951d081893203b3",
-    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt": "e2bce18496b61efc881da15201dd50a11f88a5fc1466354eacb5909f72ff529d",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/OccurrenceRestoreLocalProgress.kt": "25ffbfd39c530a802ce7b3ed8db5a8b9c7b4e8e8b3348e44e1da6ced25395a6c",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/OccurrenceTankConflictGate.kt": "03e8c0a64b51534005f5d35e60c01e848b1a68f2e02b649460a070957e8c101c",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/ScopedTankActualSync.kt": "46c9419d92ba9e3ca9fe5ce26ac55cba2c9cbc670cf80697afca361d12539bdc",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/StartTankCommitCoordinator.kt": "0ce4c79de0201a31279aa76e89aa738aaf7d2ae1b4bdf8d38fc080b9cba695bf",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripOccurrenceJournal.kt": "e7257af69b0d1bf100eda0bdb17ba71fb3d8d9b19fbe6a66884ddedcc13f5d81",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripTankSync.kt": "c33d3ff0f400c3399844059b9405e16f74f2ff32f3ff347ff9b74a5e0bf9bacf",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt": "a9ed71ebc8fe70b6e868756160e87b37c089b9a2738556641709abd164f6a84f",
     "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/IndependentQualifiedSprayStart.kt": "c3bd5e33fb4942304ba18f03aaefa64b64524185d12d48fdc3c64869a161d9ab",
     "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt": "3375fcd07854c28e5fa6d8132b0d3f7c59f1b46fb1cafd86af171576991d6463",
-    "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt": "0beaf017c633e2b1103287aaaaf8d8cbecc550ffe2e43cfed9978b8b43c1666a",
-    "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/P0DeviceTripRecoveryTest.kt": "6dd7c746ef0600b4b90111d02b27abe00a4bb987864669cd130a8ed01bbb579e",
-    "ios/VineTrack/Backend/Sync/OccurrenceStartAdmission.swift": "dab13de6c9bf5b0b8b2f1eb711e46a2f49a7d75914136690fb482ed8294a8e24",
-    "ios/VineTrack/Backend/Sync/TripSyncService.swift": "8beecbc648ebd8fd72fe3a2fbae1b9435df6eca77a5c06bb0fec7faa715f658c",
-    "ios/VineTrack/LegacyImported/Services/TripTrackingService.swift": "af9527349eeb841b526387e85f72caaaa2b2701ccc5c818e27ae9e56bdf24b1e",
-    "ios/VineTrackTests/SprayOccurrenceRecoveryHotfixTests.swift": "bbfcd3f796863865a777101443c4fd792745e833741b81a745eabaaa27e30998",
+    "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/OccurrenceTankConflictHoldTest.kt": "658fe8bcd3f268315e4f98bc34f9f21f9184d2dfcec80ed8ab574c8ee24b0b65",
     "sql/occurrence_setup_uuid_case_identity.sql": "a4b7cd176c228bc3e3e061d4bff4f00552a859764b2e4c60926b0dcd46490703",
     "sql/occurrence_setup_uuid_case_identity_verify.sql": "6e9342e9cde6e297d5d006c209ad0555dfc3bf6d69ef1a2c98b556c97a8f4aac"
   },
@@ -38,12 +36,14 @@
       "Occurrence restore keeps locally committed tank sessions/scalars and local pause (union by session ID via TankSessionReplayMerge); conflicts keep local evidence and hold with OCCURRENCE_RESTORE_TANK_CONFLICT_HELD; reconstructs a lost TRIP_TANK marker only from the durable snapshot",
       "Recovered Start Tank journal republishes the durable snapshot tank fields to the open Trip",
       "DeviceTripStatus per-predicate evaluator: Return to Trip for verified own-claim vineyard mismatch, separate local-end-pending message, case-only UUID mismatch held without ownership wording; read-only ownership text only for verified no-claim/other-claim",
-      "Diagnostics: per-predicate lines, actual session presence in UI Trip/snapshot/Start Tank journal, per-Trip pending items with fixed codes"
+      "Diagnostics: per-predicate lines, actual session presence in UI Trip/snapshot/Start Tank journal, per-Trip pending items with fixed codes",
+      "Durable tank-conflict hold: OCCURRENCE_RESTORE_TANK_CONFLICT_HELD is stored in the Trip occurrence journal heldReason (survives restart; other holds cannot drop it). While held: no TRIP_TANK reconstruction, TripTankSync leaves the marker unclaimed, ScopedTankActualSync skips that Trip's actuals, StartTankCommitCoordinator refuses new commits, ViewModel refuses Start/End Tank, fill timer, tank persistence and occurrence finish. Released only by a fresh server row whose merge is conflict-free. Copy Trip status reports tank_conflict_hold."
     ],
     "ios": [
       "requireResolvedOccurrenceStarts narrowed: same planned work or device-active Trip still blocks; independent start first durably holds an unheld create/activate chain (pending/history/acknowledged retained; releasable via verified-absence path)",
       "Diagnostics name each unattributed queued upload (TRIP_SNAPSHOT_NOT_IN_SELECTED_SLICE) with journal stage and local linked-spray presence"
     ],
+    "tankConflictHoldTestLevel": "JVM integration (OccurrenceTankConflictHoldTest, 3 cases) with production journal/gate/ActiveTripStore/PendingWriteRepository/TripTankSync/ScopedTankActualSync/StartTankCommitCoordinator and the exact ViewModel predicate; AppViewModel private restore wiring itself is not executed on the JVM (no Robolectric) and androidTest infrastructure timed out twice previously.",
     "notFixedHere": "A Tank session already lost before this fix is recoverable only from a retained Start Tank journal; actual-only evidence is held, never fabricated."
   },
   "swiftP0Selected": {
@@ -74,7 +74,7 @@
         "skipped": "0",
         "failures": "0",
         "errors": "0",
-        "timestamp": "2026-11-01T23:09:26.767Z",
+        "timestamp": "2026-11-01T23:43:31.612Z",
         "hostname": "e2b.local",
         "time": "0.001"
       },
@@ -82,12 +82,12 @@
         {
           "name": "incorrectCandidateBindingDoesNotSkipLegacyRecovery",
           "classname": "com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest",
-          "time": "0.0"
+          "time": "0.001"
         },
         {
           "name": "newBoundPathRouteDoesNotDependOnUnreadableUnrelatedLegacyJournal",
           "classname": "com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest",
-          "time": "0.001"
+          "time": "0.0"
         },
         {
           "name": "freeDriveAndMissingPlanRemainFailClosed",
@@ -108,15 +108,15 @@
         "skipped": "0",
         "failures": "0",
         "errors": "0",
-        "timestamp": "2026-11-01T23:09:26.707Z",
+        "timestamp": "2026-11-01T23:43:31.594Z",
         "hostname": "e2b.local",
-        "time": "0.057"
+        "time": "0.015"
       },
       "cases": [
         {
           "name": "missingCacheCannotReleaseDurableHold",
           "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
-          "time": "0.008"
+          "time": "0.002"
         },
         {
           "name": "exactServerCodeHoldsWithoutInferringTrial",
@@ -136,12 +136,12 @@
         {
           "name": "verifiedRestorationClaimsSameOriginalOperation",
           "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
-          "time": "0.024"
+          "time": "0.0"
         },
         {
           "name": "accountSwitchNeitherLeaksNorErasesHold",
           "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
-          "time": "0.001"
+          "time": "0.0"
         },
         {
           "name": "blockedEnqueueCreatesNoNewOutboxItem",
@@ -166,7 +166,7 @@
         {
           "name": "fileBackedHoldSurvivesAuthorityRecreationOffline",
           "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
-          "time": "0.014"
+          "time": "0.003"
         },
         {
           "name": "explicitTrialCapabilityKeepsEntryButDeniesCommands",
@@ -181,7 +181,7 @@
         {
           "name": "failedOriginalRestoresExactTimestampsErrorAndAttemptsAcrossHoldAndRestart",
           "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
-          "time": "0.003"
+          "time": "0.001"
         },
         {
           "name": "legacyWritableDefaultDoesNotReleaseKnownHold",
@@ -191,12 +191,12 @@
         {
           "name": "entryDenialCannotReleaseHeldWork",
           "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
-          "time": "0.0"
+          "time": "0.001"
         },
         {
           "name": "staleAccountResponseCannotHoldAnotherAccount",
           "classname": "com.rork.vinetrack.data.VineyardWriteAuthorityTest",
-          "time": "0.0"
+          "time": "0.001"
         },
         {
           "name": "unknownOldServerRemainsCompatible",
@@ -212,15 +212,15 @@
         "skipped": "0",
         "failures": "0",
         "errors": "0",
-        "timestamp": "2026-11-01T23:09:26.637Z",
+        "timestamp": "2026-11-01T23:43:31.036Z",
         "hostname": "e2b.local",
-        "time": "0.064"
+        "time": "0.005"
       },
       "cases": [
         {
           "name": "claimForAnotherTripIsVerifiedReadOnly",
           "classname": "com.rork.vinetrack.data.P0DeviceTripRecoveryTest",
-          "time": "0.036"
+          "time": "0.002"
         },
         {
           "name": "genuineVineyardMismatchOffersReturnAndIsNotOtherDevice",
@@ -240,7 +240,7 @@
         {
           "name": "conflictingSessionKeepsLocalEvidenceUnchangedAndHolds",
           "classname": "com.rork.vinetrack.data.P0DeviceTripRecoveryTest",
-          "time": "0.008"
+          "time": "0.0"
         },
         {
           "name": "noClaimIsVerifiedReadOnly",
@@ -255,7 +255,7 @@
         {
           "name": "serverRowAlreadyHoldingSessionNeedsNoReplay",
           "classname": "com.rork.vinetrack.data.P0DeviceTripRecoveryTest",
-          "time": "0.01"
+          "time": "0.0"
         },
         {
           "name": "locallyEndedIsSeparateFromOwnership",
@@ -265,7 +265,7 @@
         {
           "name": "serverRowWithoutSessionsKeepsLocalTank1AndRequiresReplay",
           "classname": "com.rork.vinetrack.data.P0DeviceTripRecoveryTest",
-          "time": "0.001"
+          "time": "0.0"
         },
         {
           "name": "vineyardMismatchWithForeignClaimDoesNotOfferReturn",
@@ -275,7 +275,7 @@
         {
           "name": "deviceTripWhenComputedActiveMatches",
           "classname": "com.rork.vinetrack.data.P0DeviceTripRecoveryTest",
-          "time": "0.001"
+          "time": "0.0"
         },
         {
           "name": "unreadableClaimIsHeldNotOwnership",
@@ -290,12 +290,422 @@
         {
           "name": "noServerRowLeavesProjectionUnchanged",
           "classname": "com.rork.vinetrack.data.P0DeviceTripRecoveryTest",
-          "time": "0.0"
+          "time": "0.001"
         },
         {
           "name": "serverOnlySessionIsRetainedNotDropped",
           "classname": "com.rork.vinetrack.data.P0DeviceTripRecoveryTest",
+          "time": "0.0"
+        }
+      ]
+    },
+    {
+      "attributes": {
+        "name": "com.rork.vinetrack.data.OccurrenceTankConflictHoldTest",
+        "tests": "3",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-01T23:43:30.956Z",
+        "hostname": "e2b.local",
+        "time": "0.077"
+      },
+      "cases": [
+        {
+          "name": "holdReleasesOnlyOnFreshConflictFreeServerRowAndKeepsOtherHolds",
+          "classname": "com.rork.vinetrack.data.OccurrenceTankConflictHoldTest",
+          "time": "0.058"
+        },
+        {
+          "name": "conflictCreatesDurableHoldThatBlocksTankSyncActualsCommitsAndSurvivesRestart",
+          "classname": "com.rork.vinetrack.data.OccurrenceTankConflictHoldTest",
+          "time": "0.015"
+        },
+        {
+          "name": "normalTank1RecoveryIsUnchangedAndReplays",
+          "classname": "com.rork.vinetrack.data.OccurrenceTankConflictHoldTest",
+          "time": "0.004"
+        }
+      ]
+    },
+    {
+      "attributes": {
+        "name": "com.rork.vinetrack.data.TripTankAuthorityQueueTest",
+        "tests": "1",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-01T23:43:31.576Z",
+        "hostname": "e2b.local",
+        "time": "0.011"
+      },
+      "cases": [
+        {
+          "name": "completedServerBlocksOldTankReplayWithoutRetryAndDoesNotHoldNewTrip",
+          "classname": "com.rork.vinetrack.data.TripTankAuthorityQueueTest",
+          "time": "0.011"
+        }
+      ]
+    },
+    {
+      "attributes": {
+        "name": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+        "tests": "16",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-01T23:43:31.071Z",
+        "hostname": "e2b.local",
+        "time": "0.015"
+      },
+      "cases": [
+        {
+          "name": "preparedRecoveryCannotEstablishBlockedRecipeAndRetainsExactJournal",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.004"
+        },
+        {
+          "name": "crashBeforeJournalClearIsRecoveredIdempotently",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.0"
+        },
+        {
+          "name": "fillOnlySessionIdentityIsTransitionedRatherThanMistakenForCompletedStart",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.001"
+        },
+        {
+          "name": "endedOrTankConflictedTripRefusesOperation",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.0"
+        },
+        {
+          "name": "laterTankConflictIsPreservedAndUnresolvedJournalIsNotOverwritten",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.0"
+        },
+        {
+          "name": "recoveryAfterTripSaveCompletesMarker",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.0"
+        },
+        {
+          "name": "alreadyDurableActualRecoveryIsFactualNotNewRecipeAdmission",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.001"
+        },
+        {
+          "name": "sameScreenRetryResumesFrozenJournalWithoutReplacingValues",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.0"
+        },
+        {
+          "name": "firstCommitRequiresAndVerifiesDurableTripWrite",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.0"
+        },
+        {
+          "name": "entitlementHoldRetainsInterruptedTankAndResumesOriginalAfterVerification",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.004"
+        },
+        {
+          "name": "firstCommitMergesLiveRouteAheadOfStoredSnapshotAndRelaunchRetainsIt",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.001"
+        },
+        {
+          "name": "recoveryAfterActualSaveKeepsNewerRouteAndStableIds",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.0"
+        },
+        {
+          "name": "gpsProgressDuringConfirmationIsRetainedByTankOperationMerge",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.0"
+        },
+        {
+          "name": "repeatedRecoveryFromEachIncompleteStoreStateNeverDuplicates",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.0"
+        },
+        {
+          "name": "editedActualAmountsCannotResumeOrAdvanceAnEarlierFrozenConfirmation",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.0"
+        },
+        {
+          "name": "failedJournalWriteMutatesNothing",
+          "classname": "com.rork.vinetrack.data.StartTankCommitCoordinatorTest",
+          "time": "0.0"
+        }
+      ]
+    },
+    {
+      "attributes": {
+        "name": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+        "tests": "16",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-01T23:43:30.681Z",
+        "hostname": "e2b.local",
+        "time": "0.27"
+      },
+      "cases": [
+        {
+          "name": "revocationBetweenSaveAdmissionAndCommitCannotWriteAnActual",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.038"
+        },
+        {
+          "name": "revokedTripResponseKeepsExactClaimAndNeverPublishes",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.145"
+        },
+        {
+          "name": "actualReplacementIsNotAcknowledgedByEarlierSuccess",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.024"
+        },
+        {
+          "name": "actualSuccessAfterRevocationRetainsFrozenValuesAndPendingAcrossRestart",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.011"
+        },
+        {
+          "name": "unchangedOriginalConfirmationReplaysForReturningActorAfterRestart",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.006"
+        },
+        {
+          "name": "authenticatedIdentityAloneCannotUnlockLegacyHoldOrReuseOldIncarnation",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.002"
+        },
+        {
+          "name": "corruptActualNoticeIsNotAnEmptySuccessAndLeavesRawBytesUnchanged",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.002"
+        },
+        {
+          "name": "corruptActualEvidenceIsHeldWithoutFetchMergeOrReset",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.003"
+        },
+        {
+          "name": "actualNoticeExplainsPendingDependencyAndAcknowledgementWithoutWriting",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.003"
+        },
+        {
+          "name": "absentCorruptOrMismatchedSnapshotNeverConsumesMarker",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.004"
+        },
+        {
+          "name": "authorlessOrLaterCorrectedActualsAreNotAdoptedFromConfirmedBy",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.006"
+        },
+        {
+          "name": "sameVineyardRemoteCorrectionCannotConsumeAnotherActorsPendingActual",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
           "time": "0.005"
+        },
+        {
+          "name": "delayedRemoteActualsCannotMergeAfterRevocation",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.004"
+        },
+        {
+          "name": "serverVineyardConflictBlocksExactClaimWithoutStrandingOrSending",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.004"
+        },
+        {
+          "name": "unknownForeignOrCorrectedActualNoticeNeverDisclosesContent",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.003"
+        },
+        {
+          "name": "foreignSnapshotRefusedBeforeClaimProbeOrSendAcrossRestart",
+          "classname": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+          "time": "0.007"
+        }
+      ]
+    },
+    {
+      "attributes": {
+        "name": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+        "tests": "32",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-01T23:43:31.091Z",
+        "hostname": "e2b.local",
+        "time": "0.483"
+      },
+      "cases": [
+        {
+          "name": "v2ReportRowsRetainPassIdentityAndDisplayContext",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.007"
+        },
+        {
+          "name": "reinstallRecoversActualUndoFromServerLedger",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.055"
+        },
+        {
+          "name": "replacementRetiresDoneEvidenceAndNeverInheritsCoverage",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.021"
+        },
+        {
+          "name": "rowSnapshotsSeparateStoredGeometryFromLegacyCandidateContext",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.01"
+        },
+        {
+          "name": "finalisationFreezesExactOccurrenceReviewAndRetainsPendingActionOrder",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.014"
+        },
+        {
+          "name": "snapshotWithoutDurableActivationRequiresAuthoritativeRecovery",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.015"
+        },
+        {
+          "name": "reorderedIDsAndStatesSurvive",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.003"
+        },
+        {
+          "name": "creationAndActivationNeedExactDurableAcknowledgement",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.006"
+        },
+        {
+          "name": "bDoneLeavesAIncomplete",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.001"
+        },
+        {
+          "name": "aDoneLeavesBIncomplete",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.001"
+        },
+        {
+          "name": "heldCreationLeavesNoJournalDocument",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.002"
+        },
+        {
+          "name": "plannerRejectsCrossVineyardCommit",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.0"
+        },
+        {
+          "name": "failedDurableWritePublishesNoAction",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.001"
+        },
+        {
+          "name": "blockQualifiedPlannerKeepsFourSameLabelPassesAndSubset",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.014"
+        },
+        {
+          "name": "heldLocalActivationCannotBeBypassedOrMutated",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.008"
+        },
+        {
+          "name": "entitlementHoldPreservesJournalBytesButAllowsRealReceiptAndOriginalResume",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.004"
+        },
+        {
+          "name": "restartDoneSkipUndoRestoresDone",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.005"
+        },
+        {
+          "name": "unknownFieldsSurviveJournalProjection",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.001"
+        },
+        {
+          "name": "doneSkipAndUndoRemainIndependent",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.004"
+        },
+        {
+          "name": "offlineLifecycleAllowsOrderedActionsUndoAndFinalReviewBeforeAnyReceipt",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.051"
+        },
+        {
+          "name": "offlineCreateActivationChainRetainsExactIDsAfterRecreationAndProjection",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.007"
+        },
+        {
+          "name": "guardRejectionHeldAndNeverNumericSuccess",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.002"
+        },
+        {
+          "name": "delayedDuplicateAcknowledgementPreservesNewerLocalAction",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.004"
+        },
+        {
+          "name": "sameLabelsDifferentBlocksStaySeparate",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.001"
+        },
+        {
+          "name": "uncertainAcceptedActionRecoveredByExactReceipt",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.018"
+        },
+        {
+          "name": "sharedPostgresTranscriptSurvivesKotlinRecoveryUndoAndFinalReload",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.2"
+        },
+        {
+          "name": "linkedRecipeCannotReplayBeforeOccurrenceParentConfirmation",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.009"
+        },
+        {
+          "name": "unverifiedReceiptCannotClearPendingWork",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.004"
+        },
+        {
+          "name": "remoteConflictHoldsWithoutRebaseOrLoss",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.003"
+        },
+        {
+          "name": "tripRoundTripAndUnsupportedPreserveRawWithoutNumericFallback",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.002"
+        },
+        {
+          "name": "skipToDoneChangesOnlySelectedOccurrence",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.005"
+        },
+        {
+          "name": "uncertainRetryRetainsExactWireAfterRecreation",
+          "classname": "com.rork.vinetrack.data.TripOccurrenceJournalTest",
+          "time": "0.002"
         }
       ]
     }
@@ -303,7 +713,7 @@
   "backend": {
     "project": "tbafuqwruefgkbyxrxyb",
     "repairSourceSha256": "a4b7cd176c228bc3e3e061d4bff4f00552a859764b2e4c60926b0dcd46490703",
-    "deployment": "NOT_ATTEMPTED_THIS_PASS; existing authorised function-owner path required",
+    "deployment": "NOT_ATTEMPTED_THIS_PASS; route and exact steps in docs/sync/P0_OCCURRENCE_SETUP_UUID_FIX_DEPLOYMENT.md (superuser-level session that applied 276/278; owner role is NOLOGIN with zero members)",
     "verificationHandoff": "sql/occurrence_setup_uuid_case_identity_verify.sql is read-only source, NOT EXECUTED; capture before/after owner-authorised repair and compare owner/security/ACL/search-path",
     "liveDefinitionMD5": "NOT_FRESHLY_READ; user reports b0e166d78be75c8ba770b",
     "originalTripOperationReceipts": "UNKNOWN; one earlier logged rejected call cannot establish all retained outcomes"
@@ -337,7 +747,7 @@
     "Final source-matched signed candidate identity and explicit acceptance before any upload"
   ],
   "safety": "No customer mutation by this pass (the iOS hold happens only on a future explicit independent start), journal removal, ownership/privilege change, quantity edits or store upload performed",
-  "publicMainObserved": "e0b5efa6647025ad3f1e89fa594941b48d7d1131",
+  "publicMainObserved": "45b59802f1e106d64b083bb6866387c5517b8fe0",
   "pullRequestsObserved": [
     {
       "number": 29,

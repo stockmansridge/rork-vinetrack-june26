@@ -44,9 +44,11 @@ result = {
         'android': ['Occurrence restore keeps locally committed tank sessions/scalars and local pause (union by session ID via TankSessionReplayMerge); conflicts keep local evidence and hold with OCCURRENCE_RESTORE_TANK_CONFLICT_HELD; reconstructs a lost TRIP_TANK marker only from the durable snapshot',
             'Recovered Start Tank journal republishes the durable snapshot tank fields to the open Trip',
             'DeviceTripStatus per-predicate evaluator: Return to Trip for verified own-claim vineyard mismatch, separate local-end-pending message, case-only UUID mismatch held without ownership wording; read-only ownership text only for verified no-claim/other-claim',
-            'Diagnostics: per-predicate lines, actual session presence in UI Trip/snapshot/Start Tank journal, per-Trip pending items with fixed codes'],
+            'Diagnostics: per-predicate lines, actual session presence in UI Trip/snapshot/Start Tank journal, per-Trip pending items with fixed codes',
+            'Durable tank-conflict hold: OCCURRENCE_RESTORE_TANK_CONFLICT_HELD is stored in the Trip occurrence journal heldReason (survives restart; other holds cannot drop it). While held: no TRIP_TANK reconstruction, TripTankSync leaves the marker unclaimed, ScopedTankActualSync skips that Trip\'s actuals, StartTankCommitCoordinator refuses new commits, ViewModel refuses Start/End Tank, fill timer, tank persistence and occurrence finish. Released only by a fresh server row whose merge is conflict-free. Copy Trip status reports tank_conflict_hold.'],
         'ios': ['requireResolvedOccurrenceStarts narrowed: same planned work or device-active Trip still blocks; independent start first durably holds an unheld create/activate chain (pending/history/acknowledged retained; releasable via verified-absence path)',
             'Diagnostics name each unattributed queued upload (TRIP_SNAPSHOT_NOT_IN_SELECTED_SLICE) with journal stage and local linked-spray presence'],
+        'tankConflictHoldTestLevel': 'JVM integration (OccurrenceTankConflictHoldTest, 3 cases) with production journal/gate/ActiveTripStore/PendingWriteRepository/TripTankSync/ScopedTankActualSync/StartTankCommitCoordinator and the exact ViewModel predicate; AppViewModel private restore wiring itself is not executed on the JVM (no Robolectric) and androidTest infrastructure timed out twice previously.',
         'notFixedHere': 'A Tank session already lost before this fix is recoverable only from a retained Start Tank journal; actual-only evidence is held, never fabricated.'},
     'swiftP0Selected': {'status': 'PASS', 'aggregatePassed': 15, 'durationSeconds': 126,
         'selectors': ['VineTrackTests/SprayOccurrenceRecoveryHotfixTests'],
@@ -58,7 +60,7 @@ result = {
         'limit': 'Aggregate tool receipt only, not per-case xcresult export, no handset workflow. Earlier one-pass selection overlaps; do not sum.'},
     'androidHostSuites': [],
     'backend': {'project': 'tbafuqwruefgkbyxrxyb', 'repairSourceSha256': sha('sql/occurrence_setup_uuid_case_identity.sql'),
-        'deployment': 'NOT_ATTEMPTED_THIS_PASS; existing authorised function-owner path required',
+        'deployment': 'NOT_ATTEMPTED_THIS_PASS; route and exact steps in docs/sync/P0_OCCURRENCE_SETUP_UUID_FIX_DEPLOYMENT.md (superuser-level session that applied 276/278; owner role is NOLOGIN with zero members)',
         'verificationHandoff': 'sql/occurrence_setup_uuid_case_identity_verify.sql is read-only source, NOT EXECUTED; capture before/after owner-authorised repair and compare owner/security/ACL/search-path',
         'liveDefinitionMD5': 'NOT_FRESHLY_READ; user reports b0e166d78be75c8ba770b',
         'originalTripOperationReceipts': 'UNKNOWN; one earlier logged rejected call cannot establish all retained outcomes'},
@@ -84,7 +86,10 @@ result = {
         'Final source-matched signed candidate identity and explicit acceptance before any upload'],
     'safety': 'No customer mutation by this pass (the iOS hold happens only on a future explicit independent start), journal removal, ownership/privilege change, quantity edits or store upload performed'
 }
-for name in ['com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest', 'com.rork.vinetrack.data.VineyardWriteAuthorityTest', 'com.rork.vinetrack.data.P0DeviceTripRecoveryTest']:
+for name in ['com.rork.vinetrack.ui.IndependentQualifiedSprayStartTest', 'com.rork.vinetrack.data.VineyardWriteAuthorityTest', 'com.rork.vinetrack.data.P0DeviceTripRecoveryTest',
+             'com.rork.vinetrack.data.OccurrenceTankConflictHoldTest', 'com.rork.vinetrack.data.TripTankAuthorityQueueTest',
+             'com.rork.vinetrack.data.StartTankCommitCoordinatorTest', 'com.rork.vinetrack.data.AccountScopedTankSafetyTest',
+             'com.rork.vinetrack.data.TripOccurrenceJournalTest']:
     path = ROOT / 'android-vinetrack/app/build/test-results/testDebugUnitTest' / ('TEST-' + name + '.xml')
     if path.exists():
         suite = ET.parse(path).getroot()

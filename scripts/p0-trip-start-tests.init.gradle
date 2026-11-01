@@ -5,6 +5,12 @@ gradle.projectsEvaluated {
             include '**/IndependentQualifiedSprayStartTest.kt'
             include '**/VineyardWriteAuthorityTest.kt'
             include '**/P0DeviceTripRecoveryTest.kt'
+            include '**/OccurrenceTankConflictHoldTest.kt'
+            include '**/TripTankAuthorityQueueTest.kt'
+            include '**/StartTankCommitCoordinatorTest.kt'
+            include '**/AccountScopedTankSafetyTest.kt'
+            include '**/TripOccurrenceJournalTest.kt'
+            include '**/RetentionReviewTest.kt'
         })
     }
     app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {

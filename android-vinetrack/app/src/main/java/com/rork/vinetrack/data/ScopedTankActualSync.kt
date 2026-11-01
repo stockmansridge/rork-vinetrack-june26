@@ -12,6 +12,8 @@ class ScopedTankActualSync(
     private val withAccountAccess: (AuthRetentionGuard.AccountAccess, () -> Unit) -> Boolean,
     private val upsert: suspend (SprayTankActual, AuthRetentionGuard.AccountAccess) -> Unit,
     private val fetch: suspend (String, AuthRetentionGuard.AccountAccess) -> List<SprayTankActual>,
+    /** P0 3.1.9: the actual's Trip is under a durable occurrence tank-conflict hold. */
+    private val isTankHeld: (SprayTankActual, AuthRetentionGuard.AccountAccess) -> Boolean = { _, _ -> false },
 ) {
     suspend fun replay(
         access: AuthRetentionGuard.AccountAccess,
@@ -22,7 +24,7 @@ class ScopedTankActualSync(
         if (!store.hasReadableSyncEvidence()) return
         for (actual in store.pendingOwned(access).sortedBy { it.clientUpdatedAt }) {
             if (!withAccountAccess(access) { }) return
-            if (hasUnresolvedDependency(actual)) continue
+            if (hasUnresolvedDependency(actual) || isTankHeld(actual, access)) continue
             try {
                 upsert(actual, access)
                 currentCoroutineContext().ensureActive()

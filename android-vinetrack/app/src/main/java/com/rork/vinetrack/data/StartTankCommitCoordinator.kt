@@ -16,6 +16,8 @@ class StartTankCommitCoordinator internal constructor(
     private val hasTankMarker: (String) -> Boolean,
     private val fieldAccess: com.rork.vinetrack.data.auth.FieldStoreAccess? = null,
     private val canEstablishOperation: (SprayTankActual) -> Boolean = { true },
+    /** P0 3.1.9: (owner, vineyard, trip) is under a durable occurrence tank-conflict hold. */
+    private val isTankHeld: (String, String, String) -> Boolean = { _, _, _ -> false },
 ) {
     @Serializable
     data class Journal(
@@ -45,6 +47,7 @@ class StartTankCommitCoordinator internal constructor(
         pendingWrites: PendingWriteRepository,
         tripTankSync: TripTankSync,
         canEstablishOperation: (SprayTankActual) -> Boolean,
+        isTankHeld: (String, String, String) -> Boolean = { _, _, _ -> false },
     ) : this(
         journalStorage = SharedPreferencesStartTankJournalStorage(context),
         saveActual = actualStore::save,
@@ -66,6 +69,7 @@ class StartTankCommitCoordinator internal constructor(
         hasTankMarker = { tripId -> pendingWrites.list().any { it.clientId == tripId && it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_TANK && it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved } },
         fieldAccess = com.rork.vinetrack.data.auth.FieldStoreAccess(context),
         canEstablishOperation = canEstablishOperation,
+        isTankHeld = isTankHeld,
     )
 
     private fun <T> admitted(action: () -> T): T = if (fieldAccess == null) action() else fieldAccess.admitted(action)
@@ -78,6 +82,7 @@ class StartTankCommitCoordinator internal constructor(
     private fun commitLocked(ownerUserId: String, vineyardId: String, sourceTrip: Trip, trip: Trip, actual: SprayTankActual): Boolean {
         if (!OperationalWrites.admit(vineyardId)) return false
         require(sourceTrip.id == trip.id && actual.tripId == trip.id && actual.tankSessionId.isNotBlank())
+        if (isTankHeld(ownerUserId, vineyardId, trip.id)) return false
         if (journalStorage.read() != null) return false
         val journal = Journal(
             actualRecordId = actual.id,

@@ -36,7 +36,7 @@ internal object OccurrenceRestoreLocalProgress {
         val serverSessionIds: List<String>,
     )
 
-    const val TANK_CONFLICT_CODE = "OCCURRENCE_RESTORE_TANK_CONFLICT_HELD"
+    const val TANK_CONFLICT_CODE = TripOccurrenceJournal.TANK_CONFLICT_CODE
 
     fun apply(projected: Trip, server: Trip?, saved: Trip): Result {
         val localIds = saved.tankSessions.map { it.id }
