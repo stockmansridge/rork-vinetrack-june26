@@ -1,0 +1,61 @@
+name: Focused iOS swipe and Android catalogue compile
+on:
+  push:
+    branches: [fix/ios-trip-swipe-and-actual-handoff-inspection-20261102]
+    paths: ['.github/workflows/focused-spray-incident-check.yml']
+permissions:
+  contents: read
+jobs:
+  ios-parse:
+    runs-on: macos-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift parsing and source invariants
+        run: |
+          set -euo pipefail
+          swiftc -frontend -parse ios/VineTrack/LegacyImported/Views/Trips/TripView.swift ios/VineTrack/LegacyImported/Views/Trips/TripDetailView.swift ios/VineTrack/Backend/Sync/SprayTankActualStore.swift ios/VineTrack/App/BackendSettingsView.swift
+          python3 - <<'PY'
+          from pathlib import Path
+          trip=Path('ios/VineTrack/LegacyImported/Views/Trips/TripView.swift').read_text()
+          assert '.onDelete(perform:' not in trip
+          assert '.swipeActions(edge: .trailing, allowsFullSwipe: false)' in trip
+          assert '!current.isActive' in trip
+          assert 'HANDOFF_REAL_TANK_SESSION_NOT_VERIFIED' in Path('ios/VineTrack/Backend/Sync/SprayTankActualStore.swift').read_text()
+          print('Swift parse and source checks passed (native UI testing still required)')
+          PY
+  android-compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Synthetic CI-only configuration; never commit or release
+        run: |
+          test ! -e android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt
+          cat > android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt <<'EOF'
+          package com.rork.vinetrack
+          object Config {
+              val allValues: Map<String, String> = mapOf(
+                  "EXPO_PUBLIC_SUPABASE_URL" to "https://synthetic.invalid",
+                  "EXPO_PUBLIC_SUPABASE_ANON_KEY" to "not-a-live-credential")
+          }
+          EOF
+      - name: Compile changed Android source in app context
+        working-directory: android-vinetrack
+        run: |
+          bash gradlew :app:compileDebugKotlin --no-daemon --max-workers=1 -Pkotlin.compiler.execution.strategy=in-process '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=768m -Dfile.encoding=UTF-8' > ../focused-android.log 2>&1 || { grep -nE '^e:|error:|FAILED' ../focused-android.log | head -40; tail -n 70 ../focused-android.log; exit 1; }
+          tail -n 25 ../focused-android.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: focused-android-compile-log
+          path: focused-android.log
+          retention-days: 2
