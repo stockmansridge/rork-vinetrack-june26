@@ -79,7 +79,7 @@ class SprayFieldLayoutAndroidTest {
         assertTrue("Clipped text: $text; " + layouts.joinToString { "size=${it.size} widthOverflow=${it.didOverflowWidth} heightOverflow=${it.didOverflowHeight} lines=${it.lineCount} lastBottom=${it.getLineBottom(it.lineCount - 1)} font=${it.layoutInput.style.fontSize} maxLines=${it.layoutInput.maxLines} constraints=${it.layoutInput.constraints}" }, layouts.none { it.hasVisualOverflow })
     }
 
-    @Test fun consentIsInvalidatedByScopeAndRecipeChanges() {
+    @Test fun enteredActualsSurvivePathSelectionButResetWhenRecipeChanges() {
         val scope = mutableStateOf("block-A|geometry-A|route-A")
         val water = mutableStateOf(1000.0)
         var launches = 0
@@ -91,22 +91,22 @@ class SprayFieldLayoutAndroidTest {
                         chemicals = listOf(com.rork.vinetrack.data.model.SprayChemical("product", "Product",
                             volumePerTank = 1000.0, ratePerHa = 1000.0)))),
                     scopeKey = "actor|vineyard|trip", scopeEvidence = scope.value,
-                    onDismiss = {}, onStart = { launches++ },
+                    onDismiss = {}, onStart = { _, _ -> launches++ },
                 )
             }
         }
         val start = compose.onNode(hasText("Start Trip") and hasClickAction())
         start.assertIsNotEnabled()
-        compose.onNode(isToggleable()).performScrollTo().performClick()
+        compose.onNodeWithText("Actual water (L)").performScrollTo().performTextInput("950")
+        compose.onNodeWithText("Actual Product (Litres)").performScrollTo().performTextInput("0.9")
         start.assertIsEnabled()
-        // Identical tank quantities must not carry consent to another block/route.
-        compose.runOnIdle { scope.value = "block-B|geometry-B|route-B" }
-        start.assertIsNotEnabled()
-        compose.onNode(isToggleable()).performScrollTo().performClick()
+        // Route selection happens after actual entry and cannot erase it.
+        compose.runOnIdle { scope.value = "block-A|geometry-A|route-B" }
         start.assertIsEnabled()
         compose.runOnIdle { water.value = 900.0 }
         start.assertIsNotEnabled()
-        compose.onNode(isToggleable()).performScrollTo().performClick()
+        compose.onNodeWithText("Actual water (L)").performScrollTo().performTextInput("925")
+        compose.onNodeWithText("Actual Product (Litres)").performScrollTo().performTextInput("0.85")
         start.performClick()
         compose.runOnIdle { assertEquals(1, launches) }
     }
@@ -123,12 +123,13 @@ class SprayFieldLayoutAndroidTest {
                         chemicals = listOf(com.rork.vinetrack.data.model.SprayChemical("product", "Product",
                             volumePerTank = 1000.0, ratePerHa = 1000.0)))),
                     scopeKey = "isolated-layout-fixture", onDismiss = {},
-                    onStart = { launches++; hours = it },
+                    onStart = { enteredHours, _ -> launches++; hours = enteredHours },
                 )
             }
         }
         compose.onNode(hasText("Start Trip") and hasClickAction()).assertIsNotEnabled()
-        compose.onNode(isToggleable()).performScrollTo().performClick()
+        compose.onNodeWithText("Actual water (L)").performScrollTo().performTextInput("950")
+        compose.onNodeWithText("Actual Product (Litres)").performScrollTo().performTextInput("0.9")
         compose.onNode(hasText("Start Trip") and hasClickAction()).performClick()
         compose.runOnIdle { assertEquals(1, launches); assertNull(hours) }
         compose.onNodeWithText("Start engine hours (optional)").performTextInput("123.5")

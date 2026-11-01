@@ -108,9 +108,10 @@ class StartTankCommitCoordinator internal constructor(
     }
 
     /** Retries only the already-journaled confirmation and returns its durable merged trip. */
-    fun resume(ownerUserId: String, vineyardId: String, sourceTrip: Trip, currentTrip: Trip, tankNumber: Int): Trip? =
-        if (fieldAccess == null) resumeLocked(ownerUserId, vineyardId, sourceTrip, currentTrip, tankNumber)
-        else fieldAccess.admittedForOwner(ownerUserId) { resumeLocked(ownerUserId, vineyardId, sourceTrip, currentTrip, tankNumber) }
+    fun resume(ownerUserId: String, vineyardId: String, sourceTrip: Trip, currentTrip: Trip, tankNumber: Int,
+        acceptsActual: (SprayTankActual) -> Boolean = { true }): Trip? =
+        if (fieldAccess == null) resumeLocked(ownerUserId, vineyardId, sourceTrip, currentTrip, tankNumber, acceptsActual)
+        else fieldAccess.admittedForOwner(ownerUserId) { resumeLocked(ownerUserId, vineyardId, sourceTrip, currentTrip, tankNumber, acceptsActual) }
 
     @Synchronized
     private fun resumeLocked(
@@ -119,6 +120,7 @@ class StartTankCommitCoordinator internal constructor(
         sourceTrip: Trip,
         currentTrip: Trip,
         tankNumber: Int,
+        acceptsActual: (SprayTankActual) -> Boolean,
     ): Trip? {
         val journal = journalStorage.read() ?: return null
         if (journal.ownerUserId != ownerUserId || journal.vineyardId != vineyardId ||
@@ -128,6 +130,8 @@ class StartTankCommitCoordinator internal constructor(
             journal.sourceTrip?.isFillingTank != sourceTrip.isFillingTank ||
             journal.sourceTrip?.fillingTankNumber != sourceTrip.fillingTankNumber
         ) return null
+        // An edited form cannot silently acknowledge the earlier frozen quantities.
+        if (!acceptsActual(journal.actual)) return null
         return finish(journal, currentOverride = currentTrip)
     }
 

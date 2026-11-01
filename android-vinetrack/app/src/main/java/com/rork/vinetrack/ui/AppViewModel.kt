@@ -11962,6 +11962,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         rowPlan: SprayJobRowPlan? = null,
         onReadyTrip: ((String) -> Unit)? = null,
         startEngineHours: Double? = null,
+        startActuals: com.rork.vinetrack.data.spray.SprayStartActualAmounts? = null,
         onResult: (Boolean) -> Unit,
     ) {
         input.operationalBlocker()?.let { blocker -> _ui.update { it.copy(sprayError = blocker) }; onResult(false); return }
@@ -11990,6 +11991,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (!_ui.value.isOnline) {
                 _ui.update { it.copy(sprayError = "Connect to recover original Start ${retained.trip.id}. Offline calculator Start is unavailable; your draft and original request are retained.") }
+                onResult(false); return
+            }
+            if (startActuals != null && !retainInitialSprayActuals(retained.trip.id, retained.recordId, retained.input.tanks, startActuals)) {
+                _ui.update { it.copy(sprayError = "The original actual amounts are retained. Open the original trip to review them before retrying.") }
                 onResult(false); return
             }
             submitPreparedLegacySpray(retained) { accepted ->
@@ -12031,6 +12036,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 sprayRepo.legacyReceiptInsert(vineyardId, originalInput, originalRecordId, originalTimestamp, originalAccess.userId)))
         } catch (_: Exception) {
             attempt.copy(receiptBlocker = "Legacy receipt v1 does not admit this mix's fields. Original evidence is retained locally; nothing was stripped or sent.")
+        }
+        if (startActuals != null && !retainInitialSprayActuals(originalTripId, originalRecordId, originalInput.tanks, startActuals)) {
+            _ui.update { it.copy(sprayError = "Actual amounts could not be retained on this device. Retry before starting.") }
+            onResult(false); return
         }
         try { legacySpraySaves.prepare(attempt) } catch (_: Exception) {
             _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; onResult(false); return
@@ -12286,6 +12295,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         paddockName: String?,
         rowPlan: SprayJobRowPlan? = null,
         startEngineHours: Double? = null,
+        startActuals: com.rork.vinetrack.data.spray.SprayStartActualAmounts? = null,
         onResult: (com.rork.vinetrack.data.SprayStartOutcome) -> Unit,
     ) {
         if (calculatorStartInFlight) {
@@ -12306,12 +12316,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val active = _ui.value.activeTrip?.takeIf { currentScope && it.isActive && it.endTime == null }
             val retainedAttempt = if (currentScope && startVineyard != null) runCatching { legacySpraySaves.retainedStart(startVineyard) }.getOrNull() else null
             val previous = _calculatorStartOutcome.value
-            val result = if (ok && active != null) com.rork.vinetrack.data.SprayStartOutcome(tripId = active.id,
+            val actualsCommitted = !ok || active == null || startActuals == null || commitInitialSprayActuals(active.id, startActuals)
+            if (!actualsCommitted) _ui.update { it.copy(sprayError =
+                "Trip ${active?.id} is saved, but its entered actual mix needs review. Open this same trip to retry; your entered amounts are retained and no replacement trip was created.") }
+            val result = if (ok && active != null && actualsCommitted) com.rork.vinetrack.data.SprayStartOutcome(tripId = active.id,
                 operationId = operationIdentity ?: retainedAttempt?.rpc?.operation ?: previous?.operationId, ownerId = startOwner, vineyardId = startVineyard)
                 else com.rork.vinetrack.data.SprayStartOutcome(message = if (!currentScope) "Account or vineyard changed. The original request is retained; return to its account to recover it."
                     else _ui.value.sprayError ?: "Start could not be confirmed. Keep this setup and recover the original request before trying another job.",
                     operationId = retainedAttempt?.rpc?.operation, inspectionTripIds = if (currentScope) (
-                        listOfNotNull(retainedAttempt?.trip?.id) + previous?.inspectionTripIds.orEmpty()).distinct() else emptyList(),
+                        listOfNotNull(retainedAttempt?.trip?.id, active?.id?.takeIf { !actualsCommitted }) + previous?.inspectionTripIds.orEmpty()).distinct() else emptyList(),
                     inspectionRequired = previous?.inspectionRequired == true,
                     ownerId = startOwner, vineyardId = startVineyard)
             _calculatorStartOutcome.value = result
@@ -12324,6 +12337,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _calculatorStartOutcome.value = null
         _ui.update { it.copy(sprayError = null) }
         startStage = "recipe_validation"
+        if (startActuals != null && startActuals.amountsFor(input.tanks) == null) {
+            _ui.update { it.copy(sprayError = "Enter actual water and every chemical amount for the current Tank 1 mix.") }; finish(false); return
+        }
         com.rork.vinetrack.data.spray.SprayStartRecipeValidation.blocker(input.tanks)?.let { blocker ->
             _ui.update { it.copy(sprayError = blocker) }; finish(false); return
         }
@@ -12392,7 +12408,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (rowPlan?.rowSequence?.isNotEmpty() == true) {
             startStage = "qualified_create_activate"
-            createQualifiedSpray(input, paddockId, paddockIds, paddockName, rowPlan, true, startEngineHours, finish)
+            createQualifiedSpray(input, paddockId, paddockIds, paddockName, rowPlan, true, startEngineHours, finish, startActuals)
             return
         }
         startStage = "legacy_pair_receipt"
@@ -12410,14 +12426,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     } catch (_: Exception) {
                         _ui.update { it.copy(sprayError = "Original activation $tripId is retained. Free storage and press Start again to recover; no replacement was created.") }; finish(false)
                     }
-                }, startEngineHours = startEngineHours, onResult = finish)
+                }, startEngineHours = startEngineHours, startActuals = startActuals, onResult = finish)
         } catch (_: Exception) {
             _ui.update { it.copy(sprayError = "Couldn't retain Start safely. Free storage and recover any original job from Trips; the calculator setup is unchanged.") }; finish(false)
         }
     }
 
     private fun createQualifiedSpray(input: SprayRecordRepository.SprayInput, paddockId: String?, paddockIds: List<String>,
-        paddockName: String?, plan: SprayJobRowPlan, active: Boolean, hours: Double?, onResult: (Boolean) -> Unit) {
+        paddockName: String?, plan: SprayJobRowPlan, active: Boolean, hours: Double?, onResult: (Boolean) -> Unit,
+        startActuals: com.rork.vinetrack.data.spray.SprayStartActualAmounts? = null) {
         viewModelScope.launch {
             _ui.update { it.copy(sprayBusy = true, sprayError = null) }
             var startStage = "qualified_preflight"
@@ -12442,6 +12459,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // Retain the complete linked recipe and final record ID before either HTTP request.
                 val recordId = sprayRepo.newId()
                 originalRecordId = recordId
+                if (startActuals != null) check(retainInitialSprayActuals(planned.id, recordId, input.tanks, startActuals)) {
+                    "Actual amounts could not be retained before starting."
+                }
                 sprayCreateSync.enqueue(recordId, vineyard, input.copy(tripId = planned.id), now, requiresOccurrenceParent = true)
                 startStage = "qualified_lifecycle"
                 android.util.Log.i("SprayStart", "stage=$startStage trip=${planned.id} record=$recordId operation=${occurrenceJournal(planned).load()?.pending?.firstOrNull()?.id ?: "none"}")
@@ -12888,15 +12908,111 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return repaired
     }
 
+    fun sprayReviewDraft(key: String): com.rork.vinetrack.data.model.SprayActualInputDraft? = runCatching {
+        sprayTankActualStore.inputDraft(session.userId ?: return@runCatching null,
+            _ui.value.selectedVineyardId ?: return@runCatching null, key)
+    }.getOrNull()
+
+    fun saveSprayReviewDraft(key: String, text: Map<String, String>): Boolean = runCatching {
+        val owner = session.userId ?: return@runCatching false
+        val vineyard = _ui.value.selectedVineyardId ?: return@runCatching false
+        if (!admitTripVineyard(vineyard)) return@runCatching false
+        sprayTankActualStore.saveInputDraft(com.rork.vinetrack.data.model.SprayActualInputDraft(key, owner, vineyard, text))
+    }.getOrDefault(false)
+
+    fun clearSprayReviewDraft(expected: com.rork.vinetrack.data.model.SprayActualInputDraft) {
+        runCatching { sprayTankActualStore.clearInputDraft(expected) }
+    }
+
+    private fun retainInitialSprayActuals(tripId: String, recordId: String, tanks: List<com.rork.vinetrack.data.model.SprayTank>,
+        actuals: com.rork.vinetrack.data.spray.SprayStartActualAmounts): Boolean = runCatching {
+        val owner = session.userId ?: return@runCatching false
+        val vineyard = _ui.value.selectedVineyardId ?: return@runCatching false
+        val tank = com.rork.vinetrack.data.spray.SprayStartActualAmounts.firstTank(tanks) ?: return@runCatching false
+        val text = actuals.retainedDraft(tanks) ?: return@runCatching false
+        val draft = com.rork.vinetrack.data.model.SprayActualInputDraft("tank:$tripId:${tank.id}", owner, vineyard, text, tripId, tank.id, recordId)
+        val existing = sprayTankActualStore.inputDraft(owner, vineyard, draft.key)
+        // A retry can only carry the original frozen input, never replace an uncertain confirmation.
+        existing?.let { return@runCatching it == draft }
+        sprayTankActualStore.saveInputDraft(draft)
+    }.getOrDefault(false)
+
+    private fun commitInitialSprayActuals(tripId: String, entered: com.rork.vinetrack.data.spray.SprayStartActualAmounts): Boolean {
+        val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return false
+        val owner = session.userId ?: return false
+        val record = TankMixPresentation.linkedRecord(tripId, _ui.value.sprayRecords) ?: return false
+        val expectedAmounts = entered.amountsFor(record.tanks.orEmpty()) ?: return false
+        val firstTank = com.rork.vinetrack.data.spray.SprayStartActualAmounts.firstTank(record.tanks.orEmpty()) ?: return false
+        fun exactActualIsDurable(): Boolean {
+            val currentTrip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return false
+            val actual = com.rork.vinetrack.data.model.resolveSprayTankActual(firstTank, sprayTankActualStore.load(),
+                trip.vineyardId, record.id, tripId,
+                currentTrip.tankSessions.filter { it.tankNumber == firstTank.tankNumber }.mapTo(mutableSetOf()) { it.id }) ?: return false
+            return actual.confirmedBy == owner && actual.waterVolumeL == entered.waterLitres &&
+                actual.chemicals.size == expectedAmounts.size && actual.chemicals.all {
+                    it.plannedChemicalId != null && expectedAmounts[it.plannedChemicalId] == it.actualAmountBase
+                }
+        }
+        val retainedDraft = runCatching { sprayTankActualStore.inputDraft(owner, trip.vineyardId, "tank:$tripId:${firstTank.id}") }.getOrNull()
+        // Recovery can acknowledge the original durable confirmation, never overwrite it with a new edit.
+        if (!requiresFirstTankReview(trip)) {
+            if (!exactActualIsDurable()) return false
+            retainedDraft?.takeIf { it.sprayRecordId == record.id }?.let { draft ->
+                val retained = com.rork.vinetrack.data.spray.SprayStartActualAmounts.fromRetainedDraft(record.tanks.orEmpty(), draft.text)
+                if (retained != null && retained.waterLitres == entered.waterLitres && retained.amountsFor(record.tanks.orEmpty()) == expectedAmounts)
+                    runCatching { sprayTankActualStore.clearInputDraft(draft) }
+            }
+            return true
+        }
+        val pending = pendingTankStart(tripId) ?: return false
+        val draft = retainedDraft ?: return false
+        if (draft.sprayRecordId != pending.record.id) return false
+        val actuals = com.rork.vinetrack.data.spray.SprayStartActualAmounts.fromRetainedDraft(pending.record.tanks.orEmpty(), draft.text) ?: return false
+        val amounts = actuals.amountsFor(pending.record.tanks.orEmpty()) ?: return false
+        if (actuals.waterLitres != entered.waterLitres || amounts != expectedAmounts) return false
+        if (!confirmAndStartTank(pending, actuals.waterLitres, amounts) || !exactActualIsDurable()) return false
+        // The exact session and all entered amounts are durable before consuming this retained input.
+        runCatching { sprayTankActualStore.clearInputDraft(draft) }
+        return true
+    }
+
+    /** Saved jobs record entered quantities through the same durable first-tank boundary. */
+    fun startReviewedSprayJob(tripId: String, startHours: Double?, actuals: com.rork.vinetrack.data.spray.SprayStartActualAmounts,
+        onResult: (Boolean) -> Unit) {
+        val owner = session.userId
+        val vineyard = _ui.value.selectedVineyardId
+        val record = _ui.value.sprayRecords.firstOrNull { it.tripId == tripId && it.vineyardId == vineyard && !it.isTemplate }
+        if (record == null || !retainInitialSprayActuals(tripId, record.id, record.tanks.orEmpty(), actuals)) {
+            _ui.update { it.copy(sprayError = "Actual amounts could not be retained for this saved mix. Reopen the original job and retry.") }
+            onResult(false); return
+        }
+        startSprayJob(tripId, startHours, actuals.recipeEvidence) { started ->
+            val currentScope = owner == session.userId && vineyard == _ui.value.selectedVineyardId
+            val committed = started && currentScope && commitInitialSprayActuals(tripId, actuals)
+            if (started && currentScope && !committed) _ui.update { it.copy(sprayError =
+                "Open this same trip to review its actual mix. Entered amounts are retained; no replacement trip was created.") }
+            onResult(committed)
+        }
+    }
+
     private val tankMixDrafts = com.rork.vinetrack.data.TankMixDraftStore(getApplication())
     fun tankMixDraft(tripId: String, tankId: String): Map<String,String> = runCatching {
         val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return@runCatching emptyMap()
-        tankMixDrafts.read(session.userId ?: return@runCatching emptyMap(),trip.vineyardId,trip.id,tankId)
+        val owner = session.userId ?: return@runCatching emptyMap()
+        val retained = sprayTankActualStore.inputDraft(owner, trip.vineyardId, "tank:$tripId:$tankId")
+        if (retained != null) retained.text else tankMixDrafts.read(owner, trip.vineyardId, trip.id, tankId)
     }.getOrDefault(emptyMap())
     fun saveTankMixDraft(tripId: String, tankId: String, text: Map<String,String>): Boolean = runCatching {
         val trip = _ui.value.activeTrip?.takeIf { it.id == tripId } ?: return@runCatching false
         if (!admitTripChange(trip)) return@runCatching false
-        tankMixDrafts.save(session.userId ?: return@runCatching false,trip.vineyardId,trip.id,tankId,text)
+        val owner = session.userId ?: return@runCatching false
+        val record = TankMixPresentation.linkedRecord(tripId, _ui.value.sprayRecords) ?: return@runCatching false
+        if (record.tanks.orEmpty().none { it.id == tankId }) return@runCatching false
+        val key = "tank:$tripId:$tankId"
+        val retained = sprayTankActualStore.inputDraft(owner, trip.vineyardId, key)
+        val frozen = retained?.text.orEmpty().filterKeys { it == "@waterLitres" || it == "@recipe" || it.startsWith("@chemicalBase:") }
+        sprayTankActualStore.saveInputDraft(com.rork.vinetrack.data.model.SprayActualInputDraft(
+            key, owner, trip.vineyardId, frozen + text, tripId, tankId, record.id))
     }.getOrDefault(false)
 
     /** Returns the exact next planned tank selected by the production lifecycle. */
@@ -12950,15 +13066,37 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val userId = session.userId ?: return false
         val vineyardId = selectedVineyardId ?: return false
+        if (record.tripId != trip.id || !actualWaterLitres.isFinite() || actualWaterLitres < 0.0 ||
+            actualChemicalBaseAmounts.keys != tank.chemicals.map { it.id }.toSet() ||
+            tank.chemicals.map { it.id }.distinct().size != tank.chemicals.size ||
+            actualChemicalBaseAmounts.values.any { !it.isFinite() || it < 0.0 }) return false
+        val inputDraft = runCatching { sprayTankActualStore.inputDraft(userId, vineyardId, "tank:${trip.id}:${tank.id}") }.getOrNull()
+        fun clearRecordedInput(confirmedTrip: Trip) {
+            val draft = inputDraft?.takeIf { it.sprayRecordId == record.id } ?: return
+            if (!com.rork.vinetrack.data.spray.SprayStartActualAmounts.matchesTankDraft(tank, draft.text, actualWaterLitres, actualChemicalBaseAmounts)) return
+            val stored = com.rork.vinetrack.data.model.resolveSprayTankActual(tank, sprayTankActualStore.load(), vineyardId, record.id, trip.id,
+                confirmedTrip.tankSessions.filter { it.tankNumber == tank.tankNumber }.mapTo(mutableSetOf()) { it.id }) ?: return
+            if (stored.confirmedBy == userId && stored.waterVolumeL == actualWaterLitres && stored.chemicals.size == actualChemicalBaseAmounts.size &&
+                stored.chemicals.mapNotNull { it.plannedChemicalId }.toSet() == actualChemicalBaseAmounts.keys &&
+                stored.chemicals.all { line -> line.plannedChemicalId?.let { actualChemicalBaseAmounts[it] } == line.actualAmountBase })
+                runCatching { sprayTankActualStore.clearInputDraft(draft) }
+        }
         val resumedTrip = startTankCommitCoordinator.resume(
             ownerUserId = userId,
             vineyardId = vineyardId,
             sourceTrip = pending.sourceTrip,
             currentTrip = trip,
             tankNumber = pending.result.tankNumber,
+            acceptsActual = { actual ->
+                actual.sprayRecordId == record.id && actual.confirmedBy == userId && actual.waterVolumeL == actualWaterLitres &&
+                    actual.chemicals.size == actualChemicalBaseAmounts.size &&
+                    actual.chemicals.mapNotNull { it.plannedChemicalId }.toSet() == actualChemicalBaseAmounts.keys &&
+                    actual.chemicals.all { line -> line.plannedChemicalId?.let { actualChemicalBaseAmounts[it] } == line.actualAmountBase }
+            },
         )
         if (resumedTrip != null) {
             _ui.update { state -> state.copy(trips = state.trips.map { if (it.id == trip.id) resumedTrip else it }) }
+            clearRecordedInput(resumedTrip)
             syncCommittedTankTrip(resumedTrip)
             return true
         }
@@ -12972,8 +13110,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ) ?: return false
         if (result.tankNumber != pending.result.tankNumber) return false
         if (record.tripId != trip.id || !actualWaterLitres.isFinite() || actualWaterLitres < 0.0) return false
+        if (actualChemicalBaseAmounts.keys != tank.chemicals.map { it.id }.toSet() ||
+            tank.chemicals.map { it.id }.distinct().size != tank.chemicals.size) return false
         val chemicals = tank.chemicals.map { chemical ->
-            val amount = actualChemicalBaseAmounts[chemical.id] ?: chemical.volumePerTank
+            val amount = actualChemicalBaseAmounts[chemical.id] ?: return false
             if (!amount.isFinite() || amount < 0.0) return false
             com.rork.vinetrack.data.model.SprayTankActualChemical(
                 id = java.util.UUID.randomUUID().toString(),
@@ -13006,6 +13146,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ) ?: return false
         if (!startTankCommitCoordinator.commit(ownerId, vineyardId, trip, committedTrip, actual)) return false
         _ui.update { state -> state.copy(trips = state.trips.map { if (it.id == trip.id) committedTrip else it }) }
+        clearRecordedInput(committedTrip)
         syncCommittedTankTrip(committedTrip)
         return true
     }

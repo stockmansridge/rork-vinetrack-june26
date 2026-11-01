@@ -498,6 +498,18 @@ struct ActiveTripView: View {
             // bar overlays the bottom action buttons and makes End/Pause
             // hard or impossible to tap in the cab.
             VStack(spacing: 0) {
+                if SprayTankActualStore.shared.initialMix(tripId: liveTrip.id) != nil {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(tracking.errorMessage ?? "Your entered tank amounts are retained and need to finish saving.")
+                            .font(.caption).foregroundStyle(.orange)
+                        Button("Retry saving actual tank mix") {
+                            tracking.retryInitialSprayStart(tripId: liveTrip.id)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                }
                 if store.settings.rowTrackingEnabled {
                     currentRowBanner
                 } else {
@@ -654,6 +666,7 @@ struct ActiveTripView: View {
             NavigationStack { RepairsGrowthView(initial: .growth) }
         }
         .onAppear {
+            tracking.resumeIfNeeded()
             elapsedTimer = trip.activeDuration
             startTicker()
             startTrailUpdater()

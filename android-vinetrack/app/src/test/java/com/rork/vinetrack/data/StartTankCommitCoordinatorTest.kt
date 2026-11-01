@@ -240,6 +240,23 @@ class StartTankCommitCoordinatorTest {
         assertNull(h.journals.journal)
     }
 
+    @Test fun editedActualAmountsCannotResumeOrAdvanceAnEarlierFrozenConfirmation() {
+        val h = Harness(failTrip = true)
+        assertFalse(h.coordinator().commit("user", "vineyard", sourceTrip, trip, actual))
+        val frozen = h.journals.journal
+        val writes = Triple(h.actualSaveCount, h.tripSaveCount, h.markerSaveCount)
+        h.failTrip = false
+        assertNull(h.coordinator().resume("user", "vineyard", sourceTrip, sourceTrip, 1,
+            acceptsActual = { it.waterVolumeL == 600.0 }))
+        assertEquals(frozen, h.journals.journal)
+        assertEquals(writes, Triple(h.actualSaveCount, h.tripSaveCount, h.markerSaveCount))
+        assertEquals(sourceTrip, h.trip)
+        assertNotNull(h.coordinator().resume("user", "vineyard", sourceTrip, sourceTrip, 1,
+            acceptsActual = { it.waterVolumeL == 500.0 && it.chemicals.single().actualAmountBase == 0.0 }))
+        assertEquals(actual, h.actual)
+        assertEquals(trip, h.trip)
+    }
+
     @Test fun firstCommitRequiresAndVerifiesDurableTripWrite() {
         val h = Harness()
         assertTrue(h.coordinator().commit("user", "vineyard", sourceTrip, trip, actual))

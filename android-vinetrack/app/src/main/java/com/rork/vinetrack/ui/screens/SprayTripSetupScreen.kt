@@ -86,6 +86,7 @@ fun SprayTripSetupScreen(
     var showProgramPicker by remember { mutableStateOf(false) }
     var startingRecordId by remember { mutableStateOf<String?>(null) }
     var pendingStartTripId by remember { mutableStateOf<String?>(null) }
+    var startInProgress by remember { mutableStateOf(false) }
 
     // Local and portal Program Steps share the canonical merge rules. Ordering
     // is applied by the Resume picker using numeric E-L stages, never names.
@@ -203,19 +204,33 @@ fun SprayTripSetupScreen(
         if (trip != null) {
             val reviewedRecord = state.sprayRecords.firstOrNull { it.id == startingRecordId && it.tripId == trip.id }
             val reviewedTanks = reviewedRecord?.tanks.orEmpty()
+            val actualDraftKey = "review:" + com.rork.vinetrack.data.spray.SprayStartActualAmounts.key(
+                listOf(tripId, startingRecordId.orEmpty(), state.regionFormatter.settings.toString(), java.util.Locale.getDefault().toLanguageTag()) + com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(reviewedTanks))
             SprayTripStartConfirmation(
                 tanks = reviewedTanks,
+                initialDraft = vm.sprayReviewDraft(actualDraftKey)?.text.orEmpty(),
+                busy = startInProgress,
+                errorMessage = state.sprayError,
+                onDraftChange = { vm.saveSprayReviewDraft(actualDraftKey, it) },
                 scopeKey = "${state.currentUserId}|${state.selectedVineyardId}|$tripId|$startingRecordId",
                 scopeEvidence = listOf(trip, reviewedRecord),
                 machineName = sprayTripMachineName(trip, state.machines),
                 latestEngineHours = latestSprayTripEngineHours(trip, state.machines, state.fuelLogs),
                 onDismiss = { pendingStartTripId = null; startingRecordId = null },
-                onStart = { startHours ->
-                    vm.startSprayJob(tripId, startHours, com.rork.vinetrack.data.spray.SprayStartRateReview.evidence(reviewedTanks)) { ok ->
-                        pendingStartTripId = null
-                        startingRecordId = null
-                        showProgramPicker = false
-                        if (ok) onOpenTrip(tripId)
+                onStart = { startHours, actuals ->
+                    if (!startInProgress) {
+                        startInProgress = true
+                        val frozenDraft = vm.sprayReviewDraft(actualDraftKey)
+                        vm.startReviewedSprayJob(tripId, startHours, actuals) { ok ->
+                            startInProgress = false
+                            if (ok) {
+                                frozenDraft?.let(vm::clearSprayReviewDraft)
+                                pendingStartTripId = null
+                                startingRecordId = null
+                                showProgramPicker = false
+                                onOpenTrip(tripId)
+                            }
+                        }
                     }
                 },
             )

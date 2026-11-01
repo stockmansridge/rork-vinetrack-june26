@@ -3,7 +3,7 @@ import Foundation
 import SwiftUI
 #endif
 
-/// A review binds to the actual recipe, not catalogue hints or regenerated line UUIDs.
+/// Recipe evidence binds a review to its calculated mix, independently of route selection.
 nonisolated enum SprayStartRateReview {
     static func evidence(_ tanks: [SprayTank]) -> [String] {
         var result: [String] = ["tanks", String(tanks.count)]
@@ -65,7 +65,7 @@ nonisolated enum SprayStartRateReview {
     }
 
     static func isReviewable(_ tanks: [SprayTank]) -> Bool {
-        !tanks.isEmpty && tanks.allSatisfy { tank in
+        SprayInitialTankAmounts.firstTank(in: tanks) != nil && tanks.allSatisfy { tank in
             tank.waterVolume.isFinite && tank.waterVolume > 0 && !tank.chemicals.isEmpty &&
             tank.chemicals.allSatisfy { product in
                 !product.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -76,27 +76,111 @@ nonisolated enum SprayStartRateReview {
     }
 }
 
-#if canImport(SwiftUI)
-struct SprayActualRateConfirmation: View {
-    let tanks: [SprayTank]
-    @Binding var confirmed: Bool
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Confirm actual chemical rates").font(.headline)
-                FieldInfoButton(title: "Actual chemical rates", message: "Confirm the rates you will actually apply, not just the suggested label rates. Per-100 L values show the actual tank concentration, including concentration factor. Go back to Products to change a rate. The confirmed mix is saved with this Trip; later tank actuals remain separate.")
+/// Text is deliberately blank until the operator enters what was loaded.
+/// Route choices never participate in this input or its validation.
+nonisolated struct SprayInitialTankInput: Equatable {
+    var waterText: String = ""
+    var chemicalTexts: [UUID: String] = [:]
+
+    init() {}
+
+    init(amounts: SprayInitialTankAmounts, tank: SprayTank, formatter: RegionFormatter) {
+        waterText = Self.input(formatter.volumeValue(litres: amounts.waterLitres))
+        for chemical in tank.chemicals {
+            if let amount = amounts.chemicalBaseAmounts[chemical.id] {
+                chemicalTexts[chemical.id] = Self.input(chemical.unit.fromBase(amount))
             }
-            ForEach(Array(SprayStartRateReview.lines(tanks).enumerated()), id: \.offset) { _, line in
-                Text(line).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-            }
-            if !SprayStartRateReview.isReviewable(tanks) {
-                Text("Review the chemical rates and tank water before starting.").font(.caption).foregroundStyle(.orange)
-            }
-            Toggle("I confirm these actual rates", isOn: $confirmed)
-                .disabled(!SprayStartRateReview.isReviewable(tanks))
-                .accessibilityIdentifier("spray.confirmActualRates")
         }
-        .onChange(of: SprayStartRateReview.evidence(tanks)) { _, _ in confirmed = false }
+    }
+
+    func resolved(tank: SprayTank, formatter: RegionFormatter) -> SprayInitialTankAmounts? {
+        guard let displayWater = SprayEditingNumber.completeValue(waterText), displayWater > 0,
+              Set(tank.chemicals.map(\.id)).count == tank.chemicals.count else { return nil }
+        var chemicals: [UUID: Double] = [:]
+        for chemical in tank.chemicals {
+            guard let value = SprayEditingNumber.completeValue(chemicalTexts[chemical.id] ?? ""),
+                  value >= 0 else { return nil }
+            chemicals[chemical.id] = chemical.unit.toBase(value)
+        }
+        // Never reinterpret a field retained from a different recipe.
+        guard Set(chemicalTexts.keys).isSubset(of: Set(tank.chemicals.map(\.id))) else { return nil }
+        let amounts = SprayInitialTankAmounts(tankId: tank.id, tankNumber: tank.tankNumber,
+            waterLitres: formatter.volumeToCanonical(displayWater), chemicalBaseAmounts: chemicals)
+        return amounts.isValid(for: tank) ? amounts : nil
+    }
+
+    static func plannedDisplayAmount(_ chemical: SprayChemical) -> Double {
+        chemical.quantityBasis == "display" ? chemical.volumePerTank : chemical.displayVolume
+    }
+
+    static func input(_ value: Double) -> String {
+        value.formatted(.number.locale(.current).grouping(.never).precision(.fractionLength(0...12)))
+    }
+}
+
+#if canImport(SwiftUI)
+struct SprayInitialTankActualsEditor: View {
+    let tank: SprayTank
+    let tankCount: Int
+    let formatter: RegionFormatter
+    @Binding var input: SprayInitialTankInput
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Tank \(tank.tankNumber) — Actual amounts loaded").font(.headline)
+                FieldInfoButton(title: "Actual tank contents", message: "The calculator is your guide. Enter the water and each chemical you actually put in this tank. These amounts are saved as the tank's actual-use record when you start. Enter 0 for a product you did not add. Later tanks are recorded when you fill them. Path selection does not change these amounts.")
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Water").font(.subheadline.weight(.semibold))
+                Text("Calculated: \(formatter.formatVolume(litres: tank.waterVolume))")
+                    .font(.caption).foregroundStyle(.secondary)
+                actualField("Actual water", unit: formatter.volumeUnitAbbreviation,
+                    text: $input.waterText, identifier: "spray.actualWater")
+            }
+            ForEach(tank.chemicals) { chemical in
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(chemical.name).font(.subheadline.weight(.semibold))
+                    Text("Calculated: \(SprayInitialTankInput.input(SprayInitialTankInput.plannedDisplayAmount(chemical))) \(chemical.unitLabel)")
+                        .font(.caption).foregroundStyle(.secondary)
+                    actualField("Actual amount added", unit: chemical.unitLabel,
+                        text: Binding(get: { input.chemicalTexts[chemical.id] ?? "" },
+                            set: { input.chemicalTexts[chemical.id] = $0 }),
+                        identifier: "spray.actualChemical.\(chemical.id.uuidString)")
+                    if SprayEditingNumber.completeValue(input.chemicalTexts[chemical.id] ?? "") == 0 {
+                        Text("Recorded as not added.").font(.caption).foregroundStyle(.orange)
+                    }
+                }
+            }
+            if tankCount > 1 {
+                Text("Enter later tanks when you fill them.").font(.caption).foregroundStyle(.secondary)
+            }
+            if input.resolved(tank: tank, formatter: formatter) == nil {
+                Text("Enter the actual water and every chemical amount.").font(.caption).foregroundStyle(.orange)
+            } else {
+                Label("Actual amounts ready to record", systemImage: "checkmark.circle.fill")
+                    .font(.caption).foregroundStyle(VineyardTheme.olive)
+            }
+        }
+        .padding(14)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(.rect(cornerRadius: 12))
+    }
+
+    private func actualField(_ title: String, unit: String, text: Binding<String>, identifier: String) -> some View {
+        HStack(spacing: 12) {
+            Text(title).font(.subheadline.weight(.semibold))
+            Spacer(minLength: 8)
+            TextField("Enter amount", text: text)
+                .keyboardType(.decimalPad)
+                .multilineTextAlignment(.trailing)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 130)
+                .accessibilityLabel(title)
+                .accessibilityIdentifier(identifier)
+            Text(unit).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+        }
     }
 }
 

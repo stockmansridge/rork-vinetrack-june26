@@ -20,17 +20,14 @@ import SwiftUI
 /// (`isTemplate`, `SprayJobTemplateService`) are unchanged.
 struct SprayTripSetupSheet: View {
     @Environment(MigratedDataStore.self) private var store
-    @Environment(TripTrackingService.self) private var tracking
-    @Environment(NewBackendAuthService.self) private var auth
     @Environment(SprayJobTemplateService.self) private var portalTemplates
     @Environment(\.dismiss) private var dismiss
 
     @State private var showResumeProgram: Bool = false
     @State private var showCalculator: Bool = false
     @State private var planningStep: SprayProgramStep?
-    @State private var pendingSavedTrip: Trip?
-    @State private var pendingSavedRecipe: SprayRecord?
-    @State private var legacyRecoveryError: String?
+    @State private var pendingResumeRecord: SprayRecord?
+    @State private var resumedRecord: SprayRecord?
 
     /// The vineyard's Program, from the SAME sources the Spray Program tab
     /// reads: local steps, portal steps, one dedup rule, one offline cache.
@@ -100,7 +97,15 @@ struct SprayTripSetupSheet: View {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .sheet(isPresented: $showResumeProgram) {
+            .sheet(isPresented: $showResumeProgram, onDismiss: {
+                // Wait for the picker to finish dismissing before presenting
+                // the existing trip. Starting another sheet in its tap handler
+                // can race the picker's dismissal and leave no destination.
+                if let pendingResumeRecord {
+                    resumedRecord = pendingResumeRecord
+                    self.pendingResumeRecord = nil
+                }
+            }) {
                 SprayProgramResumePickerSheet(
                     steps: programSteps,
                     onSelectStep: { step in
@@ -110,8 +115,8 @@ struct SprayTripSetupSheet: View {
                         DispatchQueue.main.async { planningStep = step }
                     },
                     onResumeRecord: { record in
+                        pendingResumeRecord = record
                         showResumeProgram = false
-                        DispatchQueue.main.async { startTripFromRecord(record) }
                     }
                 )
             }
@@ -130,31 +135,9 @@ struct SprayTripSetupSheet: View {
             .sheet(isPresented: $showCalculator, onDismiss: { dismiss() }) {
                 NavigationStack { SprayCalculatorView() }
             }
-            .sheet(item: $pendingSavedTrip) { trip in
-                SprayTripStartConfirmationSheet(
-                    machineName: machineName(for: trip),
-                    latestEngineHours: latestEngineHours(for: trip),
-                    tanks: pendingSavedRecipe?.tanks ?? []
-                ) { startEngineHours in
-                    guard let reviewed = pendingSavedRecipe,
-                          let current = store.sprayRecords.first(where: { $0.id == reviewed.id && $0.tripId == trip.id }),
-                          current.hasSameRecipeEvidence(as: reviewed),
-                          store.selectedVineyardId == trip.vineyardId else {
-                        pendingSavedTrip = nil
-                        legacyRecoveryError = "The saved spray changed. Reopen it to confirm its actual rates."
-                        return
-                    }
-                    do { try store.requireLegacySpraySyncAdmission(trip: trip.id) }
-                    catch { legacyRecoveryError = error.localizedDescription; return }
-                    tracking.activateSavedTrip(trip, startEngineHours: startEngineHours, onStarted: { success in
-                        if success { pendingSavedTrip = nil; dismiss() }
-                    })
-                }
+            .sheet(item: $resumedRecord, onDismiss: { dismiss() }) { record in
+                SprayInProgressTripSheet(recordId: record.id)
             }
-            .alert("Saved job needs reconciliation", isPresented: Binding(
-                get: { legacyRecoveryError != nil }, set: { if !$0 { legacyRecoveryError = nil } })) {
-                Button("OK", role: .cancel) { legacyRecoveryError = nil }
-            } message: { Text(legacyRecoveryError ?? "") }
             .task {
                 // Offline-safe hydration of portal Program Steps for this
                 // vineyard, so Resume works in a shed with no signal.
@@ -163,29 +146,68 @@ struct SprayTripSetupSheet: View {
         }
     }
 
-    private func startTripFromRecord(_ record: SprayRecord) {
-        guard let savedTrip = store.trips.first(where: { $0.id == record.tripId }) else {
-            return
+}
+
+/// Opening an existing job is navigation, not another Trip start. The live
+/// controls retain the original clock, pause state, route and tank actuals.
+private struct SprayInProgressTripSheet: View {
+    let recordId: UUID
+    @Environment(MigratedDataStore.self) private var store
+    @Environment(TripTrackingService.self) private var tracking
+    @Environment(\.dismiss) private var dismiss
+
+    private var record: SprayRecord? {
+        store.sprayRecords.first { $0.id == recordId }
+    }
+
+    private var trip: Trip? {
+        guard let tripId = record?.canonicalTripId else { return nil }
+        return store.trips.first { $0.id == tripId }
+    }
+
+    private var route: SprayProgramResumeRoute {
+        SprayProgramResumeRoute.resolve(
+            record: record, trip: trip,
+            selectedVineyardId: store.selectedVineyardId,
+            deviceActiveTripId: store.deviceActiveTripId,
+            isDeviceTripOwner: store.isDeviceTripOwner,
+            liveTripId: tracking.activeTrip?.id
+        )
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                switch route {
+                case .activeTrip:
+                    if let active = tracking.activeTrip {
+                        ActiveTripView(trip: active)
+                    }
+                case .tripDetails(let message):
+                    if let trip {
+                        TripDetailView(trip: trip)
+                            .safeAreaInset(edge: .top) {
+                                Label(message, systemImage: "info.circle")
+                                    .font(.subheadline)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding()
+                                    .background(Color(.secondarySystemGroupedBackground))
+                            }
+                    }
+                case .unavailable(let message):
+                    ContentUnavailableView("Spray unavailable", systemImage: "exclamationmark.triangle",
+                                           description: Text(message))
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
         }
-
-        // Saved calculator jobs already own the canonical trip identity and its
-        // full block/row/tank/equipment plan. Activate that exact snapshot; do
-        // not create a primary-block replacement and relink the spray record.
-        pendingSavedRecipe = record
-        pendingSavedTrip = savedTrip
-    }
-
-    private func machineName(for trip: Trip) -> String {
-        guard let tractorId = trip.tractorId else { return "Not selected" }
-        return store.currentTractors.first(where: { $0.id == tractorId })?.displayName ?? "Unavailable machine"
-    }
-
-    private func latestEngineHours(for trip: Trip) -> Double? {
-        guard let tractorId = trip.tractorId else { return nil }
-        return store.currentTractorFuelLogs
-            .filter { $0.tractorId == tractorId && $0.engineHours?.isFinite == true }
-            .max(by: { $0.fillDateTime < $1.fillDateTime })?
-            .engineHours
+        .onReceive(NotificationCenter.default.publisher(for: .vineTrackGoHome)) { _ in
+            dismiss()
+        }
     }
 }
 
@@ -295,9 +317,11 @@ struct SprayProgramResumePickerSheet: View {
     private var inProgressRecords: [SprayRecord] {
         store.sprayRecords
             .filter { record in
-                guard !record.isTemplate, record.endTime == nil else { return false }
-                guard let trip = store.trips.first(where: { $0.id == record.tripId }) else { return false }
-                return trip.isActive
+                guard !record.isTemplate, record.endTime == nil,
+                      record.vineyardId == store.selectedVineyardId,
+                      let tripId = record.canonicalTripId,
+                      let trip = store.trips.first(where: { $0.id == tripId }) else { return false }
+                return trip.isActive && trip.endTime == nil && trip.vineyardId == record.vineyardId
             }
             .sorted { $0.date > $1.date }
     }

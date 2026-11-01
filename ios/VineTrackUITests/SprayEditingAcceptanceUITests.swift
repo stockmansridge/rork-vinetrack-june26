@@ -24,16 +24,43 @@ final class SprayEditingAcceptanceUITests: XCTestCase {
         XCTAssertTrue(review.isEnabled)
         review.tap()
         let start = app.buttons["spray.startTrip"]
-        for _ in 0..<12 where !start.isHittable { app.scrollViews.firstMatch.swipeUp() }
-        XCTAssertTrue(start.waitForExistence(timeout: 8))
         XCTAssertTrue(start.waitForExistence(timeout: 5))
-        XCTAssertFalse(start.isEnabled, "Actual rate confirmation is required, not warning acknowledgement")
-        let rateConfirmation = app.switches["spray.confirmActualRates"]
-        for _ in 0..<12 where !rateConfirmation.isHittable { app.scrollViews.firstMatch.swipeDown() }
-        XCTAssertTrue(rateConfirmation.waitForExistence(timeout: 5))
-        rateConfirmation.tap()
+        XCTAssertFalse(start.isEnabled, "Calculated quantities alone cannot become actual-use records")
+        let water = app.textFields["spray.actualWater"]
+        let chemical = app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", "spray.actualChemical.")).firstMatch
+        for _ in 0..<12 where !water.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(water.waitForExistence(timeout: 5))
+        XCTAssertTrue(water.isEnabled, "Actual water must be editable before selecting a path")
+        XCTAssertTrue(["", "Enter amount"].contains(water.value as? String ?? ""), "Calculated water is a guide, not pre-entered actuals")
+        water.tap(); water.typeText("875.5")
+        app.buttons["keyboard.dismiss"].tap()
+        XCTAssertFalse(start.isEnabled, "Water alone cannot substitute for the chemical actually loaded")
+        for _ in 0..<8 where !chemical.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(chemical.waitForExistence(timeout: 5))
+        XCTAssertTrue(chemical.isEnabled, "Chemical amounts must be editable before selecting a path")
+        XCTAssertTrue(["", "Enter amount"].contains(chemical.value as? String ?? ""))
+        chemical.tap(); chemical.typeText("637.25")
+        app.buttons["keyboard.dismiss"].tap()
+        XCTAssertEqual(water.value as? String, "875.5")
+        XCTAssertEqual(chemical.value as? String, "637.25")
+        XCTAssertTrue(start.isEnabled, "Explicit actual quantities satisfy the mix gate independently of path selection")
+
+        // Choose a route only AFTER entering different-from-calculated amounts.
+        // This guards the reported ordering failure and any rebuild that erases
+        // actual text when a route selection invalidates the View body.
+        let pattern = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "One After Another")).firstMatch
+        for _ in 0..<12 where !pattern.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(pattern.isHittable); pattern.tap()
+        let startPath = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Start path")).firstMatch
+        for _ in 0..<12 where !startPath.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(startPath.isHittable); startPath.tap()
+        let chosenPath = app.buttons["Synthetic regional block · Path 1.5"]
+        XCTAssertTrue(chosenPath.waitForExistence(timeout: 5)); chosenPath.tap()
+        for _ in 0..<12 where !water.isHittable { app.scrollViews.firstMatch.swipeDown() }
+        XCTAssertEqual(water.value as? String, "875.5", "Selecting a path must retain actual water")
+        XCTAssertEqual(chemical.value as? String, "637.25", "Selecting a path must retain actual chemical amount")
         for _ in 0..<12 where !start.isHittable { app.scrollViews.firstMatch.swipeUp() }
-        XCTAssertTrue(start.isEnabled, "Confirmed valid mix starts without acknowledging advisory warnings")
+        XCTAssertTrue(start.isEnabled, "Entered valid mix starts without acknowledging advisory warnings")
         let warnings = app.buttons.matching(identifier: "spray.concentrationWarning")
         guard let warning = warnings.allElementsBoundByIndex.first(where: { $0.isHittable }) else {
             XCTFail("Optional orange CF warning must be visible beside enabled Start in Mixing: \(app.debugDescription)")

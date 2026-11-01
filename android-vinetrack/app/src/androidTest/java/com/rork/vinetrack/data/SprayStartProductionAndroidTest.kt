@@ -289,6 +289,11 @@ class SprayStartProductionAndroidTest {
 
     private fun tick() { compose.mainClock.advanceTimeBy(600); compose.waitForIdle() }
     private fun pressCalculatorStart(hours: String? = null) {
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Actual water (L)"))
+        compose.onNodeWithText("Actual water (L)").performTextReplacement("415")
+        compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Actual Snapshot fixture (g)"))
+        compose.onNodeWithText("Actual Snapshot fixture (g)").performTextReplacement("1234.5")
+        tick()
         try {
             compose.onNode(hasScrollToNodeAction()).performScrollToNode(hasText("Start Spray Trip", substring = true))
         } catch (failure: AssertionError) {
@@ -299,8 +304,6 @@ class SprayStartProductionAndroidTest {
             compose.onNodeWithText("Start engine hours (optional)").performTextInput(hours)
             tick()
         }
-        compose.onNode(hasText("Start Trip") and hasClickAction()).assertIsNotEnabled()
-        compose.onNode(isToggleable()).performScrollTo().performClick()
         compose.onNode(hasText("Start Trip") and hasClickAction()).assertIsEnabled()
         // Exercise the production Button's accessibility action, not an IME-obscured screen coordinate.
         compose.onNode(hasText("Start Trip") and hasClickAction()).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
@@ -314,15 +317,19 @@ class SprayStartProductionAndroidTest {
         assertEquals(savedTrip!!.getValue("id").jsonPrimitive.content, id)
         assertEquals(id, vm.ui.value.activeTrip?.id)
         assertEquals(hours, vm.ui.value.activeTrip?.startEngineHours)
-        compose.onNodeWithText("Confirm Actual Tank Mix").assertExists()
-        assertFalse(vm.ui.value.isTracking); assertEquals(1, creates)
+        compose.onNodeWithText("Confirm Actual Tank Mix").assertDoesNotExist()
+        assertFalse(vm.requiresFirstTankReview(vm.ui.value.activeTrip!!))
+        val actual = requireNotNull(vm.actualTankUse(id, 1))
+        assertEquals(415.0, actual.waterVolumeL!!, 0.0)
+        assertEquals(1234.5, actual.chemicals.single().actualAmountBase, 0.0)
+        assertEquals(1, vm.ui.value.activeTrip!!.tankSessions.size)
+        assertTrue(vm.ui.value.isTracking); assertEquals(1, creates)
         assertNull("Destination must acknowledge only after TripDetail is composed", vm.calculatorStartOutcome.value)
     }
 
     @Test(timeout = 90_000) fun calculatorButtonBlankHoursReachesTankThenRecording() {
         openCalculatorJourney(); pressCalculatorStart(); awaitTankDestination(null)
         assertEquals(1, navigationCallbacks)
-        compose.onNodeWithText("Start recording").performClick(); tick()
         assertTrue(vm.ui.value.isTracking)
         assertFalse(vm.requiresFirstTankReview(vm.ui.value.activeTrip!!))
         assertEquals(1, vm.ui.value.activeTrip!!.tankSessions.size)
@@ -377,10 +384,10 @@ class SprayStartProductionAndroidTest {
         val id = requireNotNull(work.selectedTripId.value)
         val original = storedAttempts().single()
         compose.runOnUiThread { uiGeneration++ }; tick()
-        compose.onNodeWithText("Confirm Actual Tank Mix").assertExists()
+        compose.onNodeWithText("Confirm Actual Tank Mix").assertDoesNotExist()
         assertEquals(id, work.selectedTripId.value); assertEquals(1, creates)
         assertEquals(1, navigationCallbacks); assertEquals(1, activationRequests)
-        assertEquals(original, storedAttempts().single()); assertFalse(vm.ui.value.isTracking)
+        assertEquals(original, storedAttempts().single()); assertTrue(vm.ui.value.isTracking)
         val pending = AppViewModel::class.java.getDeclaredField("pendingWrites").let { it.isAccessible = true; it.get(vm) as PendingWriteRepository }
         compose.waitUntil(20_000) { pending.list().none { it.entityType == PendingEntityType.TRIP_START && it.clientId == id && it.status == PendingWriteStatus.IN_PROGRESS } }
         pending.list().singleOrNull { it.entityType == PendingEntityType.TRIP_START && it.clientId == id }?.let { marker ->

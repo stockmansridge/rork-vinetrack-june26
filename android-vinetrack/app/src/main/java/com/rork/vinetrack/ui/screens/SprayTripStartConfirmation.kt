@@ -1,15 +1,8 @@
 package com.rork.vinetrack.ui.screens
 
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.ui.Alignment
 import com.rork.vinetrack.data.model.SprayTank
 import com.rork.vinetrack.data.spray.SprayStartRateReview
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,34 +33,40 @@ fun SprayTripStartConfirmation(
     tanks: List<SprayTank>,
     scopeKey: String,
     onDismiss: () -> Unit,
-    onStart: (Double?) -> Unit,
+    onStart: (Double?, com.rork.vinetrack.data.spray.SprayStartActualAmounts) -> Unit,
     modifier: Modifier = Modifier,
     scopeEvidence: Any? = null,
+    initialDraft: Map<String, String> = emptyMap(),
+    onDraftChange: (Map<String, String>) -> Boolean = { true },
+    showActualFields: Boolean = true,
+    busy: Boolean = false,
+    errorMessage: String? = null,
 ) {
     var hoursText by rememberSaveable { mutableStateOf("") }
     val recipeEvidence = SprayStartRateReview.evidence(tanks)
-    // Consent is session-local: never restore it after process death or a scope change.
-    var confirmedRates by remember(recipeEvidence, scopeKey, scopeEvidence) { mutableStateOf(false) }
-    var showRateHelp by rememberSaveable { mutableStateOf(false) }
+    val region = com.rork.vinetrack.ui.LocalRegionFormatter.current
+    var actualDraft by remember(recipeEvidence, scopeKey, region.settings, java.util.Locale.getDefault()) { mutableStateOf(initialDraft) }
+    var draftSaved by remember(recipeEvidence, scopeKey, region.settings, java.util.Locale.getDefault()) { mutableStateOf(true) }
+    val actuals = com.rork.vinetrack.data.spray.SprayStartActualAmounts.parse(tanks, actualDraft, region::volumeToCanonical)
     val validRecipe = SprayStartRateReview.isReviewable(tanks)
     val parsedHours = com.rork.vinetrack.data.SprayStartEngineHours.parse(hoursText)
     val validHours = com.rork.vinetrack.data.SprayStartEngineHours.isValid(hoursText)
     AlertDialog(
         modifier = modifier,
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!busy) onDismiss() },
         title = { Text("Start Trip") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Confirm actual chemical rates", modifier = Modifier.weight(1f))
-                    IconButton(onClick = { showRateHelp = true }) { Icon(Icons.Outlined.Info, contentDescription = "Actual chemical rates help") }
+                if (showActualFields) SprayStartActualFields(tanks, actualDraft, onDraftChange = {
+                    actualDraft = it
+                    draftSaved = onDraftChange(it)
+                }, enabled = !busy) else {
+                    Text("The actual amounts entered for Tank 1 will be recorded with this spray.")
                 }
-                SprayStartRateReview.lines(tanks).forEach { Text(it, modifier = Modifier.padding(bottom = 6.dp)) }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = confirmedRates, onCheckedChange = { confirmedRates = it }, enabled = validRecipe)
-                    Text("I confirm these actual rates")
-                }
-                if (!validRecipe) Text("Review the chemical rates and tank water before starting.")
+                if (!draftSaved) Text("Actual amounts could not be retained on this device. Retry before starting.")
+                if (!validRecipe) Text("Review the calculated chemical mix before starting.")
+                if (actuals == null) Text("Enter actual water and every chemical amount for this tank.")
+                errorMessage?.let { Text(it) }
                 Text("Machine: ${machineName.ifBlank { "Not selected" }}")
                 OutlinedTextField(
                     value = hoursText,
@@ -78,20 +77,17 @@ fun SprayTripStartConfirmation(
                     placeholder = { Text(latestEngineHours?.let { "Last recorded ${sprayEngineHoursLabel(it)}" } ?: "hrs") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
+                    enabled = !busy,
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                 )
                 if (latestEngineHours != null) Text("Last recorded: ${sprayEngineHoursLabel(latestEngineHours)} hrs")
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-        confirmButton = { TextButton(enabled = validHours && confirmedRates && validRecipe, onClick = { onStart(parsedHours) }) { Text("Start Trip") } },
+        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text("Cancel") } },
+        confirmButton = { TextButton(enabled = !busy && validHours && draftSaved && actuals != null && validRecipe,
+            onClick = { actuals?.let { onStart(parsedHours, it) } }) { Text(if (busy) "Starting…" else "Start Trip") } },
     )
-    if (showRateHelp) AlertDialog(
-        onDismissRequest = { showRateHelp = false },
-        title = { Text("Actual chemical rates") },
-        text = { Text("Confirm the rates you will actually apply, not just suggested label rates. Per-100 L values show the actual tank concentration, including concentration factor. Go back to Products to change a rate. The confirmed mix is saved with this Trip; later tank actuals remain separate.") },
-        confirmButton = { TextButton(onClick = { showRateHelp = false }) { Text("Close") } },
-    )
+
 }
 
 private fun sprayEngineHoursLabel(hours: Double): String =

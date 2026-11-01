@@ -305,15 +305,21 @@ final class MobileSprayUXParityUITests: XCTestCase {
         for _ in 0..<14 where !mixing.isHittable { scroll.swipeUp() }
         XCTAssertTrue(mixing.isEnabled); mixing.tap()
         let start = app.buttons["spray.startTrip"]
-        for _ in 0..<12 where !start.isHittable { scroll.swipeUp() }
         XCTAssertTrue(start.waitForExistence(timeout: 5))
-        XCTAssertFalse(start.isEnabled, "Actual rate confirmation is required, not warning acknowledgement")
-        let rateConfirmation = app.switches["spray.confirmActualRates"]
-        for _ in 0..<12 where !rateConfirmation.isHittable { app.scrollViews.firstMatch.swipeDown() }
-        XCTAssertTrue(rateConfirmation.waitForExistence(timeout: 5))
-        rateConfirmation.tap()
+        XCTAssertFalse(start.isEnabled, "Actual amounts must be entered, not accepted with a checkbox")
+        let water = app.textFields["spray.actualWater"]
+        let chemical = app.textFields.matching(NSPredicate(format: "identifier BEGINSWITH %@", "spray.actualChemical.")).firstMatch
+        reach(water, in: app)
+        XCTAssertTrue(water.isEnabled, "No path selection is required to enter actual water")
+        water.tap(); water.typeText("875.5"); app.buttons["keyboard.dismiss"].tap()
+        XCTAssertFalse(start.isEnabled, "Every chemical requires an explicit amount")
+        reach(chemical, in: app)
+        XCTAssertTrue(chemical.isEnabled, "No path selection is required to enter actual chemicals")
+        chemical.tap(); chemical.typeText("637.25"); app.buttons["keyboard.dismiss"].tap()
+        XCTAssertEqual(water.value as? String, "875.5")
+        XCTAssertEqual(chemical.value as? String, "637.25")
         for _ in 0..<12 where !start.isHittable { app.scrollViews.firstMatch.swipeUp() }
-        XCTAssertTrue(start.isEnabled, "Confirmed valid mix starts without acknowledging advisory warnings")
+        XCTAssertTrue(start.isEnabled, "Entered actual amounts permit Start without acknowledging advisory warnings")
     }
 
     @MainActor func testCanopyConfirmationFocusesRateQuestionAndCustomEntry() {
