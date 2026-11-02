@@ -119,6 +119,19 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
         if (tripId.isBlank()) return
         openCalculatorTrip(tripId)
         handle[KEY_PENDING_STARTED_TRIP] = tripId
+        notePresentedActiveTrip(tripId)
+    }
+
+    /**
+     * Durable per-identity latch: an active Trip that has already been opened
+     * must not reopen after Back, a GPS refresh, or Activity recreation.
+     * A NEW Trip has a new ID and can still open automatically.
+     */
+    fun lastPresentedActiveTripId(): String? = handle.get(KEY_LAST_PRESENTED_ACTIVE_TRIP)
+    fun notePresentedActiveTrip(tripId: String) {
+        if (tripId.isNotBlank() && lastPresentedActiveTripId() != tripId) {
+            handle[KEY_LAST_PRESENTED_ACTIVE_TRIP] = tripId
+        }
     }
 
     /**
@@ -344,6 +357,7 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
         setPinsBlockIds(emptySet())
         setTripHudLauncherMode(null)
         setSelectedTripId(null)
+        handle[KEY_LAST_PRESENTED_ACTIVE_TRIP] = null
         setProgramOpenCalculator(false)
         setProgramCalculatorPrefill(null)
         setShowSetupWizard(false)
@@ -367,6 +381,7 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
         setPinsBlockIds(emptySet())
         setPinsViewMode(PinsViewMode.Map)
         setSelectedTripId(null)
+        handle[KEY_LAST_PRESENTED_ACTIVE_TRIP] = null
         setProgramOpenCalculator(false)
         setProgramCalculatorPrefill(null)
         setShowSetupWizard(false)
@@ -417,6 +432,7 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
         const val KEY_PINS_VIEW_MODE = "work_pins_view_mode"
         const val KEY_SELECTED_TRIP = "work_selected_trip"
         const val KEY_PENDING_STARTED_TRIP = "work_pending_started_trip"
+        const val KEY_LAST_PRESENTED_ACTIVE_TRIP = "work_last_presented_active_trip"
         const val KEY_PROGRAM_CALC = "work_program_calc"
         const val KEY_PROGRAM_PREFILL = "work_program_prefill"
         const val KEY_SETUP_WIZARD = "work_setup_wizard"
