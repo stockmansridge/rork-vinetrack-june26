@@ -74,6 +74,19 @@ struct TripDetailView: View {
         return SavedOccurrenceSprayStartEligibility.mayStart(item)
     }
 
+    /// Queued, never-started originals may be explicitly cancelled; the durable
+    /// cancellation journal fences their create operation before the list changes.
+    /// Historical/completed/active Trips are not eligible for this shortcut.
+    private var isQueuedUnstartedTrip: Bool {
+        let item = currentTrip
+        return tripSync.isPendingUpsert(item.id) &&
+            !item.isActive && item.endTime == nil &&
+            item.pathPoints.isEmpty && item.tankSessions.isEmpty &&
+            item.completedPaths.isEmpty && item.skippedPaths.isEmpty &&
+            store.deviceActiveTripId != item.id &&
+            store.selectedVineyardId == item.vineyardId
+    }
+
     private var pinsForTrip: [VinePin] {
         store.pins.filter { $0.tripId == trip.id }
     }
@@ -187,7 +200,8 @@ struct TripDetailView: View {
                 }
             }
             // Queued occurrence plans retain their recovery evidence.
-            if accessControl.canDeleteOperationalRecords && !currentTrip.isActive && !mayRecoverSavedOccurrenceSpray {
+            if accessControl.canDeleteOperationalRecords && !currentTrip.isActive &&
+                (!mayRecoverSavedOccurrenceSpray || isQueuedUnstartedTrip) {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(role: .destructive) {
                         showDeleteConfirmation = true
@@ -329,13 +343,15 @@ struct TripDetailView: View {
                 guard accessControl.canDeleteOperationalRecords,
                       currentTrip.id == trip.id,
                       !currentTrip.isActive,
-                      !mayRecoverSavedOccurrenceSpray else { return }
+                      (!mayRecoverSavedOccurrenceSpray || isQueuedUnstartedTrip) else { return }
                 store.deleteTrip(trip.id)
-                dismiss()
+                if store.tripDeletionError == nil { dismiss() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Are you sure you want to delete this trip? This action cannot be undone.")
+            Text(isQueuedUnstartedTrip
+                 ? "Delete this queued Trip? The original create operation will be permanently cancelled and removed from your Trips list. VineTrack keeps minimal cancellation evidence to prevent it being uploaded again. Completed server records are never removed by this action."
+                 : "Are you sure you want to delete this trip? This action cannot be undone.")
         }
     }
 
