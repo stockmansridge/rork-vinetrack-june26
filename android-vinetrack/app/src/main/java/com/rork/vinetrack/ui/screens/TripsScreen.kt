@@ -5869,7 +5869,7 @@ private fun TripClosureCard(vm: AppViewModel, state: AppUiState, trip: Trip) {
     val local = vm.tripClosureStatus(trip)
     val shown = verified ?: local
     val title = when (shown.state) {
-        com.rork.vinetrack.data.TripClosureStatus.State.CLOSED_SYNCED -> if (verified != null) "Trip and linked records · verified with server" else "Pending · checking Trip and linked records"
+        com.rork.vinetrack.data.TripClosureStatus.State.CLOSED_SYNCED -> if (verified != null) "Trip and linked records · verified with server" else "Trip saved · confirming server records"
         com.rork.vinetrack.data.TripClosureStatus.State.LOCAL_END_PENDING -> "Ended on this device · waiting to sync"
         com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_PENDING -> "Trip ended · linked records not fully verified"
         com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_HELD -> "Ended · sync held for review"
@@ -5881,7 +5881,7 @@ private fun TripClosureCard(vm: AppViewModel, state: AppUiState, trip: Trip) {
             if (verified != null) "The server confirms this Trip is ended. No required dependent sync operations remain."
             else "Sync acknowledgements are saved. Automatic server verification is pending; you can optionally refresh below."
             else if (verified != null) "The Trip is ended and its linked Spray completion matches the Trip end time. No dependent sync operations remain."
-            else "Sync acknowledgements are saved. Pending independent Trip and Spray readback; you can optionally refresh below."
+            else "Sync acknowledgements are saved. Checking the original Trip and linked Spray independently; no action is needed."
         com.rork.vinetrack.data.TripClosureStatus.State.LOCAL_END_PENDING -> "The end is saved here and will finish on the server when sync completes. Recorded GPS and tank amounts are kept."
         com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_PENDING -> "The Trip has ended, but linked Spray completion or other records are not fully verified. Saved operations are retained; historical records are not automatically repaired."
         com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_HELD -> "A linked record could not be confirmed on the server. Nothing has been discarded. Copy the Trip status and send it to support."
@@ -5895,6 +5895,9 @@ private fun TripClosureCard(vm: AppViewModel, state: AppUiState, trip: Trip) {
     val waitingForSync = shown.state == com.rork.vinetrack.data.TripClosureStatus.State.LOCAL_END_PENDING ||
         shown.state == com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_PENDING ||
         shown.state == com.rork.vinetrack.data.TripClosureStatus.State.SERVER_STATE_UNCONFIRMED
+    // A CLOSED_SYNCED local acknowledgement awaiting a *fresh* read is not a
+    // failed upload. Give it a neutral indicator; keep genuine holds/warnings.
+    val verifyingReadback = shown.state == com.rork.vinetrack.data.TripClosureStatus.State.CLOSED_SYNCED && verified == null
     var successDetailsExpanded by rememberSaveable(trip.id) { mutableStateOf(false) }
 
     VineyardCard(modifier = Modifier.testTag("trip.closure.sync.panel")) {
@@ -5916,9 +5919,9 @@ private fun TripClosureCard(vm: AppViewModel, state: AppUiState, trip: Trip) {
         } else {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(
-                    if (waitingForSync) Icons.Filled.Sync else Icons.Filled.Warning,
+                    if (waitingForSync || verifyingReadback) Icons.Filled.Sync else Icons.Filled.Warning,
                     contentDescription = null,
-                    tint = if (waitingForSync) VineColors.Info else VineColors.Warning,
+                    tint = if (waitingForSync || verifyingReadback) VineColors.Info else VineColors.Warning,
                 )
                 Text(title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
             }
