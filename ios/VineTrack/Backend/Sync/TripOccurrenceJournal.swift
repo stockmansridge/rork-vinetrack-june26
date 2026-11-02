@@ -365,6 +365,17 @@ import Foundation
             ? Failure.updateRequired.localizedDescription : Failure.reconciliation.localizedDescription
         try save(state)
     }
+    /// A reconciliation hold on an original, never-accepted creation is
+    /// eligible for one authoritative ABSENCE check during the next sync.
+    /// This predicate does not unhold or replay anything; the journal method
+    /// below still verifies all original scopes, IDs, payloads and sequence.
+    nonisolated static func needsOriginalCreationAbsenceCheck(_ state: Snapshot) -> Bool {
+        state.heldReason != nil && state.creationConfirmed == false &&
+            state.serverActive == false && state.pending.count == 2 &&
+            state.pending[0].rpc == "create_trip_with_occurrences_v1" &&
+            state.pending[1].rpc == "activate_trip_occurrences_v1"
+    }
+
     /// Retry the SAME original create + activate intents after an unavailable
     /// backend has been repaired. The caller MUST first make an authenticated,
     /// vineyard-scoped server read and establish that this trip ID does not
