@@ -142,4 +142,23 @@ class TankDependencyPhaseBTest {
             assertFalse(code.any { it.isDigit() })
         }
     }
+
+    // Issue #43 RED: quantity-only equality is not an acknowledgement of original chemical identity.
+    @Test fun issue43ActualAckRejectsSameAmountsWithDifferentLinkage() {
+        val wrongServer = actual.copy(chemicals = listOf(chem.copy(
+            plannedChemicalId = "wrong-planned-id",
+            savedChemicalId = "wrong-saved-id",
+            usageKind = "substitution",
+        )))
+        assertFalse("Matching amounts do not prove linkage", TankDependencyVerification.actualMatches(actual, wrongServer))
+    }
+
+    // Issue #43 RED: a changed evidence snapshot must not be acknowledged as exact readback.
+    @Test fun issue43ActualAckRejectsSameAmountsWithDifferentProvenance() {
+        val expected = actual.copy(chemicals = listOf(chem.copy(productCategory = "Herbicide", snapshotAt = "2026-11-02T01:00:00Z")))
+        val serverRow = expected.copy(chemicals = listOf(expected.chemicals.single().copy(snapshotAt = "2026-11-02T02:00:00Z")))
+        assertFalse("Snapshot provenance is part of acknowledged evidence", TankDependencyVerification.actualMatches(expected, serverRow))
+    }
+
+
 }
