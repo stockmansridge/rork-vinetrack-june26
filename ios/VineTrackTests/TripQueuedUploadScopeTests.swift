@@ -93,6 +93,36 @@ final class TripQueuedUploadScopeTests: XCTestCase {
             excludingActive: selectedTrip.id).isEmpty)
     }
 
+    func testCompletedServerTripReceiptRequiresExactOriginalEndAndTankEvidence() {
+        let vineyard = UUID()
+        let end = Date(timeIntervalSince1970: 1_792_000_000)
+        let session = TankSession(tankNumber: 1, startTime: end.addingTimeInterval(-3600),
+                                  endTime: end, pathsCovered: [12.5])
+        let original = Trip(vineyardId: vineyard, endTime: end, isActive: false,
+                            tankSessions: [session], tripFunction: "spraying")
+        XCTAssertNil(CompletedTripReceiptAdmission.holdReason(local: original, remote: original))
+
+        var differentEnd = original
+        differentEnd.endTime = end.addingTimeInterval(60)
+        XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(
+            local: original, remote: differentEnd), "TRIP_ORIGINAL_END_TIME_MISMATCH")
+
+        var differentVineyard = original
+        differentVineyard.vineyardId = UUID()
+        XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(
+            local: original, remote: differentVineyard), "TRIP_ORIGINAL_IDENTITY_MISMATCH")
+
+        var changedTank = original
+        changedTank.tankSessions[0].endTime = end.addingTimeInterval(-120)
+        XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(
+            local: original, remote: changedTank), "TRIP_LOCAL_TANK_SESSION_DIFFERS")
+
+        var reopenedRemote = original
+        reopenedRemote.isActive = true
+        XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(
+            local: original, remote: reopenedRemote), "TRIP_ORIGINAL_END_TIME_MISMATCH")
+    }
+
     @MainActor func testScopeClassificationDoesNotMutatePersistedQueue() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TripQueuedScope-\(UUID().uuidString)")
