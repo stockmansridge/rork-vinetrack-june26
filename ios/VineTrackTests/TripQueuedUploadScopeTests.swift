@@ -51,6 +51,25 @@ final class TripQueuedUploadScopeTests: XCTestCase {
         XCTAssertFalse(status.eligibleForCurrentVineyardUpload)
     }
 
+    func testGlobalLegacyFailuresNeverBecomeSelectedVineyardFailureOrSuccess() {
+        let selected = UUID(), other = UUID(), selectedTrip = UUID(), foreign = UUID(), missing = UUID()
+        let result = TripQueuedScopeSummary.evaluate(
+            queuedIds: [selectedTrip, foreign, missing], failedIds: [foreign, missing],
+            selectedVineyardId: selected,
+            visibleTripVineyards: [selectedTrip: selected, foreign: other]
+        )
+        XCTAssertEqual(result.selectedQueuedCount, 1)
+        XCTAssertEqual(result.outsideSelectedQueuedCount, 2)
+        XCTAssertEqual(result.selectedFailedCount, 0, "Foreign failure must not poison current-vineyard sync")
+        XCTAssertEqual(result.unresolvedCount, 3, "Original global queue must remain visibly unresolved")
+
+        let currentFailed = TripQueuedScopeSummary.evaluate(
+            queuedIds: [selectedTrip, foreign], failedIds: [selectedTrip, foreign],
+            selectedVineyardId: selected, visibleTripVineyards: [selectedTrip: selected, foreign: other])
+        XCTAssertEqual(currentFailed.selectedFailedCount, 1)
+        XCTAssertEqual(currentFailed.outsideSelectedQueuedCount, 1)
+    }
+
     func testRemoteSoftDeletionCannotDiscardUnresolvedOriginalUpload() {
         XCTAssertFalse(TripServerTombstonePolicy.mayApplyRemoteDeletion(
             hasOriginalPendingUpload: true))
