@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -1247,8 +1249,13 @@ internal fun YieldSamplingMapScreen(
             )
         },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(padding)) {
+            // The satellite map must remain dominant, including on smaller
+            // devices and with larger accessibility text. A scrollable compact
+            // control panel may occupy at most 40% of the available height.
+            val guidanceMaxHeight = maxHeight * 0.40f
+            Column(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.fillMaxWidth().weight(1f).testTag("yield.sampling.map")) {
                 val preview = LocalYieldMapPreview.current
                 if (preview != null) preview() else GoogleMap(
                     modifier = Modifier.fillMaxSize(),
@@ -1287,12 +1294,20 @@ internal fun YieldSamplingMapScreen(
                 }
             }
 
-            // Guidance / record bar.
-            VineyardCard(modifier = Modifier.padding(12.dp)) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Compact, scrollable field controls free most of the viewport
+            // for moving around the rows on the satellite map. All original
+            // Prev/Skip/Record/List/Finish actions remain available.
+            VineyardCard(
+                modifier = Modifier
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                    .heightIn(max = guidanceMaxHeight)
+                    .verticalScroll(rememberScrollState())
+                    .testTag("yield.sampling.controls"),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.MyLocation, contentDescription = null, tint = VineColors.Info, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.width(6.dp))
                         Text(
                             when {
                                 allRecorded -> "All sample sites recorded"
@@ -1301,8 +1316,9 @@ internal fun YieldSamplingMapScreen(
                                 else -> "Next: Sample ${nearest.siteIndex} · ${nearestDistance.roundToInt()} m away"
                             },
                             color = vine.textPrimary,
-                            fontWeight = FontWeight.Medium,
+                            fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.weight(1f),
+                            maxLines = 2,
                         )
                         IconButton(onClick = { scope.launch { here = tracker.currentLocation() } }) {
                             Icon(Icons.Filled.MyLocation, contentDescription = "Refresh location", tint = vine.textSecondary)
@@ -1310,32 +1326,49 @@ internal fun YieldSamplingMapScreen(
                     }
                     Text(
                         "Sample ${session.recordedSiteCount} of ${session.totalSiteCount} recorded" +
-                            (currentBlockName?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                            (currentBlockName?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: "") +
+                            (nearest?.let { " · Row ${it.rowNumber}" } ?: ""),
                         color = vine.textSecondary,
                         fontSize = 12.sp,
+                        maxLines = 2,
                     )
-                    nearest?.let { Text("Sample ${it.siteIndex} · Row ${it.rowNumber} · ${it.paddockName}", fontWeight = FontWeight.SemiBold) }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { nearest?.let { selectedSiteId = YieldSamplingNavigation.previous(session.sampleSites, it.id) } },
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedButton(
+                            onClick = { nearest?.let { selectedSiteId = YieldSamplingNavigation.previous(session.sampleSites, it.id) } },
                             enabled = nearest != null && YieldSamplingNavigation.previous(session.sampleSites, nearest.id) != null,
-                            modifier = Modifier.weight(1f)) { Text("Prev") }
-                        OutlinedButton(onClick = { nearest?.let { selectedSiteId = YieldSamplingNavigation.next(session.sampleSites, it.id) } },
-                            enabled = nearest != null, modifier = Modifier.weight(1f)) { Text("Skip") }
+                            modifier = Modifier.weight(0.8f).heightIn(min = 48.dp),
+                            contentPadding = PaddingValues(horizontal = 4.dp),
+                        ) { Text("Prev", fontSize = 12.sp, maxLines = 1) }
+                        OutlinedButton(
+                            onClick = { nearest?.let { selectedSiteId = YieldSamplingNavigation.next(session.sampleSites, it.id) } },
+                            enabled = nearest != null,
+                            modifier = Modifier.weight(0.8f).heightIn(min = 48.dp),
+                            contentPadding = PaddingValues(horizontal = 4.dp),
+                        ) { Text("Skip", fontSize = 12.sp, maxLines = 1) }
+                        Button(
+                            onClick = { nearest?.let { recordingSite = it }; saveError = null },
+                            enabled = nearest != null,
+                            modifier = Modifier.weight(1.8f).heightIn(min = 48.dp).testTag("yield.record.next"),
+                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                            contentPadding = PaddingValues(horizontal = 6.dp),
+                        ) { Text("Record & Next", fontSize = 12.sp, maxLines = 1) }
                     }
-                    Button(onClick = { nearest?.let { recordingSite = it }; saveError = null }, enabled = nearest != null,
-                        modifier = Modifier.fillMaxWidth().testTag("yield.record.next"), colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen)) { Text("Record & Next") }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        TextButton(onClick = { showSites = true }, modifier = Modifier.weight(1f)) { Text("Sample list") }
-                        TextButton(onClick = { if (YieldSamplingNavigation.needsPartialConfirmation(session.sampleSites)) confirmPartial = true else onComplete() },
-                            enabled = YieldSamplingNavigation.canFinish(session.sampleSites), modifier = Modifier.weight(1f)) {
-                            Text("Finish Sampling (${session.recordedSiteCount}/${session.totalSiteCount})")
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { showSites = true }, modifier = Modifier.weight(1f).heightIn(min = 44.dp)) {
+                            Text("Sample list", maxLines = 1)
                         }
+                        TextButton(
+                            onClick = { if (YieldSamplingNavigation.needsPartialConfirmation(session.sampleSites)) confirmPartial = true else onComplete() },
+                            enabled = YieldSamplingNavigation.canFinish(session.sampleSites),
+                            modifier = Modifier.weight(1f).heightIn(min = 44.dp),
+                        ) { Text("Finish (${session.recordedSiteCount}/${session.totalSiteCount})", maxLines = 1) }
                     }
                     saveError?.let { Text(it, color = VineColors.Destructive) }
                 }
             }
         }
     }
+}
 
     if (confirmPartial) AlertDialog(onDismissRequest = { confirmPartial = false }, title = { Text("Finish with incomplete samples?") },
         text = { Text("${session.recordedSiteCount} of ${session.totalSiteCount} recorded. Unrecorded sites remain unrecorded, not zero. Estimates use only real samples and may be less representative.") },
