@@ -1,0 +1,56 @@
+name: Issue 43 Android RED (preinstalled SDK, isolated branch)
+
+on:
+  push:
+    branches: [issue43-tank-actual-p0]
+    paths:
+      - '.github/workflows/issue43-android-red-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  android-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify exact HEAD and Java
+        run: |
+          echo "CHECKED_SHA=$(git rev-parse HEAD)"
+          echo "TRIGGER_SHA=${{ github.sha }}"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Use runner's installed Android SDK (avoid removed tools package)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | head -n 1)
+          if [[ -z "$SDKMANAGER" ]]; then echo "No installed sdkmanager: infrastructure failure, not test RED"; exit 2; fi
+          echo "Using SDK manager at $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Run only native Issue 43 tests; assertion failures are expected RED
+        working-directory: android-vinetrack
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:testDebugUnitTest --no-daemon --console=plain \
+            --tests 'com.rork.vinetrack.data.SprayTankActualTest.issue43*' \
+            --tests 'com.rork.vinetrack.data.TankDependencyPhaseBTest.issue43*'
+      - name: Preserve original Gradle XML reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue43-android-red-v2-reports
+          path: |
+            android-vinetrack/app/build/test-results/testDebugUnitTest/
+            android-vinetrack/app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 7
