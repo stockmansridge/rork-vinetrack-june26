@@ -664,14 +664,14 @@ private fun TripSetupScreen(
                                 textStyle = androidx.compose.ui.text.TextStyle(
                                     fontWeight = FontWeight.Bold, fontSize = 18.sp, textAlign = TextAlign.Center),
                                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
-                                isError = densityText.toIntOrNull() !in 1..500,
+                                isError = (densityText.toIntOrNull() ?: 0) !in 1..500,
                             )
                             IconButton(onClick = { setDensity((densityText.toIntOrNull() ?: session.samplesPerHectare) + 1) },
                                 enabled = (densityText.toIntOrNull() ?: session.samplesPerHectare) < 500) {
                                 Icon(Icons.Filled.Add, contentDescription = "More sample sites")
                             }
                         }
-                        if (densityText.toIntOrNull() !in 1..500) {
+                        if ((densityText.toIntOrNull() ?: 0) !in 1..500) {
                             Text("Enter a whole number from 1 to 500 before generating a route.",
                                 color = VineColors.Warning, fontSize = 12.sp)
                         }
@@ -691,7 +691,7 @@ private fun TripSetupScreen(
                             )
                             Button(
                                 onClick = { useExistingRoute() },
-                                enabled = selectedBlocks.isNotEmpty(),
+                                enabled = selectedBlocks.isNotEmpty() && (densityText.toIntOrNull() ?: 0) in 1..500,
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.Info),
                             ) {
@@ -701,7 +701,7 @@ private fun TripSetupScreen(
                             }
                             OutlinedButton(
                                 onClick = { generateNewRoute() },
-                                enabled = selectedBlocks.isNotEmpty(),
+                                enabled = selectedBlocks.isNotEmpty() && (densityText.toIntOrNull() ?: 0) in 1..500,
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
                             ) {
                                 Icon(Icons.Filled.AutoGraph, contentDescription = null, modifier = Modifier.size(20.dp))
@@ -711,7 +711,7 @@ private fun TripSetupScreen(
                         } else {
                             Button(
                                 onClick = { generateNewRoute() },
-                                enabled = selectedBlocks.isNotEmpty(),
+                                enabled = selectedBlocks.isNotEmpty() && (densityText.toIntOrNull() ?: 0) in 1..500,
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
                             ) {
