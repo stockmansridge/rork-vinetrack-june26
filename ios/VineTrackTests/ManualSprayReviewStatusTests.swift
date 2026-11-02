@@ -67,14 +67,15 @@ final class ManualSprayReviewStatusTests: XCTestCase {
             // Reopen with a freshly constructed service, not the original
             // SwiftUI @State.
             let reopened = ManualSpraySubmissionGuard(defaults: defaults)
-            XCTAssertEqual(reopened.submittedId(ownerId: owner, vineyardId: vineyard), originalId)
-            XCTAssertFalse(reopened.mark(ownerId: owner, vineyardId: vineyard, manualEntryId: alternateId))
-            XCTAssertNil(reopened.submittedId(ownerId: otherOwner, vineyardId: vineyard))
-            XCTAssertNil(reopened.submittedId(ownerId: owner, vineyardId: otherVineyard))
+            XCTAssertEqual(reopened.submittedId(ownerId: owner, vineyardId: vineyard, manualEntryId: originalId), originalId)
+            XCTAssertTrue(reopened.mark(ownerId: owner, vineyardId: vineyard, manualEntryId: alternateId))
+            XCTAssertEqual(reopened.submittedId(ownerId: owner, vineyardId: vineyard, manualEntryId: alternateId), alternateId)
+            XCTAssertNil(reopened.submittedId(ownerId: otherOwner, vineyardId: vineyard, manualEntryId: originalId))
+            XCTAssertNil(reopened.submittedId(ownerId: owner, vineyardId: otherVineyard, manualEntryId: originalId))
             reopened.clearIfMatching(ownerId: owner, vineyardId: vineyard, manualEntryId: alternateId)
-            XCTAssertEqual(reopened.submittedId(ownerId: owner, vineyardId: vineyard), originalId)
+            XCTAssertEqual(reopened.submittedId(ownerId: owner, vineyardId: vineyard, manualEntryId: originalId), originalId)
             reopened.clearIfMatching(ownerId: owner, vineyardId: vineyard, manualEntryId: originalId)
-            XCTAssertNil(reopened.submittedId(ownerId: owner, vineyardId: vineyard))
+            XCTAssertNil(reopened.submittedId(ownerId: owner, vineyardId: vineyard, manualEntryId: originalId))
         }
     }
 }
