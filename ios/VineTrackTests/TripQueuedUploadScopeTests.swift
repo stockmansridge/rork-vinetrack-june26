@@ -77,6 +77,22 @@ final class TripQueuedUploadScopeTests: XCTestCase {
             hasOriginalPendingUpload: false))
     }
 
+    func testTripHistoryAndNavigationNeverLeakOtherVineyardSnapshots() {
+        let selected = UUID(), other = UUID()
+        let selectedTrip = Trip(vineyardId: selected)
+        let otherTrip = Trip(vineyardId: other)
+        let visible = TripHistoryVineyardScope.visible(
+            [otherTrip, selectedTrip], vineyardId: selected, excludingActive: nil)
+        XCTAssertEqual(visible.map(\.id), [selectedTrip.id])
+        XCTAssertFalse(TripHistoryVineyardScope.canOpen(otherTrip, vineyardId: selected))
+        XCTAssertTrue(TripHistoryVineyardScope.canOpen(selectedTrip, vineyardId: selected))
+        XCTAssertTrue(TripHistoryVineyardScope.visible(
+            [otherTrip, selectedTrip], vineyardId: nil, excludingActive: nil).isEmpty)
+        XCTAssertTrue(TripHistoryVineyardScope.visible(
+            [otherTrip, selectedTrip], vineyardId: selected,
+            excludingActive: selectedTrip.id).isEmpty)
+    }
+
     @MainActor func testScopeClassificationDoesNotMutatePersistedQueue() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TripQueuedScope-\(UUID().uuidString)")
