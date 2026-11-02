@@ -157,4 +157,25 @@ final class TankDependencyVerificationTests: XCTestCase {
         try await h.service.pushLocalTrips(vineyardId: vineyardId)
         XCTAssertNil(h.metadata.pendingUpserts[trip.id])
     }
+
+    // Issue #43 RED: a matching quantity is not proof of matching original chemical links.
+    func testIssue43ReadbackRejectsChangedLinkageAtSameQuantity() throws {
+        let tripId = UUID()
+        let localLine = try chem(2.5)
+        let otherLine = try SprayTankActualChemical(
+            id: localLine.id,
+            plannedChemicalId: UUID(uuidString: "10000000-0000-4000-8000-000000000002")!,
+            savedChemicalId: nil,
+            usageKind: "planned",
+            name: localLine.name,
+            actualAmountBase: localLine.actualAmountBase,
+            unit: localLine.unit
+        )
+        let original = try actual(tripId: tripId, chemicals: [localLine])
+        let altered = try actual(tripId: tripId, chemicals: [otherLine])
+        XCTAssertFalse(TankDependencyVerification.actualMatches(local: original, server: altered),
+                       "An accepted original-quantity ACK must also verify chemical linkage")
+    }
+
+
 }
