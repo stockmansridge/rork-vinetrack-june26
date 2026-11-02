@@ -2532,7 +2532,7 @@ final class TripTrackingService {
             case .unrelated, .independentAlreadyHeld: continue
             case .holdBeforeIndependentStart: toHold.append(journal)
             case .conflict(let code):
-                throw SprayPlanningAdmissionError(message: "An earlier planned trip (\(saved.paddockName), \(saved.startTime.formatted(date: .abbreviated, time: .shortened))) needs occurrence recovery (\(code)). Its original saved actions are retained; recover that trip before starting this work again.")
+                throw SprayPlanningAdmissionError(message: "A previous Trip on these blocks (\(saved.paddockName), \(saved.startTime.formatted(date: .abbreviated, time: .shortened))) has an unconfirmed start (\(code)). Your original Trip and actions are preserved. Open Trips, find that date and block, and use its existing recovery/Resume controls. Do not create another copy of the same spray; if this is different work, support must verify the original held job before a safe independent start.")
             }
         }
         // Hold only after every retained start is admitted, so a refusal changes nothing.
