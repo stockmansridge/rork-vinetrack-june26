@@ -712,7 +712,7 @@ struct BackendSettingsView: View {
             NavigationLink {
                 SyncDiagnosticsView()
             } label: {
-                SettingsRow(title: "Export Full Diagnostic Log", subtitle: "Read-only sync history and support report", symbol: "doc.zipper", color: .purple)
+                SettingsRow(title: "Sync Support Snapshot", subtitle: "Account-scoped read-only sync observations", symbol: "doc.zipper", color: .purple)
             }
             NavigationLink {
                 PerformanceDiagnosticsView()
