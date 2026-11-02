@@ -115,7 +115,7 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
     }
 
     // P0 3.1.9: an unrelated planned start is no longer blocked globally.
-    @MainActor func testIndependentStartHoldsOriginalChainWithoutDiscardingAndSameWorkStillBlocks() throws {
+    @MainActor func testOverlappingUnconfirmedStartRequiresDistinctWorkConsentWithoutDiscardingOriginal() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -139,12 +139,15 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
         let tracking = TripTrackingService()
         tracking.configure(store: store, locationService: LocationService())
 
-        // Same planned work: still refused, and nothing changes.
+        // Overlapping blocks alone are ambiguous; no operator approval means
+        // no journal mutation and no new Trip identity.
         XCTAssertThrowsError(try tracking.requireResolvedOccurrenceStarts(vineyardId: vineyard, blockIds: [cabFranc]))
         XCTAssertEqual(try journal.load(), before)
 
-        // Independent block: admitted; the original chain is held, never discarded.
-        try tracking.requireResolvedOccurrenceStarts(vineyardId: vineyard, blockIds: [gruner])
+        // An explicitly DIFFERENT spray on Cab Franc may proceed, but first
+        // the old create/activate chain is durably held without deletion.
+        try tracking.requireResolvedOccurrenceStarts(
+            vineyardId: vineyard, blockIds: [cabFranc], distinctWorkConfirmed: true)
         let held = try XCTUnwrap(journal.load())
         XCTAssertNotNil(held.heldReason)
         XCTAssertEqual(held.pending, before.pending, "Original create/activate intents retained exactly")
@@ -154,8 +157,12 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
         XCTAssertFalse(journal.canOperate(held), "Held chain cannot replay into a second active Trip")
         XCTAssertEqual(store.trips, [original])
 
-        // Second independent start: already held, no further write.
+        // Future unrelated block is safe. A subsequent overlap STILL needs
+        // its own explicit confirmation, even though the old chain is held.
         try tracking.requireResolvedOccurrenceStarts(vineyardId: vineyard, blockIds: [gruner])
+        XCTAssertThrowsError(try tracking.requireResolvedOccurrenceStarts(vineyardId: vineyard, blockIds: [cabFranc]))
+        try tracking.requireResolvedOccurrenceStarts(
+            vineyardId: vineyard, blockIds: [cabFranc], distinctWorkConfirmed: true)
         XCTAssertEqual(try journal.load(), held)
         // The verified-absence release path can still lift the hold for original-ID recovery.
         try journal.releaseHeldOriginalCreationAfterVerifiedServerAbsence(expectedCoverage: raw)
@@ -171,9 +178,11 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
         }
         XCTAssertEqual(OccurrenceStartAdmission.decide(retained(confirmed: true), newVineyardId: v, newBlockIds: [a]), .unrelated)
         XCTAssertEqual(OccurrenceStartAdmission.decide(retained(confirmed: nil), newVineyardId: v, newBlockIds: [a]), .unrelated)
-        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(), newVineyardId: v, newBlockIds: [a, b]), .conflict("RETAINED_START_SAME_PLANNED_WORK"))
+        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(), newVineyardId: v, newBlockIds: [a, b]), .conflict("RETAINED_START_INDEPENDENT_WORK_CONFIRMATION_REQUIRED"))
+        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(), newVineyardId: v, newBlockIds: [a], distinctWorkConfirmed: true), .holdBeforeIndependentStart)
+        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(), newVineyardId: v, newBlockIds: [a], sameOriginalWorkProven: true, distinctWorkConfirmed: true), .conflict("RETAINED_START_SAME_PLANNED_WORK"))
         XCTAssertEqual(OccurrenceStartAdmission.decide(retained(active: true), newVineyardId: v, newBlockIds: [b]), .conflict("RETAINED_START_IS_DEVICE_ACTIVE_TRIP"))
-        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(), newVineyardId: v, newBlockIds: []), .conflict("RETAINED_START_SAME_PLANNED_WORK"))
+        XCTAssertEqual(OccurrenceStartAdmission.decide(retained(), newVineyardId: v, newBlockIds: []), .conflict("RETAINED_START_INDEPENDENT_WORK_CONFIRMATION_REQUIRED"))
         XCTAssertEqual(OccurrenceStartAdmission.decide(retained(), newVineyardId: v, newBlockIds: [b]), .holdBeforeIndependentStart)
         XCTAssertEqual(OccurrenceStartAdmission.decide(retained(held: "x"), newVineyardId: v, newBlockIds: [b]), .independentAlreadyHeld)
         XCTAssertEqual(OccurrenceStartAdmission.decide(retained(vineyard: UUID()), newVineyardId: v, newBlockIds: [a]), .holdBeforeIndependentStart)
