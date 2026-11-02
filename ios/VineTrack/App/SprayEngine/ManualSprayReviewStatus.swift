@@ -5,13 +5,15 @@ import Foundation
 /// screen sees the server-readback record.
 nonisolated enum ManualSprayReviewStatus: Sendable, Hashable {
     case reviewOnly
+    case submitting
     case locallySavedAwaitingServer
     case verificationRequired
     case serverConfirmed
 
     static func resolve(serverConfirmed: Bool, hasRetainedSave: Bool,
-                        hasSubmissionMarker: Bool) -> Self {
+                        hasSubmissionMarker: Bool, isSaving: Bool = false) -> Self {
         if serverConfirmed { return .serverConfirmed }
+        if isSaving { return .submitting }
         if hasRetainedSave { return .locallySavedAwaitingServer }
         if hasSubmissionMarker { return .verificationRequired }
         return .reviewOnly
@@ -22,6 +24,7 @@ nonisolated enum ManualSprayReviewStatus: Sendable, Hashable {
     var label: String {
         switch self {
         case .reviewOnly: "Review only — not yet saved"
+        case .submitting: "Saving original manual spray — do not close"
         case .locallySavedAwaitingServer: "Saved on device — awaiting server confirmation"
         case .verificationRequired: "Submission status unknown — verification required"
         case .serverConfirmed: "Completed — server confirmed"
