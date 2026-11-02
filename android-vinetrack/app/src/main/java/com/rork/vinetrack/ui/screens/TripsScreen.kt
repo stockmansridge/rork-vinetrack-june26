@@ -274,6 +274,8 @@ fun TripsScreen(
      */
     selectedTripId: String? = null,
     onSelectedTripIdChange: (String?) -> Unit = {},
+    /** Called only by a confirmed local Start, not by opening old history. */
+    onTripStarted: (String) -> Unit = { onSelectedTripIdChange(it) },
     /**
      * Repairs/Growth launcher drawn over the live trip HUD, owned by the saved
      * work context. Dropping pins from the HUD is the same pin-drop workflow as
@@ -362,7 +364,12 @@ fun TripsScreen(
             vm = vm,
             state = state,
             onDismiss = { starting = false },
-            onStarted = { id -> starting = false; onSelectedTripIdChange(id) },
+            onStarted = { id ->
+                starting = false
+                // Explicit Start handoff protects this destination from an
+                // immediately stale Trip list, rather than showing its banner.
+                onTripStarted(id)
+            },
         )
     }
 
