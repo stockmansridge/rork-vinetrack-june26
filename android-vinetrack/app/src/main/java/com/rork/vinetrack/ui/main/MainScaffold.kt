@@ -164,12 +164,13 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
         selectedTripId, tab, tool, programOpenCalculator,
     ) {
         val activeId = deviceActive?.id
-        if (activeId == null) {
-            lastAutoOpenedTripId.value = null
-        } else if (selectedTripId == activeId) {
+        // A sync refresh can temporarily hide the same active row. Keep the
+        // already-opened ID through that gap, so a deliberate Back stays Back.
+        // A genuinely new Trip has a different ID and is still eligible.
+        if (activeId != null && selectedTripId == activeId) {
             // The synchronous Start callback already opened the right Trip.
             lastAutoOpenedTripId.value = activeId
-        } else if (TripStartNavigation.shouldOpenUnseenActive(
+        } else if (activeId != null && TripStartNavigation.shouldOpenUnseenActive(
                 lastOpenedTripId = lastAutoOpenedTripId.value,
                 activeTripId = activeId,
                 activeTripVineyardId = deviceActive.vineyardId,
