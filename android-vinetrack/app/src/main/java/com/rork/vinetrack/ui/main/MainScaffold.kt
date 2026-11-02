@@ -149,15 +149,30 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
 
     CalculatorStartDestination(vm, state, work)
 
-    // When a successful local Start reaches the state flow after its original
-    // callback was disposed, open the owned live Trip directly. Only the
-    // transition of an active ID triggers this effect: Back to the Trip list
-    // cannot rebound into the HUD on subsequent recompositions.
+    // Start can publish a local active row before its device-ownership ID or
+    // saved navigation context is hydrated. Re-evaluate when EACH prerequisite
+    // arrives, rather than only when the active ID changes. Latch the exact
+    // opened ID (including a direct Start callback) so Back never rebounds to
+    // the map on subsequent StateFlow emissions or recompositions.
     val deviceActive = state.activeTrip?.takeIf { it.isActive && it.endTime.isNullOrBlank() }
-    LaunchedEffect(deviceActive?.id, state.currentUserId, state.selectedVineyardId) {
-        if (TripStartNavigation.shouldOpenNewlyActive(
-                activeTripId = deviceActive?.id,
-                activeTripVineyardId = deviceActive?.vineyardId,
+    val lastAutoOpenedTripId = remember(state.currentUserId, state.selectedVineyardId) {
+        mutableStateOf<String?>(null)
+    }
+    LaunchedEffect(
+        deviceActive?.id, state.deviceActiveTripId,
+        state.currentUserId, state.selectedVineyardId,
+        selectedTripId, tab, tool, programOpenCalculator,
+    ) {
+        val activeId = deviceActive?.id
+        if (activeId == null) {
+            lastAutoOpenedTripId.value = null
+        } else if (selectedTripId == activeId) {
+            // The synchronous Start callback already opened the right Trip.
+            lastAutoOpenedTripId.value = activeId
+        } else if (lastAutoOpenedTripId.value != activeId &&
+            TripStartNavigation.shouldOpenNewlyActive(
+                activeTripId = activeId,
+                activeTripVineyardId = deviceActive.vineyardId,
                 deviceOwnedTripId = state.deviceActiveTripId,
                 selectedVineyardId = state.selectedVineyardId,
                 userId = state.currentUserId,
@@ -165,8 +180,10 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                 tab = tab,
                 tool = tool,
                 calculatorOpen = programOpenCalculator,
-            )) {
-            work.openCalculatorTrip(requireNotNull(deviceActive).id)
+            )
+        ) {
+            lastAutoOpenedTripId.value = activeId
+            work.openStartedTrip(activeId)
         }
     }
 
@@ -388,6 +405,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                 // the operator IS, so it stays until they leave it.
                 selectedTripId = surface.selectedTripId,
                 onSelectedTripIdChange = { work.setSelectedTripId(it) },
+                onTripStarted = { work.openStartedTrip(it) },
                 hudLauncherMode = surface.hudLauncherMode,
                 onHudLauncherModeChange = { work.setTripHudLauncherMode(it) },
                 onStartSprayTrip = { prefillId ->
