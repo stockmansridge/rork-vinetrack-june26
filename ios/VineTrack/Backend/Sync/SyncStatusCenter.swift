@@ -73,6 +73,14 @@ final class SyncStatusCenter {
     /// Bumped every time the UI requests a manual sync. The main shell
     /// observes this to trigger a full sweep.
     private(set) var manualSyncToken: Int = 0
+    private var diagnosticOwnerId: UUID?
+    private var diagnosticVineyardId: UUID?
+
+    /// Exportable events are only recorded when the actual account/vineyard is known.
+    func setDiagnosticScope(ownerId: UUID?, vineyardId: UUID?) {
+        diagnosticOwnerId = ownerId
+        diagnosticVineyardId = vineyardId
+    }
 
     var pendingTotal: Int { pendingUpserts + pendingDeletes }
     var failedTotal: Int { failedUpserts + failedDeletes }
@@ -99,14 +107,14 @@ final class SyncStatusCenter {
     /// Request a manual full sync from anywhere in the UI.
     func requestManualSync() {
         manualSyncToken &+= 1
-        SyncDiagnosticHistory.record(.manualRequest)
+        SyncDiagnosticHistory.record(.manualRequest, ownerId: diagnosticOwnerId, vineyardId: diagnosticVineyardId)
     }
 
     /// Mark the start of a full sweep.
     func syncDidStart() {
         isSyncing = true
         lastAttemptAt = Date()
-        SyncDiagnosticHistory.record(.sweepStart, pendingUpserts: pendingUpserts, pendingDeletes: pendingDeletes,
+        SyncDiagnosticHistory.record(.sweepStart, ownerId: diagnosticOwnerId, vineyardId: diagnosticVineyardId, pendingUpserts: pendingUpserts, pendingDeletes: pendingDeletes,
             failedUpserts: failedUpserts, failedDeletes: failedDeletes, held: heldSprayPairs)
     }
 
@@ -129,7 +137,7 @@ final class SyncStatusCenter {
         let changed = self.pendingUpserts != upserts || self.pendingDeletes != deletes ||
             self.failedUpserts != failedUpserts || self.failedDeletes != failedDeletes || self.heldSprayPairs != heldSprayPairs
         if changed {
-            SyncDiagnosticHistory.record(.queueChange, pendingUpserts: upserts, pendingDeletes: deletes,
+            SyncDiagnosticHistory.record(.queueChange, ownerId: diagnosticOwnerId, vineyardId: diagnosticVineyardId, pendingUpserts: upserts, pendingDeletes: deletes,
                 failedUpserts: failedUpserts, failedDeletes: failedDeletes, held: heldSprayPairs)
         }
         self.heldSprayPairs = heldSprayPairs
@@ -171,6 +179,7 @@ final class SyncStatusCenter {
         if error != nil { lastFailureAt = now }
         lastError = error
         SyncDiagnosticHistory.record(error == nil ? .sweepFinish : .sweepFailure,
+            ownerId: diagnosticOwnerId, vineyardId: diagnosticVineyardId,
             pendingUpserts: upserts, pendingDeletes: deletes, failedUpserts: failedUpserts,
             failedDeletes: failedDeletes, held: heldSprayPairs, pullSucceeded: pullSucceeded)
     }
@@ -201,9 +210,8 @@ final class SyncStatusCenter {
 }
 
 
-/// Bounded history of controlled sync milestones. It never accepts arbitrary
-/// errors, HTTP bodies, credentials, user IDs, locations or chemical data.
-/// This is a diagnostic timeline, NOT an acknowledgement or server receipt.
+/// Bounded observation history. User/vineyard IDs stay on device solely to
+/// prevent cross-account exports; no IDs, arbitrary text or payloads are shared.
 @MainActor
 enum SyncDiagnosticHistory {
     enum Kind: String, Codable {
@@ -217,6 +225,8 @@ enum SyncDiagnosticHistory {
     struct Entry: Codable {
         let timestamp: String
         let code: String
+        let ownerId: UUID
+        let vineyardId: UUID
         let pendingUpserts: Int
         let pendingDeletes: Int
         let failedUpserts: Int
@@ -225,11 +235,11 @@ enum SyncDiagnosticHistory {
         let pullSucceeded: Bool?
     }
 
-    private static let key = "vinetrack_sync_safe_timeline_v1"
+    private static let key = "vinetrack_sync_safe_timeline_v2"
     private static let limit = 250
     private static let retentionDays: TimeInterval = 14
 
-    static func snapshot(now: Date = Date()) -> [Entry] {
+    private static func all(now: Date = Date()) -> [Entry] {
         guard let bytes = UserDefaults.standard.data(forKey: key),
               let stored = try? JSONDecoder().decode([Entry].self, from: bytes) else { return [] }
         let earliest = now.addingTimeInterval(-retentionDays * 24 * 60 * 60)
@@ -239,22 +249,29 @@ enum SyncDiagnosticHistory {
         }.suffix(limit))
     }
 
-    static func record(_ kind: Kind, pendingUpserts: Int = 0, pendingDeletes: Int = 0,
-                       failedUpserts: Int = 0, failedDeletes: Int = 0, held: Int = 0,
-                       pullSucceeded: Bool? = nil) {
-        var items = snapshot()
+    static func snapshot(ownerId: UUID, vineyardId: UUID) -> [Entry] {
+        all().filter { $0.ownerId == ownerId && $0.vineyardId == vineyardId }
+    }
+
+    static func record(_ kind: Kind, ownerId: UUID?, vineyardId: UUID?,
+                       pendingUpserts: Int = 0, pendingDeletes: Int = 0,
+                       failedUpserts: Int = 0, failedDeletes: Int = 0,
+                       held: Int = 0, pullSucceeded: Bool? = nil) {
+        guard let ownerId, let vineyardId else { return }
+        var items = all()
         items.append(Entry(timestamp: ISO8601DateFormatter().string(from: Date()),
-            code: kind.rawValue, pendingUpserts: max(0, pendingUpserts),
-            pendingDeletes: max(0, pendingDeletes), failedUpserts: max(0, failedUpserts),
-            failedDeletes: max(0, failedDeletes), heldSprayPairs: max(0, held),
-            pullSucceeded: pullSucceeded))
+            code: kind.rawValue, ownerId: ownerId, vineyardId: vineyardId,
+            pendingUpserts: max(0, pendingUpserts), pendingDeletes: max(0, pendingDeletes),
+            failedUpserts: max(0, failedUpserts), failedDeletes: max(0, failedDeletes),
+            heldSprayPairs: max(0, held), pullSucceeded: pullSucceeded))
         if let bytes = try? JSONEncoder().encode(Array(items.suffix(limit))) {
             UserDefaults.standard.set(bytes, forKey: key)
         }
     }
 
-    /// Prevent any timeline surviving an account switch or sign out.
     static func clear() {
         UserDefaults.standard.removeObject(forKey: key)
+        // Remove earlier unscoped draft history if it exists on a test device.
+        UserDefaults.standard.removeObject(forKey: "vinetrack_sync_safe_timeline_v1")
     }
 }
