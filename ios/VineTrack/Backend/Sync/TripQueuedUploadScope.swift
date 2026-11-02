@@ -29,6 +29,29 @@ nonisolated enum TripQueuedUploadScope: String, Sendable, Hashable {
     var eligibleForCurrentVineyardUpload: Bool { self == .selectedSlice }
 }
 
+/// Read-only distinction between pending queue entries on the selected vineyard
+/// and legacy IDs whose original account/vineyard is not established in this
+/// loaded slice. Never treats a foreign failure as failure of the selected
+/// vineyard, nor an absent original snapshot as an acknowledged upload.
+nonisolated struct TripQueuedScopeSummary: Equatable {
+    let selectedQueuedCount: Int
+    let outsideSelectedQueuedCount: Int
+    let selectedFailedCount: Int
+    var unresolvedCount: Int { selectedQueuedCount + outsideSelectedQueuedCount }
+
+    static func evaluate(
+        queuedIds: Set<UUID>, failedIds: Set<UUID>, selectedVineyardId: UUID,
+        visibleTripVineyards: [UUID: UUID]
+    ) -> Self {
+        let selected = queuedIds.filter { visibleTripVineyards[$0] == selectedVineyardId }
+        return Self(
+            selectedQueuedCount: selected.count,
+            outsideSelectedQueuedCount: queuedIds.count - selected.count,
+            selectedFailedCount: failedIds.intersection(selected).count
+        )
+    }
+}
+
 /** A server tombstone cannot acknowledge a different outstanding local upload.
  * This policy never clears Trip queue entries, operation journals or local data.
  */
