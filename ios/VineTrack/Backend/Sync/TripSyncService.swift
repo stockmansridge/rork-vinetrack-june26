@@ -305,7 +305,8 @@ final class TripSyncService {
         var lines = ["VineTrack retained operation inspection v2", "platform: iOS",
             "version: \(bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown")",
             "build: \(bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")",
-            "source_revision: unknown_no_verified_build_receipt",
+            "source_revision: \(bundle.object(forInfoDictionaryKey: "VineTrackSourceRevision") as? String ?? "unknown_no_verified_build_receipt")",
+            "source_revision_attestation: compare_embedded_sha_with_signed_archive_build_receipt",
             // This code marker proves the installed build includes the new
             // Issue #43 UI/admission logic, not its exact signed Git SHA.
             "issue43_feature_marker: separate_spray_confirmation_scoped_trip_history_auto_end_readback_v1",
@@ -373,8 +374,9 @@ final class TripSyncService {
             "version: \(bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown")",
             "build: \(bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")",
             "source_revision: \(bundle.object(forInfoDictionaryKey: "VineTrackSourceRevision") as? String ?? "unknown_unverified_build")",
-            "no_write_no_replay_no_ack: true",
-            "server_receipts: inspected_only_not_persisted"
+            "no_server_write_no_queue_mutation_no_replay_no_ack: true",
+            "server_receipts: inspected_only_not_persisted",
+            "source_revision_attestation: compare_embedded_sha_with_signed_archive_build_receipt"
         ]
         guard !isSyncing else {
             return (lines + ["status: SYNC_ALREADY_IN_PROGRESS; no inspection performed"]).joined(separator: "\n")
