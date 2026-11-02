@@ -27,6 +27,9 @@ struct SyncDiagnosticsView: View {
     @Environment(SyncStatusCenter.self) private var syncStatusCenter
 
     @State private var copyConfirmation: String?
+    @State private var showFullLogExporter = false
+    @State private var fullLogDocument: RetainedRecoveryEvidenceDocument?
+    @State private var fullLogMessage: String?
     @State private var confirmRecoveryExport = false
     @State private var preparingRecoveryExport = false
     @State private var showRecoveryExporter = false
@@ -74,6 +77,11 @@ struct SyncDiagnosticsView: View {
             footerSection
         }
         .navigationTitle("Sync Diagnostics")
+        .fileExporter(isPresented: $showFullLogExporter, document: fullLogDocument, contentType: .json,
+            defaultFilename: "VineTrack-Sync-Support-iOS") { result in
+            fullLogMessage = { if case .success = result { return "Diagnostic report saved. No records were changed." }; return "Export cancelled or failed." }()
+            fullLogDocument = nil
+        }
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("Export sensitive retained evidence?", isPresented: $confirmRecoveryExport, titleVisibility: .visible) {
             Button("Prepare read-only export") { prepareRecoveryExport() }
@@ -297,6 +305,16 @@ struct SyncDiagnosticsView: View {
             }
             .disabled(syncStatusCenter.isSyncing || !auth.isSignedIn || store.selectedVineyardId == nil)
 
+            if systemAdmin.isSystemAdmin {
+                Button {
+                    exportFullDiagnosticLog()
+                } label: {
+                    Label("Export Full Diagnostic Log", systemImage: "square.and.arrow.up.on.square")
+                }
+                Text("Local-only, read-only support report: sync timeline and current queue summary. No raw records, secrets or photographs.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let fullLogMessage { Text(fullLogMessage).font(.footnote) }
+            }
             Button {
                 copyDiagnostics()
             } label: {
@@ -1235,6 +1253,68 @@ struct SyncDiagnosticsView: View {
     }
 
     // MARK: - Actions
+
+    private func exportFullDiagnosticLog() {
+        guard auth.isSignedIn, systemAdmin.isSystemAdmin, !systemAdmin.isLoading,
+              systemAdmin.lastLoadedAt != nil, let currentOwner = auth.userId,
+              let selected = store.selectedVineyardId else {
+            fullLogMessage = "A signed-in, verified platform administrator and selected vineyard are required."
+            return
+        }
+        // Safe timeline contains only numeric counts and fixed event codes.
+        // For existing diagnostics use an allowlisted summary; do not place the
+        // raw general-purpose diagnosticsText() or recovery evidence in this file.
+        let visible = rows.map { row in
+            ["domain": row.id, "local": String(row.localCount),
+             "pending_upserts": String(row.pendingUpserts), "pending_deletes": String(row.pendingDeletes),
+             "status": row.status.rawValue,
+             "last_sync": row.lastSync?.ISO8601Format() ?? "unknown"]
+        }
+        let entries = SyncDiagnosticHistory.snapshot().map { e in
+            ["timestamp": e.timestamp, "code": e.code,
+             "pending_upserts": String(e.pendingUpserts), "pending_deletes": String(e.pendingDeletes),
+             "failed_upserts": String(e.failedUpserts), "failed_deletes": String(e.failedDeletes),
+             "held_spray_pairs": String(e.heldSprayPairs),
+             "pull_succeeded": e.pullSucceeded.map(String.init) ?? "unknown"]
+        }
+        let report: [String: Any] = [
+            "format": "vinetrack.sync.support.v1", "platform": "ios",
+            "generated_at": Date().ISO8601Format(),
+            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
+            "app_build": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
+            "scope": "verified_system_admin_selected_vineyard",
+            "account_scope": "current_session_only",
+            "vineyard_scope": "selected_vineyard_only",
+            "owner_guard": currentOwner.uuidString.isEmpty ? "invalid" : "confirmed",
+            "selected_vineyard_guard": selected.uuidString.isEmpty ? "invalid" : "confirmed",
+            "sync_running": syncStatusCenter.isSyncing,
+            "last_attempt": syncStatusCenter.lastAttemptAt?.ISO8601Format() ?? "unknown",
+            "last_full_sync": syncStatusCenter.lastFullSyncAt?.ISO8601Format() ?? "unknown",
+            "last_successful_sync": syncStatusCenter.lastSuccessfulSyncAt?.ISO8601Format() ?? "unknown",
+            "last_pull": syncStatusCenter.lastPullAt?.ISO8601Format() ?? "unknown",
+            "last_upload": syncStatusCenter.lastUploadAt?.ISO8601Format() ?? "unknown",
+            "queue": ["pending_upserts": syncStatusCenter.pendingUpserts,
+                      "pending_deletes": syncStatusCenter.pendingDeletes,
+                      "failed_upserts": syncStatusCenter.failedUpserts,
+                      "failed_deletes": syncStatusCenter.failedDeletes,
+                      "held_spray_pairs": syncStatusCenter.heldSprayPairs],
+            "domains": visible, "events": entries,
+            "limitations": [
+                "Does not contain raw HTTP traffic, payloads, credentials, or server audit logs.",
+                "Event history begins when this build first runs. Old errors cannot be reconstructed.",
+                "Count changes are observations, not successful Supabase acknowledgements.",
+                "Current domain counters may exclude retained records not loaded into memory.",
+                "Separate sensitive retained recovery evidence export is intentionally excluded."
+            ]
+        ]
+        guard let bytes = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]),
+              auth.userId == currentOwner, store.selectedVineyardId == selected, systemAdmin.isSystemAdmin else {
+            fullLogMessage = "Could not prepare report; account or vineyard may have changed."
+            return
+        }
+        fullLogDocument = RetainedRecoveryEvidenceDocument(data: bytes)
+        showFullLogExporter = true
+    }
 
     private func prepareRecoveryExport() {
         guard !preparingRecoveryExport, let owner = auth.userId else { return }
