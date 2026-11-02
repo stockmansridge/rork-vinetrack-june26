@@ -20,6 +20,10 @@ final class SystemAdminService {
     private(set) var isLoading: Bool = false
     private(set) var lastError: String?
     private(set) var lastLoadedAt: Date?
+    /// The signed-in Supabase account whose current admin result was verified.
+    private(set) var verifiedAccountId: UUID?
+    /// Invalidates pending async auth results on refresh and sign-out.
+    private var authorizationGeneration: UInt64 = 0
 
     private let repository: SupabaseSystemAdminRepository
 
@@ -62,24 +66,47 @@ final class SystemAdminService {
     /// Refresh admin status + flags. Safe to call on launch and on settings
     /// open — failures are stored in `lastError` but never throw to the UI.
     func refresh() async {
-        let performanceAccount = SupabaseClientProvider.shared.client.auth.currentUser?.id
+        authorizationGeneration &+= 1
+        let generation = authorizationGeneration
+        let startingAccount = SupabaseClientProvider.shared.client.auth.currentUser?.id
         PerformanceCapture.shared.suspendAuthorization()
+        isSystemAdmin = false
+        verifiedAccountId = nil
         isLoading = true
+        lastLoadedAt = nil
         lastError = nil
-        defer { isLoading = false }
+        defer {
+            if generation == authorizationGeneration { isLoading = false }
+        }
+        guard let startingAccount else {
+            PerformanceCapture.shared.authorize(false)
+            return
+        }
         do {
             async let adminTask = repository.isSystemAdmin()
             async let flagsTask = repository.fetchFlags()
             let (admin, flagList) = try await (adminTask, flagsTask)
+            // Never apply the results of account A after account B logs in,
+            // or after a newer admin check invalidates this generation.
+            guard generation == authorizationGeneration,
+                  startingAccount == SupabaseClientProvider.shared.client.auth.currentUser?.id else {
+                return
+            }
             isSystemAdmin = admin
-            PerformanceCapture.shared.authorize(admin && performanceAccount == SupabaseClientProvider.shared.client.auth.currentUser?.id)
+            verifiedAccountId = admin ? startingAccount : nil
+            PerformanceCapture.shared.authorize(admin)
             var map: [String: SystemFeatureFlag] = [:]
             for flag in flagList { map[flag.key] = flag }
             flags = map
             lastLoadedAt = Date()
         } catch {
+            guard generation == authorizationGeneration,
+                  startingAccount == SupabaseClientProvider.shared.client.auth.currentUser?.id else {
+                return
+            }
             lastError = error.localizedDescription
             isSystemAdmin = false
+            verifiedAccountId = nil
             PerformanceCapture.shared.authorize(false)
         }
     }
@@ -88,7 +115,8 @@ final class SystemAdminService {
     /// optimistically and reloads from Supabase on completion.
     @discardableResult
     func setFlag(key: String, isEnabled: Bool) async -> Bool {
-        guard isSystemAdmin else {
+        guard isSystemAdmin, verifiedAccountId != nil,
+              verifiedAccountId == SupabaseClientProvider.shared.client.auth.currentUser?.id else {
             lastError = "System admin required."
             return false
         }
@@ -117,6 +145,8 @@ final class SystemAdminService {
     }
 
     func clearOnSignOut() {
+        authorizationGeneration &+= 1
+        verifiedAccountId = nil
         SyncDiagnosticHistory.clear()
         PerformanceCapture.shared.revoke()
         isSystemAdmin = false
