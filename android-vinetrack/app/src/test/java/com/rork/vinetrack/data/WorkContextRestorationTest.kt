@@ -2,6 +2,9 @@ package com.rork.vinetrack.data
 
 import androidx.lifecycle.SavedStateHandle
 import com.rork.vinetrack.ui.main.MainTab
+import com.rork.vinetrack.ui.main.MainSurface
+import com.rork.vinetrack.ui.main.TripsKnowledge
+import com.rork.vinetrack.ui.main.TripsListKnowledge
 import com.rork.vinetrack.ui.main.TripStartNavigation
 import com.rork.vinetrack.ui.main.PinWorkflow
 import com.rork.vinetrack.ui.main.ToolRoute
@@ -242,6 +245,104 @@ class WorkContextRestorationTest {
         assertFalse(shouldOpen(tab = MainTab.Program, calculatorOpen = false))
         assertFalse(shouldOpen(tool = ToolRoute.Growth))
         assertTrue(shouldOpen(tab = MainTab.Program, calculatorOpen = true))
+    }
+
+    @Test
+    fun `a confirmed Start enters live Trip even when previous authoritative list is missing it`() {
+        val handle = SavedStateHandle()
+        val work = WorkContextViewModel(handle)
+        work.bindIdentity("operator", "vineyard-a")
+        work.openTab(MainTab.Trip)
+        val staleList = TripsKnowledge(
+            knownIds = setOf("old-trip"), activeIds = emptySet(),
+            listKnowledge = TripsListKnowledge.Authoritative,
+        )
+        work.reconcileTripContext(staleList)
+
+        // Trip creation succeeded locally; a remote list from BEFORE the Start
+        // must not evict the exact new destination while the state flow catches up.
+        work.openStartedTrip("new-trip")
+        work.reconcileTripContext(staleList)
+        assertEquals(MainSurface.TripTab("new-trip", null), MainSurface.of(work.snapshot()))
+        assertEquals("new-trip", handle.get<String>("work_pending_started_trip"))
+
+        // Activity recreation keeps the exact target and the handoff latch.
+        val restored = recreate(handle)
+        restored.reconcileTripContext(staleList)
+        assertEquals("new-trip", restored.selectedTripId.value)
+
+        val liveList = TripsKnowledge(
+            knownIds = setOf("old-trip", "new-trip"), activeIds = setOf("new-trip"),
+            listKnowledge = TripsListKnowledge.Authoritative,
+        )
+        restored.reconcileTripContext(liveList)
+        assertEquals("new-trip", restored.selectedTripId.value)
+        restored.setSelectedTripId(null) // operator consciously pressed Back
+        restored.reconcileTripContext(liveList)
+        assertNull(restored.selectedTripId.value)
+    }
+
+    @Test
+    fun `a queued spray activated in place is not dropped by a stale inactive snapshot`() {
+        val handle = SavedStateHandle()
+        val work = WorkContextViewModel(handle)
+        work.bindIdentity("operator", "vineyard-a")
+        val oldList = TripsKnowledge(
+            knownIds = setOf("queued-spray"), activeIds = emptySet(),
+            listKnowledge = TripsListKnowledge.Authoritative,
+        )
+        work.reconcileTripContext(oldList)
+        work.setTab(MainTab.Program)
+        work.setSelectedTripId("queued-spray") // last displayed as inactive
+        work.openStartedTrip("queued-spray") // same original ID, no new trip created
+        work.reconcileTripContext(oldList)
+
+        assertEquals(MainTab.Trip, work.tab.value)
+        assertEquals("queued-spray", work.selectedTripId.value)
+        assertEquals("queued-spray", handle.get<String>("work_pending_started_trip"))
+        assertEquals(MainSurface.TripTab("queued-spray", null), MainSurface.of(work.snapshot()))
+
+        // A known active record closes the temporary handoff; Back remains Back.
+        work.reconcileTripContext(oldList.copy(activeIds = setOf("queued-spray")))
+        assertNull(handle.get<String>("work_pending_started_trip"))
+        work.setSelectedTripId(null)
+        work.reconcileTripContext(oldList.copy(activeIds = setOf("queued-spray")))
+        assertNull(work.selectedTripId.value)
+    }
+
+    @Test
+    fun `switching identity cancels the confirmed Start destination`() {
+        val handle = SavedStateHandle()
+        val work = WorkContextViewModel(handle)
+        work.bindIdentity("operator", "vineyard-a")
+        work.openStartedTrip("trip-in-vineyard-a")
+        assertEquals("trip-in-vineyard-a", handle.get<String>("work_pending_started_trip"))
+        work.bindIdentity("operator", "vineyard-b")
+        assertNull(work.selectedTripId.value)
+        assertNull(handle.get<String>("work_pending_started_trip"))
+        assertEquals(MainSurface.TripTab(null, null), MainSurface.of(work.snapshot()))
+    }
+
+    @Test
+    fun `late device ownership retries auto navigation but Back cannot bounce`() {
+        fun shouldOpen(deviceOwner: String?, alreadyOpened: String?): Boolean =
+            TripStartNavigation.shouldOpenUnseenActive(
+                lastOpenedTripId = alreadyOpened,
+                activeTripId = "started-trip",
+                activeTripVineyardId = "vineyard-a",
+                deviceOwnedTripId = deviceOwner,
+                selectedVineyardId = "vineyard-a",
+                userId = "operator",
+                selectedTripId = null,
+                tab = MainTab.Trip,
+                tool = null,
+                calculatorOpen = false,
+            )
+
+        assertFalse(shouldOpen(deviceOwner = null, alreadyOpened = null))
+        assertTrue(shouldOpen(deviceOwner = "started-trip", alreadyOpened = null))
+        assertFalse(shouldOpen(deviceOwner = "started-trip", alreadyOpened = "started-trip"))
+        assertFalse(shouldOpen(deviceOwner = "foreign-trip", alreadyOpened = null))
     }
 
     @Test
