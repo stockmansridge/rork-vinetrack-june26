@@ -201,11 +201,17 @@ final class SprayTankActualStore {
         var reasons: [String: Int] = [:]
         var details: [String] = []
         for actual in queued {
+            // Align the diagnostic with the ACTUAL upload gate below.
+            // A locally missing "parent established" cache bit alone is
+            // not proof that the parent is missing on the server.
+            let parentBlocked = tripSync?.isPendingParentCreation(actual.tripId) ?? true
+            let sprayPending = spraySync?.isPendingUpsert(actual.sprayRecordId) ?? true
             let decision = SprayTankActualUploadGate.decide(
-                parentTripBlocked: tripSync?.inspectionParentPending(actual.tripId) ?? true,
-                sprayRecordPending: spraySync?.isPendingUpsert(actual.sprayRecordId) ?? true)
-            let reason = decision == .upload ? "ACTUAL_USE_READY_TO_UPLOAD" :
-                (tripSync?.inspectionParentPending(actual.tripId) != false ? "ACTUAL_USE_WAITING_FOR_TRIP_PARENT" : "ACTUAL_USE_WAITING_FOR_SPRAY_RECORD")
+                parentTripBlocked: parentBlocked, sprayRecordPending: sprayPending)
+            let reason = decision == .upload
+                ? "ACTUAL_USE_GATE_OPEN_SERVER_TANK_SESSION_AND_ACTUAL_READBACK_REQUIRED"
+                : (parentBlocked ? "ACTUAL_USE_PARENT_CREATION_OR_DELETION_HELD"
+                                  : "ACTUAL_USE_SPRAY_RECORD_UPLOAD_HELD")
             reasons[reason, default: 0] += 1
             if let ownerId, tripSync?.verifiedDiagnosticsOwner == ownerId, actual.confirmedBy == ownerId,
                trips.contains(where: { $0.id == actual.tripId && $0.vineyardId == vineyardId }) {
