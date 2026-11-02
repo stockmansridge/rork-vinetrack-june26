@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - 'ios/VineTrack/Backend/Sync/TripQueuedUploadScope.swift'
+      - 'ios/VineTrack/Backend/Sync/OccurrenceStartAdmission.swift'
+      - 'ios/VineTrack/App/SprayCalculatorView.swift'
+      - 'ios/VineTrackTests/SprayOccurrenceRecoveryHotfixTests.swift'
       - 'ios/VineTrack/Backend/Sync/TripSyncService.swift'
       - 'ios/VineTrack/Backend/Sync/SprayTankActualStore.swift'
       - 'ios/VineTrackTests/TripQueuedUploadScopeTests.swift'
@@ -83,6 +86,8 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/Issue43MainTripQueue.xcresult" \
             -parallel-testing-enabled NO \
             -only-testing:VineTrackTests/TripQueuedUploadScopeTests \
+            -only-testing:VineTrackTests/SprayOccurrenceRecoveryHotfixTests/testOverlappingUnconfirmedStartRequiresDistinctWorkConsentWithoutDiscardingOriginal \
+            -only-testing:VineTrackTests/SprayOccurrenceRecoveryHotfixTests/testOccurrenceStartAdmissionDecisions \
             -only-testing:VineTrackTests/TrackedSprayCompletionSyncTests \
             -only-testing:VineTrackTests/TripClosureStatusTests \
             -only-testing:VineTrackTests/TankDependencyVerificationTests \
