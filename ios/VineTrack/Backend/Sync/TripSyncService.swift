@@ -21,6 +21,9 @@ final class TripSyncService {
     var syncStatus: Status = .idle
     var lastSyncDate: Date?
     var errorMessage: String?
+    /// Per-Trip original-evidence hold after an exact server read. This is a
+    /// transient explanation, not a receipt or authority to replay anything.
+    private(set) var receiptReconciliationHolds: [UUID: String] = [:]
 
     private func isHeld(_ id: UUID) -> Bool {
         guard let store else { return false }
@@ -1301,6 +1304,7 @@ final class TripSyncService {
               backendTrip.vineyardId == vineyardId else { return }
         store.applyRemoteTripUpsert(reconciled)
         if retainedUnacknowledgedEvidence || reconciliationHold != nil {
+            receiptReconciliationHolds[backendTrip.id] = reconciliationHold ?? "TRIP_LOCAL_EVIDENCE_DIFFERS"
             if metadata.pendingUpserts[backendTrip.id] == nil { metadata.markDirty(backendTrip.id, at: Date()) }
             metadata.markUpsertsFailed([backendTrip.id])
             errorMessage = "Completed Trip is ended on the server, but original local evidence remains held (\(reconciliationHold ?? "TRIP_LOCAL_EVIDENCE_DIFFERS")). The Trip was not reopened or uploaded again."
@@ -1312,16 +1316,19 @@ final class TripSyncService {
             if wasQueued {
                 do {
                     try metadata.acknowledgeVerifiedCompleted(backendTrip.id)
+                    receiptReconciliationHolds.removeValue(forKey: backendTrip.id)
                     SyncIssueCenter.shared.clearIssues([backendTrip.id])
                 } catch {
                     // A server match without durable on-device acknowledgement
                     // is still pending. Keep the original failed queue and
                     // avoid a false green state or loss after cold restart.
+                    receiptReconciliationHolds[backendTrip.id] = "TRIP_VERIFIED_END_RECEIPT_PERSIST_FAILED"
                     errorMessage = "TRIP_VERIFIED_END_RECEIPT_PERSIST_FAILED: original queue retained."
                     syncStatus = .failure(errorMessage ?? "Trip receipt could not be saved.")
                 }
             } else {
                 metadata.clearDirty([backendTrip.id])
+                receiptReconciliationHolds.removeValue(forKey: backendTrip.id)
                 SyncIssueCenter.shared.clearIssues([backendTrip.id])
             }
         }
