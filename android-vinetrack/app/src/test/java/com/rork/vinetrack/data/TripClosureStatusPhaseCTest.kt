@@ -5,6 +5,7 @@ import com.rork.vinetrack.data.TripClosureStatus.Marker
 import com.rork.vinetrack.data.TripClosureStatus.ServerEvidence
 import com.rork.vinetrack.data.TripClosureStatus.State
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -25,6 +26,20 @@ class TripClosureStatusPhaseCTest {
         holds: List<String> = emptyList(),
     ) = Input("3bfb7f81-2ae2-4f33-8fd8-6666b2b45393", evidence, active, end, serverSessions, locallyEnded,
         markers, occurrence, occurrenceHeld, actualSessions, pendingActuals, holds)
+
+    @Test fun completedTripReadbackComparesTheSameInstantAcrossPostgresUtcFormats() {
+        // Android's original End writes Z; PostgREST can read back +00:00.
+        // Reusing the linked-Spray exact-instant matcher avoids false scope
+        // failure without tolerating any changed End time.
+        val original = "2026-11-02T23:12:06.123405Z"
+        val postgres = "2026-11-02T23:12:06.123405+00:00"
+        val changed = "2026-11-02T23:12:06.123406+00:00"
+
+        assertTrue(TrackedSprayCompletionSync.sameTime(original, postgres))
+        assertFalse(TrackedSprayCompletionSync.sameTime(original, changed))
+        assertFalse(TrackedSprayCompletionSync.sameTime(original, null))
+        assertFalse(TrackedSprayCompletionSync.sameTime(null, postgres))
+    }
 
     @Test fun allAcknowledgedAndTerminalIsClosedSynced() {
         val r = TripClosureStatus.evaluate(closed())
