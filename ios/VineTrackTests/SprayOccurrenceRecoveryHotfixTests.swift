@@ -138,6 +138,14 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
         XCTAssertNil(before.heldReason)
         let tracking = TripTrackingService()
         tracking.configure(store: store, locationService: LocationService())
+        // A second start of the SAME original spray identity may never be
+        // authorised as separate work, even after confirming the dialog.
+        let originalRecipe = SprayRecord(tripId: original.id, vineyardId: vineyard)
+        store.sprayRecords = [originalRecipe]
+        XCTAssertThrowsError(try tracking.requireResolvedOccurrenceStarts(
+            vineyardId: vineyard, blockIds: [cabFranc],
+            newSprayRecord: originalRecipe, distinctWorkConfirmed: true))
+        XCTAssertEqual(try journal.load(), before)
 
         // Overlapping blocks alone are ambiguous; no operator approval means
         // no journal mutation and no new Trip identity.
