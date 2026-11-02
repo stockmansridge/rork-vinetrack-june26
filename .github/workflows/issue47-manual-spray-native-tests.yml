@@ -134,6 +134,7 @@ jobs:
             -parallel-testing-enabled NO \
             -only-testing:VineTrackTests/ManualSprayReviewStatusTests \
             -only-testing:VineTrackTests/ManualSprayEntryWorkflowTests/testIssue47ReopenedOutboxAndBackgroundAckRemainFailClosed \
+            -only-testing:VineTrackTests/ManualSprayEntryWorkflowTests/testIssue47CanonicalReportMustMatchExactOriginalActuals \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/issue47-ios-native.log"
       - name: Save native iOS receipts
         if: always()
