@@ -187,9 +187,10 @@ fun ManualSprayEntrySheet(
     // @remember alone cannot survive dismissal/process restoration.
     val hasRetainedSave = vm.pendingManualSprayOperations().any {
         it.kind == com.rork.vinetrack.data.PendingManualSprayKind.SAVE &&
-            it.payload.vineyardId == vineyardId
+            it.payload.vineyardId == vineyardId &&
+            it.payload.manualEntryId == identities.first
     }
-    val hasSubmissionMarker = submissionGuard.submittedId(verifiedOwnerId, vineyardId) != null
+    val hasSubmissionMarker = submissionGuard.submittedId(verifiedOwnerId, vineyardId, identities.first) != null
     val reviewStatus = manualSprayReviewStatus(
         serverConfirmed = savedTripId != null,
         hasRetainedSave = hasRetainedSave,
