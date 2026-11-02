@@ -1275,7 +1275,7 @@ struct SyncDiagnosticsView: View {
              "pending_upserts": String(e.pendingUpserts), "pending_deletes": String(e.pendingDeletes),
              "failed_upserts": String(e.failedUpserts), "failed_deletes": String(e.failedDeletes),
              "held_spray_pairs": String(e.heldSprayPairs),
-             "pull_succeeded": e.pullSucceeded.map(String.init) ?? "unknown"]
+             "pull_succeeded": e.pullSucceeded.map { $0 ? "true" : "false" } ?? "unknown"]
         }
         let report: [String: Any] = [
             "format": "vinetrack.sync.support.v1", "platform": "ios",
