@@ -1,0 +1,77 @@
+import Foundation
+import XCTest
+@testable import VineTrack
+
+/// Issue #43 / build 202: legacy Trip upload queue is global, while the app
+/// applies only the currently selected vineyard's Trip cache slice.
+/// These regressions must never require production data or network access.
+final class TripQueuedUploadScopeTests: XCTestCase {
+    func testCurrentVineyardOriginalEligibleOnlyWhenPresentInSelectedSlice() {
+        let vineyard = UUID(), id = UUID()
+        let status = TripQueuedUploadScope.classify(
+            tripId: id, selectedVineyardId: vineyard,
+            selectedTrips: [id: vineyard], persistedTrips: [id: vineyard])
+        XCTAssertEqual(status, .selectedSlice)
+        XCTAssertTrue(status.eligibleForCurrentVineyardUpload)
+    }
+
+    func testOtherLocallyCachedVineyardNeverGetsUploadedUnderCurrentVineyard() {
+        let selected = UUID(), testing = UUID(), foreign = UUID()
+        let status = TripQueuedUploadScope.classify(
+            tripId: foreign, selectedVineyardId: selected,
+            selectedTrips: [:], persistedTrips: [foreign: testing])
+        XCTAssertEqual(status, .persistedOtherVineyard)
+        XCTAssertFalse(status.eligibleForCurrentVineyardUpload)
+    }
+
+    func testSnapshotForCurrentVineyardNotLoadedCannotBeRecreatedFromMetadata() {
+        let vineyard = UUID(), original = UUID()
+        let status = TripQueuedUploadScope.classify(
+            tripId: original, selectedVineyardId: vineyard,
+            selectedTrips: [:], persistedTrips: [original: vineyard])
+        XCTAssertEqual(status, .persistedCurrentVineyardNotLoaded)
+        XCTAssertFalse(status.eligibleForCurrentVineyardUpload)
+    }
+
+    func testAbsentSnapshotDoesNotBecomeRetryableUploadOrDeletionAcknowledgement() {
+        let missing = UUID()
+        let status = TripQueuedUploadScope.classify(
+            tripId: missing, selectedVineyardId: UUID(),
+            selectedTrips: [:], persistedTrips: [:])
+        XCTAssertEqual(status, .noLocalSnapshot)
+        XCTAssertFalse(status.eligibleForCurrentVineyardUpload)
+    }
+
+    func testLocalForeignVineyardScopeWinsOverSelectedSliceMislabelling() {
+        let selected = UUID(), other = UUID(), id = UUID()
+        let status = TripQueuedUploadScope.classify(
+            tripId: id, selectedVineyardId: selected,
+            selectedTrips: [id: other], persistedTrips: [id: selected])
+        XCTAssertEqual(status, .persistedOtherVineyard)
+        XCTAssertFalse(status.eligibleForCurrentVineyardUpload)
+    }
+
+    func testRemoteSoftDeletionCannotDiscardUnresolvedOriginalUpload() {
+        XCTAssertFalse(TripServerTombstonePolicy.mayApplyRemoteDeletion(
+            hasOriginalPendingUpload: true))
+        XCTAssertTrue(TripServerTombstonePolicy.mayApplyRemoteDeletion(
+            hasOriginalPendingUpload: false))
+    }
+
+    @MainActor func testScopeClassificationDoesNotMutatePersistedQueue() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("TripQueuedScope-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let metadata = TripSyncMetadata(persistence: PersistenceStore(directory: directory))
+        let foreign = UUID()
+        metadata.markDirty(foreign, at: Date(timeIntervalSince1970: 1_700_000_000))
+        let before = metadata.pendingUpserts
+        let status = TripQueuedUploadScope.classify(
+            tripId: foreign, selectedVineyardId: UUID(),
+            selectedTrips: [:], persistedTrips: [:])
+        XCTAssertFalse(status.eligibleForCurrentVineyardUpload)
+        XCTAssertEqual(metadata.pendingUpserts, before)
+        let reloaded = TripSyncMetadata(persistence: PersistenceStore(directory: directory))
+        XCTAssertEqual(reloaded.pendingUpserts, before)
+    }
+}
