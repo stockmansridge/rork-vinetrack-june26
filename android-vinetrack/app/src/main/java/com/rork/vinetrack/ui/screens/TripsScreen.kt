@@ -5897,6 +5897,7 @@ private fun TripClosureCard(vm: AppViewModel, state: AppUiState, trip: Trip) {
         shown.state == com.rork.vinetrack.data.TripClosureStatus.State.SERVER_STATE_UNCONFIRMED
     // A CLOSED_SYNCED local acknowledgement awaiting a *fresh* read is not a
     // failed upload. Give it a neutral indicator; keep genuine holds/warnings.
+    // Only the independent server receipt may collapse this card to green.
     val verifyingReadback = shown.state == com.rork.vinetrack.data.TripClosureStatus.State.CLOSED_SYNCED && verified == null
     var successDetailsExpanded by rememberSaveable(trip.id) { mutableStateOf(false) }
 
