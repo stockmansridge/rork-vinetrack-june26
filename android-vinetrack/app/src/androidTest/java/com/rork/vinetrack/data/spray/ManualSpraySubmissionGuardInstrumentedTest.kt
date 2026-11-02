@@ -28,14 +28,15 @@ class ManualSpraySubmissionGuardInstrumentedTest {
             assertTrue(first.mark(owner, vineyard, original))
             // New instance reads original durable FieldStoreAccess prefs.
             val reopened = ManualSpraySubmissionGuard(app)
-            assertEquals(original, reopened.submittedId(owner, vineyard))
-            assertFalse(reopened.mark(owner, vineyard, alternate))
-            assertNull(reopened.submittedId(otherOwner, vineyard))
-            assertNull(reopened.submittedId(owner, otherVineyard))
+            assertEquals(original, reopened.submittedId(owner, vineyard, original))
+            assertTrue(reopened.mark(owner, vineyard, alternate))
+            assertEquals(alternate, reopened.submittedId(owner, vineyard, alternate))
+            assertNull(reopened.submittedId(otherOwner, vineyard, original))
+            assertNull(reopened.submittedId(owner, otherVineyard, original))
             reopened.clearIfMatching(owner, vineyard, alternate)
-            assertEquals(original, reopened.submittedId(owner, vineyard))
+            assertEquals(original, reopened.submittedId(owner, vineyard, original))
             reopened.clearIfMatching(owner, vineyard, original)
-            assertNull(reopened.submittedId(owner, vineyard))
+            assertNull(reopened.submittedId(owner, vineyard, original))
         } finally {
             first.clearIfMatching(owner, vineyard, original)
         }
