@@ -7,6 +7,8 @@ on:
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/VineyardInsightsScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ScoutReportScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SprayCalculatorScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/components/SprayGuidedComponents.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/main/MainScaffold.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/main/WorkContextViewModel.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/main/CalculatorStartDestination.kt'
