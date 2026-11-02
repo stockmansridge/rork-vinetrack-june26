@@ -3,7 +3,7 @@ import Foundation
 /// Classification only. Legacy Trip upload metadata is keyed by Trip ID, not
 /// account+vineyard. It must never be interpreted as permission to replay
 /// against whichever vineyard happens to be selected.
-nonisolated enum TripQueuedUploadScope: String, Sendable, Equatable {
+nonisolated enum TripQueuedUploadScope: String, Sendable, Hashable {
     case selectedSlice = "SELECTED_SLICE"
     case persistedCurrentVineyardNotLoaded = "CURRENT_VINEYARD_SNAPSHOT_NOT_LOADED"
     case persistedOtherVineyard = "OTHER_VINEYARD_SNAPSHOT_PROTECTED"
@@ -27,4 +27,13 @@ nonisolated enum TripQueuedUploadScope: String, Sendable, Equatable {
     /// The only scope eligible to reach the existing Trip upload path. This is
     /// NOT an upload ACK; all the other eligibility/retention gates still apply.
     var eligibleForCurrentVineyardUpload: Bool { self == .selectedSlice }
+}
+
+/** A server tombstone cannot acknowledge a different outstanding local upload.
+ * This policy never clears Trip queue entries, operation journals or local data.
+ */
+nonisolated enum TripServerTombstonePolicy {
+    static func mayApplyRemoteDeletion(hasOriginalPendingUpload: Bool) -> Bool {
+        !hasOriginalPendingUpload
+    }
 }
