@@ -15,7 +15,9 @@ fun CalculatorStartDestination(vm: AppViewModel, state: AppUiState, work: WorkCo
         val result = outcome ?: return@LaunchedEffect
         val id = result.tripId ?: return@LaunchedEffect
         if (result.isStarted && result.ownerId == state.currentUserId && result.vineyardId == state.selectedVineyardId) {
-            work.openCalculatorTrip(id)
+            // This is an acknowledged Start, not a history card selection.
+            // Keep the same exact Trip through a stale cached list frame.
+            work.openStartedTrip(id)
         }
     }
 }
