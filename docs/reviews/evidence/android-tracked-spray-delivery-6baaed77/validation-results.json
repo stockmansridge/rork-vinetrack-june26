@@ -1,0 +1,40 @@
+{
+  "publicCommit": "6baaed77ef0a9af5b06143cdd1115a1805368382",
+  "archiveSha256": "672762b87f6c2ab845930ca84d123e02cdb1cc87f4a211b4a13d378e88719ed8",
+  "priorPassingSourceManifestSha256": "550fe30f38c82cadc69c6f897ccd825bd8a820e17c905d299ec90523cccb8906",
+  "comparedAndroidFiles": 1274,
+  "priorPassingFingerprintDifferences": [],
+  "workspaceTrackedAndroidDifferences": [],
+  "sourceChangesMade": false,
+  "jvmSelection": {
+    "TrackedSprayCompletionSyncTest": 19,
+    "TripClosureStatusPhaseCTest": 13,
+    "TankDependencyPhaseBTest": 10,
+    "OccurrenceTankConflictHoldTest": 3,
+    "AccountScopedTankSafetyTest": 16
+  },
+  "result": "STOPPED_COMPILATION_FAILURE",
+  "failedTask": ":app:compileDebugKotlin",
+  "executedTests": 0,
+  "testXmlReceipts": [],
+  "failure": "AppConfig.kt:5:27, 116:29, 148:25 and 148:48: unresolved Config; cascading trim/not errors",
+  "cause": "Public archive omits gitignored Rork-generated Config.kt; workspace has that generated file. No injection or retry performed after failure.",
+  "log": {
+    "file": "exact-commit-jvm-compilation-failure.log",
+    "sha256": "d9f4e50ba7c0fa8d25e9da0f6a0e95c25352456ec07133cb6ef612caf05ddfb9"
+  },
+  "normalAndroidBuild": "NOT RUN after compilation failure: user stop condition",
+  "googlePlayConnection": "connected",
+  "googlePlayPackageAccess": "ok; com.rork.vinetrack; existing app",
+  "signedBuildRequested": false,
+  "publishRequested": false,
+  "submissionId": null,
+  "versionNameInSource": "3.1.9",
+  "deliveredVersionCode": null,
+  "rpcVerification": "User independently verified deployed signature, auth, original Trip end time and idempotency; not reverified or invoked by agent",
+  "customerMutations": false,
+  "historicalSweeps": false,
+  "retainedOperationChanges": false,
+  "deviceAcceptance": "NOT EXECUTED",
+  "nextStep": "Authorise validation of the exact committed application source with normal Rork-generated configuration, fingerprinting that separate generated input; do not publish until tests and normal build pass."
+}
