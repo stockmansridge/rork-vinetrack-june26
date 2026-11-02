@@ -465,6 +465,37 @@ final class TripSyncService {
         }
     }
 
+    /// Exact-ID, selected-vineyard readback for an ended Trip shown on the
+    /// device. Safe to call from the closure screen: no server write, no
+    /// generic Retry All, no global metadata cleanup. applyRemote only
+    /// acknowledges the original pending ID after dependent proof matches.
+    func reconcileServerEndedTrip(_ id: UUID) async -> Bool {
+        guard !isSyncing, let store, let auth, auth.isSignedIn,
+              let selected = store.selectedVineyardId,
+              let owner = store.currentUserIdProvider?(), owner == auth.userId,
+              SupabaseClientProvider.shared.client.auth.currentUser?.id == owner,
+              let local = store.trips.first(where: { $0.id == id && $0.vineyardId == selected }),
+              !local.isActive, local.endTime != nil,
+              metadata.pendingUpserts[id] != nil, metadata.pendingDeletes[id] == nil,
+              (try? store.tripDeletionJournal.isCancelled(id)) == false,
+              !TripCancellationIntentStore.shared.blocksReplay(tripId: id) else { return false }
+        do {
+            guard let row = try await repository.fetchTripForOccurrenceStart(tripId: id, vineyardId: selected),
+                  row.id == id, row.vineyardId == selected, row.deletedAt == nil,
+                  row.endTime == local.endTime, row.isActive == false,
+                  store.currentUserIdProvider?() == owner,
+                  store.selectedVineyardId == selected,
+                  SupabaseClientProvider.shared.client.auth.currentUser?.id == owner else { return false }
+            await applyRemote(row, vineyardId: selected, store: store)
+            let settled = metadata.pendingUpserts[id] == nil
+            SyncIssueCenter.shared.notePending(entity: "Trips", count: metadata.pendingUpserts.count)
+            return settled
+        } catch {
+            // A failed independent read is not proof of upload success.
+            return false
+        }
+    }
+
     // MARK: - Repair
 
     nonisolated struct RepairResult: Sendable {
