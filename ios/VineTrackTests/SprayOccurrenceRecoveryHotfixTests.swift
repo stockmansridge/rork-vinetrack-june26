@@ -3,6 +3,44 @@ import XCTest
 @testable import VineTrack
 
 final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
+    @MainActor func testOccurrenceSprayUploadRequiresOriginalAcceptedServerParent() throws {
+        let vineyard = UUID(), block = UUID()
+        let coverage = try TripOccurrencePlanner.commit([
+            .init(vineyardId: vineyard, blockId: block, blockName: "Source", label: 1.5, rows: [])
+        ], vineyardId: vineyard)
+        let original = Trip(vineyardId: vineyard, paddockId: block,
+                            paddockName: "Source", paddockIds: [block], isActive: false,
+                            rowSequence: [1.5], occurrenceCoverage: coverage)
+        func server(_ id: UUID, _ vineyardId: UUID,
+                    _ raw: TripOccurrenceCoverage.JSON?) throws -> BackendTrip {
+            let dict: [String: TripOccurrenceCoverage.JSON] = [
+                "id": .string(id.uuidString.lowercased()),
+                "vineyard_id": .string(vineyardId.uuidString.lowercased()),
+                "occurrence_coverage": raw ?? .null
+            ]
+            return try JSONDecoder().decode(BackendTrip.self, from: JSONEncoder().encode(dict))
+        }
+        let accepted = try server(original.id, vineyard, coverage)
+        XCTAssertTrue(OccurrenceSprayParentReceipt.matches(
+            local: original, remote: accepted, vineyardId: vineyard))
+        // The real 206 incident: the original spray exists, but the Trip
+        // create/activate never reached the server. Do not upload another child.
+        XCTAssertFalse(OccurrenceSprayParentReceipt.matches(
+            local: original, remote: nil, vineyardId: vineyard))
+        XCTAssertFalse(OccurrenceSprayParentReceipt.matches(
+            local: original, remote: try server(UUID(), vineyard, coverage), vineyardId: vineyard))
+        XCTAssertFalse(OccurrenceSprayParentReceipt.matches(
+            local: original, remote: try server(original.id, UUID(), coverage), vineyardId: vineyard))
+        XCTAssertFalse(OccurrenceSprayParentReceipt.matches(
+            local: original, remote: try server(original.id, vineyard, nil), vineyardId: vineyard))
+        let differentPlan = try TripOccurrencePlanner.commit([
+            .init(vineyardId: vineyard, blockId: block, blockName: "Other", label: 2.5, rows: [])
+        ], vineyardId: vineyard)
+        XCTAssertFalse(OccurrenceSprayParentReceipt.matches(
+            local: original, remote: try server(original.id, vineyard, differentPlan),
+            vineyardId: vineyard))
+    }
+
     @MainActor func testRejectedActivationCompletesCallbackExactlyOnceWithoutChangingOriginalTrip() {
         let trip = Trip(vineyardId: UUID(), paddockName: "Original synthetic plan", isActive: false)
         let tracking = TripTrackingService()
