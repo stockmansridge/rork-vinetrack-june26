@@ -142,6 +142,11 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
         reason = ScreenAwakeController.Reason.ActiveTrip,
     )
 
+    val removal by vm.chemicalRemoval.collectAsStateWithLifecycle()
+    if (removal.target == null || (removal.target?.owner == state.currentUserId && removal.target?.vineyard == state.selectedVineyardId)) {
+        com.rork.vinetrack.ui.components.ChemicalRemovalProgress(removal, vm::checkChemicalRemoval, vm::dismissChemicalRemovalMessage, vm::retryChemicalRemoval)
+    }
+
     CalculatorStartDestination(vm, state, work)
 
     // Keep the restored trip context honest as the trip list loads and changes:
@@ -243,7 +248,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                     MainTab.entries.forEach { entry ->
                         NavigationBarItem(
                             selected = tab == entry && tool == null && launcherMode == null,
-                            onClick = { work.openTab(entry) },
+                            onClick = { work.openTab(entry, tripsKnowledge) },
                             icon = {
                                 if (entry == MainTab.Trip) {
                                     SteeringWheelIcon(Modifier.size(24.dp))

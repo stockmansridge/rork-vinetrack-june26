@@ -1,5 +1,8 @@
 package com.rork.vinetrack.ui.screens
 
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.liveRegion
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -360,6 +363,7 @@ private fun ScoutWorkspace(
     var stageRequest by remember { mutableStateOf<ScoutStageRequest?>(null) }
     var paddockToScrollTo by remember { mutableStateOf<String?>(null) }
     val scoutListState = rememberLazyListState()
+    var mapGesture by remember { mutableStateOf(false) }
     val camera = rememberPhotoCaptureCoordinator(
         onPhoto = { uri, receipt ->
             val visitId = cameraVisitId
@@ -514,6 +518,7 @@ private fun ScoutWorkspace(
     ) { padding ->
         LazyColumn(
             state = scoutListState,
+            userScrollEnabled = !mapGesture,
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -570,7 +575,7 @@ private fun ScoutWorkspace(
                 item {
                     ScoutWorkspaceMap(visit = null, blocks = observationBlocks, pins = state.pins,
                         growthRecords = state.growthRecords, locationBlocks = observationBlocks, currentFix = stopFix,
-                        onBlockSelected = { selectedMapBlockId = it }, photoBytes = { null })
+                        onBlockSelected = { selectedMapBlockId = it }, photoBytes = { null }, onGesture = { mapGesture = it })
                 }
             } else if (current == null) {
                 item {
@@ -650,6 +655,7 @@ private fun ScoutWorkspace(
                         locationBlocks = state.paddocks,
                         currentFix = stopFix,
                         onBlockSelected = { selectedMapBlockId = it },
+                        onGesture = { mapGesture = it },
                         photoBytes = { id -> current.assessments.flatMap { it.observations }.flatMap { it.photos }.firstOrNull { it.id == id }?.let(vm.vineyardInsights::photoBytes) },
                     )
                 }
@@ -1003,6 +1009,8 @@ private fun ScoutBlockAssessmentCard(
     val appState by vm.ui.collectAsStateWithLifecycle()
 
     var confirmUnlink by remember { mutableStateOf(false) }
+    val locationFeedback = remember(visitId, assessmentId) { androidx.compose.runtime.mutableStateMapOf<ScoutItem, Pair<String, Boolean>>() }
+    val locatingItems = remember(visitId, assessmentId) { androidx.compose.runtime.mutableStateListOf<ScoutItem>() }
     var message by remember { mutableStateOf<String?>(null) }
     var messageIsError by remember { mutableStateOf(false) }
 
@@ -1128,13 +1136,20 @@ private fun ScoutBlockAssessmentCard(
                 }
                 TextButton(
                     onClick = {
+                        locatingItems.add(item)
+                        locationFeedback[item] = "Getting a fresh GPS location…" to false
                         vm.captureScoutObservationLocation(visitId, assessmentId, item) { recorded, feedback ->
-                            message = feedback
-                            messageIsError = !recorded
+                            locatingItems.remove(item)
+                            locationFeedback[item] = feedback.replace("pin button", "Record location") to !recorded
                         }
                     },
-                    enabled = enabled,
-                ) { Text(if (observation?.locationStatus == PhotoLocationStatus.GPS_CONFIRMED) "Update location" else "Record location") }
+                    enabled = enabled && item !in locatingItems,
+                ) { Text(if (item in locatingItems) "Getting location…" else if (observation?.locationStatus == PhotoLocationStatus.GPS_CONFIRMED) "Update location" else "Record location") }
+                locationFeedback[item]?.let { (feedback, error) ->
+                    Text(feedback, color = if (error) VineColors.Destructive else VineColors.LeafGreen,
+                        modifier = Modifier.semantics { liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite })
+                    if (error) Text("Your existing valid location, observations and photos are kept. You can continue with block association and retry GPS here.", fontSize = 12.sp)
+                }
             }
 
             val photos = observation?.photos.orEmpty()

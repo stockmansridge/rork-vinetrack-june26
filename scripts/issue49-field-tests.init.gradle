@@ -1,0 +1,34 @@
+// Explicit bounded Issue #49 selection; do not imply full-suite or handset acceptance.
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.project(':app')
+    app.tasks.named('compileDebugUnitTestKotlin').configure {
+        setSource(app.fileTree('src/test/java') {
+            include '**/ChemicalRemovalGuardTest.kt'
+            include '**/ReadOnlyVerificationScheduleTest.kt'
+            include '**/Issue49FieldNavigationTest.kt'
+            include '**/WorkContextRestorationTest.kt'
+            include '**/WorkContextIdentityScopingTest.kt'
+            include '**/TrackedSprayCompletionSyncTest.kt'
+            include '**/TripClosureStatusPhaseCTest.kt'
+            include '**/TankDependencyPhaseBTest.kt'
+            include '**/OccurrenceTankConflictHoldTest.kt'
+            include '**/AccountScopedTankSafetyTest.kt'
+            include '**/RetentionReviewTest.kt' // Existing ReviewWriteDisk fixture used by account-safety cases.
+            include '**/YieldCompletionPersistenceTest.kt'
+            include '**/CurrentYieldMasterParityTest.kt'
+        })
+    }
+    app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+        filter {
+            ['ChemicalRemovalGuardTest', 'ReadOnlyVerificationScheduleTest', 'Issue49FieldNavigationTest', 'WorkContextRestorationTest',
+             'WorkContextIdentityScopingTest', 'TrackedSprayCompletionSyncTest', 'TripClosureStatusPhaseCTest',
+             'TankDependencyPhaseBTest', 'OccurrenceTankConflictHoldTest', 'AccountScopedTankSafetyTest',
+             'YieldCompletionPersistenceTest', 'CurrentYieldMasterParityTest'].each {
+                includeTestsMatching('com.rork.vinetrack.data.' + it)
+            }
+        }
+        testLogging { events 'passed', 'failed', 'skipped' }
+    }
+}

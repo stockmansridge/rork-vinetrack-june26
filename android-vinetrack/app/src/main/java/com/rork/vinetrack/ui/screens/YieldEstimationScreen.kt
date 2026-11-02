@@ -88,6 +88,7 @@ import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
 import com.rork.vinetrack.data.BunchCountTripLogic
 import com.rork.vinetrack.data.LocationTracker
+import com.rork.vinetrack.data.YieldSamplingNavigation
 import com.rork.vinetrack.data.YieldSampleGenerator
 import com.rork.vinetrack.data.YieldVintageReport
 import com.rork.vinetrack.data.model.BunchCountEntry
@@ -1100,9 +1101,7 @@ private fun SamplePreviewMap(
                     state = MarkerState(position = LatLng(site.latitude, site.longitude)),
                     title = "Sample ${site.siteIndex}",
                     snippet = site.bunchCountEntry?.let { "${formatBunches(it.bunchesPerVine)} bunches/vine" } ?: "Tap to record",
-                    icon = BitmapDescriptorFactory.defaultMarker(
-                        if (site.isRecorded) BitmapDescriptorFactory.HUE_GREEN else BitmapDescriptorFactory.HUE_ORANGE,
-                    ),
+                    icon = yieldSiteIcon(site.siteIndex, site.isRecorded, false),
                     onClick = {
                         onSiteTap(site)
                         true
@@ -1110,6 +1109,33 @@ private fun SamplePreviewMap(
                 )
             }
         }
+    }
+}
+
+/** Number and completion mark are map content, not UI controls. Recorded sites stay green even when selected. */
+@Composable
+private fun yieldSiteIcon(number: Int, recorded: Boolean, selected: Boolean): com.google.android.gms.maps.model.BitmapDescriptor {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val size = with(density) { 46.dp.roundToPx() }
+    return remember(number, recorded, selected, size) {
+        val bitmap = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        val s = size.toFloat()
+        paint.color = if (selected) android.graphics.Color.rgb(30, 110, 230) else android.graphics.Color.WHITE
+        canvas.drawCircle(s / 2, s / 2, s * .48f, paint)
+        paint.color = if (recorded) android.graphics.Color.rgb(25, 130, 65) else android.graphics.Color.rgb(180, 95, 0)
+        canvas.drawCircle(s / 2, s / 2, s * .40f, paint)
+        paint.color = android.graphics.Color.WHITE
+        paint.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        paint.textSize = s * if (number >= 100) .30f else .38f
+        paint.textAlign = android.graphics.Paint.Align.CENTER
+        canvas.drawText(number.toString(), s / 2, s * if (recorded) .51f else .64f, paint)
+        if (recorded) {
+            paint.style = android.graphics.Paint.Style.STROKE; paint.strokeWidth = s * .055f
+            canvas.drawPath(android.graphics.Path().apply { moveTo(s * .38f, s * .67f); lineTo(s * .47f, s * .76f); lineTo(s * .64f, s * .59f) }, paint)
+        }
+        BitmapDescriptorFactory.fromBitmap(bitmap)
     }
 }
 
@@ -1122,10 +1148,10 @@ private fun SamplePreviewMap(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun YieldSamplingMapScreen(
+internal fun YieldSamplingMapScreen(
     state: AppUiState,
     session: YieldEstimationSession,
-    onRecord: (siteId: String, bunches: Double, recordedBy: String) -> Unit,
+    onRecord: (siteId: String, bunches: Double, recordedBy: String) -> Boolean,
     onQuadrantRecord: (String, QuadrantCountMeasurement) -> Boolean,
     onComplete: () -> Unit,
     onBack: () -> Unit,
@@ -1138,6 +1164,10 @@ private fun YieldSamplingMapScreen(
 
     var here by remember { mutableStateOf<CoordinatePoint?>(null) }
     var recordingSite by remember { mutableStateOf<SampleSite?>(null) }
+    var selectedSiteId by rememberSaveable(session.id) { mutableStateOf(session.sampleSites.firstOrNull { !it.isRecorded }?.id ?: session.sampleSites.firstOrNull()?.id) }
+    var showSites by remember { mutableStateOf(false) }
+    var confirmPartial by remember { mutableStateOf(false) }
+    var saveError by remember { mutableStateOf<String?>(null) }
 
     val camera = rememberCameraPositionState()
     var samplingMapLoaded by remember { mutableStateOf(false) }
@@ -1146,7 +1176,8 @@ private fun YieldSamplingMapScreen(
     }
     // Frame the sample sites (falling back to the selected blocks' geometry)
     // once the map is laid out.
-    LaunchedEffect(samplingMapLoaded, session.sampleSites) {
+    val siteCoordinates = session.sampleSites.map { Triple(it.id, it.latitude, it.longitude) }
+    LaunchedEffect(samplingMapLoaded, siteCoordinates) {
         if (!samplingMapLoaded) return@LaunchedEffect
         val pts = session.sampleSites.map { LatLng(it.latitude, it.longitude) }.ifEmpty {
             blocks.filter { session.isPaddockSelected(it.id) }
@@ -1158,10 +1189,9 @@ private fun YieldSamplingMapScreen(
 
     val unrecorded = session.sampleSites.filter { !it.isRecorded }
     val allRecorded = session.totalSiteCount > 0 && unrecorded.isEmpty()
-    val nearest = remember(here, session.sampleSites) {
-        val h = here ?: return@remember unrecorded.firstOrNull()
-        unrecorded.minByOrNull { metresBetween(h.latitude, h.longitude, it.latitude, it.longitude) }
-    }
+    val nearest = session.sampleSites.firstOrNull { it.id == selectedSiteId }
+        ?: YieldSamplingNavigation.ordered(session.sampleSites).firstOrNull()
+    // GPS supplies distance guidance only; it never replaces an operator's selected sample.
     val nearestDistance = nearest?.let { n ->
         here?.let { h -> metresBetween(h.latitude, h.longitude, n.latitude, n.longitude) }
     }
@@ -1209,16 +1239,12 @@ private fun YieldSamplingMapScreen(
                         )
                     }
                     session.sampleSites.forEach { site ->
-                        val hue = when {
-                            site.id == nearest?.id -> BitmapDescriptorFactory.HUE_AZURE
-                            site.isRecorded -> BitmapDescriptorFactory.HUE_GREEN
-                            else -> BitmapDescriptorFactory.HUE_ORANGE
-                        }
                         Marker(
                             state = MarkerState(position = LatLng(site.latitude, site.longitude)),
                             title = "Sample ${site.siteIndex}",
-                            icon = BitmapDescriptorFactory.defaultMarker(hue),
-                            onClick = { recordingSite = site; true },
+                            snippet = "${site.paddockName} · Row ${site.rowNumber}" + if (site.isRecorded) " · Recorded" else " · Not recorded",
+                            icon = yieldSiteIcon(site.siteIndex, site.isRecorded, site.id == nearest?.id),
+                            onClick = { selectedSiteId = site.id; true },
                         )
                     }
                 }
@@ -1251,45 +1277,57 @@ private fun YieldSamplingMapScreen(
                         color = vine.textSecondary,
                         fontSize = 12.sp,
                     )
-                    if (allRecorded) {
-                        Button(
-                            onClick = onComplete,
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.DarkGreen),
-                        ) {
-                            Icon(Icons.Filled.DoneAll, contentDescription = null, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Complete Estimation")
-                        }
-                    } else {
-                        Button(
-                            onClick = { nearest?.let { recordingSite = it } },
-                            enabled = nearest != null,
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
-                        ) {
-                            Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (nearest != null) "Record Sample ${nearest.siteIndex}" else "Done")
+                    nearest?.let { Text("Sample ${it.siteIndex} · Row ${it.rowNumber} · ${it.paddockName}", fontWeight = FontWeight.SemiBold) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { nearest?.let { selectedSiteId = YieldSamplingNavigation.previous(session.sampleSites, it.id) } },
+                            enabled = nearest != null && YieldSamplingNavigation.previous(session.sampleSites, nearest.id) != null,
+                            modifier = Modifier.weight(1f)) { Text("Prev") }
+                        OutlinedButton(onClick = { nearest?.let { selectedSiteId = YieldSamplingNavigation.next(session.sampleSites, it.id) } },
+                            enabled = nearest != null, modifier = Modifier.weight(1f)) { Text("Skip") }
+                    }
+                    Button(onClick = { nearest?.let { recordingSite = it }; saveError = null }, enabled = nearest != null,
+                        modifier = Modifier.fillMaxWidth().testTag("yield.record.next"), colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen)) { Text("Record & Next") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { showSites = true }, modifier = Modifier.weight(1f)) { Text("Sample list") }
+                        TextButton(onClick = { if (YieldSamplingNavigation.needsPartialConfirmation(session.sampleSites)) confirmPartial = true else onComplete() },
+                            enabled = YieldSamplingNavigation.canFinish(session.sampleSites), modifier = Modifier.weight(1f)) {
+                            Text("Finish Sampling (${session.recordedSiteCount}/${session.totalSiteCount})")
                         }
                     }
+                    saveError?.let { Text(it, color = VineColors.Destructive) }
                 }
             }
         }
     }
 
+    if (confirmPartial) AlertDialog(onDismissRequest = { confirmPartial = false }, title = { Text("Finish with incomplete samples?") },
+        text = { Text("${session.recordedSiteCount} of ${session.totalSiteCount} recorded. Unrecorded sites remain unrecorded, not zero. Estimates use only real samples and may be less representative.") },
+        confirmButton = { TextButton(onClick = { confirmPartial = false; onComplete() }) { Text("Finish Anyway") } },
+        dismissButton = { TextButton(onClick = { confirmPartial = false }) { Text("Keep Sampling") } })
+    if (showSites) AlertDialog(onDismissRequest = { showSites = false }, title = { Text("Choose sample") },
+        text = { androidx.compose.foundation.lazy.LazyColumn {
+            items(session.sampleSites.size) { index ->
+                val site = YieldSamplingNavigation.ordered(session.sampleSites)[index]
+                TextButton(onClick = { selectedSiteId = site.id; showSites = false }) {
+                    Text("${site.siteIndex} · ${site.paddockName} · Row ${site.rowNumber} · " + if (site.isRecorded) "Recorded" else "Not recorded")
+                }
+            }
+        } }, confirmButton = { TextButton(onClick = { showSites = false }) { Text("Done") } })
     recordingSite?.let { site ->
         CountMethodDialog(
-            site = site, session = session, state = state,
+            site = site, session = session, state = state, saveLabel = "Record & Next",
             onQuadrantSave = { measurement ->
                 val saved = state.isSystemAdmin && onQuadrantRecord(site.id, measurement)
-                if (saved) recordingSite = null
+                if (saved) { selectedSiteId = YieldSamplingNavigation.next(session.sampleSites, site.id, justRecorded = true); recordingSite = null }
+                else saveError = "Could not save this sample. It has not been advanced; retry before leaving."
                 saved
             },
             onDismiss = { recordingSite = null },
             onSave = { bunches ->
-                onRecord(site.id, bunches, state.currentUserId ?: "")
-                recordingSite = null
+                if (onRecord(site.id, bunches, state.currentUserId ?: "")) {
+                    selectedSiteId = YieldSamplingNavigation.next(session.sampleSites, site.id, justRecorded = true)
+                    recordingSite = null
+                } else saveError = "Could not save this sample. It has not been advanced; retry before leaving."
             },
         )
     }
@@ -1298,6 +1336,7 @@ private fun YieldSamplingMapScreen(
 @Composable
 private fun BunchCountDialog(
     site: SampleSite,
+    saveLabel: String = "Record",
     onDismiss: () -> Unit,
     onSave: (Double) -> Unit,
 ) {
@@ -1320,9 +1359,10 @@ private fun BunchCountDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = value != null && value >= 0,
+                modifier = Modifier.testTag("yield.record.confirm"),
+                enabled = value != null && value.isFinite() && value >= 0,
                 onClick = { value?.let(onSave) },
-            ) { Text("Record") }
+            ) { Text(saveLabel) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
@@ -1388,6 +1428,7 @@ private fun YieldEstimationSession.recordQuadrant(siteId: String, measurement: Q
 @Composable
 private fun CountMethodDialog(
     site: SampleSite,
+    saveLabel: String = "Record",
     session: YieldEstimationSession,
     state: AppUiState,
     onDismiss: () -> Unit,
@@ -1395,7 +1436,7 @@ private fun CountMethodDialog(
     onQuadrantSave: (QuadrantCountMeasurement) -> Boolean,
 ) {
     if (!session.isQuadrantCount) {
-        BunchCountDialog(site = site, onDismiss = onDismiss, onSave = onSave)
+        BunchCountDialog(site = site, saveLabel = saveLabel, onDismiss = onDismiss, onSave = onSave)
         return
     }
     if (!state.isSystemAdmin) return
@@ -1424,6 +1465,6 @@ private fun CountMethodDialog(
             }
             measurement?.let { Text("Estimated: ${formatBunches(it.bunchesPerVine)} bunches/vine", fontSize = 13.sp) }
         } },
-        confirmButton = { TextButton(enabled = measurement != null, onClick = { measurement?.let { onQuadrantSave(it) } }) { Text("Record") } },
+        confirmButton = { TextButton(modifier = Modifier.testTag("yield.record.confirm"), enabled = measurement != null, onClick = { measurement?.let { onQuadrantSave(it) } }) { Text(saveLabel) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } })
 }

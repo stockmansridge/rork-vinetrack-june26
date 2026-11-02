@@ -1,0 +1,319 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:processDebugNavigationResources UP-TO-DATE
+> Task :app:compileDebugNavigationResources UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:compileDebugKotlin UP-TO-DATE
+> Task :app:javaPreCompileDebug UP-TO-DATE
+> Task :app:compileDebugJavaWithJavac UP-TO-DATE
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar UP-TO-DATE
+> Task :app:compileDebugUnitTestKotlin UP-TO-DATE
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest UP-TO-DATE
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugJavaRes UP-TO-DATE
+> Task :app:processDebugUnitTestJavaRes UP-TO-DATE
+
+> Task :app:testDebugUnitTest
+
+AccountScopedTankSafetyTest > revocationBetweenSaveAdmissionAndCommitCannotWriteAnActual PASSED
+
+AccountScopedTankSafetyTest > revokedTripResponseKeepsExactClaimAndNeverPublishes PASSED
+
+AccountScopedTankSafetyTest > actualReplacementIsNotAcknowledgedByEarlierSuccess PASSED
+
+AccountScopedTankSafetyTest > actualSuccessAfterRevocationRetainsFrozenValuesAndPendingAcrossRestart PASSED
+
+AccountScopedTankSafetyTest > unchangedOriginalConfirmationReplaysForReturningActorAfterRestart PASSED
+
+AccountScopedTankSafetyTest > authenticatedIdentityAloneCannotUnlockLegacyHoldOrReuseOldIncarnation PASSED
+
+AccountScopedTankSafetyTest > corruptActualNoticeIsNotAnEmptySuccessAndLeavesRawBytesUnchanged PASSED
+
+AccountScopedTankSafetyTest > corruptActualEvidenceIsHeldWithoutFetchMergeOrReset PASSED
+
+AccountScopedTankSafetyTest > actualNoticeExplainsPendingDependencyAndAcknowledgementWithoutWriting PASSED
+
+AccountScopedTankSafetyTest > absentCorruptOrMismatchedSnapshotNeverConsumesMarker PASSED
+
+AccountScopedTankSafetyTest > authorlessOrLaterCorrectedActualsAreNotAdoptedFromConfirmedBy PASSED
+
+AccountScopedTankSafetyTest > sameVineyardRemoteCorrectionCannotConsumeAnotherActorsPendingActual PASSED
+
+AccountScopedTankSafetyTest > delayedRemoteActualsCannotMergeAfterRevocation PASSED
+
+AccountScopedTankSafetyTest > serverVineyardConflictBlocksExactClaimWithoutStrandingOrSending PASSED
+
+AccountScopedTankSafetyTest > unknownForeignOrCorrectedActualNoticeNeverDisclosesContent PASSED
+
+AccountScopedTankSafetyTest > foreignSnapshotRefusedBeforeClaimProbeOrSendAcrossRestart PASSED
+
+ChemicalRemovalGuardTest > failedAcknowledgementRetainsOriginalAcrossRestart PASSED
+
+ChemicalRemovalGuardTest > accountAndVineyardMustBothMatch PASSED
+
+ChemicalRemovalGuardTest > offlineFailureRetainsIdentityAndLocksAllRows PASSED
+
+ChemicalRemovalGuardTest > tenSecondResponseSerialisesTwoAdjacentRowsAndRepeatedTaps PASSED
+
+ChemicalRemovalGuardTest > reactivationRequiresOriginalActiveNondeletedRow PASSED
+
+ChemicalRemovalGuardTest > persistedBeforeCallerCanDispatch PASSED
+
+ChemicalRemovalGuardTest > persistenceExceptionDoesNotCrashOrAdmitDispatch PASSED
+
+ChemicalRemovalGuardTest > failedInitialPersistenceNeverAdmitsDispatch PASSED
+
+ChemicalRemovalGuardTest > dismissingMessageCannotDiscardRetainedTarget PASSED
+
+ChemicalRemovalGuardTest > unreadableEvidenceFailsClosedWithoutOverwrite PASSED
+
+ChemicalRemovalGuardTest > archiveRequiresOriginalArchivedRowNotAbsenceOrAdjacentRow PASSED
+
+ChemicalRemovalGuardTest > restartRetainsExactTargetButDoesNotReplayMutation PASSED
+
+ChemicalRemovalGuardTest > staleCallbackCannotUnlockAnotherRequest PASSED
+
+ChemicalRemovalGuardTest > permanentDeletionRequiresAbsenceNotArchivedRow PASSED
+
+CurrentYieldMasterParityTest > recordedZeroIsASampleNotMissing PASSED
+
+CurrentYieldMasterParityTest > damageOffRestoresBaseWithoutChangingEvidence PASSED
+
+CurrentYieldMasterParityTest > unroundedRecordedAverageDrivesTonnes PASSED
+
+CurrentYieldMasterParityTest > sharedBaseTonnesAndCurrentAuthoritativeVines PASSED
+
+CurrentYieldMasterParityTest > sharedDamageAndTripTotals PASSED
+
+CurrentYieldMasterParityTest > sampledAreaExcludesPlannedBlock PASSED
+
+CurrentYieldMasterParityTest > missingMixedVarietyWithholdsWholeBlockAndTrip PASSED
+
+CurrentYieldMasterParityTest > storedKeyWinsOverRenamedDisplay PASSED
+
+CurrentYieldMasterParityTest > historicalWeightNeverBecomesCurrent PASSED
+
+CurrentYieldMasterParityTest > noRecordedSamplesHaveNoTonnesOrPerHa PASSED
+
+CurrentYieldMasterParityTest > invalidUnconfirmedOrNonpositiveWeightRejected PASSED
+
+CurrentYieldMasterParityTest > confirmedAbsenceInvalidatesPriorWeight PASSED
+
+CurrentYieldMasterParityTest > sharedOverrideMasterAndMixedWeights PASSED
+
+CurrentYieldMasterParityTest > latestCompletedObservationStillWinsWithoutDrafts PASSED
+
+CurrentYieldMasterParityTest > onlyAbsentStoredKeyUsesNameFallback PASSED
+
+Issue49FieldNavigationTest > previousCanReviewRecordedSamples PASSED
+
+Issue49FieldNavigationTest > recordNextSkipsJustSavedSiteEvenBeforeRecomposition PASSED
+
+Issue49FieldNavigationTest > explicitHistoryRemainsOpenUntilFreshTabEntry PASSED
+
+Issue49FieldNavigationTest > skipNavigatesRouteOrderWithoutRecordingAnything PASSED
+
+Issue49FieldNavigationTest > zeroRecordedCannotFinishAllRecordedNeedsNoPartialWarning PASSED
+
+Issue49FieldNavigationTest > fourOfNineteenFinishRequiresWarningWithoutFabricatingZeros PASSED
+
+Issue49FieldNavigationTest > unknownRestoredSelectionSurvivesUntilKnowledgeArrives PASSED
+
+Issue49FieldNavigationTest > tripTabRevisitClearsCompletedDetailNotLiveTrip PASSED
+
+Issue49FieldNavigationTest > explicitRouteOrderUsesNumbersNotInputOrGpsOrder PASSED
+
+OccurrenceTankConflictHoldTest > holdReleasesOnlyOnFreshConflictFreeServerRowAndKeepsOtherHolds PASSED
+
+OccurrenceTankConflictHoldTest > conflictCreatesDurableHoldThatBlocksTankSyncActualsCommitsAndSurvivesRestart PASSED
+
+OccurrenceTankConflictHoldTest > normalTank1RecoveryIsUnchangedAndReplays PASSED
+
+ReadOnlyVerificationScheduleTest > accountEpochVineyardAndEndAreDistinctEvidenceNotReusableProof PASSED
+
+ReadOnlyVerificationScheduleTest > sameEvidenceNeverRestartsThreeReadScheduleOnRepeatedSyncPasses PASSED
+
+ReadOnlyVerificationScheduleTest > independentTripsDoNotVetoEachOther PASSED
+
+ReadOnlyVerificationScheduleTest > freshAcknowledgementInvalidatesStaleWorkerAndAllowsNewBoundedReads PASSED
+
+TankDependencyPhaseBTest > markerHeldWhenRequiredSessionExistsNowhere PASSED
+
+TankDependencyPhaseBTest > holdCodesCarryNoQuantities PASSED
+
+TankDependencyPhaseBTest > unreadableRequiredSessionsHoldMarkerWithoutNetwork PASSED
+
+TankDependencyPhaseBTest > actualHeldWhenServerTripUnknown PASSED
+
+TankDependencyPhaseBTest > noChangeMarkerAcknowledgedOnlyWhenServerHasSession PASSED
+
+TankDependencyPhaseBTest > actualNotSyncedWhenReadbackAbsentOrDifferent PASSED
+
+TankDependencyPhaseBTest > patchResponseMissingSessionKeepsMarker PASSED
+
+TankDependencyPhaseBTest > verifiedPatchRemovesMarker PASSED
+
+TankDependencyPhaseBTest > actualSyncedAfterExactReadback PASSED
+
+TankDependencyPhaseBTest > actualHeldWhileServerSessionMissing PASSED
+
+TrackedSprayCompletionSyncTest > onlineCompletionUsesOriginalEndAndOnlyCompletionFields PASSED
+
+TrackedSprayCompletionSyncTest > closureRequiresRealLinkedCompletionWithExactInstantAndIdentity PASSED
+
+TrackedSprayCompletionSyncTest > backgroundAcknowledgementClosesOnlyAfterReadback PASSED
+
+TrackedSprayCompletionSyncTest > lostResponseRetryReadsExistingCompletionWithoutSecondRpc PASSED
+
+TrackedSprayCompletionSyncTest > manualTemplateDeletedForeignAndAmbiguousSpraysNeverAutoComplete PASSED
+
+TrackedSprayCompletionSyncTest > accountSwitchDuringRpcCannotAcknowledge PASSED
+
+TrackedSprayCompletionSyncTest > offlineIntentSurvivesReopenUntilTripEndAndDependenciesAcknowledged PASSED
+
+TrackedSprayCompletionSyncTest > wrongAccountOrVineyardCannotClaimIntent PASSED
+
+TrackedSprayCompletionSyncTest > reopeningVerifiedCompletionDoesNotReplayHistoricalRows PASSED
+
+TrackedSprayCompletionSyncTest > unrelatedRetainedOperationsRemainByteForByteUnchanged PASSED
+
+TrackedSprayCompletionSyncTest > partialEndRetryAfterReopenUsesFirstRequestedTimeWithoutReplacingIntent PASSED
+
+TrackedSprayCompletionSyncTest > failedDurableEnqueueRefusesCompletionIntent PASSED
+
+TrackedSprayCompletionSyncTest > unverifiedRpcResponseDoesNotClearIntent PASSED
+
+TrackedSprayCompletionSyncTest > manualAndNonSprayingTripsDoNotCreateIntent PASSED
+
+TrackedSprayCompletionSyncTest > mismatchedExistingSprayEndIsHeldNeverOverwritten PASSED
+
+TrackedSprayCompletionSyncTest > repeatEndCannotReplaceOriginalIdentityOrTimestamp PASSED
+
+TrackedSprayCompletionSyncTest > replacedCanonicalSprayCannotRedirectOriginalCompletion PASSED
+
+TrackedSprayCompletionSyncTest > differentTripEndRetainsOriginalAndMakesNoCompletionWrite PASSED
+
+TrackedSprayCompletionSyncTest > missingOriginalIdentityRefusesNewIntent PASSED
+
+TripClosureStatusPhaseCTest > pendingTankMarkerBlocksClosure PASSED
+
+TripClosureStatusPhaseCTest > failedOrAbsentServerReadIsUnconfirmed PASSED
+
+TripClosureStatusPhaseCTest > noActualsTripClosesWithoutSessions PASSED
+
+TripClosureStatusPhaseCTest > missingRequiredSessionOnServerIsHeld PASSED
+
+TripClosureStatusPhaseCTest > allAcknowledgedAndTerminalIsClosedSynced PASSED
+
+TripClosureStatusPhaseCTest > tankConflictHoldIsHeld PASSED
+
+TripClosureStatusPhaseCTest > pendingOccurrenceOperationBlocksClosure PASSED
+
+TripClosureStatusPhaseCTest > freshTripReadCannotMaskFailedSprayRead PASSED
+
+TripClosureStatusPhaseCTest > pendingActualBlocksClosure PASSED
+
+TripClosureStatusPhaseCTest > blockedMarkerIsHeld PASSED
+
+TripClosureStatusPhaseCTest > serverActiveIsNotClosed PASSED
+
+TripClosureStatusPhaseCTest > terminalTripWithNullSprayEndCannotBeClosedSynced PASSED
+
+TripClosureStatusPhaseCTest > localEndPendingIsNeverSynced PASSED
+
+WorkContextIdentityScopingTest > rehydrating the same vineyard does not clear the block or work context PASSED
+
+WorkContextIdentityScopingTest > a different user is cleared even if the logout reset never ran PASSED
+
+WorkContextIdentityScopingTest > restoration binds before the vineyard has resolved without losing the block PASSED
+
+WorkContextIdentityScopingTest > same user and vineyard across process recreation keeps the growth workflow PASSED
+
+WorkContextIdentityScopingTest > the identity binding itself survives recreation PASSED
+
+WorkContextIdentityScopingTest > user B cannot inherit user A's tab tool or block state PASSED
+
+WorkContextIdentityScopingTest > switching vineyard discards the previous vineyard's block selection PASSED
+
+WorkContextIdentityScopingTest > explicit logout clears the work context and its binding PASSED
+
+WorkContextIdentityScopingTest > switching vineyard keeps the operator on a safe top-level tool PASSED
+
+WorkContextIdentityScopingTest > binding while still restoring writes nothing PASSED
+
+WorkContextIdentityScopingTest > switching away and back does not resurrect the first vineyard's block PASSED
+
+WorkContextRestorationTest > recreating inside a workflow does not return the user to Home PASSED
+
+WorkContextRestorationTest > active tab survives recreation PASSED
+
+WorkContextRestorationTest > only small identifiers are written to the saved state bundle PASSED
+
+WorkContextRestorationTest > a fresh install starts on Home with no workflow PASSED
+
+WorkContextRestorationTest > repairs pin workflow and block selection survive activity recreation PASSED
+
+WorkContextRestorationTest > leaving the launcher clears the pin workflow PASSED
+
+WorkContextRestorationTest > reset clears the whole work context PASSED
+
+WorkContextRestorationTest > pins view mode survives recreation PASSED
+
+WorkContextRestorationTest > trip HUD pin-drop workflow survives recreation and holds the screen awake PASSED
+
+WorkContextRestorationTest > growth pin-drop workflow survives activity recreation PASSED
+
+WorkContextRestorationTest > switching mode inside the launcher is what gets restored PASSED
+
+WorkContextRestorationTest > opening a tab closes any tool and launcher overlay PASSED
+
+YieldCompletionPersistenceTest > deletedRowDoesNotReloadAsCompletedTrip PASSED
+
+YieldCompletionPersistenceTest > explicitDraftDoesNotBecomeCompleteFromRecordedSamples PASSED
+
+YieldCompletionPersistenceTest > completedSaveWithoutActualTimestampIsRejected PASSED
+
+YieldCompletionPersistenceTest > confirmedSnapshotMustCommitBeforeQueueAcknowledgement PASSED
+
+YieldCompletionPersistenceTest > completionAndTimestampSurviveQueueRestart PASSED
+
+YieldCompletionPersistenceTest > staleFailureDoesNotFailNewerCompletion PASSED
+
+YieldCompletionPersistenceTest > interruptedUploadRetriesSameTripAndOriginalCompletionTime PASSED
+
+YieldCompletionPersistenceTest > accountChangeDuringUploadCannotAcknowledgeOriginalQueue PASSED
+
+YieldCompletionPersistenceTest > queuedDeletePreventsSaveResurrection PASSED
+
+YieldCompletionPersistenceTest > encodedTopLevelCompletionAndPayloadAreConsistent PASSED
+
+YieldCompletionPersistenceTest > promotedCompletionOverridesStaleDraftPayloadOnReload PASSED
+
+YieldCompletionPersistenceTest > lostNetworkAcknowledgementIsIdempotentOnRetry PASSED
+
+YieldCompletionPersistenceTest > failedReplacementCommitRetainsOriginalDraft PASSED
+
+YieldCompletionPersistenceTest > legacyRowsPreservePayloadCompletion PASSED
+
+YieldCompletionPersistenceTest > olderDraftAcknowledgementCannotRemoveOrPublishNewCompletion PASSED
+
+BUILD SUCCESSFUL in 12s
+26 actionable tasks: 2 executed, 24 up-to-date

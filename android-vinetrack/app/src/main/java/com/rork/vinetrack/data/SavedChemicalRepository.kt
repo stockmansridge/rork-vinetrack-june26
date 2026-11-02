@@ -484,6 +484,54 @@ class SavedChemicalRepository(private val session: SessionStore? = null) {
         }
     }
 
+    @Serializable private data class RemovalMember(@SerialName("user_id") val user: String,
+        @SerialName("vineyard_id") val vineyard: String, val role: String)
+
+    /** Independent exact-ID, vineyard-scoped read, pinned to the captured account epoch.
+     * An RLS-filtered empty chemical result is NOT deletion proof without a fresh authorised membership read.
+     */
+    suspend fun findByIdScoped(id: String, vineyard: String, access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess): SavedChemical? = withContext(Dispatchers.IO) {
+        requireConfig()
+        java.util.UUID.fromString(id); java.util.UUID.fromString(vineyard)
+        check(session?.isAccountAccessCurrent(access) == true)
+        val token = session?.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl("saved_chemicals?id=eq.$id&vineyard_id=eq.$vineyard&select=*")) {
+            authHeaders(token)
+            attributes.put(SupabaseClient.accountRequestScope, access)
+        }
+        check(session?.isAccountAccessCurrent(access) == true)
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+        val rows = response.body<List<SavedChemical>>()
+        check(rows.size <= 1)
+        val membership = SupabaseClient.http.get(SupabaseClient.restUrl("vineyard_members?user_id=eq.${access.userId}&vineyard_id=eq.$vineyard&select=user_id,vineyard_id,role")) {
+            authHeaders(token)
+            attributes.put(SupabaseClient.accountRequestScope, access)
+        }
+        check(session?.isAccountAccessCurrent(access) == true)
+        check(membership.status.isSuccess())
+        val member = membership.body<List<RemovalMember>>().singleOrNull()
+        check(member?.user == access.userId && member.vineyard == vineyard && member.role in setOf("owner", "manager"))
+        rows.singleOrNull()?.also { check(it.id == id && it.vineyardId == vineyard) }
+    }
+
+    /** Explicit operator reactivation only; no agronomic, stock, rate or actual fields are changed. */
+    suspend fun restoreArchived(id: String, vineyard: String, access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess) = withContext(Dispatchers.IO) {
+        requireConfig()
+        check(session?.isAccountAccessCurrent(access) == true)
+        com.rork.vinetrack.data.OperationalWrites.requireWrite(vineyard)
+        val token = session?.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.patch(SupabaseClient.restUrl("saved_chemicals?id=eq.$id&vineyard_id=eq.$vineyard")) {
+            authHeaders(token)
+            attributes.put(SupabaseClient.accountRequestScope, access)
+            contentType(ContentType.Application.Json)
+            setBody(kotlinx.serialization.json.buildJsonObject {
+                put("is_active", JsonPrimitive(true)); put("deleted_at", JsonNull)
+            })
+        }
+        check(session?.isAccountAccessCurrent(access) == true)
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+    }
+
     suspend fun update(id: String, input: ChemicalInput): SavedChemical =
         withContext(Dispatchers.IO) {
             requireConfig()
@@ -597,11 +645,13 @@ class SavedChemicalRepository(private val session: SessionStore? = null) {
     }
 
     /** Archive via the gated RPC. False means not_found: successful reconciliation, not a failed delete. */
-    suspend fun softDelete(id: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun softDelete(id: String, access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null): Boolean = withContext(Dispatchers.IO) {
+        if (access != null) check(session?.isAccountAccessCurrent(access) == true)
         requireConfig()
         val token = session?.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("soft_delete_saved_chemicals")) {
             authHeaders(token)
+            if (access != null) attributes.put(SupabaseClient.accountRequestScope, access)
             contentType(ContentType.Application.Json)
             setBody(SoftDeleteArgs(id))
         }
@@ -623,11 +673,13 @@ class SavedChemicalRepository(private val session: SessionStore? = null) {
      * record, job, trip, or FK. Owner/manager only. Mirrors the iOS
      * `SavedChemicalDeletionService.hardDelete`.
      */
-    suspend fun hardDeleteUnused(id: String): HardDeleteOutcome = withContext(Dispatchers.IO) {
+    suspend fun hardDeleteUnused(id: String, access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null): HardDeleteOutcome = withContext(Dispatchers.IO) {
+        if (access != null) check(session?.isAccountAccessCurrent(access) == true)
         requireConfig()
         val token = session?.accessToken ?: throw BackendError.Unauthorized
         val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("hard_delete_unused_saved_chemical")) {
             authHeaders(token)
+            if (access != null) attributes.put(SupabaseClient.accountRequestScope, access)
             contentType(ContentType.Application.Json)
             setBody(SoftDeleteArgs(id))
         }

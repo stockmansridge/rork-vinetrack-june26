@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.YieldCompletionPersistenceTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-11-02T12:41:07.993Z" hostname="e2b.local" time="0.024">
+  <properties/>
+  <testcase name="deletedRowDoesNotReloadAsCompletedTrip" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.001"/>
+  <testcase name="explicitDraftDoesNotBecomeCompleteFromRecordedSamples" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.0"/>
+  <testcase name="completedSaveWithoutActualTimestampIsRejected" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.001"/>
+  <testcase name="confirmedSnapshotMustCommitBeforeQueueAcknowledgement" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.008"/>
+  <testcase name="completionAndTimestampSurviveQueueRestart" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.001"/>
+  <testcase name="staleFailureDoesNotFailNewerCompletion" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.001"/>
+  <testcase name="interruptedUploadRetriesSameTripAndOriginalCompletionTime" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.002"/>
+  <testcase name="accountChangeDuringUploadCannotAcknowledgeOriginalQueue" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.002"/>
+  <testcase name="queuedDeletePreventsSaveResurrection" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.001"/>
+  <testcase name="encodedTopLevelCompletionAndPayloadAreConsistent" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.003"/>
+  <testcase name="promotedCompletionOverridesStaleDraftPayloadOnReload" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.0"/>
+  <testcase name="lostNetworkAcknowledgementIsIdempotentOnRetry" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.002"/>
+  <testcase name="failedReplacementCommitRetainsOriginalDraft" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.0"/>
+  <testcase name="legacyRowsPreservePayloadCompletion" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.0"/>
+  <testcase name="olderDraftAcknowledgementCannotRemoveOrPublishNewCompletion" classname="com.rork.vinetrack.data.YieldCompletionPersistenceTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

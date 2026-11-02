@@ -1,0 +1,70 @@
+{
+  "issue": 49,
+  "date": "2026-11-02",
+  "app_path": "android-vinetrack",
+  "scope": "Android only; existing main; no production customer-data mutation, SQL/RPC/RLS change, original-journal retry, queue clearing, chemical recreation or iOS edits.",
+  "implementation": {
+    "chemical_safety": "Persist frozen account/vineyard/chemical ID/name/action synchronously before dispatch; serialize removal and reactivation; restart never automatically repeats a mutation. Archive default, deliberate typed-name permanent delete and original-target-only explicit retry. Independently scoped readback plus fresh owner/manager membership required; uncertain evidence keeps all removal actions locked.",
+    "scout_map": "Observe map pointers without consuming them; disable parent scroll while map owns gesture; initial/explicit camera fit only; expanded map control.",
+    "scout_gps": "Immediate per-observation busy/result text beside location action, accessible live feedback and existing block/GPS/photo preservation. Existing location-result distinctions retained.",
+    "trip": "Clear known ended selection on tab re-entry, preserve active/unknown restoration and explicit history. Evidence-scoped, authenticated, bounded read-only Trip/linked Spray checks at 0/5/30-second delays; Pending until fresh proof, no completion sweep.",
+    "yield": "Numbered markers, green recorded checkmarks, manual sample selection, Prev/Skip/Record & Next and partial Finish confirmation. Navigation never records zero; advance only on durable save; existing weights/calculation/Quadrant Count unchanged.",
+    "badge": "Separate long name from status and prevent badge text wrapping."
+  },
+  "jvm": {
+    "status": "PASS",
+    "tests": 141,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "classes": 12,
+    "log": "jvm-final.log",
+    "named_receipts": "jvm-xml/TEST-*.xml",
+    "command": "./gradlew :app:testDebugUnitTest -I ../scripts/issue49-field-tests.init.gradle --console=plain --max-workers=1 -Pkotlin.compiler.execution.strategy=in-process '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=768m -XX:+UseParallelGC -XX:SoftRefLRUPolicyMSPerMB=50 -Dfile.encoding=UTF-8'",
+    "limits": "Explicit bounded selection, not the full unit suite. Reopen fixtures do not certify physical process death."
+  },
+  "instrumentation": {
+    "status": "PASS",
+    "receipt_source": "Terminal androidTest tool response, not a refreshed raw log or XML artifact.",
+    "tool_response": "Android instrumentation tests passed for android-vinetrack. 18 passed, 0 failed, 0 skipped. 43s. JVM src/test tests were not run.",
+    "selection": [
+      "com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest",
+      "com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest",
+      "com.rork.vinetrack.data.Issue49YieldSamplingAndroidTest",
+      "com.rork.vinetrack.data.YieldTripNavigationAndroidTest"
+    ],
+    "coverage": [
+      "Production archive/permanent-delete confirmation, server-in-use UI admission, original typed-name retry, synthetic 10-second busy guard, long-name badge at font scale 1.6",
+      "Production repository over synthetic-only HTTP: exact scoped ID, fresh membership before accepting empty read, RLS-filtered empty membership refusal, sparse reactivation PATCH, account revocation during read",
+      "Production Yield controls: 4/19 partial finish and failed-save selection retention, plus seven existing durable-save/navigation cases"
+    ],
+    "limits": "Managed emulator, synthetic records and HTTP only. Slow case exercises UI/guard with a 10-second coroutine, not a real delayed production RPC. Yield map renderer is excluded. Scout map movement/GPS result proximity are not instrumented in this selection. No named final instrumentation XML exposed. Successful runs did not refresh /tmp/rork-android-test-android-vinetrack.log; that path still contains the historical layout diagnostic and is NOT a final pass log."
+  },
+  "build": {
+    "status": "PASS",
+    "tool": "runChecks",
+    "appPath": "android-vinetrack",
+    "tool_response": "Checks passed. Build succeeded for android-vinetrack.",
+    "nonblocking_warnings": "Two existing direct storage image URLs have preferred project asset aliases; unrelated to this correction and unchanged.",
+    "limits": "Build/static validation, not signing or runtime acceptance."
+  },
+  "historical_failures": [
+    "Initial 12-pass/1-fail instrumentation raw log was overwritten before capture; not reconstructed. Badge diagnostic raw log is retained separately.",
+    "13 passed/5 failed: retry modal missing; repository fixtures failed sign-in before assertions because files/cache/dataDir were not isolated.",
+    "2 passed/3 failed: isolated storage allowed setup; mock client lacked ContentNegotiation; retry still missing.",
+    "3 passed/2 failed: repository decoding fixed; strengthened account-change assertion exposed that attempted direct account replacement was correctly refused by recovery safety; retry still missing.",
+    "0 passed/2 failed: single-dialog retry still had conflicting action layout; clean-exit replacement attempt was refused. No production recovery guard weakened.",
+    "Action-layout diagnostic 0 passed/2 failed: retry moved into scrollable body, native action slots returned to one button each; diagnostic onRoot query itself then failed because both main and dialog roots existed. Account test was corrected to assert actual credential revocation and no subsequent membership read, not claim a successful account switch.",
+    "Changed two-case selection subsequently passed 2/2 in 20 seconds. Final full bounded selection passed 18/18; do not add overlapping counts.",
+    "Earlier host compile failures included missing lifecycle import, nullable Pair and missing test fixtures; local ordinary Gradle compilation also hit GC overhead OOM. Final host command with explicit 4096m in-process compiler and normal managed build both passed."
+  ],
+  "open_gates": [
+    "Managed/public source synchronisation: inspected public main differs from validated workspace; see source-identity.json and full manifest. No current signed artifact identity.",
+    "Installed handset build not exposed by screenshots; cannot bind report to build 1793612738 without handset diagnostics.",
+    "Handset Scout one-finger pan/pinch/marker/block/recenter, outside-map scroll, photo-rich forms, GPS permission/Settings return/disabled/stale/accuracy/offline and observation-local feedback acceptance.",
+    "Controlled disposable JH Testing online/offline/background/reopen/account/vineyard/sync journeys, full delayed mutation path, Trip and linked Spray server/Portal proof, 4/19 Yield reload/Portal agreement and marker readability.",
+    "Exact two removed chemical IDs/names/vineyard/operator/time and original evidence remain unidentified. No recovery/recreation or production lookup by guessed identity.",
+    "Signed Google Play Internal Testing candidate and publication not requested in this pass. Production forbidden. Latest prior confirmed internal build remains 3.1.9 (1793612738), which predates Issue #49 changes.",
+    "Separate iOS recovery/source/crash/device gates remain unchanged and open."
+  ]
+}

@@ -89,7 +89,7 @@ class YieldTripNavigationAndroidTest {
         compose.onNodeWithText("Select all").performScrollTo().performClick()
         compose.onNodeWithText("Use Existing Route (2 sites)").performScrollTo().performClick()
         compose.onNodeWithText("Start Sampling").performClick()
-        compose.onNodeWithText("Record Sample 1").performClick()
+        compose.onNodeWithTag("yield.record.next").performClick()
     }
     private fun savedQuadrant(): YieldEstimationSession {
         val pending = PendingWriteRepository(app).list().single { it.entityType == PendingEntityType.YIELD_SESSION }
@@ -115,12 +115,12 @@ class YieldTripNavigationAndroidTest {
         compose.onNodeWithText("Count section (cm)").assertTextContains("60")
         compose.onNodeWithText("Bunches in section").performTextReplacement("12")
         compose.onNodeWithText("Estimated: 20.0 bunches/vine").assertExists()
-        compose.onNodeWithText("Record", substring = false).performClick()
-        compose.onNodeWithText("Record Sample 2").performClick()
+        compose.onNodeWithTag("yield.record.confirm").performClick()
+        compose.onNodeWithTag("yield.record.next").performClick()
         compose.onNodeWithText("Bunches in section").performTextReplacement("12")
         compose.onNodeWithText("Count section (cm)").performTextReplacement("50")
         compose.onNodeWithText("Estimated: 24.0 bunches/vine").assertExists()
-        compose.onNodeWithText("Record", substring = false).performClick()
+        compose.onNodeWithTag("yield.record.confirm").performClick()
         var id = ""
         compose.runOnIdle {
             val saved = savedQuadrant(); id = saved.id
@@ -140,10 +140,10 @@ class YieldTripNavigationAndroidTest {
         open(admin = true, quadrantFixture = true, missingSpacing = true); startQuadrant()
         compose.onNodeWithText("Bunches in section").performTextReplacement("12")
         compose.onNodeWithText("Set vine spacing in Blocks before counting.").assertExists()
-        compose.onNodeWithText("Record", substring = false).assertIsNotEnabled()
+        compose.onNodeWithTag("yield.record.confirm").assertIsNotEnabled()
         compose.runOnIdle { state().value = state().value.copy(paddocks = state().value.paddocks.map { it.copy(vineSpacing = 1.0) }) }
         compose.onNodeWithText("Bunches in section").performTextReplacement("0")
-        compose.onNodeWithText("Record", substring = false).assertIsEnabled().performClick()
+        compose.onNodeWithTag("yield.record.confirm").assertIsEnabled().performClick()
         compose.runOnIdle { assertEquals(0.0, savedQuadrant().sampleSites.first().bunchCountEntry!!.bunchesPerVine, 0.0) }
     }
     @Test fun failedDurableSaveRetainsRawDialogAndDoesNotAdvance() {
@@ -153,13 +153,13 @@ class YieldTripNavigationAndroidTest {
         val original = prefs.getString("pending_writes_json", null)
         // Corrupt only this test's disposable disk, never an installed outbox.
         assertTrue(prefs.edit().putString("pending_writes_json", "synthetic-unreadable").commit())
-        compose.onNodeWithText("Record", substring = false).performClick()
+        compose.onNodeWithTag("yield.record.confirm").performClick()
         compose.onNodeWithText("Quadrant Count - Sample 1").assertExists()
         compose.onNodeWithText("Bunches in section").assertTextContains("12")
         compose.runOnIdle { assertEquals(0, vm.ui.value.yieldSessions.first().recordedSiteCount) }
         assertTrue(prefs.edit().putString("pending_writes_json", original).commit())
-        compose.onNodeWithText("Record", substring = false).performClick()
-        compose.onNodeWithText("Record Sample 2").assertExists()
+        compose.onNodeWithTag("yield.record.confirm").performClick()
+        compose.onNodeWithText("Sample 2 · Row 2 · ").assertExists()
         compose.runOnIdle { assertEquals(12.0, savedQuadrant().sampleSites.first().bunchCountEntry!!.quadrant!!.rawBunchCount, 0.0) }
     }
     @Test fun resumeAndBackReturnsToTripsNotYieldRoot() {

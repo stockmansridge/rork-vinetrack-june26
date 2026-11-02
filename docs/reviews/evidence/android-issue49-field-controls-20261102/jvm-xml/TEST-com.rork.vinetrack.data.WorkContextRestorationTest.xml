@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.WorkContextRestorationTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-11-02T12:41:07.989Z" hostname="e2b.local" time="0.002">
+  <properties/>
+  <testcase name="recreating inside a workflow does not return the user to Home" classname="com.rork.vinetrack.data.WorkContextRestorationTest" time="0.0"/>
+  <testcase name="active tab survives recreation" classname="com.rork.vinetrack.data.WorkContextRestorationTest" time="0.0"/>
+  <testcase name="only small identifiers are written to the saved state bundle" classname="com.rork.vinetrack.data.WorkContextRestorationTest" time="0.0"/>
+  <testcase name="a fresh install starts on Home with no workflow" classname="com.rork.vinetrack.data.WorkContextRestorationTest" time="0.0"/>
+  <testcase name="repairs pin workflow and block selection survive activity recreation" classname="com.rork.vinetrack.data.WorkContextRestorationTest" time="0.0"/>
+  <testcase name="leaving the launcher clears the pin workflow" classname="com.rork.vinetrack.data.WorkContextRestorationTest" time="0.0"/>
+  <testcase name="reset clears the whole work context" classname="com.rork.vinetrack.data.WorkContextRestorationTest" time="0.0"/>
+  <testcase name="pins view mode survives recreation" classname="com.rork.vinetrack.data.WorkContextRestorationTest" time="0.0"/>
+  <testcase name="trip HUD pin-drop workflow survives recreation and holds the screen awake" classname="com.rork.vinetrack.data.WorkContextRestorationTest" time="0.001"/>
+  <testcase name="growth pin-drop workflow survives activity recreation" classname="com.rork.vinetrack.data.WorkContextRestorationTest" time="0.0"/>
+  <testcase name="switching mode inside the launcher is what gets restored" classname="com.rork.vinetrack.data.WorkContextRestorationTest" time="0.0"/>
+  <testcase name="opening a tab closes any tool and launcher overlay" classname="com.rork.vinetrack.data.WorkContextRestorationTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

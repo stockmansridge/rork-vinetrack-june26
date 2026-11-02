@@ -90,6 +90,7 @@ import com.rork.vinetrack.ui.components.ChemicalVerificationBadge
 import com.rork.vinetrack.ui.components.ChemicalStoreFilter
 import com.rork.vinetrack.ui.components.chemicalVerificationTint
 import com.rork.vinetrack.ui.components.rememberGuardedSheetState
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -154,8 +155,12 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
     // Cost editing/visibility mirrors the spray form's canViewFinancials gate.
     val canViewFinancials = canManage
 
-    val activeChemicals = remember(state.savedChemicals) {
-        com.rork.vinetrack.data.chemical.ChemicalStorePresentation.active(state.savedChemicals)
+    val removal by vm.chemicalRemoval.collectAsState()
+    val removalLocked = removal.target != null || removal.unreadable
+    var showArchived by remember { mutableStateOf(false) }
+    val activeChemicals = remember(state.savedChemicals, showArchived) {
+        if (showArchived) state.savedChemicals.filter { !it.isActive || it.deletedAt != null }
+        else com.rork.vinetrack.data.chemical.ChemicalStorePresentation.active(state.savedChemicals)
     }
     var creating by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<SavedChemical?>(null) }
@@ -243,10 +248,6 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             matchesSearch && matchesStatus
         }
     }
-    // Surfaced when the backend refuses a permanent delete because the chemical
-    // is referenced by a record. Offers "Archive instead".
-    var inUseChem by remember { mutableStateOf<SavedChemical?>(null) }
-    var inUseMessage by remember { mutableStateOf("") }
 
     /**
      * Whether a chemical is referenced by any spray record on this device,
@@ -266,7 +267,10 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
         topBar = {
             TopAppBar(
                 title = { Text("Chemicals") },
-                actions = { if (state.canViewInventory) TextButton(onClick = { showInventory = true }) { Text("Inventory") } },
+                actions = {
+                    TextButton(enabled = !removalLocked, onClick = { showArchived = !showArchived }) { Text(if (showArchived) "Active" else "Archived") }
+                    if (state.canViewInventory) TextButton(enabled = !removalLocked, onClick = { showInventory = true }) { Text("Inventory") }
+                },
                 navigationIcon = { if (onBack != null) BackNavIcon(onBack) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = vine.appBackground),
             )
@@ -308,6 +312,17 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                if (removalLocked) item(key = "retained-removal") {
+                    VineyardCard {
+                        Text("Chemical actions are locked until the original request is confirmed.", color = VineColors.Warning)
+                        val original = removal.target
+                        if (original != null && original.owner == state.currentUserId && original.vineyard == state.selectedVineyardId) {
+                            Text("${original.name} • ${original.id}")
+                            Text(removal.message ?: "Processing…")
+                            TextButton(enabled = !removal.busy, onClick = vm::checkChemicalRemoval) { Text("Check with server") }
+                        } else Text("Return to the original account and vineyard to review the request, or contact support. Do not clear storage.")
+                    }
+                }
                 if (!canManage) {
                     item(key = "locked-note") {
                         Row(
@@ -417,7 +432,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                         media = chem.masterChemicalId?.let { approvedMedia[it] }?.takeIf {
                             it.belongsTo(chem.masterChemicalId, chem.resolvedIntelligence.registration?.identityKey)
                         },
-                        canManage = canManage,
+                        canManage = canManage && !removalLocked,
                         canViewFinancials = canViewFinancials,
                         // Eligibility is the domain's call, never the UI's.
                         // Duplicating the rule here would let the button and the
@@ -428,7 +443,7 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
                         canReverify = ChemicalReverification.isOffered(chem, countryCode),
                         vineyardCountry = countryCode,
                         onEdit = { if (canManage) editing = chem },
-                        onDelete = { if (canManage) pendingDelete = chem },
+                        onDelete = { if (canManage && !removalLocked) pendingDelete = chem },
                         onMatchVerify = { if (canManage) matching = chem },
                         onReverify = { if (canManage) reverifying = chem },
                     )
@@ -525,59 +540,13 @@ fun ChemicalsScreen(vm: AppViewModel, state: AppUiState, modifier: Modifier = Mo
             state = state,
         )
     }
-    pendingDelete?.let { chem ->
-        val inUse = isInUseLocally(chem)
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text(if (inUse) "Archive ${chem.displayName}?" else "Delete or archive ${chem.displayName}?") },
-            text = {
-                Text(
-                    if (inUse) {
-                        "Archive this chemical? It will be hidden from active chemical lists but kept for historical records."
-                    } else {
-                        "Archive hides this chemical but keeps it for historical records. Delete Permanently removes it entirely — only available because it has not been used in any spray records on this device. This cannot be undone."
-                    }
-                )
+    pendingDelete?.takeIf { !removalLocked }?.let { chem ->
+        com.rork.vinetrack.ui.components.ChemicalRemovalConfirmation(
+            chemical = chem, inUse = isInUseLocally(chem), onCancel = { pendingDelete = null },
+            onConfirm = { action ->
+                vm.removeChemical(chem, action)
+                pendingDelete = null
             },
-            confirmButton = {
-                Column {
-                    TextButton(onClick = {
-                        pendingDelete = null
-                        if (editing?.id == chem.id) editing = null
-                        vm.deleteSavedChemical(chem.id) {}
-                    }) { Text("Archive Chemical") }
-                    if (!inUse) {
-                        TextButton(onClick = {
-                            val target = chem
-                            pendingDelete = null
-                            if (editing?.id == target.id) editing = null
-                            vm.hardDeleteSavedChemical(target.id) { outcome ->
-                                if (outcome is SavedChemicalRepository.HardDeleteOutcome.InUse) {
-                                    inUseChem = target
-                                    inUseMessage = outcome.message
-                                }
-                            }
-                        }) { Text("Delete Permanently", color = VineColors.Destructive) }
-                    }
-                }
-            },
-            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } },
-        )
-    }
-
-    // Backend rejected a permanent delete (chemical referenced by a record).
-    inUseChem?.let { chem ->
-        AlertDialog(
-            onDismissRequest = { inUseChem = null },
-            title = { Text("Cannot Delete") },
-            text = { Text(inUseMessage) },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.deleteSavedChemical(chem.id) {}
-                    inUseChem = null
-                }) { Text("Archive Instead") }
-            },
-            dismissButton = { TextButton(onClick = { inUseChem = null }) { Text("Cancel") } },
         )
     }
 }
@@ -613,10 +582,7 @@ private fun ChemicalRow(
             else {
             MasterFrontLabelThumbnail(media, modifier = Modifier.padding(end = 12.dp), interactive = false)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         chemical.displayName,
                         fontWeight = FontWeight.SemiBold,
@@ -702,7 +668,7 @@ private fun ChemicalRow(
             }
             if (canManage) {
                 IconButton(onClick = onDelete) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Archive chemical", tint = VineColors.Destructive, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Filled.Delete, contentDescription = if (!chemical.isActive || chemical.deletedAt != null) "Reactivate ${chemical.displayName}" else "Archive ${chemical.displayName}", tint = VineColors.Destructive, modifier = Modifier.size(20.dp))
                 }
             }
         }

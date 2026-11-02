@@ -1,0 +1,119 @@
+{
+  "selection": [
+    {
+      "name": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+      "tests": "16",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-11-02T12:41:07.489Z",
+      "time": "0.205"
+    },
+    {
+      "name": "com.rork.vinetrack.data.ChemicalRemovalGuardTest",
+      "tests": "14",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-11-02T12:41:07.698Z",
+      "time": "0.055"
+    },
+    {
+      "name": "com.rork.vinetrack.data.CurrentYieldMasterParityTest",
+      "tests": "15",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-11-02T12:41:07.756Z",
+      "time": "0.063"
+    },
+    {
+      "name": "com.rork.vinetrack.data.Issue49FieldNavigationTest",
+      "tests": "9",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-11-02T12:41:07.821Z",
+      "time": "0.026"
+    },
+    {
+      "name": "com.rork.vinetrack.data.OccurrenceTankConflictHoldTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-11-02T12:41:07.850Z",
+      "time": "0.046"
+    },
+    {
+      "name": "com.rork.vinetrack.data.ReadOnlyVerificationScheduleTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-11-02T12:41:07.897Z",
+      "time": "0.001"
+    },
+    {
+      "name": "com.rork.vinetrack.data.TankDependencyPhaseBTest",
+      "tests": "10",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-11-02T12:41:07.901Z",
+      "time": "0.027"
+    },
+    {
+      "name": "com.rork.vinetrack.data.TrackedSprayCompletionSyncTest",
+      "tests": "19",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-11-02T12:41:07.932Z",
+      "time": "0.038"
+    },
+    {
+      "name": "com.rork.vinetrack.data.TripClosureStatusPhaseCTest",
+      "tests": "13",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-11-02T12:41:07.972Z",
+      "time": "0.003"
+    },
+    {
+      "name": "com.rork.vinetrack.data.WorkContextIdentityScopingTest",
+      "tests": "11",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-11-02T12:41:07.977Z",
+      "time": "0.01"
+    },
+    {
+      "name": "com.rork.vinetrack.data.WorkContextRestorationTest",
+      "tests": "12",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-11-02T12:41:07.989Z",
+      "time": "0.002"
+    },
+    {
+      "name": "com.rork.vinetrack.data.YieldCompletionPersistenceTest",
+      "tests": "15",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "timestamp": "2026-11-02T12:41:07.993Z",
+      "time": "0.024"
+    }
+  ],
+  "total": {
+    "tests": 141,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "method": "Bounded host JVM selection via scripts/issue49-field-tests.init.gradle; not full unit suite or device acceptance."
+}

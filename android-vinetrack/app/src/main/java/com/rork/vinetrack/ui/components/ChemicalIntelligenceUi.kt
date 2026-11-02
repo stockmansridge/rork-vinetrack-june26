@@ -142,7 +142,8 @@ fun ChemicalVerificationBadge(
             modifier = Modifier.size(12.dp),
         )
         if (!compact) {
-            Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = tint)
+            Text(label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = tint,
+                maxLines = 1, softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
         }
     }
 }

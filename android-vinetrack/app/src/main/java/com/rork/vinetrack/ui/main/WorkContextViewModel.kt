@@ -191,7 +191,13 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
     fun setShowAddPinComposer(value: Boolean) { handle[KEY_ADD_PIN] = value }
 
     /** Switch to [value] as a tab root, closing any tool/launcher overlay. */
-    fun openTab(value: MainTab) {
+    private var latestTripsKnowledge = TripsKnowledge.Unknown
+
+    fun openTab(value: MainTab, knowledge: TripsKnowledge = latestTripsKnowledge) {
+        // Re-entering a tab is not an explicit request to view historical detail.
+        // Unknown/partially loaded identities remain untouched for active restoration.
+        val selected = selectedTripId.value
+        if (selected != null && selected in knowledge.knownIds && selected !in knowledge.activeIds) setSelectedTripId(null)
         setTab(value)
         setTool(null)
         setPinMode(null)
@@ -229,6 +235,7 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
      * Writes only when something actually changes.
      */
     fun reconcileTripContext(knowledge: TripsKnowledge) {
+        latestTripsKnowledge = knowledge
         val resolved = TripContextRules.reconcile(
             selectedTripId = selectedTripId.value,
             hudLauncherMode = tripHudLauncherMode.value,

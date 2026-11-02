@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.CurrentYieldMasterParityTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-11-02T12:41:07.756Z" hostname="e2b.local" time="0.063">
+  <properties/>
+  <testcase name="recordedZeroIsASampleNotMissing" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.048"/>
+  <testcase name="damageOffRestoresBaseWithoutChangingEvidence" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.001"/>
+  <testcase name="unroundedRecordedAverageDrivesTonnes" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.001"/>
+  <testcase name="sharedBaseTonnesAndCurrentAuthoritativeVines" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.0"/>
+  <testcase name="sharedDamageAndTripTotals" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.001"/>
+  <testcase name="sampledAreaExcludesPlannedBlock" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.001"/>
+  <testcase name="missingMixedVarietyWithholdsWholeBlockAndTrip" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.001"/>
+  <testcase name="storedKeyWinsOverRenamedDisplay" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.0"/>
+  <testcase name="historicalWeightNeverBecomesCurrent" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.001"/>
+  <testcase name="noRecordedSamplesHaveNoTonnesOrPerHa" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.0"/>
+  <testcase name="invalidUnconfirmedOrNonpositiveWeightRejected" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.0"/>
+  <testcase name="confirmedAbsenceInvalidatesPriorWeight" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.001"/>
+  <testcase name="sharedOverrideMasterAndMixedWeights" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.001"/>
+  <testcase name="latestCompletedObservationStillWinsWithoutDrafts" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.005"/>
+  <testcase name="onlyAbsentStoredKeyUsesNameFallback" classname="com.rork.vinetrack.data.CurrentYieldMasterParityTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

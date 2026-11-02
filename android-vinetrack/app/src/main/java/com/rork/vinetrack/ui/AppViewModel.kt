@@ -1198,6 +1198,12 @@ internal fun resolveTripPinAttribution(
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val session = SessionStore(app)
+    private val chemicalRemovalPreferences = app.getSharedPreferences("chemical-removal-guard-v1", android.content.Context.MODE_PRIVATE)
+    private val chemicalRemovalGuard = com.rork.vinetrack.data.ChemicalRemovalGuard(
+        read = { chemicalRemovalPreferences.getString("original-request", null) },
+        write = { value -> chemicalRemovalPreferences.edit().let { if (value == null) it.remove("original-request") else it.putString("original-request", value) }.commit() },
+    )
+    val chemicalRemoval = chemicalRemovalGuard.state
     private val legacySpraySaves = com.rork.vinetrack.data.LegacySpraySaveStore(app)
     private val performanceCapture = com.rork.vinetrack.data.AdminPerformanceCapture(app) { session.userId }
         .also { com.rork.vinetrack.data.SupabaseClient.performanceCapture = it }
@@ -3183,15 +3189,59 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * P0 Phase C: confirms closure against a fresh server read. Only this result may report a
      * verified CLOSED_SYNCED. Read-only: no acknowledgement, clearing or replay.
      */
+    data class ClosureCheck(val access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess, val owner: String, val vineyard: String, val trip: Trip,
+        val input: com.rork.vinetrack.data.TripClosureStatus.Input, val result: com.rork.vinetrack.data.TripClosureStatus.Result)
+    private val closureChecksMutable = MutableStateFlow<Map<String, ClosureCheck>>(emptyMap())
+    val closureChecks = closureChecksMutable.asStateFlow()
+    private val closureCheckJobs = mutableMapOf<String, kotlinx.coroutines.Job>()
+    private val awaitingAutomaticClosure = mutableMapOf<String, Pair<String, String>>()
+    private data class ClosureEvidence(val owner: String, val epoch: Long, val vineyard: String, val trip: Trip,
+        val input: com.rork.vinetrack.data.TripClosureStatus.Input)
+    private val closureVerificationSchedule = com.rork.vinetrack.data.ReadOnlyVerificationSchedule<String, ClosureEvidence>()
+
+    fun currentClosureCheck(trip: Trip): com.rork.vinetrack.data.TripClosureStatus.Result? = closureChecks.value[trip.id]?.takeIf {
+        session.isAccountAccessCurrent(it.access) && it.owner == session.userId && it.vineyard == _ui.value.selectedVineyardId && it.trip == trip && it.input == tripClosureInput(trip, null)
+    }?.result
+
+    /** At most three reads per evidence change. No writes, historical replay or endless polling. */
+    fun automaticallyVerifyClosure(trip: Trip) {
+        if (trip.isActive || trip.endTime == null || !_ui.value.isOnline || trip.vineyardId != _ui.value.selectedVineyardId ||
+            !tripClosureStatus(trip).isClosedSynced || currentClosureCheck(trip)?.isClosedSynced == true) return
+        val access = session.accountAccess() ?: return
+        val evidence = ClosureEvidence(access.userId, access.generation, trip.vineyardId, trip, tripClosureInput(trip, null))
+        if (!closureVerificationSchedule.claim(trip.id, evidence)) return
+        closureCheckJobs.remove(trip.id)?.cancel()
+        closureCheckJobs[trip.id] = viewModelScope.launch {
+            for (wait in closureVerificationSchedule.delaysMillis) {
+                kotlinx.coroutines.delay(wait)
+                val latest = _ui.value.trips.firstOrNull { it.id == trip.id && it.vineyardId == trip.vineyardId } ?: break
+                if (!closureVerificationSchedule.isCurrent(trip.id, evidence) || !_ui.value.isOnline || !session.isAccountAccessCurrent(access) || session.userId != evidence.owner || _ui.value.selectedVineyardId != trip.vineyardId ||
+                    latest != evidence.trip || tripClosureInput(latest, null) != evidence.input || !tripClosureStatus(latest).isClosedSynced) break
+                val result = verifyTripClosure(latest)
+                if (result.isClosedSynced) { awaitingAutomaticClosure.remove(trip.id); break }
+            }
+        }
+    }
+
     suspend fun verifyTripClosure(trip: Trip): com.rork.vinetrack.data.TripClosureStatus.Result {
+        val before = tripClosureInput(trip, null)
+        val vineyard = _ui.value.selectedVineyardId
         val access = session.accountAccess()
         val fresh: Result<Trip?> = if (access == null) Result.failure(IllegalStateException("NO_ACCOUNT_ACCESS"))
-            else runCatching { tripRepo.fetchTrip(trip.id, access) }
+            else runCatching { tripRepo.fetchTrip(trip.id, access) }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
         val sprays = if (access == null) Result.failure(IllegalStateException("NO_ACCOUNT_ACCESS"))
-            else runCatching { sprayRepo.fetchLinkedToTrip(trip.id, access) }
+            else runCatching { sprayRepo.fetchLinkedToTrip(trip.id, access) }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
         if (access == null || !session.isAccountAccessCurrent(access)) return com.rork.vinetrack.data.TripClosureStatus.Result(
             com.rork.vinetrack.data.TripClosureStatus.State.SERVER_STATE_UNCONFIRMED, listOf("ACCOUNT_CHANGED"))
-        return com.rork.vinetrack.data.TripClosureStatus.evaluate(tripClosureInput(trip, fresh, sprays))
+        val remote = fresh.getOrNull()
+        val scopeMatches = vineyard == trip.vineyardId && vineyard == _ui.value.selectedVineyardId &&
+            remote?.id == trip.id && remote.vineyardId == trip.vineyardId && remote.endTime == trip.endTime &&
+            _ui.value.trips.firstOrNull { it.id == trip.id } == trip && tripClosureInput(trip, null) == before
+        val result = if (!scopeMatches) com.rork.vinetrack.data.TripClosureStatus.Result(
+            com.rork.vinetrack.data.TripClosureStatus.State.SERVER_STATE_UNCONFIRMED, listOf("SCOPE_OR_EVIDENCE_CHANGED"))
+            else com.rork.vinetrack.data.TripClosureStatus.evaluate(tripClosureInput(trip, fresh, sprays))
+        if (scopeMatches) closureChecksMutable.value = closureChecksMutable.value + (trip.id to ClosureCheck(access, access.userId, trip.vineyardId, trip, before, result))
+        return result
     }
 
     /** Only explicit new End intents are replayed; never backfills historical missing end_time. */
@@ -4201,13 +4251,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 tripLabourSync.replay()
                 // Re-run the SAME occurrence journal after its parents; never mint a new finalise.
                 phase5Trace("occurrence", "ENTERED")
+                val closureCandidateIds = versions.values.filter { it.entityType == PendingEntityType.TRIP_END || it.entityType == PendingEntityType.TRIP_SPRAY_COMPLETION }.map { it.clientId }.toMutableSet()
                 for (trip in _ui.value.trips.filter { it.vineyardId == legacyScope && it.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE }) {
                     if (!phase5Current()) return@launchReplayStage
+                    if (trip.endTime != null && runCatching { occurrenceJournal(trip).load()?.pending?.isNotEmpty() == true }.getOrDefault(false)) closureCandidateIds.add(trip.id)
                     replayOccurrenceTrip(trip)
                 }
                 tripLabourSync.replay()
                 if (!phase5Current()) return@launchReplayStage
                 replayTrackedSprayCompletions(versions)
+                if (phase5Current()) {
+                    val owner = session.userId
+                    if (owner != null) {
+                        _ui.value.trips.filter { it.id in closureCandidateIds && it.vineyardId == _ui.value.selectedVineyardId }.forEach { awaitingAutomaticClosure[it.id] = owner to it.vineyardId }
+                        _ui.value.trips.filter { awaitingAutomaticClosure[it.id] == (owner to it.vineyardId) }.forEach(::automaticallyVerifyClosure)
+                    }
+                }
                 phase5Trace("exit", "PASS_COMPLETE_NOT_ACKNOWLEDGEMENT")
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 phase5Trace("exit", "INTERRUPTED_OR_SCOPE_CHANGED"); throw cancelled
@@ -14444,82 +14503,100 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Archive through the existing RPC; retain the inactive row for historical resolution. */
-    fun deleteSavedChemical(id: String, onResult: (Boolean) -> Unit) {
-        val row = _ui.value.savedChemicals.firstOrNull { it.id == id } ?: return onResult(true)
-        val owner = session.userId ?: return onResult(false)
-        val referenced = _ui.value.sprayRecords.any { record ->
-            record.tanks.orEmpty().any { tank -> tank.chemicals.any { it.savedChemicalId == id } }
+    /** Issue #49: freeze scope/identity and durably lock ALL removals before the first suspension. */
+    fun removeChemical(chemical: SavedChemical, action: com.rork.vinetrack.data.ChemicalRemovalGuard.Action) {
+        val st = _ui.value
+        val owner = session.userId ?: return
+        if (st.currentRole !in setOf("owner", "manager") || st.selectedVineyardId != chemical.vineyardId ||
+            st.savedChemicals.none { it.id == chemical.id && it.vineyardId == chemical.vineyardId }) return
+        if (pendingWrites.list().any { it.clientId == chemical.id && it.status in PendingWriteStatus.unresolved }) {
+            _ui.update { it.copy(sprayError = "Wait for this chemical's existing changes to sync before archiving or deleting.") }; return
         }
-        viewModelScope.launch {
+        val target = com.rork.vinetrack.data.ChemicalRemovalGuard.Target(owner, chemical.vineyardId, chemical.id, chemical.displayName, action)
+        if (!chemicalRemovalGuard.begin(target)) return
+        viewModelScope.launch { performChemicalRemoval(target, newRequest = true) }
+    }
+
+    /** Explicit operator retry only: never replaces the frozen target or replays on restart. */
+    fun retryChemicalRemoval() {
+        val target = chemicalRemoval.value.target ?: return
+        if (_ui.value.currentRole !in setOf("owner", "manager") ||
+            !chemicalRemovalGuard.matchesScope(target, session.userId, _ui.value.selectedVineyardId) || !chemicalRemovalGuard.checking(target)) return
+        viewModelScope.launch { performChemicalRemoval(target, newRequest = false) }
+    }
+
+    private suspend fun performChemicalRemoval(target: com.rork.vinetrack.data.ChemicalRemovalGuard.Target, newRequest: Boolean) {
+            var dispatched = false
             try {
-                val exists = savedChemicalRepo.softDelete(id)
-                val retainHistory = exists || referenced
-                if (retainHistory) savedChemicalCreateSync.archiveLocal(owner, row.vineyardId, id)
-                else savedChemicalCreateSync.removeLocal(owner, row.vineyardId, id)
-                if (session.userId == owner && _ui.value.selectedVineyardId == row.vineyardId) {
-                    _ui.update { st -> st.copy(savedChemicals = if (retainHistory) st.savedChemicals.map {
-                        if (it.id == id) com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(it) else it
-                    } else st.savedChemicals.filterNot { it.id == id }) }
-                    onResult(true)
+                val access = session.accountAccess() ?: error("NO_ACCOUNT_ACCESS")
+                check(chemicalRemovalGuard.matchesScope(target, session.userId, _ui.value.selectedVineyardId))
+                com.rork.vinetrack.data.OperationalWrites.requireWrite(target.vineyard)
+                val original = savedChemicalRepo.findByIdScoped(target.id, target.vineyard, access)
+                check(chemicalRemovalGuard.matchesScope(target, session.userId, _ui.value.selectedVineyardId))
+                if (chemicalRemovalGuard.isConfirmed(target, original)) { reconcileChemicalRemoval(target); return }
+                check(original != null)
+                check(!pendingWrites.list().any { it.clientId == target.id && it.status in PendingWriteStatus.unresolved })
+                dispatched = true // From here a lost response is uncertain; never automatically repeat the mutation.
+                when (target.action) {
+                    com.rork.vinetrack.data.ChemicalRemovalGuard.Action.ARCHIVE -> savedChemicalRepo.softDelete(target.id, access)
+                    com.rork.vinetrack.data.ChemicalRemovalGuard.Action.RESTORE -> savedChemicalRepo.restoreArchived(target.id, target.vineyard, access)
+                    com.rork.vinetrack.data.ChemicalRemovalGuard.Action.DELETE -> {
+                        val result = savedChemicalRepo.hardDeleteUnused(target.id, access)
+                        if (result is SavedChemicalRepository.HardDeleteOutcome.InUse) {
+                            check(savedChemicalRepo.findByIdScoped(target.id, target.vineyard, access) != null)
+                            check(session.isAccountAccessCurrent(access) && chemicalRemovalGuard.matchesScope(target, session.userId, _ui.value.selectedVineyardId))
+                            chemicalRemovalGuard.finish(target, "Chemical was not deleted: the server reports it is in use. Archive it instead to retain history.")
+                            return
+                        }
+                    }
                 }
+                check(session.isAccountAccessCurrent(access))
+                reconcileChemicalRemoval(target)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                chemicalRemovalGuard.hold(target, "Request interrupted. Check the original chemical before any further action.")
                 throw cancelled
-            } catch (e: BackendError.Unauthorized) {
-                onUnauthorized("deleteSavedChemical"); onResult(false)
-            } catch (e: BackendError.Server) {
-                _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
-                onResult(false)
             } catch (_: Exception) {
-                _ui.update { it.copy(sprayError = "Couldn't archive the chemical. Check your connection.") }
-                onResult(false)
+                if (!dispatched && newRequest) chemicalRemovalGuard.finish(target, "No chemical action was sent. Could not verify the original record and access; check your connection and selected vineyard before trying again.")
+                else chemicalRemovalGuard.hold(target, "Result not confirmed. Check with server when online. If it remains unconfirmed, contact support with the original chemical ID; do not recreate it or clear storage. Other removals stay blocked.")
             }
+    }
+
+    fun dismissChemicalRemovalMessage() = chemicalRemovalGuard.dismissMessage()
+
+    fun checkChemicalRemoval() {
+        val target = chemicalRemoval.value.target ?: return
+        if (!chemicalRemovalGuard.matchesScope(target, session.userId, _ui.value.selectedVineyardId) || !chemicalRemovalGuard.checking(target)) return
+        viewModelScope.launch {
+            try { reconcileChemicalRemoval(target) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { chemicalRemovalGuard.hold(target, "Check interrupted; original request retained."); throw cancelled }
+            catch (_: Exception) { chemicalRemovalGuard.hold(target, "Could not confirm the original request. Retry Check with server when online; no removal has been repeated.") }
         }
     }
 
-    /**
-     * Permanently delete an unused saved chemical via the server RPC. The
-     * backend refuses (reporting in-use) if the chemical is referenced by any
-     * record; on that branch we restore the row and surface the message.
-     * Mirrors the iOS "Delete Permanently" path.
-     */
-    fun hardDeleteSavedChemical(
-        id: String,
-        onResult: (SavedChemicalRepository.HardDeleteOutcome?) -> Unit,
-    ) {
-        val row = _ui.value.savedChemicals.firstOrNull { it.id == id }
-            ?: return onResult(SavedChemicalRepository.HardDeleteOutcome.NotFound)
-        val owner = session.userId ?: return onResult(null)
-        val retainHistory = _ui.value.sprayRecords.any { record ->
-            record.tanks.orEmpty().any { tank -> tank.chemicals.any { it.savedChemicalId == id } }
+    private suspend fun reconcileChemicalRemoval(target: com.rork.vinetrack.data.ChemicalRemovalGuard.Target) {
+        val access = session.accountAccess() ?: error("NO_ACCOUNT_ACCESS")
+        check(chemicalRemovalGuard.matchesScope(target, access.userId, _ui.value.selectedVineyardId))
+        val row = savedChemicalRepo.findByIdScoped(target.id, target.vineyard, access)
+        check(session.isAccountAccessCurrent(access) && chemicalRemovalGuard.matchesScope(target, session.userId, _ui.value.selectedVineyardId))
+        if (!chemicalRemovalGuard.isConfirmed(target, row)) {
+            chemicalRemovalGuard.hold(target, "The server has not confirmed this action. Check again, or deliberately retry only this original action. Other removals stay blocked. Never recreate the chemical or clear storage.")
+            return
         }
-        viewModelScope.launch {
-            try {
-                val outcome = savedChemicalRepo.hardDeleteUnused(id)
-                if (outcome !is SavedChemicalRepository.HardDeleteOutcome.InUse) {
-                    if (retainHistory) savedChemicalCreateSync.archiveLocal(owner, row.vineyardId, id)
-                    else savedChemicalCreateSync.removeLocal(owner, row.vineyardId, id)
-                    if (session.userId == owner && _ui.value.selectedVineyardId == row.vineyardId) {
-                        _ui.update { st -> st.copy(savedChemicals = if (retainHistory) st.savedChemicals.map {
-                            if (it.id == id) com.rork.vinetrack.data.chemical.ChemicalStorePresentation.archived(it) else it
-                        } else st.savedChemicals.filterNot { it.id == id }) }
-                    }
-                    if (!retainHistory) chemicalLabelPhotos.removeForChemical(id)
-                }
-                if (session.userId == owner && _ui.value.selectedVineyardId == row.vineyardId) onResult(outcome)
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (e: BackendError.Unauthorized) {
-                onUnauthorized("hardDeleteSavedChemical"); onResult(null)
-            } catch (e: BackendError.Server) {
-                _ui.update { it.copy(sprayError = friendlyWriteError(e.code)) }
-                onResult(null)
-            } catch (_: Exception) {
-                _ui.update { it.copy(sprayError = "Couldn't delete the chemical. Check your connection.") }
-                onResult(null)
-            }
+        // Do not cancel queued creates or rewrite historical actual/stock/rate snapshots.
+        check(!pendingWrites.list().any { it.clientId == target.id && it.status in PendingWriteStatus.unresolved })
+        if (row != null) savedChemicalCreateSync.acceptRemoteRow(target.owner, row)
+        else savedChemicalCreateSync.removeLocal(target.owner, target.vineyard, target.id)
+        _ui.update { st -> st.copy(savedChemicals = if (row == null) st.savedChemicals.filterNot { it.id == target.id }
+            else st.savedChemicals.map { if (it.id == target.id) row else it }) }
+        val verb = when (target.action) {
+            com.rork.vinetrack.data.ChemicalRemovalGuard.Action.ARCHIVE -> "archived; historical records retained"
+            com.rork.vinetrack.data.ChemicalRemovalGuard.Action.DELETE -> "permanently deleted"
+            com.rork.vinetrack.data.ChemicalRemovalGuard.Action.RESTORE -> "reactivated"
         }
+        chemicalRemovalGuard.finish(target, "Chemical $verb. Confirmed with server.")
     }
+
+    // Removal entry points intentionally centralised in removeChemical; no unguarded legacy path.
 
     // MARK: - Grape variety master list (owner/manager-managed setup)
 

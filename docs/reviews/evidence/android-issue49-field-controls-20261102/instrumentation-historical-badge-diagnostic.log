@@ -1,0 +1,44 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest:
+INSTRUMENTATION_STATUS: test=basicDetailsStaysOneReadableLineAtNarrowWidthAndLargeFont
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Badge overflow: size=189 x 68; constraints=Constraints(minWidth = 0, maxWidth = 354, minHeight = 0, maxHeight = 1417); lineWidth=187.36365; lineHeight=68.0; ellipsized=false; widthOverflow=true; heightOverflow=false
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertFalse(Assert.java:65)
+	at com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest.basicDetailsStaysOneReadableLineAtNarrowWidthAndLargeFont(Issue49ChemicalControlsAndroidTest.kt:94)
+
+INSTRUMENTATION_STATUS: stream=
+Error in basicDetailsStaysOneReadableLineAtNarrowWidthAndLargeFont(com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest):
+java.lang.AssertionError: Badge overflow: size=189 x 68; constraints=Constraints(minWidth = 0, maxWidth = 354, minHeight = 0, maxHeight = 1417); lineWidth=187.36365; lineHeight=68.0; ellipsized=false; widthOverflow=true; heightOverflow=false
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertFalse(Assert.java:65)
+	at com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest.basicDetailsStaysOneReadableLineAtNarrowWidthAndLargeFont(Issue49ChemicalControlsAndroidTest.kt:94)
+
+INSTRUMENTATION_STATUS: test=basicDetailsStaysOneReadableLineAtNarrowWidthAndLargeFont
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 1
+There was 1 failure:
+1) basicDetailsStaysOneReadableLineAtNarrowWidthAndLargeFont(com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest)
+java.lang.AssertionError: Badge overflow: size=189 x 68; constraints=Constraints(minWidth = 0, maxWidth = 354, minHeight = 0, maxHeight = 1417); lineWidth=187.36365; lineHeight=68.0; ellipsized=false; widthOverflow=true; heightOverflow=false
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at org.junit.Assert.assertFalse(Assert.java:65)
+	at com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest.basicDetailsStaysOneReadableLineAtNarrowWidthAndLargeFont(Issue49ChemicalControlsAndroidTest.kt:94)
+
+FAILURES!!!
+Tests run: 1,  Failures: 1
+
+
+INSTRUMENTATION_CODE: -1

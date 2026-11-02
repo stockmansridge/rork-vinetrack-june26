@@ -59,6 +59,7 @@ import com.rork.vinetrack.data.model.Paddock
 import com.rork.vinetrack.data.model.Pin
 import com.rork.vinetrack.ui.AppUiState
 import com.rork.vinetrack.ui.AppViewModel
+import com.rork.vinetrack.ui.components.mapGestureOwnership
 import com.rork.vinetrack.ui.components.BackNavIcon
 import com.rork.vinetrack.ui.components.VineyardCard
 import com.rork.vinetrack.ui.theme.LocalVineColors
@@ -79,9 +80,11 @@ fun ScoutReportScreen(vm: AppViewModel, state: AppUiState, visit: ScoutVisit, on
     val locations = ScoutReportPresentation.locations(visit, liveState.paddocks, liveState.growthRecords, liveState.pins)
     val markers = reportMarkers(locations)
     var selected by remember { mutableStateOf<ScoutMapMarker?>(null) }
+    var mapGesture by remember { mutableStateOf(false) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("Scout report") }, navigationIcon = { BackNavIcon(onBack) }) }) { padding ->
         LazyColumn(
+            userScrollEnabled = !mapGesture,
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -105,7 +108,7 @@ fun ScoutReportScreen(vm: AppViewModel, state: AppUiState, visit: ScoutVisit, on
                 }
             }
             item { WeatherReportCard(visit, liveState) }
-            item { ScoutVisitMap(blocks, markers) { selected = it } }
+            item { ScoutVisitMap(blocks, markers, onGesture = { mapGesture = it }) { selected = it } }
             item { Text(ScoutReportPresentation.LEGEND, fontSize = 12.sp) }
             items(locations.boundaryUnavailable) { Text(it, fontSize = 12.sp) }
             items(markers, key = { it.id }) { marker ->
@@ -190,14 +193,14 @@ private fun WeatherReportCard(visit: ScoutVisit, state: AppUiState, modifier: Mo
 }
 
 @Composable
-fun ScoutWorkspaceMap(visit: ScoutVisit?, blocks: List<Paddock>, pins: List<Pin>, photoBytes: (String) -> ByteArray?, growthRecords: List<GrowthStageRecord>, locationBlocks: List<Paddock>, currentFix: com.rork.vinetrack.data.insights.ScoutPhotoFix? = null, onBlockSelected: ((String) -> Unit)? = null, modifier: Modifier = Modifier) {
+fun ScoutWorkspaceMap(visit: ScoutVisit?, blocks: List<Paddock>, pins: List<Pin>, photoBytes: (String) -> ByteArray?, growthRecords: List<GrowthStageRecord>, locationBlocks: List<Paddock>, currentFix: com.rork.vinetrack.data.insights.ScoutPhotoFix? = null, onBlockSelected: ((String) -> Unit)? = null, modifier: Modifier = Modifier, onGesture: (Boolean) -> Unit = {}) {
     var selected by remember { mutableStateOf<ScoutMapMarker?>(null) }
     val locations = visit?.let { ScoutReportPresentation.locations(it, locationBlocks, growthRecords, pins) }
     val markers = locations?.let(::reportMarkers).orEmpty()
     val vineyardBlocks = blocks.filter { visit == null || it.vineyardId == visit.vineyardId }
     var selectedBlock by remember { mutableStateOf<String?>(null) }
     Column(modifier) {
-        ScoutVisitMap(vineyardBlocks.distinctBy { it.id }, markers, currentFix = currentFix, onBlockSelected = {
+        ScoutVisitMap(vineyardBlocks.distinctBy { it.id }, markers, currentFix = currentFix, onGesture = onGesture, onBlockSelected = {
             selectedBlock = it; onBlockSelected?.invoke(it)
         }) { selected = it }
         vineyardBlocks.firstOrNull { it.id == selectedBlock }?.let { block ->
@@ -222,11 +225,13 @@ fun ScoutWorkspaceMap(visit: ScoutVisit?, blocks: List<Paddock>, pins: List<Pin>
 }
 
 @Composable
-private fun ScoutVisitMap(blocks: List<Paddock>, markers: List<ScoutMapMarker>, currentFix: com.rork.vinetrack.data.insights.ScoutPhotoFix? = null, onBlockSelected: ((String) -> Unit)? = null, modifier: Modifier = Modifier, onMarker: (ScoutMapMarker) -> Unit) {
+private fun ScoutVisitMap(blocks: List<Paddock>, markers: List<ScoutMapMarker>, currentFix: com.rork.vinetrack.data.insights.ScoutPhotoFix? = null, onBlockSelected: ((String) -> Unit)? = null, modifier: Modifier = Modifier, onGesture: (Boolean) -> Unit = {}, expanded: Boolean = false, onMarker: (ScoutMapMarker) -> Unit) {
     val camera = rememberCameraPositionState()
     val points = blocks.flatMap { block -> block.polygonPoints.orEmpty().filter { ScoutReportPresentation.valid(it.latitude, it.longitude) }.map { LatLng(it.latitude, it.longitude) } } + markers.map { it.point }
     var mapSize by remember { mutableStateOf(IntSize.Zero) }
     var recenter by remember { mutableStateOf(0) }
+    var framedRequest by remember { mutableStateOf<Int?>(null) }
+    var showExpanded by remember { mutableStateOf(false) }
     var showMyLocation by remember { mutableStateOf(false) }
     var detailBlockId by remember { mutableStateOf<String?>(null) }
     val selectBlock: (String) -> Unit = { id ->
@@ -238,21 +243,26 @@ private fun ScoutVisitMap(blocks: List<Paddock>, markers: List<ScoutMapMarker>, 
     val textSize = with(density) { 12.sp.toPx() }
     Row {
         androidx.compose.material3.TextButton(onClick = { showMyLocation = false; recenter++ }) { Text("Recenter") }
+        if (!expanded) androidx.compose.material3.TextButton(onClick = { showExpanded = true }) { Text("Expand map") }
         if (currentFix != null) androidx.compose.material3.TextButton(onClick = { showMyLocation = true; recenter++ }) { Text("My location") }
     }
     androidx.compose.runtime.LaunchedEffect(points, mapSize, recenter) {
+        // Derived markers and GPS updates must not undo an operator's pan or zoom.
+        if (framedRequest == recenter || mapSize.width <= 0 || mapSize.height <= 0) return@LaunchedEffect
         if (showMyLocation && currentFix != null) {
             camera.animate(CameraUpdateFactory.newLatLngZoom(LatLng(currentFix.latitude, currentFix.longitude), 18f))
+            framedRequest = recenter
         } else if (mapSize.width > 0 && mapSize.height > 0 && points.isNotEmpty()) {
             val builder = LatLngBounds.builder(); points.forEach(builder::include)
             runCatching {
                 val bounds = builder.build()
                 if (points.distinct().size == 1) camera.animate(CameraUpdateFactory.newLatLngZoom(points.first(), 17f))
                 else camera.animate(CameraUpdateFactory.newLatLngBounds(bounds, mapSize.width, mapSize.height, minOf(60, minOf(mapSize.width, mapSize.height) / 4)))
+                framedRequest = recenter
             }
         }
     }
-    GoogleMap(modifier = modifier.fillMaxWidth().height(380.dp).onSizeChanged { mapSize = it }, cameraPositionState = camera, properties = MapProperties(mapType = MapType.HYBRID)) {
+    GoogleMap(modifier = modifier.fillMaxWidth().then(if (expanded) Modifier.fillMaxSize() else Modifier.height(380.dp)).mapGestureOwnership(onGesture).onSizeChanged { mapSize = it }, cameraPositionState = camera, properties = MapProperties(mapType = MapType.HYBRID)) {
         val occupied = (markers.map { it.point } + listOfNotNull(currentFix?.let { LatLng(it.latitude, it.longitude) })).mapNotNull { point -> camera.projection?.toScreenLocation(point)?.let {
             android.graphics.RectF(it.x - labelHeight / 2, it.y - labelHeight / 2, it.x + labelHeight / 2, it.y + labelHeight / 2)
         } }.toMutableList()
@@ -298,6 +308,15 @@ private fun ScoutVisitMap(blocks: List<Paddock>, markers: List<ScoutMapMarker>, 
                 Marker(state = MarkerState(marker.point), title = marker.title, snippet = marker.subtitle,
                     icon = BitmapDescriptorFactory.defaultMarker(if (marker.photoId != null) BitmapDescriptorFactory.HUE_ORANGE else if (marker.reference.startsWith("E")) BitmapDescriptorFactory.HUE_GREEN else BitmapDescriptorFactory.HUE_AZURE),
                     onClick = { onMarker(marker); true })
+            }
+        }
+    }
+    if (showExpanded) androidx.compose.ui.window.Dialog(onDismissRequest = { showExpanded = false },
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+        androidx.compose.material3.Surface(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                androidx.compose.material3.TextButton(onClick = { showExpanded = false }) { Text("Close map") }
+                ScoutVisitMap(blocks, markers, currentFix, onBlockSelected, expanded = true, onMarker = onMarker)
             }
         }
     }

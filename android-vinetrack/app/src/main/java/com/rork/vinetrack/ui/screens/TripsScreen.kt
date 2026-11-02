@@ -1,5 +1,7 @@
 package com.rork.vinetrack.ui.screens
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -5800,12 +5802,14 @@ private fun TripClosureCard(vm: AppViewModel, state: AppUiState, trip: Trip) {
     // Invalidate a prior server check when background ACKs, links, account scope or dependencies change.
     val evidenceKey = listOf(trip, state.sprayRecords, state.pendingSyncItems, state.pendingActualTripIds,
         state.locallyEndedTripIds, state.selectedVineyardId, state.currentRole, state.isOnline)
-    var verified by remember(evidenceKey) { mutableStateOf<com.rork.vinetrack.data.TripClosureStatus.Result?>(null) }
+    val closureChecks by vm.closureChecks.collectAsStateWithLifecycle()
+    val verified = remember(evidenceKey, closureChecks) { vm.currentClosureCheck(trip) }
+    LaunchedEffect(evidenceKey) { vm.automaticallyVerifyClosure(trip) }
     var checking by remember(evidenceKey) { mutableStateOf(false) }
     val local = vm.tripClosureStatus(trip)
     val shown = verified ?: local
     val title = when (shown.state) {
-        com.rork.vinetrack.data.TripClosureStatus.State.CLOSED_SYNCED -> if (verified != null) "Trip and linked records · verified with server" else "Trip and linked records synced · check server"
+        com.rork.vinetrack.data.TripClosureStatus.State.CLOSED_SYNCED -> if (verified != null) "Trip and linked records · verified with server" else "Pending · checking Trip and linked records"
         com.rork.vinetrack.data.TripClosureStatus.State.LOCAL_END_PENDING -> "Ended on this device · waiting to sync"
         com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_PENDING -> "Trip ended · linked records not fully verified"
         com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_HELD -> "Ended · sync held for review"
@@ -5815,9 +5819,9 @@ private fun TripClosureCard(vm: AppViewModel, state: AppUiState, trip: Trip) {
     val body = when (shown.state) {
         com.rork.vinetrack.data.TripClosureStatus.State.CLOSED_SYNCED -> if (trip.tripFunction != "spraying" || trip.entrySource == "manual" || trip.manualEntryId != null)
             if (verified != null) "The server confirms this Trip is ended. No required dependent sync operations remain."
-            else "Saved acknowledgements show this Trip ended with no required dependent sync operations. Check with server to verify."
+            else "Sync acknowledgements are saved. Automatic server verification is pending; you can optionally refresh below."
             else if (verified != null) "The Trip is ended and its linked Spray completion matches the Trip end time. No dependent sync operations remain."
-            else "Saved acknowledgements show the Trip and linked records complete. Check with server to verify the current Trip and Spray end times."
+            else "Sync acknowledgements are saved. Pending independent Trip and Spray readback; you can optionally refresh below."
         com.rork.vinetrack.data.TripClosureStatus.State.LOCAL_END_PENDING -> "The end is saved here and will finish on the server when sync completes. Recorded GPS and tank amounts are kept."
         com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_PENDING -> "The Trip has ended, but linked Spray completion or other records are not fully verified. Saved operations are retained; historical records are not automatically repaired."
         com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_HELD -> "A linked record could not be confirmed on the server. Nothing has been discarded. Copy the Trip status and send it to support."
@@ -5831,7 +5835,7 @@ private fun TripClosureCard(vm: AppViewModel, state: AppUiState, trip: Trip) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(enabled = !checking, onClick = {
                 checking = true
-                scope.launch { verified = runCatching { vm.verifyTripClosure(trip) }.getOrNull(); checking = false }
+                scope.launch { try { vm.verifyTripClosure(trip) } finally { checking = false } }
             }) { Text(if (checking) "Checking…" else "Check with server") }
             TextButton(onClick = { clipboard.setText(AnnotatedString(vm.deviceTripDiagnostics(trip))) }) {
                 Text("Copy Trip status")

@@ -1,0 +1,418 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest:
+INSTRUMENTATION_STATUS: test=knownInUseNeverOffersPermanentDelete
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=knownInUseNeverOffersPermanentDelete
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=tenSecondBusyProgressPreventsAdjacentActionAndRepeatedChecks
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=tenSecondBusyProgressPreventsAdjacentActionAndRepeatedChecks
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (Text + InputText + EditableText contains 'Retry original delete?' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest.uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(Issue49ChemicalControlsAndroidTest.kt:89)
+
+INSTRUMENTATION_STATUS: stream=
+Error in uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest):
+java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (Text + InputText + EditableText contains 'Retry original delete?' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest.uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(Issue49ChemicalControlsAndroidTest.kt:89)
+
+INSTRUMENTATION_STATUS: test=uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=basicDetailsStaysOneReadableLineAtNarrowWidthAndLargeFont
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=basicDetailsStaysOneReadableLineAtNarrowWidthAndLargeFont
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=archiveIsDefaultPermanentDeleteRequiresExactName
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=archiveIsDefaultPermanentDeleteRequiresExactName
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest:
+INSTRUMENTATION_STATUS: test=reactivatePatchesOnlyActivityAndTombstoneOnOriginalScopedId
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=6
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall.
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.requireUnlocked(AuthRetentionGuard.kt:216)
+	at com.rork.vinetrack.data.auth.SessionStore.save$lambda$0(SessionStore.kt:103)
+	at com.rork.vinetrack.data.auth.SessionStore.$r8$lambda$slN_HGKn4_XFdHy4rr849qp-tcc(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.SessionStore$$ExternalSyntheticLambda21.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.serialized$app_debug(AuthRetentionGuard.kt:60)
+	at com.rork.vinetrack.data.auth.SessionStore.save(SessionStore.kt:102)
+	at com.rork.vinetrack.data.auth.SessionStore.save$default(SessionStore.kt:94)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.setup(Issue49ChemicalReadbackAndroidTest.kt:40)
+
+INSTRUMENTATION_STATUS: stream=
+Error in reactivatePatchesOnlyActivityAndTombstoneOnOriginalScopedId(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest):
+java.lang.IllegalStateException: Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall.
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.requireUnlocked(AuthRetentionGuard.kt:216)
+	at com.rork.vinetrack.data.auth.SessionStore.save$lambda$0(SessionStore.kt:103)
+	at com.rork.vinetrack.data.auth.SessionStore.$r8$lambda$slN_HGKn4_XFdHy4rr849qp-tcc(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.SessionStore$$ExternalSyntheticLambda21.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.serialized$app_debug(AuthRetentionGuard.kt:60)
+	at com.rork.vinetrack.data.auth.SessionStore.save(SessionStore.kt:102)
+	at com.rork.vinetrack.data.auth.SessionStore.save$default(SessionStore.kt:94)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.setup(Issue49ChemicalReadbackAndroidTest.kt:40)
+
+INSTRUMENTATION_STATUS: test=reactivatePatchesOnlyActivityAndTombstoneOnOriginalScopedId
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=accountChangeDuringReadRejectsResult
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=7
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall.
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.requireUnlocked(AuthRetentionGuard.kt:216)
+	at com.rork.vinetrack.data.auth.SessionStore.save$lambda$0(SessionStore.kt:103)
+	at com.rork.vinetrack.data.auth.SessionStore.$r8$lambda$slN_HGKn4_XFdHy4rr849qp-tcc(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.SessionStore$$ExternalSyntheticLambda21.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.serialized$app_debug(AuthRetentionGuard.kt:60)
+	at com.rork.vinetrack.data.auth.SessionStore.save(SessionStore.kt:102)
+	at com.rork.vinetrack.data.auth.SessionStore.save$default(SessionStore.kt:94)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.setup(Issue49ChemicalReadbackAndroidTest.kt:40)
+
+INSTRUMENTATION_STATUS: stream=
+Error in accountChangeDuringReadRejectsResult(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest):
+java.lang.IllegalStateException: Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall.
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.requireUnlocked(AuthRetentionGuard.kt:216)
+	at com.rork.vinetrack.data.auth.SessionStore.save$lambda$0(SessionStore.kt:103)
+	at com.rork.vinetrack.data.auth.SessionStore.$r8$lambda$slN_HGKn4_XFdHy4rr849qp-tcc(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.SessionStore$$ExternalSyntheticLambda21.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.serialized$app_debug(AuthRetentionGuard.kt:60)
+	at com.rork.vinetrack.data.auth.SessionStore.save(SessionStore.kt:102)
+	at com.rork.vinetrack.data.auth.SessionStore.save$default(SessionStore.kt:94)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.setup(Issue49ChemicalReadbackAndroidTest.kt:40)
+
+INSTRUMENTATION_STATUS: test=accountChangeDuringReadRejectsResult
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=8
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=emptyReadRequiresFreshAuthorisedMembershipBeforeDeletionProof
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=8
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall.
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.requireUnlocked(AuthRetentionGuard.kt:216)
+	at com.rork.vinetrack.data.auth.SessionStore.save$lambda$0(SessionStore.kt:103)
+	at com.rork.vinetrack.data.auth.SessionStore.$r8$lambda$slN_HGKn4_XFdHy4rr849qp-tcc(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.SessionStore$$ExternalSyntheticLambda21.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.serialized$app_debug(AuthRetentionGuard.kt:60)
+	at com.rork.vinetrack.data.auth.SessionStore.save(SessionStore.kt:102)
+	at com.rork.vinetrack.data.auth.SessionStore.save$default(SessionStore.kt:94)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.setup(Issue49ChemicalReadbackAndroidTest.kt:40)
+
+INSTRUMENTATION_STATUS: stream=
+Error in emptyReadRequiresFreshAuthorisedMembershipBeforeDeletionProof(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest):
+java.lang.IllegalStateException: Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall.
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.requireUnlocked(AuthRetentionGuard.kt:216)
+	at com.rork.vinetrack.data.auth.SessionStore.save$lambda$0(SessionStore.kt:103)
+	at com.rork.vinetrack.data.auth.SessionStore.$r8$lambda$slN_HGKn4_XFdHy4rr849qp-tcc(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.SessionStore$$ExternalSyntheticLambda21.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.serialized$app_debug(AuthRetentionGuard.kt:60)
+	at com.rork.vinetrack.data.auth.SessionStore.save(SessionStore.kt:102)
+	at com.rork.vinetrack.data.auth.SessionStore.save$default(SessionStore.kt:94)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.setup(Issue49ChemicalReadbackAndroidTest.kt:40)
+
+INSTRUMENTATION_STATUS: test=emptyReadRequiresFreshAuthorisedMembershipBeforeDeletionProof
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=9
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=rlsFilteredEmptyMembershipNeverConfirmsDeletion
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=9
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall.
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.requireUnlocked(AuthRetentionGuard.kt:216)
+	at com.rork.vinetrack.data.auth.SessionStore.save$lambda$0(SessionStore.kt:103)
+	at com.rork.vinetrack.data.auth.SessionStore.$r8$lambda$slN_HGKn4_XFdHy4rr849qp-tcc(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.SessionStore$$ExternalSyntheticLambda21.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.serialized$app_debug(AuthRetentionGuard.kt:60)
+	at com.rork.vinetrack.data.auth.SessionStore.save(SessionStore.kt:102)
+	at com.rork.vinetrack.data.auth.SessionStore.save$default(SessionStore.kt:94)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.setup(Issue49ChemicalReadbackAndroidTest.kt:40)
+
+INSTRUMENTATION_STATUS: stream=
+Error in rlsFilteredEmptyMembershipNeverConfirmsDeletion(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest):
+java.lang.IllegalStateException: Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall.
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.requireUnlocked(AuthRetentionGuard.kt:216)
+	at com.rork.vinetrack.data.auth.SessionStore.save$lambda$0(SessionStore.kt:103)
+	at com.rork.vinetrack.data.auth.SessionStore.$r8$lambda$slN_HGKn4_XFdHy4rr849qp-tcc(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.SessionStore$$ExternalSyntheticLambda21.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.serialized$app_debug(AuthRetentionGuard.kt:60)
+	at com.rork.vinetrack.data.auth.SessionStore.save(SessionStore.kt:102)
+	at com.rork.vinetrack.data.auth.SessionStore.save$default(SessionStore.kt:94)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.setup(Issue49ChemicalReadbackAndroidTest.kt:40)
+
+INSTRUMENTATION_STATUS: test=rlsFilteredEmptyMembershipNeverConfirmsDeletion
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49YieldSamplingAndroidTest
+INSTRUMENTATION_STATUS: current=10
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.Issue49YieldSamplingAndroidTest:
+INSTRUMENTATION_STATUS: test=fourOfNineteenSkipPreviousManualSelectAndPartialFinishKeepMeasurements
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49YieldSamplingAndroidTest
+INSTRUMENTATION_STATUS: current=10
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=fourOfNineteenSkipPreviousManualSelectAndPartialFinishKeepMeasurements
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49YieldSamplingAndroidTest
+INSTRUMENTATION_STATUS: current=11
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=failedSaveKeepsDialogAndSelectionThenConfirmedSaveAdvances
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49YieldSamplingAndroidTest
+INSTRUMENTATION_STATUS: current=11
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=failedSaveKeepsDialogAndSelectionThenConfirmedSaveAdvances
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=12
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.YieldTripNavigationAndroidTest:
+INSTRUMENTATION_STATUS: test=completionRefreshesListAndReopensCompletedFromDurableIntent
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=12
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=completionRefreshesListAndReopensCompletedFromDurableIntent
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=13
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=failedDurableSaveRetainsRawDialogAndDoesNotAdvance
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=13
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=failedDurableSaveRetainsRawDialogAndDoesNotAdvance
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=14
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=normalQuadrantControlsPersistIndependentMeasurementsAndResumeSameTrip
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=14
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=normalQuadrantControlsPersistIndependentMeasurementsAndResumeSameTrip
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=15
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=nonAdminNormalStartRetainsOriginalFullVinePath
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=15
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=nonAdminNormalStartRetainsOriginalFullVinePath
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=16
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=adminCanChooseOriginalFullVineMethod
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=16
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=adminCanChooseOriginalFullVineMethod
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=17
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=missingSpacingBlocksQuadrantAndZeroIsAcceptedWithKnownSpacing
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=17
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=missingSpacingBlocksQuadrantAndZeroIsAcceptedWithKnownSpacing
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=18
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=resumeAndBackReturnsToTripsNotYieldRoot
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.YieldTripNavigationAndroidTest
+INSTRUMENTATION_STATUS: current=18
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=18
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=resumeAndBackReturnsToTripsNotYieldRoot
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 31.764
+There were 5 failures:
+1) uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest)
+java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (Text + InputText + EditableText contains 'Retry original delete?' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest.uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(Issue49ChemicalControlsAndroidTest.kt:89)
+2) reactivatePatchesOnlyActivityAndTombstoneOnOriginalScopedId(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest)
+java.lang.IllegalStateException: Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall.
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.requireUnlocked(AuthRetentionGuard.kt:216)
+	at com.rork.vinetrack.data.auth.SessionStore.save$lambda$0(SessionStore.kt:103)
+	at com.rork.vinetrack.data.auth.SessionStore.$r8$lambda$slN_HGKn4_XFdHy4rr849qp-tcc(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.SessionStore$$ExternalSyntheticLambda21.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.serialized$app_debug(AuthRetentionGuard.kt:60)
+	at com.rork.vinetrack.data.auth.SessionStore.save(SessionStore.kt:102)
+	at com.rork.vinetrack.data.auth.SessionStore.save$default(SessionStore.kt:94)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.setup(Issue49ChemicalReadbackAndroidTest.kt:40)
+3) accountChangeDuringReadRejectsResult(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest)
+java.lang.IllegalStateException: Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall.
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.requireUnlocked(AuthRetentionGuard.kt:216)
+	at com.rork.vinetrack.data.auth.SessionStore.save$lambda$0(SessionStore.kt:103)
+	at com.rork.vinetrack.data.auth.SessionStore.$r8$lambda$slN_HGKn4_XFdHy4rr849qp-tcc(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.SessionStore$$ExternalSyntheticLambda21.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.serialized$app_debug(AuthRetentionGuard.kt:60)
+	at com.rork.vinetrack.data.auth.SessionStore.save(SessionStore.kt:102)
+	at com.rork.vinetrack.data.auth.SessionStore.save$default(SessionStore.kt:94)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.setup(Issue49ChemicalReadbackAndroidTest.kt:40)
+4) emptyReadRequiresFreshAuthorisedMembershipBeforeDeletionProof(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest)
+java.lang.IllegalStateException: Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall.
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.requireUnlocked(AuthRetentionGuard.kt:216)
+	at com.rork.vinetrack.data.auth.SessionStore.save$lambda$0(SessionStore.kt:103)
+	at com.rork.vinetrack.data.auth.SessionStore.$r8$lambda$slN_HGKn4_XFdHy4rr849qp-tcc(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.SessionStore$$ExternalSyntheticLambda21.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.serialized$app_debug(AuthRetentionGuard.kt:60)
+	at com.rork.vinetrack.data.auth.SessionStore.save(SessionStore.kt:102)
+	at com.rork.vinetrack.data.auth.SessionStore.save$default(SessionStore.kt:94)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.setup(Issue49ChemicalReadbackAndroidTest.kt:40)
+5) rlsFilteredEmptyMembershipNeverConfirmsDeletion(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest)
+java.lang.IllegalStateException: Local vineyard work is retained and locked. Account access is paused until recovery can be verified. Do not clear app storage or reinstall.
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.requireUnlocked(AuthRetentionGuard.kt:216)
+	at com.rork.vinetrack.data.auth.SessionStore.save$lambda$0(SessionStore.kt:103)
+	at com.rork.vinetrack.data.auth.SessionStore.$r8$lambda$slN_HGKn4_XFdHy4rr849qp-tcc(Unknown Source:0)
+	at com.rork.vinetrack.data.auth.SessionStore$$ExternalSyntheticLambda21.invoke(D8$$SyntheticClass:0)
+	at com.rork.vinetrack.data.auth.AuthRetentionGuard.serialized$app_debug(AuthRetentionGuard.kt:60)
+	at com.rork.vinetrack.data.auth.SessionStore.save(SessionStore.kt:102)
+	at com.rork.vinetrack.data.auth.SessionStore.save$default(SessionStore.kt:94)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.setup(Issue49ChemicalReadbackAndroidTest.kt:40)
+
+FAILURES!!!
+Tests run: 18,  Failures: 5
+
+
+INSTRUMENTATION_CODE: -1

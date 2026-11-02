@@ -1,0 +1,292 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest:
+INSTRUMENTATION_STATUS: test=uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (Text + InputText + EditableText contains 'Retry original delete?' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest.uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(Issue49ChemicalControlsAndroidTest.kt:89)
+
+INSTRUMENTATION_STATUS: stream=
+Error in uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest):
+java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (Text + InputText + EditableText contains 'Retry original delete?' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest.uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(Issue49ChemicalControlsAndroidTest.kt:89)
+
+INSTRUMENTATION_STATUS: test=uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest:
+INSTRUMENTATION_STATUS: test=reactivatePatchesOnlyActivityAndTombstoneOnOriginalScopedId
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stack=java.lang.IllegalStateException: Fail to prepare request body for sending. 
+The body type is: class kotlinx.serialization.json.JsonObject (Kotlin reflection is not available), with Content-Type: application/json.
+
+If you expect serialized body, please check that you have installed the corresponding plugin(like `ContentNegotiation`) and set `Content-Type` header.
+	at io.ktor.client.plugins.HttpSend$Plugin$install$1.invokeSuspend(HttpSend.kt:83)
+	at io.ktor.client.plugins.HttpSend$Plugin$install$1.invoke(Unknown Source:15)
+	at io.ktor.client.plugins.HttpSend$Plugin$install$1.invoke(Unknown Source:4)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceedLoop(DebugPipelineContext.kt:79)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceed(DebugPipelineContext.kt:57)
+	at io.ktor.client.plugins.RequestError$install$1.invokeSuspend(HttpCallValidator.kt:165)
+	at io.ktor.client.plugins.RequestError$install$1.invoke(Unknown Source:11)
+	at io.ktor.client.plugins.RequestError$install$1.invoke(Unknown Source:4)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceedLoop(DebugPipelineContext.kt:79)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceed(DebugPipelineContext.kt:57)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.invokeSuspend$proceed(HttpRequestLifecycle.kt:42)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.access$invokeSuspend$proceed(Unknown Source:0)
+	at io.ktor.client.plugins.SetupRequestContext$install$1$1.invoke(HttpRequestLifecycle.kt:42)
+	at io.ktor.client.plugins.SetupRequestContext$install$1$1.invoke(HttpRequestLifecycle.kt:42)
+	at io.ktor.client.plugins.HttpRequestLifecycleKt$HttpRequestLifecycle$1$1.invokeSuspend(HttpRequestLifecycle.kt:29)
+	at io.ktor.client.plugins.HttpRequestLifecycleKt$HttpRequestLifecycle$1$1.invoke(Unknown Source:13)
+	at io.ktor.client.plugins.HttpRequestLifecycleKt$HttpRequestLifecycle$1$1.invoke(Unknown Source:6)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.invokeSuspend(HttpRequestLifecycle.kt:42)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.invoke(Unknown Source:11)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.invoke(Unknown Source:4)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceedLoop(DebugPipelineContext.kt:79)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceed(DebugPipelineContext.kt:57)
+	at io.ktor.util.pipeline.DebugPipelineContext.execute$ktor_utils(DebugPipelineContext.kt:63)
+	at io.ktor.util.pipeline.Pipeline.execute(Pipeline.kt:92)
+	at io.ktor.client.HttpClient.execute$ktor_client_core(HttpClient.kt:1415)
+	at io.ktor.client.statement.HttpStatement.fetchResponse(HttpStatement.kt:198)
+	at io.ktor.client.statement.HttpStatement.execute(HttpStatement.kt:95)
+	at com.rork.vinetrack.data.SavedChemicalRepository$restoreArchived$2.invokeSuspend(SavedChemicalRepository.kt:759)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:124)
+	at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:89)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:586)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:820)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:717)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:704)
+
+INSTRUMENTATION_STATUS: stream=
+Error in reactivatePatchesOnlyActivityAndTombstoneOnOriginalScopedId(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest):
+java.lang.IllegalStateException: Fail to prepare request body for sending. 
+The body type is: class kotlinx.serialization.json.JsonObject (Kotlin reflection is not available), with Content-Type: application/json.
+
+If you expect serialized body, please check that you have installed the corresponding plugin(like `ContentNegotiation`) and set `Content-Type` header.
+	at io.ktor.client.plugins.HttpSend$Plugin$install$1.invokeSuspend(HttpSend.kt:83)
+	at io.ktor.client.plugins.HttpSend$Plugin$install$1.invoke(Unknown Source:15)
+	at io.ktor.client.plugins.HttpSend$Plugin$install$1.invoke(Unknown Source:4)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceedLoop(DebugPipelineContext.kt:79)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceed(DebugPipelineContext.kt:57)
+	at io.ktor.client.plugins.RequestError$install$1.invokeSuspend(HttpCallValidator.kt:165)
+	at io.ktor.client.plugins.RequestError$install$1.invoke(Unknown Source:11)
+	at io.ktor.client.plugins.RequestError$install$1.invoke(Unknown Source:4)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceedLoop(DebugPipelineContext.kt:79)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceed(DebugPipelineContext.kt:57)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.invokeSuspend$proceed(HttpRequestLifecycle.kt:42)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.access$invokeSuspend$proceed(Unknown Source:0)
+	at io.ktor.client.plugins.SetupRequestContext$install$1$1.invoke(HttpRequestLifecycle.kt:42)
+	at io.ktor.client.plugins.SetupRequestContext$install$1$1.invoke(HttpRequestLifecycle.kt:42)
+	at io.ktor.client.plugins.HttpRequestLifecycleKt$HttpRequestLifecycle$1$1.invokeSuspend(HttpRequestLifecycle.kt:29)
+	at io.ktor.client.plugins.HttpRequestLifecycleKt$HttpRequestLifecycle$1$1.invoke(Unknown Source:13)
+	at io.ktor.client.plugins.HttpRequestLifecycleKt$HttpRequestLifecycle$1$1.invoke(Unknown Source:6)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.invokeSuspend(HttpRequestLifecycle.kt:42)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.invoke(Unknown Source:11)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.invoke(Unknown Source:4)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceedLoop(DebugPipelineContext.kt:79)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceed(DebugPipelineContext.kt:57)
+	at io.ktor.util.pipeline.DebugPipelineContext.execute$ktor_utils(DebugPipelineContext.kt:63)
+	at io.ktor.util.pipeline.Pipeline.execute(Pipeline.kt:92)
+	at io.ktor.client.HttpClient.execute$ktor_client_core(HttpClient.kt:1415)
+	at io.ktor.client.statement.HttpStatement.fetchResponse(HttpStatement.kt:198)
+	at io.ktor.client.statement.HttpStatement.execute(HttpStatement.kt:95)
+	at com.rork.vinetrack.data.SavedChemicalRepository$restoreArchived$2.invokeSuspend(SavedChemicalRepository.kt:759)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:124)
+	at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:89)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:586)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:820)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:717)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:704)
+
+INSTRUMENTATION_STATUS: test=reactivatePatchesOnlyActivityAndTombstoneOnOriginalScopedId
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=accountChangeDuringReadRejectsResult
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=3
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=accountChangeDuringReadRejectsResult
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=emptyReadRequiresFreshAuthorisedMembershipBeforeDeletionProof
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=4
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stack=io.ktor.client.call.NoTransformationFoundException: Expected response body of the type 'interface java.util.List (Kotlin reflection is not available)' but was 'class io.ktor.utils.io.SourceByteReadChannel (Kotlin reflection is not available)'
+In response from `https://tbafuqwruefgkbyxrxyb.supabase.co/rest/v1/saved_chemicals?id=eq.49000000-0000-4000-8000-000000000003&vineyard_id=eq.49000000-0000-4000-8000-000000000002&select=*`
+Response status `200 OK`
+Response header `ContentType: application/json` 
+Request header `Accept: */*`
+
+You can read how to resolve NoTransformationFoundException at FAQ: 
+https://ktor.io/docs/faq.html#no-transformation-found-exception
+	at io.ktor.client.call.HttpClientCall.bodyNullable(HttpClientCall.kt:104)
+	at com.rork.vinetrack.data.SavedChemicalRepository$findByIdScoped$2.invokeSuspend(SavedChemicalRepository.kt:731)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:124)
+	at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:89)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:586)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:820)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:717)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:704)
+
+INSTRUMENTATION_STATUS: stream=
+Error in emptyReadRequiresFreshAuthorisedMembershipBeforeDeletionProof(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest):
+io.ktor.client.call.NoTransformationFoundException: Expected response body of the type 'interface java.util.List (Kotlin reflection is not available)' but was 'class io.ktor.utils.io.SourceByteReadChannel (Kotlin reflection is not available)'
+In response from `https://tbafuqwruefgkbyxrxyb.supabase.co/rest/v1/saved_chemicals?id=eq.49000000-0000-4000-8000-000000000003&vineyard_id=eq.49000000-0000-4000-8000-000000000002&select=*`
+Response status `200 OK`
+Response header `ContentType: application/json` 
+Request header `Accept: */*`
+
+You can read how to resolve NoTransformationFoundException at FAQ: 
+https://ktor.io/docs/faq.html#no-transformation-found-exception
+	at io.ktor.client.call.HttpClientCall.bodyNullable(HttpClientCall.kt:104)
+	at com.rork.vinetrack.data.SavedChemicalRepository$findByIdScoped$2.invokeSuspend(SavedChemicalRepository.kt:731)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:124)
+	at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:89)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:586)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:820)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:717)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:704)
+
+INSTRUMENTATION_STATUS: test=emptyReadRequiresFreshAuthorisedMembershipBeforeDeletionProof
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=
+INSTRUMENTATION_STATUS: test=rlsFilteredEmptyMembershipNeverConfirmsDeletion
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=5
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=5
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=rlsFilteredEmptyMembershipNeverConfirmsDeletion
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 1.451
+There were 3 failures:
+1) uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest)
+java.lang.AssertionError: Failed: assertExists.
+Reason: Expected exactly '1' node but could not find any node that satisfies: (Text + InputText + EditableText contains 'Retry original delete?' (ignoreCase: false))
+
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow(SemanticsNodeInteraction.kt:178)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.fetchOneOrThrow$default(SemanticsNodeInteraction.kt:150)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists(SemanticsNodeInteraction.kt:125)
+	at androidx.compose.ui.test.SemanticsNodeInteraction.assertExists$default(SemanticsNodeInteraction.kt:124)
+	at com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest.uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(Issue49ChemicalControlsAndroidTest.kt:89)
+2) reactivatePatchesOnlyActivityAndTombstoneOnOriginalScopedId(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest)
+java.lang.IllegalStateException: Fail to prepare request body for sending. 
+The body type is: class kotlinx.serialization.json.JsonObject (Kotlin reflection is not available), with Content-Type: application/json.
+
+If you expect serialized body, please check that you have installed the corresponding plugin(like `ContentNegotiation`) and set `Content-Type` header.
+	at io.ktor.client.plugins.HttpSend$Plugin$install$1.invokeSuspend(HttpSend.kt:83)
+	at io.ktor.client.plugins.HttpSend$Plugin$install$1.invoke(Unknown Source:15)
+	at io.ktor.client.plugins.HttpSend$Plugin$install$1.invoke(Unknown Source:4)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceedLoop(DebugPipelineContext.kt:79)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceed(DebugPipelineContext.kt:57)
+	at io.ktor.client.plugins.RequestError$install$1.invokeSuspend(HttpCallValidator.kt:165)
+	at io.ktor.client.plugins.RequestError$install$1.invoke(Unknown Source:11)
+	at io.ktor.client.plugins.RequestError$install$1.invoke(Unknown Source:4)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceedLoop(DebugPipelineContext.kt:79)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceed(DebugPipelineContext.kt:57)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.invokeSuspend$proceed(HttpRequestLifecycle.kt:42)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.access$invokeSuspend$proceed(Unknown Source:0)
+	at io.ktor.client.plugins.SetupRequestContext$install$1$1.invoke(HttpRequestLifecycle.kt:42)
+	at io.ktor.client.plugins.SetupRequestContext$install$1$1.invoke(HttpRequestLifecycle.kt:42)
+	at io.ktor.client.plugins.HttpRequestLifecycleKt$HttpRequestLifecycle$1$1.invokeSuspend(HttpRequestLifecycle.kt:29)
+	at io.ktor.client.plugins.HttpRequestLifecycleKt$HttpRequestLifecycle$1$1.invoke(Unknown Source:13)
+	at io.ktor.client.plugins.HttpRequestLifecycleKt$HttpRequestLifecycle$1$1.invoke(Unknown Source:6)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.invokeSuspend(HttpRequestLifecycle.kt:42)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.invoke(Unknown Source:11)
+	at io.ktor.client.plugins.SetupRequestContext$install$1.invoke(Unknown Source:4)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceedLoop(DebugPipelineContext.kt:79)
+	at io.ktor.util.pipeline.DebugPipelineContext.proceed(DebugPipelineContext.kt:57)
+	at io.ktor.util.pipeline.DebugPipelineContext.execute$ktor_utils(DebugPipelineContext.kt:63)
+	at io.ktor.util.pipeline.Pipeline.execute(Pipeline.kt:92)
+	at io.ktor.client.HttpClient.execute$ktor_client_core(HttpClient.kt:1415)
+	at io.ktor.client.statement.HttpStatement.fetchResponse(HttpStatement.kt:198)
+	at io.ktor.client.statement.HttpStatement.execute(HttpStatement.kt:95)
+	at com.rork.vinetrack.data.SavedChemicalRepository$restoreArchived$2.invokeSuspend(SavedChemicalRepository.kt:759)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:124)
+	at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:89)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:586)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:820)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:717)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:704)
+3) emptyReadRequiresFreshAuthorisedMembershipBeforeDeletionProof(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest)
+io.ktor.client.call.NoTransformationFoundException: Expected response body of the type 'interface java.util.List (Kotlin reflection is not available)' but was 'class io.ktor.utils.io.SourceByteReadChannel (Kotlin reflection is not available)'
+In response from `https://tbafuqwruefgkbyxrxyb.supabase.co/rest/v1/saved_chemicals?id=eq.49000000-0000-4000-8000-000000000003&vineyard_id=eq.49000000-0000-4000-8000-000000000002&select=*`
+Response status `200 OK`
+Response header `ContentType: application/json` 
+Request header `Accept: */*`
+
+You can read how to resolve NoTransformationFoundException at FAQ: 
+https://ktor.io/docs/faq.html#no-transformation-found-exception
+	at io.ktor.client.call.HttpClientCall.bodyNullable(HttpClientCall.kt:104)
+	at com.rork.vinetrack.data.SavedChemicalRepository$findByIdScoped$2.invokeSuspend(SavedChemicalRepository.kt:731)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:124)
+	at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:89)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:586)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:820)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:717)
+	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:704)
+
+FAILURES!!!
+Tests run: 5,  Failures: 3
+
+
+INSTRUMENTATION_CODE: -1

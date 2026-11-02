@@ -1,0 +1,102 @@
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest:
+INSTRUMENTATION_STATUS: test=uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Printing with useUnmergedTree = 'false'
+Node #1 at (l=0.0, t=0.0, r=0.0, b=0.0)px
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest.uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(Issue49ChemicalControlsAndroidTest.kt:89)
+
+INSTRUMENTATION_STATUS: stream=
+Error in uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest):
+java.lang.AssertionError: Printing with useUnmergedTree = 'false'
+Node #1 at (l=0.0, t=0.0, r=0.0, b=0.0)px
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest.uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(Issue49ChemicalControlsAndroidTest.kt:89)
+
+INSTRUMENTATION_STATUS: test=uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stream=
+com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest:
+INSTRUMENTATION_STATUS: test=accountChangeDuringReadRejectsResult
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest
+INSTRUMENTATION_STATUS: current=2
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=2
+INSTRUMENTATION_STATUS: stack=java.lang.AssertionError: Synthetic account change must execute, not merely fail HTTP decoding
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest$accountChangeDuringReadRejectsResult$1.invokeSuspend(Issue49ChemicalReadbackAndroidTest.kt:100)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:98)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:94)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:70)
+	at kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source:1)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:48)
+	at kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source:1)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.accountChangeDuringReadRejectsResult(Issue49ChemicalReadbackAndroidTest.kt:89)
+
+INSTRUMENTATION_STATUS: stream=
+Error in accountChangeDuringReadRejectsResult(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest):
+java.lang.AssertionError: Synthetic account change must execute, not merely fail HTTP decoding
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest$accountChangeDuringReadRejectsResult$1.invokeSuspend(Issue49ChemicalReadbackAndroidTest.kt:100)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:98)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:94)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:70)
+	at kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source:1)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:48)
+	at kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source:1)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.accountChangeDuringReadRejectsResult(Issue49ChemicalReadbackAndroidTest.kt:89)
+
+INSTRUMENTATION_STATUS: test=accountChangeDuringReadRejectsResult
+INSTRUMENTATION_STATUS_CODE: -2
+INSTRUMENTATION_RESULT: stream=
+
+Time: 1.414
+There were 2 failures:
+1) uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest)
+java.lang.AssertionError: Printing with useUnmergedTree = 'false'
+Node #1 at (l=0.0, t=0.0, r=0.0, b=0.0)px
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.Issue49ChemicalControlsAndroidTest.uncertainPermanentRetryRequiresOriginalNameAndKeepsFrozenId(Issue49ChemicalControlsAndroidTest.kt:89)
+2) accountChangeDuringReadRejectsResult(com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest)
+java.lang.AssertionError: Synthetic account change must execute, not merely fail HTTP decoding
+	at org.junit.Assert.fail(Assert.java:89)
+	at org.junit.Assert.assertTrue(Assert.java:42)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest$accountChangeDuringReadRejectsResult$1.invokeSuspend(Issue49ChemicalReadbackAndroidTest.kt:100)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:98)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:94)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:70)
+	at kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source:1)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:48)
+	at kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source:1)
+	at com.rork.vinetrack.data.Issue49ChemicalReadbackAndroidTest.accountChangeDuringReadRejectsResult(Issue49ChemicalReadbackAndroidTest.kt:89)
+
+FAILURES!!!
+Tests run: 2,  Failures: 2
+
+
+INSTRUMENTATION_CODE: -1
