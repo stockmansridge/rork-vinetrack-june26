@@ -142,6 +142,8 @@ struct NewMainTabView: View {
                 .animation(.easeInOut(duration: 0.25), value: subscription.isRelyingOnOfflineGrace)
         }
         .onAppear {
+            syncStatusCenter.setDiagnosticScope(ownerId: auth.isSignedIn ? auth.userId : nil,
+                                                vineyardId: store.selectedVineyardId)
             if locationService.authorizationStatus == .notDetermined {
                 locationService.requestPermission()
             } else if locationService.authorizationStatus == .authorizedWhenInUse || locationService.authorizationStatus == .authorizedAlways {
@@ -223,6 +225,8 @@ struct NewMainTabView: View {
             Task { await appNoticeService.refresh() }
         }
         .task(id: "\(auth.userId?.uuidString ?? "signed-out")|\(auth.completedSignOutSequence)|\(store.selectedVineyardId?.uuidString ?? "none")") {
+            syncStatusCenter.setDiagnosticScope(ownerId: auth.isSignedIn ? auth.userId : nil,
+                                                vineyardId: store.selectedVineyardId)
             if let vineyardId = store.selectedVineyardId {
                 VineyardSelectionDiagnostics.stage("view task started", vineyardId: vineyardId)
             }
