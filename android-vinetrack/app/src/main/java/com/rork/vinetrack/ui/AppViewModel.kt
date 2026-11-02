@@ -4019,7 +4019,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val line = "recovery_source=4e177a9109f3f729d16c11a527cf64e3fe443611 diagnostic_overlay=issue41-rc1 stage=$stage reason=$reason vineyard=${_ui.value.selectedVineyardId} scope_current=${scope != null}"
         com.rork.vinetrack.data.SafeSyncDiagnosticHistory.record(when (stage) {
             "entry" -> "PHASE5_ENTRY"; "exit" -> "PHASE5_EXIT"; "legacy" -> "PHASE5_LEGACY"; "freeze" -> "PHASE5_FREEZE"; else -> "QUEUE_OBSERVED"
-        })
+        }, session.userId, _ui.value.selectedVineyardId)
         android.util.Log.i("VineTrackPhase5", line)
         _ui.update { it.copy(phase5ReplayStage = line) }
     }
@@ -5417,7 +5417,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (_ui.value.isRetryingSync) return false
         if (!_ui.value.isOnline || session.accessToken == null || pendingWrites.currentReplayScope() == null) return false
         if (pendingWrites.list().none { it.id == id && it.status == com.rork.vinetrack.data.model.PendingWriteStatus.FAILED }) return false
-        com.rork.vinetrack.data.SafeSyncDiagnosticHistory.record("RETRY_REQUESTED")
+        com.rork.vinetrack.data.SafeSyncDiagnosticHistory.record("RETRY_REQUESTED", session.userId, _ui.value.selectedVineyardId)
         retryPendingSync()
         return true
     }
@@ -7308,7 +7308,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refresh() {
         val id = _ui.value.selectedVineyardId ?: return
-        com.rork.vinetrack.data.SafeSyncDiagnosticHistory.record("MANUAL_REFRESH")
+        com.rork.vinetrack.data.SafeSyncDiagnosticHistory.record("MANUAL_REFRESH", session.userId, id)
         refreshSelectedVineyardLogo()
         refreshGrowthStageImages()
         refreshSeasonSettings(id)
@@ -18384,11 +18384,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Freshly verified system-admin report, restricted to selected vineyard,
-     * non-sensitive queue metadata, sync-cache timestamps and fixed-code events.
-     * No payload JSON, raw exceptions, server requests or recovery operations. */
+    /** Explicitly scoped support SNAPSHOT, not a full log or backend ACK receipt.
+     * The existing state is read only; NO outbox reader or replay is invoked. */
     fun exportFullSyncDiagnostics(onResult: (String?) -> Unit) {
         viewModelScope.launch {
+            // Fresh account-bound server verification. Offline export is deliberately
+            // unavailable until an equally secure local authorization model exists.
             if (!verifyPerformanceAdmin()) { onResult(null); return@launch }
             val owner = session.userId ?: run { onResult(null); return@launch }
             val state = _ui.value
@@ -18398,41 +18399,51 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(null); return@launch
             }
             val info = supportDiagnostics()
-            val items = state.pendingSyncItems.filter { it.clientId.isNotBlank() }
-            val summary = items.groupBy { it.entityType }.toSortedMap().map { (domain, values) ->
-                mapOf("domain" to domain, "pending_count" to values.size.toString(),
-                    "failed_count" to values.count { it.status == "failed" }.toString(),
-                    "blocked_count" to values.count { it.status == "blocked" }.toString())
-            }
+            val visible: List<Map<String, String>> = listOf(
+                mapOf("domain" to "trips",
+                    "local_loaded" to state.trips.count { it.vineyardId == vineyard }.toString()),
+                mapOf("domain" to "spray_records",
+                    "local_loaded" to state.sprayRecords.count { it.vineyardId == vineyard }.toString()),
+                mapOf("domain" to "pins",
+                    "local_loaded" to state.pins.count { it.vineyardId == vineyard }.toString()),
+                mapOf("domain" to "saved_chemicals",
+                    "local_loaded" to state.savedChemicals.count { it.vineyardId == vineyard }.toString()),
+                mapOf("domain" to "work_tasks",
+                    "local_loaded" to state.workTasks.count { it.vineyardId == vineyard }.toString())
+            )
             val times = domainSyncTimes().toSortedMap().map { (domain, time) ->
                 mapOf("domain" to domain,
                     "last_read_utc" to (time?.let { java.time.Instant.ofEpochMilli(it).toString() } ?: "unknown"))
             }
             val report = kotlinx.serialization.json.buildJsonObject {
-                put("format", "vinetrack.sync.support.v1")
+                put("format", "vinetrack.sync.support.snapshot.v1")
                 put("platform", "android")
                 put("generated_at", java.time.Instant.now().toString())
                 put("app_version", info.appVersion)
                 put("app_build", info.appBuild)
-                put("account_scope", "verified_current_session")
-                put("vineyard_scope", "verified_selected_vineyard")
-                put("outbox_operation_count", state.pendingSyncCount)
+                put("scope", "verified_account_and_selected_vineyard")
+                put("collection", "local_state_no_outbox_read_or_replay")
                 put("source_revision", "unknown_no_verified_build_receipt")
+                put("pending_queue_status", "UNVERIFIED_NO_VINEYARD_SCOPED_READ_ONLY_INSPECTOR")
+                put("tank_actual_queue_status", "UNVERIFIED_NO_SCOPED_INSPECTOR")
                 put("last_full_sync", "unknown_no_durable_full_sweep_receipt")
                 put("acknowledgements", "unknown_requires_server_readback")
-                put("pending_by_domain", kotlinx.serialization.json.Json.encodeToJsonElement(summary))
+                put("domains", kotlinx.serialization.json.Json.encodeToJsonElement(visible))
                 put("last_read_by_domain", kotlinx.serialization.json.Json.encodeToJsonElement(times))
                 put("events", kotlinx.serialization.json.Json.encodeToJsonElement(
-                    com.rork.vinetrack.data.SafeSyncDiagnosticHistory.snapshot()))
+                    com.rork.vinetrack.data.SafeSyncDiagnosticHistory.snapshot(owner, vineyard)))
                 put("limitations", kotlinx.serialization.json.Json.encodeToJsonElement(listOf(
-                    "This is a read-only snapshot; no retries or network reads were triggered.",
-                    "Events begin with this build and are memory-only; process restarts lose history.",
-                    "Pending counters may omit inaccessible retained legacy journals.",
-                    "HTTP request bodies, auth material, raw exceptions, identifiers and GPS are excluded.",
-                    "The report is not a proof of upload acknowledgement or older client compatibility."
+                    "This is a support SNAPSHOT; it is not a comprehensive operation log or server ACK receipt.",
+                    "A fresh system-admin server check precedes the local snapshot; no replay or sync was requested.",
+                    "Only selected-vineyard loaded state and partitioned fixed-code events are included.",
+                    "Aggregate pending items without proven vineyard scope are deliberately excluded.",
+                    "Events are memory-only and begin with this build; crashes lose earlier event history.",
+                    "Raw errors, HTTP bodies, operation payloads, authentication and GPS are excluded."
                 )))
             }
-            if (session.userId != owner || _ui.value.selectedVineyardId != vineyard || !_ui.value.isSystemAdmin) {
+            if (session.userId != owner || _ui.value.selectedVineyardId != vineyard ||
+                _ui.value.currentUserId != owner || !_ui.value.isSystemAdmin ||
+                session.retentionGuard.isLocked) {
                 onResult(null); return@launch
             }
             onResult(report.toString())
