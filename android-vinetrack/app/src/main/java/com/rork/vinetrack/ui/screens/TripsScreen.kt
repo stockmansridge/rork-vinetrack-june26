@@ -5834,17 +5834,65 @@ private fun TripClosureCard(vm: AppViewModel, state: AppUiState, trip: Trip) {
         com.rork.vinetrack.data.TripClosureStatus.State.SERVER_STATE_UNCONFIRMED -> "The server could not confirm this Trip's ended state. Nothing has been changed. Try again when online."
         com.rork.vinetrack.data.TripClosureStatus.State.ACTIVE -> "This device recorded an end, but the server row is not terminal. Nothing has been discarded."
     }
-    VineyardCard {
-        Text(title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-        Text(body, fontSize = 13.sp, color = vine.textSecondary)
-        Text("Status: ${shown.state.code}", fontSize = 12.sp, color = vine.textSecondary)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(enabled = !checking, onClick = {
-                checking = true
-                scope.launch { try { vm.verifyTripClosure(trip) } finally { checking = false } }
-            }) { Text(if (checking) "Checking…" else "Check with server") }
-            TextButton(onClick = { clipboard.setText(AnnotatedString(vm.deviceTripDiagnostics(trip))) }) {
-                Text("Copy Trip status")
+    // Collapse only after an independent, fresh server verification has
+    // confirmed both the ended Trip and its required linked records. A local
+    // "sent"/"queued" flag alone must NEVER show the green success state.
+    val verifiedComplete = verified?.state == com.rork.vinetrack.data.TripClosureStatus.State.CLOSED_SYNCED
+    val waitingForSync = shown.state == com.rork.vinetrack.data.TripClosureStatus.State.LOCAL_END_PENDING ||
+        shown.state == com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_PENDING ||
+        shown.state == com.rork.vinetrack.data.TripClosureStatus.State.SERVER_STATE_UNCONFIRMED
+    var successDetailsExpanded by rememberSaveable(trip.id) { mutableStateOf(false) }
+
+    VineyardCard(modifier = Modifier.testTag("trip.closure.sync.panel")) {
+        if (verifiedComplete) {
+            Row(
+                modifier = Modifier.fillMaxWidth()
+                    .clickable { successDetailsExpanded = !successDetailsExpanded }
+                    .testTag("trip.closure.sync.expand"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = VineColors.Success)
+                Text("Trip synced successfully", fontWeight = FontWeight.SemiBold,
+                    color = vine.textPrimary, modifier = Modifier.weight(1f))
+                Icon(if (successDetailsExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = if (successDetailsExpanded) "Minimise sync details" else "Show sync details",
+                    tint = vine.textSecondary)
+            }
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(
+                    if (waitingForSync) Icons.Filled.Sync else Icons.Filled.Warning,
+                    contentDescription = null,
+                    tint = if (waitingForSync) VineColors.Info else VineColors.Warning,
+                )
+                Text(title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+            }
+            if (waitingForSync) {
+                Text("Please wait — syncing can take up to 1 minute.",
+                    fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                Text(
+                    if (state.isOnline)
+                        "Your Trip is saved on this device. VineTrack is checking the server and linked records automatically. You can leave this screen; it may take longer on a slow connection."
+                    else
+                        "Your Trip is saved on this device. Sync will continue when you're online; no data will be discarded.",
+                    fontSize = 13.sp, color = vine.textSecondary,
+                )
+            }
+        }
+        if (!verifiedComplete || successDetailsExpanded) {
+            if (!waitingForSync || verifiedComplete) {
+                Text(body, fontSize = 13.sp, color = vine.textSecondary)
+            }
+            Text("Status: ${shown.state.code}", fontSize = 12.sp, color = vine.textSecondary)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(enabled = !checking, onClick = {
+                    checking = true
+                    scope.launch { try { vm.verifyTripClosure(trip) } finally { checking = false } }
+                }) { Text(if (checking) "Checking…" else "Check with server") }
+                TextButton(onClick = { clipboard.setText(AnnotatedString(vm.deviceTripDiagnostics(trip))) }) {
+                    Text("Copy Trip status")
+                }
             }
         }
     }
