@@ -1,4 +1,6 @@
 import SwiftUI
+import Supabase
+import Auth
 
 struct ManualSprayEntryView: View {
     @Environment(\.dismiss) private var dismiss
