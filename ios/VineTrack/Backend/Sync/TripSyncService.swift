@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import Supabase
 
 /// Local-first sync service for Trip records.
 /// Tracks dirty/deleted trips locally and pushes/pulls them against Supabase
