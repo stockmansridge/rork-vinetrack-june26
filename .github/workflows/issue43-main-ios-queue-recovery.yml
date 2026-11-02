@@ -1,0 +1,77 @@
+name: Issue 43 MAIN iOS retained Trip queue native safety tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/VineTrack/Backend/Sync/TripQueuedUploadScope.swift'
+      - 'ios/VineTrack/Backend/Sync/TripSyncService.swift'
+      - 'ios/VineTrack/Backend/Sync/SprayTankActualStore.swift'
+      - 'ios/VineTrackTests/TripQueuedUploadScopeTests.swift'
+      - '.github/workflows/issue43-main-ios-queue-recovery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never cancel evidence from a prior source SHA during incident recovery.
+concurrency:
+  group: issue43-main-ios-queue-native-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  ios:
+    name: iOS native build and original-queue retention assertions
+    runs-on: macos-15
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Pin source SHA and Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "SOURCE_SHA=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          XCODE_ROOT="/Applications/Xcode_26.3.app/Contents/Developer"
+          test -x "$XCODE_ROOT/usr/bin/xcodebuild" || {
+            echo "::error::Xcode 26.3 unavailable. This is not a test assertion failure."
+            ls -d /Applications/Xcode*.app 2>/dev/null || true
+            exit 2
+          }
+          echo "DEVELOPER_DIR=$XCODE_ROOT" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_ROOT"
+          xcodebuild -version
+          xcrun swiftc --version
+          xcrun --sdk iphonesimulator --show-sdk-version
+      - name: Select available iPhone simulator
+        id: sim
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIM=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; a=json.load(sys.stdin)["devices"]; d=[x["udid"] for k,v in a.items() if "iOS" in k for x in v if x.get("isAvailable",False) and "iPhone" in x.get("name","")]; print(d[0] if d else "")')
+          test -n "$SIM" || { echo "::error::No iOS simulator available"; exit 2; }
+          echo "id=$SIM" >> "$GITHUB_OUTPUT"
+      - name: Compile app and run selected native safety tests
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project ios/VineTrack.xcodeproj -scheme VineTrack -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.id }}" \
+            -resultBundlePath "$RUNNER_TEMP/Issue43MainTripQueue.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:VineTrackTests/TripQueuedUploadScopeTests \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/issue43-main-trip-queue.log"
+      - name: Preserve exact native source receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue43-main-ios-trip-queue-native-receipts
+          path: |
+            ${{ runner.temp }}/Issue43MainTripQueue.xcresult
+            ${{ runner.temp }}/issue43-main-trip-queue.log
+          if-no-files-found: warn
+          retention-days: 14
