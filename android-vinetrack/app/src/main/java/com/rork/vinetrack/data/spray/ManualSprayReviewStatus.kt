@@ -9,6 +9,7 @@ import com.rork.vinetrack.data.auth.FieldStoreAccess
  */
 internal enum class ManualSprayReviewStatus {
     REVIEW_ONLY,
+    SUBMITTING,
     SAVED_LOCALLY_PENDING_CONFIRMATION,
     VERIFICATION_REQUIRED,
     SERVER_CONFIRMED,
@@ -18,8 +19,10 @@ internal fun manualSprayReviewStatus(
     serverConfirmed: Boolean,
     hasRetainedSave: Boolean,
     hasSubmissionMarker: Boolean,
+    inFlight: Boolean = false,
 ): ManualSprayReviewStatus = when {
     serverConfirmed -> ManualSprayReviewStatus.SERVER_CONFIRMED
+    inFlight -> ManualSprayReviewStatus.SUBMITTING
     hasRetainedSave -> ManualSprayReviewStatus.SAVED_LOCALLY_PENDING_CONFIRMATION
     hasSubmissionMarker -> ManualSprayReviewStatus.VERIFICATION_REQUIRED
     else -> ManualSprayReviewStatus.REVIEW_ONLY
@@ -27,6 +30,7 @@ internal fun manualSprayReviewStatus(
 
 internal fun manualSprayReviewStatusLabel(status: ManualSprayReviewStatus): String = when (status) {
     ManualSprayReviewStatus.REVIEW_ONLY -> "Review only — not yet saved"
+    ManualSprayReviewStatus.SUBMITTING -> "Saving original manual spray — do not close"
     ManualSprayReviewStatus.SAVED_LOCALLY_PENDING_CONFIRMATION -> "Saved on device — awaiting server confirmation"
     ManualSprayReviewStatus.VERIFICATION_REQUIRED -> "Submission status unknown — verification required"
     ManualSprayReviewStatus.SERVER_CONFIRMED -> "Completed — server confirmed"
