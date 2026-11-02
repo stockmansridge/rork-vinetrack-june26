@@ -30,9 +30,18 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - name: Install compile SDK
-        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+      # ubuntu-latest already contains Android command-line tools. The
+      # setup-android@v3 action tries to install the removed legacy "tools"
+      # package and fails before Gradle even runs on the 2026 runner image.
+      - name: Verify runner SDK and install compile platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | head -n 1)"
+          test -x "$SDKMANAGER" || { echo "No sdkmanager on runner"; exit 2; }
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install "platforms;android-36" "build-tools;36.0.0"
       - name: Pin source revision
         run: |
           echo "SOURCE_SHA=$(git rev-parse HEAD)"
