@@ -38,6 +38,7 @@ class SprayRecordCreateSync(
     private val pending: PendingWriteRepository,
     private val createRemote: (suspend (Payload) -> SprayRecord)? = null,
     private val occurrenceParentReady: (Payload) -> Boolean = { false },
+    private val canReplayOriginal: (String?, String) -> Boolean = { _, _ -> true },
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -200,6 +201,7 @@ class SprayRecordCreateSync(
             }
             for (write in candidates) {
                 val retained = runCatching { json.decodeFromString(Payload.serializer(), write.payloadJson) }.getOrNull()
+                if (!canReplayOriginal(retained?.tripId, write.clientId)) continue
                 if (retained?.requiresOccurrenceParent == true && !occurrenceParentReady(retained)) continue
                 val claimed = pending.claimReplay(write) ?: continue
                 val payload = runCatching {

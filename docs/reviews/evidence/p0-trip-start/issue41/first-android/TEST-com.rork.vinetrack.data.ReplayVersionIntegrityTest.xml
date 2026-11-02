@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.ReplayVersionIntegrityTest" tests="19" skipped="0" failures="0" errors="0" timestamp="2026-11-02T02:44:56.720Z" hostname="e2b.local" time="0.104">
+  <properties/>
+  <testcase name="failedDurableMutationDoesNotPublishRemoval" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.002"/>
+  <testcase name="frozenPreservationCannotBeClaimedAfterAccountChangeBeforeLaunch" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.001"/>
+  <testcase name="routeReplacementSurvivesSuccessfulOlderResponseAndDiskRestart" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.019"/>
+  <testcase name="olderPermanentFailureCannotBlockReplacement" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.013"/>
+  <testcase name="frozenPermitRejectsSameIdPayloadFromDifferentVineyardBeforeSend" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.006"/>
+  <testcase name="cancellationCannotChangeReplacementStatus" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.011"/>
+  <testcase name="lateOnlineToggleFallbackCannotCoalesceAwayNewerOfflineIntent" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.003"/>
+  <testcase name="tankMarkerReplacementWhileRequestSuspendsSurvivesRestartWithoutOldCallback" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.005"/>
+  <testcase name="completionCoalescingDuringRequestSuppressesOldDisplayAndRetainsNewId" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.004"/>
+  <testcase name="interruptedTankActualUploadLeavesPendingBytesIntact" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.011"/>
+  <testcase name="tripReplayPublicationKeepsUnrelatedNewerLocalFieldsAndOwnership" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.001"/>
+  <testcase name="retryCapIsAtomicAndReplacementAttemptsAreNotConsumed" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.002"/>
+  <testcase name="duplicateAcknowledgementAndStaleStatusAreNoOps" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.001"/>
+  <testcase name="cancellationRetainsExactPayloadWithoutConsumingAttempt" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.003"/>
+  <testcase name="replacementAfterFetchPreventsOldPatch" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.003"/>
+  <testcase name="olderCreateAcknowledgementCannotRemoveSameIdReplacement" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.003"/>
+  <testcase name="olderNetworkFailureCannotIncrementOrFailReplacementAcrossRestart" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.005"/>
+  <testcase name="newerTankActualSurvivesOlderUploadAcknowledgementAndDiskRestart" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.005"/>
+  <testcase name="accountEpochChangeRejectsOlderAcknowledgementAndStatus" classname="com.rork.vinetrack.data.ReplayVersionIntegrityTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

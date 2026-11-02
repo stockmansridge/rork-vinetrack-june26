@@ -148,6 +148,14 @@ final class PersistenceStore {
         directory.appendingPathComponent("\(key).json")
     }
 
+    /// Issue #41: read original bytes for identity-only containment. No cache, decode hook,
+    /// rewrite, migration or directory creation. Missing and unreadable remain distinct.
+    func retainedBytesForInspection(key: String) throws -> Data? {
+        let url = fileURL(for: key)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try Data(contentsOf: url)
+    }
+
     /// Load with an explicit outcome. A decode failure is logged with the
     /// persistence key and underlying error (never silently swallowed) and
     /// reported through `onDecodeFailure`.

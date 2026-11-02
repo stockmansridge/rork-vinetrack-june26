@@ -25,6 +25,7 @@ class TripLabourSnapshotSync(
     private val session: SessionStore,
     private val pending: PendingWriteRepository,
     private val trips: TripRepository,
+    private val canReplayTrip: (String) -> Boolean = { true },
 ) {
     @Serializable
     data class Snapshot(
@@ -66,6 +67,7 @@ class TripLabourSnapshotSync(
                     (tripId == null || it.clientId == tripId)
             }
             for (candidate in writes) {
+                if (!canReplayTrip(candidate.clientId)) continue
                 val write = pending.claimReplay(candidate) ?: continue
                 val snapshot = runCatching { json.decodeFromString(Snapshot.serializer(), write.payloadJson) }.getOrNull()
                 if (snapshot == null) {

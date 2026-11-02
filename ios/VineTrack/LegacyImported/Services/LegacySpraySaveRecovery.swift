@@ -140,8 +140,15 @@ final class LegacySpraySaveRecovery {
         metadata.removeValue(forKey: "occurrence_coverage")
         return create.params[occurrence: "p_trip"] != .object(metadata)
     }
+    func replayInspection() -> LegacyReplayIsolation.Inspection {
+        do { return LegacyReplayIsolation.inspect(try persistence.retainedBytesForInspection(key: Self.key)) }
+        catch { return LegacyReplayIsolation.inspect(Data("unreadable".utf8)) }
+    }
     func contains(record: UUID? = nil, trip: UUID? = nil) throws -> Bool {
-        try attempts().contains { item in
+        let items: [Attempt]
+        do { items = try attempts() }
+        catch { return replayInspection().blocker(trip: trip, record: record) != nil }
+        return try items.contains { item in
             guard item.record.id == record || item.trip.id == trip else { return false }
             if try TripDeletionJournal(persistence: persistence).isCancelled(item.trip.id) { return true }
             return try requiresLegacyReceipt(item)

@@ -1890,7 +1890,12 @@ final class MigratedDataStore {
     /// Called at startup hydration and again before either dependent sync writer.
     func reconcileLegacySpraySaves(isolatingHeldFailures: Bool = false) throws {
         let journal = LegacySpraySaveRecovery(persistence: persistence)
-        guard !((try journal.attempts()).isEmpty) else { return }
+        do { guard !((try journal.attempts()).isEmpty) else { return } }
+        catch {
+            // Per-record admission below inspects original identity bytes without rewriting them.
+            if isolatingHeldFailures { return }
+            throw error
+        }
         guard let scope = legacySprayScopeProvider?(), selectedVineyardId == scope.vineyard else {
             // Foreign retained evidence remains held but cannot veto unrelated work.
             if isolatingHeldFailures { return }
@@ -2083,11 +2088,12 @@ final class MigratedDataStore {
     }
 
     func acceptedLegacySprayPairs(vineyard: UUID) throws -> [LegacySpraySaveRecovery.Attempt] {
-        try LegacySpraySaveRecovery(persistence: persistence).attempts().filter { $0.trip.coverageBasis == .legacy && !$0.isHeld && $0.scope.vineyard == vineyard }
+        // An unreadable journal never yields an accepted identity or clears a dirty marker.
+        ((try? LegacySpraySaveRecovery(persistence: persistence).attempts()) ?? []).filter { $0.trip.coverageBasis == .legacy && !$0.isHeld && $0.scope.vineyard == vineyard }
     }
 
     func unchangedAcceptedLegacySprays() throws -> [LegacySpraySaveRecovery.Attempt] {
-        try LegacySpraySaveRecovery(persistence: persistence).attempts().filter { item in
+        try ((try? LegacySpraySaveRecovery(persistence: persistence).attempts()) ?? []).filter { item in
             if try tripDeletionJournal.isCancelled(item.trip.id) { return false }
             return item.trip.coverageBasis == .legacy && !item.isHeld && item.scope.vineyard == selectedVineyardId &&
                 trips.first(where: { $0.id == item.trip.id }).map { (try? LegacySpraySaveRecovery.sameProjection($0, item.trip)) == true } == true &&
@@ -2131,7 +2137,10 @@ final class MigratedDataStore {
 
     func legacySprayHeldCount(vineyard: UUID) throws -> Int {
         let journal = LegacySpraySaveRecovery(persistence: persistence)
-        return try journal.attempts().filter { item in
+        let items: [LegacySpraySaveRecovery.Attempt]
+        do { items = try journal.attempts() }
+        catch { return journal.replayInspection().held.filter { $0.vineyard == nil || $0.vineyard == vineyard }.count }
+        return try items.filter { item in
             guard item.scope.vineyard == vineyard else { return false }
             return try journal.requiresLegacyReceipt(item)
         }.count

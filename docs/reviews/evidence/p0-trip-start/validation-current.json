@@ -1,4 +1,67 @@
 {
+  "issue41": {
+    "recordedDateUTC": "2026-11-02",
+    "status": "SOURCE_CONTAINMENT_CHECKED_ORIGINAL_RECOVERY_UNVERIFIED",
+    "release": "BLOCKED_NO_STORE_CANDIDATE_OR_UPLOAD",
+    "managedBaseCommit": "ad33558da35fc9681d377f2a2912bd740c884c1c",
+    "repairedManagedCommit": null,
+    "sourceIdentityNote": "Base is not the repaired commit. Verify automatic managed/public sync against every application/test hash before another store build. No manual Git mutation.",
+    "incident": {
+      "trip": "b1dd59ab-ff1b-4ff4-9af6-a9688425db22",
+      "tankSession": "fdb6a4b8-5cbf-41a9-a780-816a5e5fa401",
+      "actual": "c4b5f982-e3e9-467d-9067-e36736699026",
+      "originalFinalisation": "fff1638c-ac5f-4546-bc1f-c74026b03c2f",
+      "handsetReplay": "NOT_EXECUTED",
+      "freshServerReadback": "NOT_EXECUTED",
+      "quantitiesChanged": false
+    },
+    "cause": "Strict whole legacy array read throws before vineyard filter; Phase5 returns before labour/tank/actual/end dispatch. Exact private payload/decode field unknown.",
+    "androidTests": {
+      "firstRun": {"executed": 53, "passed": 52, "failed": 1, "reason": "New malformed payload case exposed JSON primitive admission; corrected to require JsonObject", "xmlDirectory": "docs/reviews/evidence/p0-trip-start/issue41/first-android"},
+      "correctedRun": {"executed": 53, "passed": 53, "failed": 0, "errors": 0, "skipped": 0, "xmlDirectory": "docs/reviews/evidence/p0-trip-start/issue41/passing-android"},
+      "selection": {"LegacyReplayIsolationTest": 13, "TankDependencyPhaseBTest": 10, "TripClosureStatusPhaseCTest": 11, "ReplayVersionIntegrityTest": 19},
+      "level": "Host JVM; production stores/tank coordinator with isolated fake transport. No AppViewModel journey/device/live account. Do not sum overlapping initial and corrected runs."
+    },
+    "iosTests": {
+      "selectors": ["VineTrackTests/LegacyReplayIsolationTests", "VineTrackTests/TankDependencyVerificationTests", "VineTrackTests/TripClosureStatusTests"],
+      "aggregatePassed": 23,
+      "durationSeconds": 143,
+      "result": "PASS_SIMULATOR_AGGREGATE_ONLY_NO_NAMED_CASE_RECEIPTS"
+    },
+    "builds": {"android": "runChecks PASS", "ios": "runChecks simulator PASS; device/Release unverified"},
+    "blockers": [
+      "Original handset/account/Portal unavailable; exact session, quantities, actual and original finalisation receipt not replayed or read back here",
+      "Labour RPC returns void and operators lack financial SELECT; independent receipt/readback contract not implemented",
+      "Full ViewModel ordered lifecycle, interruption/reopen/lost-response matrix unexecuted",
+      "iOS build 200 per-entry historical queue reconciliation remains separate",
+      "Exact repaired managed/public commit pending automatic sync"
+    ],
+    "sourceSha256": {
+      "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/LegacyReplayIsolation.kt": "e3cc37f3edc33dd60826cf3656691b50d5e6c524dd7d0d53922b45a9a0d2d199",
+      "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/LegacySpraySaveStore.kt": "03f7b572d207015199d9ceed6d8a376b23c1d14faec4d87843f8d34c8b306fa1",
+      "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/PendingWriteRepository.kt": "910992d6c38428e66443f49fae0193fdd7c10c1eca866bf5ef0da58f846f50df",
+      "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripTankSync.kt": "8e0f48b61aa778ff952a62f3f050ef52f53be2e73913dfd16bc2972367c13b41",
+      "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TankDependencyVerification.kt": "3f7d4da5616a46961861664bdddc75f3ca4690945b3300138790913dc5221ded",
+      "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SprayRecordCreateSync.kt": "0a35572e77530506ff3826fde35036a49a21317be62f67ec2a05a82d452bb046",
+      "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripLabourSnapshotSync.kt": "741246186958d393c8f18158ec541a751e0306e86add423450c2e9c71684b7fb",
+      "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt": "69752326d0bff3225eaea570f494fc68de16e0bbe0f64cd32fc5afc465b5fb63",
+      "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/SyncStatusScreen.kt": "fe279da7f7174e36e606e8f6a2df99cc9e9a0f2deafcb8fbb97836fa8e7b00f7",
+      "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/LegacyReplayIsolationTest.kt": "0bd6841917bcae55703e89ad379af75b2481bd4be1c7cc70a5d60b7816a8e93b",
+      "ios/VineTrack/Backend/Sync/LegacyReplayIsolation.swift": "1cdbca9acef65149d20cf9f5c5d58a2293c22cdf009551be7b79bded426758d7",
+      "ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift": "3f11e33192dfd5f38f6db7b3ccec196935225446b57a08b4e5cebd4f154aae96",
+      "ios/VineTrack/LegacyImported/Services/LegacySpraySaveRecovery.swift": "a103ea855a634ec31312063bc61a3c1509f90751b47cb4487d5f5a0a3c8b2519",
+      "ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift": "5f8582b3df66685223713eedfd695ea3948fb9c8c99396ddef7919a25f2f985f",
+      "ios/VineTrackTests/LegacyReplayIsolationTests.swift": "005b271fdc3afc2cbd1a52563d410088570eb8af5baa10d5fdcb5b0a0b99e362",
+      "scripts/p0-trip-start-tests.init.gradle": "f324980233a8ccea340d2d0a96f9f3da05ed5be3fa208606171a29078f63bf85"
+    },
+    "passingXmlSha256": {
+      "LegacyReplayIsolationTest": "5af988b87ace27d3528796e3b62cadc8eaf6d3a15bb39eaa0ace27b1266311be",
+      "ReplayVersionIntegrityTest": "a1e936a5f8c37d9a09bf09021ccf4171997c2f4d5bcb4703f192d8ea18a0bbf1",
+      "TankDependencyPhaseBTest": "7a7a3eca9002a05ba8b60f8221ba1a4240c7e064919c757e5bb96cff0b8886c3",
+      "TripClosureStatusPhaseCTest": "06dff746f5e760e136d8b033055116390686022dd6b4c985e0631186a48eb52c"
+    },
+    "cancellationUpdate": "User reports Android build 1793582624 cancellation and new Trip start succeeded; independent receipt verification and 3.1.8 refusal remain unverified"
+  },
   "recordedAtUTC": "2026-11-01T23:51:03.705709+00:00",
   "incident": "OPEN",
   "release": "BLOCKED_NO_UPLOAD_OR_PUBLIC_RELEASE",

@@ -65,6 +65,7 @@ class TripTankSync(
      * A null result (unreadable evidence) holds the marker; it is never treated as empty.
      */
     private val requiredSessionIds: (String) -> Set<String>? = { emptySet() },
+    private val readBackTrip: (suspend (String) -> Trip?)? = null,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -247,7 +248,7 @@ class TripTankSync(
                         withAccountAccess { pending.removeIfCurrent(write) }
                         continue
                     }
-                    val trip = saveTankSessions?.invoke(
+                    val responseTrip = saveTankSessions?.invoke(
                         payload.tripId, merged.sessions, merged.activeTankNumber,
                         merged.isFillingTank, merged.fillingTankNumber,
                     ) ?: requireNotNull(tripRepo).updateTripTankSessions(
@@ -255,7 +256,11 @@ class TripTankSync(
                         merged.isFillingTank, merged.fillingTankNumber, accountAccess,
                     )
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                    if (!TankDependencyVerification.patchVerified(trip, payload.tripId, snapshot.vineyardId, merged.sessions, required)) {
+                    // Production requires an independent GET as well as the PATCH response.
+                    val trip = if (readBackTrip != null) readBackTrip.invoke(payload.tripId)
+                        else if (tripRepo != null) tripRepo.fetchTrip(payload.tripId, accountAccess) else responseTrip
+                    if (trip == null || !TankDependencyVerification.patchVerified(responseTrip, payload.tripId, snapshot.vineyardId, merged.sessions, required) ||
+                        !TankDependencyVerification.patchVerified(trip, payload.tripId, snapshot.vineyardId, merged.sessions, required)) {
                         // The response does not prove the sessions landed: keep the marker for a later probe.
                         pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED,
                             "${TankDependencyVerification.PATCH_READBACK_MISMATCH}: The server response didn't confirm every tank. Ready to retry.")

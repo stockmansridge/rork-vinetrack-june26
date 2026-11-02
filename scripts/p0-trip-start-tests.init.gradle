@@ -13,6 +13,7 @@ gradle.projectsEvaluated {
             include '**/RetentionReviewTest.kt'
             include '**/TripActivityCancellationTest.kt'
             include '**/TankDependencyPhaseBTest.kt'
+            include '**/LegacyReplayIsolationTest.kt'
             include '**/TripClosureStatusPhaseCTest.kt'
             include '**/ReplayVersionIntegrityTest.kt'
             include '**/AtomicPendingReplacementTest.kt'

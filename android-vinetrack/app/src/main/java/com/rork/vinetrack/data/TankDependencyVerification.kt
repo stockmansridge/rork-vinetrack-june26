@@ -37,7 +37,7 @@ object TankDependencyVerification {
     fun patchVerified(returned: Trip, tripId: String, vineyardId: String, merged: List<TankSession>, required: Set<String>): Boolean {
         if (returned.id != tripId || returned.vineyardId != vineyardId) return false
         val ids = returned.tankSessions.map { it.id }.toSet()
-        return merged.all { it.id in ids } && required.all { it in ids }
+        return merged.all { expected -> returned.tankSessions.singleOrNull { it.id == expected.id } == expected } && required.all { it in ids }
     }
 
     /** Exact recorded evidence survives on the server row: identity, links and actual quantities. */

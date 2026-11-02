@@ -226,6 +226,21 @@ fun SyncStatusScreen(
             }
 
             SectionHeader("Pending Sync", onLight = true)
+            state.legacyReplayHolds.forEach { original ->
+                VineyardCard {
+                    Text("Original Save for Later · held for recovery", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    Text(original, fontSize = 13.sp, color = vine.textSecondary)
+                    Text("Inspect the scoped Trip diagnostic report below. Do not clear storage or recreate the job.", fontSize = 12.sp, color = vine.textSecondary)
+                }
+            }
+            if (state.phase5OperationHolds.isNotEmpty()) {
+                VineyardCard {
+                    Text("Replay admission · held before upload", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                    state.phase5OperationHolds.forEach { (operation, reason) ->
+                        Text("$operation · $reason", fontSize = 12.sp, color = vine.textSecondary)
+                    }
+                }
+            }
             VineyardCard {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     val count = state.pendingSyncCount

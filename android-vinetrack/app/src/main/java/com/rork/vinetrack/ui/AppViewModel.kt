@@ -575,6 +575,10 @@ data class AppUiState(
     val sprayTankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
     /** Nonidentifying guidance for the independent actual pending authority. */
     val tankActualSyncNotice: String? = null,
+    /** Issue #41: original legacy jobs, never a global error on a modern Spray Mix. */
+    val legacyReplayHolds: List<String> = emptyList(),
+    val phase5ReplayStage: String = "NOT_RUN_THIS_PROCESS",
+    val phase5OperationHolds: Map<String, String> = emptyMap(),
     /** P0 Phase C: Trips with unacknowledged local tank actuals; never shown as synced. */
     val pendingActualTripIds: Set<String> = emptySet(),
     /**
@@ -2144,7 +2148,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * other entity. The trip-coupled spray-create variants (which create a trip
      * first) are NOT queued here.
      */
-    private val sprayCreateSync = SprayRecordCreateSync(sprayRepo, pendingWrites, occurrenceParentReady = { payload ->
+    private val sprayCreateSync = SprayRecordCreateSync(sprayRepo, pendingWrites,
+        canReplayOriginal = { trip, record -> legacyReplayBlocker(trip, record) == null }, occurrenceParentReady = { payload ->
         val trip = _ui.value.trips.firstOrNull { it.id == payload.tripId && it.vineyardId == payload.vineyardId }
         val owner = session.userId
         if (trip == null || owner == null || trip.coverageBasis != TripOccurrenceCoverage.Basis.OCCURRENCE) false
@@ -2788,7 +2793,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * before any dependent marker writes to it.
      */
     private val tripStartSync = TripStartSync(tripRepo, pendingWrites)
-    private val tripLabourSync = com.rork.vinetrack.data.TripLabourSnapshotSync(session, pendingWrites, tripRepo)
+    private val tripLabourSync = com.rork.vinetrack.data.TripLabourSnapshotSync(session, pendingWrites, tripRepo,
+        canReplayTrip = { legacyReplayBlocker(it) == null })
 
     /** Foreground GPS tracker for the currently active trip (null when idle). */
     private var tracker: LocationTracker? = null
@@ -3017,6 +3023,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     rows.filter { it.clientId == trip.id }.forEach { row ->
                         lines += "  pending_item: entity=${row.entityType}; op=${row.opType}; status=${row.status}; attempts=${row.attemptCount}; code=${fixedErrorCode(row.rawDetail)}; parent_trip=${safeId(trip.id)}"
+                        if (row.attemptCount == 0) lines += "  zero_attempt_admission: ${state.phase5OperationHolds[row.id] ?: legacyReplayBlocker(trip.id) ?: "NO_LEGACY_OVERLAP_CHECK_STAGE_AND_PARENT"}; last_process_stage: ${state.phase5ReplayStage}"
                     }
                 }
                 state.sprayRecords.filter { it.vineyardId == vineyard }.forEach {
@@ -3084,6 +3091,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val info = supportDiagnostics()
         return (listOf("VineTrack device Trip status v1", "platform: Android", "version: ${info.appVersion}", "build: ${info.appBuild}") +
             com.rork.vinetrack.data.DeviceTripStatus.diagnosticLines(trip.id, deviceTripStatus(trip)) +
+            "phase5_last_process_stage: ${_ui.value.phase5ReplayStage}" +
+            "legacy_trip_admission: ${legacyReplayBlocker(trip.id) ?: "NO_OVERLAP"}" +
+            _ui.value.pendingSyncItems.filter { it.clientId == trip.id }.map {
+                "operation=${it.id} entity=${it.entityType} attempts=${it.attemptCount} hold=${_ui.value.phase5OperationHolds[it.id] ?: "CHECK_PARENT_AND_STAGE"}"
+            } +
             "trip_tank_fields: sessions=${trip.tankSessions.size}; active_tank=${trip.activeTankNumber ?: "none"}; filling=${trip.isFillingTank}" +
             "tank_conflict_hold: ${if (tankConflictHeld(trip)) TripOccurrenceJournal.TANK_CONFLICT_CODE else "none"}" +
             "start_tank_journal: ${startTankCommitCoordinator.inspect()?.takeIf { it.updatedTrip.id == trip.id }?.state ?: "absent"}" +
@@ -3201,6 +3213,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             session.userId?.takeIf { session.accessToken != null }?.let {
                 PendingWriteRepository.ReplayScope(it, performanceAuthorizationEpoch)
             }
+        }
+        pendingWrites.configureReplayAdmission { write ->
+            if (write.entityType.startsWith("trip") || write.entityType == com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD) {
+                runCatching { !legacySpraySaves.replayInspection().blocksPayload(write.clientId, write.payloadJson) }.getOrDefault(false)
+            } else true
         }
         pendingPhotos.configureReplayScope {
             session.userId?.takeIf { session.accessToken != null }?.let {
@@ -3758,7 +3775,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val writes = pendingWrites.list().filter { it.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved }
         val result = withContext(Dispatchers.IO) { preserveAffectedRecoveryEvidence(writes = writes, selective = true) }
         if (!result.didRun || pendingWrites.currentReplayScope() != scope) return null
-        return pendingWrites.freezeReplayVersions(writes.filter { it.id in result.permittedWriteIds })
+        val inspection = runCatching { legacySpraySaves.replayInspection() }.getOrNull()
+        val admitted = writes.filter { write ->
+            if (!(write.entityType.startsWith("trip") || write.entityType == com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD)) true
+            else inspection != null && !inspection.blocksPayload(write.clientId, write.payloadJson)
+        }
+        val holds = writes.filter { it !in admitted }.associate { it.id to
+            (inspection?.blocker(it.clientId) ?: "LEGACY_SAME_TRIP_CONFLICT") }
+        _ui.update { it.copy(phase5OperationHolds = holds) }
+        return pendingWrites.freezeReplayVersions(admitted.filter { it.id in result.permittedWriteIds })
     }
 
     private suspend fun prepareAffectedPinReplay(): com.rork.vinetrack.data.AffectedPinReplayOrchestration.Permit? {
@@ -3970,35 +3995,61 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun legacyReplayBlocker(trip: String?, record: String? = null): String? =
+        runCatching { legacySpraySaves.replayInspection().blocker(trip, record) }
+            .getOrElse { "LEGACY_IDENTITY_UNRESOLVED" }
+
+    private fun publishLegacyReplayInspection() {
+        val inspection = runCatching { legacySpraySaves.replayInspection() }.getOrNull()
+        val owner = session.userId
+        val vineyard = _ui.value.selectedVineyardId
+        val notices = inspection?.held?.filter { h ->
+            (h.owner == null || h.owner == owner) && (h.vineyard == null || h.vineyard == vineyard)
+        }?.map { h -> "${h.code}: Trip ${h.trip ?: "identity unreadable"}; Spray ${h.record ?: "identity unreadable"}; " +
+            "vineyard ${h.vineyard ?: "unknown"}; journal entry ${h.index}. Original evidence retained; original-job recovery required." }
+            ?: listOf("LEGACY_JOURNAL_READ_FAILURE: identity unresolved; original evidence retained.")
+        _ui.update { it.copy(legacyReplayHolds = notices) }
+    }
+
+    /** In-process stage observation, not a server acknowledgement or upload-attempt counter. */
+    private fun phase5Trace(stage: String, reason: String) {
+        val scope = pendingWrites.currentReplayScope()
+        val line = "stage=$stage reason=$reason vineyard=${_ui.value.selectedVineyardId} scope_current=${scope != null}"
+        android.util.Log.i("VineTrackPhase5", line)
+        _ui.update { it.copy(phase5ReplayStage = line) }
+    }
+
     /** Runs Phase 5 parent and dependent writes in one awaited, per-process pipeline. */
     private fun replayPhase5Writes() {
-        if (session.accessToken == null || !_ui.value.isOnline) return
+        if (session.accessToken == null || !_ui.value.isOnline) {
+            phase5Trace("entry", if (session.accessToken == null) "AUTH_REQUIRED" else "OFFLINE"); return
+        }
         launchReplayStage("phase5") {
+        phase5Trace("entry", "ENTERED")
         val stageScope = pendingWrites.currentReplayScope() ?: return@launchReplayStage
         val stageJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
         val legacyScope = _ui.value.selectedVineyardId
         fun phase5Current(): Boolean {
             stageJob?.ensureActive()
-            return pendingWrites.currentReplayScope() == stageScope && _ui.value.selectedVineyardId == legacyScope
+            val current = pendingWrites.currentReplayScope() == stageScope && _ui.value.selectedVineyardId == legacyScope
+            if (!current) phase5Trace("exit", "AUTH_SCOPE_CHANGED")
+            return current
         }
         if (legacyScope != null && session.accessToken != null) {
             val pending = withContext(Dispatchers.IO) { runCatching { legacySpraySaves.pending(legacyScope) } }
             if (!phase5Current()) return@launchReplayStage
-            if (pending.isFailure) {
-                _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }; return@launchReplayStage
-            }
+            publishLegacyReplayInspection()
+            if (pending.isFailure) phase5Trace("legacy", "LEGACY_JOURNAL_READ_FAILURE_SCOPED")
             val retained = pending.getOrDefault(emptyList())
             if (retained.isNotEmpty()) {
-                _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.status(retained, session.retentionGuard.identityEpoch.value)) }
                 replayPreparedLegacySpraySaves(retained)
                 if (!phase5Current()) return@launchReplayStage
-                // No legacy attempt enters a generic outbox. If another writer queued one,
-                // refuse the dependent pipeline rather than touching the held identities.
-                val ids = retained.flatMap { listOf(it.trip.id, it.recordId) }
-                if (pendingWrites.list().any { write -> ids.any { write.payloadJson.contains(it) } }) return@launchReplayStage
+                // Same original identities are excluded per write/dependent, never by a whole-pass return.
             }
         }
-            val versions = prepareFrozenReplayWrites() ?: return@launchReplayStage
+            val versions = prepareFrozenReplayWrites() ?: run {
+                phase5Trace("freeze", "FROZEN_REPLAY_NOT_PREPARED"); return@launchReplayStage
+            }
             if (!phase5Current()) return@launchReplayStage
             val tankAccountAccess = session.accountAccess() ?: return@launchReplayStage
             val tankVineyardId = _ui.value.selectedVineyardId
@@ -4011,6 +4062,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     if (phase5Current() && state.selectedVineyardId == owningVineyardId) state.currentRole else null
                 }
                 if (!phase5Current()) return@launchReplayStage
+                phase5Trace("trip_start", "ENTERED")
                 tripStartSync.replayAll(versions) { trip ->
                     if (!phase5Current()) return@replayAll
                     _ui.update { st -> st.copy(trips = st.trips.map { existing ->
@@ -4019,6 +4071,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     persistActiveTripSnapshot()
                 }
                 if (!phase5Current()) return@launchReplayStage
+                phase5Trace("labour", "ENTERED")
                 tripLabourSync.replay()
                 if (!phase5Current()) return@launchReplayStage
                 tripRowPlanSync.replayAll(versions) { _ ->
@@ -4039,6 +4092,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 if (!phase5Current()) return@launchReplayStage
+                phase5Trace("tank", "ENTERED")
                 tripTankSync.replayAll(versions, tankAccountAccess, { action ->
                     session.withAccountAccess(tankAccountAccess, action)
                 }) { trip ->
@@ -4054,11 +4108,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     persistActiveTripSnapshot()
                 }
                 if (!phase5Current()) return@launchReplayStage
+                phase5Trace("actual", "ENTERED")
                 com.rork.vinetrack.data.ScopedTankActualSync(
                     sprayTankActualStore, session::withAccountAccess,
                     { actual, access -> sprayTankActualRepo.upsert(actual, access) },
                     { vineyardId, access -> sprayTankActualRepo.fetch(vineyardId, access) },
-                    isTankHeld = { actual, access -> tankConflictHeld(access.userId, actual.vineyardId, actual.tripId) },
+                    isTankHeld = { actual, access -> legacyReplayBlocker(actual.tripId, actual.sprayRecordId) != null ||
+                        tankConflictHeld(access.userId, actual.vineyardId, actual.tripId) },
                     serverSessionIds = { actual, access ->
                         tripRepo.fetchTrip(actual.tripId, access)
                             ?.takeIf { it.vineyardId == actual.vineyardId }
@@ -4076,6 +4132,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         }
                 }, { vineyardId -> _ui.value.selectedVineyardId == vineyardId })
                 if (!phase5Current()) return@launchReplayStage
+                phase5Trace("end", "ENTERED")
                 tripEndSync.replayAll(versions) { trip ->
                     if (!phase5Current()) return@replayAll
                     _ui.update { st -> st.copy(
@@ -4088,6 +4145,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 if (!phase5Current()) return@launchReplayStage
                 tripLabourSync.replay()
+                // Re-run the SAME occurrence journal after its parents; never mint a new finalise.
+                phase5Trace("occurrence", "ENTERED")
+                for (trip in _ui.value.trips.filter { it.vineyardId == legacyScope && it.coverageBasis == TripOccurrenceCoverage.Basis.OCCURRENCE }) {
+                    if (!phase5Current()) return@launchReplayStage
+                    replayOccurrenceTrip(trip)
+                }
+                tripLabourSync.replay()
+                phase5Trace("exit", "PASS_COMPLETE_NOT_ACKNOWLEDGEMENT")
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                phase5Trace("exit", "INTERRUPTED_OR_SCOPE_CHANGED"); throw cancelled
             } finally {
                 phase5ReplayRunning.set(false)
             }
@@ -12469,19 +12536,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!_ui.value.isOnline) return
         items.filter { it.stage == com.rork.vinetrack.data.LegacySpraySaveStore.Stage.PREPARED && it.rpc != null && it.verified == null &&
             it.actorId == session.userId && it.identityEpoch == session.retentionGuard.identityEpoch.value }
-            .forEach { submitPreparedLegacySprayAwaited(it) {} }
+            .forEach { submitPreparedLegacySprayAwaited(it, automatic = true) {} }
+        publishLegacyReplayInspection()
     }
 
     private fun submitPreparedLegacySpray(attempt: com.rork.vinetrack.data.LegacySpraySaveStore.Attempt, onResult: (Boolean) -> Unit) {
         // Explicit user action keeps its own callback; automatic recovery awaits
         // the same contained operation in the bounded stage instead of spawning it.
-        viewModelScope.launch { submitPreparedLegacySprayAwaited(attempt, onResult) }
+        viewModelScope.launch { submitPreparedLegacySprayAwaited(attempt, onResult = onResult) }
     }
 
-    private suspend fun submitPreparedLegacySprayAwaited(attempt: com.rork.vinetrack.data.LegacySpraySaveStore.Attempt, onResult: (Boolean) -> Unit) {
+    private suspend fun submitPreparedLegacySprayAwaited(attempt: com.rork.vinetrack.data.LegacySpraySaveStore.Attempt, automatic: Boolean = false, onResult: (Boolean) -> Unit) {
         val originalAccess = session.accountAccess() ?: run { onResult(false); return }
         if (session.accessToken == null || attempt.rpc == null || attempt.verified?.status == "rejected") {
-            _ui.update { it.copy(sprayError = attempt.receiptBlocker ?: "Connect and restore your session to recover the original spray request.") }
+            if (!automatic) _ui.update { it.copy(sprayError = attempt.receiptBlocker ?: "Connect and restore your session to recover the original spray request.") }
             onResult(false); return
         }
         if (originalAccess.userId != attempt.actorId || attempt.identityEpoch != session.retentionGuard.identityEpoch.value ||
@@ -12490,11 +12558,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Never initiate a new save claim while this exact scope is held.
         if (!attempt.rpcClaimed && !admitTripVineyard(attempt.trip.vineyardId)) { onResult(false); return }
         if (!legacySpraySends.add(attempt.recordId)) {
-            _ui.update { it.copy(sprayError = "Original spray request is already being recovered. Wait for it to finish; do not create a replacement.") }
+            if (!automatic) _ui.update { it.copy(sprayError = "Original spray request is already being recovered. Wait for it to finish; do not create a replacement.") }
             onResult(false); return
         }
             try {
-                if (!session.withAccountAccess(originalAccess) { _ui.update { it.copy(sprayBusy = true, sprayError = null) } }) {
+                if (!session.withAccountAccess(originalAccess) { if (!automatic) _ui.update { it.copy(sprayBusy = true, sprayError = null) } }) {
                     onResult(false); return
                 }
                 android.util.Log.i("SprayStart", "stage=pair_recovery trip=${attempt.trip.id} record=${attempt.recordId} operation=${attempt.rpc.operation} accepted=${attempt.verified?.status == "accepted"}")
@@ -12525,8 +12593,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val published = session.withAccountAccess(originalAccess) {
                     _ui.update {
                         it.copy(
-                            sprayBusy = false,
-                            sprayError = null,
+                            sprayBusy = if (automatic) it.sprayBusy else false,
+                            sprayError = if (automatic) it.sprayError else null,
                             trips = listOf(seededTrip) + it.trips.filterNot { t -> t.id == seededTrip.id },
                             sprayRecords = listOf(created) + it.sprayRecords.filterNot { r -> r.id == created.id },
                         )
@@ -12539,7 +12607,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 throw cancelled
             } catch (e: BackendError.Unauthorized) {
                 if (session.isAccountAccessCurrent(originalAccess)) {
-                    _ui.update { it.copy(sprayBusy = false, sprayError = "Your session could not authorise the original request. Connect and restore sign-in, then recover it; the setup and IDs are retained.") }
+                    if (!automatic) _ui.update { it.copy(sprayBusy = false, sprayError = "Your session could not authorise the original request. Connect and restore sign-in, then recover it; the setup and IDs are retained.") }
                     onUnauthorized("createSprayJobForLater")
                 }
                 onResult(false)
@@ -12552,7 +12620,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         else runCatching { com.rork.vinetrack.data.LegacySpraySaveStore.status(legacySpraySaves.pending(attempt.trip.vineyardId)) }.getOrNull()
                             ?: com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE
                     android.util.Log.w("SprayStart", "stage=pair_or_reload_pending trip=${attempt.trip.id} record=${attempt.recordId} operation=${attempt.rpc.operation} accepted=$accepted http=${(e as? com.rork.vinetrack.data.LegacySprayPairReceipt.TransportFailure)?.status ?: "none"} failure=${e.javaClass.simpleName}")
-                    _ui.update { it.copy(sprayBusy = false, sprayError = message) }
+                    if (!automatic) _ui.update { it.copy(sprayBusy = false, sprayError = message) }
                 }
                 onResult(false)
             } finally {
@@ -13179,6 +13247,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun replayOccurrenceTrip(trip: Trip) {
+        legacyReplayBlocker(trip.id)?.let { code ->
+            phase5Trace("occurrence", "$code trip=${trip.id}"); return
+        }
         // A requested/acknowledged cancellation holds every occurrence replay (incl. finalise) for this Trip.
         if (runCatching { tripCancellationIntents.holdsTrip(trip.id) }.getOrDefault(true)) return
         if (!_ui.value.isOnline || session.accessToken == null || !replayingOccurrenceTrips.add(trip.id)) return
@@ -13220,7 +13291,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             com.rork.vinetrack.data.model.PendingEntityType.TRIP_METADATA) ||
                             (operation.rpc == "finalize_trip_occurrences_v1" && write.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_GPS))
                     } || sprayTankActualStore.pending(trip.id).isNotEmpty()
-                    if (dependencies && operation.rpc !in listOf("create_trip_with_occurrences_v1", "activate_trip_occurrences_v1")) return@launch
+                    if (dependencies && operation.rpc !in listOf("create_trip_with_occurrences_v1", "activate_trip_occurrences_v1")) {
+                        phase5Trace("occurrence", "WAITING_FOR_TANK_ACTUAL_GPS_OR_TRIP_PARENT trip=${trip.id} operation=${operation.id}")
+                        return@launch
+                    }
                     val result = tripRepo.applyOccurrenceOperation(operation.params, operation.rpc, access)
                     if (!session.retentionGuard.withAccount(access, { session.userId }) { journal.acknowledge(result) }) return@launch
                     val next = journal.load() ?: return@launch
@@ -18531,12 +18605,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         hydrateQuickActions(vineyardId)
         val retainedLegacy = withContext(Dispatchers.IO) { runCatching { legacySpraySaves.pending(vineyardId) } }
         if (!isCurrentLoad()) return
-        if (retainedLegacy.isFailure) {
-            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.MESSAGE) }
-        } else if (retainedLegacy.getOrDefault(emptyList()).isNotEmpty()) {
-            val attempts = retainedLegacy.getOrThrow()
-            _ui.update { it.copy(sprayError = com.rork.vinetrack.data.LegacySpraySaveStore.status(attempts, identityEpoch)) }
-            resumePreparedLegacySpraySaves(attempts)
+        publishLegacyReplayInspection()
+        if (retainedLegacy.isSuccess && retainedLegacy.getOrThrow().isNotEmpty()) {
+            resumePreparedLegacySpraySaves(retainedLegacy.getOrThrow())
         }
         val hydratedSnapshot = hydrateCachedVineyardData(userId, vineyardId, ::isCurrentLoad)
         if (!isCurrentLoad()) return

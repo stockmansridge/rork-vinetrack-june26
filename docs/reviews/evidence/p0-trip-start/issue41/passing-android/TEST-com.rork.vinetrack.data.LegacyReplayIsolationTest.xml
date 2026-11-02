@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.LegacyReplayIsolationTest" tests="13" skipped="0" failures="0" errors="0" timestamp="2026-11-02T02:50:56.722Z" hostname="e2b.local" time="0.14">
+  <properties/>
+  <testcase name="malformedModernPayloadIsNotAdmitted" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.054"/>
+  <testcase name="malformedRootNeverMeansEmpty" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.003"/>
+  <testcase name="sameOriginalTripAndRecordRemainHeld" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.002"/>
+  <testcase name="matchingSessionIdWithChangedTimestampsIsNotAcknowledged" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.027"/>
+  <testcase name="foreignOriginalIsStillProtectedNotAdopted" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.002"/>
+  <testcase name="fingerprintTracksOriginalBytesWithoutReencoding" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.002"/>
+  <testcase name="nestedConflictingIdentityIsNotDiscarded" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.003"/>
+  <testcase name="eachQueueClaimRechecksEvidenceAfterFreeze" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.01"/>
+  <testcase name="missingIdentityProtectsAllTripWrites" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.001"/>
+  <testcase name="duplicateIdentityCannotUseIndividuallyAcceptedEntriesToBypassHold" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.002"/>
+  <testcase name="incompatibleButIdentifiedOriginalDoesNotBlockNewTrip" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.001"/>
+  <testcase name="identifiedLegacyAllowsRealTankReplayWithExactRetainedSessionAndIndependentReadback" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.031"/>
+  <testcase name="absentJournalIsDistinctFromUnreadable" classname="com.rork.vinetrack.data.LegacyReplayIsolationTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

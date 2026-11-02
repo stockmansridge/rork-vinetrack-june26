@@ -53,6 +53,11 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     /** Runtime-only account boundary; never persisted in or added to queued record formats. */
     data class ReplayScope(val userId: String, val sessionEpoch: Long)
     private var scopeProvider: (() -> ReplayScope?)? = null
+    private var replayAdmission: (PendingWrite) -> Boolean = { true }
+
+    /** Read-only per-original admission, rechecked at each claim (including direct replay paths). */
+    @Synchronized
+    fun configureReplayAdmission(predicate: (PendingWrite) -> Boolean) { replayAdmission = predicate }
     private val claimedScopes = mutableMapOf<PendingWrite, ReplayScope>()
     private val claimOriginals = mutableMapOf<PendingWrite, PendingWrite>()
     private fun isHeld(write: PendingWrite): Boolean = vineyardOf(write.payloadJson)?.let { !OperationalWrites.canWrite(it) } == true
@@ -420,6 +425,7 @@ class PendingWriteRepository(private val store: PendingWriteStoring) {
     @Synchronized
     private fun claimReplayLocked(expected: PendingWrite, permittedWrites: Map<String, PendingWrite>? = null): PendingWrite? {
         if (vineyardOf(expected.payloadJson)?.let { !OperationalWrites.canWrite(it) } == true) return null
+        if (!runCatching { replayAdmission(expected) }.getOrDefault(false)) return null
         if (permittedWrites != null && permittedWrites[expected.id] != expected) return null
         if (permittedWrites is FrozenVersions && permittedWrites.scope != scopeProvider?.invoke()) return null
         if (expected.status !in setOf(PendingWriteStatus.PENDING, PendingWriteStatus.FAILED)) return null

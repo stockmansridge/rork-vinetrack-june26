@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.TripClosureStatusPhaseCTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-11-02T02:44:56.876Z" hostname="e2b.local" time="0.004">
+  <properties/>
+  <testcase name="pendingTankMarkerBlocksClosure" classname="com.rork.vinetrack.data.TripClosureStatusPhaseCTest" time="0.002"/>
+  <testcase name="failedOrAbsentServerReadIsUnconfirmed" classname="com.rork.vinetrack.data.TripClosureStatusPhaseCTest" time="0.0"/>
+  <testcase name="noActualsTripClosesWithoutSessions" classname="com.rork.vinetrack.data.TripClosureStatusPhaseCTest" time="0.0"/>
+  <testcase name="missingRequiredSessionOnServerIsHeld" classname="com.rork.vinetrack.data.TripClosureStatusPhaseCTest" time="0.0"/>
+  <testcase name="allAcknowledgedAndTerminalIsClosedSynced" classname="com.rork.vinetrack.data.TripClosureStatusPhaseCTest" time="0.0"/>
+  <testcase name="tankConflictHoldIsHeld" classname="com.rork.vinetrack.data.TripClosureStatusPhaseCTest" time="0.0"/>
+  <testcase name="pendingOccurrenceOperationBlocksClosure" classname="com.rork.vinetrack.data.TripClosureStatusPhaseCTest" time="0.0"/>
+  <testcase name="pendingActualBlocksClosure" classname="com.rork.vinetrack.data.TripClosureStatusPhaseCTest" time="0.0"/>
+  <testcase name="blockedMarkerIsHeld" classname="com.rork.vinetrack.data.TripClosureStatusPhaseCTest" time="0.001"/>
+  <testcase name="serverActiveIsNotClosed" classname="com.rork.vinetrack.data.TripClosureStatusPhaseCTest" time="0.0"/>
+  <testcase name="localEndPendingIsNeverSynced" classname="com.rork.vinetrack.data.TripClosureStatusPhaseCTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
