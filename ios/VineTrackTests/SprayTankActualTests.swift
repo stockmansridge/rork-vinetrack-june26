@@ -68,4 +68,44 @@ final class SprayTankActualTests: XCTestCase {
         trip.tankSessions = [TankSession(tankNumber: 1, startTime: Date(), endTime: Date())]
         XCTAssertNil(TankSessionLifecycle.startResult(trip: trip, at: Date(), currentRow: nil, plannedTankNumbers: [1]))
     }
+
+    // Issue #43 RED: the actual production RPC request must preserve both explicitly null linkage keys.
+    func testIssue43ProductionRPCRequestRequiresNullLinkageKeys() throws {
+        let line = try SprayTankActualChemical(
+            id: UUID(uuidString: "10000000-0000-4000-8000-000000000001")!,
+            plannedChemicalId: nil, savedChemicalId: nil,
+            usageKind: "additional", name: "Added product",
+            actualAmountBase: 250, unit: .millilitres
+        )
+        let actual = try SprayTankActual(
+            vineyardId: UUID(), sprayRecordId: UUID(), tripId: UUID(),
+            tankSessionId: UUID().uuidString, tankNumber: 1, waterVolumeL: 500,
+            chemicals: [line], confirmedAt: Date(timeIntervalSince1970: 1_790_000_000),
+            confirmedBy: UUID()
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(SprayTankActualUpsertRequest(actual: actual))
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let rows = try XCTUnwrap(request["p_chemicals"] as? [[String: Any]])
+        let json = try XCTUnwrap(rows.first)
+        XCTAssertTrue(json.keys.contains("plannedChemicalId"), "Backend requires explicit nullable plannedChemicalId")
+        XCTAssertTrue(json.keys.contains("savedChemicalId"), "Backend requires explicit nullable savedChemicalId")
+        XCTAssertTrue(json["plannedChemicalId"] is NSNull)
+        XCTAssertTrue(json["savedChemicalId"] is NSNull)
+        XCTAssertEqual(json["actualAmountBase"] as? Double, 250)
+    }
+
+    // Issue #43 RED: old/new JSONB provenance must not disappear after a typed iOS read and encode.
+    func testIssue43ChemicalRoundTripRetainsAndroidProvenance() throws {
+        let source = #"{"id":"10000000-0000-4000-8000-000000000001","plannedChemicalId":null,"savedChemicalId":null,"name":"Product","actualAmountBase":250,"unit":"mL","productCategory":"Herbicide","physicalForm":"Liquid","snapshotAt":"2026-11-02T01:00:00Z"}"#.data(using: .utf8)!
+        let value = try JSONDecoder().decode(SprayTankActualChemical.self, from: source)
+        let written = try JSONEncoder().encode(value)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: written) as? [String: Any])
+        XCTAssertEqual(json["productCategory"] as? String, "Herbicide")
+        XCTAssertEqual(json["physicalForm"] as? String, "Liquid")
+        XCTAssertEqual(json["snapshotAt"] as? String, "2026-11-02T01:00:00Z")
+    }
+
+
 }
