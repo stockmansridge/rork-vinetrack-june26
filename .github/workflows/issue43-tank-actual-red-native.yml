@@ -1,0 +1,120 @@
+name: Issue 43 Tank Actual RED native tests (branch only)
+
+on:
+  push:
+    branches:
+      - issue43-tank-actual-p0
+    paths:
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayTankActualTest.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/TankDependencyPhaseBTest.kt'
+      - 'ios/VineTrackTests/SprayTankActualTests.swift'
+      - 'ios/VineTrackTests/TankDependencyVerificationTests.swift'
+      - '.github/workflows/issue43-tank-actual-red-native.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayTankActualTest.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/TankDependencyPhaseBTest.kt'
+      - 'ios/VineTrackTests/SprayTankActualTests.swift'
+      - 'ios/VineTrackTests/TankDependencyVerificationTests.swift'
+      - '.github/workflows/issue43-tank-actual-red-native.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue43-tank-red-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android-red:
+    name: Android current production encoder and ACK assertions
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CI: 'true'
+      GRADLE_OPTS: '-Dorg.gradle.daemon=false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Show exact source
+        run: |
+          echo "WORKFLOW_HEAD=${{ github.sha }}"
+          echo "CHECKOUT_HEAD=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "${{ github.ref_name }}" = "issue43-tank-actual-p0" || test "${{ github.event_name }}" = "pull_request"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android compile SDK 36
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Execute focused native RED assertions
+        working-directory: android-vinetrack
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:testDebugUnitTest --no-daemon --console=plain \
+            --tests 'com.rork.vinetrack.data.SprayTankActualTest.issue43*' \
+            --tests 'com.rork.vinetrack.data.TankDependencyPhaseBTest.issue43*'
+      - name: Upload original JVM test receipts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue43-android-native-test-receipts
+          path: |
+            android-vinetrack/app/build/test-results/testDebugUnitTest/
+            android-vinetrack/app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 7
+
+  ios-red:
+    name: iOS current production RPC encoder and ACK assertions
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Show exact source and installed Xcode
+        run: |
+          echo "WORKFLOW_HEAD=${{ github.sha }}"
+          echo "CHECKOUT_HEAD=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          xcodebuild -version
+      - name: Choose available iPhone simulator
+        id: simulator
+        shell: bash
+        run: |
+          xcrun simctl list devices available
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); phones=[x for k,v in d["devices"].items() if "iOS" in k for x in v if x.get("isAvailable",False) and "iPhone" in x.get("name","")]; print(phones[0]["udid"] if phones else "")')
+          if [ -z "$SIMULATOR_ID" ]; then echo "No eligible iPhone simulator; infrastructure failure, NOT RED"; exit 2; fi
+          echo "id=$SIMULATOR_ID" >> "$GITHUB_OUTPUT"
+          echo "Selected $SIMULATOR_ID"
+      - name: Execute focused XCTest RED assertions
+        run: |
+          xcodebuild test \
+            -project ios/VineTrack.xcodeproj \
+            -scheme VineTrack \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
+            -resultBundlePath "$RUNNER_TEMP/Issue43TankActual.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:VineTrackTests/SprayTankActualTests/testIssue43ProductionRPCRequestRequiresNullLinkageKeys \
+            -only-testing:VineTrackTests/SprayTankActualTests/testIssue43ChemicalRoundTripRetainsAndroidProvenance \
+            -only-testing:VineTrackTests/TankDependencyVerificationTests/testIssue43ReadbackRejectsChangedLinkageAtSameQuantity \
+            CODE_SIGNING_ALLOWED=NO
+      - name: Upload XCTest results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issue43-ios-native-test-receipts
+          path: ${{ runner.temp }}/Issue43TankActual.xcresult
+          if-no-files-found: warn
+          retention-days: 7
