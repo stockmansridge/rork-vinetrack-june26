@@ -1263,7 +1263,7 @@ final class TripSyncService {
         if retainedUnacknowledgedEvidence || reconciliationHold != nil {
             if metadata.pendingUpserts[backendTrip.id] == nil { metadata.markDirty(backendTrip.id, at: Date()) }
             metadata.markUpsertsFailed([backendTrip.id])
-            errorMessage = "Completed Trip is ended on the server, but original local evidence remains held (\\(reconciliationHold ?? "TRIP_LOCAL_EVIDENCE_DIFFERS")). The Trip was not reopened or uploaded again."
+            errorMessage = "Completed Trip is ended on the server, but original local evidence remains held (\(reconciliationHold ?? "TRIP_LOCAL_EVIDENCE_DIFFERS")). The Trip was not reopened or uploaded again."
             syncStatus = .failure(errorMessage ?? "Trip reconciliation held.")
         } else {
             // Clear only the *same* original queued Trip after independent
@@ -1310,7 +1310,7 @@ final class TripSyncService {
             guard serverSprays.count == 1, serverSprays[0].id == localSpray.id,
                   TrackedSprayCompletionSync.completionIssue(
                     trip: remote, sprays: serverSprays,
-                    expectedIds: Set(actuals.map(\\.sprayRecordId)).union([localSpray.id])
+                    expectedIds: Set(actuals.map(\.sprayRecordId)).union([localSpray.id])
                   ) == nil else { return "TRIP_SERVER_SPRAY_COMPLETION_UNCONFIRMED" }
             guard let completionIntents = try? TrackedSprayCompletionSync.shared.intents(),
                   !completionIntents.contains(where: { $0.tripId == local.id }) else {
