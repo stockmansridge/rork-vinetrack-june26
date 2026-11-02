@@ -128,7 +128,8 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
                                   manualEntryId: payload.manualEntryId))
 
         let original = ManualSprayEntryCoordinator(repository: repository, store: operationStore)
-        XCTAssertNil(try await original.save(payload: payload, expectedVersion: 0))
+        let firstSaveResponse = try await original.save(payload: payload, expectedVersion: 0)
+        XCTAssertNil(firstSaveResponse)
 
         // A brand-new coordinator simulates a process/view recreation. It
         // reads the durable original operation rather than UI @State.
