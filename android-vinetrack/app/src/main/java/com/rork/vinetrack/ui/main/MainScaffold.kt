@@ -155,9 +155,8 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
     // opened ID (including a direct Start callback) so Back never rebounds to
     // the map on subsequent StateFlow emissions or recompositions.
     val deviceActive = state.activeTrip?.takeIf { it.isActive && it.endTime.isNullOrBlank() }
-    val lastAutoOpenedTripId = remember(state.currentUserId, state.selectedVineyardId) {
-        mutableStateOf<String?>(null)
-    }
+    // The once-opened ID lives with the saved work context, not a transient
+    // Compose remember, so Back also survives Activity recreation and restart.
     LaunchedEffect(
         deviceActive?.id, state.deviceActiveTripId,
         state.currentUserId, state.selectedVineyardId,
@@ -168,10 +167,11 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
         // already-opened ID through that gap, so a deliberate Back stays Back.
         // A genuinely new Trip has a different ID and is still eligible.
         if (activeId != null && selectedTripId == activeId) {
-            // The synchronous Start callback already opened the right Trip.
-            lastAutoOpenedTripId.value = activeId
+            // Direct Start callback or an intentional card tap already opened
+            // this Trip; remember it even when the screen is recreated.
+            work.notePresentedActiveTrip(activeId)
         } else if (activeId != null && TripStartNavigation.shouldOpenUnseenActive(
-                lastOpenedTripId = lastAutoOpenedTripId.value,
+                lastOpenedTripId = work.lastPresentedActiveTripId(),
                 activeTripId = activeId,
                 activeTripVineyardId = deviceActive.vineyardId,
                 deviceOwnedTripId = state.deviceActiveTripId,
@@ -183,7 +183,6 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
                 calculatorOpen = programOpenCalculator,
             )
         ) {
-            lastAutoOpenedTripId.value = activeId
             work.openStartedTrip(activeId)
         }
     }
