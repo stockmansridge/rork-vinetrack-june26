@@ -3235,7 +3235,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             com.rork.vinetrack.data.TripClosureStatus.State.SERVER_STATE_UNCONFIRMED, listOf("ACCOUNT_CHANGED"))
         val remote = fresh.getOrNull()
         val scopeMatches = vineyard == trip.vineyardId && vineyard == _ui.value.selectedVineyardId &&
-            remote?.id == trip.id && remote.vineyardId == trip.vineyardId && remote.endTime == trip.endTime &&
+            remote?.id == trip.id && remote.vineyardId == trip.vineyardId &&
+            // PostgreSQL can return +00:00 for the same UTC instant stored by
+            // Android as Z. Require exact Instant equality, not text equality;
+            // never relax the original Trip ID, scope or dependent checks.
+            com.rork.vinetrack.data.TrackedSprayCompletionSync.sameTime(remote.endTime, trip.endTime) &&
             _ui.value.trips.firstOrNull { it.id == trip.id } == trip && tripClosureInput(trip, null) == before
         val result = if (!scopeMatches) com.rork.vinetrack.data.TripClosureStatus.Result(
             com.rork.vinetrack.data.TripClosureStatus.State.SERVER_STATE_UNCONFIRMED, listOf("SCOPE_OR_EVIDENCE_CHANGED"))
