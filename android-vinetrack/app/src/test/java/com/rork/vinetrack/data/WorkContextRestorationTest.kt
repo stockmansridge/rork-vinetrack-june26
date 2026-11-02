@@ -2,6 +2,7 @@ package com.rork.vinetrack.data
 
 import androidx.lifecycle.SavedStateHandle
 import com.rork.vinetrack.ui.main.MainTab
+import com.rork.vinetrack.ui.main.TripStartNavigation
 import com.rork.vinetrack.ui.main.PinWorkflow
 import com.rork.vinetrack.ui.main.ToolRoute
 import com.rork.vinetrack.ui.main.WorkContextViewModel
@@ -188,6 +189,59 @@ class WorkContextRestorationTest {
             }
             assertTrue("saved state must hold only ids/enums/flags, found ${value?.javaClass} for $key", ok)
         }
+    }
+
+    @Test
+    fun `a newly device-owned active Trip opens its live HUD without a second banner tap`() {
+        val work = WorkContextViewModel(SavedStateHandle())
+        work.bindIdentity("operator", "vineyard-a")
+        work.openTab(MainTab.Trip)
+        assertTrue(TripStartNavigation.shouldOpenNewlyActive(
+            activeTripId = "new-trip", activeTripVineyardId = "vineyard-a",
+            deviceOwnedTripId = "new-trip", selectedVineyardId = "vineyard-a",
+            userId = "operator", selectedTripId = null, tab = MainTab.Trip,
+            tool = null, calculatorOpen = false,
+        ))
+        work.openCalculatorTrip("new-trip")
+        assertEquals(MainTab.Trip, work.tab.value)
+        assertEquals("new-trip", work.selectedTripId.value)
+        assertEquals("new-trip", recreate(SavedStateHandle(mapOf(
+            "work_tab" to work.tab.value.name, "work_selected_trip" to work.selectedTripId.value,
+        ))).selectedTripId.value)
+
+        // A deliberate Back clears the selected ID; the caller's
+        // active-ID-keyed effect does not rerun until another start.
+        work.setSelectedTripId(null)
+        assertNull(work.selectedTripId.value)
+    }
+
+    @Test
+    fun `active Trip auto entry never steals navigation across vineyard or account boundaries`() {
+        fun shouldOpen(
+            active: String? = "trip-1",
+            owner: String? = "trip-1",
+            activeVineyard: String? = "vineyard-a",
+            selectedVineyard: String? = "vineyard-a",
+            user: String? = "operator",
+            selected: String? = null,
+            tab: MainTab = MainTab.Trip,
+            tool: ToolRoute? = null,
+            calculatorOpen: Boolean = false,
+        ) = TripStartNavigation.shouldOpenNewlyActive(
+            activeTripId = active, activeTripVineyardId = activeVineyard,
+            deviceOwnedTripId = owner, selectedVineyardId = selectedVineyard,
+            userId = user, selectedTripId = selected, tab = tab, tool = tool,
+            calculatorOpen = calculatorOpen,
+        )
+        assertFalse(shouldOpen(active = null))
+        assertFalse(shouldOpen(owner = "someone-elses-trip"))
+        assertFalse(shouldOpen(activeVineyard = "vineyard-b"))
+        assertFalse(shouldOpen(user = null))
+        assertFalse(shouldOpen(selected = "history-trip"))
+        assertFalse(shouldOpen(tab = MainTab.Home))
+        assertFalse(shouldOpen(tab = MainTab.Program, calculatorOpen = false))
+        assertFalse(shouldOpen(tool = ToolRoute.Growth))
+        assertTrue(shouldOpen(tab = MainTab.Program, calculatorOpen = true))
     }
 
     @Test
