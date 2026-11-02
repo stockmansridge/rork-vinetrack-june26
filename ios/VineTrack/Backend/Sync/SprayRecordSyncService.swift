@@ -132,6 +132,41 @@ final class SprayRecordSyncService {
 
     // MARK: - Push
 
+    /// The ordinary spray queue predates occurrence Trip creation and can run
+    /// before its parent's original create+activate journal. Never upload a
+    /// linked occurrence recipe against a missing/unverified server Trip.
+    /// Keep the original local recipe and queue untouched until a scoped,
+    /// authenticated exact-ID parent read proves acceptance. Historical legacy
+    /// spraying and standalone recipes retain their established sync path.
+    private func occurrenceParentAcceptedForSprayUpload(
+        _ record: SprayRecord, vineyardId: UUID, store: MigratedDataStore
+    ) async -> Bool {
+        guard let parent = store.trips.first(where: {
+            $0.id == record.canonicalTripId && $0.vineyardId == vineyardId
+        }) else { return true }
+        guard parent.coverageBasis != .legacy else { return true }
+        guard parent.coverageBasis == .occurrence,
+              let owner = auth?.userId, auth?.isSignedIn == true,
+              store.currentUserIdProvider?() == owner,
+              store.selectedVineyardId == vineyardId,
+              !TripCancellationIntentStore.shared.blocksReplay(tripId: parent.id) else { return false }
+        do {
+            let remote = try await SupabaseTripSyncRepository().fetchTripForOccurrenceStart(
+                tripId: parent.id, vineyardId: vineyardId)
+            guard let remote, remote.id == parent.id,
+                  remote.vineyardId == vineyardId, remote.deletedAt == nil,
+                  TripOccurrenceCoverage.basis(remote.occurrenceCoverage) == .occurrence,
+                  auth?.userId == owner,
+                  store.currentUserIdProvider?() == owner,
+                  store.selectedVineyardId == vineyardId else { return false }
+            return true
+        } catch {
+            // Network uncertainty or a refused read is NOT permission to
+            // upload another spray or infer that its original Trip is absent.
+            return false
+        }
+    }
+
     func pushLocalSprayRecords(vineyardId: UUID) async throws {
         guard let store else { return }
         await store.recoverLegacySprayReceipts()
@@ -156,10 +191,28 @@ final class SprayRecordSyncService {
             let byId = Dictionary(store.sprayRecords.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             var payloads: [BackendSprayRecordUpsert] = []
             var pushedIds: [UUID] = []
+            var verifiedOccurrenceParents: [UUID: Bool] = [:]
             for (recordId, ts) in dirty {
                 guard var record = byId[recordId], record.vineyardId == vineyardId else { continue }
                 if record.pendingOrphanLink { continue }
                 try store.requireLegacySpraySyncAdmission(record: recordId)
+                // One authoritative parent lookup per occurrence Trip in this
+                // sweep. Holding a child does not mark the queue failed or
+                // acknowledge anything, and never creates a replacement ID.
+                if let parent = store.trips.first(where: {
+                    $0.id == record.canonicalTripId && $0.vineyardId == vineyardId
+                        && $0.coverageBasis != .legacy
+                }) {
+                    let accepted: Bool
+                    if let cached = verifiedOccurrenceParents[parent.id] {
+                        accepted = cached
+                    } else {
+                        accepted = await occurrenceParentAcceptedForSprayUpload(
+                            record, vineyardId: vineyardId, store: store)
+                        verifiedOccurrenceParents[parent.id] = accepted
+                    }
+                    if !accepted { continue }
+                }
                 if (acceptedIds.contains(recordId) || record.recoveredFromServerOrphan), serverById[recordId] == nil {
                     metadata.markUpsertsFailed([recordId])
                     continue // Acceptance does not authorize recreating a now-absent original.
@@ -248,12 +301,33 @@ final class SprayRecordSyncService {
                 return try !store.isLegacySpraySyncHeld(record: $0.id)
             }
             if !localForVineyard.isEmpty {
-                let now = Date()
-                let createdBy = auth?.userId
-                let payloads = localForVineyard.map {
-                    BackendSprayRecord.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now)
+                var ready: [SprayRecord] = []
+                var verifiedOccurrenceParents: [UUID: Bool] = [:]
+                for record in localForVineyard {
+                    if let parent = store.trips.first(where: {
+                        $0.id == record.canonicalTripId && $0.vineyardId == vineyardId
+                            && $0.coverageBasis != .legacy
+                    }) {
+                        let accepted: Bool
+                        if let cached = verifiedOccurrenceParents[parent.id] {
+                            accepted = cached
+                        } else {
+                            accepted = await occurrenceParentAcceptedForSprayUpload(
+                                record, vineyardId: vineyardId, store: store)
+                            verifiedOccurrenceParents[parent.id] = accepted
+                        }
+                        if !accepted { continue }
+                    }
+                    ready.append(record)
                 }
-                try await repository.upsertSprayRecords(payloads)
+                if !ready.isEmpty {
+                    let now = Date()
+                    let createdBy = auth?.userId
+                    let payloads = ready.map {
+                        BackendSprayRecord.upsert(from: $0, createdBy: createdBy, clientUpdatedAt: now)
+                    }
+                    try await repository.upsertSprayRecords(payloads)
+                }
             }
             return
         }
