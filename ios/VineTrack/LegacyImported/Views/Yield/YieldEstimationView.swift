@@ -669,15 +669,30 @@ struct YieldEstimationView: View {
                         samplesPerHaText = "\(samplesPerHa)"
                         showSamplesPerHaEditor = true
                     } label: {
-                        summaryCard(
-                            title: "Samples/Ha",
-                            value: "\(samplesPerHa)",
-                            icon: "number",
-                            color: .orange,
-                            editable: true
-                        )
+                        VStack(spacing: 4) {
+                            Text("Samples/ha")
+                                .font(.caption.weight(.semibold))
+                            HStack(spacing: 5) {
+                                Text("\(samplesPerHa)")
+                                    .font(.title2.weight(.bold))
+                                    .monospacedDigit()
+                                Image(systemName: "pencil")
+                                    .font(.caption.weight(.semibold))
+                            }
+                            Text(viewModel.isCompleted ? "Locked" : "Tap to change")
+                                .font(.caption2.weight(.medium))
+                        }
+                        .foregroundStyle(viewModel.isCompleted ? Color.secondary : Color.orange)
+                        .frame(maxWidth: .infinity, minHeight: 82)
+                        .padding(.vertical, 5)
+                        .background(Color.orange.opacity(viewModel.isCompleted ? 0.04 : 0.10),
+                                    in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color.orange.opacity(viewModel.isCompleted ? 0.25 : 0.9), lineWidth: 1.5))
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("yield.samplesPerHectare.edit")
+                    .accessibilityLabel("Edit number of samples per hectare, currently \(samplesPerHa)")
                     .disabled(viewModel.isCompleted)
                     summaryCard(
                         title: "Total Sites",
