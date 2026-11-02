@@ -1243,13 +1243,95 @@ final class TripSyncService {
             retainedUnacknowledgedEvidence = retainedUnacknowledgedEvidence || !missingBlocks.isEmpty
             reconciled.paddockIds.append(contentsOf: missingBlocks)
         }
+        // A server terminal row is NOT by itself a receipt for a different
+        // local upload. Verify the exact original end, GPS, tank sessions,
+        // linked Spray Record and actual chemical quantities before retiring
+        // one pending historical Trip entry. Never write or re-end the server
+        // Trip, and never silently discard a divergent local branch.
+        var reconciliationHold: String? = nil
+        let wasQueued = metadata.pendingUpserts[backendTrip.id] != nil
+        if serverCompleted, wasQueued, let local {
+            reconciliationHold = CompletedTripReceiptAdmission.holdReason(local: local, remote: mapped)
+            if reconciliationHold == nil, !retainedUnacknowledgedEvidence {
+                reconciliationHold = await verifyCompletedTripDependents(local: local, remote: mapped, store: store)
+            }
+        }
+        guard store.currentUserIdProvider?() == auth?.userId,
+              store.selectedVineyardId == vineyardId,
+              backendTrip.vineyardId == vineyardId else { return }
         store.applyRemoteTripUpsert(reconciled)
-        if retainedUnacknowledgedEvidence {
+        if retainedUnacknowledgedEvidence || reconciliationHold != nil {
             if metadata.pendingUpserts[backendTrip.id] == nil { metadata.markDirty(backendTrip.id, at: Date()) }
             metadata.markUpsertsFailed([backendTrip.id])
-            syncStatus = .failure("Completed trip has unreconciled device evidence. Original evidence retained; no completed-trip write was made.")
+            errorMessage = "Completed Trip is ended on the server, but original local evidence remains held (\\(reconciliationHold ?? "TRIP_LOCAL_EVIDENCE_DIFFERS")). The Trip was not reopened or uploaded again."
+            syncStatus = .failure(errorMessage ?? "Trip reconciliation held.")
         } else {
+            // Clear only the *same* original queued Trip after independent
+            // readback and a consistent scope. Unattributed/global queue IDs
+            // and all local source journals remain untouched.
             metadata.clearDirty([backendTrip.id])
+            SyncIssueCenter.shared.clearIssues([backendTrip.id])
+        }
+    }
+
+    /// Only consulted for a queued ended Trip whose parent was independently
+    /// read from the original vineyard. This is a read-only acknowledgement
+    /// gate; it NEVER submits, recreates, deletes or edits old spray records.
+    private func verifyCompletedTripDependents(
+        local: Trip, remote: Trip, store: MigratedDataStore
+    ) async -> String? {
+        guard store.currentUserIdProvider?() == auth?.userId,
+              auth?.isSignedIn == true,
+              SupabaseClientProvider.shared.client.auth.currentUser?.id == auth?.userId,
+              store.selectedVineyardId == local.vineyardId else {
+            return "TRIP_COMPLETION_SCOPE_CHANGED"
+        }
+        guard local.tripFunction == TripFunction.spraying.rawValue else { return nil }
+        let linked = store.sprayRecords.filter { $0.canonicalTripId == local.id }
+        guard linked.count == 1, let localSpray = linked.first,
+              localSpray.vineyardId == local.vineyardId else {
+            return "TRIP_LINKED_SPRAY_LOCAL_UNCONFIRMED"
+        }
+        let actualStore = SprayTankActualStore.shared
+        guard !actualStore.hasPending(tripId: local.id) else { return "TRIP_ACTUAL_USE_STILL_PENDING" }
+        let actuals = actualStore.records.filter { $0.tripId == local.id }
+        guard actuals.allSatisfy({ $0.vineyardId == local.vineyardId &&
+            $0.sprayRecordId == localSpray.id && actualStore.dependencyHolds[$0.id] == nil }) else {
+            return "TRIP_ACTUAL_USE_IDENTITY_HELD"
+        }
+        let serverSessionIds = TankDependencyVerification.ids(remote.tankSessions)
+        guard TankDependencyVerification.requiredSessions(tripId: local.id, actuals: actuals)
+              .isSubset(of: serverSessionIds) else {
+            return "TRIP_ACTUAL_SESSION_NOT_ON_SERVER"
+        }
+        do {
+            let serverSprays = try await SprayCompletionRepository().fetchLinked(tripId: local.id)
+                .map { $0.toSprayRecord() }
+            guard serverSprays.count == 1, serverSprays[0].id == localSpray.id,
+                  TrackedSprayCompletionSync.completionIssue(
+                    trip: remote, sprays: serverSprays,
+                    expectedIds: Set(actuals.map(\\.sprayRecordId)).union([localSpray.id])
+                  ) == nil else { return "TRIP_SERVER_SPRAY_COMPLETION_UNCONFIRMED" }
+            guard let completionIntents = try? TrackedSprayCompletionSync.shared.intents(),
+                  !completionIntents.contains(where: { $0.tripId == local.id }) else {
+                return "TRIP_ORIGINAL_COMPLETION_INTENT_PENDING"
+            }
+            // The exact water volume and each recorded chemical amount must
+            // match independent server readback, not just a session count.
+            for actual in actuals {
+                let serverActual = try await actualStore.actualReader(actual)
+                guard TankDependencyVerification.actualMatches(local: actual, server: serverActual) else {
+                    return "TRIP_ACTUAL_AMOUNT_READBACK_MISMATCH"
+                }
+            }
+            guard store.currentUserIdProvider?() == auth?.userId,
+                  store.selectedVineyardId == local.vineyardId,
+                  SupabaseClientProvider.shared.client.auth.currentUser?.id == auth?.userId else {
+                return "TRIP_COMPLETION_SCOPE_CHANGED"
+            }
+            return nil
+        } catch {
+            return "TRIP_COMPLETION_DEPENDENT_SERVER_READ_FAILED"
         }
     }
 }
@@ -1409,5 +1491,32 @@ final class TripSyncMetadata {
 
     private func save() {
         persistence.save(state, key: key)
+    }
+}
+
+
+/// Exact readback admission for a historically ended Trip. A fresh server
+/// parent alone cannot acknowledge the old device upload: disjoint GPS,
+/// changed tank contents, unacknowledged paths and different end-times stay
+/// recoverable without changing server history.
+nonisolated enum CompletedTripReceiptAdmission {
+    static func holdReason(local: Trip, remote: Trip) -> String? {
+        guard local.id == remote.id, local.vineyardId == remote.vineyardId,
+              local.tripFunction == remote.tripFunction else { return "TRIP_ORIGINAL_IDENTITY_MISMATCH" }
+        guard !local.isActive, !remote.isActive,
+              let localEnd = local.endTime, let remoteEnd = remote.endTime,
+              localEnd == remoteEnd else { return "TRIP_ORIGINAL_END_TIME_MISMATCH" }
+        guard ActiveTripPathReconciler.containsRoute(local.pathPoints, in: remote.pathPoints) else {
+            return "TRIP_LOCAL_GPS_NOT_ON_SERVER"
+        }
+        guard local.tankSessions.allSatisfy({ session in
+            remote.tankSessions.contains { $0.id == session.id && $0 == session }
+        }) else { return "TRIP_LOCAL_TANK_SESSION_DIFFERS" }
+        guard local.completedPaths.allSatisfy(remote.completedPaths.contains),
+              local.skippedPaths.allSatisfy(remote.skippedPaths.contains),
+              Set(local.paddockIds).isSubset(of: Set(remote.paddockIds)) else {
+            return "TRIP_LOCAL_ROUTE_PROGRESS_DIFFERS"
+        }
+        return nil
     }
 }
