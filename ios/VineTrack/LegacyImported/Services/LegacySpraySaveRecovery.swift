@@ -138,7 +138,12 @@ final class LegacySpraySaveRecovery {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         var metadata = try JSONDecoder().decode([String: TripOccurrenceCoverage.JSON].self, from: encoder.encode(payload))
         metadata.removeValue(forKey: "occurrence_coverage")
-        return create.params[occurrence: "p_trip"] != .object(metadata)
+        // A new occurrence create uses canonical lowercase block IDs, while
+        // pre-fix journals must keep their immutable original uppercase payload.
+        // Accept either encoding as the same UUID identity without rewriting it.
+        let canonical = OccurrenceCreateBlockUUID.canonicalize(metadata)
+        return create.params[occurrence: "p_trip"] != .object(metadata) &&
+            create.params[occurrence: "p_trip"] != .object(canonical)
     }
     func replayInspection() -> LegacyReplayIsolation.Inspection {
         do { return LegacyReplayIsolation.inspect(try persistence.retainedBytesForInspection(key: Self.key)) }
