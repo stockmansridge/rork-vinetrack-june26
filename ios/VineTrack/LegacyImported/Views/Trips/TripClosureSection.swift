@@ -6,6 +6,7 @@ import SwiftUI
 struct TripClosureSection: View {
     let trip: Trip
     @Environment(MigratedDataStore.self) private var store
+    @Environment(TripSyncService.self) private var tripSync
     @State private var verified: TripClosureStatus.Result?
     @State private var lastInput: TripClosureStatus.Input?
     @State private var checking = false
@@ -41,7 +42,7 @@ struct TripClosureSection: View {
                     Button {
                         Task { await verify() }
                     } label: {
-                        Label(checking ? "Checking…" : "Check with server", systemImage: "arrow.triangle.2.circlepath")
+                        Label(checking ? "Verifying…" : "Verify & reconcile with server", systemImage: "arrow.triangle.2.circlepath")
                     }
                     .disabled(checking)
                     Button {
@@ -79,6 +80,20 @@ struct TripClosureSection: View {
         let before = service.closureInput(trip: trip, store: store, fresh: nil)
         let capturedTrip = trip
         let (input, result) = await service.verifyClosure(trip: capturedTrip, store: store)
+        // A matching, independently read server end can now reconcile the
+        // exact original pending Trip ID. This never sends a second End or
+        // replays the legacy queue: the sync service verifies GPS, tank
+        // sessions, completed Spray and actual chemical quantities first.
+        // If any evidence differs, the original operation remains held.
+        if input.evidence == .freshRead,
+           input.serverIsActive == false,
+           input.serverEndTime == capturedTrip.endTime,
+           input.linkedSprayIssue == nil,
+           input.pendingActualIds.isEmpty,
+           input.occurrencePending == 0,
+           input.occurrenceHeldReason == nil {
+            _ = await tripSync.reconcileServerEndedTrip(capturedTrip.id)
+        }
         let after = service.closureInput(trip: trip, store: store, fresh: nil)
         if before == after && capturedTrip == trip {
             lastInput = input
