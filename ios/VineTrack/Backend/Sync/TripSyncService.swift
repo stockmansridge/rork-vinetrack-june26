@@ -432,17 +432,25 @@ final class TripSyncService {
             guard current() else { throw CancellationError() }
             let retained = retainedState
             if let issue = retained.inspectionError { throw TripDeletionJournal.Held(reason: issue) }
-            // Unscoped legacy deletions remain outstanding too; never present their absence from
-            // the current-scope projection as overall success or mislabel them as spray jobs.
+            // Legacy upload metadata is GLOBAL. A failed Trip from a different
+            // vineyard must not mark this vineyard's entire sync as failed;
+            // equally, its original queue must not disappear behind SUCCESS.
+            let visibleTripVineyards = Dictionary((store?.trips ?? []).map { ($0.id, $0.vineyardId) },
+                                                  uniquingKeysWith: { _, latest in latest })
+            let scoped = TripQueuedScopeSummary.evaluate(
+                queuedIds: Set(metadata.pendingUpserts.keys), failedIds: failedUpsertIds,
+                selectedVineyardId: vineyardId, visibleTripVineyards: visibleTripVineyards)
             let held = max(retained.total, metadata.pendingDeletes.count)
-            if held > 0, let summary = retained.summary { errorMessage = summary }
-            if !failedUpsertIds.isEmpty {
-                syncStatus = .failure("Trip reconciliation pending. Original device evidence is retained; completed trips will not be reopened.")
+            let unresolved = max(held, scoped.unresolvedCount)
+            if scoped.selectedFailedCount > 0 {
+                syncStatus = .failure("This vineyard has \(scoped.selectedFailedCount) failed Trip upload(s). Original evidence is retained; finished Trips will not be reopened.")
                 return
             }
             metadata.setLastSync(Date(), for: vineyardId)
-            if held > 0 {
-                syncStatus = .held(held)
+            if unresolved > 0 {
+                let queueText = "\(scoped.selectedQueuedCount) Trip upload(s) in this vineyard, \(scoped.outsideSelectedQueuedCount) in other or unidentified original scopes"
+                errorMessage = "Trip reconciliation remains held (\(queueText)). A completed download is not an upload acknowledgement. \(retained.summary ?? "Original Trip operations are retained for individual review.")"
+                syncStatus = .held(unresolved)
             } else {
                 lastSyncDate = Date()
                 errorMessage = nil
