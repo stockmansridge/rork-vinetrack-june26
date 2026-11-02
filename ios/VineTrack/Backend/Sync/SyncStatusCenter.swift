@@ -99,12 +99,15 @@ final class SyncStatusCenter {
     /// Request a manual full sync from anywhere in the UI.
     func requestManualSync() {
         manualSyncToken &+= 1
+        SyncDiagnosticHistory.record(.manualRequest)
     }
 
     /// Mark the start of a full sweep.
     func syncDidStart() {
         isSyncing = true
         lastAttemptAt = Date()
+        SyncDiagnosticHistory.record(.sweepStart, pendingUpserts: pendingUpserts, pendingDeletes: pendingDeletes,
+            failedUpserts: failedUpserts, failedDeletes: failedDeletes, held: heldSprayPairs)
     }
 
     /// True when uploads are still outstanding after the last online attempt.
@@ -123,6 +126,12 @@ final class SyncStatusCenter {
     /// Refresh the queued-item counts without touching sync timestamps. Used
     /// while offline so the indicator still reflects the local backlog.
     func refreshPending(upserts: Int, deletes: Int, failedUpserts: Int = 0, failedDeletes: Int = 0, heldSprayPairs: Int = 0) {
+        let changed = self.pendingUpserts != upserts || self.pendingDeletes != deletes ||
+            self.failedUpserts != failedUpserts || self.failedDeletes != failedDeletes || self.heldSprayPairs != heldSprayPairs
+        if changed {
+            SyncDiagnosticHistory.record(.queueChange, pendingUpserts: upserts, pendingDeletes: deletes,
+                failedUpserts: failedUpserts, failedDeletes: failedDeletes, held: heldSprayPairs)
+        }
         self.heldSprayPairs = heldSprayPairs
         pendingUpserts = upserts
         pendingDeletes = deletes
@@ -161,6 +170,9 @@ final class SyncStatusCenter {
         }
         if error != nil { lastFailureAt = now }
         lastError = error
+        SyncDiagnosticHistory.record(error == nil ? .sweepFinish : .sweepFailure,
+            pendingUpserts: upserts, pendingDeletes: deletes, failedUpserts: failedUpserts,
+            failedDeletes: failedDeletes, held: heldSprayPairs, pullSucceeded: pullSucceeded)
     }
 
     /// Derive the coarse status the UI displays. Offline takes priority over a
@@ -185,5 +197,64 @@ final class SyncStatusCenter {
         case .held(let count): return "Partial sync · \(count) spray job\(count == 1 ? "" : "s") held locally"
         case .synced: return "Online · Synced"
         }
+    }
+}
+
+
+/// Bounded history of controlled sync milestones. It never accepts arbitrary
+/// errors, HTTP bodies, credentials, user IDs, locations or chemical data.
+/// This is a diagnostic timeline, NOT an acknowledgement or server receipt.
+@MainActor
+enum SyncDiagnosticHistory {
+    enum Kind: String, Codable {
+        case manualRequest = "manual_request"
+        case sweepStart = "sweep_start"
+        case sweepFinish = "sweep_finish"
+        case sweepFailure = "sweep_failure"
+        case queueChange = "queue_count_changed"
+    }
+
+    struct Entry: Codable {
+        let timestamp: String
+        let code: String
+        let pendingUpserts: Int
+        let pendingDeletes: Int
+        let failedUpserts: Int
+        let failedDeletes: Int
+        let heldSprayPairs: Int
+        let pullSucceeded: Bool?
+    }
+
+    private static let key = "vinetrack_sync_safe_timeline_v1"
+    private static let limit = 250
+    private static let retentionDays: TimeInterval = 14
+
+    static func snapshot(now: Date = Date()) -> [Entry] {
+        guard let bytes = UserDefaults.standard.data(forKey: key),
+              let stored = try? JSONDecoder().decode([Entry].self, from: bytes) else { return [] }
+        let earliest = now.addingTimeInterval(-retentionDays * 24 * 60 * 60)
+        return Array(stored.filter {
+            guard let at = ISO8601DateFormatter().date(from: $0.timestamp) else { return false }
+            return at >= earliest && at <= now.addingTimeInterval(60)
+        }.suffix(limit))
+    }
+
+    static func record(_ kind: Kind, pendingUpserts: Int = 0, pendingDeletes: Int = 0,
+                       failedUpserts: Int = 0, failedDeletes: Int = 0, held: Int = 0,
+                       pullSucceeded: Bool? = nil) {
+        var items = snapshot()
+        items.append(Entry(timestamp: ISO8601DateFormatter().string(from: Date()),
+            code: kind.rawValue, pendingUpserts: max(0, pendingUpserts),
+            pendingDeletes: max(0, pendingDeletes), failedUpserts: max(0, failedUpserts),
+            failedDeletes: max(0, failedDeletes), heldSprayPairs: max(0, held),
+            pullSucceeded: pullSucceeded))
+        if let bytes = try? JSONEncoder().encode(Array(items.suffix(limit))) {
+            UserDefaults.standard.set(bytes, forKey: key)
+        }
+    }
+
+    /// Prevent any timeline surviving an account switch or sign out.
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: key)
     }
 }
