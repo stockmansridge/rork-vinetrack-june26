@@ -578,7 +578,7 @@ private fun TripSetupScreen(
                     )
                     EstimationStat(
                         "Density",
-                        "${String.format(java.util.Locale.US, "%.2f", blockAreaFmt.perAreaValue(session.samplesPerHectare.toDouble()))}/${blockAreaFmt.areaUnitAbbreviation}",
+                        "${session.samplesPerHectare}/ha",
                         VineColors.LeafGreen,
                         Modifier.weight(1f),
                     )
