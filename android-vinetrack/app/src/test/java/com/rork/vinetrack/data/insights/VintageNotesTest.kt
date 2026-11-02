@@ -47,7 +47,7 @@ class VintageNotesTest {
     private val raw = MemoryStore()
     private var clockMillis = 1_757_000_000_000L
     private val store = VineyardInsightsStore(raw)
-    private val controller = VineyardInsightsController(store) { Instant.ofEpochMilli(clockMillis) }
+    private val controller = VineyardInsightsController(store, clock = { Instant.ofEpochMilli(clockMillis) })
 
     private fun tick(millis: Long = 1_000L) {
         clockMillis += millis
