@@ -194,6 +194,7 @@ fun ManualSprayEntrySheet(
         serverConfirmed = savedTripId != null,
         hasRetainedSave = hasRetainedSave,
         hasSubmissionMarker = hasSubmissionMarker || awaitingServerConfirmation,
+        inFlight = isSaving,
     )
     LaunchedEffect(currentDraft, existing?.id, savedTripId, reviewStatus, isSaving) {
         // Do not replace the retained original form while a save is pending.
@@ -263,11 +264,16 @@ fun ManualSprayEntrySheet(
                 Text("Manual weather is optional and remains authoritative. Station availability never blocks saving.")
             } else {
                 Text(manualSprayReviewStatusLabel(reviewStatus))
-                if (reviewStatus == ManualSprayReviewStatus.SAVED_LOCALLY_PENDING_CONFIRMATION ||
-                    reviewStatus == ManualSprayReviewStatus.VERIFICATION_REQUIRED) {
-                    Text(if (hasRetainedSave)
-                        "The original manual spray submission is retained on this device. Do not create another application or delete the saved operation. Check Sync status."
-                        else "A previous manual spray submission was attempted, but completion is unverified here. Check the original saved Spray Record and Portal before creating another.")
+                if (reviewStatus != ManualSprayReviewStatus.REVIEW_ONLY &&
+                    reviewStatus != ManualSprayReviewStatus.SERVER_CONFIRMED) {
+                    Text(when (reviewStatus) {
+                        ManualSprayReviewStatus.SUBMITTING ->
+                            "VineTrack is submitting this manual spray. Do not close or edit until the result is known."
+                        ManualSprayReviewStatus.SAVED_LOCALLY_PENDING_CONFIRMATION ->
+                            "The original manual spray submission is retained on this device. Do not create another application or delete the saved operation. Check Sync status."
+                        else ->
+                            "A previous manual spray submission was attempted, but completion is unverified here. Check the original saved Spray Record and Portal before creating another."
+                    })
                     Text("This screen does not retry, acknowledge, remove, or overwrite the original submission.")
                 } else {
                     Text("$reference\n${formatLocal(startInstant, zone)} — ${formatLocal(endInstant, zone)}\n${blockIds.size} blocks · ${reviewPayload?.tanks?.size ?: 0} tanks · ${fmt.formatVolume(reviewPayload?.tanks?.sumOf { it.waterVolumeLitres } ?: 0.0)}")
