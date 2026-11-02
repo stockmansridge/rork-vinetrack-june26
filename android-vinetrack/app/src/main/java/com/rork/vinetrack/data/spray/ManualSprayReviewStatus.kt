@@ -2,6 +2,11 @@ package com.rork.vinetrack.data.spray
 
 import android.content.Context
 import com.rork.vinetrack.data.auth.FieldStoreAccess
+import com.rork.vinetrack.data.model.ManualSprayPayload
+import com.rork.vinetrack.data.reporting.SprayReportPayloadV1
+import java.time.Instant
+import kotlin.math.abs
+import kotlin.math.max
 
 /**
  * This policy observes original retained operation evidence; it never
@@ -38,6 +43,61 @@ internal fun manualSprayReviewStatusLabel(status: ManualSprayReviewStatus): Stri
 
 internal fun ManualSprayReviewStatus.canOfferSave(): Boolean =
     this == ManualSprayReviewStatus.REVIEW_ONLY
+
+/**
+ * A read-only server report must contain the exact original manual
+ * application identity, timestamps, blocks, water and chemical actuals.
+ * This matcher does not modify the backend or local outbox.
+ */
+internal fun manualSprayReportMatchesOriginal(
+    report: SprayReportPayloadV1,
+    payload: ManualSprayPayload,
+): Boolean {
+    if (report.identity.vineyardId != payload.vineyardId ||
+        report.identity.tripId != payload.tripId ||
+        report.identity.sprayRecordId != payload.sprayRecordId ||
+        report.identity.vineyardTimeZone != payload.vineyardTimeZone ||
+        report.provenance?.source != "manual" ||
+        report.provenance.manualEntryId != payload.manualEntryId ||
+        !report.provenance.isManualEntry ||
+        !sameManualTime(report.trip.startUtc, payload.startUtc) ||
+        !sameManualTime(report.trip.endUtc, payload.endUtc)
+    ) return false
+
+    val blocks = report.blocks ?: return false
+    if (blocks.size != payload.blocks.size ||
+        blocks.map { it.blockId }.toSet() != payload.blocks.map { it.blockId }.toSet() ||
+        report.tanks.size != payload.tanks.size
+    ) return false
+
+    return payload.tanks.all { original ->
+        val tank = report.tanks.singleOrNull {
+            it.actualId == original.actualId && it.tankNumber == original.tankNumber
+        } ?: return@all false
+        val water = tank.actualWaterLitres ?: return@all false
+        sameManualQty(water, original.waterVolumeLitres) &&
+            tank.chemicals.size == original.chemicals.size &&
+            original.chemicals.all { chemical ->
+                val received = tank.chemicals.singleOrNull {
+                    it.actualChemicalId == chemical.id && it.savedChemicalId == chemical.savedChemicalId
+                } ?: return@all false
+                received.actualAmountBase?.let { sameManualQty(it, chemical.actualAmountBase) } == true &&
+                    received.unit == chemical.unit &&
+                    received.productCategory == chemical.productCategory &&
+                    received.physicalForm == chemical.physicalForm.name
+            }
+    }
+}
+
+private fun sameManualQty(actual: Double, expected: Double): Boolean =
+    actual.isFinite() && expected.isFinite() &&
+        abs(actual - expected) <= max(0.000001, max(abs(actual), abs(expected)) * 0.000000001)
+
+private fun sameManualTime(actual: String?, expected: String): Boolean =
+    actual != null && runCatching {
+        abs(Instant.parse(actual).toEpochMilli() -
+            Instant.parse(expected).toEpochMilli()) <= 1000L
+    }.getOrDefault(false)
 
 /**
  * Local-only submission-intent marker. One new manual draft per vineyard is
