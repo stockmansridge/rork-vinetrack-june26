@@ -6,6 +6,9 @@ on:
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldEstimationScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/VineyardInsightsScreen.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ScoutReportScreen.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayTractorOptionsTest.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/insights/ScoutCaptureTest.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/insights/VintageNotesTest.kt'
       - '.github/workflows/android-bunch-scout-validation.yml'
   workflow_dispatch:
 
