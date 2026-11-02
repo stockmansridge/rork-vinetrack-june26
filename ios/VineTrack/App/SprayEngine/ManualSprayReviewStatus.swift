@@ -19,6 +19,59 @@ nonisolated enum ManualSprayReviewStatus: Sendable, Hashable {
         return .reviewOnly
     }
 
+    /// Read-only canonical server receipt: no queue mutation, retry or ACK.
+    /// Unknown, partial or mismatched data MUST NOT release the old draft.
+    static func reportMatchesOriginal(_ report: SprayReportPayloadV1,
+                                      payload: ManualSprayPayload) -> Bool {
+        guard report.identity.vineyardId == payload.vineyardId,
+              report.identity.tripId == payload.tripId,
+              report.identity.sprayRecordId == payload.sprayRecordId,
+              report.identity.vineyardTimeZone == payload.vineyardTimeZone,
+              report.provenance?.source == "manual",
+              report.provenance?.manualEntryId == payload.manualEntryId,
+              report.provenance?.isManualEntry == true,
+              sameTimestamp(report.trip.startUtc, payload.startUtc),
+              sameTimestamp(report.trip.endUtc, payload.endUtc),
+              let blocks = report.blocks,
+              blocks.count == payload.blocks.count,
+              Set(blocks.map(\.blockId)) == Set(payload.blocks.map { $0.blockId.uuidString.lowercased() }),
+              report.tanks.count == payload.tanks.count else { return false }
+
+        for saved in payload.tanks {
+            guard let actual = report.tanks.first(where: {
+                $0.actualId == saved.actualId && $0.tankNumber == saved.tankNumber
+            }), let water = actual.actualWaterLitres,
+                  sameQuantity(water, saved.waterVolumeLitres),
+                  actual.chemicals.count == saved.chemicals.count else { return false }
+            for chemical in saved.chemicals {
+                guard let reported = actual.chemicals.first(where: {
+                    $0.actualChemicalId == chemical.id && $0.savedChemicalId == chemical.savedChemicalId
+                }), let qty = reported.actualAmountBase,
+                    sameQuantity(qty, chemical.actualAmountBase),
+                    reported.unit == chemical.unit.rawValue,
+                    reported.productCategory == chemical.productCategory,
+                    reported.physicalForm == chemical.physicalForm.rawValue
+                else { return false }
+            }
+        }
+        return true
+    }
+
+    private static func sameQuantity(_ lhs: Double, _ rhs: Double) -> Bool {
+        lhs.isFinite && rhs.isFinite &&
+            abs(lhs - rhs) <= max(0.000001, max(abs(lhs), abs(rhs)) * 0.000000001)
+    }
+
+    private static func sameTimestamp(_ raw: String?, _ expected: Date) -> Bool {
+        guard let raw else { return false }
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fractional = parser.date(from: raw)
+        parser.formatOptions = [.withInternetDateTime]
+        guard let actual = fractional ?? parser.date(from: raw) else { return false }
+        return abs(actual.timeIntervalSince(expected)) <= 1
+    }
+
     var canOfferSave: Bool { self == .reviewOnly }
 
     var label: String {
