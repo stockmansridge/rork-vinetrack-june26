@@ -1,4 +1,8 @@
 package com.rork.vinetrack.data
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.double
 
 import com.rork.vinetrack.data.model.SprayChemical
 import com.rork.vinetrack.data.model.SprayTank
@@ -83,4 +87,34 @@ class SprayTankActualTest {
         assertNull(parseLocalizedNonNegativeDecimal("12,5x", formatter))
         assertNull(parseLocalizedNonNegativeDecimal("12,,5", formatter))
     }
+
+    // Issue #43 RED contract test: exercise the JSON serializer used by the production RPC Request.
+    // Supabase validates the PRESENCE of both nullable linkage keys (including explicit null).
+    @Test fun issue43ProductionChemicalCodecRequiresExplicitNullLinkageKeys() {
+        val addition = SprayTankActualChemical(
+            id = "10000000-0000-4000-8000-000000000001",
+            plannedChemicalId = null,
+            savedChemicalId = null,
+            name = "Added product",
+            actualAmountBase = 250.0,
+            unit = "mL",
+            usageKind = "additional",
+        )
+        val wire = SupabaseClient.json.encodeToJsonElement(SprayTankActualChemical.serializer(), addition).jsonObject
+        assertTrue("The backend requires plannedChemicalId even when null", wire.containsKey("plannedChemicalId"))
+        assertTrue("The backend requires savedChemicalId even when null", wire.containsKey("savedChemicalId"))
+        assertEquals(JsonNull, wire["plannedChemicalId"])
+        assertEquals(JsonNull, wire["savedChemicalId"])
+        assertEquals(250.0, wire["actualAmountBase"]?.jsonPrimitive?.double!!, 0.0)
+    }
+
+    // Issue #43 RED: ignoring a future provenance member must not silently strip it on re-encode.
+    @Test fun issue43ChemicalRoundTripRetainsUnknownFutureEvidence() {
+        val serverJson = """{"id":"10000000-0000-4000-8000-000000000001","plannedChemicalId":null,"savedChemicalId":null,"name":"Product","actualAmountBase":250,"unit":"mL","futureEvidence":{"source":"old-device"}}"""
+        val parsed = SupabaseClient.json.decodeFromString(SprayTankActualChemical.serializer(), serverJson)
+        val written = SupabaseClient.json.encodeToJsonElement(SprayTankActualChemical.serializer(), parsed).jsonObject
+        assertTrue("Do not acknowledge a future-field-destructive edit", written.containsKey("futureEvidence"))
+    }
+
+
 }
