@@ -3,13 +3,17 @@ package com.rork.vinetrack.data
 import java.time.Instant
 
 /**
- * Fixed-code in-memory sync event timeline. No raw messages, body data, IDs,
- * auth data, coordinates, URLs or chemical records are ever accepted.
- * This is observation-only, not a server ACK ledger.
+ * Bounded in-memory fixed-code sync observations. Owner/vineyard identifiers
+ * are retained only for filtering; they never appear in exported events.
+ * There are no arbitrary strings, payloads, HTTP bodies, or auth secrets.
+ * This is not a persistent server ACK audit trail.
  */
 internal object SafeSyncDiagnosticHistory {
     private const val MAX_EVENTS = 250
-    private data class Event(val at: String, val code: String, val count: Int)
+    private data class Event(
+        val at: String, val code: String, val ownerId: String,
+        val vineyardId: String
+    )
     private val entries = ArrayDeque<Event>()
     private val allowed = setOf(
         "PHASE5_ENTRY", "PHASE5_EXIT", "PHASE5_LEGACY",
@@ -17,14 +21,15 @@ internal object SafeSyncDiagnosticHistory {
         "QUEUE_OBSERVED", "VINEYARD_REFRESH"
     )
 
-    @Synchronized fun record(code: String, count: Int = 0) {
-        if (code !in allowed) return
+    @Synchronized fun record(code: String, ownerId: String?, vineyardId: String?) {
+        if (code !in allowed || ownerId.isNullOrBlank() || vineyardId.isNullOrBlank()) return
         if (entries.size >= MAX_EVENTS) entries.removeFirst()
-        entries.addLast(Event(Instant.now().toString(), code, count.coerceAtLeast(0)))
+        entries.addLast(Event(Instant.now().toString(), code, ownerId, vineyardId))
     }
 
-    @Synchronized fun snapshot(): List<Map<String, String>> =
-        entries.map { mapOf("timestamp" to it.at, "code" to it.code, "count" to it.count.toString()) }
+    @Synchronized fun snapshot(ownerId: String, vineyardId: String): List<Map<String, String>> =
+        entries.filter { it.ownerId == ownerId && it.vineyardId == vineyardId }
+            .map { mapOf("timestamp" to it.at, "code" to it.code) }
 
     @Synchronized fun clear() { entries.clear() }
 }
