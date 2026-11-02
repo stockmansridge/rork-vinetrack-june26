@@ -12,6 +12,20 @@ nonisolated enum TripTypeFilter: String, CaseIterable, Sendable {
     case maintenance = "Maintenance"
 }
 
+/// History and navigation always follow the selected vineyard. The store can
+/// temporarily retain another vineyard's original snapshots for safe recovery;
+/// those must never appear as current-vineyard history or sync failures.
+nonisolated enum TripHistoryVineyardScope {
+    static func visible(_ trips: [Trip], vineyardId: UUID?, excludingActive activeId: UUID?) -> [Trip] {
+        guard let vineyardId else { return [] }
+        return trips.filter { $0.vineyardId == vineyardId && $0.id != activeId }
+    }
+
+    static func canOpen(_ trip: Trip, vineyardId: UUID?) -> Bool {
+        vineyardId != nil && trip.vineyardId == vineyardId
+    }
+}
+
 struct TripView: View {
     var historyOnly = false
     @Environment(MigratedDataStore.self) private var store
@@ -31,7 +45,7 @@ struct TripView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let active = tracking.activeTrip, !historyOnly {
+                if let active = tracking.activeTrip, active.vineyardId == store.selectedVineyardId, !historyOnly {
                     ActiveTripView(trip: active)
                 } else if !historyOnly && store.deviceActiveTripId != nil && !store.isDeviceTripOwner {
                     ContentUnavailableView("Trip already in progress", systemImage: "tractor", description: Text("This device already has an active trip. Sign back in as the operator who started it, or finish that trip before starting another."))
@@ -51,8 +65,8 @@ struct TripView: View {
                     tripHistoryList
                 }
             }
-            .navigationTitle(!historyOnly && tracking.activeTrip != nil ? "Active Trip" : "Trips")
-            .navigationBarTitleDisplayMode(tracking.activeTrip != nil ? .inline : .large)
+            .navigationTitle(!historyOnly && tracking.activeTrip?.vineyardId == store.selectedVineyardId ? "Active Trip" : "Trips")
+            .navigationBarTitleDisplayMode(tracking.activeTrip?.vineyardId == store.selectedVineyardId ? .inline : .large)
             .background(Color(.systemGroupedBackground))
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -161,7 +175,8 @@ struct TripView: View {
     }
 
     private var pastTrips: [Trip] {
-        store.trips.filter { $0.id != store.deviceActiveTripId }
+        TripHistoryVineyardScope.visible(
+            store.trips, vineyardId: store.selectedVineyardId, excludingActive: store.deviceActiveTripId)
     }
 
     private var filteredAndSortedTrips: [Trip] {
@@ -341,8 +356,12 @@ struct TripView: View {
             .listStyle(.insetGrouped)
             .listSectionSpacing(0)
             .navigationDestination(for: UUID.self) { tripId in
-                if let trip = store.trips.first(where: { $0.id == tripId }) {
+                if let trip = store.trips.first(where: { $0.id == tripId }),
+                   TripHistoryVineyardScope.canOpen(trip, vineyardId: store.selectedVineyardId) {
                     TripDetailView(trip: trip)
+                } else {
+                    ContentUnavailableView("Trip not in this vineyard", systemImage: "lock.shield",
+                        description: Text("Switch to the original vineyard to view or recover this Trip. No saved Trip data was changed."))
                 }
             }
         }
