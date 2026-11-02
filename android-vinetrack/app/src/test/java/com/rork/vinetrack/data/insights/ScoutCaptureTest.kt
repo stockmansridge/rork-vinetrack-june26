@@ -96,7 +96,7 @@ class ScoutCaptureTest {
     private var clockMillis = 1_757_000_000_000L
     private val store = VineyardInsightsStore(raw)
     private val controller =
-        VineyardInsightsController(store, photoFiles) { Instant.ofEpochMilli(clockMillis) }
+        VineyardInsightsController(store, photoFiles = photoFiles, clock = { Instant.ofEpochMilli(clockMillis) })
 
     private fun jpeg(marker: Byte = 1): ByteArray = byteArrayOf(marker, 2, 3, 4)
 
