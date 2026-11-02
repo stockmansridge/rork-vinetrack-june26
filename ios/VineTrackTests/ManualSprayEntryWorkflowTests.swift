@@ -111,6 +111,56 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
         XCTAssertEqual(saveCount, 1)
     }
 
+    func testIssue47ReopenedOutboxAndBackgroundAckRemainFailClosed() async throws {
+        let payload = fixture()
+        let repository = ManualSprayRepositoryDouble(failSaves: 1)
+        let operationStore = ManualSprayMemoryStore()
+
+        let suiteName = "vinetrack.issue47.lifecycle.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            XCTFail("Cannot create isolated submission marker defaults")
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let marker = ManualSpraySubmissionGuard(defaults: defaults)
+        let owner = UUID()
+        XCTAssertTrue(marker.mark(ownerId: owner, vineyardId: payload.vineyardId,
+                                  manualEntryId: payload.manualEntryId))
+
+        let original = ManualSprayEntryCoordinator(repository: repository, store: operationStore)
+        XCTAssertNil(try await original.save(payload: payload, expectedVersion: 0))
+
+        // A brand-new coordinator simulates a process/view recreation. It
+        // reads the durable original operation rather than UI @State.
+        let reopened = ManualSprayEntryCoordinator(repository: repository, store: operationStore)
+        XCTAssertEqual(reopened.pendingPayloads.first?.manualEntryId, payload.manualEntryId)
+        let pendingStatus = ManualSprayReviewStatus.resolve(
+            serverConfirmed: false,
+            hasRetainedSave: reopened.operations.contains {
+                $0.kind == .save && $0.payload.vineyardId == payload.vineyardId
+            },
+            hasSubmissionMarker: marker.submittedId(ownerId: owner,
+                                                     vineyardId: payload.vineyardId) != nil
+        )
+        XCTAssertEqual(pendingStatus, .locallySavedAwaitingServer)
+        XCTAssertFalse(pendingStatus.canOfferSave)
+
+        // Back-end replay now succeeds and legitimately removes the original
+        // outbox entry. The UI still lacks a verified readback receipt.
+        await reopened.replay(currentVineyardId: payload.vineyardId, currentRole: .owner)
+        XCTAssertTrue(reopened.pendingPayloads.isEmpty)
+        let afterBackgroundAck = ManualSprayReviewStatus.resolve(
+            serverConfirmed: false,
+            hasRetainedSave: false,
+            hasSubmissionMarker: marker.submittedId(ownerId: owner,
+                                                     vineyardId: payload.vineyardId) != nil
+        )
+        XCTAssertEqual(afterBackgroundAck, .verificationRequired)
+        XCTAssertFalse(afterBackgroundAck.canOfferSave)
+        let originalSends = repository.saveCalls
+        XCTAssertEqual(Set(originalSends.map(\.operationId)).count, 1)
+    }
+
     private func fixture() -> ManualSprayPayload {
         let start = Date(timeIntervalSince1970: 1_789_000_000)
         return ManualSprayPayload(
