@@ -173,7 +173,7 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
         } else if (activeId != null && TripStartNavigation.shouldOpenUnseenActive(
                 lastOpenedTripId = work.lastPresentedActiveTripId(),
                 activeTripId = activeId,
-                activeTripVineyardId = deviceActive.vineyardId,
+                activeTripVineyardId = deviceActive?.vineyardId,
                 deviceOwnedTripId = state.deviceActiveTripId,
                 selectedVineyardId = state.selectedVineyardId,
                 userId = state.currentUserId,
