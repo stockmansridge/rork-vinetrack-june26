@@ -1,6 +1,8 @@
 package com.rork.vinetrack.ui.screens
 
 import android.content.Intent
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,6 +31,33 @@ internal fun PerformanceDiagnosticsCard(vm: AppViewModel, modifier: Modifier = M
         VineyardCard {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Performance Diagnostics")
+                Text("Full Sync Diagnostic Log")
+                Text("Creates a read-only JSON snapshot of current sync queue counts, read timestamps and safe event history. Does not retry or modify data.")
+                Button(enabled = !busy, onClick = {
+                    busy = true
+                    message = null
+                    vm.exportFullSyncDiagnostics { report ->
+                        busy = false
+                        if (report == null) {
+                            message = "Could not verify system admin and selected vineyard. No report exported."
+                        } else {
+                            runCatching {
+                                val folder = File(context.cacheDir, "exports").apply { mkdirs() }
+                                val file = File(folder, "VineTrack-Sync-Support-Android.json")
+                                file.writeText(report, Charsets.UTF_8)
+                                val uri = FileProvider.getUriForFile(context,
+                                    "${context.packageName}.fileprovider", file)
+                                context.startActivity(Intent.createChooser(
+                                    Intent(Intent.ACTION_SEND).apply {
+                                        type = "application/json"
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }, "Share Full Diagnostic Log"))
+                            }.onFailure { message = "Unable to create or share the diagnostic file." }
+                        }
+                    }
+                }) { Text(if (busy) "Verifying…" else "Export Full Diagnostic Log") }
+                Text("Sensitive retained recovery evidence is not included. Export contains no credentials, raw server responses or operation payloads.")
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Capture performance timings", modifier = Modifier.weight(1f))
                     Switch(checked = enabled, enabled = !busy, onCheckedChange = { requested ->
