@@ -2,6 +2,8 @@
 
 **Status:** GOVERNANCE DRAFT / P0 RELEASE BLOCKED. This document defines mandatory expected behaviour; it does **not** claim iOS, Android, Portal, legacy 3.1.8 or live SQL currently satisfy all clauses. Source of truth for verified DB column types: [live-public-schema-snapshot-20261102.json](live-public-schema-snapshot-20261102.json) (26 tables / 718 column definitions; metadata only). This contract supplements, does not replace, [OPERATIONAL_REPAIR_CONTRACT.md](OPERATIONAL_REPAIR_CONTRACT.md), [sync-compatibility-register.json](sync-compatibility-register.json), [sync-concurrency-contract.md](../sync-concurrency-contract.md), and the domain-specific specifications.
 
+**Trip deletion:** The user-approved whole-activity deletion rule is specified in [TRIP_DELETION_CASCADE_CONTRACT_V1.md](TRIP_DELETION_CASCADE_CONTRACT_V1.md). It supersedes any suggestion that merely soft-deleting the Trip row and leaving its operational Spray/Tank children visible fulfils Delete. Separate legally mandated pesticide-use retention remains mandatory.
+
 ## 0. Purpose, scope, baseline
 
 A changed writer, DTO, RPC, migration, queue, read, cache, access policy, or Portal form is a **cross-platform contract change** even if only one component is edited. Changes need a documented source-version comparison, before/after durable fixtures, explicit older-client compatibility check, and evidence of device-to-server-to-other-device convergence. No uncontrolled "fix until it looks green".
