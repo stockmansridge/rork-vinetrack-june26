@@ -7,7 +7,7 @@ import Foundation
 /// occurrence Trip had an unconfirmed creation. That blocked an unrelated
 /// Grüner Veltliner start behind an unrecoverable Cab Franc Trip. The safety
 /// intent is kept:
-///  - the same planned work (same vineyard with overlapping blocks) must be
+///  - the same original spray/job identity, not merely an overlapping block, must be
 ///    recovered with its original IDs, never re-minted;
 ///  - the device's own active Trip always blocks;
 ///  - an unheld create/activate chain could later replay and produce a second
@@ -37,12 +37,25 @@ nonisolated enum OccurrenceStartAdmission {
         let heldReason: String?
     }
 
-    static func decide(_ retained: Retained, newVineyardId: UUID, newBlockIds: Set<UUID>) -> Decision {
+    /// Overlapping blocks alone do not prove identical planned work: a grower can
+    /// spray Cab Franc twice on different dates. The caller must prove a shared
+    /// original spray/plan identity or obtain explicit confirmation that this is
+    /// DIFFERENT work. Even then, the original unconfirmed create/activate chain
+    /// is durably held before the new Trip obtains any identity.
+    static func decide(
+        _ retained: Retained, newVineyardId: UUID, newBlockIds: Set<UUID>,
+        sameOriginalWorkProven: Bool = false, distinctWorkConfirmed: Bool = false
+    ) -> Decision {
         guard retained.creationConfirmed == false else { return .unrelated }
         if retained.isDeviceActiveTrip { return .conflict("RETAINED_START_IS_DEVICE_ACTIVE_TRIP") }
-        if retained.vineyardId == newVineyardId &&
-            (retained.blockIds.isEmpty || newBlockIds.isEmpty || !retained.blockIds.isDisjoint(with: newBlockIds)) {
+        let sameVineyard = retained.vineyardId == newVineyardId
+        if sameVineyard && sameOriginalWorkProven {
             return .conflict("RETAINED_START_SAME_PLANNED_WORK")
+        }
+        let overlapping = sameVineyard &&
+            (retained.blockIds.isEmpty || newBlockIds.isEmpty || !retained.blockIds.isDisjoint(with: newBlockIds))
+        if overlapping && !distinctWorkConfirmed {
+            return .conflict("RETAINED_START_INDEPENDENT_WORK_CONFIRMATION_REQUIRED")
         }
         return retained.heldReason != nil ? .independentAlreadyHeld : .holdBeforeIndependentStart
     }
