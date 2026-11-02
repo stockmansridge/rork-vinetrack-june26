@@ -19,13 +19,15 @@ struct ManualSprayEntryView: View {
     /// vineyard-scoped draft, even when its UI @State was discarded.
     private var retainedSaveForVineyard: PendingManualSprayOperation? {
         coordinator.operations.first {
-            $0.kind == .save && $0.payload.vineyardId == vineyardId
+            $0.kind == .save && $0.payload.vineyardId == vineyardId &&
+                $0.payload.manualEntryId == draft.manualEntryId
         }
     }
 
     private var hasSubmissionMarker: Bool {
         guard let ownerId = verifiedOwnerId else { return false }
-        return submissionGuard.submittedId(ownerId: ownerId, vineyardId: vineyardId) != nil
+        return submissionGuard.submittedId(ownerId: ownerId, vineyardId: vineyardId,
+                                           manualEntryId: draft.manualEntryId) != nil
     }
     private let vineyardId: UUID
     private let timeZone: TimeZone
