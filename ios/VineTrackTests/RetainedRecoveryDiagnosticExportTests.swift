@@ -12,10 +12,13 @@ final class RetainedRecoveryDiagnosticExportTests: XCTestCase {
         let dataRoot = docs.appendingPathComponent("VineTrackData")
         let occurrence = support.appendingPathComponent("TripOccurrenceJournals/owner/vineyard")
         let planning = support.appendingPathComponent("SprayPlanningAttempts-v1/actor/vineyard/incarnation")
-        for directory in [dataRoot, occurrence, planning] {
+        let cancellation = support.appendingPathComponent("TripActivityCancellation/local-end-claims")
+        for directory in [dataRoot, occurrence, planning, cancellation] {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
         let originals: [URL: Data] = [
+            cancellation.appendingPathComponent("original-trip.json"): Data(#"{"tripId":"original-trip","endedAt":"retained-time","source":"device_claim_at_end"}"#.utf8),
+            dataRoot.appendingPathComponent("vinetrack_tracked_spray_completion_v1.json"): Data(#"{"pending":[{"tripId":"original-trip","sprayRecordId":"original-spray"}],"acknowledged":[]}"#.utf8),
             dataRoot.appendingPathComponent("vinetrack_trips.json"): Data("{malformed retained trip".utf8),
             dataRoot.appendingPathComponent("vinetrack_spray_records.json"): Data(#"[{"id":"f8fc6b6c-b60f-465c-9a80-0dad4b857049","tanks":[{"water":600,"originalMl":646},{"water":600}],"ratePerHa":300,"ratePer100L":0}]"#.utf8),
             dataRoot.appendingPathComponent("vinetrack_legacy_spray_save_attempts_v1.json"): Data(#"[{"tripBytes":"AAEC/w==","recordBytes":"//4=","verified":{"status":"accepted","hash":"retained-original"}}]"#.utf8),

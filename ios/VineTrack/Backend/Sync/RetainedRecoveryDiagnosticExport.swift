@@ -30,6 +30,7 @@ nonisolated enum RetainedRecoveryDiagnosticExport {
     // Explicit operational allowlist. Never export Keychain, preferences,
     // Supabase session storage, HTTP caches or the entire app container.
     static let keys = [
+        "vinetrack_tracked_spray_completion_v1",
         "vinetrack_trips", "vinetrack_spray_records", "vinetrack_saved_chemicals",
         "vinetrack_spray_tank_actuals_v1", "vinetrack_start_tank_commit_v1",
         "vinetrack_legacy_spray_save_attempts_v1", "vinetrack_trip_sync_metadata", "vinetrack_trip_deletion_journal_v1",
@@ -58,7 +59,7 @@ nonisolated enum RetainedRecoveryDiagnosticExport {
         "vinetrack_vineyard_material_sync_metadata", "vinetrack_work_task_material_sync_metadata",
         "vinetrack_spray_target_library_outbox", "vinetrack_custom_pin_outbox", "vinetrack_manual_issue_outbox"
     ]
-    static let journalDirectories = ["TripOccurrenceJournals", "SprayPlanningAttempts-v1", "RecoveryDecodeDiagnostics-v1"]
+    static let journalDirectories = ["TripOccurrenceJournals", "SprayPlanningAttempts-v1", "RecoveryDecodeDiagnostics-v1", "TripActivityCancellation"]
 
     static func capture(documents: URL, applicationSupport: URL, ownerId: String,
                         vineyardId: String, version: String, build: String, diagnostics: String) throws -> Data {

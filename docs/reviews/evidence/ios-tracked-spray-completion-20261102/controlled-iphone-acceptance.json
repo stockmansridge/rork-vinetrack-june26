@@ -1,0 +1,21 @@
+{
+  "status": "Instructions only; no device or Portal acceptance performed",
+  "before_original_phone_upgrade": [
+    "Do not uninstall, clear storage, reset sync, run repair, cancel original work, or blindly retry the pending Tank Actual.",
+    "On installed build 202, if Sync Diagnostics already offers the sensitive retained-evidence export, save it privately before upgrading. Verify the saved file exists and preserve it without editing. It contains potentially sensitive records and embedded photographs from other device accounts/vineyards; never post it in chat or public GitHub.",
+    "If the export is unavailable on 202, first establish a protected encrypted Finder/device backup or an authorised app-container preservation route. Do not upgrade just to gain access to the new export. A backup is not proof that original queue contents have been inspected or can be restored individually.",
+    "Record installed version/build and privately preserve original journal/queue/claim/receipt bytes and hashes. Identify the one pending Tank Actual by its original actual ID, parent Trip ID and tank-session ID. Counts or matching water amounts alone are insufficient.",
+    "Do not upgrade the original-record handset until preservation has been confirmed. Signed delivery must be source-matched, above build 202 and use the existing bundle/signing identity."
+  ],
+  "disposable_jh_testing_acceptance_after_delivery": [
+    "Use an eligible internal TestFlight account and upgrade in place only after the preservation gate. Confirm installed version/build and source identity; if source identity is unknown, stop.",
+    "Create a NEW disposable tracked-spraying Trip in JH Testing with its linked Spray. Record both IDs, original route and exact water/chemical/actual quantities before End. Do not use historical or operational records.",
+    "Online: explicitly End once, capture first End time, allow sync, then use Check with server. Independently confirm in the authenticated Portal that the same original Trip and Spray share that End time and identities, actual quantities, sessions and route are unchanged.",
+    "Offline on a separate NEW disposable Trip: End once. It must show local End/pending linked completion, never verified completion or durable success after a failed persistence write. Do not use manual End Spray as a replacement.",
+    "Reconnect and allow ordinary scoped replay. Verify only the matching intent retires after independent Trip/Spray confirmation. Compare original IDs, first End, quantities and dependents with Portal. No second finalisation or Spray should appear.",
+    "Cold-reopen the app and repeat the read-only status/Portal comparison. A controlled kill/relaunch is a separate lifecycle check; repository reconstruction in simulator tests is not process-death proof.",
+    "Account/vineyard switches must not dispatch an intent under another scope or retain a stale verified badge. Keep original historical holds visible and unchanged; global unresolved retained entries are not explained away by an empty selected-vineyard queue.",
+    "If any result is uncertain, preserve current diagnostics privately and stop. Do not clear queues, recreate parents, overwrite actuals or repeat operations blindly."
+  ],
+  "separate_original_record_obligation": "Historical iOS reconciliation remains held until exact original actual/Trip/session identity and durable acknowledgement evidence are available. Disposable acceptance is not original-record recovery."
+}

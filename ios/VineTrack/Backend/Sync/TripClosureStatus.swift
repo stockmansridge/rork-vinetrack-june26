@@ -26,7 +26,7 @@ nonisolated enum TripClosureStatus {
         let status: String
     }
 
-    struct Input: Sendable {
+    struct Input: Sendable, Equatable {
         var tripId: String
         var evidence: ServerEvidence
         var serverIsActive: Bool
@@ -41,6 +41,10 @@ nonisolated enum TripClosureStatus {
         var actualSessionIds: Set<String>
         var pendingActualIds: [String]
         var holdCodes: [String]
+        var linkedSprayIssue: String? = nil
+        var completionIntentPending: Bool = false
+        var ownerScope: String = ""
+        var selectedVineyardScope: String = ""
     }
 
     struct Result: Sendable, Equatable {
@@ -68,6 +72,8 @@ nonisolated enum TripClosureStatus {
         if input.occurrenceHeldReason != nil { reasons.append("OCCURRENCE_HELD") }
         if !input.pendingActualIds.isEmpty { reasons.append("TANK_ACTUALS_PENDING_\(input.pendingActualIds.count)") }
         reasons.append(contentsOf: input.holdCodes)
+        if let issue = input.linkedSprayIssue { reasons.append(issue) }
+        if input.completionIntentPending { reasons.append("TRACKED_SPRAY_COMPLETION_INTENT_PENDING") }
         let sessionProblem: Bool
         if required.isEmpty {
             sessionProblem = false
@@ -102,6 +108,7 @@ nonisolated enum TripClosureStatus {
             "  occurrence_pending: \(input.occurrencePending.map(String.init) ?? "unreadable"); held=\(input.occurrenceHeldReason != nil)",
             "  tank_actuals: total_sessions=\(input.actualSessionIds.count); pending=\(input.pendingActualIds.count)",
             "  server_sessions: \(input.serverSessionIds.map { String($0.count) } ?? "unreadable")",
+            "  linked_spray: \(input.linkedSprayIssue ?? "matching_completion"); completion_intent_pending=\(input.completionIntentPending)",
             "  reasons: \((result.reasons.isEmpty ? ["none"] : result.reasons).joined(separator: ","))",
         ]
     }

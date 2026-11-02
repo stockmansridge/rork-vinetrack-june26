@@ -3,7 +3,6 @@ import Foundation
 nonisolated enum SprayCompletionResolver {
     static func status(record: SprayRecord, trip: Trip?) -> SprayCompletionStatus {
         if record.endTime != nil { return .completed }
-        if let trip, !trip.isActive, trip.endTime != nil { return .completed }
         if trip?.isActive == true { return .inProgress }
         return .upcoming
     }

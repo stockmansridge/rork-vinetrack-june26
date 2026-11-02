@@ -1,0 +1,8 @@
+{
+  "bytes": 2693486,
+  "captured_at": "2026-11-02T10:59:26.308458+00:00",
+  "configuration_values_included": false,
+  "file": "pinned-baseline-runtime-crash.log",
+  "scope": "Managed iOS simulator output only; not physical device or signed Release acceptance",
+  "sha256": "4e3ac48d8afb72d5aea8b87c976e10849b034c7c104cee5d70221e09fa46a23a"
+}

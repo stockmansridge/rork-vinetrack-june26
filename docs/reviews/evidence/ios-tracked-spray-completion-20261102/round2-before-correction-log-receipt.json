@@ -1,0 +1,8 @@
+{
+  "bytes": 93727,
+  "captured_at": "2026-11-02T10:55:26.886573+00:00",
+  "configuration_values_included": false,
+  "file": "round2-before-correction.log",
+  "scope": "Managed iOS simulator output only; not physical device or signed Release acceptance",
+  "sha256": "74044741921a4bbfcc3049f56928a33667dfb7dbab8a4ae26bc5c2f8f0d79cc8"
+}

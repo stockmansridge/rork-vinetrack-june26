@@ -1,0 +1,8 @@
+{
+  "bytes": 27499,
+  "captured_at": "2026-11-02T10:57:50.233162+00:00",
+  "configuration_values_included": false,
+  "file": "initial-missing-import-build-failure.log",
+  "scope": "Managed iOS simulator output only; not physical device or signed Release acceptance",
+  "sha256": "ff3d0265d285bb68c4be217903c4d1fb1ba038f124cc75572d422bcf77cca174"
+}

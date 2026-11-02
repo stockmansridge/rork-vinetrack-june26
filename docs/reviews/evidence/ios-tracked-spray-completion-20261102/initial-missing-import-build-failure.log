@@ -1,0 +1,418 @@
+[x] ios/VineTrack/App/NewMainTabView.swift:627:110: property 'id' is not available due to missing import of defining module 'Auth' [#MemberImportVisibility]
+[x] ios/VineTrack/App/NewMainTabView.swift:627:108: property 'currentUser' is not available due to missing import of defining module 'Auth' [#MemberImportVisibility]
+[x] ios/VineTrack/App/NewMainTabView.swift:627:97: property 'currentUser' is not available due to missing import of defining module 'Auth' [#MemberImportVisibility]
+[x] ios/VineTrack/App/NewMainTabView.swift:627:92: property 'auth' is not available due to missing import of defining module 'Supabase' [#MemberImportVisibility]
+ 'init(repository:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 27 |         self.service = service
+ 28 |     }
+ios/VineTrack/LegacyImported/Services/SavedChemicalDeletionService.swift:32:5: note: calls to initializer 'init(repository:)' from outside of its actor context are implicitly asynchronous
+30 |     private let repository: any SavedChemicalSyncRepositoryProtocol
+31 | 
+32 |     init(repository: (any SavedChemicalSyncRepositoryProtocol)? = nil) {
+   |     `- note: calls to initializer 'init(repository:)' from outside of its actor context are implicitly asynchronous
+33 |         self.repository = repository ?? SupabaseSavedChemicalSyncRepository()
+34 |     }
+[!]  ios/VineTrack/App/ChemicalIntelligence/CatalogueSearchModel.swift:20:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 18 |     private var pollTask: Task<Void, Never>?
+ 19 |     private var requestId: UUID = UUID()
+ 20 |     init(persistence: PersistenceStore = .shared, repository: (any CatalogueBackendProtocol)? = nil) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 21 |         self.persistence = persistence; self.repository = repository ?? CatalogueRepository()
+ 22 |     }
+ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[VineTrack] Compiling CatalogueChemicalEditorView.swift
+[VineTrack] Compiling CatalogueSearchModel.swift
+[VineTrack] Compiling CatalogueSearchView.swift
+[VineTrack] Compiling ChemicalInventoryActionsView.swift
+[VineTrack] Compiling ChemicalInventoryView.swift
+[VineTrack] Compiling ChemicalMatchFlowView.swift
+[VineTrack] Compiling ChemicalProductSearchSheet.swift
+[VineTrack] Compiling ChemicalReverifyFlowView.swift
+[VineTrack] Compiling ChemicalSearchV2View.swift
+[VineTrack] Compiling VineyardPreferredRateSection.swift
+[VineTrack] Compiling ScoutGrowthStageCoordinator.swift
+[VineTrack] Compiling ScoutReportView.swift
+[VineTrack] Compiling VineyardInsightsView.swift
+[VineTrack] Compiling VintageReportWorkspaceView.swift
+[VineTrack] Compiling LegacySprayRecoveryValidationView.swift
+[VineTrack] Compiling SprayCalculatorKeyboardValidationView.swift
+[!]  ios/VineTrack/App/IrrigationHistoryView.swift:557:159: call to main actor-isolated static method 'displayDate' in a synchronous nonisolated context [#ActorIsolatedCall]
+555 |                             .foregroundStyle(.cyan)
+556 |                     }
+557 |                     Text("\(row.sessionCount) sessions · \(IrrigationFormat.duration(minutes: row.totalRuntimeMinutes)) · last \(row.lastIrrigationDate.map(IrrigationFormat.displayDate) ?? "—")")
+    |                                                                                                                                                             `- warning: call to main actor-isolated static method 'displayDate' in a synchronous nonisolated context [#ActorIsolatedCall]
+558 |                         .font(.caption)
+559 |                         .foregroundStyle(.secondary)
+ios/VineTrack/App/IrrigationRecordsView.swift:48:17: note: calls to static method 'displayDate' from outside of its actor context are implicitly asynchronous
+ 46 |     }()
+ 47 | 
+ 48 |     static func displayDate(_ isoDate: String) -> String {
+    |                 `- note: calls to static method 'displayDate' from outside of its actor context are implicitly asynchronous
+ 49 |         guard let date = dateFormat.date(from: isoDate) else { return isoDate }
+ 50 |         return date.formatted(date: .abbreviated, time: .omitted)
+[VineTrack] Compiling CustomiseOperationalToolsView.swift
+[VineTrack] Compiling DefaultDataSeeder.swift
+[VineTrack] Compiling DiseaseRiskAdvisorView.swift
+[VineTrack] Compiling FertigationApplicationHistoryView.swift
+[VineTrack] Compiling FertigationSessionEditView.swift
+[VineTrack] Compiling GrowthObservationActionView.swift
+[VineTrack] Compiling HomeAlertsCard.swift
+[VineTrack] Compiling HomeRainSummaryCard.swift
+[VineTrack] Compiling HomeSyncStatusChip.swift
+[VineTrack] Compiling IrrigationHistoryView.swift
+[VineTrack] Compiling IrrigationRecordEntryView.swift
+[VineTrack] Compiling IrrigationRecordsView.swift
+[VineTrack] Compiling IrrigationReportsCentreView.swift
+[VineTrack] Compiling IrrigationSetupView.swift
+[VineTrack] Compiling ManualIssueComposerView.swift
+[VineTrack] Compiling ManualIssueDetailView.swift
+[!]  ios/VineTrack/Backend/Sync/PinSyncService.swift:129:42: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 127 |         metadata: PinSyncMetadata? = nil,
+ 128 |         photoStorage: (any PinPhotoStorageProtocol)? = nil,
+ 129 |         persistence: PersistenceStore = .shared,
+     |                                          `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 130 |         deletionStore: LinkedPinGrowthDeletionStore? = nil
+ 131 |     ) {
+ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  ios/VineTrack/Backend/Sync/PinSyncService.swift:1036:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+1034 |     private static let currentMappingVersion = 2
+1035 | 
+1036 |     init(persistence: PersistenceStore = .shared) {
+     |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+1037 |         self.persistence = persistence
+1038 |         var loaded: State = persistence.load(key: key) ?? State()
+ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  ios/VineTrack/Backend/Sync/ManagementSyncServices.swift:34:56: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+  32 |     }
+  33 | 
+  34 |     init(key: String, persistence: PersistenceStore = .shared) {
+     |                                                        `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+  35 |         self.key = key
+  36 |         self.persistence = persistence
+ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  ios/VineTrack/Backend/Sync/OperationsSyncServices.swift:39:56: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+  37 |     }
+  38 | 
+  39 |     init(key: String, persistence: PersistenceStore = .shared) {
+     |                                                        `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+  40 |         self.key = key
+  41 |         self.persistence = persistence
+ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  ios/VineTrack/Backend/Sync/SprayJobTemplateService.swift:42:58: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 40 | 
+ 41 |     init(
+ 42 |         repository: SupabaseSprayJobTemplateRepository = SupabaseSprayJobTemplateRepository(),
+    |                                                          `- warning: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 43 |         persistence: PersistenceStore = .shared
+ 44 |     ) {
+ios/VineTrack/Backend/Repositories/SupabaseSprayJobTemplateRepository.swift:24:5: note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+ 22 |     private let provider: SupabaseClientProvider
+ 23 | 
+ 24 |     init(provider: SupabaseClientProvider = .shared) {
+    |     `- note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+ 25 |         self.provider = provider
+ 26 |     }
+[!]  ios/VineTrack/Backend/Sync/SprayJobTemplateService.swift:43:42: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 41 |     init(
+ 42 |         repository: SupabaseSprayJobTemplateRepository = SupabaseSprayJobTemplateRepository(),
+ 43 |         persistence: PersistenceStore = .shared
+    |                                          `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 44 |     ) {
+ 45 |         self.repository = repository
+ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  ios/VineTrack/Backend/Sync/SprayRecordSyncService.swift:323:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+321 |     }
+322 | 
+323 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+324 |         self.persistence = persistence
+325 |         self.state = persistence.load(key: key) ?? State()
+ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  ios/VineTrack/Backend/Sync/TripSyncService.swift:1291:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+1289 |     }
+1290 | 
+1291 |     init(persistence: PersistenceStore = .shared) {
+     |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+1292 |         self.persistence = persistence
+1293 |         self.state = persistence.load(key: key) ?? State()
+ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift:16:55: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 14 | 
+ 15 |     init(provider: SupabaseClientProvider = .shared,
+ 16 |          deletionAuthority: VineyardWriteAuthority = .shared,
+    |                                                       `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 17 |          deletionSession: (() async throws -> DeletionSession)? = nil,
+ 18 |          deletionTransport: @escaping (URLRequest) async throws -> (Data, URLResponse) = { try await URLSession.shared.data(for: $0) }) {
+ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[!]  ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift:53:84: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 51 |     private let authority: VineyardWriteAuthority
+ 52 | 
+ 53 |     init(scope: Scope, directory: URL? = nil, authority: VineyardWriteAuthority = .shared,
+    |                                                                                    `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 54 |          createDirectoryIfMissing: Bool = true) throws {
+ 55 |         self.authority = authority
+ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[VineTrack] Compiling PinSyncService.swift
+[VineTrack] Compiling PruningSyncService.swift
+[VineTrack] Compiling PruningYieldSettingsSyncService.swift
+[VineTrack] Compiling ResponsiveRemoteApplication.swift
+[VineTrack] Compiling SprayJobTemplateService.swift
+[VineTrack] Compiling SprayRecordSyncService.swift
+[VineTrack] Compiling TripCostAllocationSyncService.swift
+[VineTrack] Compiling TripSyncService.swift
+[VineTrack] Compiling WorkTaskMaterialSyncServices.swift
+[VineTrack] Compiling BackendDiagnosticView.swift
+[VineTrack] Compiling MigratedDataStoreDiagnosticView.swift
+[VineTrack] Compiling SprayProgramCSVService.swift
+[VineTrack] Compiling WorkTaskCostRollup.swift
+[VineTrack] Compiling GrapeVarietyCanonicalization.swift
+[VineTrack] Compiling MigratedDataStore+Buttons.swift
+[VineTrack] Compiling MigratedDataStore+EquipmentScope.swift
+[!]  ios/VineTrack/LegacyImported/Services/StartTankCommitCoordinator.swift:26:42: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 24 | 
+ 25 |     init(
+ 26 |         persistence: PersistenceStore = .shared,
+    |                                          `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 27 |         actualStore: SprayTankActualStore = .shared,
+ 28 |         failurePoint: FailurePoint? = nil
+ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  ios/VineTrack/LegacyImported/Services/StartTankCommitCoordinator.swift:27:46: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 25 |     init(
+ 26 |         persistence: PersistenceStore = .shared,
+ 27 |         actualStore: SprayTankActualStore = .shared,
+    |                                              `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 28 |         failurePoint: FailurePoint? = nil
+ 29 |     ) {
+ios/VineTrack/Backend/Sync/SprayTankActualStore.swift:86:16: note: static property declared here
+ 84 | @MainActor
+ 85 | final class SprayTankActualStore {
+ 86 |     static let shared = SprayTankActualStore()
+    |                `- note: static property declared here
+ 87 |     private static let persistenceKey = "vinetrack_spray_tank_actuals_v1"
+ 88 | 
+[VineTrack] Compiling MigratedDataStore+GrapeVariety.swift
+[VineTrack] Compiling MigratedDataStore+GrowthStage.swift
+[VineTrack] Compiling MigratedDataStore+Irrigation.swift
+[VineTrack] Compiling MigratedDataStore+Management.swift
+[VineTrack] Compiling MigratedDataStore+Materials.swift
+[VineTrack] Compiling MigratedDataStore+Operations.swift
+[VineTrack] Compiling MigratedDataStore+SavedInputs.swift
+[VineTrack] Compiling MigratedDataStore+Spray.swift
+[VineTrack] Compiling MigratedDataStore+TripCostAllocations.swift
+[VineTrack] Compiling MigratedDataStore+Yield.swift
+[VineTrack] Compiling RipenessVarietyResolver.swift
+[VineTrack] Compiling StartTankCommitCoordinator.swift
+[VineTrack] Compiling ButtonsAndQuickActionsView.swift
+[VineTrack] Compiling EditButtonsSheet.swift
+[VineTrack] Compiling QuickPinSheet.swift
+[VineTrack] Compiling SprayCalculationSummarySheet.swift
+[VineTrack] Compiling CostingSetupWizardSection.swift
+[VineTrack] Compiling CostReportsView.swift
+[VineTrack] Compiling EquipmentManagementView.swift
+[VineTrack] Compiling FuelLogHubView.swift
+[VineTrack] Compiling FuelLogView.swift
+[VineTrack] Compiling OtherEquipmentManagementView.swift
+[VineTrack] Compiling SprayEquipmentManagementView.swift
+[VineTrack] Compiling TractorManagementView.swift
+[VineTrack] Compiling VineyardMachineManagementView.swift
+[VineTrack] Compiling FertiliserCalculatorView.swift
+[VineTrack] Compiling ELStageConfirmationView.swift
+[VineTrack] Compiling GrowthStageImagesSettingsView.swift
+[VineTrack] Compiling GrowthStagePickerSheet.swift
+[VineTrack] Compiling IrrigationRecommendationView.swift
+[VineTrack] Compiling SoilProfileEditorSheet.swift
+[VineTrack] Compiling AddEditMaintenanceLogView.swift
+[VineTrack] Compiling MaintenanceLogDetailView.swift
+[VineTrack] Compiling MaintenanceLogListView.swift
+[VineTrack] Compiling ButtonTemplateListView.swift
+[VineTrack] Compiling EditButtonTemplateSheet.swift
+[VineTrack] Compiling EditPaddockSheet.swift
+[VineTrack] Compiling FixBlockVarietiesSheet.swift
+** BUILD FAILED **
+
+
+[VineTrack] Compiling GrowthStageBlockDetailView.swift
+The following build commands failed:
+[VineTrack] Compiling GrowthStageHistoryView.swift
+[VineTrack] Compiling GrowthStageRecordsListView.swift
+	SwiftCompile normal arm64 ios/VineTrack/App/NewMainTabView.swift (in target 'VineTrack' from project 'VineTrack')
+[VineTrack] Compiling OptimalRipenessHubView.swift
+[VineTrack] Compiling RipenessSurfacesViews.swift
+	SwiftCompile normal arm64 Compiling\ NewMainTabView.swift ios/VineTrack/App/NewMainTabView.swift (in target 'VineTrack' from project 'VineTrack')
+[VineTrack] Compiling SetBudburstDatesSheet.swift
+	Building project VineTrack with scheme VineTrack and configuration Debug
+(3 failures)
+[VineTrack] Compiling VarietyGDDDetailView.swift
+[VineTrack] Compiling PinDropView.swift
+[VineTrack] Compiling PinsView.swift
+[VineTrack] Compiling PruningActivityEditorView.swift
+[!]  ios/VineTrack/LegacyImported/Views/SprayManagement/ChemicalDeleteActions.swift:26:50: call to main actor-isolated initializer 'init(repository:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 24 |     fileprivate let service: SavedChemicalDeletionService
+ 25 | 
+ 26 |     init(service: SavedChemicalDeletionService = SavedChemicalDeletionService()) {
+    |                                                  `- warning: call to main actor-isolated initializer 'init(repository:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 27 |         self.service = service
+ 28 |     }
+ios/VineTrack/LegacyImported/Services/SavedChemicalDeletionService.swift:32:5: note: calls to initializer 'init(repository:)' from outside of its actor context are implicitly asynchronous
+30 |     private let repository: any SavedChemicalSyncRepositoryProtocol
+31 | 
+32 |     init(repository: (any SavedChemicalSyncRepositoryProtocol)? = nil) {
+   |     `- note: calls to initializer 'init(repository:)' from outside of its actor context are implicitly asynchronous
+33 |         self.repository = repository ?? SupabaseSavedChemicalSyncRepository()
+34 |     }
+[VineTrack] Compiling SprayManagementSettingsView.swift
+[VineTrack] Compiling SprayPresetsView.swift
+[VineTrack] Compiling AddEditWorkTaskLabourLineView.swift
+[VineTrack] Compiling AddEditWorkTaskMachineLineView.swift
+[VineTrack] Compiling AddEditWorkTaskView.swift
+[VineTrack] Compiling WorkTaskAttributionView.swift
+[VineTrack] Compiling WorkTaskCalculatorView.swift
+[VineTrack] Compiling WorkTaskLabourLinesSection.swift
+[VineTrack] Compiling WorkTaskLogPresentation.swift
+[VineTrack] Compiling WorkTaskLogView.swift
+[VineTrack] Compiling WorkTaskMaterialsViews.swift
+[VineTrack] Compiling WorkTasksHubView.swift
+[VineTrack] Compiling ActiveTripView.swift
+[VineTrack] Compiling AddBlocksToTripSheet.swift
+[VineTrack] Compiling ChangeTripRouteSheet.swift
+[!]  ios/VineTrack/LegacyImported/Views/Trips/StartTripSheet.swift:91:25: call to main actor-isolated static method 'rowOrderSort' in a synchronous nonisolated context [#ActorIsolatedCall]
+  89 |         store.paddocks
+  90 |             .filter { selectedPaddockIds.contains($0.id) }
+  91 |             .sorted(by: Self.rowOrderSort)
+     |                         `- warning: call to main actor-isolated static method 'rowOrderSort' in a synchronous nonisolated context [#ActorIsolatedCall]
+  92 |     }
+  93 | 
+  94 |     /// Sort blocks by lowest row number first, then by name. Blocks without
+  95 |     /// row geometry fall to the end (compared by name).
+  96 |     static func rowOrderSort(_ a: Paddock, _ b: Paddock) -> Bool {
+     |                 |- note: calls to static method 'rowOrderSort' from outside of its actor context are implicitly asynchronous
+     |                 `- note: main actor isolation inferred from conformance to protocol 'View'
+  97 |         let aMin = a.rows.map(\.number).min()
+  98 |         let bMin = b.rows.map(\.number).min()
+[VineTrack] Compiling ConfirmActualTankMixView.swift
+[VineTrack] Compiling EndTripReviewSheet.swift
+[VineTrack] Compiling StartTripSheet.swift
+[VineTrack] Compiling TankMixDetailsView.swift
+[VineTrack] Compiling TripCancellationSection.swift
+[VineTrack] Compiling TripCostingLinksEditSheet.swift
+[VineTrack] Compiling TripFunctionsSettingsView.swift
+[VineTrack] Compiling TripView.swift
+[VineTrack] Compiling CloneRootstockManagementViews.swift
+[VineTrack] Compiling GrapeVarietyManagementView.swift
+[VineTrack] Compiling BackendVineyardDetailSheet.swift
+[VineTrack] Compiling BackendVineyardListView.swift
+[VineTrack] Compiling EditVineyardSheet.swift
+[VineTrack] Compiling CurrentYieldEstimateSummary.swift
+[VineTrack] Compiling DamageRecordsListView.swift
+[VineTrack] Compiling PruningActivityReportView.swift
+[VineTrack] Compiling PruningBlockDetailView.swift
+[VineTrack] Compiling PruningTrackerView.swift
+[VineTrack] Compiling CalculationSettingsView.swift
+[VineTrack] Compiling GrowthStageConfigSheet.swift
+[VineTrack] Compiling RegionUnitsSettingsView.swift
+[VineTrack] Compiling ManualSprayEntryView.swift
+[VineTrack] Compiling SprayLineChemicalPicker.swift
+[VineTrack] Compiling SprayProgramView.swift
+[VineTrack] Compiling SprayRecordDetailView.swift
+[VineTrack] Compiling SprayRecordFormView.swift
+[VineTrack] Compiling ChemicalDeleteActions.swift
+[VineTrack] Compiling ChemicalsManagementView.swift
+[VineTrack] Compiling OperatorCategoriesView.swift
+[VineTrack] Compiling SavedInputsManagementView.swift
+[VineTrack] Compiling WeatherSetupWizardView.swift
+[VineTrack] Compiling WeatherStationPickerSheet.swift
+[VineTrack] Compiling WundergroundStationPickerSheet.swift
+[VineTrack] Compiling YieldTripValidationView.swift
+[VineTrack] Compiling VineyardHomeLogoRefresh.swift
+[VineTrack] Compiling AlertService.swift
+[VineTrack] Compiling ButtonConfigSyncService.swift
+[VineTrack] Compiling CustomPinTypeService.swift
+[VineTrack] Compiling FertiliserSyncService.swift
+[VineTrack] Compiling GrowthStageImageSyncService.swift
+[VineTrack] Compiling GrowthStageRecordSyncService.swift
+[VineTrack] Compiling ManagementSyncServices.swift
+[VineTrack] Compiling ManualIssueSyncService.swift
+[VineTrack] Compiling OperationsSyncServices.swift
+[VineTrack] Compiling PaddockSyncService.swift
+[VineTrack] Compiling PickingRecordSyncService.swift
+PruneExplicitPrecompiledModules ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+PruneExplicitPrecompiledModules ios/.limbuild-sandbox/derived-data/SDKExplicitPrecompiledModules
+PruneExplicitPrecompiledModules ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/ExplicitPrecompiledModules
+Build Timing Summary
+SwiftCompile (12 tasks) | 28.383 seconds
+SwiftDriver (1 task) | 2.892 seconds
+GenerateAssetSymbols (1 task) | 0.960 seconds
+Copy (3 tasks) | 0.100 seconds
+ProcessInfoPlistFile (4 tasks) | 0.023 seconds
+WriteAuxiliaryFile (4 tasks) | 0.008 seconds
+LinkAssetCatalog (1 task) | 0.003 seconds
+Result bundle written to path:
+	ios/.limbuild-sandbox/result-bundles/build-1793616135780349000/build.xcresult
+Build completed in 20.534928s
+exit status 65

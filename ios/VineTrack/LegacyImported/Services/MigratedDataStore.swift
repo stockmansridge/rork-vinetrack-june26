@@ -1689,7 +1689,7 @@ final class MigratedDataStore {
     /// exactly as it was: still active, still holding its full route.
     ///
     /// `endTime` is the moment the operator confirmed, matching `endTrip`.
-    func endTripOrThrow(_ tripId: UUID) throws {
+    func endTripOrThrow(_ tripId: UUID, endedAt: Date = Date()) throws {
         guard let index = trips.firstIndex(where: { $0.id == tripId }),
               selectedVineyardId == trips[index].vineyardId
         else { throw TripEndPersistenceError.tripUnavailable }
@@ -1698,7 +1698,7 @@ final class MigratedDataStore {
         var next = trips
         var trip = next[index]
         trip.isActive = false
-        trip.endTime = Date()
+        trip.endTime = endedAt
         next[index] = trip
         try tripRepo.saveSliceOrThrow(next, for: vineyardId)
         trips = next

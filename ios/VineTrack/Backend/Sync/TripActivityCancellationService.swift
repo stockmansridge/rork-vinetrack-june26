@@ -337,13 +337,22 @@ extension TripActivityCancellationService {
         for a in actuals { if let code = actualStore.dependencyHolds[a.id] { holds.append(code) } }
         let pendingActuals = actuals.filter { actualStore.pendingIds.contains($0.id) }.map { $0.id.uuidString.lowercased() }
             + Array(repeating: "initial_mix_draft", count: max(0, actualStore.pendingCount(tripId: trip.id) - actuals.filter { actualStore.pendingIds.contains($0.id) }.count))
+        var linkedIssue = TrackedSprayCompletionSync.completionIssue(trip: trip,
+            sprays: store.sprayRecords.filter { $0.canonicalTripId == trip.id },
+            expectedIds: Set(actuals.map(\.sprayRecordId)))
+        _ = TrackedSprayCompletionSync.shared.revision
+        let completionIntents = try? TrackedSprayCompletionSync.shared.intents()
+        if completionIntents == nil { linkedIssue = "TRACKED_SPRAY_COMPLETION_JOURNAL_UNREADABLE" }
         return TripClosureStatus.Input(
             tripId: key, evidence: evidence, serverIsActive: isActive, serverEndTime: endTime,
             serverSessionIds: serverSessions,
             locallyEnded: isLocalEndPending(trip, store: store),
-            unresolvedMarkers: markers, occurrencePending: occurrencePending, occurrenceHeldReason: occurrenceHeld,
+            unresolvedMarkers: markers.sorted { ($0.entityType, $0.status) < ($1.entityType, $1.status) }, occurrencePending: occurrencePending, occurrenceHeldReason: occurrenceHeld,
             actualSessionIds: Set(actuals.map { TankDependencyVerification.normalized($0.tankSessionId) }),
-            pendingActualIds: pendingActuals, holdCodes: holds)
+            pendingActualIds: pendingActuals.sorted(), holdCodes: holds.sorted(), linkedSprayIssue: linkedIssue,
+            completionIntentPending: completionIntents?.contains(where: { $0.tripId == trip.id }) ?? true,
+            ownerScope: store.currentUserIdProvider?()?.uuidString ?? "signed_out",
+            selectedVineyardScope: store.selectedVineyardId?.uuidString ?? "none")
     }
 
     /// Closure state from acknowledged local evidence (no network).
@@ -353,13 +362,32 @@ extension TripActivityCancellationService {
 
     /// Confirms closure against a fresh server read; only this may report a verified CLOSED_SYNCED.
     func verifyClosure(trip: Trip, store: MigratedDataStore) async -> (TripClosureStatus.Input, TripClosureStatus.Result) {
+        let owner = store.currentUserIdProvider?()
         let fresh: Swift.Result<BackendTrip?, Error>
         do {
             fresh = .success(try await SupabaseTripSyncRepository().fetchTripForOccurrenceStart(tripId: trip.id, vineyardId: trip.vineyardId))
         } catch {
             fresh = .failure(error)
         }
-        let input = closureInput(trip: trip, store: store, fresh: fresh)
+        var input = closureInput(trip: trip, store: store, fresh: fresh)
+        if trip.tripFunction == TripFunction.spraying.rawValue {
+            do {
+                let linked = try await SprayCompletionRepository().fetchLinked(tripId: trip.id)
+                guard let owner, owner == store.currentUserIdProvider?(),
+                      SupabaseClientProvider.shared.client.auth.currentUser?.id == owner,
+                      store.selectedVineyardId == trip.vineyardId,
+                      case .success(let serverTrip?) = fresh, serverTrip.deletedAt == nil,
+                      serverTrip.id == trip.id, serverTrip.vineyardId == trip.vineyardId else {
+                    throw TrackedSprayCompletionSync.Failure.held
+                }
+                let actualIds = Set(SprayTankActualStore.shared.records.filter { $0.tripId == trip.id }.map(\.sprayRecordId))
+                    .union(store.sprayRecords.filter { $0.canonicalTripId == trip.id }.map(\.id))
+                input = closureInput(trip: trip, store: store, fresh: fresh)
+                input.linkedSprayIssue = TrackedSprayCompletionSync.completionIssue(trip: serverTrip.toTrip(),
+                    sprays: linked.map { $0.toSprayRecord() }, expectedIds: actualIds)
+                if serverTrip.endTime != trip.endTime { input.linkedSprayIssue = "TRIP_ORIGINAL_END_TIME_MISMATCH" }
+            } catch { input.linkedSprayIssue = "LINKED_SPRAY_SERVER_READ_UNCONFIRMED" }
+        }
         return (input, TripClosureStatus.evaluate(input))
     }
 }

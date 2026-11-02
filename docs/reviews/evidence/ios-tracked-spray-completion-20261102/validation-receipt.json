@@ -1,0 +1,93 @@
+{
+  "date_utc": "2026-11-02",
+  "scope": "iOS explicit new tracked spraying End; no historical recovery or customer data mutation",
+  "managed_base_not_current_source_sha": "2d405ade1e00501b73264e6aad77ae979489bef0",
+  "pinned_github_baseline_sha": "0f373ae6730a0b3b3925741be9b6c8e90128f353",
+  "prechange_parity": "All tracked iOS app/test blobs match pinned baseline. Only public/generated Config.swift differs; generated configuration is excluded from tracked-source parity.",
+  "current_source_manifest": "final-84-pass-source-manifest.json",
+  "current_source_file_count": 1295,
+  "current_source_manifest_sha256": "0e1e7207c65646e08c18b5bcaa4223f57dde42fb3623f4373fd3aa17d587ceef",
+  "final_normal_check": {
+    "tool": "runChecks",
+    "appPath": "ios",
+    "result": "PASS: simulator build succeeded",
+    "device_or_signed_release": false,
+    "unrelated_not_changed": "Two existing direct-storage asset URL warnings",
+    "raw_success_log_exposed": false
+  },
+  "final_native_selection": {
+    "tool": "swiftTest",
+    "appPath": "ios",
+    "onlyTesting": [
+      "VineTrackTests/TrackedSprayCompletionSyncTests",
+      "VineTrackTests/TripClosureStatusTests",
+      "VineTrackTests/TripQueuedUploadScopeTests",
+      "VineTrackTests/TankDependencyVerificationTests",
+      "VineTrackTests/RetainedRecoveryDiagnosticExportTests",
+      "VineTrackTests/TripEndGateTests",
+      "VineTrackTests/SprayProgramRound2Tests"
+    ],
+    "result": "PASS",
+    "aggregate_passed": 84,
+    "elapsed_seconds": 71,
+    "xcode": "27.1 managed simulator environment",
+    "per_suite_counts_or_named_passing_receipts_exposed": false,
+    "raw_success_log_exposed": false,
+    "caveat": "Successful managed tools left earlier failure logs unchanged on disk. No stale log is relabelled as a final pass; final result is the tool's aggregate response only. No named XML or xcresult export was returned."
+  },
+  "historical_checkpoints_not_added_to_final_count": [
+    {
+      "selection": "Six classes, excluding SprayProgramRound2Tests, before final export/UI/closure strengthening",
+      "passed": 59,
+      "elapsed_seconds": 142,
+      "raw_log_available": false
+    },
+    {
+      "selection": "VineTrackTests/SprayProgramRound2Tests before correction",
+      "passed": 21,
+      "failed": 4,
+      "log": "round2-before-correction.log",
+      "cause": "Four older assertions expected terminal Trip alone to imply Spray completion. Two completionStatus scenarios, duplicate Trip order, and vintage fixture were corrected to require explicit Spray End; date/scope/template assertions preserved."
+    },
+    {
+      "selection": "First normal build before Supabase import fix",
+      "result": "FAIL: four missing Supabase/Auth member-import diagnostics in NewMainTabView.swift",
+      "log": "initial-missing-import-build-failure.log",
+      "correction": "Added import Supabase. Subsequent normal build passed."
+    }
+  ],
+  "configuration_method": {
+    "method": "Existing Rork-managed generated build configuration; no new generator or restored values",
+    "generated_cache_sha256_rechecked": "a14659eccea440191bf2191b9a26a321f46bc599a9c03a5be85629815fa09c9d",
+    "current_virtual_empty_config": "Intentional virtual view, not overwritten and not treated as runtime configuration failure",
+    "generated_values_in_evidence": false,
+    "signed_configuration_or_artifact_mapping": "not available; no new signed build"
+  },
+  "delivery": {
+    "latest_confirmed_version": "3.1.9",
+    "latest_confirmed_build": 202,
+    "latest_submission_id": "2f343e19-b71b-4bf0-9dba-1ae5c2492ff1",
+    "latest_processing_status": "COMPLETE",
+    "new_signed_build_requested": false,
+    "new_upload": false,
+    "public_app_store_submission": false,
+    "current_public_source_sha": null,
+    "diagnostic_build_source_sha": "unknown_no_verified_build_receipt",
+    "remaining_gates": [
+      "Managed source synchronisation and all iOS blob verification against the resulting public GitHub commit",
+      "Verified build-source identity embedded in diagnostic export and closure output; available publish schema does not document source-SHA injection",
+      "Resolve pinned GitHub runtime crash and retain current-source native workflow receipts",
+      "Signed internal TestFlight build above 202 with unchanged app identity",
+      "Protected original-handset preservation before in-place upgrade",
+      "Identify pending original actual ID, parent Trip and tank session without guessing"
+    ]
+  },
+  "not_executed": [
+    "Physical iPhone online/offline/reconnect/cold-reopen or process-death tests",
+    "Authenticated production completion RPC or Portal acceptance",
+    "Original handset queue reconciliation or repair",
+    "Full unfiltered native test suite",
+    "Signed Release validation"
+  ],
+  "safety": "No SQL deployed, no customer RPC invoked, no migration, historical completion sweep, original-record retry, queue clearing, storage clearing, uninstall, replacement finalisation or identity/signing change."
+}

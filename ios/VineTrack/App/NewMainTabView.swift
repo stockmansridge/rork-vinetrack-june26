@@ -1,4 +1,5 @@
 import SwiftUI
+import Supabase
 import CoreLocation
 import Combine
 import UIKit
@@ -534,6 +535,7 @@ struct NewMainTabView: View {
             // Final ended state is a durable second stage and can only upload
             // after this trip's actual-use rows have cleared their queue.
             await tripSync.syncTripsForSelectedVineyard()
+            await replayTrackedSprayCompletions(vineyardId: vineyardId)
         }
         let performanceTemplates = PerformanceCapture.shared.begin("sync Program templates")
         await sprayJobTemplateService.syncForSelectedVineyard()
@@ -616,6 +618,59 @@ struct NewMainTabView: View {
                 VineyardSelectionDiagnostics.syncSucceeded(vineyardId: sweepVineyardId)
             }
         }
+    }
+
+    private func replayTrackedSprayCompletions(vineyardId: UUID) async {
+        guard let owner = auth.userId, store.currentUserIdProvider?() == owner else { return }
+        let repository = SprayCompletionRepository()
+        func current() -> Bool {
+            !Task.isCancelled && auth.userId == owner && store.currentUserIdProvider?() == owner &&
+            store.selectedVineyardId == vineyardId && SupabaseClientProvider.shared.client.auth.currentUser?.id == owner
+        }
+        func ready(_ trip: Trip) -> Bool {
+            guard current(), let local = store.trips.first(where: { $0.id == trip.id }),
+                  local.vineyardId == vineyardId, !local.isActive, local.endTime == trip.endTime,
+                  !tripSync.isPendingUpsert(trip.id), !tripSync.isPendingDelete(trip.id),
+                  !TripCancellationIntentStore.shared.blocksReplay(tripId: trip.id),
+                  (try? store.tripDeletionJournal.isCancelled(trip.id)) == false,
+                  (try? store.isLegacySpraySyncHeld(trip: trip.id)) == false,
+                  tripCostAllocationSync.pendingUpsertCount == 0, tripCostAllocationSync.pendingDeleteCount == 0 else { return false }
+            let linked = store.sprayRecords.filter { $0.canonicalTripId == trip.id }
+            guard linked.count == 1, let spray = linked.first,
+                  !sprayRecordSync.isPendingUpsert(spray.id), !sprayRecordSync.isPendingDelete(spray.id),
+                  (try? store.isLegacySpraySyncHeld(record: spray.id)) == false else { return false }
+            var input = TripActivityCancellationService.shared.closureInput(trip: local, store: store, fresh: nil)
+            input.serverIsActive = trip.isActive; input.serverEndTime = trip.endTime
+            input.serverSessionIds = TankDependencyVerification.ids(trip.tankSessions)
+            // These two predicates are the result of this operation, not its dependencies.
+            input.linkedSprayIssue = nil; input.completionIntentPending = false
+            return TripClosureStatus.evaluate(input).isClosedSynced
+        }
+        await TrackedSprayCompletionSync.shared.replay(ownerId: owner, vineyardId: vineyardId,
+            isCurrent: current,
+            fetchTrip: { id in
+                guard current() else { throw TrackedSprayCompletionSync.Failure.held }
+                let row = try await SupabaseTripSyncRepository().fetchTripForOccurrenceStart(tripId: id, vineyardId: vineyardId)
+                guard current(), let row, row.id == id, row.vineyardId == vineyardId,
+                      row.deletedAt == nil, row.isActive == false else { return nil }
+                return row.toTrip()
+            }, fetchSprays: { id in
+                guard current() else { throw TrackedSprayCompletionSync.Failure.held }
+                let rows = try await repository.fetchLinked(tripId: id)
+                guard current() else { throw TrackedSprayCompletionSync.Failure.held }
+                return rows.map { $0.toSprayRecord() }
+            }, dependenciesReady: ready,
+            expectedSprayIds: { trip in
+                Set(SprayTankActualStore.shared.records.filter { $0.tripId == trip.id }.map(\.sprayRecordId))
+                    .union(store.sprayRecords.filter { $0.canonicalTripId == trip.id }.map(\.id))
+            }, complete: { id in
+                guard current() else { throw TrackedSprayCompletionSync.Failure.held }
+                try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId.uuidString)
+                return try await repository.completeTracked(id: id, ownerId: owner)
+            }, onVerified: { remote in
+                guard current(), let local = store.sprayRecords.first(where: { $0.id == remote.id }) else { return }
+                store.applyRemoteSprayRecordUpsert(SprayCompletionResolver.preservingServerCompletion(local: local, server: remote))
+            })
     }
 
     // MARK: - Vineyard region settings
@@ -760,6 +815,7 @@ struct NewMainTabView: View {
     /// Total queued upserts across every field-data sync service.
     private var aggregatePendingUpserts: Int {
         pinSync.pendingUpsertCount
+            + trackedCompletionPendingCount
             + paddockSync.pendingUpsertCount
             + tripSync.pendingUpsertCount
             + sprayRecordSync.pendingUpsertCount
@@ -853,8 +909,15 @@ struct NewMainTabView: View {
         tripSync.retainedState.sprays.count
     }
 
+    private var trackedCompletionPendingCount: Int {
+        _ = TrackedSprayCompletionSync.shared.revision
+        // Global outstanding work remains visible even outside the selected slice.
+        return (try? TrackedSprayCompletionSync.shared.intents().count) ?? 1
+    }
+
     private var aggregateSyncError: String? {
         let messages = [
+            trackedCompletionPendingCount > 0 ? "Linked Spray completion remains unverified. Original End intents are retained." : nil,
             tripSync.retainedState.inspectionError,
             pinSync.errorMessage,
             paddockSync.errorMessage,

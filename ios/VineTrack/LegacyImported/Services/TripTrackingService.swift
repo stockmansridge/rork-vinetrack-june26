@@ -981,8 +981,10 @@ final class TripTrackingService {
         // Reporting a trip as ended that was never saved would silently
         // discard the whole route.
         do {
-            try store?.endTripOrThrow(trip.id)
-            store?.releaseDeviceTripAfterLocalEnd(store?.trips.first { $0.id == trip.id } ?? trip)
+            guard let store else { throw TripEndPersistenceError.tripUnavailable }
+            let ended = try prepareTrackedSprayEnd(trip, store: store)
+            try store.endTripOrThrow(trip.id, endedAt: ended)
+            store.releaseDeviceTripAfterLocalEnd(store.trips.first { $0.id == trip.id } ?? trip)
         } catch {
             let detail = (error as NSError).localizedDescription
             errorMessage = TripEndOutcome.persistenceFailed(detail).operatorMessage
@@ -2573,16 +2575,34 @@ final class TripTrackingService {
         }
     }
 
+    private func prepareTrackedSprayEnd(_ trip: Trip, store: MigratedDataStore) throws -> Date {
+        guard trip.tripFunction == TripFunction.spraying.rawValue else { return Date() }
+        guard let owner = store.currentUserIdProvider?(), store.selectedVineyardId == trip.vineyardId,
+              store.isDeviceTripOwner, store.deviceActiveTripId == trip.id else {
+            throw TrackedSprayCompletionSync.Failure.held
+        }
+        return try TrackedSprayCompletionSync.shared.prepare(ownerId: owner, trip: trip,
+            sprays: store.sprayRecords, proposed: Date())
+    }
+
     private func endOccurrenceTrip(_ current: Trip) -> TripEndOutcome {
         guard current.coverageBasis == .occurrence, let store else { return .persistenceFailed(TripOccurrenceCoverage.Failure.updateRequired.localizedDescription) }
         if case let .blocked(blocker) = TripEndGate.evaluate(trip: current) { errorMessage = blocker.message; return .blocked(blocker) }
         do {
             let journal = try occurrenceJournal(for: current)
-            let ended = Date()
+            let ended = try prepareTrackedSprayEnd(current, store: store)
             var metadata: [String: TripOccurrenceCoverage.JSON] = ["endTime": .string(ISO8601DateFormatter().string(from: ended))]
             if let hours = current.endEngineHours { metadata["endEngineHours"] = .number(hours) }
             if let notes = current.completionNotes { metadata["completionNotes"] = .string(notes) }
-            try journal.finalize(.object(metadata))
+            if let original = try journal.load()?.history.last(where: { $0.action[occurrence: "kind"]?.occurrenceString == "finalize" }) {
+                // The Trip cache may have failed after the original finalisation
+                // reached disk. Reuse it, never append a replacement operation.
+                guard original.action[occurrence: "metadata"]?[occurrence: "endTime"]?.occurrenceString == ISO8601DateFormatter().string(from: ended) else {
+                    throw TrackedSprayCompletionSync.Failure.held
+                }
+            } else {
+                try journal.finalize(.object(metadata))
+            }
             guard let state = try journal.load() else { throw TripOccurrenceCoverage.Failure.missing }
             var local = try current.withOccurrenceProjection(state.projected)
             local.isActive = false; local.isPaused = false; local.endTime = ended

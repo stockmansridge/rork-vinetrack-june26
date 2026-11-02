@@ -9,16 +9,20 @@ struct TripClosureSection: View {
     @State private var verified: TripClosureStatus.Result?
     @State private var lastInput: TripClosureStatus.Input?
     @State private var checking = false
+    @State private var verifiedAgainst: TripClosureStatus.Input?
+    @State private var verifiedTrip: Trip?
 
     private var service: TripActivityCancellationService { .shared }
 
     var body: some View {
         if trip.endTime != nil {
-            let local = service.closureStatus(trip: trip, store: store)
-            if local.state != .localEndPending {
-                let shown = verified ?? local
+            let current = service.closureInput(trip: trip, store: store, fresh: nil)
+            let local = TripClosureStatus.evaluate(current)
+            let stillVerified = verifiedAgainst == current && verifiedTrip == trip
+            let shown = stillVerified ? (verified ?? local) : local
+            Group {
                 Section {
-                    Label(title(shown), systemImage: symbol(shown.state))
+                    Label(title(shown, isVerified: stillVerified && verified != nil), systemImage: symbol(shown.state))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(tint(shown.state))
                     Text(detail(shown.state)).font(.caption).foregroundStyle(.secondary)
@@ -30,9 +34,9 @@ struct TripClosureSection: View {
                     }
                     .disabled(checking)
                     Button {
-                        let input = lastInput ?? service.closureInput(trip: trip, store: store, fresh: nil)
+                        let input = stillVerified ? (lastInput ?? current) : current
                         UIPasteboard.general.string = (["VineTrack Trip closure status v1", "platform: iOS",
-                            "verified_recovery_source: 4e177a9109f3f729d16c11a527cf64e3fe443611; public: 64516a77082f3eb4b3917c7cf10170dbf3c31b19; diagnostic_overlay: issue41-rc1",
+                            "source_revision: unknown_no_verified_build_receipt",
                             "version: \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown") build: \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")"] +
                             TripClosureStatus.diagnosticLines(input, TripClosureStatus.evaluate(input))).joined(separator: "\n")
                     } label: {
@@ -42,20 +46,35 @@ struct TripClosureSection: View {
                     Text("Sync status")
                 }
             }
+            .onChange(of: current) { _, _ in
+                verified = nil; lastInput = nil; verifiedAgainst = nil; verifiedTrip = nil
+            }
+            .onChange(of: trip) { _, _ in
+                verified = nil; lastInput = nil; verifiedAgainst = nil; verifiedTrip = nil
+            }
         }
     }
 
     private func verify() async {
         checking = true
-        let (input, result) = await service.verifyClosure(trip: trip, store: store)
-        lastInput = input
-        verified = result
+        let before = service.closureInput(trip: trip, store: store, fresh: nil)
+        let capturedTrip = trip
+        let (input, result) = await service.verifyClosure(trip: capturedTrip, store: store)
+        let after = service.closureInput(trip: trip, store: store, fresh: nil)
+        if before == after && capturedTrip == trip {
+            lastInput = input
+            verified = result
+            verifiedAgainst = after
+            verifiedTrip = capturedTrip
+        } else {
+            verified = nil; lastInput = nil; verifiedAgainst = nil; verifiedTrip = nil
+        }
         checking = false
     }
 
-    private func title(_ r: TripClosureStatus.Result) -> String {
+    private func title(_ r: TripClosureStatus.Result, isVerified: Bool) -> String {
         switch r.state {
-        case .closedSynced: return verified != nil ? "Closed and synced · verified with server" : "Closed and synced"
+        case .closedSynced: return isVerified ? "Closed and synced · verified with server" : "Closed and synced"
         case .localEndPending: return "Ended on this device · waiting to sync"
         case .dependentsPending: return "Ended · records still syncing"
         case .dependentsHeld: return "Ended · sync held for review"
@@ -66,7 +85,7 @@ struct TripClosureSection: View {
 
     private func detail(_ s: TripClosureStatus.State) -> String {
         switch s {
-        case .closedSynced: return "The server shows this Trip ended, and its tank records, actual amounts, spray record and route are all acknowledged."
+        case .closedSynced: return "The retained evidence shows a matching Trip and linked Spray End with no outstanding required dependencies. Check with server for an independent current read."
         case .localEndPending: return "The end is saved here and will finish on the server when sync completes. Recorded GPS and tank amounts are kept."
         case .dependentsPending: return "The Trip has ended but some linked records have not been acknowledged by the server yet. They are kept and will retry automatically."
         case .dependentsHeld: return "A linked record could not be confirmed on the server. Nothing has been discarded. Copy the Trip status and send it to support."

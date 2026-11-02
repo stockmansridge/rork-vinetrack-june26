@@ -1,0 +1,1105 @@
+Building with Xcode 27.1 (27A9275)
+Command line invocation:
+Build settings from command line:
+Resolving Package Graph
+Resolved source packages
+swift-concurrency-extras - https://github.com/pointfreeco/swift-concurrency-extras @ 1.4.3
+swift-crypto - https://github.com/apple/swift-crypto.git @ 4.5.2
+swift-clocks - https://github.com/pointfreeco/swift-clocks @ 1.1.1
+RevenueCat - https://github.com/RevenueCat/purchases-ios.git @ 5.99.0
+xctest-dynamic-overlay - https://github.com/pointfreeco/xctest-dynamic-overlay @ 1.13.1
+swift-http-types - https://github.com/apple/swift-http-types.git @ 1.8.0
+swift-asn1 - https://github.com/apple/swift-asn1.git @ 1.7.3
+swift-issue-reporting - https://github.com/pointfreeco/swift-issue-reporting @ 2.1.2
+Supabase - https://github.com/supabase/supabase-swift.git @ 2.55.5
+Writing result bundle at path:
+	/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/result-bundles/build-1793616688344747000/build.xcresult
+Build Preparation
+Build task concurrency set to 14 via user default IDEBuildOperationMaxNumberOfConcurrentCompileTasks
+note: Using codesigning identity override: -
+ComputePackagePrebuildTargetDependencyGraph
+Prepare packages
+CreateBuildRequest
+SendProjectDescription
+CreateBuildOperation
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+note: Target dependency graph (34 targets)
+GatherProvisioningInputs
+CreateBuildDescription
+ClangStatCache /Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/SDKStatCaches.noindex/iphonesimulator27.1-24A94232-e829b21a6f8c9b70876ba0858053c04421d52c5dee28f89a436238487c04ba4c.sdkstatcache
+Failed to create FS event stream. Considering the cache up-to-date.
+[VineTrack] Compiling TripActivityCancellationService.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripActivityCancellationService.swift:96:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 94 | 
+ 95 |     init(tripSync: TripSyncService, spraySync: SprayRecordSyncService,
+ 96 |          actuals: SprayTankActualStore = .shared, claims: TripLocalEndClaimStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 97 |         self.tripSync = tripSync; self.spraySync = spraySync; self.actuals = actuals; self.claims = claims
+ 98 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/SprayTankActualStore.swift:86:16: note: static property declared here
+ 84 | @MainActor
+ 85 | final class SprayTankActualStore {
+ 86 |     static let shared = SprayTankActualStore()
+    |                `- note: static property declared here
+ 87 |     private static let persistenceKey = "vinetrack_spray_tank_actuals_v1"
+ 88 | 
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift:16:55: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 14 | 
+ 15 |     init(provider: SupabaseClientProvider = .shared,
+ 16 |          deletionAuthority: VineyardWriteAuthority = .shared,
+    |                                                       `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 17 |          deletionSession: (() async throws -> DeletionSession)? = nil,
+ 18 |          deletionTransport: @escaping (URLRequest) async throws -> (Data, URLResponse) = { try await URLSession.shared.data(for: $0) }) {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Views/SprayManagement/ChemicalDeleteActions.swift:26:50: call to main actor-isolated initializer 'init(repository:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 24 |     fileprivate let service: SavedChemicalDeletionService
+ 25 | 
+ 26 |     init(service: SavedChemicalDeletionService = SavedChemicalDeletionService()) {
+    |                                                  `- warning: call to main actor-isolated initializer 'init(repository:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 27 |         self.service = service
+ 28 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Services/SavedChemicalDeletionService.swift:32:5: note: calls to initializer 'init(repository:)' from outside of its actor context are implicitly asynchronous
+30 |     private let repository: any SavedChemicalSyncRepositoryProtocol
+31 | 
+32 |     init(repository: (any SavedChemicalSyncRepositoryProtocol)? = nil) {
+   |     `- note: calls to initializer 'init(repository:)' from outside of its actor context are implicitly asynchronous
+33 |         self.repository = repository ?? SupabaseSavedChemicalSyncRepository()
+34 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/ChemicalIntelligence/CatalogueSearchModel.swift:20:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 18 |     private var pollTask: Task<Void, Never>?
+ 19 |     private var requestId: UUID = UUID()
+ 20 |     init(persistence: PersistenceStore = .shared, repository: (any CatalogueBackendProtocol)? = nil) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 21 |         self.persistence = persistence; self.repository = repository ?? CatalogueRepository()
+ 22 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/ChemicalIntelligence/ChemicalLineSnapshot.swift:162:5: 'nonisolated' can not be applied to variable with non-'Sendable' type 'ISO8601DateFormatter'; this is an error in the Swift 6 language mode
+160 |     /// also writes. A Swift-default `978307200.5` next to Kotlin's
+161 |     /// `"2026-08-15T…Z"` would be two shapes for the same fact in one column.
+162 |     nonisolated static let capturedAtFormatter: ISO8601DateFormatter = {
+    |     `- warning: 'nonisolated' can not be applied to variable with non-'Sendable' type 'ISO8601DateFormatter'; this is an error in the Swift 6 language mode
+163 |         let f = ISO8601DateFormatter()
+164 |         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+/Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk/System/Library/Frameworks/Foundation.framework/Headers/NSISO8601DateFormatter.h:80:12: note: class 'ISO8601DateFormatter' does not conform to the 'Sendable' protocol
+ 78 | /// > In Swift, you can use ``Date/ISO8601FormatStyle`` rather than ``ISO8601DateFormatter``. The ``FormatStyle`` API offers a declarative idiom for customizing the formatting of various types. Also, Foundation caches identical ``FormatStyle`` instances, so you don't need to pass them around your app, or risk wasting memory with duplicate formatters.
+ 79 | API_AVAILABLE(macosx(10.12), ios(10.0), watchos(3.0), tvos(10.0))
+ 80 | @interface NSISO8601DateFormatter : NSFormatter <NSSecureCoding> {
+    |            `- note: class 'ISO8601DateFormatter' does not conform to the 'Sendable' protocol
+ 81 | @private
+ 82 |     CFDateFormatterRef _formatter;
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/NewBackendAuthService.swift:27:46: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 25 | 
+ 26 |     init(
+ 27 |         authRepository: any AuthRepository = SupabaseAuthRepository(),
+    |                                              `- warning: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 28 |         profileRepository: any ProfileRepositoryProtocol = SupabaseProfileRepository(),
+ 29 |         teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Auth/SupabaseAuthRepository.swift:7:5: note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+  5 |     private let provider: SupabaseClientProvider
+  6 | 
+  7 |     init(provider: SupabaseClientProvider = .shared) {
+    |     |- note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+    |     `- note: main actor isolation inferred from conformance to protocol 'AuthRepository'
+  8 |         self.provider = provider
+  9 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/NewBackendAuthService.swift:28:60: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 26 |     init(
+ 27 |         authRepository: any AuthRepository = SupabaseAuthRepository(),
+ 28 |         profileRepository: any ProfileRepositoryProtocol = SupabaseProfileRepository(),
+    |                                                            `- warning: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 29 |         teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()
+ 30 |     ) {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseProfileRepository.swift:7:5: note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+ 5 |     private let provider: SupabaseClientProvider
+ 6 | 
+ 7 |     init(provider: SupabaseClientProvider = .shared) {
+   |     |- note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+   |     `- note: main actor isolation inferred from conformance to protocol 'ProfileRepositoryProtocol'
+ 8 |         self.provider = provider
+ 9 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/NewBackendAuthService.swift:29:54: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 27 |         authRepository: any AuthRepository = SupabaseAuthRepository(),
+ 28 |         profileRepository: any ProfileRepositoryProtocol = SupabaseProfileRepository(),
+ 29 |         teamRepository: any TeamRepositoryProtocol = SupabaseTeamRepository()
+    |                                                      `- warning: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 30 |     ) {
+ 31 |         self.authRepository = authRepository
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseTeamRepository.swift:7:5: note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+  5 |     private let provider: SupabaseClientProvider
+  6 | 
+  7 |     init(provider: SupabaseClientProvider = .shared) {
+    |     |- note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+    |     `- note: main actor isolation inferred from conformance to protocol 'TeamRepositoryProtocol'
+  8 |         self.provider = provider
+  9 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/SystemAdminService.swift:26:54: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 24 |     private let repository: SupabaseSystemAdminRepository
+ 25 | 
+ 26 |     init(repository: SupabaseSystemAdminRepository = SupabaseSystemAdminRepository()) {
+    |                                                      `- warning: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 27 |         self.repository = repository
+ 28 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseSystemAdminRepository.swift:327:5: note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+325 |     private let provider: SupabaseClientProvider
+326 | 
+327 |     init(provider: SupabaseClientProvider = .shared) {
+    |     `- note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+328 |         self.provider = provider
+329 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/Resistance/ResistancePlanJobService.swift:39:54: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 37 | 
+ 38 |     init(
+ 39 |         repository: SupabaseSprayJobPlanRepository = SupabaseSprayJobPlanRepository(),
+    |                                                      `- warning: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 40 |         defaults: UserDefaults = .standard
+ 41 |     ) {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseSprayJobPlanRepository.swift:13:5: note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+11 |     private let provider: SupabaseClientProvider
+12 | 
+13 |     init(provider: SupabaseClientProvider = .shared) {
+   |     `- note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+14 |         self.provider = provider
+15 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/Resistance/ResistancePlanRepository.swift:156:47: call to main actor-isolated initializer 'init(defaults:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+154 | 
+155 |     init(
+156 |         local: any ResistancePlanLocalStore = ResistancePlanStore(),
+    |                                               `- warning: call to main actor-isolated initializer 'init(defaults:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+157 |         remote: (any ResistancePlanRemote)? = nil,
+158 |         clock: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/Resistance/ResistancePlanStore.swift:47:5: note: calls to initializer 'init(defaults:)' from outside of its actor context are implicitly asynchronous
+ 45 |     private let defaults: UserDefaults
+ 46 | 
+ 47 |     init(defaults: UserDefaults = .standard) {
+    |     |- note: calls to initializer 'init(defaults:)' from outside of its actor context are implicitly asynchronous
+    |     `- note: main actor isolation inferred from conformance to protocol 'ResistancePlanLocalStore'
+ 48 |         self.defaults = defaults
+ 49 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/SprayProgram/SprayProgramCalculatorInputs.swift:4:50: conformance of 'SprayProgramCalculatorInputs' to protocol 'Decodable' crosses into main actor-isolated code and can cause data races; this is an error in the Swift 6 language mode [#ConformanceIsolation]
+ 2 | 
+ 3 | /// Explicit Program Step inputs only. No inferred water, canopy confirmation or product arithmetic.
+ 4 | nonisolated struct SprayProgramCalculatorInputs: Codable, Hashable, Sendable {
+   |                                                  |- warning: conformance of 'SprayProgramCalculatorInputs' to protocol 'Decodable' crosses into main actor-isolated code and can cause data races; this is an error in the Swift 6 language mode [#ConformanceIsolation]
+   |                                                  |- note: isolate this conformance to the main actor with '@MainActor'
+   |                                                  `- note: turn data races into runtime errors with '@preconcurrency'
+ 5 |     var canopySize: String? = nil
+ 6 |     var canopyDensity: String? = nil
+   :
+28 | 
+29 | extension SprayProgramCalculatorInputs {
+30 |     init(from decoder: Decoder) throws {
+   |     |- note: main actor-isolated initializer 'init(from:)' cannot satisfy nonisolated requirement
+   |     `- note: mark initializer 'init(from:)' 'nonisolated'
+31 |         let c = try decoder.container(keyedBy: CodingKeys.self)
+32 |         func number(_ key: CodingKeys) -> Double? {
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/PinCaptureEvidence.swift:209:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+207 |     private(set) var records: [PinCaptureEvidence]
+208 | 
+209 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+210 |         self.persistence = persistence
+211 |         let precise: Data? = persistence.load(key: key)
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/VineyardWeatherIntegrationCache.swift:23:12: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 21 | 
+ 22 |     init(repository: any VineyardWeatherIntegrationRepositoryProtocol
+ 23 |          = SupabaseVineyardWeatherIntegrationRepository()) {
+    |            `- warning: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 24 |         self.repository = repository
+ 25 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/VineyardWeatherIntegrationRepository.swift:111:5: note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+109 |     private let provider: SupabaseClientProvider
+110 | 
+111 |     init(provider: SupabaseClientProvider = .shared) {
+    |     |- note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+    |     `- note: main actor isolation inferred from conformance to protocol 'VineyardWeatherIntegrationRepositoryProtocol'
+112 |         self.provider = provider
+113 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/NSWSeedSoilLookupService.swift:30:9: stored property 'rawAttributes' of 'Sendable'-conforming struct 'NSWSeedSoilSuggestion' contains non-Sendable type 'Any'; this is an error in the Swift 6 language mode
+ 28 |     let matchedKeywords: [String]
+ 29 |     let disclaimer: String?
+ 30 |     let rawAttributes: [String: Any]?
+    |         `- warning: stored property 'rawAttributes' of 'Sendable'-conforming struct 'NSWSeedSoilSuggestion' contains non-Sendable type 'Any'; this is an error in the Swift 6 language mode
+ 31 | 
+ 32 |     func hash(into hasher: inout Hasher) {
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/NSWSeedSoilLookupService.swift:57:9: stored property 'rawResponse' of 'Sendable'-conforming struct 'NSWSeedSoilLookupResult' contains non-Sendable type 'Any'; this is an error in the Swift 6 language mode
+ 55 |     let message: String?
+ 56 |     let disclaimer: String?
+ 57 |     let rawResponse: [String: Any]?
+    |         `- warning: stored property 'rawResponse' of 'Sendable'-conforming struct 'NSWSeedSoilLookupResult' contains non-Sendable type 'Any'; this is an error in the Swift 6 language mode
+ 58 | }
+ 59 | 
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseCloneRootstockCatalogRepository.swift:380:63: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+221 |     private let rootstockReads = CatalogReadSingleFlight<[SharedRootstockCatalogEntry]>()
+222 | 
+223 |     init(provider: SupabaseClientProvider = .shared) {
+    |     `- note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+224 |         self.provider = provider
+225 |     }
+    :
+378 | 
+379 |     private init(
+380 |         repository: SupabaseCloneRootstockCatalogRepository = SupabaseCloneRootstockCatalogRepository()
+    |                                                               `- warning: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+381 |     ) {
+382 |         self.repository = repository
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseFertigationRepository.swift:28:47: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 26 | 
+ 27 |     /// Injection isolates request-gating assertions from production accounts.
+ 28 |     init(authority: VineyardWriteAuthority = .shared, adminCheck: @escaping () async throws -> Bool, transport: @escaping (String, Object) async throws -> Data) {
+    |                                               `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 29 |         self.authority = authority
+ 30 |         self.adminCheck = adminCheck
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseGrapeVarietyCatalogRepository.swift:354:61: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+129 |     private let provider: SupabaseClientProvider
+130 | 
+131 |     init(provider: SupabaseClientProvider = .shared) {
+    |     `- note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+132 |         self.provider = provider
+133 |     }
+    :
+352 | 
+353 |     private init(
+354 |         repository: SupabaseGrapeVarietyCatalogRepository = SupabaseGrapeVarietyCatalogRepository()
+    |                                                             `- warning: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+355 |     ) {
+356 |         self.repository = repository
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift:16:55: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 14 | 
+ 15 |     init(provider: SupabaseClientProvider = .shared,
+ 16 |          deletionAuthority: VineyardWriteAuthority = .shared,
+    |                                                       `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 17 |          deletionSession: (() async throws -> DeletionSession)? = nil,
+ 18 |          deletionTransport: @escaping (URLRequest) async throws -> (Data, URLResponse) = { try await URLSession.shared.data(for: $0) }) {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/YieldBunchWeightsRepository.swift:35:91: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 33 |     private let defaults: UserDefaults
+ 34 |     let authority: VineyardWriteAuthority
+ 35 |     init(provider: SupabaseClientProvider = .shared, authority: VineyardWriteAuthority = .shared,
+    |                                                                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 36 |          defaults: UserDefaults = .standard, transport: (any YieldBunchWeightsTransport)? = nil,
+ 37 |          currentUserId: (() -> UUID?)? = nil) {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/ButtonConfigSyncService.swift:219:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+217 |     }
+218 | 
+219 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+220 |         self.persistence = persistence
+221 |         self.state = persistence.load(key: key) ?? State()
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/GrowthStageImageSyncService.swift:239:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+237 |     }
+238 | 
+239 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+240 |         self.persistence = persistence
+241 |         self.state = persistence.load(key: key) ?? State()
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/GrowthStageRecordSyncService.swift:71:42: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 69 |         photoStorage: (any PinPhotoStorageProtocol)? = nil,
+ 70 |         metadata: GrowthStageRecordSyncMetadata? = nil,
+ 71 |         persistence: PersistenceStore = .shared,
+    |                                          `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 72 |         deletionStore: LinkedPinGrowthDeletionStore? = nil,
+ 73 |         acknowledgedPinIds: ((UUID) async throws -> Set<UUID>)? = nil
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/GrowthStageRecordSyncService.swift:906:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+904 |     }
+905 | 
+906 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+907 |         self.persistence = persistence
+908 |         self.state = persistence.load(key: key) ?? State()
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/ManagementSyncServices.swift:34:56: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+  32 |     }
+  33 | 
+  34 |     init(key: String, persistence: PersistenceStore = .shared) {
+     |                                                        `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+  35 |         self.key = key
+  36 |         self.persistence = persistence
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/ManagementSyncServices.swift:299:105: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 297 |     private var isConfigured: Bool = false
+ 298 | 
+ 299 |     init(repository: (any SavedChemicalSyncRepositoryProtocol)? = nil, persistence: PersistenceStore = .shared,
+     |                                                                                                         `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 300 |          backendConfigured: @escaping () -> Bool = { SupabaseClientProvider.shared.isConfigured }) {
+ 301 |         self.repository = repository ?? SupabaseSavedChemicalSyncRepository()
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/OperationsSyncServices.swift:39:56: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+  37 |     }
+  38 | 
+  39 |     init(key: String, persistence: PersistenceStore = .shared) {
+     |                                                        `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+  40 |         self.key = key
+  41 |         self.persistence = persistence
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/PaddockSyncService.swift:718:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+716 |     }
+717 | 
+718 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+719 |         self.persistence = persistence
+720 |         self.state = persistence.load(key: key) ?? State()
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/PendingLinkedPinGrowthDeletion.swift:23:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+21 |     private(set) var targets: [UUID: PendingLinkedPinGrowthDeletion]
+22 | 
+23 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+24 |         self.persistence = persistence
+25 |         self.targets = persistence.load(key: key) ?? [:]
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/PinSyncService.swift:129:42: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 127 |         metadata: PinSyncMetadata? = nil,
+ 128 |         photoStorage: (any PinPhotoStorageProtocol)? = nil,
+ 129 |         persistence: PersistenceStore = .shared,
+     |                                          `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 130 |         deletionStore: LinkedPinGrowthDeletionStore? = nil
+ 131 |     ) {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/PinSyncService.swift:1036:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+1034 |     private static let currentMappingVersion = 2
+1035 | 
+1036 |     init(persistence: PersistenceStore = .shared) {
+     |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+1037 |         self.persistence = persistence
+1038 |         var loaded: State = persistence.load(key: key) ?? State()
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/SprayJobTemplateService.swift:42:58: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 40 | 
+ 41 |     init(
+ 42 |         repository: SupabaseSprayJobTemplateRepository = SupabaseSprayJobTemplateRepository(),
+    |                                                          `- warning: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 43 |         persistence: PersistenceStore = .shared
+ 44 |     ) {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseSprayJobTemplateRepository.swift:24:5: note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+ 22 |     private let provider: SupabaseClientProvider
+ 23 | 
+ 24 |     init(provider: SupabaseClientProvider = .shared) {
+    |     `- note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+ 25 |         self.provider = provider
+ 26 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/SprayJobTemplateService.swift:43:42: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 41 |     init(
+ 42 |         repository: SupabaseSprayJobTemplateRepository = SupabaseSprayJobTemplateRepository(),
+ 43 |         persistence: PersistenceStore = .shared
+    |                                          `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 44 |     ) {
+ 45 |         self.repository = repository
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/SprayRecordSyncService.swift:323:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+321 |     }
+322 | 
+323 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+324 |         self.persistence = persistence
+325 |         self.state = persistence.load(key: key) ?? State()
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/SprayTargetLibraryService.swift:47:54: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 45 |     private static let outboxKey = "vinetrack_spray_target_library_outbox"
+ 46 | 
+ 47 |     init(repository: VineyardSprayTargetRepository = VineyardSprayTargetRepository()) {
+    |                                                      `- warning: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 48 |         self.repository = repository
+ 49 |         loadPersisted()
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/VineyardSprayTargetRepository.swift:13:5: note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+11 |     private let provider: SupabaseClientProvider
+12 | 
+13 |     init(provider: SupabaseClientProvider = .shared) {
+   |     `- note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+14 |         self.provider = provider
+15 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripActivityCancellationService.swift:96:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 94 | 
+ 95 |     init(tripSync: TripSyncService, spraySync: SprayRecordSyncService,
+ 96 |          actuals: SprayTankActualStore = .shared, claims: TripLocalEndClaimStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 97 |         self.tripSync = tripSync; self.spraySync = spraySync; self.actuals = actuals; self.claims = claims
+ 98 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/SprayTankActualStore.swift:86:16: note: static property declared here
+ 84 | @MainActor
+ 85 | final class SprayTankActualStore {
+ 86 |     static let shared = SprayTankActualStore()
+    |                `- note: static property declared here
+ 87 |     private static let persistenceKey = "vinetrack_spray_tank_actuals_v1"
+ 88 | 
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripLabourSnapshotJournal.swift:60:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 58 |     private let key = "vinetrack_trip_labour_original_facts"
+ 59 | 
+ 60 |     init(persistence: PersistenceStore = .shared) { self.persistence = persistence }
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 61 | 
+ 62 |     func record(_ snapshot: Snapshot) throws {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift:53:84: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 51 |     private let authority: VineyardWriteAuthority
+ 52 | 
+ 53 |     init(scope: Scope, directory: URL? = nil, authority: VineyardWriteAuthority = .shared,
+    |                                                                                    `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 54 |          createDirectoryIfMissing: Bool = true) throws {
+ 55 |         self.authority = authority
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripSyncService.swift:1291:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+1289 |     }
+1290 | 
+1291 |     init(persistence: PersistenceStore = .shared) {
+     |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+1292 |         self.persistence = persistence
+1293 |         self.state = persistence.load(key: key) ?? State()
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/VineyardTripFunctionService.swift:28:63: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 26 |     private(set) var loadedVineyardId: UUID?
+ 27 | 
+ 28 |     init(repository: SupabaseVineyardTripFunctionRepository = SupabaseVineyardTripFunctionRepository()) {
+    |                                                               `- warning: call to main actor-isolated initializer 'init(provider:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 29 |         self.repository = repository
+ 30 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseVineyardTripFunctionRepository.swift:10:5: note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+ 8 |     private let provider: SupabaseClientProvider
+ 9 | 
+10 |     init(provider: SupabaseClientProvider = .shared) {
+   |     `- note: calls to initializer 'init(provider:)' from outside of its actor context are implicitly asynchronous
+11 |         self.provider = provider
+12 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift:420:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 418 |     // MARK: - Init
+ 419 | 
+ 420 |     init(persistence: PersistenceStore = .shared) {
+     |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 421 |         self.persistence = persistence
+ 422 |         self.vineyardRepo = VineyardRepository(persistence: persistence)
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Models/PruningResourceLink.swift:4:45: conformance of 'PruningResourceSnapshot' to protocol 'Decodable' crosses into main actor-isolated code and can cause data races; this is an error in the Swift 6 language mode [#ConformanceIsolation]
+  2 | 
+  3 | /// Exact server comparison values. Keep the timestamp string at PostgreSQL precision.
+  4 | nonisolated struct PruningResourceSnapshot: Codable, Sendable, Hashable {
+    |                                             |- warning: conformance of 'PruningResourceSnapshot' to protocol 'Decodable' crosses into main actor-isolated code and can cause data races; this is an error in the Swift 6 language mode [#ConformanceIsolation]
+    |                                             |- note: isolate this conformance to the main actor with '@MainActor'
+    |                                             `- note: turn data races into runtime errors with '@preconcurrency'
+  5 |     let id: UUID
+  6 |     let vineyardId: UUID
+    :
+ 30 |         try container.encode(deletedAt, forKey: .deletedAt)
+ 31 |     }
+ 32 |     init(from decoder: Decoder) throws {
+    |     |- note: main actor-isolated initializer 'init(from:)' cannot satisfy nonisolated requirement
+    |     `- note: mark initializer 'init(from:)' 'nonisolated'
+ 33 |         let container = try decoder.container(keyedBy: CodingKeys.self)
+ 34 |         id = try container.decode(UUID.self, forKey: .id)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Models/PruningResourceLink.swift:4:45: conformance of 'PruningResourceSnapshot' to protocol 'Encodable' crosses into main actor-isolated code and can cause data races; this is an error in the Swift 6 language mode [#ConformanceIsolation]
+  2 | 
+  3 | /// Exact server comparison values. Keep the timestamp string at PostgreSQL precision.
+  4 | nonisolated struct PruningResourceSnapshot: Codable, Sendable, Hashable {
+    |                                             |- warning: conformance of 'PruningResourceSnapshot' to protocol 'Encodable' crosses into main actor-isolated code and can cause data races; this is an error in the Swift 6 language mode [#ConformanceIsolation]
+    |                                             |- note: isolate this conformance to the main actor with '@MainActor'
+    |                                             `- note: turn data races into runtime errors with '@preconcurrency'
+  5 |     let id: UUID
+  6 |     let vineyardId: UUID
+    :
+ 21 | 
+ 22 | extension PruningResourceSnapshot {
+ 23 |     func encode(to encoder: Encoder) throws {
+    |          |- note: main actor-isolated instance method 'encode(to:)' cannot satisfy nonisolated requirement
+    |          `- note: mark instance method 'encode(to:)' 'nonisolated'
+ 24 |         var container = encoder.container(keyedBy: CodingKeys.self)
+ 25 |         try container.encode(id, forKey: .id)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/EquipmentItemRepository.swift:11:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 9 |     private let persistence: PersistenceStore
+10 | 
+11 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+12 |         self.persistence = persistence
+13 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:136:41: main actor-isolated static property 'storageDirectory' can not be referenced from a nonisolated context
+  3 | 
+  4 | enum LegacyStorage {
+  5 |     static let storageDirectory: URL = {
+    |                `- note: static property declared here
+  6 |         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+  7 |         let dir = docs.appendingPathComponent("VineTrackData", isDirectory: true)
+    :
+134 |     }
+135 | 
+136 |     init(directory: URL = LegacyStorage.storageDirectory) {
+    |                                         `- warning: main actor-isolated static property 'storageDirectory' can not be referenced from a nonisolated context
+137 |         self.directory = directory
+138 |         let encoder = JSONEncoder()
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/MaintenanceLogRepository.swift:33:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 31 |     }
+ 32 | 
+ 33 |     init(persistence: PersistenceStore = .shared) { self.persistence = persistence }
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 34 | 
+ 35 |     private func state() throws -> State {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/PinRepository.swift:21:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 19 |     private let persistence: PersistenceStore
+ 20 | 
+ 21 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 22 |         self.persistence = persistence
+ 23 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/PinRepository.swift:52:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 50 |     private let persistence: PersistenceStore
+ 51 | 
+ 52 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 53 |         self.persistence = persistence
+ 54 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/PruningActivityLabourLineRepository.swift:14:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+12 |     private let persistence: PersistenceStore
+13 | 
+14 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+15 |         self.persistence = persistence
+16 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/SavedInputRepository.swift:13:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+11 |     private let persistence: PersistenceStore
+12 | 
+13 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+14 |         self.persistence = persistence
+15 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/SettingsRepository.swift:11:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 9 |     private let persistence: PersistenceStore
+10 | 
+11 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+12 |         self.persistence = persistence
+13 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/SprayRepository.swift:16:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 14 |     private let persistence: PersistenceStore
+ 15 | 
+ 16 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 17 |         self.persistence = persistence
+ 18 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/TripCostAllocationRepository.swift:13:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+11 |     private let persistence: PersistenceStore
+12 | 
+13 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+14 |         self.persistence = persistence
+15 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/TripRepository.swift:11:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 9 |     private let persistence: PersistenceStore
+10 | 
+11 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+12 |         self.persistence = persistence
+13 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/VineyardRepository.swift:11:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 9 |     private let persistence: PersistenceStore
+10 | 
+11 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+12 |         self.persistence = persistence
+13 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/WorkTaskLabourLineRepository.swift:13:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+11 |     private let persistence: PersistenceStore
+12 | 
+13 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+14 |         self.persistence = persistence
+15 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/WorkTaskMachineLineRepository.swift:13:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+11 |     private let persistence: PersistenceStore
+12 | 
+13 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+14 |         self.persistence = persistence
+15 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/WorkTaskMaterialRepository.swift:30:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 28 |     private let persistence: PersistenceStore
+ 29 | 
+ 30 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 31 |         self.persistence = persistence
+ 32 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/WorkTaskMaterialRepository.swift:63:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 61 |     private let persistence: PersistenceStore
+ 62 | 
+ 63 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 64 |         self.persistence = persistence
+ 65 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/WorkTaskMaterialRepository.swift:112:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+110 |     private let persistence: PersistenceStore
+111 | 
+112 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+113 |         self.persistence = persistence
+114 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/WorkTaskPaddockRepository.swift:13:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+11 |     private let persistence: PersistenceStore
+12 | 
+13 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+14 |         self.persistence = persistence
+15 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/WorkTaskPieceRateRowRepository.swift:14:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+12 |     private let persistence: PersistenceStore
+13 | 
+14 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+15 |         self.persistence = persistence
+16 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/WorkTaskRepository.swift:12:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+10 |     private let persistence: PersistenceStore
+11 | 
+12 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+13 |         self.persistence = persistence
+14 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/WorkTaskTypeRepository.swift:13:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+11 |     private let persistence: PersistenceStore
+12 | 
+13 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+14 |         self.persistence = persistence
+15 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/YieldRepository.swift:17:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 15 |     private let persistence: PersistenceStore
+ 16 | 
+ 17 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 18 |         self.persistence = persistence
+ 19 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Services/FertiliserStore.swift:27:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+25 |     private let persistence: PersistenceStore
+26 | 
+27 |     init(persistence: PersistenceStore = .shared) {
+   |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+28 |         self.persistence = persistence
+29 |         records = persistence.load(key: Self.recordsKey) ?? []
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+SwiftCompile normal arm64 (in target 'VineTrack' from project 'VineTrack')
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Services/PruningStore.swift:83:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 81 |     private let persistence: PersistenceStore
+ 82 | 
+ 83 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 84 |         self.persistence = persistence
+ 85 |         setups = persistence.load(key: Self.setupsKey) ?? []
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Services/StartTankCommitCoordinator.swift:26:42: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 24 | 
+ 25 |     init(
+ 26 |         persistence: PersistenceStore = .shared,
+    |                                          `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 27 |         actualStore: SprayTankActualStore = .shared,
+ 28 |         failurePoint: FailurePoint? = nil
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Services/StartTankCommitCoordinator.swift:27:46: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 25 |     init(
+ 26 |         persistence: PersistenceStore = .shared,
+ 27 |         actualStore: SprayTankActualStore = .shared,
+    |                                              `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 28 |         failurePoint: FailurePoint? = nil
+ 29 |     ) {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/SprayTankActualStore.swift:86:16: note: static property declared here
+ 84 | @MainActor
+ 85 | final class SprayTankActualStore {
+ 86 |     static let shared = SprayTankActualStore()
+    |                `- note: static property declared here
+ 87 |     private static let persistenceKey = "vinetrack_spray_tank_actuals_v1"
+ 88 | 
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[#ConformanceIsolation]: <https://docs.swift.org/compiler/documentation/diagnostics/conformance-isolation>
+[VineTrack] Compiling EndSprayView.swift
+[VineTrack] Compiling RetainedRecoveryDiagnosticExport.swift
+[VineTrack] Compiling SyncDiagnosticsView.swift
+[VineTrack] Compiling SprayRecordDetailView.swift
+[VineTrack] Copy arm64-apple-ios-simulator.swiftsourceinfo -> VineTrack.swiftsourceinfo
+[VineTrack] Copy arm64-apple-ios-simulator.abi.json -> VineTrack.abi.json
+[VineTrack] Copy arm64-apple-ios-simulator.swiftmodule -> VineTrack.swiftmodule
+[VineTrack] Linking VineTrack
+[VineTrackTests] Compiling RetainedRecoveryDiagnosticExportTests.swift
+SwiftCompile normal arm64 (in target 'VineTrackTests' from project 'VineTrack')
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ResistancePlanRepositoryTests.swift:167:51: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+165 |     func makeRepo(
+166 |         server: (any ResistancePlanRemote)?,
+167 |         store: InMemoryResistancePlanLocalStore = InMemoryResistancePlanLocalStore(),
+    |                                                   `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+168 |         clock: Clock = Clock(),
+169 |         userId: String? = "user-1"
+VineTrack.InMemoryResistancePlanLocalStore.init:2:21: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+1 | class InMemoryResistancePlanLocalStore {
+2 | @MainActor internal init()}
+  |                     `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+3 | 
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ResistancePlanRevisionSyncTests.swift:147:51: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+145 |     func makeRepo(
+146 |         server: (any ResistancePlanRemote)?,
+147 |         store: InMemoryResistancePlanLocalStore = InMemoryResistancePlanLocalStore(),
+    |                                                   `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+148 |         clock: Clock
+149 |     ) -> ResistancePlanRepository {
+VineTrack.InMemoryResistancePlanLocalStore.init:2:21: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+1 | class InMemoryResistancePlanLocalStore {
+2 | @MainActor internal init()}
+  |                     `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+3 | 
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+CopySwiftLibs /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrack.app (in target 'VineTrack' from project 'VineTrack')
+[VineTrack] Extract App Intents Metadata
+2026-11-02 03:52:03.940 appintentsmetadataprocessor[61570:59833051] Starting appintentsmetadataprocessor export
+2026-11-02 03:52:03.941 appintentsmetadataprocessor[61570:59833051] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+[VineTrackTripTests] Linking VineTrackTripTests
+CopySwiftLibs /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrack.app/PlugIns/VineTrackTripTests.xctest (in target 'VineTrackTripTests' from project 'VineTrack')
+[VineTrackTripTests] Extract App Intents Metadata
+2026-11-02 03:52:04.206 appintentsmetadataprocessor[61573:59833072] Starting appintentsmetadataprocessor export
+2026-11-02 03:52:04.207 appintentsmetadataprocessor[61573:59833072] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+Signing VineTrackTripTests.xctest (in target 'VineTrackTripTests' from project 'VineTrack')
+[VineTrackTests] Copy arm64-apple-ios-simulator.swiftsourceinfo -> VineTrackTests.swiftsourceinfo
+[VineTrackTests] Copy arm64-apple-ios-simulator.abi.json -> VineTrackTests.abi.json
+[VineTrackTests] Linking VineTrackTests
+CopySwiftLibs /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrack.app/PlugIns/VineTrackTests.xctest (in target 'VineTrackTests' from project 'VineTrack')
+[VineTrackTests] Extract App Intents Metadata
+2026-11-02 03:52:13.020 appintentsmetadataprocessor[61583:59833126] Starting appintentsmetadataprocessor export
+2026-11-02 03:52:13.021 appintentsmetadataprocessor[61583:59833126] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+Signing VineTrackTests.xctest (in target 'VineTrackTests' from project 'VineTrack')
+Signing VineTrack.app (in target 'VineTrack' from project 'VineTrack')
+[VineTrack] Validate VineTrack.app
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/ExplicitPrecompiledModules
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/SDKExplicitPrecompiledModules
+Build Timing Summary
+SwiftEmitModule (2 tasks) | 35.827 seconds
+SwiftCompile (6 tasks) | 9.266 seconds
+SwiftDriver (3 tasks) | 4.877 seconds
+SwiftDriver Compilation (3 tasks) | 1.152 seconds
+Ld (3 tasks) | 0.925 seconds
+Signing (3 tasks) | 0.423 seconds
+CopySwiftLibs (3 tasks) | 0.110 seconds
+ExtractAppIntentsMetadata (3 tasks) | 0.074 seconds
+Copy (5 tasks) | 0.015 seconds
+SwiftDriver Compilation Requirements (3 tasks) | 0.002 seconds
+Validate (1 task) | 0.001 seconds
+Result bundle written to path:
+	/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/result-bundles/build-1793616688344747000/build.xcresult
+Test Build Succeeded
+Build completed in 45.429292s
+Syncing test products to simulator...
+Synced test products in 16.861181667s, running tests...
+4 of 25 tests failed
+
+SprayProgramRound2Tests/completionStatus(_:): Expectation failed: SprayCompletionResolver.status(record: record, trip: trip) == expected
+SprayCompletionResolver.status(record: record, trip: trip) → .upcoming
+expected → .completed
+SprayProgramRound2Tests/completionStatus(_:): Expectation failed: SprayCompletionResolver.status(record: record, trip: trip) == expected
+SprayCompletionResolver.status(record: record, trip: trip) → .upcoming
+expected → .completed
+SprayProgramRound2Tests/completionJoinKeepsFirstTripDuplicateAndRecordedLinkAuthority(): Expectation failed: Set(SprayProgramProgression.completed(records: records, trips: [completedDuplicate, active], vineyardId: vineyard, window: window).map(\.id)) == [linked.id, independentlyCompleted.id]
+Set(SprayProgramProgression.completed(records: records, trips: [completedDuplicate, active], vineyardId: vineyard, window: window).map(\.id)) → [1E60C66D-EAAE-43B5-BD97-6DA41A0BD6FF]
+[linked.id, independentlyCompleted.id] → [1E60C66D-EAAE-43B5-BD97-6DA41A0BD6FF, 6441B3AE-74B3-4165-B7F9-72FF722FEBDF]
+SprayProgramRound2Tests/vintageDatasetUsesEventDateAndCompletedTripNotRepairDate(): Expectation failed: SprayProgramProgression.completed(records: [valid, upcoming, previous, boundary, template], trips: [trip], vineyardId: vineyard, window: window).map(\.id) == [valid.id]
+SprayProgramProgression.completed(records: [valid, upcoming, previous, boundary, template], trips: [trip], vineyardId: vineyard, window: window).map(\.id) → []
+[valid.id] → [E649F0F7-51F2-47F6-A652-8CF57069BE2C]

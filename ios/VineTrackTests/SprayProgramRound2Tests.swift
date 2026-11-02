@@ -11,7 +11,9 @@ struct SprayProgramRound2Tests {
         let trip = Trip(endTime: scenario == 2 || scenario == 3 ? end : nil,
             isActive: scenario == 1, isPaused: scenario == 3)
         let record = SprayRecord(tripId: trip.id, endTime: scenario == 0 ? end : nil)
-        let expected: SprayCompletionStatus = scenario == 1 ? .inProgress : scenario == 4 ? .upcoming : .completed
+        // A terminal Trip is not a Spray acknowledgement. Only scenario 0
+        // carries the independent Spray end; scenarios 2/3 await completion.
+        let expected: SprayCompletionStatus = scenario == 0 ? .completed : scenario == 1 ? .inProgress : .upcoming
         #expect(SprayCompletionResolver.status(record: record, trip: trip) == expected)
     }
 
@@ -292,14 +294,15 @@ struct SprayProgramRound2Tests {
         let independentlyCompleted = SprayRecord(vineyardId: vineyard, date: window.start, endTime: window.start)
         let records = [linked, unrecorded, missing, independentlyCompleted]
         #expect(Set(SprayProgramProgression.completed(records: records, trips: [active, completedDuplicate], vineyardId: vineyard, window: window).map(\.id)) == [independentlyCompleted.id])
-        #expect(Set(SprayProgramProgression.completed(records: records, trips: [completedDuplicate, active], vineyardId: vineyard, window: window).map(\.id)) == [linked.id, independentlyCompleted.id])
+        #expect(Set(SprayProgramProgression.completed(records: records, trips: [completedDuplicate, active], vineyardId: vineyard, window: window).map(\.id)) == [independentlyCompleted.id])
     }
 
     @Test func vintageDatasetUsesEventDateAndCompletedTripNotRepairDate() {
         let vineyard = UUID()
         let window = SeasonWindow.window(vintage: 2027, seasonStartMonth: 7, seasonStartDay: 1, timeZone: TimeZone(secondsFromGMT: 0)!)
         let trip = Trip(vineyardId: vineyard, endTime: window.start.addingTimeInterval(300), isActive: false, isPaused: true)
-        let valid = SprayRecord(tripId: trip.id, vineyardId: vineyard, date: window.start, sprayReference: "EL9 — Leaves")
+        let valid = SprayRecord(tripId: trip.id, vineyardId: vineyard, date: window.start,
+            endTime: trip.endTime, sprayReference: "EL9 — Leaves")
         let upcoming = SprayRecord(vineyardId: vineyard, date: window.start)
         let previous = SprayRecord(vineyardId: vineyard, date: window.start.addingTimeInterval(-1), endTime: Date())
         let boundary = SprayRecord(vineyardId: vineyard, date: window.endExclusive, endTime: Date())

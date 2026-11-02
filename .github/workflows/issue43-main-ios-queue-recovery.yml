@@ -8,6 +8,23 @@ on:
       - 'ios/VineTrack/Backend/Sync/TripSyncService.swift'
       - 'ios/VineTrack/Backend/Sync/SprayTankActualStore.swift'
       - 'ios/VineTrackTests/TripQueuedUploadScopeTests.swift'
+      - 'ios/VineTrack/Backend/Sync/TrackedSprayCompletionSync.swift'
+      - 'ios/VineTrack/Backend/Sync/TripClosureStatus.swift'
+      - 'ios/VineTrack/Backend/Sync/TripActivityCancellationService.swift'
+      - 'ios/VineTrack/Backend/Sync/RetainedRecoveryDiagnosticExport.swift'
+      - 'ios/VineTrack/Backend/Repositories/SprayCompletionRepository.swift'
+      - 'ios/VineTrack/LegacyImported/Services/TripTrackingService.swift'
+      - 'ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift'
+      - 'ios/VineTrack/App/NewMainTabView.swift'
+      - 'ios/VineTrack/App/SprayProgram/EndSprayView.swift'
+      - 'ios/VineTrack/App/SprayProgram/SprayCompletionResolver.swift'
+      - 'ios/VineTrack/LegacyImported/Views/Trips/TripClosureSection.swift'
+      - 'ios/VineTrackTests/TrackedSprayCompletionSyncTests.swift'
+      - 'ios/VineTrackTests/TripClosureStatusTests.swift'
+      - 'ios/VineTrackTests/TankDependencyVerificationTests.swift'
+      - 'ios/VineTrackTests/RetainedRecoveryDiagnosticExportTests.swift'
+      - 'ios/VineTrackTests/TripEndGateTests.swift'
+      - 'ios/VineTrackTests/SprayProgramRound2Tests.swift'
       - '.github/workflows/issue43-main-ios-queue-recovery.yml'
   workflow_dispatch:
 
@@ -34,6 +51,8 @@ jobs:
         run: |
           set -euo pipefail
           echo "SOURCE_SHA=$(git rev-parse HEAD)"
+          git rev-parse HEAD > "$RUNNER_TEMP/issue43-source-sha.txt"
+          git ls-tree -r HEAD ios > "$RUNNER_TEMP/issue43-source-blobs.txt"
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
           XCODE_ROOT="/Applications/Xcode_26.3.app/Contents/Developer"
           test -x "$XCODE_ROOT/usr/bin/xcodebuild" || {
@@ -64,6 +83,12 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/Issue43MainTripQueue.xcresult" \
             -parallel-testing-enabled NO \
             -only-testing:VineTrackTests/TripQueuedUploadScopeTests \
+            -only-testing:VineTrackTests/TrackedSprayCompletionSyncTests \
+            -only-testing:VineTrackTests/TripClosureStatusTests \
+            -only-testing:VineTrackTests/TankDependencyVerificationTests \
+            -only-testing:VineTrackTests/RetainedRecoveryDiagnosticExportTests \
+            -only-testing:VineTrackTests/TripEndGateTests \
+            -only-testing:VineTrackTests/SprayProgramRound2Tests \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/issue43-main-trip-queue.log"
       - name: Preserve exact native source receipts
         if: always()
@@ -73,5 +98,7 @@ jobs:
           path: |
             ${{ runner.temp }}/Issue43MainTripQueue.xcresult
             ${{ runner.temp }}/issue43-main-trip-queue.log
+            ${{ runner.temp }}/issue43-source-sha.txt
+            ${{ runner.temp }}/issue43-source-blobs.txt
           if-no-files-found: warn
           retention-days: 14

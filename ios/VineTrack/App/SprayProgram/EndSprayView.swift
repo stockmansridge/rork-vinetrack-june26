@@ -15,13 +15,22 @@ struct EndSprayView: View {
     private var record: SprayRecord? { store.sprayRecords.first { $0.id == recordId } }
     private var trip: Trip? { record.flatMap { record in store.trips.first { $0.id == record.canonicalTripId } } }
 
+    private var automaticCompletionPending: Bool {
+        _ = TrackedSprayCompletionSync.shared.revision
+        guard let pending = try? TrackedSprayCompletionSync.shared.intents() else { return true }
+        return pending.contains { $0.sprayRecordId == recordId }
+    }
+
     var body: some View {
-        if let endedAt = record?.endTime ?? trip?.endTime {
+        if let endedAt = record?.endTime {
             VStack(alignment: .leading, spacing: 4) {
                 Label("Completed", systemImage: "checkmark.circle.fill")
                 Text(endedAt.formattedTZ(date: .abbreviated, time: .shortened, in: store.settings.resolvedTimeZone))
                     .font(.caption).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading)
+        } else if automaticCompletionPending {
+            Label("Trip End saved · linked Spray completion awaiting verified sync", systemImage: "icloud.and.arrow.up")
+                .font(.caption).foregroundStyle(.secondary)
         } else if let record, !record.isTemplate, record.endTime == nil,
            record.entrySource != "manual", record.manualEntryId == nil, access.canEditRecords {
             Button("End Spray") {

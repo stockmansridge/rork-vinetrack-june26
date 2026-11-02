@@ -1,0 +1,44 @@
+{
+  "repository": "stockmansridge/rork-vinetrack-june26",
+  "run_id": 41428788604,
+  "head_sha": "0f373ae6730a0b3b3925741be9b6c8e90128f353",
+  "run_url": "https://github.com/stockmansridge/rork-vinetrack-june26/actions/runs/41428788604",
+  "job_id": 125221816432,
+  "status": "completed",
+  "conclusion": "failure",
+  "completed_at": "2026-11-02T10:50:14Z",
+  "test_step_exit_code": 65,
+  "artifact": {
+    "id": 13133599464,
+    "name": "issue43-main-ios-trip-queue-native-receipts",
+    "size_in_bytes": 74679691,
+    "expires_at": "2026-11-16T10:50:04Z",
+    "github_published_sha256": "5258c6858c9a1cb0ce6afa1a90bf81673bca0208d96afed7b253278cd6e22470",
+    "downloaded_archive_sha256": "5258c6858c9a1cb0ce6afa1a90bf81673bca0208d96afed7b253278cd6e22470",
+    "initial_api_download": "HTTP 401; no authenticated GitHub CLI available",
+    "retrieval_url": "https://nightly.link/stockmansridge/rork-vinetrack-june26/actions/runs/41428788604/issue43-main-ios-trip-queue-native-receipts.zip",
+    "retrieval": "Public mirror downloaded successfully; exact SHA-256 verified against first-party GitHub API metadata before inspecting original log",
+    "archive_and_xcresult_location": "Outside tracked project under /tmp; do not commit archives or build outputs",
+    "retained_log": "pinned-baseline-runtime-crash.log"
+  },
+  "observed_native_log": {
+    "xcode": "26.3",
+    "suite": "TripQueuedUploadScopeTests",
+    "named_passes_before_crash": [
+      "testAbsentSnapshotDoesNotBecomeRetryableUploadOrDeletionAcknowledgement",
+      "testCurrentVineyardOriginalEligibleOnlyWhenPresentInSelectedSlice",
+      "testLocalForeignVineyardScopeWinsOverSelectedSliceMislabelling",
+      "testOtherLocallyCachedVineyardNeverGetsUploadedUnderCurrentVineyard",
+      "testRemoteSoftDeletionCannotDiscardUnresolvedOriginalUpload"
+    ],
+    "crashing_case": "testScopeClassificationDoesNotMutatePersistedQueue",
+    "message": "malloc: pointer being freed was not allocated",
+    "observed_launches_crashing_during_case": 2,
+    "named_pass_after_restart": "testSnapshotForCurrentVineyardNotLoadedCannotBeRecreatedFromMetadata",
+    "terminal_marker": "** TEST FAILED **",
+    "assertion_failure_observed": false,
+    "compilation_failure_observed": false,
+    "underlying_runtime_crash_cause_proven": false,
+    "caveat": "Final one-test successful summary is after runner restarts, not a complete suite pass. Current managed aggregate passes on Xcode 27.1 do not resolve or overwrite this baseline runtime failure."
+  }
+}
