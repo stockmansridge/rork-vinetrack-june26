@@ -29,6 +29,8 @@ struct SyncDiagnosticsView: View {
     @State private var copyConfirmation: String?
     @State private var isInspectingTripServer: Bool = false
     @State private var tripRecoveryReadbackV3: String?
+    @State private var tripRecoveryScopeOwner: UUID?
+    @State private var tripRecoveryScopeVineyard: UUID?
     @State private var confirmRecoveryExport = false
     @State private var preparingRecoveryExport = false
     @State private var showRecoveryExporter = false
@@ -306,9 +308,21 @@ struct SyncDiagnosticsView: View {
             }
             Button {
                 Task { @MainActor in
+                    let selectedOwner = auth.userId
+                    let selectedVineyard = store.selectedVineyardId
                     isInspectingTripServer = true
                     defer { isInspectingTripServer = false }
-                    tripRecoveryReadbackV3 = await tripSync.inspectTripServerReadbackV3()
+                    let report = await tripSync.inspectTripServerReadbackV3()
+                    if auth.userId == selectedOwner && store.selectedVineyardId == selectedVineyard {
+                        tripRecoveryScopeOwner = selectedOwner
+                        tripRecoveryScopeVineyard = selectedVineyard
+                        tripRecoveryReadbackV3 = report
+                    } else {
+                        // No cross-account or cross-vineyard diagnostic carryover.
+                        tripRecoveryReadbackV3 = nil
+                        tripRecoveryScopeOwner = nil
+                        tripRecoveryScopeVineyard = nil
+                    }
                 }
             } label: {
                 HStack {
@@ -320,7 +334,9 @@ struct SyncDiagnosticsView: View {
             }
             .disabled(isInspectingTripServer || syncStatusCenter.isSyncing ||
                       !auth.isSignedIn || store.selectedVineyardId == nil)
-            if let tripRecoveryReadbackV3 {
+            if let tripRecoveryReadbackV3,
+               auth.userId == tripRecoveryScopeOwner,
+               store.selectedVineyardId == tripRecoveryScopeVineyard {
                 Button {
                     UIPasteboard.general.string = tripRecoveryReadbackV3
                     copyConfirmation = "Trip Sync Recovery v3 copied; no records were changed."
