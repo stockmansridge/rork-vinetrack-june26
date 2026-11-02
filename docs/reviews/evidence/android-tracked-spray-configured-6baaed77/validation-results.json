@@ -1,0 +1,109 @@
+{
+  "publicCommit": "6baaed77ef0a9af5b06143cdd1115a1805368382",
+  "archiveSha256": "672762b87f6c2ab845930ca84d123e02cdb1cc87f4a211b4a13d378e88719ed8",
+  "sourceManifestSha256": "550fe30f38c82cadc69c6f897ccd825bd8a820e17c905d299ec90523cccb8906",
+  "comparedAndroidFiles": 1274,
+  "sourceDifferences": [],
+  "applicationSourceModified": false,
+  "managedHeadAtValidation": "5608925e830fef2150febfd8f1ec2a46e5b120aa",
+  "androidTreeAtValidation": "55394e1c1ef02abe9d425f9d257f092e8b7a364f",
+  "configurationReceipt": "configuration-receipt.json",
+  "tests": {
+    "kind": "host JVM debug variant",
+    "executed": 61,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "suites": [
+      {
+        "file": "TEST-com.rork.vinetrack.data.AccountScopedTankSafetyTest.xml",
+        "sha256": "88bb69917b36e2ddfd42ef7ff37a0765ef9b3fdf68f428f23da7ca8a082d0535",
+        "name": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+        "tests": "16",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T09:28:30.265Z",
+        "hostname": "e2b.local",
+        "time": "0.188"
+      },
+      {
+        "file": "TEST-com.rork.vinetrack.data.OccurrenceTankConflictHoldTest.xml",
+        "sha256": "d4bf692d8196462a1d4eda77bc3451cec5698d3f0aeeb76cd49a122e7f109738",
+        "name": "com.rork.vinetrack.data.OccurrenceTankConflictHoldTest",
+        "tests": "3",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T09:28:30.457Z",
+        "hostname": "e2b.local",
+        "time": "0.058"
+      },
+      {
+        "file": "TEST-com.rork.vinetrack.data.TankDependencyPhaseBTest.xml",
+        "sha256": "bb7d5f747a02f0c3cb18be5e6e92fbe532aba3e6f930ad22d65b1ed16fd1bf4c",
+        "name": "com.rork.vinetrack.data.TankDependencyPhaseBTest",
+        "tests": "10",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T09:28:30.517Z",
+        "hostname": "e2b.local",
+        "time": "0.029"
+      },
+      {
+        "file": "TEST-com.rork.vinetrack.data.TrackedSprayCompletionSyncTest.xml",
+        "sha256": "6edbc3b3e7cec2807162308cb93ce61db47508ca4794f981c23878bbc80dd990",
+        "name": "com.rork.vinetrack.data.TrackedSprayCompletionSyncTest",
+        "tests": "19",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T09:28:30.549Z",
+        "hostname": "e2b.local",
+        "time": "0.064"
+      },
+      {
+        "file": "TEST-com.rork.vinetrack.data.TripClosureStatusPhaseCTest.xml",
+        "sha256": "abd5895e50108b6551a77ef0c8b32aad87903c12ee1409d455619f5b37e74701",
+        "name": "com.rork.vinetrack.data.TripClosureStatusPhaseCTest",
+        "tests": "13",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T09:28:30.615Z",
+        "hostname": "e2b.local",
+        "time": "0.005"
+      }
+    ]
+  },
+  "normalAndroidBuild": {
+    "tool": "runChecks",
+    "appPath": "android-vinetrack",
+    "success": true,
+    "scope": "Managed workspace with all 1274 tracked Android files identical to pinned public source"
+  },
+  "signingBuildRequest": {
+    "tool": "generatePlayAab",
+    "result": "The current project has unsynced source changes. Finish this turn, then retry publishing.",
+    "runId": null,
+    "retryAttempted": false
+  },
+  "playSetup": {
+    "connected": true,
+    "existingPackageAccess": "ok",
+    "packageName": "com.rork.vinetrack"
+  },
+  "versionName": "3.1.9",
+  "minimumExclusiveVersionCode": 1793604728,
+  "signedVersionCode": null,
+  "submissionId": null,
+  "published": false,
+  "status": "VALIDATION_PASSED_SIGNED_BUILD_BLOCKED_PENDING_MANAGED_SYNC",
+  "deviceOrPortalAcceptance": "Not executed; JVM tests and normal build are not device lifecycle acceptance",
+  "productionMutations": false,
+  "customerRecordMutations": false,
+  "historicalSweeps": false,
+  "retainedOperationChanges": false,
+  "nextAction": "After automatic managed sync, list exact-source publishable builds and generate only if no matching build; verify assigned code >1793604728 before Internal publication. Existing user authorisation remains sufficient."
+}

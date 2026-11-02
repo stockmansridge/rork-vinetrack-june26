@@ -1,0 +1,159 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.14.3/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig FROM-CACHE
+> Task :app:checkDebugAarMetadata
+> Task :app:processDebugNavigationResources FROM-CACHE
+> Task :app:compileDebugNavigationResources FROM-CACHE
+> Task :app:generateDebugResValues FROM-CACHE
+> Task :app:mapDebugSourceSetPaths
+> Task :app:generateDebugResources FROM-CACHE
+> Task :app:mergeDebugResources FROM-CACHE
+> Task :app:packageDebugResources FROM-CACHE
+> Task :app:parseDebugLocalResources FROM-CACHE
+> Task :app:createDebugCompatibleScreenManifests
+> Task :app:extractDeepLinksDebug FROM-CACHE
+> Task :app:processDebugMainManifest FROM-CACHE
+> Task :app:processDebugManifest FROM-CACHE
+> Task :app:processDebugManifestForPackage FROM-CACHE
+> Task :app:processDebugResources FROM-CACHE
+> Task :app:compileDebugKotlin FROM-CACHE
+> Task :app:javaPreCompileDebug FROM-CACHE
+> Task :app:compileDebugJavaWithJavac FROM-CACHE
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:compileDebugUnitTestKotlin FROM-CACHE
+> Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebugUnitTest FROM-CACHE
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugJavaRes
+> Task :app:processDebugUnitTestJavaRes
+
+> Task :app:testDebugUnitTest
+
+AccountScopedTankSafetyTest > revocationBetweenSaveAdmissionAndCommitCannotWriteAnActual PASSED
+
+AccountScopedTankSafetyTest > revokedTripResponseKeepsExactClaimAndNeverPublishes PASSED
+
+AccountScopedTankSafetyTest > actualReplacementIsNotAcknowledgedByEarlierSuccess PASSED
+
+AccountScopedTankSafetyTest > actualSuccessAfterRevocationRetainsFrozenValuesAndPendingAcrossRestart PASSED
+
+AccountScopedTankSafetyTest > unchangedOriginalConfirmationReplaysForReturningActorAfterRestart PASSED
+
+AccountScopedTankSafetyTest > authenticatedIdentityAloneCannotUnlockLegacyHoldOrReuseOldIncarnation PASSED
+
+AccountScopedTankSafetyTest > corruptActualNoticeIsNotAnEmptySuccessAndLeavesRawBytesUnchanged PASSED
+
+AccountScopedTankSafetyTest > corruptActualEvidenceIsHeldWithoutFetchMergeOrReset PASSED
+
+AccountScopedTankSafetyTest > actualNoticeExplainsPendingDependencyAndAcknowledgementWithoutWriting PASSED
+
+AccountScopedTankSafetyTest > absentCorruptOrMismatchedSnapshotNeverConsumesMarker PASSED
+
+AccountScopedTankSafetyTest > authorlessOrLaterCorrectedActualsAreNotAdoptedFromConfirmedBy PASSED
+
+AccountScopedTankSafetyTest > sameVineyardRemoteCorrectionCannotConsumeAnotherActorsPendingActual PASSED
+
+AccountScopedTankSafetyTest > delayedRemoteActualsCannotMergeAfterRevocation PASSED
+
+AccountScopedTankSafetyTest > serverVineyardConflictBlocksExactClaimWithoutStrandingOrSending PASSED
+
+AccountScopedTankSafetyTest > unknownForeignOrCorrectedActualNoticeNeverDisclosesContent PASSED
+
+AccountScopedTankSafetyTest > foreignSnapshotRefusedBeforeClaimProbeOrSendAcrossRestart PASSED
+
+OccurrenceTankConflictHoldTest > holdReleasesOnlyOnFreshConflictFreeServerRowAndKeepsOtherHolds PASSED
+
+OccurrenceTankConflictHoldTest > conflictCreatesDurableHoldThatBlocksTankSyncActualsCommitsAndSurvivesRestart PASSED
+
+OccurrenceTankConflictHoldTest > normalTank1RecoveryIsUnchangedAndReplays PASSED
+
+TankDependencyPhaseBTest > markerHeldWhenRequiredSessionExistsNowhere PASSED
+
+TankDependencyPhaseBTest > holdCodesCarryNoQuantities PASSED
+
+TankDependencyPhaseBTest > unreadableRequiredSessionsHoldMarkerWithoutNetwork PASSED
+
+TankDependencyPhaseBTest > actualHeldWhenServerTripUnknown PASSED
+
+TankDependencyPhaseBTest > noChangeMarkerAcknowledgedOnlyWhenServerHasSession PASSED
+
+TankDependencyPhaseBTest > actualNotSyncedWhenReadbackAbsentOrDifferent PASSED
+
+TankDependencyPhaseBTest > patchResponseMissingSessionKeepsMarker PASSED
+
+TankDependencyPhaseBTest > verifiedPatchRemovesMarker PASSED
+
+TankDependencyPhaseBTest > actualSyncedAfterExactReadback PASSED
+
+TankDependencyPhaseBTest > actualHeldWhileServerSessionMissing PASSED
+
+TrackedSprayCompletionSyncTest > onlineCompletionUsesOriginalEndAndOnlyCompletionFields PASSED
+
+TrackedSprayCompletionSyncTest > closureRequiresRealLinkedCompletionWithExactInstantAndIdentity PASSED
+
+TrackedSprayCompletionSyncTest > backgroundAcknowledgementClosesOnlyAfterReadback PASSED
+
+TrackedSprayCompletionSyncTest > lostResponseRetryReadsExistingCompletionWithoutSecondRpc PASSED
+
+TrackedSprayCompletionSyncTest > manualTemplateDeletedForeignAndAmbiguousSpraysNeverAutoComplete PASSED
+
+TrackedSprayCompletionSyncTest > accountSwitchDuringRpcCannotAcknowledge PASSED
+
+TrackedSprayCompletionSyncTest > offlineIntentSurvivesReopenUntilTripEndAndDependenciesAcknowledged PASSED
+
+TrackedSprayCompletionSyncTest > wrongAccountOrVineyardCannotClaimIntent PASSED
+
+TrackedSprayCompletionSyncTest > reopeningVerifiedCompletionDoesNotReplayHistoricalRows PASSED
+
+TrackedSprayCompletionSyncTest > unrelatedRetainedOperationsRemainByteForByteUnchanged PASSED
+
+TrackedSprayCompletionSyncTest > partialEndRetryAfterReopenUsesFirstRequestedTimeWithoutReplacingIntent PASSED
+
+TrackedSprayCompletionSyncTest > failedDurableEnqueueRefusesCompletionIntent PASSED
+
+TrackedSprayCompletionSyncTest > unverifiedRpcResponseDoesNotClearIntent PASSED
+
+TrackedSprayCompletionSyncTest > manualAndNonSprayingTripsDoNotCreateIntent PASSED
+
+TrackedSprayCompletionSyncTest > mismatchedExistingSprayEndIsHeldNeverOverwritten PASSED
+
+TrackedSprayCompletionSyncTest > repeatEndCannotReplaceOriginalIdentityOrTimestamp PASSED
+
+TrackedSprayCompletionSyncTest > replacedCanonicalSprayCannotRedirectOriginalCompletion PASSED
+
+TrackedSprayCompletionSyncTest > differentTripEndRetainsOriginalAndMakesNoCompletionWrite PASSED
+
+TrackedSprayCompletionSyncTest > missingOriginalIdentityRefusesNewIntent PASSED
+
+TripClosureStatusPhaseCTest > pendingTankMarkerBlocksClosure PASSED
+
+TripClosureStatusPhaseCTest > failedOrAbsentServerReadIsUnconfirmed PASSED
+
+TripClosureStatusPhaseCTest > noActualsTripClosesWithoutSessions PASSED
+
+TripClosureStatusPhaseCTest > missingRequiredSessionOnServerIsHeld PASSED
+
+TripClosureStatusPhaseCTest > allAcknowledgedAndTerminalIsClosedSynced PASSED
+
+TripClosureStatusPhaseCTest > tankConflictHoldIsHeld PASSED
+
+TripClosureStatusPhaseCTest > pendingOccurrenceOperationBlocksClosure PASSED
+
+TripClosureStatusPhaseCTest > freshTripReadCannotMaskFailedSprayRead PASSED
+
+TripClosureStatusPhaseCTest > pendingActualBlocksClosure PASSED
+
+TripClosureStatusPhaseCTest > blockedMarkerIsHeld PASSED
+
+TripClosureStatusPhaseCTest > serverActiveIsNotClosed PASSED
+
+TripClosureStatusPhaseCTest > terminalTripWithNullSprayEndCannotBeClosedSynced PASSED
+
+TripClosureStatusPhaseCTest > localEndPendingIsNeverSynced PASSED
+
+BUILD SUCCESSFUL in 16s
+26 actionable tasks: 8 executed, 18 from cache

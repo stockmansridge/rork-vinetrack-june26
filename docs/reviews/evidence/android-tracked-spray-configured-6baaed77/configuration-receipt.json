@@ -1,0 +1,19 @@
+{
+  "publicCommit": "6baaed77ef0a9af5b06143cdd1115a1805368382",
+  "sourceFilesCompared": 1274,
+  "sourceDifferences": [],
+  "configurationMethod": "Use existing Rork-managed Config.kt materialised in sandbox, validated by normal runChecks; copy byte-for-byte into isolated exact-commit validation archive. No custom generator, dummy values or application changes.",
+  "configurationIdentity": "com.rork.vinetrack.Config",
+  "allValuesContract": "Map<String, String>; all 14 constants mapped by name",
+  "configurationSha256": "a1da2e0589dbe2e6430459e36a7e32dc93c4b15c846e6bc7cccbc1499a4712e8",
+  "matchesPreviouslyRecordedVineTrackEnvironment": true,
+  "supabaseProjectMatchesExistingVineTrack": true,
+  "googleWebClientShapeValid": true,
+  "revenueCatAndroidProductionKeyShapeValid": true,
+  "all14ValuesPresent": true,
+  "availableProcessEnvironmentMatches": {},
+  "environmentComparisonLimit": "Full generated input exactly matches protected prior successful VineTrack environment fingerprint; not live service authentication or purchase testing.",
+  "configTracked": false,
+  "signedCredentialsRead": false,
+  "normalAndroidBuild": "runChecks passed on identical 1274-file application source with this managed configuration"
+}
