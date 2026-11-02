@@ -1257,10 +1257,13 @@ final class TripSyncService {
             }
             for session in local.tankSessions {
                 if let index = reconciled.tankSessions.firstIndex(where: { $0.id == session.id }) {
-                    if reconciled.tankSessions[index] != session {
+                    if !TankSessionReceiptMatch.equivalent(local: session, remote: reconciled.tankSessions[index]) {
                         retainedUnacknowledgedEvidence = true
-                        reconciled.tankSessions[index] = session
                     }
+                    // Preserve the original device evidence even if the wire
+                    // representation rounded a time by less than a millisecond.
+                    // This is local-only; no terminal server Trip is rewritten.
+                    reconciled.tankSessions[index] = session
                 } else {
                     retainedUnacknowledgedEvidence = true
                     reconciled.tankSessions.append(session)
@@ -1567,6 +1570,58 @@ final class TripSyncMetadata {
 }
 
 
+/// Historical legacy server tank JSON can round timestamps to 3 decimal
+/// places. A difference no greater than 1ms is ONLY a wire precision match,
+/// not authority to alter, re-end, or replay a completed Trip. Every other
+/// tank field and linked spray/actual-use receipt is still checked separately.
+nonisolated enum TankSessionReceiptMatch {
+    private static let maximumWireRoundoffSeconds: TimeInterval = 0.001
+
+    static func sameTime(_ local: Date?, _ remote: Date?) -> Bool {
+        switch (local, remote) {
+        case (nil, nil): return true
+        case let (.some(l), .some(r)):
+            return abs(l.timeIntervalSince(r)) <= maximumWireRoundoffSeconds
+        default: return false
+        }
+    }
+
+    static func equivalent(local: TankSession, remote: TankSession) -> Bool {
+        discrepancy(local: local, remote: remote) == nil
+    }
+
+    /// Only field and magnitude buckets are emitted; never copy private tank
+    /// dates, raw JSON or recorded chemical amounts into sync diagnostics.
+    private static func differenceBucket(_ local: Date?, _ remote: Date?) -> String {
+        guard let local, let remote else { return "PRESENCE" }
+        let delta = abs(local.timeIntervalSince(remote))
+        if delta < 1 { return "SUBSECOND" }
+        if delta < 60 { return "SECONDS" }
+        if delta < 3600 { return "MINUTES" }
+        return "HOURS"
+    }
+
+    static func discrepancy(local: TankSession, remote: TankSession) -> String? {
+        guard local.id == remote.id else { return "TRIP_LOCAL_TANK_SESSION_ID_DIFFERS" }
+        guard local.tankNumber == remote.tankNumber else { return "TRIP_LOCAL_TANK_NUMBER_DIFFERS" }
+        if !sameTime(local.startTime, remote.startTime) {
+            return "TRIP_LOCAL_TANK_START_TIME_DIFFERS_\(differenceBucket(local.startTime, remote.startTime))"
+        }
+        if !sameTime(local.endTime, remote.endTime) {
+            return "TRIP_LOCAL_TANK_END_TIME_DIFFERS_\(differenceBucket(local.endTime, remote.endTime))"
+        }
+        guard local.pathsCovered == remote.pathsCovered, local.startRow == remote.startRow,
+              local.endRow == remote.endRow else { return "TRIP_LOCAL_TANK_PATHS_DIFFER" }
+        if !sameTime(local.fillStartTime, remote.fillStartTime) {
+            return "TRIP_LOCAL_TANK_FILL_START_DIFFERS_\(differenceBucket(local.fillStartTime, remote.fillStartTime))"
+        }
+        if !sameTime(local.fillEndTime, remote.fillEndTime) {
+            return "TRIP_LOCAL_TANK_FILL_END_DIFFERS_\(differenceBucket(local.fillEndTime, remote.fillEndTime))"
+        }
+        return nil
+    }
+}
+
 /// Exact readback admission for a historically ended Trip. A fresh server
 /// parent alone cannot acknowledge the old device upload: disjoint GPS,
 /// changed tank contents, unacknowledged paths and different end-times stay
@@ -1581,30 +1636,18 @@ nonisolated enum CompletedTripReceiptAdmission {
         guard ActiveTripPathReconciler.containsRoute(local.pathPoints, in: remote.pathPoints) else {
             return "TRIP_LOCAL_GPS_NOT_ON_SERVER"
         }
-        // Field-level reason codes make old receipts actionable. Never accept
-        // a matching ID as proof that the historical session content matches.
+        // A server ID alone is not a receipt: require unique original tank
+        // identities plus every field, allowing ONLY <=1ms wire precision loss.
+        guard Set(local.tankSessions.map(\.id)).count == local.tankSessions.count,
+              Set(remote.tankSessions.map(\.id)).count == remote.tankSessions.count else {
+            return "TRIP_LOCAL_TANK_DUPLICATE_SESSION_ID"
+        }
         for localSession in local.tankSessions {
             guard let remoteSession = remote.tankSessions.first(where: { $0.id == localSession.id }) else {
                 return "TRIP_LOCAL_TANK_SESSION_NOT_ON_SERVER"
             }
-            if localSession != remoteSession {
-                if localSession.tankNumber != remoteSession.tankNumber {
-                    return "TRIP_LOCAL_TANK_NUMBER_DIFFERS"
-                }
-                if localSession.startTime != remoteSession.startTime ||
-                    localSession.endTime != remoteSession.endTime {
-                    return "TRIP_LOCAL_TANK_TIMES_DIFFER"
-                }
-                if localSession.pathsCovered != remoteSession.pathsCovered ||
-                    localSession.startRow != remoteSession.startRow ||
-                    localSession.endRow != remoteSession.endRow {
-                    return "TRIP_LOCAL_TANK_PATHS_DIFFER"
-                }
-                if localSession.fillStartTime != remoteSession.fillStartTime ||
-                    localSession.fillEndTime != remoteSession.fillEndTime {
-                    return "TRIP_LOCAL_TANK_FILL_TIMES_DIFFER"
-                }
-                return "TRIP_LOCAL_TANK_SESSION_DIFFERS"
+            if let reason = TankSessionReceiptMatch.discrepancy(local: localSession, remote: remoteSession) {
+                return reason
             }
         }
         guard local.completedPaths.allSatisfy(remote.completedPaths.contains),
