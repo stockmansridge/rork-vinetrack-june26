@@ -76,6 +76,17 @@ class TripClosureStatusPhaseCTest {
         assertEquals(State.DEPENDENTS_HELD, TripClosureStatus.evaluate(closed(holds = listOf("TRIP_TANK_CONFLICT"))).state)
     }
 
+    @Test fun terminalTripWithNullSprayEndCannotBeClosedSynced() {
+        val r = TripClosureStatus.evaluate(closed().copy(sprayCompletionIssue = "LINKED_SPRAY_COMPLETION_PENDING"))
+        assertEquals(State.DEPENDENTS_PENDING, r.state)
+        assertTrue("LINKED_SPRAY_COMPLETION_PENDING" in r.reasons)
+    }
+
+    @Test fun freshTripReadCannotMaskFailedSprayRead() {
+        assertEquals(State.DEPENDENTS_PENDING, TripClosureStatus.evaluate(
+            closed().copy(sprayCompletionIssue = "LINKED_SPRAY_READ_FAILED")).state)
+    }
+
     @Test fun noActualsTripClosesWithoutSessions() {
         val r = TripClosureStatus.evaluate(closed(actualSessions = emptySet(), serverSessions = emptySet()))
         assertEquals(State.CLOSED_SYNCED, r.state)

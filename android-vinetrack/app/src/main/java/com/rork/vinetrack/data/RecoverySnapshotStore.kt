@@ -234,6 +234,7 @@ class RecoverySnapshotStore internal constructor(
             PendingEntityType.TRIP_LABOUR,
             PendingEntityType.TRIP_TANK,
             PendingEntityType.TRIP_END,
+            PendingEntityType.TRIP_SPRAY_COMPLETION,
         )
 
         // A competing capture fails closed rather than blocking Main on a worker.

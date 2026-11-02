@@ -1,0 +1,146 @@
+{
+  "publicBaselineCommit": "63848ddc392828901fd90f13212e8d74281bc753",
+  "managedBaseCommit": "631ec5636a40a98bafa83480a20459fad9345617",
+  "branch": "main",
+  "correctionCommit": null,
+  "sourceState": "Working-tree/index overlay; bases do not contain correction",
+  "sourceManifestSha256": "550fe30f38c82cadc69c6f897ccd825bd8a820e17c905d299ec90523cccb8906",
+  "androidFileCount": 1274,
+  "changedAndroidFilesAgainstPublicBaseline": [
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/RecoverySnapshotStore.kt",
+      "sha256": "f16bee76b78d35bb161fd0fc7aad0d950660d47446f70d2918622aab425cbd38",
+      "bytes": 25750,
+      "executable": false,
+      "baselineSha256": "06209da6d231c02bbb4d5dadd0939f5fc7dce9827facf157f87f3411f33317ca"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SprayRecordRepository.kt",
+      "sha256": "0ac1484d731a0d48320d55b61dbb52f8bb0d0a7f2f6f21f9af55e75046af901f",
+      "bytes": 28800,
+      "executable": false,
+      "baselineSha256": "90688a10f852ee949d016e7532632fe3b74ebd8b0ad3270819d2bfbbf9a3f26e"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TrackedSprayCompletionSync.kt",
+      "sha256": "c198f8790f9aff291ada7dacdeae3352156d54edf619b84fa36fe4e1a6171b7a",
+      "bytes": 7755,
+      "executable": false,
+      "baselineSha256": null
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripClosureStatus.kt",
+      "sha256": "9ba5ec885ff4ab055aa420cae5f66fa99828447cf18c2ec38d1f943316adaacc",
+      "bytes": 6042,
+      "executable": false,
+      "baselineSha256": "9663ba768509e110ec6f321ec9d8c62a22fe14202d2de865ad8562d6e69ec806"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/PendingWrite.kt",
+      "sha256": "e1405b930cee05a49529ad51beda9c00e6e45c98843eeb0e740e4cb526290b6e",
+      "bytes": 25836,
+      "executable": false,
+      "baselineSha256": "a50364b184168dd307a5aa4677f9a829b99f4f34b15bb3efdab64553caaba5f9"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt",
+      "sha256": "453d265e553e75ba92a285b38d4817338694f3cab2e35f09e47dbb818c9ceaf5",
+      "bytes": 1042962,
+      "executable": false,
+      "baselineSha256": "7d746ebce04590c4c8ffaf5ada5bd896fc65761ca78a3f073e46977a7179a7e5"
+    },
+    {
+      "path": "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/TripsScreen.kt",
+      "sha256": "56b75703928747551f60188b9dc66763629edf3f77ac54dcf2145e97f0c057da",
+      "bytes": 301676,
+      "executable": false,
+      "baselineSha256": "9293817b63d7986fe1152bdef19dc1c365744f1e9da59e1a4749e725b8776374"
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/TrackedSprayCompletionSyncTest.kt",
+      "sha256": "8c145d6e9849b8fbc8c5f2fbcb9e2f7d71eab40054e227442cd2f7d1849e00f3",
+      "bytes": 9235,
+      "executable": false,
+      "baselineSha256": null
+    },
+    {
+      "path": "android-vinetrack/app/src/test/java/com/rork/vinetrack/data/TripClosureStatusPhaseCTest.kt",
+      "sha256": "0aa9b8ccecf4d0d71b25636de5b9a2e8ef803f6332650e0f9aace9c66a0242f5",
+      "bytes": 4241,
+      "executable": false,
+      "baselineSha256": "85fb3522de77a22047611c0f617baf13c76d73fe19f7a8ee9b778800f3f36fb8"
+    },
+    {
+      "path": "android-vinetrack/tracked-spray-tests.init.gradle",
+      "sha256": "5284bf5d051ac31bc99057a0095f0ec0c798408452f63d96152c61b5c5167a83",
+      "bytes": 832,
+      "executable": false,
+      "baselineSha256": null
+    }
+  ],
+  "nativeValidation": {
+    "kind": "host JVM",
+    "tests": 61,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "receipts": [
+      {
+        "suite": "com.rork.vinetrack.data.TrackedSprayCompletionSyncTest",
+        "tests": 19,
+        "timestamp": "2026-11-02T09:08:09.410Z",
+        "sha256": "d7808626f232f6bc8377142c98447f47e9013841af6cca1f139c1cdaba834bac",
+        "file": "TEST-com.rork.vinetrack.data.TrackedSprayCompletionSyncTest.xml"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.TripClosureStatusPhaseCTest",
+        "tests": 13,
+        "timestamp": "2026-11-02T09:08:09.482Z",
+        "sha256": "6d96a7ac3cf9e65fb0eb0fe17650105b646cb4e053c0ed0bbe142e2c9fc3a6f0",
+        "file": "TEST-com.rork.vinetrack.data.TripClosureStatusPhaseCTest.xml"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.TankDependencyPhaseBTest",
+        "tests": 10,
+        "timestamp": "2026-11-02T09:08:09.380Z",
+        "sha256": "2a8af13f41b6c685656d5fd48c4e0410f2599ea85217b31a80327dc702a7a236",
+        "file": "TEST-com.rork.vinetrack.data.TankDependencyPhaseBTest.xml"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.OccurrenceTankConflictHoldTest",
+        "tests": 3,
+        "timestamp": "2026-11-02T09:08:09.310Z",
+        "sha256": "2b8cde57b77d74acae49d016b488ecbda21d51fdee01b9b0c7cfba626cc8e522",
+        "file": "TEST-com.rork.vinetrack.data.OccurrenceTankConflictHoldTest.xml"
+      },
+      {
+        "suite": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+        "tests": 16,
+        "timestamp": "2026-11-02T09:08:09.130Z",
+        "sha256": "b0dc2d7f5cb96e202093062d414ba97d40936610fb96b00d124f03c5790b2765",
+        "file": "TEST-com.rork.vinetrack.data.AccountScopedTankSafetyTest.xml"
+      }
+    ],
+    "selection": "android-vinetrack/tracked-spray-tests.init.gradle",
+    "finalLogSha256": "39c7b7b019bbcb216cf6fe2f9503f22e33c0dfd45e8f0160ee407e9e2119b050",
+    "productionSourceExclusions": false
+  },
+  "normalAndroidBuild": "runChecks passed on final application source; not device execution or delivery acceptance",
+  "earlierAttempts": [
+    "Production compilation OOM: zero assertions",
+    "Test fixture compilation missing shared helpers: zero assertions",
+    "57 passes before final safety review; superseded, not additive"
+  ],
+  "notExecuted": [
+    "Device instrumentation",
+    "Real process-death lifecycle",
+    "Authenticated backend/Portal acceptance",
+    "Deployed SQL 259 verification",
+    "Full unfiltered unit suite",
+    "Signed testing candidate request",
+    "Store publication",
+    "Customer-record repair"
+  ],
+  "scope": "New explicit tracked End intents only; no historical scan; existing operations/actuals/manual workflow preserved",
+  "retentionModel": "Reopen tests reconstruct coordinator/repository over shared in-memory persisted state, not Android process death"
+}

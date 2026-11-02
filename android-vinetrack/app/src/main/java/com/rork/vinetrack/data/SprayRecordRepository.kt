@@ -231,6 +231,21 @@ class SprayRecordRepository(private val session: SessionStore) {
         firstRow(response)
     }
 
+    /** Read-only canonical linkage check, fenced to the original account incarnation. */
+    suspend fun fetchLinkedToTrip(tripId: String, access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess): List<SprayRecord> = withContext(Dispatchers.IO) {
+        requireConfig()
+        check(session.isAccountAccessCurrent(access))
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl("spray_records")) {
+            attributes.put(SupabaseClient.accountRequestScope, access)
+            authHeaders(token)
+            url { parameters.append("trip_id", "eq.$tripId"); parameters.append("select", "*") }
+        }
+        check(session.isAccountAccessCurrent(access))
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, "Linked Spray read failed")
+        response.body<List<SprayRecord>>()
+    }
+
     fun nowIso(): String = Instant.now().toString()
 
     /** Generate a fresh client-side spray-record id (UUID). */
@@ -425,11 +440,14 @@ class SprayRecordRepository(private val session: SessionStore) {
     @Serializable
     private data class CompletionTripLink(@SerialName("trip_id") val tripId: String? = null)
 
-    suspend fun completeSprayRecord(id: String, allowUnlinked: Boolean): com.rork.vinetrack.data.spray.SprayCompletionResponse =
+    suspend fun completeSprayRecord(id: String, allowUnlinked: Boolean,
+        access: com.rork.vinetrack.data.auth.AuthRetentionGuard.AccountAccess? = null): com.rork.vinetrack.data.spray.SprayCompletionResponse =
         withContext(Dispatchers.IO) {
             requireConfig()
             val token = session.accessToken ?: throw BackendError.Unauthorized
+            if (access != null) check(session.isAccountAccessCurrent(access))
             val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("complete_spray_record")) {
+                if (access != null) attributes.put(SupabaseClient.accountRequestScope, access)
                 authHeaders(token)
                 contentType(ContentType.Application.Json)
                 setBody(CompleteArgs(id, allowUnlinked))
@@ -447,6 +465,7 @@ class SprayRecordRepository(private val session: SessionStore) {
                 }.getOrNull() else null
                 throw com.rork.vinetrack.data.spray.SprayCompletionRejected(code, tripId)
             }
+            if (access != null) check(session.isAccountAccessCurrent(access))
             response.body<com.rork.vinetrack.data.spray.SprayCompletionResponse>()
         }
 

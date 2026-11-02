@@ -3111,7 +3111,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * P0 Phase C: read-only closure evidence for [trip]. [fresh] is a fresh server read result
      * (Result.success(null) = absent); null uses the acknowledged local row. Never writes stores.
      */
-    private fun tripClosureInput(trip: Trip, fresh: Result<Trip?>?): com.rork.vinetrack.data.TripClosureStatus.Input {
+    private val trackedSprayCompletion by lazy { com.rork.vinetrack.data.TrackedSprayCompletionSync(pendingWrites) }
+
+    private fun saveTrackedSprayCompletionIntent(owner: String, trip: Trip, proposedEndTime: String): String {
+        if (trip.tripFunction != "spraying" || trip.entrySource == "manual" || trip.manualEntryId != null) return proposedEndTime
+        val endTime = trackedSprayCompletion.endTimeForRetry(owner, trip, proposedEndTime)
+        val ids = (_ui.value.sprayRecords.filter { it.tripId == trip.id && it.vineyardId == trip.vineyardId &&
+            !it.isTemplate && it.entrySource != "manual" && it.manualEntryId == null && it.deletedAt == null }.map { it.id } +
+            sprayTankActualStore.load().filter { it.tripId == trip.id }.map { it.sprayRecordId }).toSet()
+        trackedSprayCompletion.enqueue(owner, trip, endTime, ids.singleOrNull())
+        return endTime
+    }
+
+    private fun tripClosureInput(trip: Trip, fresh: Result<Trip?>?, freshSprays: Result<List<SprayRecord>>? = null): com.rork.vinetrack.data.TripClosureStatus.Input {
         val st = _ui.value
         val evidenceRow: Trip? = when {
             fresh == null -> trip
@@ -3155,6 +3167,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             actualSessionIds = actuals.map { it.tankSessionId }.toSet(),
             pendingActualIds = pendingActuals,
             holdCodes = held,
+            sprayCompletionIssue = if (freshSprays?.isFailure == true && trip.tripFunction == "spraying")
+                "LINKED_SPRAY_READ_FAILED"
+            else com.rork.vinetrack.data.TrackedSprayCompletionSync.completionIssue(activeEvidence,
+                freshSprays?.getOrNull() ?: st.sprayRecords.filter { it.tripId == trip.id },
+                actuals.map { it.sprayRecordId }.toSet()),
         )
     }
 
@@ -3170,7 +3187,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val access = session.accountAccess()
         val fresh: Result<Trip?> = if (access == null) Result.failure(IllegalStateException("NO_ACCOUNT_ACCESS"))
             else runCatching { tripRepo.fetchTrip(trip.id, access) }
-        return com.rork.vinetrack.data.TripClosureStatus.evaluate(tripClosureInput(trip, fresh))
+        val sprays = if (access == null) Result.failure(IllegalStateException("NO_ACCOUNT_ACCESS"))
+            else runCatching { sprayRepo.fetchLinkedToTrip(trip.id, access) }
+        if (access == null || !session.isAccountAccessCurrent(access)) return com.rork.vinetrack.data.TripClosureStatus.Result(
+            com.rork.vinetrack.data.TripClosureStatus.State.SERVER_STATE_UNCONFIRMED, listOf("ACCOUNT_CHANGED"))
+        return com.rork.vinetrack.data.TripClosureStatus.evaluate(tripClosureInput(trip, fresh, sprays))
+    }
+
+    /** Only explicit new End intents are replayed; never backfills historical missing end_time. */
+    private suspend fun replayTrackedSprayCompletions(versions: Map<String, com.rork.vinetrack.data.model.PendingWrite>) {
+        val access = session.accountAccess() ?: return
+        val vineyard = _ui.value.selectedVineyardId ?: return
+        val scope = pendingWrites.currentReplayScope() ?: return
+        trackedSprayCompletion.replay(access.userId, vineyard, versions,
+            isCurrent = { session.isAccountAccessCurrent(access) && _ui.value.selectedVineyardId == vineyard &&
+                pendingWrites.currentReplayScope() == scope },
+            fetchTrip = { tripRepo.fetchTrip(it, access) },
+            fetchSprays = { sprayRepo.fetchLinkedToTrip(it, access) },
+            dependenciesReady = { remote ->
+                val local = _ui.value.trips.firstOrNull { it.id == remote.id }
+                local != null && legacyReplayBlocker(remote.id) == null &&
+                    !runCatching { tripCancellationIntents.holdsTrip(remote.id) }.getOrDefault(true) &&
+                    com.rork.vinetrack.data.TripClosureStatus.evaluate(tripClosureInput(local, Result.success(remote)).let { input ->
+                        input.copy(unresolvedMarkers = input.unresolvedMarkers.filterNot {
+                            it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_SPRAY_COMPLETION },
+                            sprayCompletionIssue = null)
+                    }).isClosedSynced
+            },
+            expectedSprayIds = { remote -> sprayTankActualStore.load().filter { it.tripId == remote.id }.map { it.sprayRecordId }.toSet() },
+            complete = {
+                com.rork.vinetrack.data.OperationalWrites.requireWrite(vineyard)
+                sprayRepo.completeSprayRecord(it, allowUnlinked = false, access = access)
+            },
+            onVerified = { record -> _ui.update { st -> st.copy(sprayRecords = st.sprayRecords.map {
+                if (it.id == record.id) it.copy(endTime = record.endTime, syncVersion = record.syncVersion) else it
+            }) } },
+        )
     }
 
     /** Submit an in-app support / feedback / feature request (mirrors iOS SupportRequestView). */
@@ -3452,6 +3504,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             entityType == PendingEntityType.TRIP_TANK -> "Trip tanks"
             entityType == PendingEntityType.TRIP_START -> "Trip start"
             entityType == PendingEntityType.TRIP_END -> "Trip end"
+            entityType == PendingEntityType.TRIP_SPRAY_COMPLETION -> "Linked Spray completion"
             entityType == PendingEntityType.PIN_EDIT -> "Pin edit"
             entityType == PendingEntityType.PIN && opType == PendingOpType.DELETE -> "Pin delete"
             entityType == PendingEntityType.TRIP && opType == PendingOpType.DELETE -> "Trip delete"
@@ -4153,6 +4206,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     replayOccurrenceTrip(trip)
                 }
                 tripLabourSync.replay()
+                if (!phase5Current()) return@launchReplayStage
+                replayTrackedSprayCompletions(versions)
                 phase5Trace("exit", "PASS_COMPLETE_NOT_ACKNOWLEDGEMENT")
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 phase5Trace("exit", "INTERRUPTED_OR_SCOPE_CHANGED"); throw cancelled
@@ -9611,10 +9666,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             onResult(false)
             return
         }
-        val requestedEndInstant = java.time.Instant.now()
-        val requestedEndTime = requestedEndInstant.toString()
+        val requestedEndTime = try { saveTrackedSprayCompletionIntent(owner, repaired,
+            java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS).toString()) }
+        catch (_: Exception) {
+            _ui.update { it.copy(tripError = "Couldn't save linked Spray completion. Trip is still running; original work retained.") }
+            onResult(false); return
+        }
         if (trip.tripFunction == "spraying") {
-            viewModelScope.launch { sprayReportRepository.captureUnavailableIfDue(trip, requestedEndInstant, isFinal = true) }
+            viewModelScope.launch { sprayReportRepository.captureUnavailableIfDue(trip, java.time.Instant.parse(requestedEndTime), isFinal = true) }
         }
         sprayWeatherJob?.cancel()
         sprayWeatherJob = null
@@ -9656,7 +9715,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _ui.update { it.copy(tripBusy = true, tripError = null) }
             try {
-                val ended = tripRepo.endTrip(tripId, capturedPoints, capturedDistance, cleanNotes, endEngineHours)
+                val ended = tripRepo.endTrip(tripId, capturedPoints, capturedDistance, cleanNotes, endEngineHours, endTime = requestedEndTime)
                 tripLabourSync.replay(tripId)
                 _ui.update { st ->
                     st.copy(
@@ -9668,6 +9727,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         tripBusy = false,
                     )
                 }
+                replayPhase5Writes()
                 // Trip finished server-side — drop only this device's snapshot.
                 runCatching { activeTripStore.load()?.takeIf { it.trip.id == tripId }?.let { activeTripStore.clear() } }
                 onResult(true)
@@ -9716,6 +9776,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 else "Trip ended offline — it'll finish syncing when connection returns.",
             )
         }
+        if (_ui.value.isOnline) replayPhase5Writes()
     }
 
     /**
@@ -13166,11 +13227,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             require(hours == null || (hours.isFinite() && hours >= (trip.startEngineHours ?: 0.0)))
             val owner = session.userId ?: error("Account access required.")
-            val endTime = java.time.Instant.now().toString()
+            val proposedEndTime = java.time.Instant.now().truncatedTo(java.time.temporal.ChronoUnit.MICROS).toString()
             val captured = trip.copy(pathPoints = tracker?.points?.toList() ?: trip.pathPoints,
                 totalDistance = tracker?.distanceMetres ?: trip.totalDistance, completionNotes = notes, endEngineHours = hours)
             check(activeTripStore.saveDurably(owner, trip.vineyardId, captured)) { "Couldn't save the final route. Trip is retained." }
             val journal = occurrenceJournal(trip)
+            val endTime = saveTrackedSprayCompletionIntent(owner, trip, proposedEndTime)
             journal.finalize(kotlinx.serialization.json.buildJsonObject {
                 put("endTime", endTime); if (hours != null) put("endEngineHours", hours)
                 if (notes != null) put("completionNotes", notes)
@@ -13322,7 +13384,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (_: Exception) {
                 if (session.isAccountAccessCurrent(access)) _ui.update { it.copy(tripError = "Occurrence sync is pending. Saved actions are retained.") }
-            } finally { replayingOccurrenceTrips.remove(trip.id) }
+            } finally {
+                replayingOccurrenceTrips.remove(trip.id)
+                if (!phase5ReplayRunning.get() && pendingWrites.list().any {
+                    it.entityType == com.rork.vinetrack.data.model.PendingEntityType.TRIP_SPRAY_COMPLETION && it.clientId == trip.id
+                }) replayPhase5Writes()
+            }
         }
     }
 

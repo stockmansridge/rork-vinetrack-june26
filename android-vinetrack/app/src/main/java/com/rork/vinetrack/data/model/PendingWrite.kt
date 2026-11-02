@@ -130,6 +130,8 @@ object PendingEntityType {
      * metadata state frozen in.
      */
     const val TRIP_END = "trip_end"
+    /** Explicit tracked End -> SQL 259 completion; separate from generic Spray/manual writes. */
+    const val TRIP_SPRAY_COMPLETION = "trip_spray_completion"
     /**
      * Lightweight trip-START create marker for a NEW trip begun offline (Tier-A
      * Stage B-3-1). The client generates the final trip UUID up front and uses

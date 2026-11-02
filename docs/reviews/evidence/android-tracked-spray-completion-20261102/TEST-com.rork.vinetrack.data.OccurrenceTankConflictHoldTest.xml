@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.OccurrenceTankConflictHoldTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-11-02T09:08:09.310Z" hostname="e2b.local" time="0.068">
+  <properties/>
+  <testcase name="holdReleasesOnlyOnFreshConflictFreeServerRowAndKeepsOtherHolds" classname="com.rork.vinetrack.data.OccurrenceTankConflictHoldTest" time="0.052"/>
+  <testcase name="conflictCreatesDurableHoldThatBlocksTankSyncActualsCommitsAndSurvivesRestart" classname="com.rork.vinetrack.data.OccurrenceTankConflictHoldTest" time="0.013"/>
+  <testcase name="normalTank1RecoveryIsUnchangedAndReplays" classname="com.rork.vinetrack.data.OccurrenceTankConflictHoldTest" time="0.003"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

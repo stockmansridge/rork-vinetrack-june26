@@ -51,6 +51,8 @@ object TripClosureStatus {
         val actualSessionIds: Set<String>,
         val pendingActualIds: List<String>,
         val holdCodes: List<String>,
+        /** Tracked Spray end-time/linkage evidence; null only when checked or not required. */
+        val sprayCompletionIssue: String? = null,
     )
 
     data class Result(val state: State, val reasons: List<String>) {
@@ -74,6 +76,7 @@ object TripClosureStatus {
         input.occurrenceHeldReason?.let { reasons += "OCCURRENCE_HELD" }
         if (input.pendingActualIds.isNotEmpty()) reasons += "TANK_ACTUALS_PENDING_${input.pendingActualIds.size}"
         input.holdCodes.forEach { reasons += it }
+        input.sprayCompletionIssue?.let { reasons += it }
         if (required.isNotEmpty()) when {
             serverSessions == null -> reasons += TankDependencyVerification.REQUIRED_SESSIONS_UNREADABLE
             !serverSessions.containsAll(required) -> reasons += TankDependencyVerification.REQUIRED_SESSION_MISSING
@@ -102,6 +105,7 @@ object TripClosureStatus {
         "  occurrence_pending: ${input.occurrencePending ?: "unreadable"}; held=${input.occurrenceHeldReason != null}",
         "  tank_actuals: total_sessions=${input.actualSessionIds.size}; pending=${input.pendingActualIds.size}",
         "  server_sessions: ${input.serverSessionIds?.size ?: "unreadable"}",
+        "  linked_spray_completion: ${input.sprayCompletionIssue ?: "matched_or_not_required"}",
         "  reasons: ${result.reasons.ifEmpty { listOf("none") }.joinToString(",")}",
     )
 }
