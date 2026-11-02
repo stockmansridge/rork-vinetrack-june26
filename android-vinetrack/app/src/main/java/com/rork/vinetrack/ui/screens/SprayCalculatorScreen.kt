@@ -479,6 +479,9 @@ fun SprayCalculatorScreen(
     prefillPaddockIds: List<String> = emptyList(),
 ) {
     val vine = LocalVineColors.current
+    // Align calculator-specific selected options, step accents and primary
+    // actions with iOS system blue (#007AFF). Vineyard-wide brand colours,
+    // success/warning signals and other screens remain unchanged.
     val context = LocalContext.current
     val fmt = LocalRegionFormatter.current
     val carrierFormat = remember(fmt) { SprayCarrierRegionalFormat(fmt) }
@@ -1507,8 +1510,8 @@ fun SprayCalculatorScreen(
                     isDone = guidedFlow.isComplete(SprayGuidedStep.APPLICATION),
                     isExpanded = expandedStep == SprayGuidedStep.APPLICATION,
                     summary = applicationSummary,
-                    accent = VineColors.Olive,
-                    doneAccent = VineColors.Olive,
+                    accent = VineColors.Primary,
+                    doneAccent = VineColors.Primary,
                     onToggle = { toggleStep(SprayGuidedStep.APPLICATION) },
                 ) {
                 OutlinedTextField(
@@ -1590,8 +1593,8 @@ fun SprayCalculatorScreen(
                     isDone = guidedFlow.isComplete(SprayGuidedStep.BLOCKS),
                     isExpanded = expandedStep == SprayGuidedStep.BLOCKS,
                     summary = blocksSummary,
-                    accent = VineColors.Olive,
-                    doneAccent = VineColors.Olive,
+                    accent = VineColors.Primary,
+                    doneAccent = VineColors.Primary,
                     onToggle = { toggleStep(SprayGuidedStep.BLOCKS) },
                 ) {
                 InlineBlockSelector(
@@ -1627,8 +1630,8 @@ fun SprayCalculatorScreen(
                     isDone = guidedFlow.isComplete(SprayGuidedStep.TARGET),
                     isExpanded = expandedStep == SprayGuidedStep.TARGET,
                     summary = targetSummary,
-                    accent = VineColors.Olive,
-                    doneAccent = VineColors.Olive,
+                    accent = VineColors.Primary,
+                    doneAccent = VineColors.Primary,
                     onToggle = { toggleStep(SprayGuidedStep.TARGET) },
                 ) {
                     Text(
@@ -1642,59 +1645,68 @@ fun SprayCalculatorScreen(
                         fontSize = 12.sp,
                         color = vine.textSecondary,
                     )
-                    SprayTarget.presentationOrder.chunked(2).forEach { pair ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            pair.forEach { target ->
-                                GuidedChip(
-                                    label = target.label,
-                                    isSelected = sprayTargets.contains(target),
-                                    accent = VineColors.Olive,
-                                    modifier = Modifier.weight(1f),
-                                    onClick = {
-                                        if (sprayTargets.contains(target)) {
-                                            sprayTargets.remove(target)
-                                        } else {
-                                            sprayTargets.add(target)
-                                        }
-                                    },
-                                )
+                    // Group rows into ONE child of GuidedStepCard's 12.dp
+                    // outer spacing; only the option-to-option gap shrinks.
+                    // Keep equal-width columns and 40.dp minimum hit surfaces.
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SprayTarget.presentationOrder.chunked(2).forEach { pair ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                pair.forEach { target ->
+                                    GuidedChip(
+                                        label = target.label,
+                                        isSelected = sprayTargets.contains(target),
+                                        accent = VineColors.Primary,
+                                        modifier = Modifier.weight(1f),
+                                        compact = true,
+                                        onClick = {
+                                            if (sprayTargets.contains(target)) {
+                                                sprayTargets.remove(target)
+                                            } else {
+                                                sprayTargets.add(target)
+                                            }
+                                        },
+                                    )
+                                }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
                             }
-                            if (pair.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
 
                     if (operationType != SprayOperationType.SPREADER.raw) {
                         Text("Application location", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                        (SprayHeadTarget.entries.map { it to null } + SprayGroundTarget.entries.map { null to it })
-                            .chunked(2).forEach { pair ->
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    pair.forEach { (head, ground) ->
-                                        GuidedChip(
-                                            label = head?.label ?: ground?.label.orEmpty(),
-                                            isSelected = head?.let { sprayHeadTarget == it && groundTarget == null }
-                                                ?: (groundTarget == ground && sprayHeadTarget == null),
-                                            accent = VineColors.Olive,
-                                            modifier = Modifier.weight(1f),
-                                            onClick = {
-                                                if (head != null) {
-                                                    operationType = SprayOperationType.FOLIAR_SPRAY.raw
-                                                    sprayHeadTarget = head
-                                                    groundTarget = null
-                                                    bandWidthText = ""
-                                                } else if (ground != null) {
-                                                    operationType = SprayOperationType.BANDED_SPRAY.raw
-                                                    groundTarget = ground
-                                                    sprayHeadTarget = null
-                                                    carrierBasisChoice = SprayCarrierBasis.LITRES_PER_HECTARE
-                                                    carrierAreaBasis = SprayCarrierAreaBasis.TREATED_AREA
-                                                }
-                                                result = null
-                                            },
-                                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            (SprayHeadTarget.entries.map { it to null } + SprayGroundTarget.entries.map { null to it })
+                                .chunked(2).forEach { pair ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        pair.forEach { (head, ground) ->
+                                            GuidedChip(
+                                                label = head?.label ?: ground?.label.orEmpty(),
+                                                isSelected = head?.let { sprayHeadTarget == it && groundTarget == null }
+                                                    ?: (groundTarget == ground && sprayHeadTarget == null),
+                                                accent = VineColors.Primary,
+                                                modifier = Modifier.weight(1f),
+                                                compact = true,
+                                                onClick = {
+                                                    if (head != null) {
+                                                        operationType = SprayOperationType.FOLIAR_SPRAY.raw
+                                                        sprayHeadTarget = head
+                                                        groundTarget = null
+                                                        bandWidthText = ""
+                                                    } else if (ground != null) {
+                                                        operationType = SprayOperationType.BANDED_SPRAY.raw
+                                                        groundTarget = ground
+                                                        sprayHeadTarget = null
+                                                        carrierBasisChoice = SprayCarrierBasis.LITRES_PER_HECTARE
+                                                        carrierAreaBasis = SprayCarrierAreaBasis.TREATED_AREA
+                                                    }
+                                                    result = null
+                                                },
+                                            )
+                                        }
+                                        if (pair.size == 1) Spacer(Modifier.weight(1f))
                                     }
-                                    if (pair.size == 1) Spacer(Modifier.weight(1f))
                                 }
-                            }
+                        }
                         sprayHeadTarget?.let { head -> Text(head.detail, fontSize = 11.sp, color = vine.textSecondary) }
                     }
 
@@ -1727,18 +1739,18 @@ fun SprayCalculatorScreen(
                         if (guidedFlow.bandWidth != null) {
                             GuidedCalculatedPanel(
                                 title = "Application geometry",
-                                accent = VineColors.Olive,
+                                accent = VineColors.Primary,
                             ) {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     GuidedCalculatedRow(
                                         label = "Gross area",
                                         value = carrierFormat.hectares(guidedPlan.grossAreaHectares),
-                                        accent = VineColors.Olive,
+                                        accent = VineColors.Primary,
                                     )
                                     GuidedCalculatedRow(
                                         label = "Treated area",
                                         value = carrierFormat.hectares(guidedPlan.treatedAreaHectares),
-                                        accent = VineColors.Olive,
+                                        accent = VineColors.Primary,
                                         emphasis = true,
                                     )
                                 }
@@ -1767,8 +1779,8 @@ fun SprayCalculatorScreen(
                     isDone = guidedFlow.isComplete(SprayGuidedStep.GROWTH_STAGE),
                     isExpanded = expandedStep == SprayGuidedStep.GROWTH_STAGE,
                     summary = growthStageSummary,
-                    accent = VineColors.Olive,
-                    doneAccent = VineColors.Olive,
+                    accent = VineColors.Primary,
+                    doneAccent = VineColors.Primary,
                     onToggle = { toggleStep(SprayGuidedStep.GROWTH_STAGE) },
                 ) {
                 GrowthStageSection(
@@ -1818,8 +1830,8 @@ fun SprayCalculatorScreen(
                     isDone = guidedFlow.isComplete(SprayGuidedStep.EQUIPMENT),
                     isExpanded = expandedStep == SprayGuidedStep.EQUIPMENT,
                     summary = equipmentSummary,
-                    accent = VineColors.Olive,
-                    doneAccent = VineColors.Olive,
+                    accent = VineColors.Primary,
+                    doneAccent = VineColors.Primary,
                     onToggle = { toggleStep(SprayGuidedStep.EQUIPMENT) },
                 ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1828,7 +1840,7 @@ fun SprayCalculatorScreen(
                         Icon(
                             Icons.Filled.AddCircle,
                             contentDescription = "Add equipment",
-                            tint = VineColors.Olive,
+                            tint = VineColors.Primary,
                             modifier = Modifier.size(24.dp),
                         )
                     }
@@ -1857,7 +1869,7 @@ fun SprayCalculatorScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    Icon(Icons.Filled.AddCircle, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(20.dp))
+                                    Icon(Icons.Filled.AddCircle, contentDescription = null, tint = VineColors.Primary, modifier = Modifier.size(20.dp))
                                     Text("Add Equipment", fontSize = 14.sp, color = vine.textPrimary)
                                 }
                             }
@@ -1879,7 +1891,7 @@ fun SprayCalculatorScreen(
                                     Icon(
                                         if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
                                         contentDescription = null,
-                                        tint = if (isSelected) VineColors.Olive else vine.textSecondary,
+                                        tint = if (isSelected) VineColors.Primary else vine.textSecondary,
                                         modifier = Modifier.size(20.dp),
                                     )
                                     Text(eq.displayName, fontSize = 14.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
@@ -1924,8 +1936,8 @@ fun SprayCalculatorScreen(
                     isDone = guidedFlow.isComplete(SprayGuidedStep.CARRIER),
                     isExpanded = expandedStep == SprayGuidedStep.CARRIER,
                     summary = carrierSummary,
-                    accent = VineColors.Olive,
-                    doneAccent = VineColors.Olive,
+                    accent = VineColors.Primary,
+                    doneAccent = VineColors.Primary,
                     onToggle = { toggleStep(SprayGuidedStep.CARRIER) },
                 ) {
                 if (operationType == "Foliar Spray") {
@@ -2083,7 +2095,7 @@ fun SprayCalculatorScreen(
                             )
                         }
                         if (sprayVolumeChoice != SprayVolumeChoice.UNDECIDED) {
-                            GuidedCalculatedPanel(title = "Sprayer output and carrier", accent = VineColors.Olive) {
+                            GuidedCalculatedPanel(title = "Sprayer output and carrier", accent = VineColors.Primary) {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     GuidedCalculatedRow(
                                         label = "Actual sprayer output",
@@ -2092,7 +2104,7 @@ fun SprayCalculatorScreen(
                                             SprayCarrierBasis.LITRES_PER_100_METRES -> decision.actualLitresPer100Metres?.let { fmt.formatVolumePer100Length(it) } ?: "Unavailable"
                                             SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> "Unavailable"
                                         },
-                                        accent = VineColors.Olive,
+                                        accent = VineColors.Primary,
                                         emphasis = true,
                                     )
                                     GuidedCalculatedRow(
@@ -2102,14 +2114,14 @@ fun SprayCalculatorScreen(
                                             SprayCarrierBasis.LITRES_PER_100_METRES -> decision.actualLitresPerHectare?.let { fmt.formatVolumePerArea(it, 2) } ?: "Unavailable"
                                             SprayCarrierBasis.MANUAL_TOTAL_VOLUME -> "Unavailable"
                                         },
-                                        accent = VineColors.Olive,
+                                        accent = VineColors.Primary,
                                         caption = if (resolvedRowSpacing == null) SprayVolumeHelp.ROW_SPACING_REQUIRED else "Derived from matching row spacing",
                                     )
-                                    GuidedCalculatedRow(label = "Concentration factor", value = SprayGuidedFormat.factor(decision.concentrationFactor), accent = VineColors.Olive)
+                                    GuidedCalculatedRow(label = "Concentration factor", value = SprayGuidedFormat.factor(decision.concentrationFactor), accent = VineColors.Primary)
                                     GuidedCalculatedRow(
                                         label = "Total carrier volume",
                                         value = if (guidedFlow.isCarrierResolved) carrierFormat.litres(guidedPlan.carrier.totalLitres) else "Unavailable",
-                                        accent = VineColors.Olive,
+                                        accent = VineColors.Primary,
                                         emphasis = true,
                                     )
                                 }
@@ -2127,17 +2139,17 @@ fun SprayCalculatorScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (guidedFlow.isCarrierResolved) {
-                        GuidedCalculatedPanel(title = "Spray volume", accent = VineColors.Olive) {
+                        GuidedCalculatedPanel(title = "Spray volume", accent = VineColors.Primary) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                GuidedCalculatedRow(label = "Total spray water", value = carrierFormat.litres(guidedPlan.carrier.totalLitres), accent = VineColors.Olive, emphasis = true)
+                                GuidedCalculatedRow(label = "Total spray water", value = carrierFormat.litres(guidedPlan.carrier.totalLitres), accent = VineColors.Primary, emphasis = true)
                                 GuidedCalculatedRow(
                                     label = "Sprayer application rate",
                                     value = guidedPlan.carrier.litresPerHectare?.let { rate ->
                                         "${fmt.formatVolumePerArea(rate, 2)} (${if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "treated" else "gross"} area)"
                                     } ?: "Unavailable",
-                                    accent = VineColors.Olive,
+                                    accent = VineColors.Primary,
                                 )
-                                GuidedCalculatedRow(label = "Concentration factor", value = "Not used", accent = VineColors.Olive)
+                                GuidedCalculatedRow(label = "Concentration factor", value = "Not used", accent = VineColors.Primary)
                             }
                         }
                     }
@@ -2151,12 +2163,12 @@ fun SprayCalculatorScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (guidedFlow.isCarrierResolved) {
-                        GuidedCalculatedPanel(title = "Calculated spray water", accent = VineColors.Olive) {
+                        GuidedCalculatedPanel(title = "Calculated spray water", accent = VineColors.Primary) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                GuidedCalculatedRow(label = "Application rate", value = "${carrierFormat.litresPerHectare(guidedPlan.carrier.litresPerHectare)} (${if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "treated" else "gross"} area)", accent = VineColors.Olive)
-                                GuidedCalculatedRow(label = "Calculation area", value = carrierFormat.hectares(guidedPlan.carrier.areaHectaresUsed), accent = VineColors.Olive)
-                                GuidedCalculatedRow(label = "Total spray water", value = carrierFormat.litres(guidedPlan.carrier.totalLitres), accent = VineColors.Olive, emphasis = true)
-                                GuidedCalculatedRow(label = "Concentration factor", value = "Not used", accent = VineColors.Olive)
+                                GuidedCalculatedRow(label = "Application rate", value = "${carrierFormat.litresPerHectare(guidedPlan.carrier.litresPerHectare)} (${if (carrierAreaBasis == SprayCarrierAreaBasis.TREATED_AREA) "treated" else "gross"} area)", accent = VineColors.Primary)
+                                GuidedCalculatedRow(label = "Calculation area", value = carrierFormat.hectares(guidedPlan.carrier.areaHectaresUsed), accent = VineColors.Primary)
+                                GuidedCalculatedRow(label = "Total spray water", value = carrierFormat.litres(guidedPlan.carrier.totalLitres), accent = VineColors.Primary, emphasis = true)
+                                GuidedCalculatedRow(label = "Concentration factor", value = "Not used", accent = VineColors.Primary)
                             }
                         }
                     }
@@ -2192,24 +2204,24 @@ fun SprayCalculatorScreen(
                         val carrier = guidedPlan.carrier
                         GuidedCalculatedPanel(
                             title = "Calculated carrier volume",
-                            accent = VineColors.Olive,
+                            accent = VineColors.Primary,
                         ) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 GuidedCalculatedRow(
                                     label = "Concentration factor",
                                     value = SprayGuidedFormat.factor(carrier.concentrationFactor),
-                                    accent = VineColors.Olive,
+                                    accent = VineColors.Primary,
                                 )
                                 GuidedCalculatedRow(
                                     label = "Total carrier",
                                     value = carrierFormat.litres(carrier.totalLitres),
-                                    accent = VineColors.Olive,
+                                    accent = VineColors.Primary,
                                     emphasis = true,
                                 )
                                 GuidedCalculatedRow(
                                     label = "Equivalent applied volume",
                                     value = carrierFormat.litresPerHectare(carrier.litresPerHectare),
-                                    accent = VineColors.Olive,
+                                    accent = VineColors.Primary,
                                     caption = if (carrier.litresPerHectare != null) {
                                         "Derived from row spacing \u2014 not entered"
                                     } else {
@@ -2310,8 +2322,8 @@ fun SprayCalculatorScreen(
                     isDone = guidedFlow.isComplete(SprayGuidedStep.PRODUCTS),
                     isExpanded = expandedStep == SprayGuidedStep.PRODUCTS,
                     summary = productsSummary,
-                    accent = VineColors.Olive,
-                    doneAccent = VineColors.Olive,
+                    accent = VineColors.Primary,
+                    doneAccent = VineColors.Primary,
                     onToggle = { toggleStep(SprayGuidedStep.PRODUCTS) },
                 ) {
                 chemLines.forEachIndexed { idx, line ->
@@ -2347,7 +2359,7 @@ fun SprayCalculatorScreen(
                         ) {
                             GuidedProductBasisPicker(
                                 selected = productAreaBasis[line.uid] ?: bandedProductDefault,
-                                accent = VineColors.Olive,
+                                accent = VineColors.Primary,
                             ) { basis ->
                                 productAreaBasis[line.uid] = basis
                                 result = null
@@ -2371,7 +2383,7 @@ fun SprayCalculatorScreen(
                             GuidedProductCalculationRow(
                                 line = planLine,
                                 concentrationFactor = guidedPlan.carrier.concentrationFactor,
-                                accent = VineColors.Olive,
+                                accent = VineColors.Primary,
                             )
                         }
 
@@ -2402,9 +2414,9 @@ fun SprayCalculatorScreen(
                         onClick = { showExistingChemicalPicker = true },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = VineColors.Olive.copy(alpha = 0.12f),
-                            contentColor = VineColors.Olive,
-                            disabledContainerColor = VineColors.Olive.copy(alpha = 0.06f),
+                            containerColor = VineColors.Primary.copy(alpha = 0.12f),
+                            contentColor = VineColors.Primary,
+                            disabledContainerColor = VineColors.Primary.copy(alpha = 0.06f),
                             disabledContentColor = vine.textSecondary,
                         ),
                     ) {
@@ -2437,13 +2449,13 @@ fun SprayCalculatorScreen(
                     isDone = guidedFlow.isComplete,
                     isExpanded = expandedStep == SprayGuidedStep.REVIEW,
                     summary = reviewSummary,
-                    accent = VineColors.Olive,
-                    doneAccent = VineColors.Olive,
+                    accent = VineColors.Primary,
+                    doneAccent = VineColors.Primary,
                     onToggle = { toggleStep(SprayGuidedStep.REVIEW) },
                 ) {
                     val carrier = guidedPlan.carrier
                     guidedFlow.inputs.planningIntent?.let { intent ->
-                        GuidedReviewGroup(title = "Planned Spray Mix", accent = VineColors.Olive, onEdit = { toggleStep(SprayGuidedStep.CARRIER) }) {
+                        GuidedReviewGroup(title = "Planned Spray Mix", accent = VineColors.Primary, onEdit = { toggleStep(SprayGuidedStep.CARRIER) }) {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 GuidedReviewRow("Configuration", intent.configuration?.title ?: "Not recorded")
                                 GuidedReviewRow("Planning method", intent.method?.title ?: "Not recorded")
@@ -2466,7 +2478,7 @@ fun SprayCalculatorScreen(
                     // Review-stage presentation only; route and actual-use gates remain unchanged.
                     GuidedReviewGroup(
                         title = "Application",
-                        accent = VineColors.Olive,
+                        accent = VineColors.Primary,
                         onEdit = { toggleStep(SprayGuidedStep.APPLICATION) },
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2477,7 +2489,7 @@ fun SprayCalculatorScreen(
 
                     GuidedReviewGroup(
                         title = "Blocks & geometry",
-                        accent = VineColors.Olive,
+                        accent = VineColors.Primary,
                         onEdit = { toggleStep(SprayGuidedStep.BLOCKS) },
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2500,7 +2512,7 @@ fun SprayCalculatorScreen(
 
                     GuidedReviewGroup(
                         title = "Target",
-                        accent = VineColors.Olive,
+                        accent = VineColors.Primary,
                         onEdit = { toggleStep(SprayGuidedStep.TARGET) },
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2529,7 +2541,7 @@ fun SprayCalculatorScreen(
 
                     GuidedReviewGroup(
                         title = "Growth stage",
-                        accent = VineColors.Olive,
+                        accent = VineColors.Primary,
                         onEdit = { toggleStep(SprayGuidedStep.GROWTH_STAGE) },
                     ) {
                         GuidedReviewRow("Stage", growthStageSummary)
@@ -2537,7 +2549,7 @@ fun SprayCalculatorScreen(
 
                     GuidedReviewGroup(
                         title = "Equipment",
-                        accent = VineColors.Olive,
+                        accent = VineColors.Primary,
                         onEdit = { toggleStep(SprayGuidedStep.EQUIPMENT) },
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2558,7 +2570,7 @@ fun SprayCalculatorScreen(
 
                     GuidedReviewGroup(
                         title = "Carrier volume",
-                        accent = VineColors.Olive,
+                        accent = VineColors.Primary,
                         onEdit = { toggleStep(SprayGuidedStep.CARRIER) },
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2598,7 +2610,7 @@ fun SprayCalculatorScreen(
 
                     GuidedReviewGroup(
                         title = "Products",
-                        accent = VineColors.Olive,
+                        accent = VineColors.Primary,
                         onEdit = { toggleStep(SprayGuidedStep.PRODUCTS) },
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2622,7 +2634,7 @@ fun SprayCalculatorScreen(
                                             color = if (line.isUnresolved) {
                                                 VineColors.Warning
                                             } else {
-                                                VineColors.Olive
+                                                VineColors.Primary
                                             },
                                         )
                                     }
@@ -2659,14 +2671,14 @@ fun SprayCalculatorScreen(
                     if (!calculationReference.isEmpty && (operationType != "Foliar Spray" || planningMethod != SprayPlanningMethod.FULL_TANK)) {
                         GuidedReviewGroup(
                             title = "Calculation reference",
-                            accent = VineColors.Olive,
+                            accent = VineColors.Primary,
                         ) {
                             CalculationReferenceContent(calculationReference)
                         }
                     }
 
                     if (notes.isNotBlank()) {
-                        GuidedReviewGroup(title = "Notes", accent = VineColors.Olive) {
+                        GuidedReviewGroup(title = "Notes", accent = VineColors.Primary) {
                             Text(notes, fontSize = 13.sp, color = vine.textPrimary)
                         }
                     }
@@ -2716,7 +2728,7 @@ fun SprayCalculatorScreen(
                         },
                         enabled = formIsValid && !saving,
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
+                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                     ) {
                         Icon(Icons.Filled.Science, contentDescription = null, modifier = Modifier.size(18.dp))
                         Text(if (guidedFlow.inputs.planningIntent == null) "  Create Spray Job & View Tank Mix" else "  Review Spray Mix", fontWeight = FontWeight.SemiBold)
@@ -3125,7 +3137,7 @@ private fun BlockSelectionRow(
         Icon(
             if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
             contentDescription = null,
-            tint = if (isSelected) VineColors.Olive else vine.textSecondary,
+            tint = if (isSelected) VineColors.Primary else vine.textSecondary,
             modifier = Modifier.size(20.dp),
         )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -3279,7 +3291,7 @@ private fun GrowthStageSection(
                                 Row(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(VineColors.Olive.copy(alpha = 0.10f))
+                                        .background(VineColors.Primary.copy(alpha = 0.10f))
                                         .clickable { menu = true }
                                         .padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -3293,12 +3305,12 @@ private fun GrowthStageSection(
                                         },
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = VineColors.Olive,
+                                        color = VineColors.Primary,
                                     )
                                     Icon(
                                         Icons.Filled.SwapVert,
                                         contentDescription = null,
-                                        tint = VineColors.Olive,
+                                        tint = VineColors.Primary,
                                         modifier = Modifier.size(12.dp),
                                     )
                                 }
@@ -3345,7 +3357,7 @@ private fun GrowthStageRadioRow(
         Icon(
             if (selected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
             contentDescription = null,
-            tint = if (selected) VineColors.Olive else vine.textSecondary,
+            tint = if (selected) VineColors.Primary else vine.textSecondary,
             modifier = Modifier.size(20.dp),
         )
         if (code != null) {
@@ -3374,7 +3386,7 @@ private fun GuidedContinueAction(
         onClick = { if (flow.isComplete(step) && flow.isUnlocked(next)) onContinue() },
         enabled = enabled,
         modifier = Modifier.fillMaxWidth(),
-        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
+        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
     ) { Text("Continue to $nextTitle →", fontWeight = FontWeight.SemiBold) }
     if (showRequirement) {
         flow.blocker(step)?.let { blocker ->
@@ -3408,10 +3420,10 @@ private fun EquipmentSummaryCard(
             modifier = Modifier
                 .size(44.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(VineColors.Olive.copy(alpha = 0.15f)),
+                .background(VineColors.Primary.copy(alpha = 0.15f)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Filled.Build, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(20.dp))
+            Icon(Icons.Filled.Build, contentDescription = null, tint = VineColors.Primary, modifier = Modifier.size(20.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             if (equipmentName != null) {
@@ -3465,10 +3477,10 @@ private fun TractorSummaryCard(
             modifier = Modifier
                 .size(44.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .background(VineColors.Olive.copy(alpha = 0.15f)),
+                .background(VineColors.Primary.copy(alpha = 0.15f)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(Icons.Filled.Agriculture, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(20.dp))
+            Icon(Icons.Filled.Agriculture, contentDescription = null, tint = VineColors.Primary, modifier = Modifier.size(20.dp))
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(tractorName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, maxLines = 1)
@@ -3498,7 +3510,7 @@ private fun SelectorOptionRow(
         Icon(
             if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
             contentDescription = null,
-            tint = if (isSelected) VineColors.Olive else vine.textSecondary,
+            tint = if (isSelected) VineColors.Primary else vine.textSecondary,
             modifier = Modifier.size(20.dp),
         )
         Text(label, fontSize = 14.sp, color = vine.textPrimary, modifier = Modifier.weight(1f))
@@ -3593,10 +3605,10 @@ internal fun CalcChemicalLineCard(
                 if (line.basis == SprayCalculator.RateBasis.PER_100L) "Per 100L" else "Per Ha",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
-                color = if (line.basis == SprayCalculator.RateBasis.PER_100L) VineColors.Indigo else VineColors.Olive,
+                color = if (line.basis == SprayCalculator.RateBasis.PER_100L) VineColors.Indigo else VineColors.Primary,
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
-                    .background((if (line.basis == SprayCalculator.RateBasis.PER_100L) VineColors.Indigo else VineColors.Olive).copy(alpha = 0.12f))
+                    .background((if (line.basis == SprayCalculator.RateBasis.PER_100L) VineColors.Indigo else VineColors.Primary).copy(alpha = 0.12f))
                     .padding(horizontal = 8.dp, vertical = 3.dp),
             )
             IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
@@ -3830,7 +3842,7 @@ internal fun CalcChemicalLineCard(
                 Spacer(Modifier.weight(1f))
                 if (isOverridden) {
                     TextButton(onClick = { line.overrideText = ""; onChanged() }) {
-                        Text("Reset", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Olive)
+                        Text("Reset", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
                     }
                 }
             }
@@ -4293,7 +4305,7 @@ private fun EquipmentPathSetupContent(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Icon(Icons.Filled.Tune, contentDescription = null, tint = VineColors.Olive)
+            Icon(Icons.Filled.Tune, contentDescription = null, tint = VineColors.Primary)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("No. Fans / Jets", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
                 Text("Optional \u2014 recorded for compliance", fontSize = 11.sp, color = vine.textSecondary)
@@ -4312,7 +4324,7 @@ private fun EquipmentPathSetupContent(
         onClick = onConfirm,
         enabled = canConfirm,
         modifier = Modifier.fillMaxWidth(),
-        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
+        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
     ) {
         Icon(Icons.Filled.CheckCircle, contentDescription = null)
         Text(if (isConfirmed) "  Equipment confirmed" else "  Confirm equipment")
@@ -4475,7 +4487,7 @@ private fun SprayTankMixReview(
         ) {
             item {
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Filled.WaterDrop, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(40.dp))
+                    Icon(Icons.Filled.WaterDrop, contentDescription = null, tint = VineColors.Primary, modifier = Modifier.size(40.dp))
                     Spacer(Modifier.height(8.dp))
                     Text("Spray Tank Mixing", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
                     Spacer(Modifier.height(4.dp))
@@ -4492,19 +4504,19 @@ private fun SprayTankMixReview(
             item {
                 VineyardCard {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 4.dp)) {
-                        Icon(Icons.Filled.Person, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Filled.Person, contentDescription = null, tint = VineColors.Primary, modifier = Modifier.size(18.dp))
                         Text("Operator", fontSize = 14.sp, color = vine.textSecondary, modifier = Modifier.weight(1f))
                         Text(operatorName, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = vine.textPrimary)
                     }
                     Box(Modifier.fillMaxWidth().height(0.5.dp).background(vine.cardBorder))
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 4.dp)) {
-                        Icon(Icons.Filled.Build, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Filled.Build, contentDescription = null, tint = VineColors.Primary, modifier = Modifier.size(18.dp))
                         Text("Equipment", fontSize = 14.sp, color = vine.textSecondary, modifier = Modifier.weight(1f))
                         Text(equipmentLabel, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = vine.textPrimary)
                     }
                     Box(Modifier.fillMaxWidth().height(0.5.dp).background(vine.cardBorder))
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 4.dp)) {
-                        Icon(Icons.Filled.DirectionsCar, contentDescription = null, tint = VineColors.Olive, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Filled.DirectionsCar, contentDescription = null, tint = VineColors.Primary, modifier = Modifier.size(18.dp))
                         Text("Tractor", fontSize = 14.sp, color = vine.textSecondary, modifier = Modifier.weight(1f))
                         Text(tractorLabel, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = vine.textPrimary)
                     }
@@ -4516,7 +4528,7 @@ private fun SprayTankMixReview(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        MixStatTile("Total Area", LocalRegionFormatter.current.formatArea(result.totalAreaHectares), VineColors.Olive, Modifier.weight(1f))
+                        MixStatTile("Total Area", LocalRegionFormatter.current.formatArea(result.totalAreaHectares), VineColors.Primary, Modifier.weight(1f))
                         MixStatTile("Total Water", LocalRegionFormatter.current.formatVolume(result.totalWaterLitres), VineColors.Indigo, Modifier.weight(1f))
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -4533,7 +4545,7 @@ private fun SprayTankMixReview(
                         Text(cr.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary, modifier = Modifier.weight(1f))
                         normalizedUrl(saved?.labelUrl)?.let { url ->
                             IconButton(onClick = { uriHandler.openUri(url) }, modifier = Modifier.size(30.dp)) {
-                                Icon(Icons.Filled.Description, contentDescription = "Open chemical label", tint = VineColors.Olive, modifier = Modifier.size(16.dp))
+                                Icon(Icons.Filled.Description, contentDescription = "Open chemical label", tint = VineColors.Primary, modifier = Modifier.size(16.dp))
                             }
                         }
                         normalizedUrl(saved?.productUrl)?.let { url ->
@@ -4555,7 +4567,7 @@ private fun SprayTankMixReview(
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text("Total", fontSize = 11.sp, color = vine.textSecondary)
-                            Text(SprayGuidedFormat.quantity(cr.totalAmount, cr.unit), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Olive)
+                            Text(SprayGuidedFormat.quantity(cr.totalAmount, cr.unit), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = VineColors.Primary)
                         }
                     }
                     if (result.totalTanks > 0) {
@@ -4776,7 +4788,7 @@ private fun SprayTankMixReview(
                         onClick = onStart,
                         enabled = !saving && hasChosenTrackingPattern && !hasActiveTrip && operationalBlocker == null && actualsReady,
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Olive),
+                        colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary),
                     ) {
                         if (saving) {
                             CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
@@ -4831,7 +4843,7 @@ private fun CalculationReferenceSection(
             title.uppercase(),
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
-            color = VineColors.Olive,
+            color = VineColors.Primary,
         )
         lines.forEach { line ->
             Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
