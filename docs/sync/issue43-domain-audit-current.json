@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "issue": 43,
+  "captured_on": "2026-11-02",
+  "managed_source": "0130a8ff05fcb4759ccd4fe2046d376ac2631be6",
+  "governing_reference_pr": 38,
+  "governing_reference_head": "637d646181a4b7cab1ab0ed8da3db1e84c7a327e",
+  "governing_reference_merged": false,
+  "report": "ISSUE43_P0_FIELD_AUDIT_CURRENT_20261102.md",
+  "release_certified": false,
+  "contract_complete": false,
+  "scope": "First P0 current-source field audit, not complete lifecycle or 26-domain certification",
+  "status_semantics": {
+    "Verified": "Complete native, backend, Portal, old/new signed-device and per-action evidence; no domain qualifies",
+    "Mismatch": "An incompatible representation or authority policy is identified; remaining actions and acceptance are incomplete",
+    "Unverified": "No complete semantic verdict; source discovery and structural inventory do not establish compliance"
+  },
+  "common_evidence_gaps": [
+    "Genuine signed-source iOS and Android 3.1.8 writer and local-store captures",
+    "Installed 3.1.9 signed source/build mapping and actual production writer captures",
+    "Current independently inspected Portal serializers and report RPC projections",
+    "Fresh backend schema/function/trigger/RLS provenance and controlled compatibility executions",
+    "Both-direction old/new read-edit tests preserving unknown fields",
+    "Original-device lifecycle, in-place upgrade, failure/restart and Portal convergence"
+  ],
+  "fixture_status": {
+    "ios_318_real_writer": "Missing",
+    "android_318_real_writer": "Missing",
+    "ios_319_installed_writer": "Missing",
+    "android_319_installed_writer": "Missing",
+    "portal_pinned_writer": "Missing",
+    "synthetic_cases_are_historical_evidence": false
+  },
+  "domains": [
+    {"id":"account_vineyard_access","primary_table":"vineyards","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"blocks_geometry","primary_table":"paddocks","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"pin","primary_table":"pins","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"trip","primary_table":"trips","status":"Unverified","scope":"Operational dependency backlog identified, 50-column and nested-action audit incomplete","findings":["P0-F05","P0-F06"]},
+    {"id":"trip_occurrence","primary_table":"trip_occurrence_operations","status":"Unverified","scope":"Per-verb writers, receipts and original-device acceptance incomplete","findings":["P0-F05"]},
+    {"id":"spray_job","primary_table":"spray_jobs","status":"Unverified","scope":"Job/template route must be audited separately from Spray record template"},
+    {"id":"spray_record","primary_table":"spray_records","status":"Mismatch","scope":"14-field conditional flat representation absent from pinned SQL snapshot; valid By Area notes route not proven broken; full 56-column and action audit incomplete","findings":["P0-F04"]},
+    {"id":"tank_session","primary_table":"trips","status":"Unverified","scope":"Full nested session field/action and old/new compatibility audit incomplete","findings":["P0-F05"]},
+    {"id":"tank_actual","primary_table":"spray_tank_actuals","status":"Mismatch","scope":"19-column boundary plus nested chemical fields reviewed; null-key and concurrency/ACK mismatches; lossless correction and device/backend/Portal acceptance incomplete","findings":["P0-F01","P0-F02","P0-F03","P0-F07"]},
+    {"id":"chemical_store","primary_table":"saved_chemicals","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"chemical_catalogue","primary_table":"chemical_v3_product_revisions","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"equipment","primary_table":"spray_equipment","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"tractors","primary_table":"tractors","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"machines","primary_table":"vineyard_machines","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"work_tasks","primary_table":"work_tasks","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"yield","primary_table":"yield_estimation_sessions","status":"Unverified","scope":"No complete current field/action review; unregistered coordinator call requires review"},
+    {"id":"pruning","primary_table":"pruning_seasons","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"growth","primary_table":"growth_stage_records","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"maintenance","primary_table":"maintenance_logs","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"fertiliser","primary_table":"fertiliser_records","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"irrigation","primary_table":"irrigation_sessions","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"weather","primary_table":"vineyard_weather_observations","status":"Unverified","scope":"Provider/read-cache ownership and supported actions require review"},
+    {"id":"images_documents","primary_table":"storage.objects","status":"Unverified","scope":"Storage key/upload/delete acknowledgement review incomplete"},
+    {"id":"settings_preferences","primary_table":"vineyards","status":"Unverified","scope":"No complete current field/action review"},
+    {"id":"entitlement","primary_table":"vinetrack_entitlement_state","status":"Unverified","scope":"Backend authority and read-only/expired-access queue semantics incomplete"},
+    {"id":"other_mobile_queues","primary_table":"*","status":"Unverified","scope":"Independent queue action discovery and complete sweep receipts incomplete"}
+  ],
+  "validation": {
+    "source_inventory": {
+      "status": "FAIL",
+      "command": "python3 scripts/audit_sync_inventory.py --verify-inventory --output /tmp/vinetrack-issue43-inventory-current.json",
+      "registered_source": "8c15003d793e200c12f43c1a35349c77e829fdbf",
+      "unregistered_ios_calls": ["YieldMasterWeightCache.shared.synchronize"],
+      "android_discriminator_drift": false,
+      "literal_route_signature_drift": true,
+      "dynamic_route_signature_drift": true,
+      "evidence_level": "Structural only, not serializer semantics"
+    },
+    "draft_governance_validator": "Reviewed source only; unmerged required artifacts absent locally",
+    "semantic_harness_extension": "Review proposal only; not implemented before requested first report",
+    "ci_activation": "Not performed; review and required branch protection remain outstanding",
+    "native_tests": "Not run in this documentation-only pass",
+    "app_builds": "Not run; application source unchanged",
+    "controlled_backend_tests": "Not run",
+    "original_device_tests": "Not run",
+    "portal_interactions": "Not run"
+  },
+  "source_sha256": {
+    "ios/VineTrack/LegacyImported/Models/SprayTankActual.swift": "b89ebad511511df35e81d611fd74498aa05a55516f16cba8b099734e5597c09b",
+    "ios/VineTrack/Backend/Sync/SprayTankActualStore.swift": "f1119e0e3f8d6ec76da869dfd4f0b3de7edbcf8fea2521e0a39d69828b9e4f00",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/SprayTankActual.kt": "1c087f422ae03ac4cea60bce9203411748d3d27d382a6b4d73a999755d20e574",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SprayTankActualRepository.kt": "d390e54227cc0ffbf1ca63f63ef591b0db6ce64df17c809c074fabaeb6c57513",
+    "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SupabaseClient.kt": "a5d2bbac1ddf3e3115aa99bf33c02df7debe215e031187ee85b407916a38d296"
+  },
+  "retained_incident_constraints": {
+    "issue40": "Historical original-device reconciliation unresolved",
+    "issue41": "Original modern Trip is server-terminal; do not cancel/recreate; handset closure and exact original chemical/labour/GPS acceptance incomplete",
+    "issue42": "Original legacy journal retained and held; no fabricated receipt/session or absent-parent adoption",
+    "production_mutations": "None in this pass",
+    "public_release": "BLOCKED"
+  }
+}
