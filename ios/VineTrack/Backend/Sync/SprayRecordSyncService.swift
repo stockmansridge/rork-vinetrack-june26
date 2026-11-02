@@ -1,6 +1,22 @@
 import Foundation
 import Observation
 
+/// Positive, scoped server proof for an occurrence-linked spray parent.
+/// A device-local pending queue, row name, or matching UUID alone is not an
+/// accepted parent. The same original occurrence plan must be on the server
+/// before the ordinary Spray Record sync may create/update its child.
+nonisolated enum OccurrenceSprayParentReceipt {
+    static func matches(local: Trip, remote: BackendTrip?, vineyardId: UUID) -> Bool {
+        guard local.vineyardId == vineyardId, local.coverageBasis == .occurrence,
+              let remote, remote.id == local.id,
+              remote.vineyardId == vineyardId, remote.deletedAt == nil,
+              let originalPlan = TripOccurrenceCoverage.read(local.occurrenceCoverage),
+              let acceptedPlan = TripOccurrenceCoverage.read(remote.occurrenceCoverage) else { return false }
+        return originalPlan.planId == acceptedPlan.planId &&
+            originalPlan.planRevision == acceptedPlan.planRevision
+    }
+}
+
 /// Local-first sync service for SprayRecord entities.
 /// Tracks dirty/deleted spray records locally and pushes/pulls them against
 /// Supabase using `SupabaseSprayRecordSyncRepository`. Conflict resolution is
@@ -153,9 +169,8 @@ final class SprayRecordSyncService {
         do {
             let remote = try await SupabaseTripSyncRepository().fetchTripForOccurrenceStart(
                 tripId: parent.id, vineyardId: vineyardId)
-            guard let remote, remote.id == parent.id,
-                  remote.vineyardId == vineyardId, remote.deletedAt == nil,
-                  TripOccurrenceCoverage.basis(remote.occurrenceCoverage) == .occurrence,
+            guard OccurrenceSprayParentReceipt.matches(
+                    local: parent, remote: remote, vineyardId: vineyardId),
                   auth?.userId == owner,
                   store.currentUserIdProvider?() == owner,
                   store.selectedVineyardId == vineyardId else { return false }
