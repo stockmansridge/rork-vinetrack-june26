@@ -38,6 +38,7 @@ struct TripDetailView: View {
     @State private var recoveredMixReviewed = false
     @State private var pendingMixReview: SavedMixReview?
     @State private var showDeleteConfirmation: Bool = false
+    @State private var queuedDeleteError: String?
     @State private var position: MapCameraPosition = .automatic
     @State private var isExporting: Bool = false
     @State private var sprayExportError: String?
@@ -337,6 +338,14 @@ struct TripDetailView: View {
         } message: {
             Text(savedSprayRecoveryError ?? "")
         }
+        .alert("Trip deletion held", isPresented: Binding(
+            get: { queuedDeleteError != nil },
+            set: { if !$0 { queuedDeleteError = nil } }
+        )) {
+            Button("OK", role: .cancel) { queuedDeleteError = nil }
+        } message: {
+            Text(queuedDeleteError ?? "")
+        }
         .alert("Delete Trip", isPresented: $showDeleteConfirmation) {
             Button("Delete", role: .destructive) {
                 // Recheck the live state: a Trip may have changed after the alert opened.
@@ -345,7 +354,11 @@ struct TripDetailView: View {
                       !currentTrip.isActive,
                       (!mayRecoverSavedOccurrenceSpray || isQueuedUnstartedTrip) else { return }
                 store.deleteTrip(trip.id)
-                if store.tripDeletionError == nil { dismiss() }
+                if let error = store.tripDeletionError {
+                    queuedDeleteError = error
+                } else {
+                    dismiss()
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
