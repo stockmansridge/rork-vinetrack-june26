@@ -303,6 +303,7 @@ final class TripSyncService {
             // This code marker proves the installed build includes the new
             // Issue #43 UI/admission logic, not its exact signed Git SHA.
             "issue43_feature_marker: separate_spray_confirmation_scoped_trip_history_auto_end_readback_v1",
+            "issue43_receipt_reconciliation: server_terminal_exact_route_spray_actuals_durable_v2",
             "last_trip_sync_local: \(lastSyncDate?.ISO8601Format() ?? "unknown")",
             "last_full_sync: unknown_no_durable_full_sweep_receipt",
             "upload_cleared_acknowledgement: unknown_not_persisted",
