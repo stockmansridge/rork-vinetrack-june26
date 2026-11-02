@@ -293,6 +293,37 @@ class WorkContextRestorationTest {
     }
 
     @Test
+    fun `Back from a live map stays Back after a process recreation`() {
+        val handle = SavedStateHandle()
+        val work = WorkContextViewModel(handle)
+        work.bindIdentity("operator", "vineyard-a")
+        work.openStartedTrip("first-trip")
+        work.setSelectedTripId(null)
+        assertEquals("first-trip", work.lastPresentedActiveTripId())
+
+        val restored = recreate(handle)
+        restored.bindIdentity("operator", "vineyard-a")
+        assertNull(restored.selectedTripId.value)
+        assertEquals("first-trip", restored.lastPresentedActiveTripId())
+        assertFalse(TripStartNavigation.shouldOpenUnseenActive(
+            lastOpenedTripId = restored.lastPresentedActiveTripId(),
+            activeTripId = "first-trip", activeTripVineyardId = "vineyard-a",
+            deviceOwnedTripId = "first-trip", selectedVineyardId = "vineyard-a",
+            userId = "operator", selectedTripId = null,
+            tab = MainTab.Trip, tool = null, calculatorOpen = false,
+        ))
+
+        // A truly new Start may still open automatically.
+        assertTrue(TripStartNavigation.shouldOpenUnseenActive(
+            lastOpenedTripId = restored.lastPresentedActiveTripId(),
+            activeTripId = "second-trip", activeTripVineyardId = "vineyard-a",
+            deviceOwnedTripId = "second-trip", selectedVineyardId = "vineyard-a",
+            userId = "operator", selectedTripId = null,
+            tab = MainTab.Trip, tool = null, calculatorOpen = false,
+        ))
+    }
+
+    @Test
     fun `a queued spray activated in place is not dropped by a stale inactive snapshot`() {
         val handle = SavedStateHandle()
         val work = WorkContextViewModel(handle)
