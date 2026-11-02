@@ -59,7 +59,8 @@ struct ManualSprayEntryView: View {
         ManualSprayReviewStatus.resolve(
             serverConfirmed: savedResponse != nil,
             hasRetainedSave: retainedSaveForVineyard != nil,
-            hasSubmissionMarker: hasSubmissionMarker || awaitingServerConfirmation
+            hasSubmissionMarker: hasSubmissionMarker || awaitingServerConfirmation,
+            isSaving: isSaving
         )
     }
 
@@ -200,9 +201,11 @@ struct ManualSprayEntryView: View {
     @ViewBuilder private var protectedSubmissionSections: some View {
         Section("Manual spray submission") {
             LabeledContent("Status", value: reviewStatus.label)
-            Text(reviewStatus == .locallySavedAwaitingServer
-                ? "An original manual spray submission is retained on this device. It must be reconciled through its existing operation ID; do not create another spray."
-                : "This device previously submitted a manual spray, but the original operation is no longer available for confirmation here. Check the saved Spray Record and Portal before making another entry.")
+            Text(reviewStatus == .submitting
+                ? "VineTrack is submitting this manual spray. Do not close or edit until the result is known."
+                : (reviewStatus == .locallySavedAwaitingServer
+                    ? "An original manual spray submission is retained on this device. It must be reconciled through its existing operation ID; do not create another spray."
+                    : "This device previously submitted a manual spray, but the original operation is no longer available for confirmation here. Check the saved Spray Record and Portal before making another entry."))
                 .foregroundStyle(.orange)
             Text("The exact application record, quantities and completion time have not been re-confirmed on this screen. Closing does not delete or retry the original operation.")
                 .font(.caption)
