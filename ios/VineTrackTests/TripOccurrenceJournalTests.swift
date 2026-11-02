@@ -441,11 +441,13 @@ final class TripOccurrenceJournalTests: XCTestCase {
         try journal.hold("OCCURRENCE_SYNC_UNAVAILABLE")
         let retained = try XCTUnwrap(journal.load())
         XCTAssertNotNil(retained.heldReason)
+        XCTAssertTrue(TripOccurrenceJournal.needsOriginalCreationAbsenceCheck(retained))
         try journal.releaseHeldOriginalCreationAfterVerifiedServerAbsence(
             expectedCoverage: frozen
         )
         let retried = try XCTUnwrap(journal.load())
         XCTAssertNil(retried.heldReason)
+        XCTAssertFalse(TripOccurrenceJournal.needsOriginalCreationAbsenceCheck(retried))
         XCTAssertEqual(retried.pending, [create, activation])
         XCTAssertEqual(retried.history.map(\.id), retained.history.map(\.id))
         XCTAssertEqual(retried.acknowledged, frozen)
@@ -468,6 +470,7 @@ final class TripOccurrenceJournalTests: XCTestCase {
         ]))
         try journal.hold("OCCURRENCE_CONFLICT")
         let before = try XCTUnwrap(journal.load())
+        XCTAssertTrue(TripOccurrenceJournal.needsOriginalCreationAbsenceCheck(before))
         XCTAssertThrowsError(try journal.releaseHeldOriginalCreationAfterVerifiedServerAbsence(
             expectedCoverage: fixture(otherBlock: true)
         ))
