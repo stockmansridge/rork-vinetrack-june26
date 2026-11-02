@@ -149,6 +149,27 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
 
     CalculatorStartDestination(vm, state, work)
 
+    // When a successful local Start reaches the state flow after its original
+    // callback was disposed, open the owned live Trip directly. Only the
+    // transition of an active ID triggers this effect: Back to the Trip list
+    // cannot rebound into the HUD on subsequent recompositions.
+    val deviceActive = state.activeTrip?.takeIf { it.isActive && it.endTime.isNullOrBlank() }
+    LaunchedEffect(deviceActive?.id, state.currentUserId, state.selectedVineyardId) {
+        if (TripStartNavigation.shouldOpenNewlyActive(
+                activeTripId = deviceActive?.id,
+                activeTripVineyardId = deviceActive?.vineyardId,
+                deviceOwnedTripId = state.deviceActiveTripId,
+                selectedVineyardId = state.selectedVineyardId,
+                userId = state.currentUserId,
+                selectedTripId = selectedTripId,
+                tab = tab,
+                tool = tool,
+                calculatorOpen = programOpenCalculator,
+            )) {
+            work.openCalculatorTrip(requireNotNull(deviceActive).id)
+        }
+    }
+
     // Keep the restored trip context honest as the trip list loads and changes:
     // a selected trip that was deleted, or a HUD launcher whose trip has ended,
     // is dropped here rather than left holding the screen awake for a workflow
