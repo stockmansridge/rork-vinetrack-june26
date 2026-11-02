@@ -482,7 +482,7 @@ final class TripSyncService {
               (try? store.tripDeletionJournal.isCancelled(id)) == false,
               !TripCancellationIntentStore.shared.blocksReplay(tripId: id) else { return false }
         do {
-            guard let row = try await repository.fetchTripForOccurrenceStart(tripId: id, vineyardId: selected),
+            guard let row = try await SupabaseTripSyncRepository().fetchTripForOccurrenceStart(tripId: id, vineyardId: selected),
                   row.id == id, row.vineyardId == selected, row.deletedAt == nil,
                   row.endTime == local.endTime, row.isActive == false,
                   store.currentUserIdProvider?() == owner,
