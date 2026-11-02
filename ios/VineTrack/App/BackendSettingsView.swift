@@ -710,6 +710,11 @@ struct BackendSettingsView: View {
     private var systemAdminSection: some View {
         Section {
             NavigationLink {
+                SyncDiagnosticsView()
+            } label: {
+                SettingsRow(title: "Export Full Diagnostic Log", subtitle: "Read-only sync history and support report", symbol: "doc.zipper", color: .purple)
+            }
+            NavigationLink {
                 PerformanceDiagnosticsView()
             } label: {
                 SettingsRow(
