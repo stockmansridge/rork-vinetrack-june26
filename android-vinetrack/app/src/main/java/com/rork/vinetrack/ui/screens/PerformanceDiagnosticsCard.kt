@@ -3,6 +3,7 @@ package com.rork.vinetrack.ui.screens
 import android.content.Intent
 import androidx.core.content.FileProvider
 import java.io.File
+import java.util.UUID
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,8 +32,8 @@ internal fun PerformanceDiagnosticsCard(vm: AppViewModel, modifier: Modifier = M
         VineyardCard {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Performance Diagnostics")
-                Text("Full Sync Diagnostic Log")
-                Text("Creates a read-only JSON snapshot of current sync queue counts, read timestamps and safe event history. Does not retry or modify data.")
+                Text("Sync Support Snapshot")
+                Text("Exports selected-vineyard in-memory counts, read timestamps and scoped event codes. Queue / server receipts require additional instrumentation.")
                 Button(enabled = !busy, onClick = {
                     busy = true
                     message = null
@@ -43,21 +44,47 @@ internal fun PerformanceDiagnosticsCard(vm: AppViewModel, modifier: Modifier = M
                         } else {
                             runCatching {
                                 val folder = File(context.cacheDir, "exports").apply { mkdirs() }
-                                val file = File(folder, "VineTrack-Sync-Support-Android.json")
+                                // The URI is unique for each report: a previously
+                                // shared URI cannot be reused to read a later export.
+                                val authority = "${context.packageName}.fileprovider"
+                                val prefix = "VineTrack-Sync-Support-Snapshot-"
+                                val now = System.currentTimeMillis()
+                                folder.listFiles()?.filter {
+                                    it.isFile && it.name.startsWith(prefix) && it.extension == "json"
+                                }?.forEach { old ->
+                                    if (now - old.lastModified() > 24L * 60L * 60L * 1000L) {
+                                        runCatching {
+                                            context.revokeUriPermission(
+                                                FileProvider.getUriForFile(context, authority, old),
+                                                Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        }
+                                        old.delete()
+                                    }
+                                }
+                                val file = File(folder, "$prefix${UUID.randomUUID()}.json")
                                 file.writeText(report, Charsets.UTF_8)
-                                val uri = FileProvider.getUriForFile(context,
-                                    "${context.packageName}.fileprovider", file)
+                                folder.listFiles()?.filter {
+                                    it.isFile && it.name.startsWith(prefix) && it.extension == "json"
+                                }?.sortedByDescending { it.lastModified() }?.drop(3)?.forEach { old ->
+                                    runCatching {
+                                        context.revokeUriPermission(
+                                            FileProvider.getUriForFile(context, authority, old),
+                                            Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    old.delete()
+                                }
+                                val uri = FileProvider.getUriForFile(context, authority, file)
                                 context.startActivity(Intent.createChooser(
                                     Intent(Intent.ACTION_SEND).apply {
                                         type = "application/json"
                                         putExtra(Intent.EXTRA_STREAM, uri)
                                         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }, "Share Full Diagnostic Log"))
+                                    }, "Share Sync Support Snapshot"))
                             }.onFailure { message = "Unable to create or share the diagnostic file." }
                         }
                     }
-                }) { Text(if (busy) "Verifying…" else "Export Full Diagnostic Log") }
-                Text("Sensitive retained recovery evidence is not included. Export contains no credentials, raw server responses or operation payloads.")
+                }) { Text(if (busy) "Verifying…" else "Export Sync Support Snapshot") }
+                Text("Reports are unique files. Expired exports are revoked and removed during subsequent exports; Android may also clear its cache. No raw recovery evidence is included.")
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Capture performance timings", modifier = Modifier.weight(1f))
                     Switch(checked = enabled, enabled = !busy, onCheckedChange = { requested ->
