@@ -117,6 +117,7 @@ final class SystemAdminService {
     }
 
     func clearOnSignOut() {
+        SyncDiagnosticHistory.clear()
         PerformanceCapture.shared.revoke()
         isSystemAdmin = false
         flags = [:]
