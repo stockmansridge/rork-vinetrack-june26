@@ -20,12 +20,23 @@ struct TripClosureSection: View {
             let local = TripClosureStatus.evaluate(current)
             let stillVerified = verifiedAgainst == current && verifiedTrip == trip
             let shown = stillVerified ? (verified ?? local) : local
+            // A fresh server-end read is useful even while the original local
+            // upload receipt remains pending. Do not turn this into CLOSED_SYNCED.
+            let serverEndConfirmed = stillVerified && lastInput?.evidence == .freshRead &&
+                lastInput?.serverIsActive == false &&
+                lastInput?.serverEndTime == trip.endTime
             Group {
                 Section {
-                    Label(title(shown, isVerified: stillVerified && verified != nil), systemImage: symbol(shown.state))
+                    Label(serverEndConfirmed && shown.state == .localEndPending
+                          ? "Trip end confirmed on server · original local sync pending"
+                          : title(shown, isVerified: stillVerified && verified != nil),
+                          systemImage: symbol(shown.state))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(tint(shown.state))
-                    Text(detail(shown.state)).font(.caption).foregroundStyle(.secondary)
+                    Text(serverEndConfirmed && shown.state == .localEndPending
+                         ? "This exact Trip end exists on the server. The original phone's local upload and dependent-record receipts are still being reconciled; nothing was re-uploaded, erased or marked fully synced."
+                         : detail(shown.state))
+                        .font(.caption).foregroundStyle(.secondary)
                     Text("Status: \(shown.state.rawValue)").font(.caption2).foregroundStyle(.secondary)
                     Button {
                         Task { await verify() }
@@ -45,6 +56,14 @@ struct TripClosureSection: View {
                 } header: {
                     Text("Sync status")
                 }
+            }
+            .task(id: trip.id) {
+                // A one-time read-only check when an ended Trip is opened.
+                // The explicit button remains available for another check.
+                // Never replay, acknowledge or delete historical queue entries.
+                guard store.selectedVineyardId == trip.vineyardId,
+                      NetworkMonitor.shared.isOnline else { return }
+                await verify()
             }
             .onChange(of: current) { _, _ in
                 verified = nil; lastInput = nil; verifiedAgainst = nil; verifiedTrip = nil
