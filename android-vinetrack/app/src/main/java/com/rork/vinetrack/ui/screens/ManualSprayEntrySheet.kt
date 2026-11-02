@@ -382,6 +382,18 @@ fun ManualSprayEntrySheet(
                                         message = "The manual spray remains retained or requires verification. Do not make another entry; check Sync status."
                                     }
                                 } catch (error: Exception) {
+                                    if (error is com.rork.vinetrack.data.ManualSprayMutationException &&
+                                        vm.pendingManualSprayOperations().none {
+                                            it.kind == com.rork.vinetrack.data.PendingManualSprayKind.SAVE &&
+                                            it.payload.vineyardId == vineyardId &&
+                                            it.payload.manualEntryId == candidate.manualEntryId
+                                        }) {
+                                        submissionGuard.clearIfMatching(verifiedOwnerId, vineyardId,
+                                            candidate.manualEntryId)
+                                        awaitingServerConfirmation = false
+                                        message = "The server rejected this application. Review the original record before submitting corrected details."
+                                        return@launch
+                                    }
                                     // Explicit local persistence failure occurs
                                     // before the coordinator sends a request.
                                     if (error is IllegalStateException &&
