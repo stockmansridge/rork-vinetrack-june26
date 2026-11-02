@@ -594,13 +594,23 @@ final class TripSyncService {
             let held = max(retained.total, metadata.pendingDeletes.count)
             let unresolved = max(held, scoped.unresolvedCount)
             if scoped.selectedFailedCount > 0 {
-                syncStatus = .failure("This vineyard has \(scoped.selectedFailedCount) failed Trip upload(s). Original evidence is retained; finished Trips will not be reopened.")
+                errorMessage = "This vineyard has \(scoped.selectedFailedCount) failed Trip upload(s). Original evidence is retained; finished Trips will not be reopened."
+                syncStatus = .failure(errorMessage ?? "Current-vineyard Trip upload held.")
                 return
             }
             metadata.setLastSync(Date(), for: vineyardId)
             if unresolved > 0 {
                 let queueText = "\(scoped.selectedQueuedCount) Trip upload(s) in this vineyard, \(scoped.outsideSelectedQueuedCount) in other or unidentified original scopes"
-                errorMessage = "Trip reconciliation remains held (\(queueText)). A completed download is not an upload acknowledgement. \(retained.summary ?? "Original Trip operations are retained for individual review.")"
+                if TripSyncHoldPresentation.needsCurrentVineyardAttention(
+                    selectedQueuedCount: scoped.selectedQueuedCount, currentRetainedCount: retained.total
+                ) {
+                    errorMessage = "Trip reconciliation remains held (\(queueText)). A completed download is not an upload acknowledgement. \(retained.summary ?? "Original Trip operations are retained for individual review.")"
+                } else {
+                    // Protected foreign/unattributed legacy IDs still prevent a
+                    // GLOBAL upload-cleared receipt and keep status .held.
+                    // They are not a failed write for this selected vineyard.
+                    errorMessage = nil
+                }
                 syncStatus = .held(unresolved)
             } else {
                 lastSyncDate = Date()
