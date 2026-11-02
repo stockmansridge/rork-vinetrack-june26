@@ -3369,8 +3369,14 @@ private fun StartTripSheet(
             seedingDetails = seedingDetails,
         ) { ok ->
             saving = false
-            if (ok) vm.activeTripIdOrNull()?.let(onStarted)
-            else startError = vm.ui.value.tripError ?: "Couldn't start the trip."
+            if (ok) {
+                // The Start callback can arrive before the active Trip StateFlow
+                // has published its ID. Navigate immediately when available;
+                // otherwise dismiss the sheet and let MainScaffold's guarded
+                // device-owned active-ID handoff open the live HUD once loaded.
+                val startedId = vm.activeTripIdOrNull() ?: vm.ui.value.activeTrip?.id
+                if (startedId != null) onStarted(startedId) else onDismiss()
+            } else startError = vm.ui.value.tripError ?: "Couldn't start the trip."
         }
     }
 
