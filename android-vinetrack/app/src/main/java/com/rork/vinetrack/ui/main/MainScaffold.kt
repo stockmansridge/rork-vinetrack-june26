@@ -191,17 +191,34 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
     // a selected trip that was deleted, or a HUD launcher whose trip has ended,
     // is dropped here rather than left holding the screen awake for a workflow
     // that is no longer on screen. Only IDs cross this boundary.
+    // The orange Live card reads state.activeTrip, which can arrive before
+    // state.trips. The work-context reconciliation must recognise that same
+    // locally active ID too; otherwise an authoritative but stale Trips list
+    // can discard a correctly navigated map destination.
+    val liveSelectedVineyardTrip = state.activeTrip?.takeIf {
+        it.vineyardId == state.selectedVineyardId &&
+            it.isActive && it.endTime.isNullOrBlank() &&
+            it.id !in state.locallyEndedTripIds &&
+            it.id !in state.locallyDeletedTripIds
+    }
     val tripsKnowledge = remember(
         state.trips,
         state.tripsListKnowledge,
         state.locallyEndedTripIds,
         state.locallyDeletedTripIds,
+        liveSelectedVineyardTrip?.id,
     ) {
+        val activeIds = state.trips
+            .filter { it.isActive && it.endTime.isNullOrBlank() && it.id !in state.locallyEndedTripIds }
+            .mapTo(mutableSetOf()) { it.id }
+        val knownIds = state.trips.mapTo(mutableSetOf()) { it.id }
+        liveSelectedVineyardTrip?.id?.let { liveId ->
+            knownIds.add(liveId)
+            activeIds.add(liveId)
+        }
         TripsKnowledge(
-            knownIds = state.trips.mapTo(mutableSetOf()) { it.id },
-            activeIds = state.trips
-                .filter { it.isActive && it.id !in state.locallyEndedTripIds }
-                .mapTo(mutableSetOf()) { it.id },
+            knownIds = knownIds,
+            activeIds = activeIds,
             // Provenance travels with the ids: an empty list from a successful
             // server read clears a stale selection, an empty list that simply
             // hasn't loaded yet does not.
