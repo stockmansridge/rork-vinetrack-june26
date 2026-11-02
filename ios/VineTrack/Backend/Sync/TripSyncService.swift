@@ -1301,8 +1301,21 @@ final class TripSyncService {
             // Clear only the *same* original queued Trip after independent
             // readback and a consistent scope. Unattributed/global queue IDs
             // and all local source journals remain untouched.
-            metadata.clearDirty([backendTrip.id])
-            SyncIssueCenter.shared.clearIssues([backendTrip.id])
+            if wasQueued {
+                do {
+                    try metadata.acknowledgeVerifiedCompleted(backendTrip.id)
+                    SyncIssueCenter.shared.clearIssues([backendTrip.id])
+                } catch {
+                    // A server match without durable on-device acknowledgement
+                    // is still pending. Keep the original failed queue and
+                    // avoid a false green state or loss after cold restart.
+                    errorMessage = "TRIP_VERIFIED_END_RECEIPT_PERSIST_FAILED: original queue retained."
+                    syncStatus = .failure(errorMessage ?? "Trip receipt could not be saved.")
+                }
+            } else {
+                metadata.clearDirty([backendTrip.id])
+                SyncIssueCenter.shared.clearIssues([backendTrip.id])
+            }
         }
     }
 
@@ -1482,6 +1495,18 @@ final class TripSyncMetadata {
         // deleting a row is not an acknowledgement of any queued edit.
         state.pendingDeletes[id] = date
         save()
+    }
+
+    /// Only for an independently verified and accepted terminal Trip.
+    /// Persist the exact-ID acknowledgement before updating in-memory state;
+    /// a disk-full/interrupted write must never pretend the old queue cleared.
+    func acknowledgeVerifiedCompleted(_ id: UUID) throws {
+        guard state.pendingUpserts[id] != nil else { return }
+        var next = state
+        next.pendingUpserts.removeValue(forKey: id)
+        next.failedUpserts.remove(id)
+        try persistence.saveOrThrow(next, key: key)
+        state = next
     }
 
     func clearDirty(_ ids: [UUID]) {
