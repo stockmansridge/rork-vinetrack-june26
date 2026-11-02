@@ -93,6 +93,25 @@ final class TripQueuedUploadScopeTests: XCTestCase {
             excludingActive: selectedTrip.id).isEmpty)
     }
 
+    func testForeignLegacyTripHoldIsNotASelectedVineyardErrorOrFullReceipt() {
+        // Historical queue IDs remain in the global pending count and are
+        // never re-scoped or cleared merely to make a red banner disappear.
+        let vineyard = UUID(), other = UUID(), oldId = UUID()
+        let summary = TripQueuedScopeSummary.evaluate(
+            queuedIds: [oldId], failedIds: [oldId],
+            selectedVineyardId: vineyard, visibleTripVineyards: [oldId: other])
+        XCTAssertEqual(summary.unresolvedCount, 1)
+        XCTAssertEqual(summary.outsideSelectedQueuedCount, 1)
+        XCTAssertEqual(summary.selectedQueuedCount, 0)
+        XCTAssertEqual(summary.selectedFailedCount, 0)
+        XCTAssertFalse(TripSyncHoldPresentation.needsCurrentVineyardAttention(
+            selectedQueuedCount: summary.selectedQueuedCount, currentRetainedCount: 0))
+        XCTAssertTrue(TripSyncHoldPresentation.needsCurrentVineyardAttention(
+            selectedQueuedCount: 1, currentRetainedCount: 0))
+        XCTAssertTrue(TripSyncHoldPresentation.needsCurrentVineyardAttention(
+            selectedQueuedCount: 0, currentRetainedCount: 1))
+    }
+
     func testCompletedServerTripReceiptRequiresExactOriginalEndAndTankEvidence() {
         let vineyard = UUID()
         let end = Date(timeIntervalSince1970: 1_792_000_000)
