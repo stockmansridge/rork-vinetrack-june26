@@ -1,10 +1,7 @@
 name: Issue 43 Android RED (preinstalled SDK, isolated branch)
 
 on:
-  push:
-    branches: [issue43-tank-actual-p0]
-    paths:
-      - '.github/workflows/issue43-android-red-v2.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -37,13 +34,35 @@ jobs:
           echo "Using SDK manager at $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Supply CI-only unconfigured Rork generated Config stub
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt
+          if [ ! -f "$TARGET" ]; then
+            mkdir -p "$(dirname "$TARGET")"
+            cat > "$TARGET" <<'KOTLIN'
+          package com.rork.vinetrack
+          // TEST RUNNER ONLY: stand-in for Rork's generated, untracked Config.kt.
+          // No credentials; no production source or release artefacts are changed.
+          object Config {
+              val allValues: Map<String, String> = emptyMap()
+          }
+          KOTLIN
+            echo "GENERATED_TEST_ONLY_CONFIG_STUB=true"
+          else
+            echo "RORK_CONFIG_SOURCE_PRESENT=true"
+          fi
       - name: Run only native Issue 43 tests; assertion failures are expected RED
         working-directory: android-vinetrack
+        shell: bash
         run: |
+          set -o pipefail
           chmod +x ./gradlew
-          ./gradlew :app:testDebugUnitTest --no-daemon --console=plain \
+          ./gradlew :app:testDebugUnitTest --no-daemon --console=plain --stacktrace \
             --tests 'com.rork.vinetrack.data.SprayTankActualTest.issue43*' \
-            --tests 'com.rork.vinetrack.data.TankDependencyPhaseBTest.issue43*'
+            --tests 'com.rork.vinetrack.data.TankDependencyPhaseBTest.issue43*' \
+            2>&1 | tee "$RUNNER_TEMP/issue43-android-gradle.log"
       - name: Preserve original Gradle XML reports
         uses: actions/upload-artifact@v4
         if: always()
@@ -52,5 +71,6 @@ jobs:
           path: |
             android-vinetrack/app/build/test-results/testDebugUnitTest/
             android-vinetrack/app/build/reports/tests/testDebugUnitTest/
+            ${{ runner.temp }}/issue43-android-gradle.log
           if-no-files-found: warn
           retention-days: 7
