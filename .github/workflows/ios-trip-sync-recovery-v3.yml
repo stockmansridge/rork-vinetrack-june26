@@ -62,6 +62,7 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/iOSTripRecoveryV3.xcresult" \
             -parallel-testing-enabled NO \
             -only-testing:VineTrackTests/TripQueuedUploadScopeTests/testCompletedServerTripReceiptRequiresExactOriginalEndAndTankEvidence \
+            -only-testing:VineTrackTests/TripQueuedUploadScopeTests/testForeignLegacyTripHoldIsNotASelectedVineyardErrorOrFullReceipt \
             -only-testing:VineTrackTests/TripOccurrenceJournalTests/testBackendUpgradeRetriesUppercaseOriginalHeldCreateWithoutChangingFrozenIDs \
             -only-testing:VineTrackTests/TripOccurrenceJournalTests/testBackendUpgradeRefusesChangedLocalCoverageAndKeepsHold \
             INFOPLIST_KEY_VineTrackSourceRevision="${{ github.sha }}" \
