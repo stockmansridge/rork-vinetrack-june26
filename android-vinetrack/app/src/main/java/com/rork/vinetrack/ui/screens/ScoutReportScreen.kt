@@ -193,7 +193,7 @@ private fun WeatherReportCard(visit: ScoutVisit, state: AppUiState, modifier: Mo
 }
 
 @Composable
-fun ScoutWorkspaceMap(visit: ScoutVisit?, blocks: List<Paddock>, pins: List<Pin>, photoBytes: (String) -> ByteArray?, growthRecords: List<GrowthStageRecord>, locationBlocks: List<Paddock>, currentFix: com.rork.vinetrack.data.insights.ScoutPhotoFix? = null, onBlockSelected: ((String) -> Unit)? = null, modifier: Modifier = Modifier, onGesture: (Boolean) -> Unit = {}) {
+fun ScoutWorkspaceMap(visit: ScoutVisit?, blocks: List<Paddock>, pins: List<Pin>, photoBytes: (String) -> ByteArray?, growthRecords: List<GrowthStageRecord>, locationBlocks: List<Paddock>, currentFix: com.rork.vinetrack.data.insights.ScoutPhotoFix? = null, onBlockSelected: ((String) -> Unit)? = null, modifier: Modifier = Modifier, onGesture: (Boolean) -> Unit = {}, showReferences: Boolean = true) {
     var selected by remember { mutableStateOf<ScoutMapMarker?>(null) }
     val locations = visit?.let { ScoutReportPresentation.locations(it, locationBlocks, growthRecords, pins) }
     val markers = locations?.let(::reportMarkers).orEmpty()
@@ -206,14 +206,17 @@ fun ScoutWorkspaceMap(visit: ScoutVisit?, blocks: List<Paddock>, pins: List<Pin>
         vineyardBlocks.firstOrNull { it.id == selectedBlock }?.let { block ->
             ScoutBlockDetails(block)
         }
-        if (locations != null) {
+        if (locations != null && showReferences) {
+            // Full report keeps audit-grade GPS/observation/photo references;
+            // the Scout Trip overview hides this long technical list unless
+            // the operator opens the full report. Data is never discarded.
             LocationReferences(markers) { selected = it }
             locations.boundaryUnavailable.forEach { Text(it, fontSize = 12.sp) }
             if (locations.unavailable.isNotEmpty()) {
                 Text("Location unavailable", fontWeight = FontWeight.Bold)
                 locations.unavailable.forEach { Text(it, fontSize = 12.sp) }
             }
-        } else if (currentFix == null) {
+        } else if (locations == null && currentFix == null) {
             Text("Location unavailable — choose a block manually.", fontSize = 12.sp)
         }
     }
