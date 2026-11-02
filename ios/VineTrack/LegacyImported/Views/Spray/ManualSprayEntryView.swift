@@ -19,6 +19,7 @@ struct ManualSprayEntryView: View {
     @State private var members: [BackendVineyardMember] = []
     @State private var isReviewing: Bool = false
     @State private var isSaving: Bool = false
+    @State private var awaitingServerConfirmation: Bool = false
     @State private var message: String?
     @State private var loadError: String?
 
@@ -33,6 +34,12 @@ struct ManualSprayEntryView: View {
         _expectedVersion = State(initialValue: existingRecord?.syncVersion ?? 0)
         _isLoadingExisting = State(initialValue: existingRecord != nil)
         _savedResponse = State(initialValue: nil)
+    }
+
+    private var reviewStatus: ManualSprayReviewStatus {
+        if savedResponse != nil { return .serverConfirmed }
+        if awaitingServerConfirmation { return .locallySavedAwaitingServer }
+        return .reviewOnly
     }
 
     var body: some View {
@@ -58,14 +65,18 @@ struct ManualSprayEntryView: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button(isReviewing ? "Save manual spray" : "Review") {
-                    if isReviewing { Task { await save() } } else { validateForReview() }
+                if savedResponse != nil || awaitingServerConfirmation {
+                    Button(savedResponse != nil ? "Done" : "Close") { dismiss() }
+                } else {
+                    Button(isReviewing ? "Save manual spray" : "Review") {
+                        if isReviewing { Task { await save() } } else { validateForReview() }
+                    }
+                    .disabled(isSaving || isLoadingExisting || loadError != nil || accessControl.loadedVineyardId != vineyardId || !accessControl.canManageManualSprays)
                 }
-                .disabled(isSaving || isLoadingExisting || loadError != nil || accessControl.loadedVineyardId != vineyardId || !accessControl.canManageManualSprays)
             }
         }
         .onChange(of: draft) { _, updated in
-            if existingRecord == nil && savedResponse == nil { ManualSprayDraftStore.shared.save(updated) }
+            if existingRecord == nil && savedResponse == nil && !awaitingServerConfirmation { ManualSprayDraftStore.shared.save(updated) }
         }
         .task {
             members = (try? await teamRepository.listMembers(vineyardId: vineyardId)) ?? []
@@ -153,7 +164,7 @@ struct ManualSprayEntryView: View {
     }
 
     @ViewBuilder private var reviewSections: some View {
-        Section { Label("Manual entry", systemImage: "pencil").foregroundStyle(.purple); LabeledContent("Status", value: "Completed") }
+        Section { Label("Manual entry", systemImage: "pencil").foregroundStyle(.purple); LabeledContent("Status", value: reviewStatus.label) }
         Section("Application") { LabeledContent("Reference", value: draft.reference); LabeledContent("Start", value: fmt.formatDateTime(draft.startUtc)); LabeledContent("End", value: fmt.formatDateTime(draft.endUtc)); LabeledContent("Timezone", value: draft.vineyardTimeZone) }
         Section("Summary") { LabeledContent("Blocks", value: "\(draft.blocks.count)"); LabeledContent("Tanks", value: "\(draft.tanks.count)"); LabeledContent("Actual water", value: fmt.formatVolume(litres: draft.tanks.reduce(0) { $0 + $1.waterVolumeLitres })) }
         if let savedResponse {
@@ -162,6 +173,12 @@ struct ManualSprayEntryView: View {
                 Text("This lookup is optional. An unavailable station never changes the saved application or replaces manual observations.").font(.caption).foregroundStyle(.secondary)
             }
             Button("Done") { dismiss() }
+        } else if awaitingServerConfirmation {
+            Section {
+                Text("This application has been retained on this device but is not yet server-confirmed. Do not create a second application; check Sync status.")
+                    .foregroundStyle(.orange)
+                Button("Close — awaiting sync") { dismiss() }
+            }
         } else {
             Button("Back to edit") { isReviewing = false }
         }
@@ -211,7 +228,9 @@ struct ManualSprayEntryView: View {
     }
 
     private func save() async {
-        guard loadError == nil, accessControl.loadedVineyardId == vineyardId, accessControl.canManageManualSprays else { return }
+        guard !awaitingServerConfirmation, savedResponse == nil,
+              loadError == nil, accessControl.loadedVineyardId == vineyardId,
+              accessControl.canManageManualSprays else { return }
         isSaving = true
         defer { isSaving = false }
         do {
@@ -220,8 +239,13 @@ struct ManualSprayEntryView: View {
                 expectedVersion = response.syncVersion
                 savedResponse = response
                 ManualSprayDraftStore.shared.clear(vineyardId: vineyardId)
-                message = "Manual spray saved. Historical station weather is optional."
-            } else { message = "Saved on this device — awaiting sync" }
+                message = "Manual spray confirmed by the server. Historical station weather is optional."
+            } else {
+                // The coordinator retains the original immutable operation.
+                // Never offer a second Save while a receipt is outstanding.
+                awaitingServerConfirmation = true
+                message = "Saved on this device, but not yet confirmed by the server. Do not enter this application a second time. Check Sync status."
+            }
         } catch { message = error.localizedDescription }
     }
 
