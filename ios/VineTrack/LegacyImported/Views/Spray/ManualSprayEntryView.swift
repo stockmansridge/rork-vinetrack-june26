@@ -310,6 +310,7 @@ struct ManualSprayEntryView: View {
         let validated: ManualSprayPayload
         do { validated = try draft.validated() }
         catch { message = error.localizedDescription; return }
+        if existingRecord == nil { ManualSprayDraftStore.shared.save(validated) }
         guard submissionGuard.mark(ownerId: ownerId, vineyardId: vineyardId,
                                    manualEntryId: validated.manualEntryId) else {
             message = "An earlier spray submission could not be safely reconciled. Check Sync status before saving again."
