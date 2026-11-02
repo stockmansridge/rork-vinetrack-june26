@@ -112,10 +112,44 @@ final class TripQueuedUploadScopeTests: XCTestCase {
         XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(
             local: original, remote: differentVineyard), "TRIP_ORIGINAL_IDENTITY_MISMATCH")
 
+        // Real historical server JSON loses sub-millisecond Date precision.
+        // That loss is not a new tank event; all other evidence must still match.
+        var roundedTank = original
+        roundedTank.tankSessions[0].startTime = session.startTime.addingTimeInterval(0.0004)
+        roundedTank.tankSessions[0].endTime = end.addingTimeInterval(-0.0004)
+        XCTAssertTrue(TankSessionReceiptMatch.equivalent(
+            local: original.tankSessions[0], remote: roundedTank.tankSessions[0]))
+        XCTAssertNil(CompletedTripReceiptAdmission.holdReason(
+            local: original, remote: roundedTank))
+
+        // Meaningful differences must remain held, even with matching IDs.
         var changedTank = original
         changedTank.tankSessions[0].endTime = end.addingTimeInterval(-120)
         XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(
-            local: original, remote: changedTank), "TRIP_LOCAL_TANK_SESSION_DIFFERS")
+            local: original, remote: changedTank), "TRIP_LOCAL_TANK_END_TIME_DIFFERS_MINUTES")
+
+        var changedSubsecond = original
+        changedSubsecond.tankSessions[0].startTime =
+            session.startTime.addingTimeInterval(0.05)
+        XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(
+            local: original, remote: changedSubsecond), "TRIP_LOCAL_TANK_START_TIME_DIFFERS_SUBSECOND")
+
+        var missingEnd = original
+        missingEnd.tankSessions[0].endTime = nil
+        XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(
+            local: original, remote: missingEnd), "TRIP_LOCAL_TANK_END_TIME_DIFFERS_PRESENCE")
+
+        var changedRoutes = original
+        changedRoutes.tankSessions[0].pathsCovered = [13.5]
+        XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(
+            local: original, remote: changedRoutes), "TRIP_LOCAL_TANK_PATHS_DIFFER")
+
+        var differentSessionID = original
+        differentSessionID.tankSessions = [TankSession(
+            tankNumber: 1, startTime: session.startTime, endTime: session.endTime,
+            pathsCovered: session.pathsCovered)]
+        XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(
+            local: original, remote: differentSessionID), "TRIP_LOCAL_TANK_SESSION_NOT_ON_SERVER")
 
         var reopenedRemote = original
         reopenedRemote.isActive = true
