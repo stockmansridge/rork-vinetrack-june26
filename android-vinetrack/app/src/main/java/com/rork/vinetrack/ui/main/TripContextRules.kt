@@ -111,3 +111,33 @@ object TripContextRules {
         return TripContext(selectedTripId, hudLauncherMode)
     }
 }
+
+/**
+ * A newly started, device-owned Trip opens its live HUD immediately rather
+ * than leaving the operator on a Trips list with an Active Trip banner.
+ *
+ * This is a navigation-only fallback for when the Start callback occurs
+ * before the active Trip becomes visible in the state flow. It never creates,
+ * activates, uploads or resumes a Trip, and does not steal navigation from
+ * Home, a different vineyard, an already selected Trip or other tools.
+ * Call only when the observed active-ID changes; returning Back to the
+ * list must remain possible without an automatic bounce.
+ */
+object TripStartNavigation {
+    fun shouldOpenNewlyActive(
+        activeTripId: String?,
+        activeTripVineyardId: String?,
+        deviceOwnedTripId: String?,
+        selectedVineyardId: String?,
+        userId: String?,
+        selectedTripId: String?,
+        tab: MainTab,
+        tool: ToolRoute?,
+        calculatorOpen: Boolean,
+    ): Boolean {
+        if (userId == null || selectedVineyardId == null || activeTripId.isNullOrBlank()) return false
+        if (activeTripId != deviceOwnedTripId || activeTripVineyardId != selectedVineyardId) return false
+        if (selectedTripId != null || tool != null) return false
+        return tab == MainTab.Trip || (tab == MainTab.Program && calculatorOpen)
+    }
+}
