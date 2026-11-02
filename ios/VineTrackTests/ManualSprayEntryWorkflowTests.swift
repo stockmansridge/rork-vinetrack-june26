@@ -140,7 +140,8 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
                 $0.kind == .save && $0.payload.vineyardId == payload.vineyardId
             },
             hasSubmissionMarker: marker.submittedId(ownerId: owner,
-                                                     vineyardId: payload.vineyardId) != nil
+                                                     vineyardId: payload.vineyardId,
+                                                     manualEntryId: payload.manualEntryId) != nil
         )
         XCTAssertEqual(pendingStatus, .locallySavedAwaitingServer)
         XCTAssertFalse(pendingStatus.canOfferSave)
@@ -153,7 +154,8 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
             serverConfirmed: false,
             hasRetainedSave: false,
             hasSubmissionMarker: marker.submittedId(ownerId: owner,
-                                                     vineyardId: payload.vineyardId) != nil
+                                                     vineyardId: payload.vineyardId,
+                                                     manualEntryId: payload.manualEntryId) != nil
         )
         XCTAssertEqual(afterBackgroundAck, .verificationRequired)
         XCTAssertFalse(afterBackgroundAck.canOfferSave)
