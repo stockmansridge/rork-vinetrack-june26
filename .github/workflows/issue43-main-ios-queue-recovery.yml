@@ -10,6 +10,7 @@ on:
       - 'ios/VineTrack/LegacyImported/Views/Trips/TripView.swift'
       - 'ios/VineTrackTests/SprayOccurrenceRecoveryHotfixTests.swift'
       - 'ios/VineTrack/Backend/Sync/TripSyncService.swift'
+      - 'ios/VineTrack/Backend/Sync/SprayRecordSyncService.swift'
       - 'ios/VineTrack/Backend/Sync/SprayTankActualStore.swift'
       - 'ios/VineTrackTests/TripQueuedUploadScopeTests.swift'
       - 'ios/VineTrack/Backend/Sync/TrackedSprayCompletionSync.swift'
