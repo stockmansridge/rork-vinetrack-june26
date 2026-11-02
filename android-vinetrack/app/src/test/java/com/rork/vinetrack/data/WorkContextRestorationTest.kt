@@ -262,12 +262,14 @@ class WorkContextRestorationTest {
         // Trip creation succeeded locally; a remote list from BEFORE the Start
         // must not evict the exact new destination while the state flow catches up.
         work.openStartedTrip("new-trip")
+        assertEquals("new-trip", work.lastPresentedActiveTripId())
         work.reconcileTripContext(staleList)
         assertEquals(MainSurface.TripTab("new-trip", null), MainSurface.of(work.snapshot()))
         assertEquals("new-trip", handle.get<String>("work_pending_started_trip"))
 
         // Activity recreation keeps the exact target and the handoff latch.
         val restored = recreate(handle)
+        assertEquals("new-trip", restored.lastPresentedActiveTripId())
         restored.reconcileTripContext(staleList)
         assertEquals("new-trip", restored.selectedTripId.value)
 
@@ -280,6 +282,14 @@ class WorkContextRestorationTest {
         restored.setSelectedTripId(null) // operator consciously pressed Back
         restored.reconcileTripContext(liveList)
         assertNull(restored.selectedTripId.value)
+        assertEquals("new-trip", restored.lastPresentedActiveTripId())
+        assertFalse(TripStartNavigation.shouldOpenUnseenActive(
+            lastOpenedTripId = recreate(handle).lastPresentedActiveTripId(),
+            activeTripId = "new-trip", activeTripVineyardId = "vineyard-a",
+            deviceOwnedTripId = "new-trip", selectedVineyardId = "vineyard-a",
+            userId = "operator", selectedTripId = null, tab = MainTab.Trip,
+            tool = null, calculatorOpen = false,
+        ))
     }
 
     @Test
@@ -320,6 +330,7 @@ class WorkContextRestorationTest {
         work.bindIdentity("operator", "vineyard-b")
         assertNull(work.selectedTripId.value)
         assertNull(handle.get<String>("work_pending_started_trip"))
+        assertNull(work.lastPresentedActiveTripId())
         assertEquals(MainSurface.TripTab(null, null), MainSurface.of(work.snapshot()))
     }
 
