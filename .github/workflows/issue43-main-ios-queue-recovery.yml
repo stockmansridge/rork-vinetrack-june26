@@ -7,6 +7,7 @@ on:
       - 'ios/VineTrack/Backend/Sync/TripQueuedUploadScope.swift'
       - 'ios/VineTrack/Backend/Sync/OccurrenceStartAdmission.swift'
       - 'ios/VineTrack/App/SprayCalculatorView.swift'
+      - 'ios/VineTrack/LegacyImported/Views/Trips/TripView.swift'
       - 'ios/VineTrackTests/SprayOccurrenceRecoveryHotfixTests.swift'
       - 'ios/VineTrack/Backend/Sync/TripSyncService.swift'
       - 'ios/VineTrack/Backend/Sync/SprayTankActualStore.swift'
