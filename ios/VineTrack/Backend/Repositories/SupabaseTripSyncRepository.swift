@@ -1,6 +1,27 @@
 import Foundation
 import Supabase
 
+/// Encode newly planned block UUIDs as canonical lower-case strings. A
+/// persisted occurrence create is immutable and is never passed through this
+/// function again after its journal has been committed.
+nonisolated enum OccurrenceCreateBlockUUID {
+    typealias JSON = TripOccurrenceCoverage.JSON
+
+    static func canonicalize(_ original: [String: JSON]) -> [String: JSON] {
+        var next = original
+        if case .array(let blockIds) = original["paddock_ids"] {
+            next["paddock_ids"] = .array(blockIds.map { value in
+                guard case .string(let raw) = value, let uuid = UUID(uuidString: raw) else { return value }
+                return .string(uuid.uuidString.lowercased())
+            })
+        }
+        if case .string(let raw) = original["paddock_id"], let uuid = UUID(uuidString: raw) {
+            next["paddock_id"] = .string(uuid.uuidString.lowercased())
+        }
+        return next
+    }
+}
+
 final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     private let provider: SupabaseClientProvider
     private let deletionAuthority: VineyardWriteAuthority
@@ -136,17 +157,23 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
         var metadata = try JSONDecoder().decode([String: TripOccurrenceCoverage.JSON].self, from: encoder.encode(trip))
         metadata.removeValue(forKey: "occurrence_coverage")
+        // Swift JSONEncoder serialises UUIDs in upper case, but the deployed
+        // occurrence RPC checks JSON array membership using case-sensitive text.
+        // Canonicalise only NEW requests. Never rewrite a durable original WAL.
+        let canonicalMetadata = OccurrenceCreateBlockUUID.canonicalize(metadata)
         let journal = try TripOccurrenceJournal(scope: .init(ownerId: ownerId.uuidString.lowercased(),
             vineyardId: trip.vineyardId.uuidString.lowercased(), tripId: trip.id.uuidString.lowercased()))
         if let existing = try journal.load() {
             guard let creation = existing.history.first(where: { $0.rpc == "create_trip_with_occurrences_v1" }),
-                  creation.params[occurrence: "p_trip"] == .object(metadata), creation.params[occurrence: "p_coverage"] == coverage else {
+                  (creation.params[occurrence: "p_trip"] == .object(metadata) ||
+                   creation.params[occurrence: "p_trip"] == .object(canonicalMetadata)),
+                  creation.params[occurrence: "p_coverage"] == coverage else {
                 throw TripOccurrenceCoverage.Failure.reconciliation
             }
             return
         }
         try TripDeletionJournal().registerCreation(.init(account: ownerId, vineyard: trip.vineyardId, trip: trip.id))
-        try journal.prepareCreation(trip: .object(metadata), coverage: coverage)
+        try journal.prepareCreation(trip: .object(canonicalMetadata), coverage: coverage)
     }
 
     /// Serial durable action replay. Never converts an occurrence trip into a numeric full-snapshot write.
