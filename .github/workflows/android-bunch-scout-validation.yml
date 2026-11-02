@@ -46,6 +46,21 @@ jobs:
         run: |
           echo "SOURCE_SHA=$(git rev-parse HEAD)"
           test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+      - name: Supply CI-only Rork Config.kt for compilation
+        shell: bash
+        run: |
+          # Rork injects this generated file only in its signed builds.
+          # Empty public values are adequate for native compilation/tests;
+          # this file is temporary and is never committed or packaged for release.
+          CONFIG=android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt
+          if [ ! -f "$CONFIG" ]; then
+            cat > "$CONFIG" <<'KOTLIN'
+          package com.rork.vinetrack
+          object Config {
+              val allValues: Map<String, String> = emptyMap()
+          }
+          KOTLIN
+          fi
       - name: Compile Android and test JVM logic
         working-directory: android-vinetrack
         run: |
