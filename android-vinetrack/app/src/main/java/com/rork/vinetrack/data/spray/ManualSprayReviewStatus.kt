@@ -54,23 +54,32 @@ internal class ManualSpraySubmissionGuard(context: Context) {
         )
     )
 
-    private fun key(ownerId: String, vineyardId: String) = "$ownerId|$vineyardId"
+    private fun legacyKey(ownerId: String, vineyardId: String) = "$ownerId|$vineyardId"
+    private fun key(ownerId: String, vineyardId: String, manualEntryId: String) =
+        "$ownerId|$vineyardId|$manualEntryId"
 
-    fun submittedId(ownerId: String?, vineyardId: String): String? =
-        ownerId?.takeIf { it.isNotBlank() }?.let {
-            prefs.getString(key(it, vineyardId), null)
-        }
+    /** Observe only this exact application, never every spray in the vineyard. */
+    fun submittedId(ownerId: String?, vineyardId: String, manualEntryId: String): String? {
+        if (ownerId.isNullOrBlank() || manualEntryId.isBlank() || vineyardId.isBlank()) return null
+        val active = prefs.getString(key(ownerId, vineyardId, manualEntryId), null)
+            ?: prefs.getString(legacyKey(ownerId, vineyardId), null)
+        return active?.takeIf { it == manualEntryId }
+    }
 
     fun mark(ownerId: String?, vineyardId: String, manualEntryId: String): Boolean {
         if (ownerId.isNullOrBlank() || vineyardId.isBlank() || manualEntryId.isBlank()) return false
-        val existing = submittedId(ownerId, vineyardId)
-        if (existing != null && existing != manualEntryId) return false
-        return prefs.edit().putString(key(ownerId, vineyardId), manualEntryId).commit() &&
-            submittedId(ownerId, vineyardId) == manualEntryId
+        // Other applications have *different* identities and cannot block
+        // this one. Unknown original attempts remain in the preferences file.
+        return prefs.edit().putString(key(ownerId, vineyardId, manualEntryId), manualEntryId).commit() &&
+            submittedId(ownerId, vineyardId, manualEntryId) == manualEntryId
     }
 
     fun clearIfMatching(ownerId: String?, vineyardId: String, manualEntryId: String) {
-        if (ownerId.isNullOrBlank() || submittedId(ownerId, vineyardId) != manualEntryId) return
-        prefs.edit().remove(key(ownerId, vineyardId)).commit()
+        if (ownerId.isNullOrBlank() || submittedId(ownerId, vineyardId, manualEntryId) != manualEntryId) return
+        val edit = prefs.edit().remove(key(ownerId, vineyardId, manualEntryId))
+        if (prefs.getString(legacyKey(ownerId, vineyardId), null) == manualEntryId) {
+            edit.remove(legacyKey(ownerId, vineyardId))
+        }
+        edit.commit()
     }
 }
