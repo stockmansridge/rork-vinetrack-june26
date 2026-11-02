@@ -203,6 +203,10 @@ struct SprayCalculatorView: View {
     @State private var retainedStartRecord: SprayRecord?
     @State private var retainedStartReview: SprayMixReview?
     @State private var hasAttemptedStart = false
+    /// A retained start on overlapping blocks is NOT proof this is the same
+    /// spray. Only the operator may confirm a separate new job; original
+    /// operations are durably held before a new identity is allocated.
+    @State private var showDistinctSprayConfirmation = false
     @State private var savedFeedback: Bool = false
     @State private var pendingLaterSave: (record: SprayRecord, trip: Trip)? = nil
     @State private var errorMessage: String?
@@ -3151,6 +3155,14 @@ struct SprayCalculatorView: View {
             .navigationTitle(guidedInputs.planningIntent == nil ? "Spray Tank Mixing" : "Review Spray Mix")
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(isStartingJob)
+            .confirmationDialog("Start a separate spray?", isPresented: $showDistinctSprayConfirmation, titleVisibility: .visible) {
+                Button("Start separate spray") {
+                    Task { await confirmAndStartJob(distinctWorkConfirmed: true) }
+                }
+                Button("Not now", role: .cancel) {}
+            } message: {
+                Text("A previous Trip on overlapping blocks still has retained start operations. Confirm only if this is a different spraying job. VineTrack will preserve and hold the earlier original operations, not delete or replay them. To resume the old job instead, open its Trip in Trips.")
+            }
         }
     }
 
@@ -4636,7 +4648,7 @@ struct SprayCalculatorView: View {
         }
     }
 
-    private func confirmAndStartJob() async {
+    private func confirmAndStartJob(distinctWorkConfirmed: Bool = false) async {
         guard hasChosenTrackingPattern else {
             errorMessage = "Select a tracking pattern before starting."
             return
@@ -4674,7 +4686,7 @@ struct SprayCalculatorView: View {
         isStartingJob = true
         // Start exactly the reviewed recipe. The tracking service already captures
         // start/hourly weather independently; a weather request must not block Start.
-        finalizeStartFromMixSummary()
+        finalizeStartFromMixSummary(distinctWorkConfirmed: distinctWorkConfirmed)
     }
 
     private var validStartEngineHours: Bool {
@@ -4695,7 +4707,7 @@ struct SprayCalculatorView: View {
             .engineHours
     }
 
-    private func finalizeStartFromMixSummary() {
+    private func finalizeStartFromMixSummary(distinctWorkConfirmed: Bool = false) {
         guard let amounts = enteredInitialActuals, validStartEngineHours,
               SprayStartRateReview.isReviewable(pendingTanks),
               store.selectedVineyardId == reviewedVineyardId, auth.userId == reviewedUserId else {
@@ -4767,7 +4779,12 @@ struct SprayCalculatorView: View {
         let finished: (Bool) -> Void = { success in
             isStartingJob = false
             guard success else {
-                errorMessage = tracking.errorMessage ?? "The original saved spray needs recovery; your actual tank amounts are retained."
+                let requiresDistinctWorkConfirmation = !hasAttemptedStart &&
+                    (tracking.errorMessage?.contains("RETAINED_START_INDEPENDENT_WORK_CONFIRMATION_REQUIRED") == true)
+                errorMessage = requiresDistinctWorkConfirmation
+                    ? "An earlier Trip on these blocks is unresolved. Confirm this is DIFFERENT spraying work to start separately, or open the original Trip in Trips to recover it."
+                    : (tracking.errorMessage ?? "The original saved spray needs recovery; your actual tank amounts are retained.")
+                if requiresDistinctWorkConfirmation { showDistinctSprayConfirmation = true }
                 if !hasAttemptedStart {
                     // A definitive preflight refusal has not prepared a
                     // persistent operation. Keep the text editable for retry.
@@ -4818,6 +4835,7 @@ struct SprayCalculatorView: View {
             startEngineHours: parsedStartEngineHours,
             sprayRecord: record,
             initialTankActuals: amounts,
+            distinctWorkConfirmed: distinctWorkConfirmed,
             onPreparationStarted: { hasAttemptedStart = true },
             onStarted: finished
         )
