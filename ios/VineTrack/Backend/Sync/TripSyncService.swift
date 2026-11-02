@@ -1283,10 +1283,17 @@ final class TripSyncService {
         // Trip, and never silently discard a divergent local branch.
         var reconciliationHold: String? = nil
         let wasQueued = metadata.pendingUpserts[backendTrip.id] != nil
-        if serverCompleted, wasQueued, let local {
-            reconciliationHold = CompletedTripReceiptAdmission.holdReason(local: local, remote: mapped)
-            if reconciliationHold == nil, !retainedUnacknowledgedEvidence {
-                reconciliationHold = await verifyCompletedTripDependents(local: local, remote: mapped, store: store)
+        if serverCompleted, wasQueued {
+            if let local {
+                reconciliationHold = CompletedTripReceiptAdmission.holdReason(local: local, remote: mapped)
+                if reconciliationHold == nil, !retainedUnacknowledgedEvidence {
+                    reconciliationHold = await verifyCompletedTripDependents(local: local, remote: mapped, store: store)
+                }
+            } else {
+                // A server Trip existing with the same UUID cannot attest to a
+                // missing original phone snapshot. Keep the original queued
+                // operation intact for scoped/manual reconciliation.
+                reconciliationHold = "TRIP_ORIGINAL_LOCAL_SNAPSHOT_UNAVAILABLE"
             }
         }
         guard store.currentUserIdProvider?() == auth?.userId,
