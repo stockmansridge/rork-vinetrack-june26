@@ -190,6 +190,28 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         let journal = try TripOccurrenceJournal(scope: .init(ownerId: account.uuidString.lowercased(),
             vineyardId: trip.vineyardId.uuidString.lowercased(), tripId: trip.id.uuidString.lowercased()))
         guard let initial = try journal.load() else { throw TripOccurrenceCoverage.Failure.missing }
+        // The existing Trip-details recovery could retry this exact two-op WAL
+        // after the server's UUID comparison was fixed, but normal Sync could
+        // leave it held indefinitely. A scoped, authenticated read-only check
+        // now unlocks ONLY the original create+activate pair if the server row
+        // is genuinely absent. Journal.release... validates both immutable IDs
+        // and their saved payloads, with no remint, delete or guessed record.
+        if TripOccurrenceJournal.needsOriginalCreationAbsenceCheck(initial) {
+            try VineyardWriteAuthority.shared.requireWrite(vineyardId: trip.vineyardId.uuidString)
+            try deletion.requireNotCancelled(trip.id)
+            let remote = try await fetchTripForOccurrenceStart(tripId: trip.id, vineyardId: trip.vineyardId)
+            let checkedSession = try await provider.client.auth.session
+            guard checkedSession.user.id == account,
+                  checkedSession.refreshToken == session.refreshToken else {
+                throw TripOccurrenceCoverage.Failure.scopeConflict
+            }
+            // A row already on the server is NOT permission to re-create it.
+            // It requires a separate accepted-operation receipt reconciliation.
+            guard remote == nil else { throw TripOccurrenceCoverage.Failure.reconciliation }
+            try deletion.requireNotCancelled(trip.id)
+            try journal.releaseHeldOriginalCreationAfterVerifiedServerAbsence(
+                expectedCoverage: initial.acknowledged)
+        }
         if initial.creationConfirmed != false || !initial.pending.contains(where: { $0.rpc == "create_trip_with_occurrences_v1" }) {
             let recovery = try await occurrenceRequest(rpc: "get_trip_occurrence_recovery_v1", params: .object([
                 "p_trip_id": .string(trip.id.uuidString.lowercased()),
