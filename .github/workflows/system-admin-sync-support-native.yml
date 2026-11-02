@@ -1,0 +1,144 @@
+name: System Admin sync support snapshot native tests (draft PR only)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ios/VineTrack/App/SystemAdminService.swift'
+      - 'ios/VineTrack/App/SyncDiagnosticsView.swift'
+      - 'ios/VineTrack/Backend/Sync/SyncStatusCenter.swift'
+      - 'ios/VineTrackTests/SyncSupportSnapshotScopeTests.swift'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SafeSyncDiagnosticHistory.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/PerformanceDiagnosticsCard.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SafeSyncDiagnosticHistoryTest.kt'
+      - '.github/workflows/system-admin-sync-support-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-support-snapshot-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: Android diagnostic source and native JVM tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify source and toolchain
+        run: |
+          set -euo pipefail
+          echo "EXPECTED=${{ github.event.pull_request.head.sha || github.sha }}"
+          echo "ACTUAL=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install SDK using existing runner manager
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | head -n 1)
+          test -n "$SDKMANAGER" || { echo "::error::Missing SDK manager"; exit 2; }
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Isolated generated Config substitute (never committed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt
+          if [ ! -f "$TARGET" ]; then
+            mkdir -p "$(dirname "$TARGET")"
+            cat > "$TARGET" <<'KOTLIN'
+          package com.rork.vinetrack
+          object Config {
+              val allValues: Map<String, String> = emptyMap()
+          }
+          KOTLIN
+            echo "CI_ONLY_GENERATED_CONFIG_STUB=true"
+          fi
+      - name: Execute native scope assertions
+        working-directory: android-vinetrack
+        shell: bash
+        run: |
+          set -o pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:testDebugUnitTest --no-daemon --console=plain --stacktrace \
+            --tests 'com.rork.vinetrack.data.SafeSyncDiagnosticHistoryTest' \
+            2>&1 | tee "$RUNNER_TEMP/sync-support-android.log"
+      - name: Preserve original Android receipts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync-support-android-native
+          path: |
+            android-vinetrack/app/build/test-results/testDebugUnitTest/
+            android-vinetrack/app/build/reports/tests/testDebugUnitTest/
+            ${{ runner.temp }}/sync-support-android.log
+          if-no-files-found: warn
+          retention-days: 7
+
+  ios:
+    name: iOS diagnostic source and native XCTest
+    runs-on: macos-15
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify source and select Xcode 26.3
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          XCODE_ROOT="/Applications/Xcode_26.3.app/Contents/Developer"
+          if [ ! -x "$XCODE_ROOT/usr/bin/xcodebuild" ]; then
+            echo "::error::Xcode 26.3 missing; environment failure, NOT test RED"
+            ls -d /Applications/Xcode*.app 2>/dev/null || true
+            exit 2
+          fi
+          echo "DEVELOPER_DIR=$XCODE_ROOT" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_ROOT"
+          xcodebuild -version
+          xcrun swiftc --version
+          xcrun --sdk iphonesimulator --show-sdk-version
+      - name: Select available iPhone simulator
+        id: simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); a=[x for k,v in d["devices"].items() if "iOS" in k for x in v if x.get("isAvailable",False) and "iPhone" in x.get("name","")]; print(a[0]["udid"] if a else "")')
+          test -n "$SIMULATOR_ID" || { echo "::error::No iPhone simulator"; exit 2; }
+          echo "id=$SIMULATOR_ID" >> "$GITHUB_OUTPUT"
+      - name: Execute native scope XCTest
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project ios/VineTrack.xcodeproj -scheme VineTrack -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
+            -resultBundlePath "$RUNNER_TEMP/SyncSupportSnapshot.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:VineTrackTests/SyncSupportSnapshotScopeTests \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/sync-support-ios.log"
+      - name: Preserve original iOS receipts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sync-support-ios-native
+          path: |
+            ${{ runner.temp }}/SyncSupportSnapshot.xcresult
+            ${{ runner.temp }}/sync-support-ios.log
+          if-no-files-found: warn
+          retention-days: 7
