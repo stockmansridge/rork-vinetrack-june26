@@ -464,7 +464,7 @@ final class TripSyncService {
                         let linked = try await SprayCompletionRepository().fetchLinked(tripId: tripId)
                         let localSprays = store.sprayRecords.filter { $0.canonicalTripId == tripId }
                         lines += ["server_linked_sprays: \(linked.count)",
-                                  "local_server_spray_ids_match: \(Set(linked.map(\\.id)) == Set(localSprays.map(\\.id)))"]
+                                  "local_server_spray_ids_match: \(Set(linked.map(\.id)) == Set(localSprays.map(\.id)))"]
                     } catch { lines.append("server_linked_sprays: READ_FAILED_NO_ASSUMPTION") }
                     let localActuals = SprayTankActualStore.shared.records.filter { $0.tripId == tripId }
                     for actual in localActuals {
@@ -479,9 +479,12 @@ final class TripSyncService {
                 if let journalSnapshot, !journalSnapshot.pending.isEmpty {
                     do {
                         let recovery = try await reader.fetchOccurrenceRecovery(
-                            tripId: tripId, operationIds: journalSnapshot.pending.map(\\.id))
-                        let receipts = recovery[occurrence: "receipts"]?.occurrenceArray ?? []
-                        lines.append("original_operation_server_receipts_visible: \(receipts.count)")
+                            tripId: tripId, operationIds: journalSnapshot.pending.map(\.id))
+                        if case .array(let receipts) = recovery[occurrence: "receipts"] {
+                            lines.append("original_operation_server_receipts_visible: \(receipts.count)")
+                        } else {
+                            lines.append("original_operation_server_receipts: RESPONSE_SHAPE_NOT_VERIFIED")
+                        }
                     } catch { lines.append("original_operation_server_receipts: READ_FAILED_NO_ASSUMPTION") }
                 }
             } catch {
