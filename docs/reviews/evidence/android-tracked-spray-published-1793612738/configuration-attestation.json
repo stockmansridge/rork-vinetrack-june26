@@ -1,0 +1,33 @@
+{
+  "priorBlankGeneratedSha256": "c79d68f9e9dc96559263dee80de69190df5c3886eab29a2f613104989d78eab7",
+  "differenceClassification": "Semantic: all 14 generated constant values were empty, versus 14 nonempty approved values. Not formatting-only.",
+  "changedValueKeys": [
+    "EXPO_PUBLIC_GOOGLE_MAPS_API_KEY",
+    "EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID",
+    "EXPO_PUBLIC_PROJECT_ID",
+    "EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY",
+    "EXPO_PUBLIC_REVENUECAT_IOS_API_KEY",
+    "EXPO_PUBLIC_REVENUECAT_TEST_API_KEY",
+    "EXPO_PUBLIC_RORK_API_BASE_URL",
+    "EXPO_PUBLIC_RORK_AUTH_URL",
+    "EXPO_PUBLIC_RORK_FUNCTIONS_URL",
+    "EXPO_PUBLIC_RORK_TOOLKIT_SECRET_KEY",
+    "EXPO_PUBLIC_SUPABASE_ANON_KEY",
+    "EXPO_PUBLIC_SUPABASE_URL",
+    "EXPO_PUBLIC_TEAM_ID",
+    "EXPO_PUBLIC_TOOLKIT_URL"
+  ],
+  "restoration": "Byte-for-byte reuse of protected prior Rork-materialised Config.kt from exact-source isolated validation archive; no invented configuration or new generator.",
+  "initialCopyAttempt": "Read-only generated file refused write; no tests ran. Inspected owner/mode and unchanged hash, temporarily enabled owner write, restored exact bytes, restored original read-only mode 0444.",
+  "restoredSha256": "a1da2e0589dbe2e6430459e36a7e32dc93c4b15c846e6bc7cccbc1499a4712e8",
+  "matchesHistoricalApprovedConfiguration": true,
+  "identity": "com.rork.vinetrack.Config",
+  "contract": "allValues: Map<String, String>; all 14 nonempty constants bound by name",
+  "supabaseProjectMatchesApproved": true,
+  "configurationIgnoredAndNotTracked": true,
+  "configurationMatchesAfterNormalBuildAndSignedBuild": true,
+  "serverConfigurationStoreUpdated": false,
+  "limit": "Attests local generated input used for host JVM and normal Android build. Typed signed-build/Play responses expose source identity but no generated-configuration digest, upload-certificate fingerprint or binary digest; those are not independently attested here. Live authentication, Maps, purchases and backend acceptance were not tested.",
+  "configurationValuesExported": false,
+  "signingCredentialsRead": false
+}

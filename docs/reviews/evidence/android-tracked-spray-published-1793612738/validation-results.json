@@ -1,0 +1,104 @@
+{
+  "publicCorrectionCommit": "6baaed77ef0a9af5b06143cdd1115a1805368382",
+  "managedSigningSnapshot": "e5e3582bbfdb97b76b4f0ba6a427018ea01f5514",
+  "androidTree": "55394e1c1ef02abe9d425f9d257f092e8b7a364f",
+  "sourceManifestSha256": "550fe30f38c82cadc69c6f897ccd825bd8a820e17c905d299ec90523cccb8906",
+  "sourceFilesCompared": 1274,
+  "sourceDifferences": [],
+  "applicationSourceModified": false,
+  "tests": {
+    "kind": "host JVM debug",
+    "forcedRerun": true,
+    "executed": 61,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "suites": [
+      {
+        "file": "TEST-com.rork.vinetrack.data.AccountScopedTankSafetyTest.xml",
+        "sha256": "95e21bfb611c9a027e1563972999a0261c3e1d96c432d62079a4be7987eafc4c",
+        "name": "com.rork.vinetrack.data.AccountScopedTankSafetyTest",
+        "tests": "16",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T09:43:46.982Z",
+        "hostname": "e2b.local",
+        "time": "0.19"
+      },
+      {
+        "file": "TEST-com.rork.vinetrack.data.OccurrenceTankConflictHoldTest.xml",
+        "sha256": "1bc5e9d31288b70b132075f152d392262b4870da514acaf25ac61d5d8a772c46",
+        "name": "com.rork.vinetrack.data.OccurrenceTankConflictHoldTest",
+        "tests": "3",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T09:43:47.176Z",
+        "hostname": "e2b.local",
+        "time": "0.06"
+      },
+      {
+        "file": "TEST-com.rork.vinetrack.data.TankDependencyPhaseBTest.xml",
+        "sha256": "9cf8b397b7ee7457ca1ac50407a50134e936813d7b6c9e88ce1a1672de6aed29",
+        "name": "com.rork.vinetrack.data.TankDependencyPhaseBTest",
+        "tests": "10",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T09:43:47.239Z",
+        "hostname": "e2b.local",
+        "time": "0.03"
+      },
+      {
+        "file": "TEST-com.rork.vinetrack.data.TrackedSprayCompletionSyncTest.xml",
+        "sha256": "6aa6715b02780142acebf63963c6b41066e9dc7a1e637a2e2fcd62a8db16fc49",
+        "name": "com.rork.vinetrack.data.TrackedSprayCompletionSyncTest",
+        "tests": "19",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T09:43:47.273Z",
+        "hostname": "e2b.local",
+        "time": "0.09"
+      },
+      {
+        "file": "TEST-com.rork.vinetrack.data.TripClosureStatusPhaseCTest.xml",
+        "sha256": "c3a1bd274c747dce27c9d446fccf21c87f7559f9faa892b01a422fee7dd8feb4",
+        "name": "com.rork.vinetrack.data.TripClosureStatusPhaseCTest",
+        "tests": "13",
+        "skipped": "0",
+        "failures": "0",
+        "errors": "0",
+        "timestamp": "2026-11-02T09:43:47.367Z",
+        "hostname": "e2b.local",
+        "time": "0.008"
+      }
+    ]
+  },
+  "normalAndroidBuild": {
+    "tool": "runChecks",
+    "appPath": "android-vinetrack",
+    "passed": true,
+    "nonblockingWarnings": "Two existing storage image URLs have preferred asset addresses; unchanged to preserve exact correction source."
+  },
+  "configurationReceipt": "configuration-attestation.json",
+  "deliveryReceipt": "play-delivery-receipt.json",
+  "status": "PUBLISHED_INTERNAL_TESTING",
+  "acceptanceNotExecuted": [
+    "Android instrumentation",
+    "physical-device/process-death/reopen lifecycle",
+    "authenticated backend/Portal journey",
+    "full unfiltered JVM suite",
+    "live authentication/purchase acceptance"
+  ],
+  "preserved": [
+    "350 L / 702 g historical application",
+    "original operation identities and queues",
+    "LEGACY_ORIGINAL_HELD protections",
+    "Issue #43 source and baseline"
+  ],
+  "customerDataMutations": false,
+  "historicalSweeps": false,
+  "productionPublication": false
+}

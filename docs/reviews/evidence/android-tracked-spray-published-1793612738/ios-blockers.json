@@ -1,0 +1,61 @@
+{
+  "scope": "Read-only current iOS source and TestFlight inspection; no iOS implementation, test rerun, signing or upload in this task.",
+  "sourceInspected": "e5e3582bbfdb97b76b4f0ba6a427018ea01f5514",
+  "testflight": {
+    "version": "3.1.9",
+    "build": "201",
+    "processingState": "VALID",
+    "internalBuildState": "IN_BETA_TESTING",
+    "group": "Internal Testing",
+    "whatToTest": null,
+    "conclusion": "Apple processing is no longer a blocker. Internal availability is confirmed by authenticated ASC, not handset installation. Build 201 is not bound to current inspected source by this read. No new iOS upload needed merely to resolve processing."
+  },
+  "requiredCorrections": [
+    {
+      "finding": "Tracked Trip End has no explicit linked Spray completion in either inspected end route.",
+      "evidence": [
+        "ios/VineTrack/LegacyImported/Services/TripTrackingService.swift:983-1058",
+        "ios/VineTrack/LegacyImported/Services/TripTrackingService.swift:2576-2593",
+        "ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift:1692-1705"
+      ],
+      "required": "Review a separate iOS correction: durable explicit new tracked-End intent retaining original owner, vineyard, Trip, Spray, operation and End time; wait for required authoritative acknowledgements, invoke the existing completion RPC with linked semantics, independently read back Trip and Spray, and retire only that exact acknowledged intent. No historical sweep, operation replacement or quantity changes. Android implementation is not proof of iOS parity."
+    },
+    {
+      "finding": "An ended linked Trip makes EndSprayView render Completed even when the Spray end is nil, hiding the existing completion action; resolver also infers completion from Trip state.",
+      "evidence": [
+        "ios/VineTrack/App/SprayProgram/EndSprayView.swift:19-25",
+        "ios/VineTrack/App/SprayProgram/EndSprayView.swift:86-94",
+        "ios/VineTrack/App/SprayProgram/SprayCompletionResolver.swift:4-6"
+      ],
+      "required": "Separate Trip ended, Trip acknowledged and Spray completion confirmed. Do not use a linked Trip timestamp as Spray completion proof. Retain a scoped explicit completion/retry path when the Spray has no confirmed end, preserving manual workflow boundaries."
+    },
+    {
+      "finding": "Fresh closure verification fetches only Trip; local pending Spray markers are not fresh Spray completion evidence, yet CLOSED_SYNCED UI claims linked records acknowledged.",
+      "evidence": [
+        "ios/VineTrack/Backend/Sync/TripActivityCancellationService.swift:316-322",
+        "ios/VineTrack/Backend/Sync/TripActivityCancellationService.swift:340-363",
+        "ios/VineTrack/Backend/Sync/TripClosureStatus.swift:29-44",
+        "ios/VineTrack/Backend/Sync/TripClosureStatus.swift:82-93",
+        "ios/VineTrack/LegacyImported/Views/Trips/TripClosureSection.swift:56-69"
+      ],
+      "required": "Require canonical linked Spray identity, scope, completed status and original-time agreement in fresh closure evidence. Distinguish local cached acknowledgement from fresh verification and limit claims for other dependents to actual evidence; queue absence alone is insufficient."
+    },
+    {
+      "finding": "Cached verified closure and diagnostic input override later local evidence without invalidation; pending-local-End section is hidden.",
+      "evidence": [
+        "ios/VineTrack/LegacyImported/Views/Trips/TripClosureSection.swift:16-19",
+        "ios/VineTrack/LegacyImported/Views/Trips/TripClosureSection.swift:32-37",
+        "ios/VineTrack/LegacyImported/Views/Trips/TripClosureSection.swift:48-53"
+      ],
+      "required": "Bind checks to evidence revisions, discard stale results when relevant state changes, prevent late stale responses from restoring success, and keep pending/held diagnostics visible."
+    }
+  ],
+  "validationAndDeliveryGaps": [
+    "Pinned native CI run 41411189793 at 61877aec62f9ab855e7fb4d3107b244c34e7e5c6 is now completed FAILURE. Compile/test step exited 65. Native receipt artifact 13126367820 exists. Public run/job/annotation records do not establish executed test counts or underlying compiler/test failure; inspect the retained artifact before selecting that correction. No retry or false pass.",
+    "Current CI workflow selects TripQueuedUploadScopeTests only; it does not certify End-to-Spray completion, stale verification invalidation, signed Release/TestFlight identity or full lifecycle. Add source-pinned focused native coverage to a separately approved iOS correction; do not weaken or refresh Issue #43 inventory merely to pass.",
+    "Build 201 has null en-US What to Test notes. Attach approved scoped recovery limitations to that exact build separately; this task was read-only for iOS.",
+    "Original-device retained queues/handoffs, independent labour acknowledgement/readback, actual chemical/water/GPS comparison, interruption/reopen, genuine 3.1.8 compatibility and authenticated Portal lifecycle acceptance remain outstanding. No queue clearing, historical repair, migration or production release.",
+    "After reviewed corrections: complete native build/tests on exact source, produce a source-matched internal candidate, upgrade original installations in place and perform controlled disposable online/offline/reconnect/reopen acceptance with independent backend/Portal readback. Existing Android 61 passes and Play delivery do not satisfy these iOS gates."
+  ],
+  "acceptanceStatus": "NOT CERTIFIED; production remains blocked."
+}

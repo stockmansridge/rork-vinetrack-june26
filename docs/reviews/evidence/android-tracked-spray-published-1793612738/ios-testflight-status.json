@@ -1,0 +1,36 @@
+{
+  "receiptKind": "Projection of observed authenticated asc builds info response",
+  "appId": "6761143377",
+  "version": "3.1.9",
+  "buildNumber": "201",
+  "buildId": "c56b4cb3-cf80-4595-b5cb-0aeb3630fc28",
+  "processingState": "VALID",
+  "expired": false,
+  "internalBuildState": "IN_BETA_TESTING",
+  "externalBuildState": "READY_FOR_BETA_SUBMISSION",
+  "group": {
+    "name": "Internal Testing",
+    "id": "1a8d95a6-44ec-47ac-8754-47a0a283582e",
+    "isInternalGroup": true
+  },
+  "testNotes": {
+    "locale": "en-US",
+    "whatsNew": null
+  },
+  "currentSourceInspected": "e5e3582bbfdb97b76b4f0ba6a427018ea01f5514",
+  "currentSourceBoundToBuild201": false,
+  "iosUploadOrSourceChangePerformed": false,
+  "pinnedNativeRun": {
+    "id": 41411189793,
+    "sourceSha": "61877aec62f9ab855e7fb4d3107b244c34e7e5c6",
+    "status": "completed",
+    "conclusion": "failure",
+    "jobId": 125164374394,
+    "failedStep": "Compile app and run selected native safety tests",
+    "exitCode": 65,
+    "artifactId": 13126367820,
+    "artifactName": "issue43-main-ios-trip-queue-native-receipts",
+    "namedTestResultsInspected": false,
+    "limit": "Public run/job/annotations establish failure, not its underlying compiler/test cause or executed test counts. Artifact/log inspection remains necessary."
+  }
+}

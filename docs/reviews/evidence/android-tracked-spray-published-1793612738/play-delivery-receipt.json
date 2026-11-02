@@ -1,0 +1,36 @@
+{
+  "receiptKind": "Projection of observed typed Rork responses",
+  "build": {
+    "runId": "ffabeb5a-b005-4f73-8991-0332c75d8867",
+    "snapshotId": "e5e3582bbfdb97b76b4f0ba6a427018ea01f5514",
+    "sourceHash": "src_55394e1c1ef02abe9",
+    "appPath": "android-vinetrack",
+    "framework": "kotlin",
+    "status": "completed",
+    "packageName": "com.rork.vinetrack",
+    "matchesCurrentSourceBeforePublication": true
+  },
+  "validation": {
+    "status": "validated",
+    "track": "internal",
+    "editId": "16237501823384530206",
+    "versionCode": "1793612738",
+    "releaseStatus": "completed",
+    "submissionId": "79e05adc-7646-467f-94f3-8f69debaa287"
+  },
+  "committedPublication": {
+    "status": "published",
+    "packageName": "com.rork.vinetrack",
+    "track": "internal",
+    "editId": "17995010067933895863",
+    "versionCode": "1793612738",
+    "releaseName": "3.1.9 tracked Spray completion",
+    "releaseStatus": "completed",
+    "submissionId": "a9729895-0ba3-4110-a64b-4ad45462498b"
+  },
+  "versionNameFromUnchangedSource": "3.1.9",
+  "minimumExclusiveCode": 1793604728,
+  "assignedCodeVerifiedBeforeCommit": true,
+  "productionPublication": false,
+  "testerOptInLinkReturned": false
+}

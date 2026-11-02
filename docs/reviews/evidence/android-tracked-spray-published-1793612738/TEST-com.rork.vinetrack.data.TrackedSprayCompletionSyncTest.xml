@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" tests="19" skipped="0" failures="0" errors="0" timestamp="2026-11-02T09:43:47.273Z" hostname="e2b.local" time="0.09">
+  <properties/>
+  <testcase name="onlineCompletionUsesOriginalEndAndOnlyCompletionFields" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.052"/>
+  <testcase name="closureRequiresRealLinkedCompletionWithExactInstantAndIdentity" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.001"/>
+  <testcase name="backgroundAcknowledgementClosesOnlyAfterReadback" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.002"/>
+  <testcase name="lostResponseRetryReadsExistingCompletionWithoutSecondRpc" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.002"/>
+  <testcase name="manualTemplateDeletedForeignAndAmbiguousSpraysNeverAutoComplete" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.004"/>
+  <testcase name="accountSwitchDuringRpcCannotAcknowledge" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.003"/>
+  <testcase name="offlineIntentSurvivesReopenUntilTripEndAndDependenciesAcknowledged" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.003"/>
+  <testcase name="wrongAccountOrVineyardCannotClaimIntent" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.002"/>
+  <testcase name="reopeningVerifiedCompletionDoesNotReplayHistoricalRows" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.003"/>
+  <testcase name="unrelatedRetainedOperationsRemainByteForByteUnchanged" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.002"/>
+  <testcase name="partialEndRetryAfterReopenUsesFirstRequestedTimeWithoutReplacingIntent" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.002"/>
+  <testcase name="failedDurableEnqueueRefusesCompletionIntent" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.001"/>
+  <testcase name="unverifiedRpcResponseDoesNotClearIntent" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.002"/>
+  <testcase name="manualAndNonSprayingTripsDoNotCreateIntent" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.0"/>
+  <testcase name="mismatchedExistingSprayEndIsHeldNeverOverwritten" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.003"/>
+  <testcase name="repeatEndCannotReplaceOriginalIdentityOrTimestamp" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.002"/>
+  <testcase name="replacedCanonicalSprayCannotRedirectOriginalCompletion" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.002"/>
+  <testcase name="differentTripEndRetainsOriginalAndMakesNoCompletionWrite" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.003"/>
+  <testcase name="missingOriginalIdentityRefusesNewIntent" classname="com.rork.vinetrack.data.TrackedSprayCompletionSyncTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

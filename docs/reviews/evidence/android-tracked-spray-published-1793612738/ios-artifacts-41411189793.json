@@ -1,0 +1,25 @@
+{
+  "total_count": 1,
+  "artifacts": [
+    {
+      "id": 13126367820,
+      "node_id": "MDg6QXJ0aWZhY3QxMzEyNjM2NzgyMA==",
+      "name": "issue43-main-ios-trip-queue-native-receipts",
+      "size_in_bytes": 78828833,
+      "url": "https://api.github.com/repos/stockmansridge/rork-vinetrack-june26/actions/artifacts/13126367820",
+      "archive_download_url": "https://api.github.com/repos/stockmansridge/rork-vinetrack-june26/actions/artifacts/13126367820/zip",
+      "expired": false,
+      "digest": "sha256:932e55aff4bdcb80bf453beaa8ca93bc5b65edfc9eb90811760c167fb0fe83e0",
+      "created_at": "2026-11-02T08:36:15Z",
+      "updated_at": "2026-11-02T08:36:15Z",
+      "expires_at": "2026-11-16T08:36:09Z",
+      "workflow_run": {
+        "id": 41411189793,
+        "repository_id": 1282190330,
+        "head_repository_id": 1282190330,
+        "head_branch": "main",
+        "head_sha": "61877aec62f9ab855e7fb4d3107b244c34e7e5c6"
+      }
+    }
+  ]
+}
