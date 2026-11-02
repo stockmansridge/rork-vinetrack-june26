@@ -356,6 +356,7 @@ final class TripTrackingService {
         seedingDetails: SeedingDetails? = nil,
         sprayRecord: SprayRecord? = nil,
         initialTankActuals: SprayInitialTankAmounts? = nil,
+        distinctWorkConfirmed: Bool = false,
         onPreparationStarted: () -> Void = {},
         onStarted: @escaping (Bool) -> Void = { _ in }
     ) {
@@ -430,7 +431,8 @@ final class TripTrackingService {
                 guard plannedCandidates.allSatisfy({ resolvedIds.contains($0.blockId) }),
                       resolvedIds.allSatisfy({ block in plannedCandidates.contains { $0.blockId == block } }) else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                 // A retained uncertain start must be recovered, never replaced with newly minted IDs.
-                try requireResolvedOccurrenceStarts(vineyardId: vineyardId, blockIds: resolvedIds)
+                try requireResolvedOccurrenceStarts(vineyardId: vineyardId, blockIds: resolvedIds,
+                    newSprayRecord: sprayRecord, distinctWorkConfirmed: distinctWorkConfirmed)
                 trip.occurrenceCoverage = try TripOccurrencePlanner.commit(plannedCandidates, vineyardId: vineyardId)
                 var inactive = trip; inactive.isActive = false
                 let repository = SupabaseTripSyncRepository()
@@ -2516,23 +2518,42 @@ final class TripTrackingService {
     /// An independent start first durably holds any unheld original create/activate
     /// chain so it cannot later replay into a second active Trip. Nothing is discarded,
     /// reminted or cleared; the original stays visible for individual reconciliation.
-    func requireResolvedOccurrenceStarts(vineyardId: UUID, blockIds: [UUID]) throws {
+    func requireResolvedOccurrenceStarts(
+        vineyardId: UUID, blockIds: [UUID],
+        newSprayRecord: SprayRecord? = nil, distinctWorkConfirmed: Bool = false
+    ) throws {
         guard let store else { throw TripOccurrenceCoverage.Failure.scopeConflict }
         var toHold: [TripOccurrenceJournal] = []
         for saved in store.trips where saved.coverageBasis == .occurrence {
             let journal = try occurrenceJournal(for: saved, initializeIfMissing: false)
             guard let state = try journal.inspectionSnapshot() else { continue }
+            // Only durable identities prove the SAME planned spray. A shared
+            // block by itself cannot establish it. No rate, amount or snapshot
+            // content is rewritten by this preflight.
+            let originalSprays = store.sprayRecords.filter {
+                $0.canonicalTripId == saved.id && $0.vineyardId == saved.vineyardId
+            }
+            let sameOriginalWork = newSprayRecord.map { proposed in
+                originalSprays.contains {
+                    $0.id == proposed.id ||
+                    (proposed.sprayJobId != nil && $0.sprayJobId == proposed.sprayJobId)
+                }
+            } ?? false
             let decision = OccurrenceStartAdmission.decide(.init(
                 tripId: saved.id, vineyardId: saved.vineyardId,
                 blockIds: Set(saved.paddockIds + [saved.paddockId].compactMap { $0 }),
                 isDeviceActiveTrip: store.deviceActiveTripId == saved.id,
                 creationConfirmed: state.creationConfirmed, heldReason: state.heldReason),
-                newVineyardId: vineyardId, newBlockIds: Set(blockIds))
+                newVineyardId: vineyardId, newBlockIds: Set(blockIds),
+                sameOriginalWorkProven: sameOriginalWork, distinctWorkConfirmed: distinctWorkConfirmed)
             switch decision {
             case .unrelated, .independentAlreadyHeld: continue
             case .holdBeforeIndependentStart: toHold.append(journal)
             case .conflict(let code):
-                throw SprayPlanningAdmissionError(message: "A previous Trip on these blocks (\(saved.paddockName), \(saved.startTime.formatted(date: .abbreviated, time: .shortened))) has an unconfirmed start (\(code)). Your original Trip and actions are preserved. Open Trips, find that date and block, and use its existing recovery/Resume controls. Do not create another copy of the same spray; if this is different work, support must verify the original held job before a safe independent start.")
+                if code == "RETAINED_START_INDEPENDENT_WORK_CONFIRMATION_REQUIRED" {
+                    throw SprayPlanningAdmissionError(message: "Earlier Trip on overlapping blocks (\(saved.paddockName), \(saved.startTime.formatted(date: .abbreviated, time: .shortened))) has an unresolved start (\(code)). If this is a separate spray, explicitly confirm DIFFERENT work; the earlier original journal will be held intact before the new Trip starts. To resume that earlier spray, open its original Trip in Trips.")
+                }
+                throw SprayPlanningAdmissionError(message: "Original Trip (\(saved.paddockName), \(saved.startTime.formatted(date: .abbreviated, time: .shortened))) requires its own recovery (\(code)). The original saved actions remain intact. Open the original Trip in Trips; this start cannot be substituted or duplicated.")
             }
         }
         // Hold only after every retained start is admitted, so a refusal changes nothing.
