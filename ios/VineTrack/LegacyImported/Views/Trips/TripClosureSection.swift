@@ -39,6 +39,13 @@ struct TripClosureSection: View {
                          : detail(shown.state))
                         .font(.caption).foregroundStyle(.secondary)
                     Text("Status: \(shown.state.rawValue)").font(.caption2).foregroundStyle(.secondary)
+                    if let receiptHold = tripSync.receiptReconciliationHolds[trip.id] {
+                        Label("Original local record held: \(receiptHold)",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .accessibilityIdentifier("trip.receiptReconciliationHold")
+                    }
                     Button {
                         Task { await verify() }
                     } label: {
