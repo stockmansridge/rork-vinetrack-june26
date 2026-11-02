@@ -10,6 +10,8 @@ import com.rork.vinetrack.ui.main.PinWorkflow
 import com.rork.vinetrack.ui.main.ToolRoute
 import com.rork.vinetrack.ui.main.WorkContextViewModel
 import com.rork.vinetrack.ui.screens.PinsViewMode
+import com.rork.vinetrack.ui.screens.TripLiveDestinationResolver
+import com.rork.vinetrack.data.model.Trip
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -245,6 +247,61 @@ class WorkContextRestorationTest {
         assertFalse(shouldOpen(tab = MainTab.Program, calculatorOpen = false))
         assertFalse(shouldOpen(tool = ToolRoute.Growth))
         assertTrue(shouldOpen(tab = MainTab.Program, calculatorOpen = true))
+    }
+
+    @Test
+    fun `newly started spray opens the exact live HUD even while Trips list is absent or stale`() {
+        val vineyard = "vineyard-a"
+        val historical = Trip(id = "spray-1", vineyardId = vineyard, isActive = false)
+        val live = historical.copy(isActive = true, endTime = null)
+
+        val work = WorkContextViewModel(SavedStateHandle())
+        work.bindIdentity("operator", vineyard)
+        work.openStartedTrip(live.id)
+
+        // The orange Live card already knows the active Trip, but the
+        // list has not returned it yet. Never render the Trips list instead.
+        val stale = TripsKnowledge(
+            knownIds = emptySet(), activeIds = emptySet(),
+            listKnowledge = TripsListKnowledge.Authoritative,
+        )
+        work.reconcileTripContext(stale)
+        assertEquals(MainSurface.TripTab(live.id, null), MainSurface.of(work.snapshot()))
+        assertEquals(live, TripLiveDestinationResolver.resolve(
+            work.selectedTripId.value, emptyList(), live, vineyard))
+
+        // A stale inactive list record must never override a live snapshot.
+        assertEquals(live, TripLiveDestinationResolver.resolve(
+            live.id, listOf(historical), live, vineyard))
+        // Later, when the full list contains the active ID, rendering remains
+        // on the same HUD without allocating another Trip or changing its ID.
+        work.reconcileTripContext(stale.copy(
+            knownIds = setOf(live.id), activeIds = setOf(live.id)))
+        assertEquals(live.id, work.selectedTripId.value)
+        assertEquals(live, TripLiveDestinationResolver.resolve(
+            live.id, listOf(live), live, vineyard))
+
+        // Pressing Back must still return to Trips and remain there.
+        work.setSelectedTripId(null)
+        assertNull(TripLiveDestinationResolver.resolve(
+            work.selectedTripId.value, listOf(live), live, vineyard))
+    }
+
+    @Test
+    fun `live HUD fallback cannot cross vineyards or override history`() {
+        val local = Trip(id = "live-1", vineyardId = "vineyard-a", isActive = true)
+        val other = local.copy(vineyardId = "vineyard-b")
+        val history = Trip(id = "history", vineyardId = "vineyard-a", isActive = false)
+        assertNull(TripLiveDestinationResolver.resolve(
+            local.id, emptyList(), other, "vineyard-a"))
+        assertNull(TripLiveDestinationResolver.resolve(
+            local.id, emptyList(), local, "vineyard-b"))
+        assertNull(TripLiveDestinationResolver.resolve(
+            local.id, emptyList(), local, null))
+        assertEquals(history, TripLiveDestinationResolver.resolve(
+            history.id, listOf(history), local, "vineyard-a"))
+        assertNull(TripLiveDestinationResolver.resolve(
+            null, listOf(history), local, "vineyard-a"))
     }
 
     @Test
