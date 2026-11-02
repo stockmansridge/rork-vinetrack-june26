@@ -24,6 +24,25 @@ class TripOccurrenceNativeStore(context: Context) {
             }, scope)
         }
     }
+
+    private fun validKey(ownerId: String, vineyardId: String, tripId: String): String {
+        listOf(ownerId, vineyardId, tripId).forEach { require(UUID.fromString(it).toString() == it) }
+        return "$ownerId/$vineyardId/$tripId"
+    }
+
+    /** Exact stored bytes for evidence; null when absent. */
+    @Synchronized fun rawJournal(ownerId: String, vineyardId: String, tripId: String): String? {
+        val key = validKey(ownerId, vineyardId, tripId)
+        return access.admittedForOwner(ownerId) { preferences.getString(key, null) }
+    }
+
+    /** Cancellation-only, after a verified durable server receipt. Synchronous commit. */
+    @Synchronized fun removeJournal(ownerId: String, vineyardId: String, tripId: String): Boolean {
+        val key = validKey(ownerId, vineyardId, tripId)
+        val removed = access.admittedForOwner(ownerId) { preferences.edit().remove(key).commit() }
+        if (removed) journals.remove(TripOccurrenceJournal.Scope(ownerId, vineyardId, tripId))
+        return removed
+    }
 }
 
 /** Display projections never populate legacy numeric coverage arrays. */

@@ -11,6 +11,11 @@ internal interface ActiveTripSnapshotStorage {
         return true
     }
     fun remove()
+    /** Synchronous removal; used only after a verified server cancellation receipt. */
+    fun removeDurably(): Boolean {
+        remove()
+        return true
+    }
 }
 
 internal class SharedPreferencesActiveTripSnapshotStorage(
@@ -32,6 +37,8 @@ internal class SharedPreferencesActiveTripSnapshotStorage(
     override fun remove() {
         prefs.edit { remove(KEY_SNAPSHOT) }
     }
+
+    override fun removeDurably(): Boolean = prefs.edit().remove(KEY_SNAPSHOT).commit()
 
     private companion object {
         const val KEY_SNAPSHOT = "active_trip_snapshot_json"

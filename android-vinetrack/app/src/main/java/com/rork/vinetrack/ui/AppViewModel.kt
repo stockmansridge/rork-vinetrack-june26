@@ -2146,6 +2146,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val trip = _ui.value.trips.firstOrNull { it.id == payload.tripId && it.vineyardId == payload.vineyardId }
         val owner = session.userId
         if (trip == null || owner == null || trip.coverageBasis != TripOccurrenceCoverage.Basis.OCCURRENCE) false
+        else if (runCatching { tripCancellationIntents.holdsTrip(trip.id) }.getOrDefault(true)) false
         else runCatching {
             val state = occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, trip.vineyardId, trip.id)).load()
             state?.creationConfirmed == true && state.heldReason == null
@@ -2592,6 +2593,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * journal and are never held; an unreadable journal for this Trip fails closed.
      */
     private fun tankConflictHeld(ownerId: String?, vineyardId: String, tripId: String): Boolean {
+        if (runCatching { tripCancellationIntents.holdsTrip(tripId) }.getOrDefault(true)) return true
         val owner = ownerId ?: return false
         val journal = runCatching { occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, vineyardId, tripId)) }.getOrNull()
         return com.rork.vinetrack.data.OccurrenceTankConflictGate.isHeld(journal)
@@ -2607,6 +2609,134 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
     private val sprayTankActualStore = com.rork.vinetrack.data.SprayTankActualStore(app)
     private val sprayTankActualRepo = com.rork.vinetrack.data.SprayTankActualRepository(session)
+
+    /** P0 Phase A: durable Cancel Trip intents (sql/281). Open intents hold this Trip's replay. */
+    private val tripCancellationIntents by lazy { com.rork.vinetrack.data.TripCancellationIntentStore(getApplication<Application>()) }
+    private val tripCancellation by lazy {
+        com.rork.vinetrack.data.TripActivityCancellationCoordinator(
+            tripCancellationIntents,
+            com.rork.vinetrack.data.TripCancellationEvidenceWriter(
+                java.io.File(getApplication<Application>().filesDir, "trip_cancellation_evidence")),
+            remote = object : com.rork.vinetrack.data.TripActivityCancellationCoordinator.Remote {
+                override suspend fun cancel(intent: com.rork.vinetrack.data.TripActivityCancellation.Intent): kotlinx.serialization.json.JsonObject =
+                    try { tripRepo.cancelTripActivity(intent) } catch (error: com.rork.vinetrack.data.BackendError.Server) {
+                        throw com.rork.vinetrack.data.TripActivityCancellationCoordinator.ServerRefusal(
+                            error.code, com.rork.vinetrack.data.TripActivityCancellation.serverCode(error.body))
+                    }
+                override suspend fun readReceipt(tripId: String, vineyardId: String) = tripRepo.readTripCancellationReceipt(tripId, vineyardId)
+            },
+            local = object : com.rork.vinetrack.data.TripActivityCancellationCoordinator.Local {
+                override fun pendingWrites() = pendingWrites.list()
+                override fun removeWriteIfCurrent(expected: com.rork.vinetrack.data.model.PendingWrite) = pendingWrites.removeIfCurrent(expected)
+                override fun localActuals(tripId: String) = sprayTankActualStore.load().filter { it.tripId == tripId }
+                override fun removeActual(id: String) = sprayTankActualStore.remove(id)
+                override fun rawJournal(ownerId: String, vineyardId: String, tripId: String) = occurrenceStore.rawJournal(ownerId, vineyardId, tripId)
+                override fun removeJournal(ownerId: String, vineyardId: String, tripId: String) = occurrenceStore.removeJournal(ownerId, vineyardId, tripId)
+                override fun activeClaimJson() = activeTripStore.rawSnapshot()
+                override fun clearActiveClaimIfTrip(ownerId: String, vineyardId: String, tripId: String) =
+                    activeTripStore.clearIfTrip(ownerId, vineyardId, tripId)
+            },
+        )
+    }
+
+    data class TripCancellationInfo(
+        val eligible: Boolean,
+        val code: String?,
+        val localActualCount: Int,
+        val openState: String?,
+    )
+
+    /** Read-only: whether Cancel Trip may be offered for this LOCAL_END_PENDING Trip on this device. */
+    fun tripCancellationInfo(trip: Trip): TripCancellationInfo {
+        val state = _ui.value
+        val open = runCatching { tripCancellationIntents.find(trip.id) }.getOrNull()
+        val claim = runCatching { activeTripStore.load() }.getOrNull()
+        val role = state.currentRole.takeIf { state.selectedVineyardId == trip.vineyardId }
+        val result = com.rork.vinetrack.data.TripActivityCancellation.eligibility(
+            role = role, signedInUserId = session.userId, claimOwnerId = claim?.ownerUserId,
+            claimVineyardId = claim?.vineyardId, claimTripId = claim?.trip?.id, tripId = trip.id, vineyardId = trip.vineyardId,
+            localEndPending = deviceTripStatus(trip).reason == com.rork.vinetrack.data.DeviceTripStatus.Reason.LOCAL_END_PENDING,
+        )
+        val actuals = runCatching { sprayTankActualStore.load().count { it.tripId == trip.id } }.getOrDefault(0)
+        return TripCancellationInfo(result.allowed || open?.isOpen == true, result.code, actuals, open?.state?.name)
+    }
+
+    /**
+     * Cancels this device's LOCAL_END_PENDING Trip through the audited server RPC. Local queues,
+     * journal, actuals and claim are removed only after a verified, durably stored receipt.
+     * [onResult] receives null on full success, otherwise a fixed-code message (evidence retained).
+     */
+    fun cancelLocalEndPendingTrip(
+        trip: Trip,
+        classification: com.rork.vinetrack.data.TripActivityCancellation.Classification,
+        confirmedRecordedActualsWereNotApplied: Boolean,
+        onResult: (String?) -> Unit,
+    ) {
+        val owner = session.userId
+        val info = tripCancellationInfo(trip)
+        if (owner == null || !info.eligible) { onResult(cancellationMessage(info.code ?: "TRIP_CANCEL_FORBIDDEN")); return }
+        if (!_ui.value.isOnline) { onResult(cancellationMessage("TRIP_CANCEL_OFFLINE")); return }
+        viewModelScope.launch {
+            val outcome = runCatching {
+                tripCancellation.cancel(
+                    com.rork.vinetrack.data.TripActivityCancellation.Request(owner, trip.vineyardId, trip.id, classification,
+                        confirmedRecordedActualsWereNotApplied),
+                    _ui.value.sprayRecords.filter { it.tripId == trip.id && it.vineyardId == trip.vineyardId }.map { it.id }.sorted(),
+                )
+            }.getOrElse { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                com.rork.vinetrack.data.TripActivityCancellationCoordinator.Outcome.Pending("TRIP_CANCEL_LOCAL_STEP_FAILED")
+            }
+            onResult(applyCancellationOutcome(trip.id, outcome))
+        }
+    }
+
+    private fun applyCancellationOutcome(tripId: String, outcome: com.rork.vinetrack.data.TripActivityCancellationCoordinator.Outcome): String? =
+        when (outcome) {
+            is com.rork.vinetrack.data.TripActivityCancellationCoordinator.Outcome.Acked -> {
+                _ui.update { st ->
+                    st.copy(
+                        trips = st.trips.filterNot { it.id == tripId },
+                        locallyEndedTripIds = st.locallyEndedTripIds - tripId,
+                        locallyDeletedTripIds = st.locallyDeletedTripIds + tripId,
+                        deviceActiveTripId = st.deviceActiveTripId.takeIf { it != tripId },
+                        sprayRecords = st.sprayRecords.filterNot { it.tripId == tripId },
+                    )
+                }
+                if (outcome.cleaned) null else cancellationMessage("TRIP_CANCEL_ACKED_CLEANUP_PENDING")
+            }
+            is com.rork.vinetrack.data.TripActivityCancellationCoordinator.Outcome.Pending -> cancellationMessage(outcome.code ?: "TRIP_CANCEL_RESPONSE_UNKNOWN")
+            is com.rork.vinetrack.data.TripActivityCancellationCoordinator.Outcome.Refused -> cancellationMessage(outcome.code)
+        }
+
+    private fun cancellationMessage(code: String): String = when (code) {
+        "TRIP_CANCEL_OFFLINE" -> "Connect to the internet to cancel this Trip. Nothing was changed."
+        "TRIP_CANCEL_FORBIDDEN" -> "Only an Owner, Manager or Supervisor of this vineyard can cancel this Trip. Nothing was changed."
+        "TRIP_CANCEL_CLASSIFICATION_UNKNOWN_HELD" -> "Confirm whether spray was applied before cancelling. Nothing was changed."
+        "TRIP_CANCEL_LOCAL_ACTUALS_REQUIRE_CONFIRMATION" -> "This Trip has recorded tank amounts. Confirm they were not applied, or choose Applied. Nothing was changed."
+        "TRIP_CANCEL_SERVER_ACTUALS_REQUIRE_APPLIED_REVIEW" -> "The server already holds confirmed tank amounts for this Trip. Choose Applied so a compliance record is kept. Nothing was changed."
+        "TRIP_CANCEL_WRITE_IN_FLIGHT" -> "A sync for this Trip is in progress. Try again in a moment. Nothing was changed."
+        "TRIP_CANCEL_TRIP_COMPLETED" -> "The server already finished this Trip, so it can't be cancelled. Refresh to see it."
+        "TRIP_CANCEL_ACKED_CLEANUP_PENDING" -> "Trip cancelled on the server. Local cleanup will finish automatically. Code $code"
+        "TRIP_CANCEL_RESPONSE_UNKNOWN", "TRIP_CANCEL_READBACK_UNAVAILABLE", "TRIP_CANCEL_LOCAL_STEP_FAILED" ->
+            "The cancellation result isn't confirmed yet. Your Trip and evidence are kept; it will be checked again automatically. Code $code"
+        else -> "Trip was not cancelled. Your Trip and evidence are kept. Code $code"
+    }
+
+    /** Startup/refresh: resolve lost responses and finish cleanup for acknowledged cancellations. */
+    private suspend fun reconcileTripCancellations() {
+        if (!_ui.value.isOnline || session.accessToken == null) return
+        val owner = session.userId ?: return
+        runCatching { tripCancellationIntents.all() }.getOrDefault(emptyList())
+            .filter { it.isOpen && it.ownerId == owner }
+            .forEach { intent ->
+                val outcome = runCatching { tripCancellation.reconcile(intent) }.getOrElse { error ->
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    return@forEach
+                }
+                if (outcome is com.rork.vinetrack.data.TripActivityCancellationCoordinator.Outcome.Acked) applyCancellationOutcome(intent.tripId, outcome)
+            }
+    }
     private val startTankCommitCoordinator = com.rork.vinetrack.data.StartTankCommitCoordinator(
         app, activeTripStore, sprayTankActualStore, pendingWrites, tripTankSync,
         canEstablishOperation = { actual ->
@@ -5683,6 +5813,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun replayAllPendingWrites() {
         if (automaticReplayIdentity() == null) return
+        if (session.accessToken != null && _ui.value.isOnline) launchReplayStage("trip-cancellation") { reconcileTripCancellations() }
         replayPendingPinEvidence()
         if (session.accessToken != null && _ui.value.isOnline) {
             launchReplayStage("fertigation") {
@@ -12965,6 +13096,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun replayOccurrenceTrip(trip: Trip) {
+        // A requested/acknowledged cancellation holds every occurrence replay (incl. finalise) for this Trip.
+        if (runCatching { tripCancellationIntents.holdsTrip(trip.id) }.getOrDefault(true)) return
         if (!_ui.value.isOnline || session.accessToken == null || !replayingOccurrenceTrips.add(trip.id)) return
         val owner = session.userId
         val access = session.retentionGuard.captureAccount(owner)

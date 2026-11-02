@@ -845,6 +845,51 @@ class TripRepository(private val session: SessionStore) {
         }
     }
 
+    /** P0 Phase A: sql/281. Throws BackendError.Server with the raw body on refusal. */
+    suspend fun cancelTripActivity(intent: TripActivityCancellation.Intent): JsonObject = withContext(Dispatchers.IO) {
+        requireConfig()
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        if (access.userId != intent.ownerId) throw BackendError.Unauthorized
+        listOf(intent.operationId, intent.tripId, intent.vineyardId).forEach { UUID.fromString(it) }
+        val admission = writeAdmission(access)
+        admission.send(intent.vineyardId) {
+            val token = session.accessToken ?: throw BackendError.Unauthorized
+            val response = SupabaseClient.http.post(SupabaseClient.rpcUrl("cancel_trip_activity_v1")) {
+                authHeaders(token)
+                attributes.put(SupabaseClient.accountRequestScope, access)
+                attributes.put(SupabaseClient.operationalWriteVineyard, intent.vineyardId)
+                contentType(ContentType.Application.Json)
+                setBody(buildJsonObject {
+                    put("p_operation_id", intent.operationId)
+                    put("p_trip_id", intent.tripId)
+                    put("p_vineyard_id", intent.vineyardId)
+                    put("p_application", intent.classification)
+                    put("p_client_baseline", intent.baseline)
+                    put("p_compliance_facts", intent.complianceFacts ?: JsonNull)
+                })
+            }
+            if (!session.isAccountAccessCurrent(access)) throw BackendError.Unauthorized
+            if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+            response.body<JsonObject>()
+        }
+    }
+
+    /** Lost-response readback of the durable receipt (RLS: vineyard members). Null when absent. */
+    suspend fun readTripCancellationReceipt(tripId: String, vineyardId: String): JsonObject? = withContext(Dispatchers.IO) {
+        requireConfig()
+        val access = session.accountAccess() ?: throw BackendError.Unauthorized
+        UUID.fromString(tripId); UUID.fromString(vineyardId)
+        val token = session.accessToken ?: throw BackendError.Unauthorized
+        val response = SupabaseClient.http.get(SupabaseClient.restUrl(
+            "trip_activity_cancellation_receipts?trip_id=eq.$tripId&vineyard_id=eq.$vineyardId&select=*")) {
+            authHeaders(token)
+            attributes.put(SupabaseClient.accountRequestScope, access)
+        }
+        if (!session.isAccountAccessCurrent(access)) throw BackendError.Unauthorized
+        if (!response.status.isSuccess()) throw BackendError.Server(response.status.value, response.bodyAsText())
+        response.body<List<JsonObject>>().singleOrNull()
+    }
+
     private suspend inline fun <reified T> patchTrip(
         id: String,
         patch: T,

@@ -5780,5 +5780,88 @@ private fun DeviceTripStatusCard(vm: AppViewModel, state: AppUiState, trip: Trip
                 Text("Copy Trip status")
             }
         }
+        if (reason == com.rork.vinetrack.data.DeviceTripStatus.Reason.LOCAL_END_PENDING) {
+            TripCancellationSection(vm = vm, state = state, trip = trip)
+        }
+    }
+}
+
+/**
+ * P0 Phase A: Cancel Trip for a LOCAL_END_PENDING Trip held by this device. The operator must state
+ * whether spray was applied; "Not sure" changes nothing. Evidence is saved before the request and
+ * local records are removed only after the server's verified cancellation receipt.
+ */
+@Composable
+private fun TripCancellationSection(vm: AppViewModel, state: AppUiState, trip: Trip) {
+    val vine = LocalVineColors.current
+    var refresh by remember { mutableStateOf(0) }
+    val info = remember(trip.id, state.currentRole, state.selectedVineyardId, state.locallyEndedTripIds, state.deviceActiveTripId, refresh) {
+        vm.tripCancellationInfo(trip)
+    }
+    var showDialog by remember { mutableStateOf(false) }
+    var applied by remember { mutableStateOf<Boolean?>(null) }
+    var confirmActuals by remember { mutableStateOf(false) }
+    var working by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+
+    if (!info.eligible) {
+        Text(
+            "Cancel Trip is available to an Owner, Manager or Supervisor of this vineyard on the device holding this Trip (${info.code ?: "TRIP_CANCEL_FORBIDDEN"}).",
+            fontSize = 12.sp, color = vine.textSecondary,
+        )
+        return
+    }
+    info.openState?.let {
+        Text("Cancellation status: $it. It is re-checked automatically when online.", fontSize = 12.sp, color = vine.textSecondary)
+    }
+    OutlinedButton(enabled = !working, onClick = { applied = null; confirmActuals = false; message = null; showDialog = true }) {
+        if (working) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp) else Text("Cancel Trip")
+    }
+    message?.let { Text(it, fontSize = 12.sp, color = vine.textSecondary) }
+
+    if (showDialog) {
+        val needsConfirm = applied == false && info.localActualCount > 0
+        AlertDialog(
+            onDismissRequest = { if (!working) showDialog = false },
+            title = { Text("Cancel this Trip?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("This removes the Trip and its linked spray record and tank entries for everyone. A copy of this device's records is saved first. It can't be undone.", fontSize = 13.sp)
+                    Text("Was any spray actually applied on this Trip?", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(false to "Not applied", true to "Applied").forEach { (value, label) ->
+                            if (applied == value) Button(onClick = { applied = value }) { Text(label) }
+                            else OutlinedButton(onClick = { applied = value }) { Text(label) }
+                        }
+                    }
+                    when (applied) {
+                        true -> if (info.localActualCount == 0) Text("No tank amounts are recorded on this device, so the compliance record can't be kept from here. Keep the Trip and contact support.", fontSize = 12.sp, color = vine.textSecondary)
+                            else Text("The recorded tank amounts (${info.localActualCount} tank${if (info.localActualCount == 1) "" else "s"}) are kept as a compliance record for 3 years.", fontSize = 12.sp, color = vine.textSecondary)
+                        false -> if (needsConfirm) Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = confirmActuals, onCheckedChange = { confirmActuals = it })
+                            Text("Tank amounts were recorded, but none of it was sprayed.", fontSize = 12.sp)
+                        }
+                        null -> Text("If you're not sure, keep the Trip and ask the operator.", fontSize = 12.sp, color = vine.textSecondary)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !working && applied != null && (!needsConfirm || confirmActuals) && !(applied == true && info.localActualCount == 0),
+                    onClick = {
+                        val choice = if (applied == true) com.rork.vinetrack.data.TripActivityCancellation.Classification.APPLIED
+                            else com.rork.vinetrack.data.TripActivityCancellation.Classification.NOT_APPLIED
+                        working = true
+                        vm.cancelLocalEndPendingTrip(trip, choice, confirmActuals) { result ->
+                            working = false
+                            showDialog = false
+                            message = result
+                            refresh++
+                        }
+                    },
+                ) { Text("Cancel Trip") }
+            },
+            dismissButton = { TextButton(enabled = !working, onClick = { showDialog = false }) { Text("Keep Trip") } },
+        )
     }
 }

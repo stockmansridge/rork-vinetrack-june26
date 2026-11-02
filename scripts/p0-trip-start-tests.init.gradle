@@ -11,6 +11,7 @@ gradle.projectsEvaluated {
             include '**/AccountScopedTankSafetyTest.kt'
             include '**/TripOccurrenceJournalTest.kt'
             include '**/RetentionReviewTest.kt'
+            include '**/TripActivityCancellationTest.kt'
         })
     }
     app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {

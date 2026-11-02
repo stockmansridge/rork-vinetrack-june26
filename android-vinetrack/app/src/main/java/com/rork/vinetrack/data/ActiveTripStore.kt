@@ -121,6 +121,29 @@ class ActiveTripStore internal constructor(
             existing.vineyardId == existing.trip.vineyardId
     }.getOrDefault(false)
 
+    /**
+     * Cancellation-only: removes the claim ONLY when it is exactly this owner/vineyard/Trip.
+     * Returns true when no claim for this Trip remains (absent or another Trip's claim is untouched).
+     * Unreadable snapshots are retained and return false.
+     */
+    fun clearIfTrip(ownerUserId: String, vineyardId: String, tripId: String): Boolean {
+        val remove = {
+            synchronized(this) {
+                val raw = storage.read() ?: return@synchronized true
+                val existing = runCatching { json.decodeFromString(Snapshot.serializer(), raw) }.getOrNull()
+                    ?: return@synchronized false
+                if (existing.trip.id != tripId) return@synchronized true
+                if (existing.ownerUserId != ownerUserId || existing.vineyardId != vineyardId ||
+                    existing.trip.vineyardId != vineyardId) return@synchronized false
+                storage.removeDurably()
+            }
+        }
+        return if (fieldAccess == null) remove() else fieldAccess.admittedForOwner(ownerUserId, remove)
+    }
+
+    /** Raw stored claim for evidence capture; never decoded or altered. */
+    fun rawSnapshot(): String? = storage.read()
+
     /** Unreadable/foreign snapshots are retained, never cleared as an empty or invalid claim. */
     fun clear() {
         val remove = {
