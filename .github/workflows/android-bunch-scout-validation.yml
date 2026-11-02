@@ -1,0 +1,52 @@
+name: Android Bunch Count and Scout UI native build
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/YieldEstimationScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/VineyardInsightsScreen.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ScoutReportScreen.kt'
+      - '.github/workflows/android-bunch-scout-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-bunch-scout-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  android:
+    name: Compile Android and run existing JVM regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install compile SDK
+        run: sdkmanager --install "platforms;android-36" "build-tools;36.0.0"
+      - name: Pin source revision
+        run: |
+          echo "SOURCE_SHA=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+      - name: Compile Android and test JVM logic
+        working-directory: android-vinetrack
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace :app:compileDebugKotlin :app:testDebugUnitTest
+      - name: Preserve JVM test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-bunch-scout-jvm-results
+          path: android-vinetrack/app/build/test-results/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 14
