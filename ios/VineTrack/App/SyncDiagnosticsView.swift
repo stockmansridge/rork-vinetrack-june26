@@ -78,11 +78,14 @@ struct SyncDiagnosticsView: View {
         }
         .navigationTitle("Sync Diagnostics")
         .fileExporter(isPresented: $showFullLogExporter, document: fullLogDocument, contentType: .json,
-            defaultFilename: "VineTrack-Sync-Support-iOS") { result in
+            defaultFilename: "VineTrack-Sync-Support-Snapshot-iOS") { result in
             fullLogMessage = { if case .success = result { return "Diagnostic report saved. No records were changed." }; return "Export cancelled or failed." }()
             fullLogDocument = nil
         }
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: auth.userId) { _, _ in invalidatePreparedSupportSnapshot() }
+        .onChange(of: store.selectedVineyardId) { _, _ in invalidatePreparedSupportSnapshot() }
+        .onChange(of: systemAdmin.verifiedAccountId) { _, _ in invalidatePreparedSupportSnapshot() }
         .confirmationDialog("Export sensitive retained evidence?", isPresented: $confirmRecoveryExport, titleVisibility: .visible) {
             Button("Prepare read-only export") { prepareRecoveryExport() }
             Button("Cancel", role: .cancel) {}
@@ -309,9 +312,9 @@ struct SyncDiagnosticsView: View {
                 Button {
                     exportFullDiagnosticLog()
                 } label: {
-                    Label("Export Full Diagnostic Log", systemImage: "square.and.arrow.up.on.square")
+                    Label("Export Sync Support Snapshot", systemImage: "square.and.arrow.up.on.square")
                 }
-                Text("Local-only, read-only support report: sync timeline and current queue summary. No raw records, secrets or photographs.")
+                Text("Local-only scoped snapshot: in-memory record counts and fixed-code sync events. Queue and ACK evidence remain unavailable until safe inspectors are added.")
                     .font(.caption).foregroundStyle(.secondary)
                 if let fullLogMessage { Text(fullLogMessage).font(.footnote) }
             }
@@ -1254,62 +1257,72 @@ struct SyncDiagnosticsView: View {
 
     // MARK: - Actions
 
+    private func invalidatePreparedSupportSnapshot() {
+        // A document offered under one account or vineyard must never be
+        // presented under another one or after admin verification is revoked.
+        fullLogDocument = nil
+        showFullLogExporter = false
+    }
+
     private func exportFullDiagnosticLog() {
         guard auth.isSignedIn, systemAdmin.isSystemAdmin, !systemAdmin.isLoading,
               systemAdmin.lastLoadedAt != nil, let currentOwner = auth.userId,
+              systemAdmin.verifiedAccountId == currentOwner,
+              SupabaseClientProvider.shared.client.auth.currentUser?.id == currentOwner,
               let selected = store.selectedVineyardId else {
-            fullLogMessage = "A signed-in, verified platform administrator and selected vineyard are required."
+            fullLogMessage = "A signed-in, account-bound system administrator and selected vineyard are required."
             return
         }
-        // Safe timeline contains only numeric counts and fixed event codes.
-        // For existing diagnostics use an allowlisted summary; do not place the
-        // raw general-purpose diagnosticsText() or recovery evidence in this file.
-        let visible = rows.map { row in
-            ["domain": row.id, "local": String(row.localCount),
-             "pending_upserts": String(row.pendingUpserts), "pending_deletes": String(row.pendingDeletes),
-             "status": row.status.rawValue,
-             "last_sync": row.lastSync?.ISO8601Format() ?? "unknown"]
-        }
-        let entries = SyncDiagnosticHistory.snapshot().map { e in
-            ["timestamp": e.timestamp, "code": e.code,
-             "pending_upserts": String(e.pendingUpserts), "pending_deletes": String(e.pendingDeletes),
-             "failed_upserts": String(e.failedUpserts), "failed_deletes": String(e.failedDeletes),
-             "held_spray_pairs": String(e.heldSprayPairs),
-             "pull_succeeded": e.pullSucceeded.map { $0 ? "true" : "false" } ?? "unknown"]
-        }
+
+        // ONLY current in-memory rows are inspected here. In particular, do
+        // not call the generic 'rows' accessor: some legacy queue count helpers
+        // can create directories or write decode-evidence during inspection.
+        let visible: [[String: String]] = [
+            ["domain": "trips",
+             "local_loaded": String(store.trips.filter { $0.vineyardId == selected }.count)],
+            ["domain": "spray_records",
+             "local_loaded": String(store.sprayRecords.filter { $0.vineyardId == selected }.count)],
+            ["domain": "pins",
+             "local_loaded": String(store.pins.filter { $0.vineyardId == selected }.count)],
+            ["domain": "saved_chemicals",
+             "local_loaded": String(store.savedChemicals.filter { $0.vineyardId == selected }.count)],
+            ["domain": "work_tasks",
+             "local_loaded": String(store.workTasks.filter { $0.vineyardId == selected }.count)]
+        ]
+        // Only fixed-code events carrying this exact account and vineyard
+        // scope may leave the device. Their aggregate queue counts are NOT
+        // exported because the underlying services may count other vineyards.
+        let entries = SyncDiagnosticHistory.snapshot(ownerId: currentOwner, vineyardId: selected)
+            .map { ["timestamp": $0.timestamp, "code": $0.code] }
+
         let report: [String: Any] = [
-            "format": "vinetrack.sync.support.v1", "platform": "ios",
+            "format": "vinetrack.sync.support.snapshot.v1",
+            "platform": "ios",
             "generated_at": Date().ISO8601Format(),
             "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown",
             "app_build": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
-            "scope": "verified_system_admin_selected_vineyard",
-            "account_scope": "current_session_only",
-            "vineyard_scope": "selected_vineyard_only",
-            "owner_guard": currentOwner.uuidString.isEmpty ? "invalid" : "confirmed",
-            "selected_vineyard_guard": selected.uuidString.isEmpty ? "invalid" : "confirmed",
-            "sync_running": syncStatusCenter.isSyncing,
-            "last_attempt": syncStatusCenter.lastAttemptAt?.ISO8601Format() ?? "unknown",
-            "last_full_sync": syncStatusCenter.lastFullSyncAt?.ISO8601Format() ?? "unknown",
-            "last_successful_sync": syncStatusCenter.lastSuccessfulSyncAt?.ISO8601Format() ?? "unknown",
-            "last_pull": syncStatusCenter.lastPullAt?.ISO8601Format() ?? "unknown",
-            "last_upload": syncStatusCenter.lastUploadAt?.ISO8601Format() ?? "unknown",
-            "queue": ["pending_upserts": syncStatusCenter.pendingUpserts,
-                      "pending_deletes": syncStatusCenter.pendingDeletes,
-                      "failed_upserts": syncStatusCenter.failedUpserts,
-                      "failed_deletes": syncStatusCenter.failedDeletes,
-                      "held_spray_pairs": syncStatusCenter.heldSprayPairs],
-            "domains": visible, "events": entries,
+            "scope": "verified_account_and_selected_vineyard",
+            "collection": "read_only_in_memory_no_network_or_replay",
+            "domains": visible,
+            "events": entries,
+            "pending_queue_status": "UNVERIFIED_NO_SIDE_EFFECT_FREE_SCOPED_READER",
+            "tank_actual_queue_status": "UNVERIFIED_NO_SIDE_EFFECT_FREE_SCOPED_READER",
+            "server_acknowledgements": "UNVERIFIED_REQUIRES_SERVER_RECEIPT",
             "limitations": [
-                "Does not contain raw HTTP traffic, payloads, credentials, or server audit logs.",
-                "Event history begins when this build first runs. Old errors cannot be reconstructed.",
-                "Count changes are observations, not successful Supabase acknowledgements.",
-                "Current domain counters may exclude retained records not loaded into memory.",
-                "Separate sensitive retained recovery evidence export is intentionally excluded."
+                "This is a support SNAPSHOT, not a complete event log or server receipt.",
+                "Only selected-vineyard in-memory records and scoped fixed-code events are exported.",
+                "No unscoped global queue counters, timestamps, recovery files or other-vineyard data.",
+                "The existing UI diagnostics page may use different, non-pure readers; this export does not invoke them.",
+                "Events start with this build and may not capture all background stages.",
+                "No credentials, HTTP response bodies, record contents or photographs are exported."
             ]
         ]
-        guard let bytes = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]),
-              auth.userId == currentOwner, store.selectedVineyardId == selected, systemAdmin.isSystemAdmin else {
-            fullLogMessage = "Could not prepare report; account or vineyard may have changed."
+        guard let bytes = try? JSONSerialization.data(withJSONObject: report,
+                          options: [.prettyPrinted, .sortedKeys]),
+              auth.userId == currentOwner, store.selectedVineyardId == selected,
+              systemAdmin.isSystemAdmin, systemAdmin.verifiedAccountId == currentOwner,
+              SupabaseClientProvider.shared.client.auth.currentUser?.id == currentOwner else {
+            fullLogMessage = "Could not prepare the snapshot; authorization or vineyard changed."
             return
         }
         fullLogDocument = RetainedRecoveryEvidenceDocument(data: bytes)
