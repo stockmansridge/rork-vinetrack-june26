@@ -333,6 +333,10 @@ private fun ScoutWorkspace(
     val writeFailed by insights.lastWriteFailed.collectAsStateWithLifecycle()
     val syncError by insights.lastSyncError.collectAsStateWithLifecycle()
     val current = visits.firstOrNull { it.id == openId && it.vineyardId == state.selectedVineyardId }
+    // Completed Scout Trips open as a concise overview, like iOS.
+    // Detailed observations, technical GPS references and full reports stay accessible.
+    var showScoutMap by rememberSaveable(current?.id) { mutableStateOf(false) }
+    var showScoutStops by rememberSaveable(current?.id) { mutableStateOf(false) }
     var editingStopId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedMapBlockId by rememberSaveable { mutableStateOf<String?>(null) }
     var showBlockSelection by remember { mutableStateOf(false) }
@@ -646,10 +650,33 @@ private fun ScoutWorkspace(
                         Text("Make observation")
                     }
                 }
-                if (editingStopId == null) item {
+                if (!current.isEditable && editingStopId == null) item {
+                    VineyardCard {
+                        Text("Scout Trip summary", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = vine.textPrimary)
+                        Text("${current.scoutDateIso} · Vintage ${VintageYearText.format(current.vintageYear)} · ${current.scoutNameSnapshot ?: "Observer unavailable"}",
+                            fontSize = 12.sp, color = vine.textSecondary)
+                        Text("${current.assessments.size} observation stops · ${current.assessments.sumOf { it.photoCount }} photos",
+                            fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                        current.visitSummary?.takeIf { it.isNotBlank() }?.let { summary ->
+                            Text(summary, color = vine.textPrimary, fontSize = 14.sp, maxLines = 5)
+                        }
+                        Text("Full findings, photographs and exact location references are in the report.",
+                            fontSize = 12.sp, color = vine.textSecondary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            TextButton(onClick = { showScoutStops = !showScoutStops }) {
+                                Text(if (showScoutStops) "Hide observations" else "Show observations")
+                            }
+                            TextButton(onClick = { showScoutMap = !showScoutMap }) {
+                                Text(if (showScoutMap) "Hide map" else "Show map")
+                            }
+                        }
+                        TextButton(onClick = { reportVisit = current }) { Text("View full report") }
+                    }
+                }
+                if (editingStopId == null && (current.isEditable || showScoutMap)) item {
                     ScoutWorkspaceMap(
                         visit = current,
-                        blocks = state.paddocks,
+                        blocks = state.paddocks.filter { block -> current.assessments.any { it.paddockId == block.id } },
                         pins = state.pins,
                         growthRecords = state.growthRecords,
                         locationBlocks = state.paddocks,
@@ -657,9 +684,13 @@ private fun ScoutWorkspace(
                         onBlockSelected = { selectedMapBlockId = it },
                         onGesture = { mapGesture = it },
                         photoBytes = { id -> current.assessments.flatMap { it.observations }.flatMap { it.photos }.firstOrNull { it.id == id }?.let(vm.vineyardInsights::photoBytes) },
+                        showReferences = false,
                     )
                 }
-                items(current.assessments.filter { editingStopId == null || it.id == editingStopId }, key = { it.id }) { assessment ->
+                items(current.assessments.filter {
+                    (current.isEditable || editingStopId != null || showScoutStops) &&
+                        (editingStopId == null || it.id == editingStopId)
+                }, key = { it.id }) { assessment ->
                     if (editingStopId == null) {
                         OutlinedButton(onClick = { editingStopId = assessment.id; observationError = null }, modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.fillMaxWidth()) {
@@ -718,7 +749,7 @@ private fun ScoutWorkspace(
                 if (editingStopId == null) item {
                     Text("${current.scoutDateIso} • Vintage ${VintageYearText.format(current.vintageYear)} • ${current.scoutNameSnapshot ?: "Observer unavailable"}", fontSize = 12.sp)
                     Text(insights.syncStatus(current), fontSize = 12.sp)
-                    TextButton(onClick = { reportVisit = current }) { Text("View Report") }
+                    if (current.isEditable) TextButton(onClick = { reportVisit = current }) { Text("View Report") }
                     Button(
                         onClick = { showReview = true },
                         modifier = Modifier.fillMaxWidth(),
