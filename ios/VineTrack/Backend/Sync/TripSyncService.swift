@@ -24,6 +24,9 @@ final class TripSyncService {
     /// Per-Trip original-evidence hold after an exact server read. This is a
     /// transient explanation, not a receipt or authority to replay anything.
     private(set) var receiptReconciliationHolds: [UUID: String] = [:]
+    /// Optional, explicit server inspection only. Not a sync receipt and never
+    /// persisted as upload authority or mixed with the global queue totals.
+    private(set) var lastTripServerReadbackV3: String?
 
     private func isHeld(_ id: UUID) -> Bool {
         guard let store else { return false }
@@ -357,6 +360,141 @@ final class TripSyncService {
             lines += ["", "unattributed_queue_entry: trip=\(id.uuidString.lowercased()); reason=\(pendingUploadDiagnosticReason(id)); queue_marked_failed=\(metadata.isUpsertFailed(id)); occurrence_journal_selected_vineyard=\(journalState); linked_spray=\(linkedSpray); action: individual_reconciliation_required_no_clear"]
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// iOS P0 v3. User-requested, authenticated and vineyard-scoped read-only
+    /// evidence. No journal.load(), queue mutation, RPC write, retry or ACK.
+    /// Original receipt proof remains exclusively in normal sync admission.
+    func inspectTripServerReadbackV3() async -> String {
+        let bundle = Bundle.main
+        var lines = [
+            "VineTrack Trip Sync Recovery v3 — server read-only",
+            "platform: iOS",
+            "version: \(bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown")",
+            "build: \(bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")",
+            "source_revision: \(bundle.object(forInfoDictionaryKey: "VineTrackSourceRevision") as? String ?? "unknown_unverified_build")",
+            "no_write_no_replay_no_ack: true",
+            "server_receipts: inspected_only_not_persisted"
+        ]
+        guard !isSyncing else {
+            return (lines + ["status: SYNC_ALREADY_IN_PROGRESS; no inspection performed"]).joined(separator: "\n")
+        }
+        guard let store, let account = auth?.userId, auth?.isSignedIn == true,
+              store.currentUserIdProvider?() == account,
+              SupabaseClientProvider.shared.client.auth.currentUser?.id == account,
+              let vineyard = store.selectedVineyardId else {
+            return (lines + ["status: ACCOUNT_OR_VINEYARD_NOT_VERIFIED"]).joined(separator: "\n")
+        }
+        let selected = store.trips.filter { $0.vineyardId == vineyard }
+        let pending = selected.filter { metadata.pendingUpserts[$0.id] != nil }
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        lines += ["vineyard_id: \(vineyard.uuidString.lowercased())",
+                  "global_legacy_pending: \(metadata.pendingUpserts.count)",
+                  "selected_vineyard_pending: \(pending.count)",
+                  "other_or_unattributed_queue_ids: \(metadata.pendingUpserts.count - pending.count)",
+                  "other_vineyard_records: PROTECTED_NOT_INSPECTED"]
+        let reader = SupabaseTripSyncRepository()
+        for local in pending.prefix(25) {
+            guard store.currentUserIdProvider?() == account,
+                  store.selectedVineyardId == vineyard,
+                  SupabaseClientProvider.shared.client.auth.currentUser?.id == account else {
+                lines.append("status: SCOPE_CHANGED_INSPECTION_STOPPED")
+                break
+            }
+            let tripId = local.id
+            lines += ["", "trip_id: \(tripId.uuidString.lowercased())",
+                      "queue_failed: \(metadata.isUpsertFailed(tripId))",
+                      "local_is_active: \(local.isActive)",
+                      "local_is_ended: \(local.endTime != nil)",
+                      "local_tank_count: \(local.tankSessions.count)",
+                      "local_spray_count: \(store.sprayRecords.filter { $0.canonicalTripId == tripId }.count)",
+                      "local_actual_pending: \(SprayTankActualStore.shared.pendingCount(tripId: tripId))",
+                      "queue_stage: \(pendingUploadDiagnosticReason(tripId))"]
+            var journalSnapshot: TripOccurrenceJournal.Snapshot? = nil
+            if local.coverageBasis == .occurrence {
+                do {
+                    let journal = try TripOccurrenceJournal(scope: .init(
+                        ownerId: account.uuidString.lowercased(),
+                        vineyardId: vineyard.uuidString.lowercased(),
+                        tripId: tripId.uuidString.lowercased()), createDirectoryIfMissing: false)
+                    journalSnapshot = try journal.inspectionSnapshot()
+                    if let journalSnapshot {
+                        lines += TripOccurrenceJournal.inspectionLines(journalSnapshot)
+                    } else {
+                        lines.append("original_journal: ABSENT_OR_UNAVAILABLE_NO_REPLAY")
+                    }
+                } catch { lines.append("original_journal: UNREADABLE_NO_REPLAY") }
+            }
+            do {
+                let row = try await reader.fetchTripForOccurrenceStart(tripId: tripId, vineyardId: vineyard)
+                guard store.currentUserIdProvider?() == account,
+                      store.selectedVineyardId == vineyard,
+                      SupabaseClientProvider.shared.client.auth.currentUser?.id == account else {
+                    lines.append("server_result: SCOPE_CHANGED_DISCARDED")
+                    break
+                }
+                guard let row else {
+                    lines += ["server_trip: NOT_VISIBLE_IN_AUTHENTICATED_SCOPED_READ",
+                              "recovery_class: ORIGINAL_ID_OPERATION_RECONCILIATION_REQUIRED"]
+                    continue
+                }
+                let remote = row.toTrip()
+                lines += ["server_trip: PRESENT_EXACT_ID",
+                          "server_ended: \(row.endTime != nil)",
+                          "server_active: \(row.isActive ?? false)",
+                          "server_tank_count: \(remote.tankSessions.count)",
+                          "terminal_trip_hold_code: \(CompletedTripReceiptAdmission.holdReason(local: local, remote: remote) ?? "none")",
+                          TripRecoveryTimeEvidence.compare(field: "trip_end", local: local.endTime, remote: remote.endTime)]
+                for tank in local.tankSessions.sorted(by: { $0.id.uuidString < $1.id.uuidString }) {
+                    lines.append("tank_session_id: \(tank.id.uuidString.lowercased())")
+                    guard let serverTank = remote.tankSessions.first(where: { $0.id == tank.id }) else {
+                        lines.append("tank_server: SESSION_ID_NOT_FOUND")
+                        continue
+                    }
+                    lines.append("tank_discrepancy: \(TankSessionReceiptMatch.discrepancy(local: tank, remote: serverTank) ?? "none")")
+                    lines += [
+                        TripRecoveryTimeEvidence.compare(field: "tank_start", local: tank.startTime, remote: serverTank.startTime),
+                        TripRecoveryTimeEvidence.compare(field: "tank_end", local: tank.endTime, remote: serverTank.endTime),
+                        TripRecoveryTimeEvidence.compare(field: "tank_fill_start", local: tank.fillStartTime, remote: serverTank.fillStartTime),
+                        TripRecoveryTimeEvidence.compare(field: "tank_fill_end", local: tank.fillEndTime, remote: serverTank.fillEndTime)
+                    ]
+                }
+                if local.tripFunction == TripFunction.spraying.rawValue {
+                    do {
+                        let linked = try await SprayCompletionRepository().fetchLinked(tripId: tripId)
+                        let localSprays = store.sprayRecords.filter { $0.canonicalTripId == tripId }
+                        lines += ["server_linked_sprays: \(linked.count)",
+                                  "local_server_spray_ids_match: \(Set(linked.map(\\.id)) == Set(localSprays.map(\\.id)))"]
+                    } catch { lines.append("server_linked_sprays: READ_FAILED_NO_ASSUMPTION") }
+                    let localActuals = SprayTankActualStore.shared.records.filter { $0.tripId == tripId }
+                    for actual in localActuals {
+                        do {
+                            let remoteActual = try await SprayTankActualStore.shared.actualReader(actual)
+                            lines.append("actual_id: \(actual.id.uuidString.lowercased()); server_matches: \(TankDependencyVerification.actualMatches(local: actual, server: remoteActual))")
+                        } catch {
+                            lines.append("actual_id: \(actual.id.uuidString.lowercased()); server_read: FAILED")
+                        }
+                    }
+                }
+                if let journalSnapshot, !journalSnapshot.pending.isEmpty {
+                    do {
+                        let recovery = try await reader.fetchOccurrenceRecovery(
+                            tripId: tripId, operationIds: journalSnapshot.pending.map(\\.id))
+                        let receipts = recovery[occurrence: "receipts"]?.occurrenceArray ?? []
+                        lines.append("original_operation_server_receipts_visible: \(receipts.count)")
+                    } catch { lines.append("original_operation_server_receipts: READ_FAILED_NO_ASSUMPTION") }
+                }
+            } catch {
+                lines.append("server_trip: READ_FAILED_NO_ASSUMPTION")
+            }
+        }
+        if pending.count > 25 { lines.append("remaining_selected_pending: \(pending.count - 25); not_inspected") }
+        lines.append("inspected_at_utc: \(Date().ISO8601Format())")
+        let report = lines.joined(separator: "\n")
+        // In-memory convenience for the Copy Sync diagnostics action. It is
+        // neither a durable accepted receipt nor a permitted replay authority.
+        lastTripServerReadbackV3 = report
+        return report
     }
 
     // MARK: - Work Task link
@@ -1570,6 +1708,24 @@ final class TripSyncMetadata {
     }
 }
 
+
+/// Content-limited time evidence for one original session. No chemical
+/// amounts, coordinates, credentials, names or server payloads are included.
+nonisolated enum TripRecoveryTimeEvidence {
+    static func compare(field: String, local: Date?, remote: Date?) -> String {
+        func timestamp(_ date: Date?) -> String {
+            guard let date else { return "missing" }
+            return String(format: "%.6f", date.timeIntervalSince1970)
+        }
+        let delta: String
+        if let local, let remote {
+            delta = String(format: "%.3f", abs(local.timeIntervalSince(remote)) * 1_000)
+        } else {
+            delta = local == nil && remote == nil ? "both_missing" : "presence_mismatch"
+        }
+        return "\(field): local_epoch_s=\(timestamp(local)); server_epoch_s=\(timestamp(remote)); absolute_delta_ms=\(delta)"
+    }
+}
 
 /// Historical legacy server tank JSON can round timestamps to 3 decimal
 /// places. A difference no greater than 1ms is ONLY a wire precision match,
