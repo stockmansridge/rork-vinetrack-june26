@@ -43,6 +43,8 @@ struct ManualSprayEntryView: View {
     @State private var isReviewing: Bool = false
     @State private var isSaving: Bool = false
     @State private var awaitingServerConfirmation: Bool = false
+    @State private var isVerifyingReadback: Bool = false
+    @State private var confirmedByReadback: Bool = false
     @State private var message: String?
     @State private var loadError: String?
 
@@ -61,7 +63,7 @@ struct ManualSprayEntryView: View {
 
     private var reviewStatus: ManualSprayReviewStatus {
         ManualSprayReviewStatus.resolve(
-            serverConfirmed: savedResponse != nil,
+            serverConfirmed: savedResponse != nil || confirmedByReadback,
             hasRetainedSave: retainedSaveForVineyard != nil,
             hasSubmissionMarker: hasSubmissionMarker || awaitingServerConfirmation,
             isSaving: isSaving
@@ -92,13 +94,14 @@ struct ManualSprayEntryView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { if !isSaving { dismiss() } }.disabled(isSaving)
+                Button("Cancel") { if !isSaving && !isVerifyingReadback { dismiss() } }
+                    .disabled(isSaving || isVerifyingReadback)
             }
             ToolbarItem(placement: .confirmationAction) {
                 if reviewStatus != .reviewOnly {
                     Button(savedResponse != nil ? "Done" : "Close") {
-                        if !isSaving { dismiss() }
-                    }.disabled(isSaving)
+                        if !isSaving && !isVerifyingReadback { dismiss() }
+                    }.disabled(isSaving || isVerifyingReadback)
                 } else {
                     Button(isReviewing ? "Save manual spray" : "Review") {
                         if isReviewing { Task { await save() } } else { validateForReview() }
@@ -109,7 +112,7 @@ struct ManualSprayEntryView: View {
                 }
             }
         }
-        .interactiveDismissDisabled(isSaving)
+        .interactiveDismissDisabled(isSaving || isVerifyingReadback)
         .onChange(of: draft) { _, updated in
             // Once the original operation has been submitted, never replace
             // its saved form snapshot while the server state is unresolved.
@@ -214,6 +217,15 @@ struct ManualSprayEntryView: View {
             Text("The exact application record, quantities and completion time have not been re-confirmed on this screen. Closing does not delete or retry the original operation.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if reviewStatus != .submitting {
+                Button(isVerifyingReadback ? "Checking original spray…" : "Verify original spray on server") {
+                    Task { await verifyOriginalReadback() }
+                }
+                .disabled(isSaving || isVerifyingReadback ||
+                          accessControl.loadedVineyardId != vineyardId)
+                Text("Verification only reads the existing server report. It will never retry, replace, or delete retained work.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -221,7 +233,12 @@ struct ManualSprayEntryView: View {
         Section { Label("Manual entry", systemImage: "pencil").foregroundStyle(.purple); LabeledContent("Status", value: reviewStatus.label) }
         Section("Application") { LabeledContent("Reference", value: draft.reference); LabeledContent("Start", value: fmt.formatDateTime(draft.startUtc)); LabeledContent("End", value: fmt.formatDateTime(draft.endUtc)); LabeledContent("Timezone", value: draft.vineyardTimeZone) }
         Section("Summary") { LabeledContent("Blocks", value: "\(draft.blocks.count)"); LabeledContent("Tanks", value: "\(draft.tanks.count)"); LabeledContent("Actual water", value: fmt.formatVolume(litres: draft.tanks.reduce(0) { $0 + $1.waterVolumeLitres })) }
-        if let savedResponse {
+        if confirmedByReadback && savedResponse == nil {
+            Section {
+                Text("The original application, actual quantities and times were verified against the server report.")
+                Button("Done") { dismiss() }
+            }
+        } else if let savedResponse {
             Section("Weather station") {
                 Button("Retrieve historical station weather", systemImage: "cloud.sun") { Task { await recoverWeather(savedResponse) } }
                 Text("This lookup is optional. An unavailable station never changes the saved application or replaces manual observations.").font(.caption).foregroundStyle(.secondary)
@@ -326,6 +343,49 @@ struct ManualSprayEntryView: View {
                                                 manualEntryId: validated.manualEntryId)
             }
             message = error.localizedDescription
+        }
+    }
+
+    /// Explicit read-only recovery for a background ACK. The original manual
+    /// entry ID, Trip, spray record, tanks and quantities must all match.
+    /// No retry, ACK promotion, queue mutation or new operation occurs here.
+    private func verifyOriginalReadback() async {
+        guard !isSaving, !isVerifyingReadback,
+              let ownerId = verifiedOwnerId,
+              submissionGuard.submittedId(ownerId: ownerId, vineyardId: vineyardId,
+                                          manualEntryId: draft.manualEntryId) == draft.manualEntryId,
+              accessControl.loadedVineyardId == vineyardId,
+              accessControl.canManageManualSprays else {
+            message = "No verified submission identity is available for this account and vineyard."
+            return
+        }
+        let original = draft
+        isVerifyingReadback = true
+        defer { isVerifyingReadback = false }
+        do {
+            let report = try await SprayReportRepository.shared.fetch(tripId: original.tripId)
+            guard verifiedOwnerId == ownerId,
+                  accessControl.loadedVineyardId == vineyardId,
+                  ManualSprayReviewStatus.reportMatchesOriginal(report, payload: original) else {
+                message = "The server report is missing or differs from the original submission. Do not resubmit this spray. Its evidence is retained."
+                return
+            }
+            guard !coordinator.operations.contains(where: {
+                $0.kind == .save && $0.payload.vineyardId == vineyardId &&
+                $0.payload.manualEntryId == original.manualEntryId
+            }) else {
+                message = "The server report matches, but this device still retains the original operation. Check Sync status; the queue was not changed."
+                return
+            }
+            submissionGuard.clearIfMatching(ownerId: ownerId, vineyardId: vineyardId,
+                                            manualEntryId: original.manualEntryId)
+            ManualSprayDraftStore.shared.clear(vineyardId: vineyardId)
+            confirmedByReadback = true
+            awaitingServerConfirmation = false
+            isReviewing = true
+            message = "Original manual spray verified from the server. You can safely start a separate new application."
+        } catch {
+            message = "The original spray could not be independently verified. Keep this application; no new submission was made."
         }
     }
 
