@@ -60,6 +60,11 @@ class TripTankSync(
     private val saveTankSessions: (suspend (String, List<TankSession>, Int?, Boolean, Int?) -> Trip)? = null,
     /** P0 3.1.9: (owner, vineyard, trip) is under a durable occurrence tank-conflict hold. */
     private val isTankHeld: (String, String, String) -> Boolean = { _, _, _ -> false },
+    /**
+     * P0 3.1.9 Phase B: tank session IDs referenced by local Tank actuals for a Trip.
+     * A null result (unreadable evidence) holds the marker; it is never treated as empty.
+     */
+    private val requiredSessionIds: (String) -> Set<String>? = { emptySet() },
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -204,6 +209,20 @@ class TripTankSync(
                         )
                         continue
                     }
+                    val required = runCatching { requiredSessionIds(payload.tripId) }.getOrNull()
+                    if (required == null) {
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED,
+                            "${TankDependencyVerification.REQUIRED_SESSIONS_UNREADABLE}: Couldn't read this trip's Tank actuals. Tank progress is retained.")
+                        continue
+                    }
+                    if (TankDependencyVerification.unsatisfiableSessions(required, local.tankSessions, server.tankSessions).isNotEmpty()) {
+                        // Never acknowledge the marker while a session an actual depends on exists nowhere.
+                        withAccountAccess {
+                            pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                                "${TankDependencyVerification.REQUIRED_SESSION_MISSING}: A Tank actual's tank session is missing. Evidence is retained for review.")
+                        }
+                        continue
+                    }
                     val merged = TankSessionReplayMerge.merge(server, local)
                     if (merged == null) {
                         // Merge could not be proven safe (would drop/regress
@@ -216,7 +235,15 @@ class TripTankSync(
                         continue
                     }
                     if (!merged.addsSomething(server)) {
-                        // Nothing new beyond the server tank state — don't PATCH.
+                        // Nothing new beyond the server tank state — don't PATCH. Acknowledge only
+                        // when the server row already holds every required session.
+                        if (TankDependencyVerification.missingFromServer(required, server.tankSessions).isNotEmpty()) {
+                            withAccountAccess {
+                                pending.updateStatusIfCurrent(write, PendingWriteStatus.BLOCKED,
+                                    "${TankDependencyVerification.REQUIRED_SESSION_MISSING}: A Tank actual's tank session is missing. Evidence is retained for review.")
+                            }
+                            continue
+                        }
                         withAccountAccess { pending.removeIfCurrent(write) }
                         continue
                     }
@@ -228,6 +255,12 @@ class TripTankSync(
                         merged.isFillingTank, merged.fillingTankNumber, accountAccess,
                     )
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (!TankDependencyVerification.patchVerified(trip, payload.tripId, snapshot.vineyardId, merged.sessions, required)) {
+                        // The response does not prove the sessions landed: keep the marker for a later probe.
+                        pending.updateStatusIfCurrent(write, PendingWriteStatus.FAILED,
+                            "${TankDependencyVerification.PATCH_READBACK_MISMATCH}: The server response didn't confirm every tank. Ready to retry.")
+                        continue
+                    }
                     withAccountAccess {
                         if (pending.currentReplayScope() == originalScope && pending.removeIfCurrent(write)) onSynced(trip)
                     }

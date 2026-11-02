@@ -80,6 +80,21 @@ final class MigratedDataStore {
         persistence.save(ownership, key: Keys.deviceActiveTripId)
     }
 
+    /// P0 Phase A: before the tracking claim is released at End, record durable original-device
+    /// proof for this exact Trip so a later Cancel Trip can be limited to this installation.
+    /// A failed record only makes cancellation ineligible (fail-closed); End itself is unaffected.
+    func releaseDeviceTripAfterLocalEnd(_ trip: Trip) {
+        if let ownership = deviceTripOwnership, ownership.tripId == trip.id {
+            TripLocalEndClaimStore.shared.record(.init(
+                tripId: trip.id.uuidString.lowercased(),
+                ownerId: ownership.userId?.uuidString.lowercased(),
+                vineyardId: trip.vineyardId.uuidString.lowercased(),
+                endedAt: trip.endTime ?? Date(),
+                source: "device_claim_at_end"))
+        }
+        releaseDeviceTrip(trip.id)
+    }
+
     func releaseDeviceTrip(_ id: UUID) {
         guard deviceActiveTripId == id else { return }
         deviceTripOwnership = nil

@@ -575,6 +575,8 @@ data class AppUiState(
     val sprayTankActuals: List<com.rork.vinetrack.data.model.SprayTankActual> = emptyList(),
     /** Nonidentifying guidance for the independent actual pending authority. */
     val tankActualSyncNotice: String? = null,
+    /** P0 Phase C: Trips with unacknowledged local tank actuals; never shown as synced. */
+    val pendingActualTripIds: Set<String> = emptySet(),
     /**
      * Read-only portal spray templates from `spray_jobs` (is_template = true,
      * deleted_at IS NULL), mapped to in-memory [SprayRecord] templates. Never
@@ -996,7 +998,7 @@ data class AppUiState(
      */
     fun tripSyncState(tripId: String): TripSyncBadge {
         val items = pendingSyncItems.filter { it.clientId == tripId && it.entityType.startsWith("trip") }
-        if (items.isEmpty() && tripId !in locallyEndedTripIds) return TripSyncBadge.SYNCED
+        if (items.isEmpty() && tripId !in locallyEndedTripIds && tripId !in pendingActualTripIds) return TripSyncBadge.SYNCED
         if (items.any { it.status == "failed" }) return TripSyncBadge.ERROR
         if (items.any { it.status == "in_progress" }) return TripSyncBadge.SYNCING
         return TripSyncBadge.QUEUED
@@ -2585,7 +2587,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * coordinators.
      */
     private val tripTankSync = TripTankSync(tripRepo, pendingWrites, activeTripStore,
-        isTankHeld = { owner, vineyard, trip -> tankConflictHeld(owner, vineyard, trip) })
+        isTankHeld = { owner, vineyard, trip -> tankConflictHeld(owner, vineyard, trip) },
+        requiredSessionIds = { tripId -> sprayTankActualStore.load().filter { it.tripId == tripId }.map { it.tankSessionId }.toSet() })
 
     /**
      * P0 3.1.9: durable occurrence tank-conflict hold (stored in the Trip's own
@@ -3083,8 +3086,78 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             com.rork.vinetrack.data.DeviceTripStatus.diagnosticLines(trip.id, deviceTripStatus(trip)) +
             "trip_tank_fields: sessions=${trip.tankSessions.size}; active_tank=${trip.activeTankNumber ?: "none"}; filling=${trip.isFillingTank}" +
             "tank_conflict_hold: ${if (tankConflictHeld(trip)) TripOccurrenceJournal.TANK_CONFLICT_CODE else "none"}" +
-            "start_tank_journal: ${startTankCommitCoordinator.inspect()?.takeIf { it.updatedTrip.id == trip.id }?.state ?: "absent"}"
+            "start_tank_journal: ${startTankCommitCoordinator.inspect()?.takeIf { it.updatedTrip.id == trip.id }?.state ?: "absent"}" +
+            tripClosureInput(trip, null).let { input ->
+                com.rork.vinetrack.data.TripClosureStatus.diagnosticLines(trip.id, input,
+                    com.rork.vinetrack.data.TripClosureStatus.evaluate(input))
+            }
         ).joinToString("\n")
+    }
+
+    /**
+     * P0 Phase C: read-only closure evidence for [trip]. [fresh] is a fresh server read result
+     * (Result.success(null) = absent); null uses the acknowledged local row. Never writes stores.
+     */
+    private fun tripClosureInput(trip: Trip, fresh: Result<Trip?>?): com.rork.vinetrack.data.TripClosureStatus.Input {
+        val st = _ui.value
+        val evidenceRow: Trip? = when {
+            fresh == null -> trip
+            else -> fresh.getOrNull()
+        }
+        val evidence = when {
+            fresh == null -> com.rork.vinetrack.data.TripClosureStatus.ServerEvidence.ACKED_LOCAL_ROW
+            fresh.isFailure -> com.rork.vinetrack.data.TripClosureStatus.ServerEvidence.READ_FAILED
+            evidenceRow == null || evidenceRow.vineyardId != trip.vineyardId -> com.rork.vinetrack.data.TripClosureStatus.ServerEvidence.ABSENT
+            else -> com.rork.vinetrack.data.TripClosureStatus.ServerEvidence.FRESH_READ
+        }
+        val actuals = runCatching { sprayTankActualStore.load().filter { it.tripId == trip.id } }.getOrDefault(emptyList())
+        val pendingActuals = runCatching { sprayTankActualStore.pending(trip.id).map { it.id } }.getOrDefault(listOf("UNREADABLE"))
+        val sprayIds = (actuals.map { it.sprayRecordId } + st.sprayRecords.filter { it.tripId == trip.id }.map { it.id }).toSet()
+        val markers = runCatching { pendingWrites.list() }.getOrDefault(emptyList()).filter { w ->
+            w.status in com.rork.vinetrack.data.model.PendingWriteStatus.unresolved &&
+                ((w.clientId == trip.id && w.entityType.startsWith("trip")) ||
+                    (w.clientId in sprayIds && w.entityType == com.rork.vinetrack.data.model.PendingEntityType.SPRAY_RECORD))
+        }.map { com.rork.vinetrack.data.TripClosureStatus.Marker(it.entityType, it.status) }
+        val owner = session.userId
+        val journal = if (owner == null) null else runCatching {
+            occurrenceStore.journal(TripOccurrenceJournal.Scope(owner, trip.vineyardId, trip.id)).load()
+        }
+        val occurrencePending = when {
+            journal == null || journal.isFailure -> null
+            else -> journal.getOrNull()?.pending?.size ?: 0
+        }
+        val held = mutableListOf<String>()
+        if (tankConflictHeld(trip)) held += TripOccurrenceJournal.TANK_CONFLICT_CODE
+        val activeEvidence = evidenceRow ?: trip
+        return com.rork.vinetrack.data.TripClosureStatus.Input(
+            tripId = trip.id, evidence = evidence,
+            serverIsActive = activeEvidence.isActive, serverEndTime = activeEvidence.endTime,
+            serverSessionIds = if (evidence == com.rork.vinetrack.data.TripClosureStatus.ServerEvidence.READ_FAILED ||
+                evidence == com.rork.vinetrack.data.TripClosureStatus.ServerEvidence.ABSENT) null
+                else activeEvidence.tankSessions.map { it.id }.toSet(),
+            locallyEnded = trip.id in st.locallyEndedTripIds,
+            unresolvedMarkers = markers,
+            occurrencePending = occurrencePending,
+            occurrenceHeldReason = journal?.getOrNull()?.heldReason,
+            actualSessionIds = actuals.map { it.tankSessionId }.toSet(),
+            pendingActualIds = pendingActuals,
+            holdCodes = held,
+        )
+    }
+
+    /** P0 Phase C: closure state from acknowledged local evidence (no network). */
+    fun tripClosureStatus(trip: Trip): com.rork.vinetrack.data.TripClosureStatus.Result =
+        com.rork.vinetrack.data.TripClosureStatus.evaluate(tripClosureInput(trip, null))
+
+    /**
+     * P0 Phase C: confirms closure against a fresh server read. Only this result may report a
+     * verified CLOSED_SYNCED. Read-only: no acknowledgement, clearing or replay.
+     */
+    suspend fun verifyTripClosure(trip: Trip): com.rork.vinetrack.data.TripClosureStatus.Result {
+        val access = session.accountAccess()
+        val fresh: Result<Trip?> = if (access == null) Result.failure(IllegalStateException("NO_ACCOUNT_ACCESS"))
+            else runCatching { tripRepo.fetchTrip(trip.id, access) }
+        return com.rork.vinetrack.data.TripClosureStatus.evaluate(tripClosureInput(trip, fresh))
     }
 
     /** Submit an in-app support / feedback / feature request (mirrors iOS SupportRequestView). */
@@ -3191,7 +3264,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             ((it.clientId == actual.tripId && it.entityType in setOf(PendingEntityType.TRIP_TANK, PendingEntityType.TRIP_START)) ||
                                 (it.clientId == actual.sprayRecordId && it.entityType == PendingEntityType.SPRAY_RECORD)) }
                     }
-                    _ui.update { it.copy(sprayTankActuals = actuals, tankActualSyncNotice = notice) }
+                    val pendingTrips = runCatching { sprayTankActualStore.pending().map { it.tripId }.toSet() }
+                        .getOrElse { actuals.map { it.tripId }.toSet() }
+                    _ui.update { it.copy(sprayTankActuals = actuals, tankActualSyncNotice = notice, pendingActualTripIds = pendingTrips) }
                 }
             }
         }
@@ -3984,6 +4059,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     { actual, access -> sprayTankActualRepo.upsert(actual, access) },
                     { vineyardId, access -> sprayTankActualRepo.fetch(vineyardId, access) },
                     isTankHeld = { actual, access -> tankConflictHeld(access.userId, actual.vineyardId, actual.tripId) },
+                    serverSessionIds = { actual, access ->
+                        tripRepo.fetchTrip(actual.tripId, access)
+                            ?.takeIf { it.vineyardId == actual.vineyardId }
+                            ?.tankSessions?.map { it.id }?.toSet()
+                    },
+                    readBack = { actual, access ->
+                        sprayTankActualRepo.fetch(actual.vineyardId, access).singleOrNull { it.id == actual.id }
+                    },
                 ).replay(tankAccountAccess, tankVineyardId, { actual ->
                     TripStartSync.hasUnresolvedStart(pendingWrites, actual.tripId) ||
                         pendingWrites.list().any { write ->

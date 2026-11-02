@@ -81,6 +81,12 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         }
     }
 
+    func fetchTankSessionIds(tripId: UUID, vineyardId: UUID) async throws -> Set<String>? {
+        guard let row = try await fetchTripForOccurrenceStart(tripId: tripId, vineyardId: vineyardId),
+              row.deletedAt == nil else { return nil }
+        return TankDependencyVerification.ids(row.tankSessions ?? [])
+    }
+
     private func requireTripWrite(_ id: UUID) async throws -> UUID {
         guard let owner = provider.client.auth.currentUser?.id else { throw CancellationError() }
         struct Row: Decodable { let vineyard_id: UUID }

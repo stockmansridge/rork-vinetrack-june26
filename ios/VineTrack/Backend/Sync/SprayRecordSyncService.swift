@@ -34,6 +34,12 @@ final class SprayRecordSyncService {
     /// Whether a specific spray record is queued for a remote delete.
     func isPendingDelete(_ id: UUID) -> Bool { metadata.pendingDeletes[id] != nil }
 
+    /// P0 Phase A: removes exactly one queue entry for a spray record whose Trip cancellation
+    /// receipt is verified and durably acknowledged. Never used by count.
+    func clearCancelledTripRecordQueue(_ id: UUID, delete: Bool) {
+        if delete { metadata.clearDeleted([id]) } else { metadata.clearDirty([id]) }
+    }
+
     /// True while a full sweep is actively pushing/pulling spray records.
     var isSyncing: Bool { syncStatus == .syncing }
 
@@ -134,6 +140,11 @@ final class SprayRecordSyncService {
         let createdBy = auth?.userId
         var dirty = metadata.pendingUpserts
         for id in Array(dirty.keys) where try store.isLegacySpraySyncHeld(record: id) {
+            dirty.removeValue(forKey: id)
+        }
+        // P0 Phase A: a Trip cancellation in progress (or acknowledged) holds its linked spray record.
+        let recordTrips = Dictionary(store.sprayRecords.map { ($0.id, $0.tripId) }, uniquingKeysWith: { _, new in new })
+        for id in Array(dirty.keys) where recordTrips[id].map({ TripCancellationIntentStore.shared.blocksReplay(tripId: $0) }) == true {
             dirty.removeValue(forKey: id)
         }
         if !dirty.isEmpty {

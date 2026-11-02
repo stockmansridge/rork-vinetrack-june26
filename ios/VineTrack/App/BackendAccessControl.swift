@@ -64,6 +64,8 @@ final class BackendAccessControl {
     var canDeleteOperationalRecords: Bool { effectiveRole?.canDeleteOperationalRecords ?? false }
     var canInviteMembers: Bool { effectiveRole?.canInviteMembers ?? false }
     var canExportFinancialReports: Bool { effectiveRole?.canExportFinancialReports ?? false }
+    /// P0 Phase A: the verified, account-scoped role used by Cancel Trip eligibility (server re-checks).
+    var tripCancellationRole: String? { effectiveRole?.rawValue }
     var canManageBilling: Bool { effectiveRole?.canManageBilling ?? false }
     var canEditRecords: Bool { effectiveRole?.canEditRecords ?? false }
     var canCreateOperationalRecords: Bool { effectiveRole?.canCreateOperationalRecords ?? false }

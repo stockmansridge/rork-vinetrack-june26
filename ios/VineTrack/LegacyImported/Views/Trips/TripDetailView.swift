@@ -148,6 +148,8 @@ struct TripDetailView: View {
         List {
             tripHeaderSection
             tripRecoverySection
+            TripCancellationSection(trip: currentTrip)
+            TripClosureSection(trip: currentTrip)
             tripSummarySection
             tripSprayRecordSection
             tripRowsSection

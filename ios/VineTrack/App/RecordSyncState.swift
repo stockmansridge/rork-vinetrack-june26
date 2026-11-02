@@ -94,7 +94,9 @@ extension RecordSyncState {
     @MainActor
     static func forTrip(_ tripId: UUID, tripSync: TripSyncService) -> RecordSyncState {
         resolve(
-            isPending: tripSync.isPendingUpsert(tripId) || tripSync.isPendingDelete(tripId),
+            // P0 Phase C: a Trip with unacknowledged tank actuals is never shown as synced.
+            isPending: tripSync.isPendingUpsert(tripId) || tripSync.isPendingDelete(tripId) ||
+                SprayTankActualStore.shared.hasPending(tripId: tripId),
             serviceIsSyncing: tripSync.isSyncing,
             recordHasFailure: tripSync.hasFailure(tripId)
         )

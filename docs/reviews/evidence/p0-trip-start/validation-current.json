@@ -785,5 +785,34 @@
     "iOS retains PR31 initial-mix/recovery flow and PR33 explicit-null water and exact-revision acknowledgement; newest edits affect inspection and preflight directory side effects, not receipt admission.",
     "SQL repair source matches reviewed PR31; deployment is not established by source equality.",
     "Exhaustive hunk equivalence and final public-main equality still require a completed final source comparison."
-  ]
+  ],
+  "issue40PhaseBC": {
+    "recordedAtUTC": "2026-11-02",
+    "verdict": "NOT_ACCEPTED_source_only",
+    "androidJvm": {
+      "TankDependencyPhaseBTest": "10/10",
+      "TripClosureStatusPhaseCTest": "11/11 xml sha256 22337dad0b1a45c59d4727eba21cff8dd342af9d10c438f9b0222fd3030afb5c"
+    },
+    "iosSwiftTest": {
+      "TripClosureStatusTests+TankDependencyVerificationTests": "18 passed in 158s (simulator)"
+    },
+    "builds": {
+      "android": "runChecks PASS",
+      "ios": "runChecks PASS simulator only"
+    },
+    "sourceSha256": {
+      "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TripClosureStatus.kt": "9663ba768509e110ec6f321ec9d8c62a22fe14202d2de865ad8562d6e69ec806",
+      "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TankDependencyVerification.kt": "61ac7501dd55008717aad875527e89c951c9870a89e3a8cee4ab31bb7c9ece88",
+      "ios/VineTrack/Backend/Sync/TripClosureStatus.swift": "baf5a8f4ee4f4b2fad4e348598a1c13238af88044c4474d70f8c45e6e435c929",
+      "ios/VineTrack/Backend/Sync/TankDependencyVerification.swift": "7e6325b0c56de413561ac7386e1eaa9bdc25a2e848acfc09195b658db88d9375",
+      "ios/VineTrack/Backend/Sync/TripActivityCancellationService.swift": "02b527065322e759b301dac1932e6c6d2b72e25be104c02d350a54225ec3e248"
+    },
+    "notExecuted": [
+      "original-device acceptance",
+      "fresh controlled Trip to CLOSED_SYNCED",
+      "iOS build 200 per-entry stuck-queue reconciliation",
+      "Play Internal/TestFlight candidates"
+    ],
+    "report": "docs/sync/P0_ISSUE40_PARITY_REPORT_20261102.md"
+  }
 }

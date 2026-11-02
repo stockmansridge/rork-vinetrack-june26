@@ -982,7 +982,7 @@ final class TripTrackingService {
         // discard the whole route.
         do {
             try store?.endTripOrThrow(trip.id)
-            store?.releaseDeviceTrip(trip.id)
+            store?.releaseDeviceTripAfterLocalEnd(store?.trips.first { $0.id == trip.id } ?? trip)
         } catch {
             let detail = (error as NSError).localizedDescription
             errorMessage = TripEndOutcome.persistenceFailed(detail).operatorMessage
@@ -2587,7 +2587,7 @@ final class TripTrackingService {
             var local = try current.withOccurrenceProjection(state.projected)
             local.isActive = false; local.isPaused = false; local.endTime = ended
             try store.updateTripOrThrow(local)
-            store.releaseDeviceTrip(local.id)
+            store.releaseDeviceTripAfterLocalEnd(local)
             stopTrackingLoops(stopLocation: true); isTracking = false; isPaused = false
             errorMessage = "Trip stopped locally. Occurrence review is saved; finalisation awaits dependency-safe sync."
             return .ended

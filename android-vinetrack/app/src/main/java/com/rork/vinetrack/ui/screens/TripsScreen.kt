@@ -1213,6 +1213,8 @@ private fun TripDetailView(
                 )
             } else if (trip.isActive && trip.endTime.isNullOrBlank()) {
                 DeviceTripStatusCard(vm = vm, state = state, trip = trip)
+            } else if (!trip.endTime.isNullOrBlank()) {
+                TripClosureCard(vm = vm, state = state, trip = trip)
             }
 
             state.tankActualSyncNotice?.let { notice ->
@@ -5782,6 +5784,52 @@ private fun DeviceTripStatusCard(vm: AppViewModel, state: AppUiState, trip: Trip
         }
         if (reason == com.rork.vinetrack.data.DeviceTripStatus.Reason.LOCAL_END_PENDING) {
             TripCancellationSection(vm = vm, state = state, trip = trip)
+        }
+    }
+}
+
+/**
+ * P0 Phase C: an ended Trip is reported fully synced only as CLOSED_SYNCED, which requires every
+ * dependent to be acknowledged; "Verified" additionally requires a fresh server read. Read-only.
+ */
+@Composable
+private fun TripClosureCard(vm: AppViewModel, state: AppUiState, trip: Trip) {
+    val vine = LocalVineColors.current
+    val clipboard = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
+    var verified by remember(trip.id) { mutableStateOf<com.rork.vinetrack.data.TripClosureStatus.Result?>(null) }
+    var checking by remember(trip.id) { mutableStateOf(false) }
+    val local = remember(trip.id, trip.endTime, trip.tankSessions, state.pendingSyncItems, state.pendingActualTripIds,
+        state.locallyEndedTripIds) { vm.tripClosureStatus(trip) }
+    val shown = verified ?: local
+    val title = when (shown.state) {
+        com.rork.vinetrack.data.TripClosureStatus.State.CLOSED_SYNCED -> if (verified != null) "Closed and synced · verified with server" else "Closed and synced"
+        com.rork.vinetrack.data.TripClosureStatus.State.LOCAL_END_PENDING -> "Ended on this device · waiting to sync"
+        com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_PENDING -> "Ended · records still syncing"
+        com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_HELD -> "Ended · sync held for review"
+        com.rork.vinetrack.data.TripClosureStatus.State.SERVER_STATE_UNCONFIRMED -> "Ended · server state not confirmed"
+        com.rork.vinetrack.data.TripClosureStatus.State.ACTIVE -> "Server still shows this Trip active"
+    }
+    val body = when (shown.state) {
+        com.rork.vinetrack.data.TripClosureStatus.State.CLOSED_SYNCED -> "The server shows this Trip ended, and its tank records, actual amounts, spray record and route are all acknowledged."
+        com.rork.vinetrack.data.TripClosureStatus.State.LOCAL_END_PENDING -> "The end is saved here and will finish on the server when sync completes. Recorded GPS and tank amounts are kept."
+        com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_PENDING -> "The Trip has ended but some linked records have not been acknowledged by the server yet. They are kept and will retry automatically."
+        com.rork.vinetrack.data.TripClosureStatus.State.DEPENDENTS_HELD -> "A linked record could not be confirmed on the server. Nothing has been discarded. Copy the Trip status and send it to support."
+        com.rork.vinetrack.data.TripClosureStatus.State.SERVER_STATE_UNCONFIRMED -> "The server could not confirm this Trip's ended state. Nothing has been changed. Try again when online."
+        com.rork.vinetrack.data.TripClosureStatus.State.ACTIVE -> "This device recorded an end, but the server row is not terminal. Nothing has been discarded."
+    }
+    VineyardCard {
+        Text(title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+        Text(body, fontSize = 13.sp, color = vine.textSecondary)
+        Text("Status: ${shown.state.code}", fontSize = 12.sp, color = vine.textSecondary)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(enabled = !checking, onClick = {
+                checking = true
+                scope.launch { verified = runCatching { vm.verifyTripClosure(trip) }.getOrNull(); checking = false }
+            }) { Text(if (checking) "Checking…" else "Check with server") }
+            TextButton(onClick = { clipboard.setText(AnnotatedString(vm.deviceTripDiagnostics(trip))) }) {
+                Text("Copy Trip status")
+            }
         }
     }
 }

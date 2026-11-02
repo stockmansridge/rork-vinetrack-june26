@@ -164,7 +164,11 @@ struct NewMainTabView: View {
             tripSync.configurePhase5EndGate { tripId in
                 SprayTankActualStore.shared.hasPending(tripId: tripId)
             }
+            tripSync.configureTankDependencies { tripId in
+                TankDependencyVerification.requiredSessions(tripId: tripId, actuals: SprayTankActualStore.shared.records)
+            }
             sprayRecordSync.configure(store: store, auth: auth)
+            TripActivityCancellationService.shared.configure(tripSync: tripSync, spraySync: sprayRecordSync)
             sprayJobTemplateService.configure(store: store, auth: auth)
             buttonConfigSync.configure(store: store, auth: auth)
             savedChemicalSync.configure(store: store, auth: auth)
@@ -501,6 +505,8 @@ struct NewMainTabView: View {
         if let sweepVineyardId {
             VineyardSelectionDiagnostics.stage("sync-remaining-records", vineyardId: sweepVineyardId)
         }
+        // P0 Phase A: finish any interrupted Trip cancellation (readback first) before queues replay.
+        await TripActivityCancellationService.shared.reconcileAll()
         let performanceTrips = PerformanceCapture.shared.begin("sync Trips initial pass")
         await tripSync.syncTripsForSelectedVineyard()
         PerformanceCapture.shared.end(performanceTrips)

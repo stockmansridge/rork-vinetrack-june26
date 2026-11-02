@@ -90,6 +90,11 @@ final class SprayTankActualStore {
     private(set) var pendingIds: Set<UUID>
     private(set) var initialMixDrafts: [SprayInitialTankDraft]
     private let persistence: PersistenceStore
+    /// P0 3.1.9 Phase B: live Trip tank sessions (nil = Trip absent/deleted) and exact actual readback.
+    var tankSessionReader: @MainActor (SprayTankActual) async throws -> Set<String>? = { try await SprayTankActualStore.liveTankSessionIds($0) }
+    var actualReader: @MainActor (SprayTankActual) async throws -> SprayTankActual? = { try await SprayTankActualStore.liveReadBack($0) }
+    /// Last fixed Phase B hold code per actual; diagnostics only, never quantities.
+    private(set) var dependencyHolds: [UUID: String] = [:]
 
     convenience init() {
         self.init(persistence: .shared)
@@ -275,6 +280,15 @@ final class SprayTankActualStore {
         pendingIds = pending
     }
 
+    /// P0 Phase A: removes only this Trip's initial-mix drafts, after a verified and durably
+    /// acknowledged cancellation receipt (the evidence file already holds their content).
+    func removeInitialMixDrafts(tripId: UUID, vineyardId: UUID) throws {
+        let next = initialMixDrafts.filter { !($0.tripId == tripId && $0.vineyardId == vineyardId) }
+        guard next.count != initialMixDrafts.count else { return }
+        try persistence.saveOrThrow(SprayTankActualCache(records: records, pendingIds: pendingIds, initialMixDrafts: next), key: Self.persistenceKey)
+        initialMixDrafts = next
+    }
+
     func removeLocal(id: UUID) throws {
         let next = records.filter { $0.id != id }
         var pending = pendingIds
@@ -316,6 +330,29 @@ final class SprayTankActualStore {
         }
     }
 
+    static func liveTankSessionIds(_ actual: SprayTankActual) async throws -> Set<String>? {
+        struct Row: Decodable { let tank_sessions: [TankSession]? }
+        let rows: [Row] = try await SupabaseClientProvider.shared.client.from("trips")
+            .select("tank_sessions")
+            .eq("id", value: actual.tripId.uuidString)
+            .eq("vineyard_id", value: actual.vineyardId.uuidString)
+            .is("deleted_at", value: nil)
+            .limit(2).execute().value
+        guard rows.count <= 1 else { throw TankSessionReadbackUnsupported() }
+        return rows.first.map { TankDependencyVerification.ids($0.tank_sessions ?? []) }
+    }
+
+    static func liveReadBack(_ actual: SprayTankActual) async throws -> SprayTankActual? {
+        let rows: [BackendSprayTankActual] = try await SupabaseClientProvider.shared.client
+            .from("spray_tank_actuals").select()
+            .eq("id", value: actual.id.uuidString)
+            .eq("vineyard_id", value: actual.vineyardId.uuidString)
+            .is("deleted_at", value: nil)
+            .limit(2).execute().value
+        guard rows.count <= 1 else { return nil }
+        return try rows.first?.actual()
+    }
+
     /// Replays only after parent trip and spray-record sync have had an opportunity to run.
     func syncPending(tripSync: TripSyncService?, spraySync: SprayRecordSyncService?, vineyardId: UUID) async {
         defer {
@@ -345,9 +382,22 @@ final class SprayTankActualStore {
                 continue
             }
             do {
+                // Phase B: the session this actual depends on must already be on the server Trip.
+                let serverSessions = try await tankSessionReader(actual)
+                guard let serverSessions,
+                      serverSessions.contains(TankDependencyVerification.normalized(actual.tankSessionId)) else {
+                    dependencyHolds[id] = TankDependencyVerification.actualSessionNotOnServer
+                    continue
+                }
                 try await SupabaseClientProvider.shared.client
                     .rpc("upsert_spray_tank_actual", params: SprayTankActualUpsertRequest(actual: actual))
                     .execute()
+                // Phase B: acknowledge only after the server returns the exact recorded evidence.
+                guard TankDependencyVerification.actualMatches(local: actual, server: try await actualReader(actual)) else {
+                    dependencyHolds[id] = TankDependencyVerification.actualReadbackMismatch
+                    continue
+                }
+                dependencyHolds.removeValue(forKey: id)
                 try acknowledgeUploaded(actual)
                 // Releasing the Phase 5 gate is the caller's next stage: once
                 // this trip has no pending actuals, `hasPending` returns false

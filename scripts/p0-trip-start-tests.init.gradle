@@ -12,6 +12,10 @@ gradle.projectsEvaluated {
             include '**/TripOccurrenceJournalTest.kt'
             include '**/RetentionReviewTest.kt'
             include '**/TripActivityCancellationTest.kt'
+            include '**/TankDependencyPhaseBTest.kt'
+            include '**/TripClosureStatusPhaseCTest.kt'
+            include '**/ReplayVersionIntegrityTest.kt'
+            include '**/AtomicPendingReplacementTest.kt'
         })
     }
     app.tasks.withType(org.gradle.api.tasks.testing.Test).configureEach {

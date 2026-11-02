@@ -47,7 +47,8 @@ final class TripSyncService {
     /// True only when the parent row has never reached the server. This is the
     /// one legitimate reason to defer a child upload.
     func isPendingParentCreation(_ id: UUID) -> Bool {
-        metadata.pendingDeletes[id] != nil || (try? store?.tripDeletionJournal.isCancelled(id)) == true ||
+        TripCancellationIntentStore.shared.blocksReplay(tripId: id) ||
+            metadata.pendingDeletes[id] != nil || (try? store?.tripDeletionJournal.isCancelled(id)) == true ||
             (metadata.pendingUpserts[id] != nil && !metadata.isParentEstablished(id))
     }
 
@@ -87,6 +88,20 @@ final class TripSyncService {
 
     /// Whether a specific trip is queued for a remote delete.
     func isPendingDelete(_ id: UUID) -> Bool { metadata.pendingDeletes[id] != nil }
+
+    /// P0 Phase A: this Trip's own durable upload-queue identities (not counts).
+    func cancellationQueueEntries(_ id: UUID) -> [TripActivityCancellation.QueueEntry] {
+        var entries: [TripActivityCancellation.QueueEntry] = []
+        let key = id.uuidString.lowercased()
+        if metadata.pendingUpserts[id] != nil { entries.append(.init(kind: TripActivityCancellation.QueueEntry.tripUpsert, id: key)) }
+        if metadata.pendingWorkTaskClears[id] != nil { entries.append(.init(kind: TripActivityCancellation.QueueEntry.tripWorkTaskClear, id: key)) }
+        return entries
+    }
+
+    /// P0 Phase A: removes exactly one entry after a verified, durably acknowledged cancellation receipt.
+    func clearCancelledTripQueue(_ id: UUID, workTaskClear: Bool) {
+        if workTaskClear { metadata.clearWorkTaskClears([id]) } else { metadata.clearDirty([id]) }
+    }
 
     /// True while a full sweep is actively pushing/pulling trips.
     var isSyncing: Bool { syncStatus == .syncing }
@@ -146,6 +161,15 @@ final class TripSyncService {
     /// Holds final ended state locally until this trip's actual-use queue clears.
     func configurePhase5EndGate(_ gate: @escaping (UUID) -> Bool) {
         shouldDeferEndedTrip = gate
+    }
+
+    /// P0 3.1.9 Phase B: tank session IDs referenced by local Tank actuals for a Trip.
+    private var requiredTankSessions: (UUID) -> Set<String> = { _ in [] }
+    /// Last fixed Phase B hold code per Trip; diagnostics only, never quantities.
+    private(set) var tankDependencyHolds: [UUID: String] = [:]
+
+    func configureTankDependencies(_ provider: @escaping (UUID) -> Set<String>) {
+        requiredTankSessions = provider
     }
 
     // MARK: - Dirty tracking
@@ -771,7 +795,8 @@ final class TripSyncService {
         let createdBy = auth?.userId
         var firstUploadError: Error?
         var dirty = metadata.pendingUpserts
-        for id in Array(dirty.keys) where try store.tripDeletionJournal.isCancelled(id) || store.isLegacySpraySyncHeld(trip: id) {
+        for id in Array(dirty.keys) where try store.tripDeletionJournal.isCancelled(id) || store.isLegacySpraySyncHeld(trip: id)
+            || TripCancellationIntentStore.shared.blocksReplay(tripId: id) {
             dirty.removeValue(forKey: id)
         }
         if !dirty.isEmpty {
@@ -842,6 +867,19 @@ final class TripSyncService {
                     }
                     trip = preserved
                 }
+                // Phase B: never acknowledge tank progress that lacks a session an actual depends on.
+                let required = requiredTankSessions(tripId)
+                if !TankDependencyVerification.missing(required: required, in: TankDependencyVerification.ids(trip.tankSessions)).isEmpty {
+                    tankDependencyHolds[tripId] = TankDependencyVerification.requiredSessionMissing
+                    metadata.markUpsertsFailed([tripId])
+                    SyncIssueCenter.shared.recordFailure(id: tripId, entity: "Trips",
+                        detail: SyncFailureDetail(kind: .permanent, reasonCode: TankDependencyVerification.requiredSessionMissing,
+                            friendlyMessage: "A Tank actual's tank session is missing from this Trip. Evidence is retained for review.",
+                            technicalDetail: "code: \(TankDependencyVerification.requiredSessionMissing); trip retained locally"),
+                        queuedAt: ts, payloadKeys: [], vineyardId: vineyardId)
+                    skipped.append((tripId, TankDependencyVerification.requiredSessionMissing))
+                    continue
+                }
                 payloads.append(BackendTrip.upsert(from: trip, createdBy: createdBy, clientUpdatedAt: ts))
                 pushedIds.append(tripId)
             }
@@ -856,7 +894,28 @@ final class TripSyncService {
             // The parent row demonstrably exists for everything uploaded, so
             // children may upload even while finalisation stays queued.
             metadata.markParentsEstablished(result.uploaded)
-            metadata.clearDirty(result.uploaded.filter { (try? store.tripDeletionJournal.isCancelled($0)) == false })
+            // Phase B: a Trip whose actuals depend on tank sessions stays queued until an exact
+            // server readback contains every required session.
+            var unverifiedTank: Set<UUID> = []
+            for id in result.uploaded {
+                let required = requiredTankSessions(id)
+                guard !required.isEmpty else { continue }
+                do {
+                    let serverIds = try await repository.fetchTankSessionIds(tripId: id, vineyardId: vineyardId)
+                    if let serverIds, TankDependencyVerification.missing(required: required, in: serverIds).isEmpty {
+                        tankDependencyHolds.removeValue(forKey: id)
+                    } else {
+                        unverifiedTank.insert(id)
+                        tankDependencyHolds[id] = TankDependencyVerification.patchReadbackMismatch
+                    }
+                } catch is TankSessionReadbackUnsupported {
+                    // Test transports only; the payload pre-check above still applied.
+                } catch {
+                    unverifiedTank.insert(id)
+                    tankDependencyHolds[id] = TankDependencyVerification.patchReadbackMismatch
+                }
+            }
+            metadata.clearDirty(result.uploaded.filter { !unverifiedTank.contains($0) && (try? store.tripDeletionJournal.isCancelled($0)) == false })
             for id in result.uploaded where deferredEndIds.contains(id) && shouldDeferEndedTrip(id) {
                 // Still waiting on actual-use rows: keep the trip queued so the
                 // finalisation stage re-runs once they clear.
@@ -880,7 +939,8 @@ final class TripSyncService {
         if !clears.isEmpty {
             let byIdNow = Dictionary(store.trips.map { ($0.id, $0) }, uniquingKeysWith: { _, new in new })
             for (tripId, _) in clears {
-                if try store.tripDeletionJournal.isCancelled(tripId) || store.isLegacySpraySyncHeld(trip: tripId) { continue }
+                if try store.tripDeletionJournal.isCancelled(tripId) || store.isLegacySpraySyncHeld(trip: tripId)
+                    || TripCancellationIntentStore.shared.blocksReplay(tripId: tripId) { continue }
                 // Conflict guard: if the user re-linked this trip locally before
                 // the sync, the newer link wins — drop the stale clear and let the
                 // upsert carry the link instead of wiping it.
@@ -1022,6 +1082,9 @@ final class TripSyncService {
         guard (try? store.isLegacySpraySyncHeld(trip: backendTrip.id)) == false else {
             metadata.markUpsertsFailed([backendTrip.id]); return
         }
+        // P0 Phase A anti-resurrection: while a cancellation is open or acknowledged, only the
+        // server tombstone may change this Trip locally; a live row never overwrites retained evidence.
+        if backendTrip.deletedAt == nil, TripCancellationIntentStore.shared.blocksReplay(tripId: backendTrip.id) { return }
         // Soft-deleted remotely.
         if backendTrip.deletedAt != nil {
             store.applyRemoteTripDelete(backendTrip.id)

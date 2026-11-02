@@ -21,6 +21,9 @@ protocol TripSyncRepositoryProtocol: Sendable {
     /// Previously held ambiguities are rechecked read-only; never issue a fresh delete here.
     func reverifyDeletion(_ scope: TripDeletionJournal.Scope, isCurrent: () -> Bool) async throws -> String
     func fetchOccurrenceRecovery(tripId: UUID, operationIds: [String]) async throws -> TripOccurrenceCoverage.JSON
+    /// P0 3.1.9 Phase B: exact scoped readback of a live Trip's tank session IDs (lowercased).
+    /// nil means the Trip is absent or soft-deleted.
+    func fetchTankSessionIds(tripId: UUID, vineyardId: UUID) async throws -> Set<String>?
 }
 
 extension TripSyncRepositoryProtocol {
@@ -32,5 +35,8 @@ extension TripSyncRepositoryProtocol {
     }
     func fetchOccurrenceRecovery(tripId: UUID, operationIds: [String]) async throws -> TripOccurrenceCoverage.JSON {
         throw TripOccurrenceCoverage.Failure.updateRequired
+    }
+    func fetchTankSessionIds(tripId: UUID, vineyardId: UUID) async throws -> Set<String>? {
+        throw TankSessionReadbackUnsupported()
     }
 }
