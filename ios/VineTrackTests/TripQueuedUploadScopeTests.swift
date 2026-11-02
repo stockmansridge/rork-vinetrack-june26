@@ -102,8 +102,24 @@ final class TripQueuedUploadScopeTests: XCTestCase {
                             tankSessions: [session], tripFunction: "spraying")
         XCTAssertNil(CompletedTripReceiptAdmission.holdReason(local: original, remote: original))
 
+        // The iOS exact-ID readback and admission must agree on a bounded
+        // wire-precision difference; not just tank sessions.
+        var roundedEnd = original
+        roundedEnd.endTime = end.addingTimeInterval(0.0004)
+        XCTAssertTrue(TankSessionReceiptMatch.sameTime(roundedEnd.endTime, original.endTime))
+        XCTAssertNil(CompletedTripReceiptAdmission.holdReason(
+            local: original, remote: roundedEnd))
+        let v3 = TripRecoveryTimeEvidence.compare(
+            field: "trip_end", local: original.endTime, remote: roundedEnd.endTime)
+        XCTAssertTrue(v3.contains("trip_end:"))
+        XCTAssertTrue(v3.contains("absolute_delta_ms="))
+        XCTAssertTrue(v3.contains("local_epoch_s="))
+        XCTAssertEqual(TripRecoveryTimeEvidence.compare(
+            field: "missing", local: nil, remote: end).contains("presence_mismatch"), true)
+
         var differentEnd = original
         differentEnd.endTime = end.addingTimeInterval(60)
+        XCTAssertFalse(TankSessionReceiptMatch.sameTime(original.endTime, differentEnd.endTime))
         XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(
             local: original, remote: differentEnd), "TRIP_ORIGINAL_END_TIME_MISMATCH")
 
