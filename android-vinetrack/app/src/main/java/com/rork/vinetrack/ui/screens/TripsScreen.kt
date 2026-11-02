@@ -258,6 +258,30 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+/**
+ * The active-trip snapshot is published separately from the full Trips list.
+ * A just-started Trip must resolve from that live snapshot FIRST, even when
+ * its older list entry is still absent or says inactive. Resolution is scoped
+ * to the selected vineyard; it never manufactures or activates a Trip.
+ */
+internal object TripLiveDestinationResolver {
+    fun resolve(
+        tripId: String?,
+        knownTrips: List<Trip>,
+        activeTrip: Trip?,
+        selectedVineyardId: String?,
+    ): Trip? {
+        if (tripId.isNullOrBlank() || selectedVineyardId.isNullOrBlank()) return null
+        val live = activeTrip?.takeIf {
+            it.id == tripId && it.vineyardId == selectedVineyardId &&
+                it.deletedAt == null && it.isActive && it.endTime.isNullOrBlank()
+        }
+        return live ?: knownTrips.firstOrNull {
+            it.id == tripId && it.vineyardId == selectedVineyardId && it.deletedAt == null
+        }
+    }
+}
+
 @Composable
 fun TripsScreen(
     vm: AppViewModel,
@@ -292,10 +316,10 @@ fun TripsScreen(
     // Spray Trip setup chooser (template / custom / resume), mirroring iOS.
     var sprayTripSetup by remember { mutableStateOf(false) }
 
-    // A selected trip that isn't in the list yet (still loading after a process
-    // restart) simply shows the list; it opens as soon as the trip arrives.
-    val selected = state.trips.firstOrNull { it.id == selectedTripId }
-
+    // A confirmed Start owns a destination ID even before the separate Trips
+    // list hydrates. Never treat a missing list row as a request for the list.
+    // TripDetailView resolves the exact active snapshot or shows a brief
+    // loading state until it becomes available.
     if (sprayTripSetup) {
         androidx.activity.compose.BackHandler { sprayTripSetup = false }
         SprayTripSetupScreen(
@@ -319,7 +343,7 @@ fun TripsScreen(
     // rewritten every GPS tick, and animating that would crossfade the HUD
     // once a second.
     AnimatedContent(
-        targetState = selected?.id,
+        targetState = selectedTripId,
         transitionSpec = { fadeIn() togetherWith fadeOut() },
         label = "trip-nav",
         modifier = modifier,
@@ -985,7 +1009,10 @@ private fun TripDetailView(
     val context = LocalContext.current
     val regionFormatter = LocalRegionFormatter.current
     val exportScope = rememberCoroutineScope()
-    val trip = state.trips.firstOrNull { it.id == tripId }
+    val trip = TripLiveDestinationResolver.resolve(
+        tripId = tripId, knownTrips = state.trips,
+        activeTrip = state.activeTrip, selectedVineyardId = state.selectedVineyardId,
+    )
     var confirmDelete by remember { mutableStateOf(false) }
     var ending by remember { mutableStateOf(false) }
     var changingRoute by remember { mutableStateOf(false) }
@@ -1002,9 +1029,29 @@ private fun TripDetailView(
     // detail (summary, cost, etc.) and back via the top-bar controls.
     var showLiveHud by remember(tripId) { mutableStateOf(true) }
 
-    // The trip can disappear after delete — bail out cleanly.
-    LaunchedEffect(trip == null) { if (trip == null) onBack() }
-    if (trip == null) return
+    // The calculator can report success before the Trips list has hydrated.
+    // A null row at that instant is NOT a deletion and must never trigger
+    // onBack(): that previously cancelled the saved Start destination and
+    // stranded the operator on the orange Live card instead of the map.
+    // The authenticated work context separately clears genuinely deleted IDs.
+    if (trip == null) {
+        BackHandler(onBack = onBack)
+        Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            CircularProgressIndicator()
+            Text("Opening Live Trip…", color = vine.textPrimary)
+            Text(
+                "Waiting for the original active Trip on this device. The Trip is not being started again.",
+                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                color = vine.textSecondary,
+            )
+            OutlinedButton(onClick = onBack) { Text("Back to Trips") }
+        }
+        return
+    }
     LaunchedEffect(trip.id) { vm.acknowledgeCalculatorStartDestination(trip.id) }
 
     // iOS parity: ActiveTripView disables the idle timer while it is on screen
