@@ -98,10 +98,27 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
      */
     val selectedTripId: StateFlow<String?> = handle.getStateFlow(KEY_SELECTED_TRIP, null)
 
-    /** Idempotent destination establishment for both immediate and recovered calculator results. */
+    /**
+     * A confirmed Start is a navigation destination, not a second activation.
+     * Opening the Trip tab BEFORE selecting is important: openTab can discard
+     * a historical/queued selection from the preceding Trips snapshot.
+     */
     fun openCalculatorTrip(tripId: String) {
-        setSelectedTripId(tripId)
         openTab(MainTab.Trip)
+        setSelectedTripId(tripId)
+    }
+
+    /**
+     * The Start callback may beat local active-trip publication, and a stale
+     * authoritative list must not clear this exact new destination during
+     * hydration. The small pending ID is scoped by bindIdentity, is acknowledged
+     * once the owned Trip appears active, and is cancelled by the user's Back.
+     * No Trip record, replay journal or server operation is changed here.
+     */
+    fun openStartedTrip(tripId: String) {
+        if (tripId.isBlank()) return
+        openCalculatorTrip(tripId)
+        handle[KEY_PENDING_STARTED_TRIP] = tripId
     }
 
     /**
@@ -181,6 +198,11 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
      * launcher with it: that launcher belongs to the trip it was drawn over.
      */
     fun setSelectedTripId(value: String?) {
+        // Manual Back, selecting history, or a vineyard/account switch cancels
+        // a pending Start handoff. Never auto-open after the operator leaves.
+        if (value != handle.get<String?>(KEY_PENDING_STARTED_TRIP)) {
+            handle[KEY_PENDING_STARTED_TRIP] = null
+        }
         if (handle.get<String?>(KEY_SELECTED_TRIP) == value) return
         handle[KEY_SELECTED_TRIP] = value
         handle[KEY_TRIP_HUD_LAUNCHER] = null
@@ -236,6 +258,22 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
      */
     fun reconcileTripContext(knowledge: TripsKnowledge) {
         latestTripsKnowledge = knowledge
+        val pendingStart = handle.get<String?>(KEY_PENDING_STARTED_TRIP)
+        if (pendingStart != null) {
+            if (pendingStart in knowledge.locallyRemovedIds ||
+                selectedTripId.value != pendingStart) {
+                // Local deletion or explicit navigation cancels the handoff.
+                handle[KEY_PENDING_STARTED_TRIP] = null
+            } else {
+                // Active publication is the acknowledgement. Until then, the
+                // previous list's "absent" or "inactive" evidence is NOT
+                // authoritative for a Trip that just started on this device.
+                if (pendingStart in knowledge.activeIds) {
+                    handle[KEY_PENDING_STARTED_TRIP] = null
+                }
+                return
+            }
+        }
         val resolved = TripContextRules.reconcile(
             selectedTripId = selectedTripId.value,
             hudLauncherMode = tripHudLauncherMode.value,
@@ -378,6 +416,7 @@ class WorkContextViewModel(private val handle: SavedStateHandle) : ViewModel() {
         const val KEY_PINS_BLOCK_IDS = "work_pins_block_ids"
         const val KEY_PINS_VIEW_MODE = "work_pins_view_mode"
         const val KEY_SELECTED_TRIP = "work_selected_trip"
+        const val KEY_PENDING_STARTED_TRIP = "work_pending_started_trip"
         const val KEY_PROGRAM_CALC = "work_program_calc"
         const val KEY_PROGRAM_PREFILL = "work_program_prefill"
         const val KEY_SETUP_WIZARD = "work_setup_wizard"
