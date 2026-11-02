@@ -169,8 +169,8 @@ fun MainScaffold(vm: AppViewModel, state: AppUiState, work: WorkContextViewModel
         } else if (selectedTripId == activeId) {
             // The synchronous Start callback already opened the right Trip.
             lastAutoOpenedTripId.value = activeId
-        } else if (lastAutoOpenedTripId.value != activeId &&
-            TripStartNavigation.shouldOpenNewlyActive(
+        } else if (TripStartNavigation.shouldOpenUnseenActive(
+                lastOpenedTripId = lastAutoOpenedTripId.value,
                 activeTripId = activeId,
                 activeTripVineyardId = deviceActive.vineyardId,
                 deviceOwnedTripId = state.deviceActiveTripId,
