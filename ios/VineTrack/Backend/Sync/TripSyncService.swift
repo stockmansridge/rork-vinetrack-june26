@@ -217,12 +217,36 @@ final class TripSyncService {
             let reason = pendingUploadDiagnosticReason(id)
             reasons[reason, default: 0] += 1
         }
+        // Legacy pending IDs do NOT carry a vineyard/account scope. This is
+        // a *read-only* cache classification, never upload authority or an ACK.
+        var scopeLines: [String] = ["scope_classification: unavailable_account_not_verified"]
+        if let store, let owner = auth?.userId, auth?.isSignedIn == true,
+           store.currentUserIdProvider?() == owner, let vineyard = store.selectedVineyardId {
+            let selected = Dictionary(store.trips.map { ($0.id, $0.vineyardId) },
+                                      uniquingKeysWith: { _, latest in latest })
+            let persisted = Dictionary(store.tripRepo.loadAll().map { ($0.id, $0.vineyardId) },
+                                       uniquingKeysWith: { _, latest in latest })
+            var scopes: [TripQueuedUploadScope: Int] = [:]
+            for id in pending.keys {
+                let scope = TripQueuedUploadScope.classify(tripId: id, selectedVineyardId: vineyard,
+                    selectedTrips: selected, persistedTrips: persisted)
+                scopes[scope, default: 0] += 1
+            }
+            scopeLines = [
+                "selected_slice_queued_uploads: \(scopes[.selectedSlice, default: 0])",
+                "same_vineyard_snapshot_not_loaded: \(scopes[.persistedCurrentVineyardNotLoaded, default: 0])",
+                "other_locally_cached_vineyard_protected: \(scopes[.persistedOtherVineyard, default: 0])",
+                "original_snapshot_unavailable: \(scopes[.noLocalSnapshot, default: 0])",
+                "scope_classification: cached_local_only_not_server_ack_or_owner_attestation"
+            ]
+        }
         return ([
-            "VineTrack pending Trip upload inspection v1",
-            "queued_trip_uploads: \(pending.count)",
-            "queue_marked_failed: \(pending.keys.filter { metadata.isUpsertFailed($0) }.count)",
+            "VineTrack pending Trip upload inspection v2",
+            "queued_trip_uploads_global_legacy: \(pending.count)",
+            "queue_marked_failed_global_legacy: \(pending.keys.filter { metadata.isUpsertFailed($0) }.count)",
+            "Global metadata includes other vineyards; held IDs are preserved, not replayed or cleared.",
             "These are local queue stages, not proof of server acceptance or of data loss."
-        ] + reasons.sorted { $0.key < $1.key }.map { "  \($0.key): \($0.value)" }).joined(separator: "\n")
+        ] + scopeLines + reasons.sorted { $0.key < $1.key }.map { "  \($0.key): \($0.value)" }).joined(separator: "\n")
     }
 
     private func pendingUploadDiagnosticReason(_ id: UUID) -> String {
@@ -230,6 +254,11 @@ final class TripSyncService {
         guard let account = auth?.userId, auth?.isSignedIn == true,
               store.currentUserIdProvider?() == account else { return "TRIP_ACCOUNT_NOT_VERIFIED" }
         guard let vineyard = store.selectedVineyardId else { return "TRIP_VINEYARD_NOT_SELECTED" }
+        // A normal historical Trip is NOT an upload-pending Trip merely
+        // because it uses the legacy coverage format.
+        guard metadata.pendingUpserts[id] != nil else {
+            return "TRIP_NOT_QUEUED_SERVER_RECEIPT_NOT_PERSISTED"
+        }
         // Do not infer that a different vineyard's cached record is an orphan,
         // and do not search another account's retained files for diagnostics.
         guard let trip = store.trips.first(where: { $0.id == id }) else {
@@ -794,7 +823,20 @@ final class TripSyncService {
         try store.reconcileLegacySpraySaves(isolatingHeldFailures: true)
         let createdBy = auth?.userId
         var firstUploadError: Error?
-        var dirty = metadata.pendingUpserts
+        // Global legacy metadata is not scoped to account/vineyard. Never
+        // attempt an upload, mark failed, or infer a deletion for IDs that
+        // are not in the current selected-vineyard Trip snapshot. In
+        // particular this protects other-vineyard and tombstoned history.
+        // This filter is a temporary upload *eligibility* projection only:
+        // metadata.pendingUpserts and all original evidence stay intact.
+        let selectedTrips = Dictionary(store.trips.map { ($0.id, $0.vineyardId) },
+                                       uniquingKeysWith: { _, latest in latest })
+        var dirty = metadata.pendingUpserts.filter { id, _ in
+            TripQueuedUploadScope.classify(
+                tripId: id, selectedVineyardId: vineyardId,
+                selectedTrips: selectedTrips, persistedTrips: [:]
+            ).eligibleForCurrentVineyardUpload
+        }
         for id in Array(dirty.keys) where try store.tripDeletionJournal.isCancelled(id) || store.isLegacySpraySyncHeld(trip: id)
             || TripCancellationIntentStore.shared.blocksReplay(tripId: id) {
             dirty.removeValue(forKey: id)
@@ -809,7 +851,9 @@ final class TripSyncService {
                 dirty.removeValue(forKey: id)
                 metadata.markUpsertsFailed([id])
             }
-            let endedOnServer = serverTrips.filter { dirty[$0.id] != nil && $0.endTime != nil }
+            let endedOnServer = serverTrips.filter {
+                dirty[$0.id] != nil && $0.endTime != nil && $0.deletedAt == nil
+            }
             let endedIds = Set(endedOnServer.map(\.id))
             for ended in endedOnServer {
                 await applyRemote(ended, vineyardId: vineyardId, store: store)
@@ -823,15 +867,16 @@ final class TripSyncService {
             var payloads: [BackendTripUpsert] = []
             var pushedIds: [UUID] = []
             var skipped: [(UUID, String)] = []
-            var orphans: [UUID] = []
             var deferredEndIds: Set<UUID> = []
             for (tripId, ts) in dirty {
                 if try store.tripDeletionJournal.isCancelled(tripId) { continue }
+                // A snapshot disappearing after the initial scope projection
+                // must remain in the original global queue. Never convert
+                // its absence into a failed request or reconstruct another
+                // vineyard's Trip from a guessed owner.
+                guard var trip = byId[tripId] else { continue }
                 try store.requireLegacySpraySyncAdmission(trip: tripId)
                 if endedIds.contains(tripId) { continue }
-                // A missing cache snapshot is not an upload acknowledgement.
-                // Keep this separate item for evidence recovery; deletion must not discard it.
-                guard var trip = byId[tripId] else { orphans.append(tripId); continue }
                 if trip.vineyardId != vineyardId {
                     // Try to repair: only if every paddock on the trip resolves to the
                     // currently selected vineyard. Never guess across vineyards.
@@ -883,7 +928,6 @@ final class TripSyncService {
                 payloads.append(BackendTrip.upsert(from: trip, createdBy: createdBy, clientUpdatedAt: ts))
                 pushedIds.append(tripId)
             }
-            metadata.markUpsertsFailed(orphans)
             let result = await SyncQueuePush.run(
                 entity: "Trips",
                 ids: pushedIds,
@@ -1085,11 +1129,17 @@ final class TripSyncService {
         // P0 Phase A anti-resurrection: while a cancellation is open or acknowledged, only the
         // server tombstone may change this Trip locally; a live row never overwrites retained evidence.
         if backendTrip.deletedAt == nil, TripCancellationIntentStore.shared.blocksReplay(tripId: backendTrip.id) { return }
-        // Soft-deleted remotely.
+        // Soft-deleted remotely. A tombstone is NOT proof that an unrelated
+        // original queued upload was accepted or may be thrown away. Deletion
+        // acknowledgement belongs to the independent deletion journal.
         if backendTrip.deletedAt != nil {
+            guard metadata.pendingUpserts[backendTrip.id] == nil else {
+                syncStatus = .failure("A server Trip is deleted but the device retains original upload evidence. Reconciliation is required; nothing was deleted.")
+                return
+            }
             store.applyRemoteTripDelete(backendTrip.id)
-            metadata.clearDirty([backendTrip.id])
-            // No pending local deletion exists here; do not acknowledge by ID.
+            // No original upsert or local deletion exists here. Do not
+            // acknowledge any write merely because this server ID exists.
             metadata.clearWorkTaskClears([backendTrip.id])
             return
         }
