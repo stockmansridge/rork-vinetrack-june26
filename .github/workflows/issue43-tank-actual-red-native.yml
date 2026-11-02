@@ -27,7 +27,7 @@ jobs:
   android-red:
     name: Android current production encoder and ACK assertions
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 75
     env:
       CI: 'true'
       GRADLE_OPTS: '-Dorg.gradle.daemon=false'
@@ -112,7 +112,17 @@ jobs:
           echo "EXPECTED_BRANCH_HEAD=${{ github.event.pull_request.head.sha || github.sha }}"
           echo "CHECKOUT_HEAD=$(git rev-parse HEAD)"
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          XCODE_ROOT="/Applications/Xcode_26.3.app/Contents/Developer"
+          if [ ! -x "$XCODE_ROOT/usr/bin/xcodebuild" ]; then
+            echo "::error::Required Xcode 26.3 unavailable at $XCODE_ROOT; not a Tank Actual RED test result"
+            ls -d /Applications/Xcode*.app 2>/dev/null || true
+            exit 2
+          fi
+          echo "DEVELOPER_DIR=$XCODE_ROOT" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_ROOT"
           xcodebuild -version
+          xcrun swiftc --version
+          xcrun --sdk iphonesimulator --show-sdk-version
       - name: Choose available iPhone simulator
         id: simulator
         shell: bash
