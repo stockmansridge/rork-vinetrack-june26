@@ -299,6 +299,9 @@ final class TripSyncService {
             "version: \(bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown")",
             "build: \(bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")",
             "source_revision: unknown_no_verified_build_receipt",
+            // This code marker proves the installed build includes the new
+            // Issue #43 UI/admission logic, not its exact signed Git SHA.
+            "issue43_feature_marker: separate_spray_confirmation_scoped_trip_history_auto_end_readback_v1",
             "last_trip_sync_local: \(lastSyncDate?.ISO8601Format() ?? "unknown")",
             "last_full_sync: unknown_no_durable_full_sweep_receipt",
             "upload_cleared_acknowledgement: unknown_not_persisted",
