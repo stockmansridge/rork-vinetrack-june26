@@ -123,6 +123,31 @@ final class TripQueuedUploadScopeTests: XCTestCase {
             local: original, remote: reopenedRemote), "TRIP_ORIGINAL_END_TIME_MISMATCH")
     }
 
+    @MainActor func testVerifiedCompletedTripReceiptRequiresDurableQueueAcknowledgement() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "TripVerifiedReceipt-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let metadata = TripSyncMetadata(persistence: persistence)
+        let original = UUID()
+        metadata.markDirty(original, at: Date(timeIntervalSince1970: 1_792_000_000))
+        metadata.markUpsertsFailed([original])
+        persistence.durableSaveFailureForTesting = { _ in CocoaError(.fileWriteOutOfSpace) }
+        XCTAssertThrowsError(try metadata.acknowledgeVerifiedCompleted(original))
+        XCTAssertNotNil(metadata.pendingUpserts[original])
+        XCTAssertTrue(metadata.isUpsertFailed(original))
+        XCTAssertNotNil(TripSyncMetadata(persistence: PersistenceStore(directory: directory)).pendingUpserts[original])
+
+        persistence.durableSaveFailureForTesting = nil
+        try metadata.acknowledgeVerifiedCompleted(original)
+        XCTAssertNil(metadata.pendingUpserts[original])
+        XCTAssertFalse(metadata.isUpsertFailed(original))
+        let reloaded = TripSyncMetadata(persistence: PersistenceStore(directory: directory))
+        XCTAssertNil(reloaded.pendingUpserts[original])
+        XCTAssertFalse(reloaded.isUpsertFailed(original))
+    }
+
     @MainActor func testScopeClassificationDoesNotMutatePersistedQueue() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TripQueuedScope-\(UUID().uuidString)")
