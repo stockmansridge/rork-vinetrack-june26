@@ -10,9 +10,12 @@ on:
       - 'ios/VineTrack/LegacyImported/Views/Spray/ManualSprayEntryView.swift'
       - 'ios/VineTrack/App/SprayEngine/ManualSprayReviewStatus.swift'
       - 'ios/VineTrackTests/ManualSprayReviewStatusTests.swift'
+      - 'ios/VineTrackTests/ManualSprayEntryWorkflowTests.swift'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ManualSprayEntrySheet.kt'
       - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/spray/ManualSprayReviewStatus.kt'
       - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/spray/ManualSprayReviewStatusTest.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/ManualSprayEntryWorkflowTest.kt'
+      - 'android-vinetrack/app/src/androidTest/java/com/rork/vinetrack/data/spray/ManualSpraySubmissionGuardInstrumentedTest.kt'
       - '.github/workflows/issue47-manual-spray-native-tests.yml'
 
 permissions:
@@ -76,6 +79,7 @@ jobs:
           chmod +x ./gradlew
           ./gradlew :app:testDebugUnitTest --no-daemon --console=plain \
             --tests 'com.rork.vinetrack.data.spray.ManualSprayReviewStatusTest' \
+            --tests 'com.rork.vinetrack.data.ManualSprayEntryWorkflowTest.issue47*' \
             2>&1 | tee "$RUNNER_TEMP/issue47-android-native.log"
       - name: Save native Android receipts
         if: always()
@@ -129,6 +133,7 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/Issue47ManualSpray.xcresult" \
             -parallel-testing-enabled NO \
             -only-testing:VineTrackTests/ManualSprayReviewStatusTests \
+            -only-testing:VineTrackTests/ManualSprayEntryWorkflowTests/testIssue47ReopenedOutboxAndBackgroundAckRemainFailClosed \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/issue47-ios-native.log"
       - name: Save native iOS receipts
         if: always()
