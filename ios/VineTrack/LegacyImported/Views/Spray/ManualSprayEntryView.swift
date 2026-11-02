@@ -6,6 +6,25 @@ struct ManualSprayEntryView: View {
     @Environment(BackendAccessControl.self) private var accessControl
 
     private var fmt: RegionFormatter { store.settings.regionFormatter }
+    private let submissionGuard = ManualSpraySubmissionGuard()
+
+    private var verifiedOwnerId: UUID? {
+        SupabaseClientProvider.shared.client.auth.currentUser?.id
+    }
+
+    /// This is the original local mutation outbox, not a new queue or retry.
+    /// Any unverified save in this vineyard blocks re-entry from the single
+    /// vineyard-scoped draft, even when its UI @State was discarded.
+    private var retainedSaveForVineyard: PendingManualSprayOperation? {
+        coordinator.operations.first {
+            $0.kind == .save && $0.payload.vineyardId == vineyardId
+        }
+    }
+
+    private var hasSubmissionMarker: Bool {
+        guard let ownerId = verifiedOwnerId else { return false }
+        return submissionGuard.submittedId(ownerId: ownerId, vineyardId: vineyardId) != nil
+    }
     private let vineyardId: UUID
     private let timeZone: TimeZone
     private let teamRepository: any TeamRepositoryProtocol
@@ -37,9 +56,11 @@ struct ManualSprayEntryView: View {
     }
 
     private var reviewStatus: ManualSprayReviewStatus {
-        if savedResponse != nil { return .serverConfirmed }
-        if awaitingServerConfirmation { return .locallySavedAwaitingServer }
-        return .reviewOnly
+        ManualSprayReviewStatus.resolve(
+            serverConfirmed: savedResponse != nil,
+            hasRetainedSave: retainedSaveForVineyard != nil,
+            hasSubmissionMarker: hasSubmissionMarker || awaitingServerConfirmation
+        )
     }
 
     var body: some View {
@@ -53,6 +74,8 @@ struct ManualSprayEntryView: View {
                             Text(loadError)
                             Button("Retry") { Task { await loadExisting() } }
                         }
+                    } else if reviewStatus != .reviewOnly && savedResponse == nil {
+                        protectedSubmissionSections
                     } else if isReviewing { reviewSections } else { entrySections }
                     if let message { Text(message).foregroundStyle(.secondary) }
                 }
@@ -60,23 +83,34 @@ struct ManualSprayEntryView: View {
                 ContentUnavailableView("Manual spray entry unavailable", systemImage: "lock.fill", description: Text("Only Owners, Managers and Supervisors can add completed manual sprays."))
             }
         }
-        .navigationTitle(isReviewing ? "Review manual spray" : (existingRecord == nil ? "Add manual spray" : "Edit manual spray"))
+        .navigationTitle(reviewStatus != .reviewOnly || isReviewing ? "Manual spray status" : (existingRecord == nil ? "Add manual spray" : "Edit manual spray"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel") { if !isSaving { dismiss() } }.disabled(isSaving)
+            }
             ToolbarItem(placement: .confirmationAction) {
-                if savedResponse != nil || awaitingServerConfirmation {
-                    Button(savedResponse != nil ? "Done" : "Close") { dismiss() }
+                if reviewStatus != .reviewOnly {
+                    Button(savedResponse != nil ? "Done" : "Close") {
+                        if !isSaving { dismiss() }
+                    }.disabled(isSaving)
                 } else {
                     Button(isReviewing ? "Save manual spray" : "Review") {
                         if isReviewing { Task { await save() } } else { validateForReview() }
                     }
-                    .disabled(isSaving || isLoadingExisting || loadError != nil || accessControl.loadedVineyardId != vineyardId || !accessControl.canManageManualSprays)
+                    .disabled(isSaving || isLoadingExisting || loadError != nil ||
+                              reviewStatus != .reviewOnly ||
+                              accessControl.loadedVineyardId != vineyardId || !accessControl.canManageManualSprays)
                 }
             }
         }
+        .interactiveDismissDisabled(isSaving)
         .onChange(of: draft) { _, updated in
-            if existingRecord == nil && savedResponse == nil && !awaitingServerConfirmation { ManualSprayDraftStore.shared.save(updated) }
+            // Once the original operation has been submitted, never replace
+            // its saved form snapshot while the server state is unresolved.
+            if existingRecord == nil && !isSaving && reviewStatus == .reviewOnly {
+                ManualSprayDraftStore.shared.save(updated)
+            }
         }
         .task {
             members = (try? await teamRepository.listMembers(vineyardId: vineyardId)) ?? []
@@ -163,6 +197,19 @@ struct ManualSprayEntryView: View {
         }
     }
 
+    @ViewBuilder private var protectedSubmissionSections: some View {
+        Section("Manual spray submission") {
+            LabeledContent("Status", value: reviewStatus.label)
+            Text(reviewStatus == .locallySavedAwaitingServer
+                ? "An original manual spray submission is retained on this device. It must be reconciled through its existing operation ID; do not create another spray."
+                : "This device previously submitted a manual spray, but the original operation is no longer available for confirmation here. Check the saved Spray Record and Portal before making another entry.")
+                .foregroundStyle(.orange)
+            Text("The exact application record, quantities and completion time have not been re-confirmed on this screen. Closing does not delete or retry the original operation.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
     @ViewBuilder private var reviewSections: some View {
         Section { Label("Manual entry", systemImage: "pencil").foregroundStyle(.purple); LabeledContent("Status", value: reviewStatus.label) }
         Section("Application") { LabeledContent("Reference", value: draft.reference); LabeledContent("Start", value: fmt.formatDateTime(draft.startUtc)); LabeledContent("End", value: fmt.formatDateTime(draft.endUtc)); LabeledContent("Timezone", value: draft.vineyardTimeZone) }
@@ -180,7 +227,9 @@ struct ManualSprayEntryView: View {
                 Button("Close — awaiting sync") { dismiss() }
             }
         } else {
-            Button("Back to edit") { isReviewing = false }
+            Button("Back to edit") {
+                if !isSaving && reviewStatus == .reviewOnly { isReviewing = false }
+            }.disabled(isSaving || reviewStatus != .reviewOnly)
         }
     }
 
@@ -228,25 +277,49 @@ struct ManualSprayEntryView: View {
     }
 
     private func save() async {
-        guard !awaitingServerConfirmation, savedResponse == nil,
+        guard !isSaving, isReviewing, reviewStatus == .reviewOnly,
               loadError == nil, accessControl.loadedVineyardId == vineyardId,
-              accessControl.canManageManualSprays else { return }
+              accessControl.canManageManualSprays,
+              let ownerId = verifiedOwnerId else { return }
+        // Mark the original submission BEFORE the coordinator can reach the
+        // server. The outbox itself, retries and ACK policy remain unchanged.
+        let validated: ManualSprayPayload
+        do { validated = try draft.validated() }
+        catch { message = error.localizedDescription; return }
+        guard submissionGuard.mark(ownerId: ownerId, vineyardId: vineyardId,
+                                   manualEntryId: validated.manualEntryId) else {
+            message = "An earlier spray submission could not be safely reconciled. Check Sync status before saving again."
+            return
+        }
         isSaving = true
         defer { isSaving = false }
         do {
-            let response = try await coordinator.save(payload: draft, expectedVersion: expectedVersion)
+            let response = try await coordinator.save(payload: validated, expectedVersion: expectedVersion)
             if let response, response.serverConfirmed {
                 expectedVersion = response.syncVersion
                 savedResponse = response
+                submissionGuard.clearIfMatching(ownerId: ownerId, vineyardId: vineyardId,
+                                                manualEntryId: validated.manualEntryId)
                 ManualSprayDraftStore.shared.clear(vineyardId: vineyardId)
                 message = "Manual spray confirmed by the server. Historical station weather is optional."
             } else {
-                // The coordinator retains the original immutable operation.
-                // Never offer a second Save while a receipt is outstanding.
                 awaitingServerConfirmation = true
-                message = "Saved on this device, but not yet confirmed by the server. Do not enter this application a second time. Check Sync status."
+                message = "The submission is retained or requires verification. Do not enter this application a second time; check Sync status."
             }
-        } catch { message = error.localizedDescription }
+        } catch {
+            // A local outbox-persistence failure happens before any server
+            // request. Only in that specific case may we safely clear intent.
+            if let persistenceError = error as? ManualSprayPersistenceError,
+               case .couldNotPersist = persistenceError,
+               !coordinator.operations.contains(where: {
+                   $0.kind == .save && $0.payload.vineyardId == vineyardId &&
+                   $0.payload.manualEntryId == validated.manualEntryId
+               }) {
+                submissionGuard.clearIfMatching(ownerId: ownerId, vineyardId: vineyardId,
+                                                manualEntryId: validated.manualEntryId)
+            }
+            message = error.localizedDescription
+        }
     }
 
     private func recoverWeather(_ response: ManualSpraySaveResponse) async {
