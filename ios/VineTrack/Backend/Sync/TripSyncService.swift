@@ -487,7 +487,8 @@ final class TripSyncService {
         do {
             guard let row = try await SupabaseTripSyncRepository().fetchTripForOccurrenceStart(tripId: id, vineyardId: selected),
                   row.id == id, row.vineyardId == selected, row.deletedAt == nil,
-                  row.endTime == local.endTime, row.isActive == false,
+                  TankSessionReceiptMatch.sameTime(row.endTime, local.endTime),
+                  row.isActive == false,
                   store.currentUserIdProvider?() == owner,
                   store.selectedVineyardId == selected,
                   SupabaseClientProvider.shared.client.auth.currentUser?.id == owner else { return false }
@@ -1632,7 +1633,9 @@ nonisolated enum CompletedTripReceiptAdmission {
               local.tripFunction == remote.tripFunction else { return "TRIP_ORIGINAL_IDENTITY_MISMATCH" }
         guard !local.isActive, !remote.isActive,
               let localEnd = local.endTime, let remoteEnd = remote.endTime,
-              localEnd == remoteEnd else { return "TRIP_ORIGINAL_END_TIME_MISMATCH" }
+              TankSessionReceiptMatch.sameTime(localEnd, remoteEnd) else {
+            return "TRIP_ORIGINAL_END_TIME_MISMATCH"
+        }
         guard ActiveTripPathReconciler.containsRoute(local.pathPoints, in: remote.pathPoints) else {
             return "TRIP_LOCAL_GPS_NOT_ON_SERVER"
         }
