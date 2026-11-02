@@ -31,7 +31,9 @@ struct TripClosureSection: View {
                     .disabled(checking)
                     Button {
                         let input = lastInput ?? service.closureInput(trip: trip, store: store, fresh: nil)
-                        UIPasteboard.general.string = (["VineTrack Trip closure status v1", "platform: iOS"] +
+                        UIPasteboard.general.string = (["VineTrack Trip closure status v1", "platform: iOS",
+                            "verified_recovery_source: 4e177a9109f3f729d16c11a527cf64e3fe443611; public: 64516a77082f3eb4b3917c7cf10170dbf3c31b19; diagnostic_overlay: issue41-rc1",
+                            "version: \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown") build: \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown")"] +
                             TripClosureStatus.diagnosticLines(input, TripClosureStatus.evaluate(input))).joined(separator: "\n")
                     } label: {
                         Label("Copy Trip status", systemImage: "doc.on.doc")

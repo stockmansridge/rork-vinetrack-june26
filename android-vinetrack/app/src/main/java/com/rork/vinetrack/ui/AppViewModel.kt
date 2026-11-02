@@ -3091,6 +3091,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val info = supportDiagnostics()
         return (listOf("VineTrack device Trip status v1", "platform: Android", "version: ${info.appVersion}", "build: ${info.appBuild}") +
             com.rork.vinetrack.data.DeviceTripStatus.diagnosticLines(trip.id, deviceTripStatus(trip)) +
+            "verified_recovery_source: 4e177a9109f3f729d16c11a527cf64e3fe443611; public: 64516a77082f3eb4b3917c7cf10170dbf3c31b19; diagnostic_overlay: issue41-rc1" +
             "phase5_last_process_stage: ${_ui.value.phase5ReplayStage}" +
             "legacy_trip_admission: ${legacyReplayBlocker(trip.id) ?: "NO_OVERLAP"}" +
             _ui.value.pendingSyncItems.filter { it.clientId == trip.id }.map {
@@ -4014,7 +4015,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** In-process stage observation, not a server acknowledgement or upload-attempt counter. */
     private fun phase5Trace(stage: String, reason: String) {
         val scope = pendingWrites.currentReplayScope()
-        val line = "stage=$stage reason=$reason vineyard=${_ui.value.selectedVineyardId} scope_current=${scope != null}"
+        val line = "recovery_source=4e177a9109f3f729d16c11a527cf64e3fe443611 diagnostic_overlay=issue41-rc1 stage=$stage reason=$reason vineyard=${_ui.value.selectedVineyardId} scope_current=${scope != null}"
         android.util.Log.i("VineTrackPhase5", line)
         _ui.update { it.copy(phase5ReplayStage = line) }
     }

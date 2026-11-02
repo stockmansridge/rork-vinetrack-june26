@@ -1,6 +1,24 @@
 # VineTrack 3.1.9 P0 — Issue #40 iOS/Android parity report (2 November 2026)
 
-Verdict: **NOT ACCEPTED — release blocked.** Source parity is implemented and checked by automated tests and builds only. No original-device, live-server or authenticated Portal acceptance has been executed. Parity is not claimed from compilation or simulator results.
+Verdict: **NOT ACCEPTED — production release blocked.** Latest user authorises controlled Play Internal Testing and TestFlight recovery candidates only. Source parity is implemented and checked by automated tests and builds only. No original-device, live-server or authenticated Portal acceptance has been executed. Parity is not claimed from compilation or simulator results.
+
+## Controlled delivery update — 2 November 2026
+
+- Verified recovery managed revision `4e177a9109f3f729d16c11a527cf64e3fe443611` against public GitHub `64516a77082f3eb4b3917c7cf10170dbf3c31b19`. All 16 recorded application/test SHA-256 values match both; all tracked app blobs match public source. All four retained passing Android XML hashes match and total 53 tests, zero failures/errors/skips.
+- Added `issue41-rc1` diagnostic-only overlay: verified recovery revision in Android Copy Trip status and Phase 5 traces; same revision plus installed version/build in iOS Copy Trip status. This identifies the verified recovery source, not a self-referential claim about the overlay's future commit. Overlay hashes and full tracked-app manifest digests are retained in `validation-current.json.issue41.controlledDelivery`.
+- After overlay: Android normal build PASS; iOS simulator build PASS. Prior 53 JVM / 23 aggregate iOS test evidence is reused within its original limits; no new device/network test or final-binary equivalence claimed.
+- **iOS 3.1.9 build 201 signed and uploaded**, submission `96c48871-12f0-4c7e-a3e0-d71fa1d5b87e`, existing team/bundle route, supplied source snapshot, Xcode 27.1. Managed environment identity unchanged (`77512c8744941d43de74978b0c1291c3bb06d8da`). Apple processing and TestFlight availability remain unconfirmed: immediate ASC read still returned build 200. Build 201's What to Test metadata cannot yet be attached; no new App Store review submitted. No source snapshot ID/archive checksum exposed by the tool; source is verified recovery revision plus the exact fingerprinted diagnostic overlay, not yet a new committed SHA.
+- **Android signed export not created**: package access succeeds and all listed existing bundles are stale. `generatePlayAab` refused: “The current project has unsynced source changes. Finish this turn, then retry publishing.” No version code/run/submission allocated, no validation or publication, no older artifact substituted. Resume after automatic sync, code above 1793582624 and later uploads, validate and publish Internal only. Existing package/signing/configuration were not changed.
+- **Issue #40 remains outstanding on iOS:** original-device cancellation receipt/readback, lost-response and 3.1.8 refusal acceptance; full dependent/closure lifecycle and interruption/reopen acceptance; per-entry reconciliation of four historical Trip operations and one orphan actual; independent labour proof; named owner-level occurrence UUID correction. Build 201 does not claim these gaps resolved.
+
+### Protected original-Android recovery checklist — not executed here
+
+1. Update the original installation in place only after the new signed Internal candidate is confirmed. No uninstall, storage clearing, cancellation, queue-count clearing or replacement records.
+2. Copy Trip status before replay for Trip `b1dd59ab-ff1b-4ff4-9af6-a9688425db22`; preserve exact local start/end, GPS, entered water and chemicals, and operation evidence. Confirm candidate version/code and `verified_recovery_source`/overlay labels.
+3. Online on the original account/vineyard, observe Phase 5 admission and parent waits. Unrelated identified legacy jobs may remain held on their original Pending Sync entries. Same/unknown evidence must remain held; stop on a conflict rather than relax guards.
+4. Verify server Tank session `fdb6a4b8-5cbf-41a9-a780-816a5e5fa401` matches the complete retained session; verify actual `c4b5f982-e3e9-467d-9067-e36736699026` with exact entered water/chemical values and identities. Do not substitute planned values. Require independent server readback, not zero queue count or HTTP success alone.
+5. Verify GPS/labour evidence through authorised receipts/readback. Labour's current void RPC is not independent proof; unresolved proof keeps acceptance blocked. Replay original finalisation `fff1638c-ac5f-4546-bc1f-c74026b03c2f`, never a replacement. Require original-operation receipt, terminal Trip row and claim release.
+6. Close/reopen and independently read server state; require exact linked records, no duplicates/missing quantities, all dependents acknowledged, verified CLOSED_SYNCED. If any stage fails, retain every original byte/operation and return candidate identity, original operation ID, stage and fixed code. Repeat complete lifecycle acceptance on iOS before any production decision.
 
 ## Supabase dependencies
 - `sql/281_trip_activity_cancellation_v1.sql` deployed after a rolled-back 16/16 dry run.
@@ -32,7 +50,7 @@ Verdict: **NOT ACCEPTED — release blocked.** Source parity is implemented and 
 
 ## Builds
 - Android `runChecks` PASS; iOS `runChecks` PASS (simulator build only; device/Release unverified).
-- Issue #41 supersedes the next-build step: no new Internal/TestFlight store candidate until investigation/correction/test/source identity are reported and further delivery is authorised. Normal validation builds are not store delivery.
+- Latest controlled-delivery authorisation supersedes the prior investigation-only gate: Internal/TestFlight only; see current delivery update. Normal validation builds are not store delivery.
 
 ## Original-device tests — NOT EXECUTED
 - Android update from the user: build `1793582624` cancelled `3bfb7f81-…` and permitted the new Trip to start. This is reported handset success, not our independent receipt/readback verification. 3.1.8 refusal remains unverified.
@@ -47,7 +65,7 @@ Verdict: **NOT ACCEPTED — release blocked.** Source parity is implemented and 
 
 ## Issue #41 investigation and bounded correction
 
-**OPEN / NOT RECOVERED / NO STORE CANDIDATE.** Read-only issue evidence confirms Trip `b1dd59ab-ff1b-4ff4-9af6-a9688425db22`, retained Tank session `fdb6a4b8-5cbf-41a9-a780-816a5e5fa401`, actual `c4b5f982-e3e9-467d-9067-e36736699026` and finalisation `fff1638c-ac5f-4546-bc1f-c74026b03c2f`. Creation/activation/Spray Record had been accepted; the reported server remained Active with no sessions/actuals or finalisation receipt. This is incident evidence, not a fresh live read performed here.
+**OPEN / NOT RECOVERED.** Controlled recovery delivery now authorised; see current update (iOS 201 uploaded, Android awaiting automatic source sync). Read-only issue evidence confirms Trip `b1dd59ab-ff1b-4ff4-9af6-a9688425db22`, retained Tank session `fdb6a4b8-5cbf-41a9-a780-816a5e5fa401`, actual `c4b5f982-e3e9-467d-9067-e36736699026` and finalisation `fff1638c-ac5f-4546-bc1f-c74026b03c2f`. Creation/activation/Spray Record had been accepted; the reported server remained Active with no sessions/actuals or finalisation receipt. This is incident evidence, not a fresh live read performed here.
 
 ### Confirmed source cause
 
@@ -75,4 +93,4 @@ Verdict: **NOT ACCEPTED — release blocked.** Source parity is implemented and 
 - No original Android installation, authenticated account or Portal session is available. The exact Trip/session/actual/finalisation have **not** been replayed or acknowledged here. Never recreate them, substitute planned quantities, clear storage, drain by count or cancel the new Trip to hide this failure.
 - Labour still uses existing `capture_trip_labour_start_v1` / `finalise_trip_labour_v1` RPC success. SQL 253 returns `void`; operational operators intentionally cannot SELECT financial allocations. Independent labour readback/receipt proof is **not implemented or verified** by this correction. Do not claim end-to-end verified CLOSED_SYNCED from these checks. A scoped, authorised verification contract or operator evidence is still required.
 - The complete ViewModel/real-network ordered lifecycle, interrupted/lost-response/reopen matrix and exact server quantities/terminal row/original finalisation receipt remain unexecuted. iOS build 200's four historical Trip operations and orphan actual still require separate per-entry reconciliation.
-- Working source is fingerprinted in `validation-current.json.issue41`. Managed base **`ad33558da35fc9681d377f2a2912bd740c884c1c`** is the preceding #40 commit, **not** the repaired commit. Automatic managed sync has not yet supplied a repaired commit identity in this turn; verify it against these hashes before any store candidate. No manual staging/commit/push, package/signing/version/configuration change, backend mutation or store publication performed.
+- Recovery source is fingerprinted in `validation-current.json.issue41`. Managed base `ad33558da35fc9681d377f2a2912bd740c884c1c` is not the repair; repaired managed/public revisions and diagnostic-only overlay are verified and recorded above. No manual staging/commit/push, package/signing/configuration change, backend mutation, App Store review or production publication performed. iOS build 201 is a controlled recovery upload, not original-device acceptance.

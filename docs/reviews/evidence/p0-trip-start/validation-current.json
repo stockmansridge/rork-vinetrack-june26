@@ -2,10 +2,47 @@
   "issue41": {
     "recordedDateUTC": "2026-11-02",
     "status": "SOURCE_CONTAINMENT_CHECKED_ORIGINAL_RECOVERY_UNVERIFIED",
-    "release": "BLOCKED_NO_STORE_CANDIDATE_OR_UPLOAD",
+    "release": "CONTROLLED_INTERNAL_TESTFLIGHT_ONLY_PRODUCTION_BLOCKED",
     "managedBaseCommit": "ad33558da35fc9681d377f2a2912bd740c884c1c",
-    "repairedManagedCommit": null,
-    "sourceIdentityNote": "Base is not the repaired commit. Verify automatic managed/public sync against every application/test hash before another store build. No manual Git mutation.",
+    "repairedManagedCommit": "4e177a9109f3f729d16c11a527cf64e3fe443611",
+    "repairedPublicCommit": "64516a77082f3eb4b3917c7cf10170dbf3c31b19",
+    "sourceIdentityNote": "All 16 recorded source/test SHA256 values match managed HEAD and public GitHub blobs before diagnostic-only overlay. All tracked iOS and Android blobs match public source. Four passing XML hashes verified, totals 53/0/0/0. The overlay below adds revision/version strings only; original sourceSha256 remains historical tested-source evidence, not the final candidate hash. No manual Git mutation.",
+    "controlledDelivery": {
+      "authorised": "Latest user authorises fresh recovery candidates only: Play Internal Testing and TestFlight. Production and App Store review prohibited pending both-platform lifecycle acceptance.",
+      "diagnosticOverlay": "issue41-rc1",
+      "overlaySha256": {
+        "android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/AppViewModel.kt": "7d746ebce04590c4c8ffaf5ada5bd896fc65761ca78a3f073e46977a7179a7e5",
+        "ios/VineTrack/LegacyImported/Views/Trips/TripClosureSection.swift": "8f602dbcdb30d2f22e7460511ba88c65f57d88d65354b618d15f32aa740b4635"
+      },
+      "sourceManifestMethod": "SHA256 of compact sorted JSON mapping tracked existing app paths to file SHA256, before publication; generated/injected configuration is not independently attested by this digest.",
+      "trackedAppManifestDigests": {
+        "ios": {"files": 1291, "sha256": "a055506d88aa1c91de03b7a7f9931e08169555303bcda3722caf820fe77aad60"},
+        "android-vinetrack": {"files": 1271, "sha256": "62ef7966b7af177688b52b7e80c85b2f5cd01d2e5f3e1eed2791915f72c08fe8"}
+      },
+      "validation": "After diagnostic-only overlay: Android runChecks PASS; iOS runChecks simulator PASS. Existing bounded tests reused for unchanged recovery logic; no new lifecycle/device tests claimed.",
+      "android": {
+        "package": "com.rork.vinetrack", "version": "3.1.9", "minimumCodeExclusive": 1793582624,
+        "googlePlayConnected": true, "packageAccess": "ok existing app; no operation lock returned",
+        "existingBuilds": "All 20 listed signed builds matchesCurrentSource=false; none substituted",
+        "generatePlayAab": "REFUSED: The current project has unsynced source changes. Finish this turn, then retry publishing.",
+        "runId": null, "versionCode": null, "submissionId": null, "published": false,
+        "next": "After automatic sync, verify overlay hashes and current-source signed build selection; generate once, await status once, validate then commit Internal only. Retain backend code and receipts. Do not manually commit or retry unchanged in this turn.",
+        "signingAndEffectiveConfig": "Existing route/config preserved; final signed AAB certificate, configuration and checksum not available because no new signed build was created"
+      },
+      "ios": {
+        "team": "8Y879855VK", "bundle": "app.rork.nt0v48tayl7v8noxcfe74", "ascAppId": "6761143377",
+        "version": "3.1.9", "buildNumber": 201, "submissionId": "96c48871-12f0-4c7e-a3e0-d71fa1d5b87e",
+        "submitBuild": "ok: signed build succeeded and uploaded; Apple processing pending",
+        "currentBuildStep": "complete", "buildProcessingState": null,
+        "archiveSource": "supplied-snapshot", "builder": "limrun", "xcodeMajor": "27.1", "clientEnvsHash": "77512c8744941d43de74978b0c1291c3bb06d8da",
+        "ascReadback": "Immediate latest-build lookup still returned 200, not 201; Apple processing/TestFlight availability not independently confirmed. No duplicate upload or processing polling.",
+        "sourceMapping": "Verified repaired managed/public source plus exactly the fingerprinted TripClosureSection diagnostic overlay. Tool reports server-pinned supplied snapshot, but does not expose snapshot ID, archive checksum or resolved Git commit. Do not claim an exact new committed revision or binary checksum.",
+        "testflightInvite": "Backend automatic handling; delivery not independently confirmed",
+        "betaNotes": "Build 201 not yet visible to ASC; What to Test metadata not written. Outstanding #40 acceptance is listed in parity report; attach to exact build once available.",
+        "appStoreReviewSubmitted": false,
+        "outstandingIssue40": ["Original-device cancellation and independent receipt/readback, lost-response and 3.1.8 refusal", "Full dependent/closure lifecycle on both platforms and interruption/reopen matrix", "Per-entry reconciliation of four historical Trip operations and orphan actual", "Independent labour acknowledgement/readback proof", "Named owner-level occurrence UUID correction"]
+      }
+    },
     "incident": {
       "trip": "b1dd59ab-ff1b-4ff4-9af6-a9688425db22",
       "tankSession": "fdb6a4b8-5cbf-41a9-a780-816a5e5fa401",
@@ -34,7 +71,7 @@
       "Labour RPC returns void and operators lack financial SELECT; independent receipt/readback contract not implemented",
       "Full ViewModel ordered lifecycle, interruption/reopen/lost-response matrix unexecuted",
       "iOS build 200 per-entry historical queue reconciliation remains separate",
-      "Exact repaired managed/public commit pending automatic sync"
+      "Diagnostic-only overlay awaiting automatic managed sync; Android signed export refused unsynced changes. iOS 201 upload succeeded but processing, exact archive identity and TestFlight availability unverified"
     ],
     "sourceSha256": {
       "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/LegacyReplayIsolation.kt": "e3cc37f3edc33dd60826cf3656691b50d5e6c524dd7d0d53922b45a9a0d2d199",
