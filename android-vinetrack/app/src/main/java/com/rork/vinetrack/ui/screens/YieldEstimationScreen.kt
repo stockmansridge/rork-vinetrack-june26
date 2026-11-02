@@ -623,20 +623,57 @@ private fun TripSetupScreen(
             if (session.totalSiteCount == 0) {
                 VineyardCard {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Number of samples", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                                Text("Sample sites per ${blockAreaFmt.areaUnitAbbreviation} — saved as the default for the next trip", color = vine.textSecondary, fontSize = 12.sp)
+                        // Number of samples is an integer density per HECTARE.
+                        // Do not convert to a decimal display or constrain the
+                        // input to a 36dp two-line stepper. Keep one clear field
+                        // and obvious +/- controls, matching the iOS editor.
+                        var densityText by rememberSaveable(session.id) {
+                            mutableStateOf(session.samplesPerHectare.toString())
+                        }
+                        LaunchedEffect(session.samplesPerHectare) {
+                            if (densityText.toIntOrNull() != session.samplesPerHectare) {
+                                densityText = session.samplesPerHectare.toString()
                             }
-                            Stepper(
-                                value = session.samplesPerHectare,
-                                displayValue = String.format(java.util.Locale.US, "%.2f", blockAreaFmt.perAreaValue(session.samplesPerHectare.toDouble())),
-                                onChange = {
-                                    onApply(session.copy(samplesPerHectare = it))
-                                    // A changed count becomes the shared vineyard default (sql/187).
-                                    vm.saveYieldSamplingDefault(it)
+                        }
+                        fun setDensity(n: Int) {
+                            if (n !in 1..500) return
+                            densityText = n.toString()
+                            if (n != session.samplesPerHectare) {
+                                onApply(session.copy(samplesPerHectare = n))
+                                vm.saveYieldSamplingDefault(n)
+                            }
+                        }
+                        Text("Number of samples per hectare", fontWeight = FontWeight.Bold, color = vine.textPrimary, fontSize = 16.sp)
+                        Text("Whole-number sample sites/ha · saved as the default for the next trip",
+                            color = vine.textSecondary, fontSize = 12.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            IconButton(onClick = { setDensity((densityText.toIntOrNull() ?: session.samplesPerHectare) - 1) },
+                                enabled = (densityText.toIntOrNull() ?: session.samplesPerHectare) > 1) {
+                                Icon(Icons.Filled.Remove, contentDescription = "Fewer sample sites")
+                            }
+                            OutlinedTextField(
+                                value = densityText,
+                                onValueChange = { entered ->
+                                    val digits = entered.filter(Char::isDigit).take(3)
+                                    densityText = digits
+                                    digits.toIntOrNull()?.let(::setDensity)
                                 },
+                                modifier = Modifier.width(124.dp).testTag("yield.samplesPerHectare.input"),
+                                label = { Text("Sites/ha") },
+                                singleLine = true,
+                                textStyle = androidx.compose.ui.text.TextStyle(
+                                    fontWeight = FontWeight.Bold, fontSize = 18.sp, textAlign = TextAlign.Center),
+                                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Number),
+                                isError = densityText.toIntOrNull() !in 1..500,
                             )
+                            IconButton(onClick = { setDensity((densityText.toIntOrNull() ?: session.samplesPerHectare) + 1) },
+                                enabled = (densityText.toIntOrNull() ?: session.samplesPerHectare) < 500) {
+                                Icon(Icons.Filled.Add, contentDescription = "More sample sites")
+                            }
+                        }
+                        if (densityText.toIntOrNull() !in 1..500) {
+                            Text("Enter a whole number from 1 to 500 before generating a route.",
+                                color = VineColors.Warning, fontSize = 12.sp)
                         }
                         val expected = YieldSampleGenerator.expectedSampleCount(
                             blocks, session.selectedPaddockIds, session.samplesPerHectare,
