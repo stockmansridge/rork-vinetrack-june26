@@ -382,10 +382,13 @@ fun GuidedChip(
     isSelected: Boolean,
     accent: Color,
     modifier: Modifier = Modifier,
+    // Only the calculator Target grids opt in: compact visual chips retain a
+    // comfortable minimum height, while other guided choices stay unchanged.
+    compact: Boolean = false,
     onClick: () -> Unit,
 ) {
     Surface(
-        modifier = modifier,
+        modifier = if (compact) modifier.heightIn(min = 40.dp) else modifier,
         shape = RoundedCornerShape(9.dp),
         color = if (isSelected) accent else MaterialTheme.colorScheme.surfaceVariant,
         onClick = onClick,
@@ -395,7 +398,10 @@ fun GuidedChip(
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
             color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            modifier = Modifier.padding(
+                horizontal = if (compact) 10.dp else 12.dp,
+                vertical = if (compact) 7.dp else 10.dp,
+            ),
         )
     }
 }
