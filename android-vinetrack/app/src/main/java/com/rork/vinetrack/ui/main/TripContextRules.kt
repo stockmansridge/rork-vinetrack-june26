@@ -124,6 +124,35 @@ object TripContextRules {
  * list must remain possible without an automatic bounce.
  */
 object TripStartNavigation {
+    /**
+     * The caller records the exact ID on either a direct Start callback or
+     * a fallback handoff. Device ownership can become visible later than the
+     * active row, but returning Back must never reopen that same Trip.
+     */
+    fun shouldOpenUnseenActive(
+        lastOpenedTripId: String?,
+        activeTripId: String?,
+        activeTripVineyardId: String?,
+        deviceOwnedTripId: String?,
+        selectedVineyardId: String?,
+        userId: String?,
+        selectedTripId: String?,
+        tab: MainTab,
+        tool: ToolRoute?,
+        calculatorOpen: Boolean,
+    ): Boolean =
+        activeTripId != lastOpenedTripId && shouldOpenNewlyActive(
+            activeTripId = activeTripId,
+            activeTripVineyardId = activeTripVineyardId,
+            deviceOwnedTripId = deviceOwnedTripId,
+            selectedVineyardId = selectedVineyardId,
+            userId = userId,
+            selectedTripId = selectedTripId,
+            tab = tab,
+            tool = tool,
+            calculatorOpen = calculatorOpen,
+        )
+
     fun shouldOpenNewlyActive(
         activeTripId: String?,
         activeTripVineyardId: String?,
