@@ -52,6 +52,17 @@ nonisolated struct TripQueuedScopeSummary: Equatable {
     }
 }
 
+/// Global legacy IDs still prevent a full-sync receipt, but a held Trip
+/// belonging only to a foreign/unidentified scope is not a CURRENT vineyard
+/// error. Never delete its queue entry or report a fully drained upload.
+nonisolated enum TripSyncHoldPresentation {
+    static func needsCurrentVineyardAttention(
+        selectedQueuedCount: Int, currentRetainedCount: Int
+    ) -> Bool {
+        selectedQueuedCount > 0 || currentRetainedCount > 0
+    }
+}
+
 /** A server tombstone cannot acknowledge a different outstanding local upload.
  * This policy never clears Trip queue entries, operation journals or local data.
  */
