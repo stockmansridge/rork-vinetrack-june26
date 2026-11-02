@@ -42,28 +42,40 @@ struct ManualSpraySubmissionGuard {
 
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
-    private func key(ownerId: UUID, vineyardId: UUID) -> String {
+    private func legacyKey(ownerId: UUID, vineyardId: UUID) -> String {
         "vinetrack_manual_spray_submission_guard_v1_\(ownerId.uuidString.lowercased())_\(vineyardId.uuidString.lowercased())"
     }
 
-    func submittedId(ownerId: UUID, vineyardId: UUID) -> UUID? {
-        guard let raw = defaults.string(forKey: key(ownerId: ownerId, vineyardId: vineyardId)) else { return nil }
-        return UUID(uuidString: raw)
+    private func key(ownerId: UUID, vineyardId: UUID, manualEntryId: UUID) -> String {
+        "\(legacyKey(ownerId: ownerId, vineyardId: vineyardId))_\(manualEntryId.uuidString.lowercased())"
     }
 
-    /// Fail closed if a different unsafely unresolved spray has already been
-    /// submitted in this owner's single-draft vineyard workflow.
+    /// Only a single application's submission can prevent resubmitting that
+    /// exact application; other spray records are not locked by this marker.
+    func submittedId(ownerId: UUID, vineyardId: UUID, manualEntryId: UUID) -> UUID? {
+        let active = defaults.string(forKey: key(ownerId: ownerId, vineyardId: vineyardId,
+                                                  manualEntryId: manualEntryId))
+            ?? defaults.string(forKey: legacyKey(ownerId: ownerId, vineyardId: vineyardId))
+        guard active == manualEntryId.uuidString else { return nil }
+        return manualEntryId
+    }
+
     @discardableResult
     func mark(ownerId: UUID, vineyardId: UUID, manualEntryId: UUID) -> Bool {
-        if let existing = submittedId(ownerId: ownerId, vineyardId: vineyardId),
-           existing != manualEntryId { return false }
-        let name = key(ownerId: ownerId, vineyardId: vineyardId)
+        let name = key(ownerId: ownerId, vineyardId: vineyardId, manualEntryId: manualEntryId)
         defaults.set(manualEntryId.uuidString, forKey: name)
-        return defaults.synchronize() && defaults.string(forKey: name) == manualEntryId.uuidString
+        return defaults.synchronize() &&
+               submittedId(ownerId: ownerId, vineyardId: vineyardId, manualEntryId: manualEntryId) == manualEntryId
     }
 
     func clearIfMatching(ownerId: UUID, vineyardId: UUID, manualEntryId: UUID) {
-        guard submittedId(ownerId: ownerId, vineyardId: vineyardId) == manualEntryId else { return }
-        defaults.removeObject(forKey: key(ownerId: ownerId, vineyardId: vineyardId))
+        guard submittedId(ownerId: ownerId, vineyardId: vineyardId,
+                          manualEntryId: manualEntryId) == manualEntryId else { return }
+        defaults.removeObject(forKey: key(ownerId: ownerId, vineyardId: vineyardId,
+                                          manualEntryId: manualEntryId))
+        if defaults.string(forKey: legacyKey(ownerId: ownerId, vineyardId: vineyardId)) ==
+            manualEntryId.uuidString {
+            defaults.removeObject(forKey: legacyKey(ownerId: ownerId, vineyardId: vineyardId))
+        }
     }
 }
