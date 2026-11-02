@@ -175,6 +175,37 @@ class ManualSprayEntryWorkflowTest {
         assertTrue(store.values.any { it.kind == PendingManualSprayKind.DELETE })
     }
 
+    @Test fun issue47ReopenOriginalOperationAndBackgroundAckDoNotEnableNewSave() = runBlocking {
+        val payload = fixture()
+        val store = MemoryStore()
+        val gateway = GatewayDouble(failSave = true)
+        val first = ManualSprayEntryCoordinator(gateway, store)
+        assertNull(first.save(payload, 0))
+
+        // Recreate coordinator, as on process restart, from the SAME durable
+        // storage. No new operation ID or destructive outbox replacement.
+        val reopened = ManualSprayEntryCoordinator(gateway, store)
+        assertEquals(payload.manualEntryId, reopened.pendingPayloads().single().manualEntryId)
+        val stillQueued = com.rork.vinetrack.data.spray.manualSprayReviewStatus(
+            serverConfirmed = false, hasRetainedSave = reopened.pendingOperations().any {
+                it.kind == PendingManualSprayKind.SAVE && it.payload.vineyardId == payload.vineyardId
+            }, hasSubmissionMarker = true
+        )
+        assertEquals(com.rork.vinetrack.data.spray.ManualSprayReviewStatus.SAVED_LOCALLY_PENDING_CONFIRMATION, stillQueued)
+        assertFalse(com.rork.vinetrack.data.spray.manualSprayReviewStatusLabel(stillQueued).contains("Completed"))
+
+        // Successful background replay legitimately removes its original
+        // queue entry, not the UI's separate locally persisted intent marker.
+        reopened.replay { "owner" }
+        assertTrue(reopened.pendingPayloads().isEmpty())
+        val afterBackgroundAck = com.rork.vinetrack.data.spray.manualSprayReviewStatus(
+            serverConfirmed = false, hasRetainedSave = false, hasSubmissionMarker = true
+        )
+        assertEquals(com.rork.vinetrack.data.spray.ManualSprayReviewStatus.VERIFICATION_REQUIRED, afterBackgroundAck)
+        assertFalse(com.rork.vinetrack.data.spray.manualSprayReviewStatusLabel(afterBackgroundAck).contains("Completed"))
+        assertEquals(1, gateway.operationIds.distinct().size)
+    }
+
     private fun fixture(): ManualSprayPayload = ManualSprayPayload(
         vineyardId = UUID.randomUUID().toString(), reference = "Manual 1", operationType = "Foliar Spray",
         startUtc = "2026-09-08T23:30:00Z", endUtc = "2026-09-09T01:00:00Z", vineyardTimeZone = "Australia/Adelaide",
