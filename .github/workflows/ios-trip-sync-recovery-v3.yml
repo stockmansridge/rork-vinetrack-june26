@@ -1,0 +1,79 @@
+name: iOS P0 Trip Sync Recovery v3 native validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ios/VineTrack/Backend/Sync/TripSyncService.swift'
+      - 'ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift'
+      - 'ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift'
+      - 'ios/VineTrack/App/SyncDiagnosticsView.swift'
+      - 'ios/VineTrackTests/TripQueuedUploadScopeTests.swift'
+      - 'ios/VineTrackTests/TripOccurrenceJournalTests.swift'
+      - '.github/workflows/ios-trip-sync-recovery-v3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A prior source SHA's failure evidence is never cancelled by later commits.
+concurrency:
+  group: ios-trip-recovery-v3-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  native:
+    runs-on: macos-15
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Confirm exact source and native toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          git rev-parse HEAD > "$RUNNER_TEMP/ios-trip-recovery-v3-source.txt"
+          XCODE_ROOT="/Applications/Xcode_26.3.app/Contents/Developer"
+          test -x "$XCODE_ROOT/usr/bin/xcodebuild" || {
+            echo "::error::Xcode 26.3 unavailable"; exit 2;
+          }
+          echo "DEVELOPER_DIR=$XCODE_ROOT" >> "$GITHUB_ENV"
+          export DEVELOPER_DIR="$XCODE_ROOT"
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+      - name: Select native iOS simulator
+        id: sim
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIM=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; a=json.load(sys.stdin)["devices"]; d=[x["udid"] for k,v in a.items() if "iOS" in k for x in v if x.get("isAvailable",False) and "iPhone" in x.get("name","")]; print(d[0] if d else "")')
+          test -n "$SIM"
+          echo "id=$SIM" >> "$GITHUB_OUTPUT"
+      - name: Build iOS app and test original-record recovery gates
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project ios/VineTrack.xcodeproj -scheme VineTrack -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.id }}" \
+            -resultBundlePath "$RUNNER_TEMP/iOSTripRecoveryV3.xcresult" \
+            -parallel-testing-enabled NO \
+            -only-testing:VineTrackTests/TripQueuedUploadScopeTests/testCompletedServerTripReceiptRequiresExactOriginalEndAndTankEvidence \
+            -only-testing:VineTrackTests/TripOccurrenceJournalTests/testBackendUpgradeRetriesUppercaseOriginalHeldCreateWithoutChangingFrozenIDs \
+            -only-testing:VineTrackTests/TripOccurrenceJournalTests/testBackendUpgradeRefusesChangedLocalCoverageAndKeepsHold \
+            INFOPLIST_KEY_VineTrackSourceRevision="${{ github.sha }}" \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/ios-trip-recovery-v3.log"
+      - name: Preserve source and validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-trip-sync-recovery-v3-native-receipts
+          path: |
+            ${{ runner.temp }}/iOSTripRecoveryV3.xcresult
+            ${{ runner.temp }}/ios-trip-recovery-v3.log
+            ${{ runner.temp }}/ios-trip-recovery-v3-source.txt
+          if-no-files-found: warn
+          retention-days: 14
