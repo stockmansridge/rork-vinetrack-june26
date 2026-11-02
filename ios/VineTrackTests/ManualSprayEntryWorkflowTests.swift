@@ -163,6 +163,57 @@ final class ManualSprayEntryWorkflowTests: XCTestCase {
         XCTAssertEqual(Set(originalSends.map(\.operationId)).count, 1)
     }
 
+    func testIssue47CanonicalReportMustMatchExactOriginalActuals() throws {
+        let original = fixture()
+        let iso = ISO8601DateFormatter()
+        let report = SprayReportPayloadV1(
+            schemaVersion: "1.2",
+            coverageBasis: nil,
+            coverageContract: nil,
+            identity: .init(tripId: original.tripId, sprayRecordId: original.sprayRecordId,
+                            vineyardId: original.vineyardId, vineyardName: "Test vineyard",
+                            reference: original.reference, vineyardTimeZone: original.vineyardTimeZone),
+            provenance: .init(source: "manual", manualEntryId: original.manualEntryId,
+                              isManualEntry: true, label: "Manual entry"),
+            recordingEvidence: nil,
+            trip: .init(startUtc: iso.string(from: original.startUtc), endUtc: iso.string(from: original.endUtc),
+                        activeDurationSeconds: nil, distanceMetres: nil, operatorName: nil, pinCount: 0,
+                        operatorId: nil, operatorSource: nil, elapsedDurationSeconds: nil, pausedDurationSeconds: nil),
+            blocks: original.blocks.map { .init(blockId: $0.blockId.uuidString.lowercased(),
+                                                  name: $0.blockName, grossAreaHa: nil, treatedAreaHa: nil) },
+            equipment: .init(tractorName: nil, startEngineHours: nil, endEngineHours: nil,
+                             engineHoursUsed: nil, sprayUnitName: nil, machineId: nil,
+                             tractorId: nil, sprayEquipmentId: nil, equipmentSource: nil,
+                             tractorGear: nil, numberOfFansJets: nil, averageSpeedKmh: nil,
+                             fuelConsumptionLPerHour: nil, fuelConsumptionSource: nil,
+                             fuelHours: nil, fuelHoursSource: nil),
+            rows: [],
+            tanks: original.tanks.map { tank in
+                .init(tankNumber: tank.tankNumber, actualId: tank.actualId, actualVersion: nil,
+                      plannedWaterLitres: nil, actualWaterLitres: tank.waterVolumeLitres,
+                      chemicals: tank.chemicals.map { chemical in
+                          .init(actualChemicalId: chemical.id, plannedChemicalId: nil,
+                                savedChemicalId: chemical.savedChemicalId, replacesPlannedChemicalId: nil,
+                                usageKind: "additional", name: chemical.name, unit: chemical.unit.rawValue,
+                                plannedAmountBase: nil, actualAmountBase: chemical.actualAmountBase,
+                                matchSource: "actualOnly", productCategory: chemical.productCategory,
+                                physicalForm: chemical.physicalForm.rawValue)
+                      })
+            },
+            actualChemicalTotals: [], plannedChemicalTotals: nil,
+            application: nil, programStep: nil, tankSessions: nil, cost: nil,
+            metadataCorrectionVersion: nil, metadataAmendments: nil,
+            weather: [], route: nil, amendments: [], warnings: []
+        )
+        XCTAssertTrue(ManualSprayReviewStatus.reportMatchesOriginal(report, payload: original))
+        var tampered = original
+        tampered.tanks[0].waterVolumeLitres += 10
+        XCTAssertFalse(ManualSprayReviewStatus.reportMatchesOriginal(report, payload: tampered))
+        tampered = original
+        tampered.tanks[0].chemicals[0].actualAmountBase += 2
+        XCTAssertFalse(ManualSprayReviewStatus.reportMatchesOriginal(report, payload: tampered))
+    }
+
     private func fixture() -> ManualSprayPayload {
         let start = Date(timeIntervalSince1970: 1_789_000_000)
         return ManualSprayPayload(
