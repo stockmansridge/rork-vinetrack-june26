@@ -1,31 +1,27 @@
 name: Issue 43 Tank Actual RED native tests (branch only)
 
 on:
-  push:
-    branches:
-      - issue43-tank-actual-p0
-    paths:
-      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayTankActualTest.kt'
-      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/TankDependencyPhaseBTest.kt'
-      - 'ios/VineTrackTests/SprayTankActualTests.swift'
-      - 'ios/VineTrackTests/TankDependencyVerificationTests.swift'
-      - '.github/workflows/issue43-tank-actual-red-native.yml'
   pull_request:
-    branches:
-      - main
+    branches: [main]
     paths:
       - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/SprayTankActualTest.kt'
       - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/TankDependencyPhaseBTest.kt'
       - 'ios/VineTrackTests/SprayTankActualTests.swift'
       - 'ios/VineTrackTests/TankDependencyVerificationTests.swift'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/model/SprayTankActual.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/TankDependencyVerification.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/SprayTankActualRepository.kt'
+      - 'ios/VineTrack/LegacyImported/Models/SprayTankActual.swift'
+      - 'ios/VineTrack/Backend/Sync/SprayTankActualStore.swift'
+      - 'ios/VineTrack/Backend/Sync/TankDependencyVerification.swift'
       - '.github/workflows/issue43-tank-actual-red-native.yml'
-
+  workflow_dispatch:
 permissions:
   contents: read
 
 concurrency:
-  group: issue43-tank-red-${{ github.ref }}
-  cancel-in-progress: false
+  group: issue43-tank-red-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   android-red:
@@ -38,29 +34,56 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Show exact source
         run: |
-          echo "WORKFLOW_HEAD=${{ github.sha }}"
+          echo "EXPECTED_BRANCH_HEAD=${{ github.event.pull_request.head.sha || github.sha }}"
           echo "CHECKOUT_HEAD=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
           test "${{ github.ref_name }}" = "issue43-tank-actual-p0" || test "${{ github.event_name }}" = "pull_request"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - name: Install Android compile SDK 36
+      - name: Install Android SDK 36 using runner's existing sdkmanager
+        shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | head -n 1)
+          if [ -z "$SDKMANAGER" ]; then echo "No SDK manager; runner error, not RED"; exit 2; fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+      - name: Supply test-runner-only stub for Rork-generated Config
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET=android-vinetrack/app/src/main/java/com/rork/vinetrack/Config.kt
+          if [ ! -f "$TARGET" ]; then
+            mkdir -p "$(dirname "$TARGET")"
+            cat > "$TARGET" <<'KOTLIN'
+          package com.rork.vinetrack
+          // CI-ONLY surrogate for absent Rork-generated Config.kt; NOT a production source edit.
+          object Config {
+              val allValues: Map<String, String> = emptyMap()
+          }
+          KOTLIN
+            echo "CI_ONLY_GENERATED_CONFIG_STUB=true"
+          else
+            echo "EXISTING_GENERATED_CONFIG=true"
+          fi
       - name: Execute focused native RED assertions
         working-directory: android-vinetrack
+        shell: bash
         run: |
+          set -o pipefail
           chmod +x ./gradlew
-          ./gradlew :app:testDebugUnitTest --no-daemon --console=plain \
+          ./gradlew :app:testDebugUnitTest --no-daemon --console=plain --stacktrace \
             --tests 'com.rork.vinetrack.data.SprayTankActualTest.issue43*' \
-            --tests 'com.rork.vinetrack.data.TankDependencyPhaseBTest.issue43*'
+            --tests 'com.rork.vinetrack.data.TankDependencyPhaseBTest.issue43*' \
+            2>&1 | tee "$RUNNER_TEMP/issue43-android-gradle.log"
       - name: Upload original JVM test receipts
         uses: actions/upload-artifact@v4
         if: always()
@@ -69,6 +92,7 @@ jobs:
           path: |
             android-vinetrack/app/build/test-results/testDebugUnitTest/
             android-vinetrack/app/build/reports/tests/testDebugUnitTest/
+            ${{ runner.temp }}/issue43-android-gradle.log
           if-no-files-found: warn
           retention-days: 7
 
@@ -81,12 +105,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Show exact source and installed Xcode
         run: |
-          echo "WORKFLOW_HEAD=${{ github.sha }}"
+          echo "EXPECTED_BRANCH_HEAD=${{ github.event.pull_request.head.sha || github.sha }}"
           echo "CHECKOUT_HEAD=$(git rev-parse HEAD)"
-          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
           xcodebuild -version
       - name: Choose available iPhone simulator
         id: simulator
@@ -98,7 +123,9 @@ jobs:
           echo "id=$SIMULATOR_ID" >> "$GITHUB_OUTPUT"
           echo "Selected $SIMULATOR_ID"
       - name: Execute focused XCTest RED assertions
+        shell: bash
         run: |
+          set -o pipefail
           xcodebuild test \
             -project ios/VineTrack.xcodeproj \
             -scheme VineTrack \
@@ -109,12 +136,14 @@ jobs:
             -only-testing:VineTrackTests/SprayTankActualTests/testIssue43ProductionRPCRequestRequiresNullLinkageKeys \
             -only-testing:VineTrackTests/SprayTankActualTests/testIssue43ChemicalRoundTripRetainsAndroidProvenance \
             -only-testing:VineTrackTests/TankDependencyVerificationTests/testIssue43ReadbackRejectsChangedLinkageAtSameQuantity \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/issue43-ios-xcodebuild.log"
       - name: Upload XCTest results
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: issue43-ios-native-test-receipts
-          path: ${{ runner.temp }}/Issue43TankActual.xcresult
+          path: |
+            ${{ runner.temp }}/Issue43TankActual.xcresult
+            ${{ runner.temp }}/issue43-ios-xcodebuild.log
           if-no-files-found: warn
           retention-days: 7
