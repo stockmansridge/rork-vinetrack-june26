@@ -1581,9 +1581,32 @@ nonisolated enum CompletedTripReceiptAdmission {
         guard ActiveTripPathReconciler.containsRoute(local.pathPoints, in: remote.pathPoints) else {
             return "TRIP_LOCAL_GPS_NOT_ON_SERVER"
         }
-        guard local.tankSessions.allSatisfy({ session in
-            remote.tankSessions.contains { $0.id == session.id && $0 == session }
-        }) else { return "TRIP_LOCAL_TANK_SESSION_DIFFERS" }
+        // Field-level reason codes make old receipts actionable. Never accept
+        // a matching ID as proof that the historical session content matches.
+        for localSession in local.tankSessions {
+            guard let remoteSession = remote.tankSessions.first(where: { $0.id == localSession.id }) else {
+                return "TRIP_LOCAL_TANK_SESSION_NOT_ON_SERVER"
+            }
+            if localSession != remoteSession {
+                if localSession.tankNumber != remoteSession.tankNumber {
+                    return "TRIP_LOCAL_TANK_NUMBER_DIFFERS"
+                }
+                if localSession.startTime != remoteSession.startTime ||
+                    localSession.endTime != remoteSession.endTime {
+                    return "TRIP_LOCAL_TANK_TIMES_DIFFER"
+                }
+                if localSession.pathsCovered != remoteSession.pathsCovered ||
+                    localSession.startRow != remoteSession.startRow ||
+                    localSession.endRow != remoteSession.endRow {
+                    return "TRIP_LOCAL_TANK_PATHS_DIFFER"
+                }
+                if localSession.fillStartTime != remoteSession.fillStartTime ||
+                    localSession.fillEndTime != remoteSession.fillEndTime {
+                    return "TRIP_LOCAL_TANK_FILL_TIMES_DIFFER"
+                }
+                return "TRIP_LOCAL_TANK_SESSION_DIFFERS"
+            }
+        }
         guard local.completedPaths.allSatisfy(remote.completedPaths.contains),
               local.skippedPaths.allSatisfy(remote.skippedPaths.contains),
               Set(local.paddockIds).isSubset(of: Set(remote.paddockIds)) else {
