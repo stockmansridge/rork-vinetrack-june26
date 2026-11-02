@@ -27,6 +27,8 @@ struct SyncDiagnosticsView: View {
     @Environment(SyncStatusCenter.self) private var syncStatusCenter
 
     @State private var copyConfirmation: String?
+    @State private var isInspectingTripServer: Bool = false
+    @State private var tripRecoveryReadbackV3: String?
     @State private var confirmRecoveryExport = false
     @State private var preparingRecoveryExport = false
     @State private var showRecoveryExporter = false
@@ -301,6 +303,33 @@ struct SyncDiagnosticsView: View {
                 copyDiagnostics()
             } label: {
                 Label("Copy sync diagnostics", systemImage: "doc.on.doc")
+            }
+            Button {
+                Task { @MainActor in
+                    isInspectingTripServer = true
+                    defer { isInspectingTripServer = false }
+                    tripRecoveryReadbackV3 = await tripSync.inspectTripServerReadbackV3()
+                }
+            } label: {
+                HStack {
+                    Label(isInspectingTripServer ? "Inspecting Trip readback…" :
+                        "Inspect Trip sync with server (read-only)", systemImage: "checkmark.shield")
+                    Spacer()
+                    if isInspectingTripServer { ProgressView() }
+                }
+            }
+            .disabled(isInspectingTripServer || syncStatusCenter.isSyncing ||
+                      !auth.isSignedIn || store.selectedVineyardId == nil)
+            if let tripRecoveryReadbackV3 {
+                Button {
+                    UIPasteboard.general.string = tripRecoveryReadbackV3
+                    copyConfirmation = "Trip Sync Recovery v3 copied; no records were changed."
+                } label: {
+                    Label("Copy Trip Sync Recovery v3", systemImage: "doc.on.doc")
+                }
+                Text("This report includes original Trip/tank IDs and precise times. Share privately. It inspects only the selected vineyard and does not retry or clear any queue.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Button {
                 confirmRecoveryExport = true
