@@ -1133,7 +1133,9 @@ final class TripSyncService {
         // original queued upload was accepted or may be thrown away. Deletion
         // acknowledgement belongs to the independent deletion journal.
         if backendTrip.deletedAt != nil {
-            guard metadata.pendingUpserts[backendTrip.id] == nil else {
+            guard TripServerTombstonePolicy.mayApplyRemoteDeletion(
+                hasOriginalPendingUpload: metadata.pendingUpserts[backendTrip.id] != nil
+            ) else {
                 syncStatus = .failure("A server Trip is deleted but the device retains original upload evidence. Reconciliation is required; nothing was deleted.")
                 return
             }
