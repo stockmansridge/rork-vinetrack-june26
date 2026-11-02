@@ -31,7 +31,8 @@ new wrapper function. Each changes the security contract that 276 enforces.
    - `definition_md5 = b0e166d78be75c8ba770b2dccfd14256` (if different, STOP and re-review the live function)
    - `security_definer = true`
    - `old_text_comparison_present = true`, `uuid_identity_comparison_present = false`
-   - `auth_uid_check_text_present = true`
+   - `actor_uid_guard_present = true`, `vineyard_role_guard_present = true`, `replay_actor_guard_present = true` (the function delegates `auth.uid()` through `trip_occurrence_actor_uid_v1()`, so no direct `auth.uid()` text is expected)
+   - Record the two helper function MD5s and verify they do not change.
    Save `function_acl` and `function_search_path` verbatim.
 2. **Apply inside one transaction** in the authorised session:
    ```sql
@@ -42,7 +43,7 @@ new wrapper function. Each changes the security contract that 276 enforces.
    \i sql/occurrence_setup_uuid_case_identity_verify.sql
    -- COMMIT only if: owner, security_definer, function_acl and function_search_path are
    -- byte-identical to step 1; old_text_comparison_present = false;
-   -- uuid_identity_comparison_present = true; auth_uid_check_text_present = true.
+   -- uuid_identity_comparison_present = true; all three delegated authority guards remain true and both helper-function MD5s remain identical.
    -- Otherwise ROLLBACK.
    commit;
    ```
@@ -51,7 +52,7 @@ new wrapper function. Each changes the security contract that 276 enforces.
    and `SET search_path` (all three come from `pg_get_functiondef`). The signature does not
    change, so no API schema reload is needed.
 3. **Read-only after-capture**: run the verify query again from the normal role and record the new
-   `definition_md5`. Only the MD5 and the two comparison flags may differ from step 1.
+   `definition_md5`. Only the main function MD5 and the two comparison flags may differ from step 1; delegated authority guards, helper hashes and security metadata must remain unchanged.
 4. **No data step.** Do not replay, rewrite or delete existing `trip_occurrence_operations` rows
    or retained client requests. Affected devices retry their own original requests through
    normal recovery, keeping the same operation IDs.
