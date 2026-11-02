@@ -332,6 +332,17 @@ struct ManualSprayEntryView: View {
                 message = "The submission is retained or requires verification. Do not enter this application a second time; check Sync status."
             }
         } catch {
+            if error is ManualSprayMutationError,
+               !coordinator.operations.contains(where: {
+                    $0.kind == .save && $0.payload.vineyardId == vineyardId &&
+                    $0.payload.manualEntryId == validated.manualEntryId
+               }) {
+                submissionGuard.clearIfMatching(ownerId: ownerId, vineyardId: vineyardId,
+                                                manualEntryId: validated.manualEntryId)
+                awaitingServerConfirmation = false
+                message = "The server definitively rejected this application. Review the original record before resubmitting corrected details."
+                return
+            }
             // A local outbox-persistence failure happens before any server
             // request. Only in that specific case may we safely clear intent.
             if let persistenceError = error as? ManualSprayPersistenceError,
