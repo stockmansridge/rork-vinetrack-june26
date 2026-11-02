@@ -1,7 +1,83 @@
 {
+  "issue42": {
+    "recordedDateUTC": "2026-11-02",
+    "status": "READ_ONLY_FORENSICS_ORIGINAL_BYTES_UNAVAILABLE_OUTCOME_UNKNOWN",
+    "release": "PRODUCTION_BLOCKED_NO_NEW_BUILD_OR_UPLOAD_THIS_PASS",
+    "managedHead": "57bdc45df60c7e31dc3cdb0f97d9c3fe6fc5bede",
+    "appSourceChanged": false,
+    "serverMutationOrRpcInvoked": false,
+    "diagnosticScript": "scripts/inspect-issue42-original-job.py",
+    "validation": "Diagnostic script syntax PASS; both SELECT-only live query phases PASS. No app changes, build or new test suite. No handset interactions tested.",
+    "original": {
+      "trip": "d9604cde-1544-47e2-b3d1-8d7f1361128a",
+      "spray": "1b69e888-6a97-4d31-8fbb-ae047a0aff9d",
+      "reportedVineyard": "59973ced-1fb9-42ec-a66d-9eaad3172824",
+      "reportedBuild": 1793590250,
+      "reportedJournalEntry": 0,
+      "reportedCodes": ["LEGACY_ORIGINAL_HELD", "LEGACY_EVIDENCE_INSPECTION_HELD"],
+      "operationId": null, "actorId": null, "identityEpoch": null,
+      "rawBytesSha256": null, "schemaVersion": null, "stage": null,
+      "rpcClaimed": null, "candidateReceipt": null, "verifiedReceipt": null,
+      "exactValidationFailure": null,
+      "reasonUnknown": "Per-item index combines duplicate/decode/validate/unverified holds; separate strict whole-reader/access catch does not identify the failing entry. Valid-but-unverified alone does not throw strict read. Original bytes and exact installed decoder mapping unavailable.",
+      "adb": "No devices attached; original private journal not accessed",
+      "runtimeLogs": "Bounded 100-row runtime search had no matching IDs/legacy/Phase5 text; not original-device or exhaustive log evidence"
+    },
+    "liveEvidence": {
+      "projectRef": "tbafuqwruefgkbyxrxyb",
+      "snapshotUTC": "2026-11-02T04:19:48.961947Z",
+      "apiReadOnly": true,
+      "role": "supabase_read_only_user", "roleBypassesRls": true,
+      "scope": "Exact original IDs across all vineyards/actors; no deleted_at, UI-slice or time-window filter. Existing SELECT privilege including private receipt ledger verified. Not an original-user JWT recovery call or client ACK.",
+      "catalogSha256": "3c575041e4dec9813f292affa213bd7d29da1c47d48f441e737c329339fb62cd",
+      "exactIdEvidenceSha256": "41acf00906de4b54ad6373cb9101b541a3d2a93a5af19e21f57403507c0873ef",
+      "rawArtifactLocation": "Outside repository under /tmp; no raw frozen requests, chemical amounts or tokens retained in this receipt",
+      "legacy42Matches": {
+        "tripsIncludingSoftDeleted": 0, "spraysIncludingSoftDeleted": 0,
+        "tankActuals": 0, "privatePairReceipts": 0,
+        "occurrenceReceipts": 0, "cancellationReceipts": 0,
+        "complianceArchives": 0, "manualTombstones": 0,
+        "auditEntityOrDetailsReferences": 0, "integrationAuditMetadataReferences": 0
+      },
+      "outcomeLimit": "No matching retained v1 terminal receipt found. Not proof never sent/accepted; early RPC exceptions and old REST writes may leave no pair receipt. No exhaustive historical request logs, backups or purged-row proof. Exact original operation lookup remains unavailable until handset journal supplied.",
+      "deployedDefinitions": {
+        "recover_legacy_spray_pair_v1": {"owner": "postgres", "md5": "c1df866e4fb5a0645cc681f7f9a87e95", "sha256": "fb52029a4602a2ea3603b7fbf21a9d023d57301082292799da1831bdc988f399", "semantics": "SELECT-only exact actor/body/operation receipt lookup; unknown is not never-delivered or create authority"},
+        "save_legacy_spray_pair_v1": {"owner": "postgres", "md5": "915da5f44281ba2e01f31acdebd93e79", "sha256": "0fbf4d41f65c250f9414446368ba77553e75b66d50b0aa2f470927f5be0862eb"},
+        "cancel_trip_activity_v1": {"owner": "postgres", "md5": "f14c6be3c8053ce31d35fffa0894de6c", "limit": "Absent/deleted/completed original parents rejected; do not fabricate parent or call for #42/#40 history"}
+      }
+    },
+    "separateJobs": [
+      {"trip": "b1dd59ab-ff1b-4ff4-9af6-a9688425db22", "status": "SERVER_RECOVERY_INDEPENDENTLY_CONFIRMED_DEVICE_ACCEPTANCE_OPEN", "isActive": false, "endUTC": "2026-11-02T01:56:57.915573Z", "tank": "fdb6a4b8-5cbf-41a9-a780-816a5e5fa401", "actual": "c4b5f982-e3e9-467d-9067-e36736699026", "waterL": 670, "chemicalLines": 1, "finalisation": "fff1638c-ac5f-4546-bc1f-c74026b03c2f", "acceptedUTC": "2026-11-02T04:02:50.484983Z", "gpsPointCount": 1, "labour": "Allocation has worker/hours presence and captured timestamp; no rate snapshot. Exact handset comparison/client receipt unavailable."},
+      {"trip": "3bfb7f81-2ae2-4f33-8fd8-6666b2b45393", "status": "SERVER_CANCELLATION_INDEPENDENTLY_CONFIRMED", "operation": "563799cd-18c7-4dc2-9c77-cb3f25e38106", "receipt": "CANCELLED_ACKED", "classification": "not_applied", "cancelledUTC": "2026-11-02T01:53:47.906226Z", "tripAndSpraySoftDeleted": true, "deviceAndOldClientAcceptance": "UNVERIFIED"},
+      {"trip": "2be68a70-9582-4981-8a87-e727f113cdf6", "status": "ABSENT_PARENT_ORIGINAL_CREATE_UNCERTAIN", "spray": "0be063ee-5586-46d5-8e0d-e4759b54d7fc", "spraySoftDeleted": true, "pairOccurrenceCancellationReceipts": 0},
+      {"trip": "0a5466df-f0c1-4289-b2e2-a832ddb29ae5", "status": "PAIR_ACCEPTED_THEN_PARENT_SOFT_DELETED_OTHER_VINEYARD", "vineyard": "fe952afe-437f-4be7-8cbf-fdd8e630411c", "acceptedPairOperation": "00132259-6a67-4919-8838-56f2a89c6925", "activeSpray": "bc7bb873-16d7-4b4d-9fd8-0f37196375e9", "terminalCancellationOrArchive": false},
+      {"trip": "78bfc262-2620-4833-9d86-a3c5c6f5fb47", "status": "PARENT_SOFT_DELETED_ACTIVE_CHILD_CONFIRMED_ACTUAL", "activeSpray": "9970459b-2ce5-4ba2-98f6-6c40bf70d001", "confirmedActual": "edeaaabf-2d02-468e-b46a-ae95cace9b29", "auditAction": "admin_force_stop_trip", "terminalCancellationOrArchive": false},
+      {"trip": "f2cbf5b2-9ed3-4ac8-bc9d-73b885cbcc52", "status": "PAIR_ACCEPTED_THEN_PARENT_SOFT_DELETED_CONFIRMED_ACTUAL", "acceptedPairOperation": "44c834c0-c38b-4899-b108-c0e516bff374", "activeSpray": "0fff5593-43ef-4305-989b-8b406deddd83", "confirmedActual": "3fc717e4-074e-4645-aa2f-9f44ec0adda6", "terminalCancellationOrArchive": false},
+      {"trip": "6f6754a0-bad1-4e3c-900f-c51580096dec", "status": "PAIR_ACCEPTED_THEN_PARENT_SOFT_DELETED_HANDOFF_UNRESOLVED", "acceptedPairOperation": "631faeab-25e6-4df9-a378-8c1e92175c1c", "activeSpray": "f79e29c7-849f-4446-9bb9-0ad54a177b81", "actualCount": 0, "terminalCancellationOrArchive": false}
+    ],
+    "deliveryEvidence": {
+      "reportedInstalledCode": 1793590250,
+      "codeToRunMapping": "NOT_EXPOSED_NOT_INFERRED",
+      "completedRuns": [
+        {"runId": "07e2cd46-89a8-4f65-8ad0-7d6ea56c4f2c", "snapshotId": "qxgpoylqournrulf2tao1", "sourceHash": "src_1297276cdcb58e471"},
+        {"runId": "bf3cb343-994d-433c-bfc7-288ad6c672f1", "snapshotId": "05uebktzbg1wdggj913mx", "sourceHash": "src_0841d605df19172c8"}
+      ],
+      "currentAndroidTree": "0841d605df19172c84395f9ad0e814002335b4fd",
+      "unexposed": ["Signed version-code/run mapping", "Artifact checksum/signature", "Effective configuration", "Committed Internal publication receipt"],
+      "action": "Read-only listing/status of existing runs only. No generation/publication. Do not equate source prefix/time with signed installation provenance."
+    },
+    "nextPrerequisites": [
+      "Protected read-only original handset journal/account/epoch export, stable raw SHA256 and per-entry field/type validation diagnosis without rewrite",
+      "Exact signed build/source/configuration receipt",
+      "Original-scope frozen-request receipt reconciliation; no create from unknown and no REST adoption",
+      "Named authorised operator Applied/Not applied/Not sure; dedicated reviewed absent/deleted-parent terminal receipt/archive/anti-resurrection contract before cancellation",
+      "Verified durable terminal ACK and unchanged local revision before exact scoped retirement",
+      "Both-platform original-device exact chemical/labour/GPS/End/dependent ACK/claim-release/reopened CLOSED_SYNCED plus interruption/lost-response and 3.1.8 binary matrix"
+    ]
+  },
   "issue41": {
     "recordedDateUTC": "2026-11-02",
-    "status": "SOURCE_CONTAINMENT_CHECKED_ORIGINAL_RECOVERY_UNVERIFIED",
+    "status": "MODERN_SERVER_RECOVERY_CONFIRMED_ORIGINAL_DEVICE_ACCEPTANCE_OPEN",
     "release": "CONTROLLED_INTERNAL_TESTFLIGHT_ONLY_PRODUCTION_BLOCKED",
     "managedBaseCommit": "ad33558da35fc9681d377f2a2912bd740c884c1c",
     "repairedManagedCommit": "4e177a9109f3f729d16c11a527cf64e3fe443611",
@@ -48,8 +124,8 @@
       "tankSession": "fdb6a4b8-5cbf-41a9-a780-816a5e5fa401",
       "actual": "c4b5f982-e3e9-467d-9067-e36736699026",
       "originalFinalisation": "fff1638c-ac5f-4546-bc1f-c74026b03c2f",
-      "handsetReplay": "NOT_EXECUTED",
-      "freshServerReadback": "NOT_EXECUTED",
+      "handsetReplay": "Not performed by agent; user reports recovery on build 1793590250",
+      "freshServerReadback": "Independent SELECT-only exact-ID snapshot 2026-11-02T04:19:48.961947Z confirms original session, 670 L actual / one line, terminal Trip and original finalisation accepted; see issue42. Exact chemical/labour/device closure still unverified.",
       "quantitiesChanged": false
     },
     "cause": "Strict whole legacy array read throws before vineyard filter; Phase5 returns before labour/tank/actual/end dispatch. Exact private payload/decode field unknown.",
@@ -67,11 +143,11 @@
     },
     "builds": {"android": "runChecks PASS", "ios": "runChecks simulator PASS; device/Release unverified"},
     "blockers": [
-      "Original handset/account/Portal unavailable; exact session, quantities, actual and original finalisation receipt not replayed or read back here",
+      "Original handset/Portal unavailable; exact server session/actual/finalisation now independently read. Exact chemical/labour comparison, client dependent ACKs/claim release/reopened CLOSED_SYNCED outstanding",
       "Labour RPC returns void and operators lack financial SELECT; independent receipt/readback contract not implemented",
       "Full ViewModel ordered lifecycle, interruption/reopen/lost-response matrix unexecuted",
       "iOS build 200 per-entry historical queue reconciliation remains separate",
-      "Diagnostic-only overlay awaiting automatic managed sync; Android signed export refused unsynced changes. iOS 201 upload succeeded but processing, exact archive identity and TestFlight availability unverified"
+      "Earlier Android unsynced export refusal is historical. User now reports build 1793590250 and two completed signed runs are visible, but exact code/source/config/signature/publication mapping unexposed. iOS 201 original-device issue evidence confirms installed build report, not independent exact archive/configuration attestation. No new delivery in #42 pass"
     ],
     "sourceSha256": {
       "android-vinetrack/app/src/main/java/com/rork/vinetrack/data/LegacyReplayIsolation.kt": "e3cc37f3edc33dd60826cf3656691b50d5e6c524dd7d0d53922b45a9a0d2d199",
@@ -97,7 +173,7 @@
       "TankDependencyPhaseBTest": "7a7a3eca9002a05ba8b60f8221ba1a4240c7e064919c757e5bb96cff0b8886c3",
       "TripClosureStatusPhaseCTest": "06dff746f5e760e136d8b033055116390686022dd6b4c985e0631186a48eb52c"
     },
-    "cancellationUpdate": "User reports Android build 1793582624 cancellation and new Trip start succeeded; independent receipt verification and 3.1.8 refusal remain unverified"
+    "cancellationUpdate": "Independent read-only snapshot confirms CANCELLED_ACKED operation 563799cd-18c7-4dc2-9c77-cb3f25e38106, not_applied, matching Trip/Spray tombstones. Original-device cleanup/lost-response and 3.1.8 binary refusal remain unverified; see issue42"
   },
   "recordedAtUTC": "2026-11-01T23:51:03.705709+00:00",
   "incident": "OPEN",
