@@ -61,6 +61,11 @@ final class TripQueuedUploadScopeTests: XCTestCase {
     @MainActor func testScopeClassificationDoesNotMutatePersistedQueue() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("TripQueuedScope-\(UUID().uuidString)")
+        // PersistenceStore intentionally does not create directories.
+        // Mirror the real app's pre-existing VineTrackData directory; otherwise
+        // its legacy non-throwing save discards an ENOENT and this test falsely
+        // reports a queue-loss regression before any scope code runs.
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let metadata = TripSyncMetadata(persistence: PersistenceStore(directory: directory))
         let foreign = UUID()
