@@ -4016,6 +4016,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun phase5Trace(stage: String, reason: String) {
         val scope = pendingWrites.currentReplayScope()
         val line = "recovery_source=4e177a9109f3f729d16c11a527cf64e3fe443611 diagnostic_overlay=issue41-rc1 stage=$stage reason=$reason vineyard=${_ui.value.selectedVineyardId} scope_current=${scope != null}"
+        com.rork.vinetrack.data.SafeSyncDiagnosticHistory.record(when (stage) {
+            "entry" -> "PHASE5_ENTRY"; "exit" -> "PHASE5_EXIT"; "legacy" -> "PHASE5_LEGACY"; "freeze" -> "PHASE5_FREEZE"; else -> "QUEUE_OBSERVED"
+        })
         android.util.Log.i("VineTrackPhase5", line)
         _ui.update { it.copy(phase5ReplayStage = line) }
     }
@@ -5413,6 +5416,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (_ui.value.isRetryingSync) return false
         if (!_ui.value.isOnline || session.accessToken == null || pendingWrites.currentReplayScope() == null) return false
         if (pendingWrites.list().none { it.id == id && it.status == com.rork.vinetrack.data.model.PendingWriteStatus.FAILED }) return false
+        com.rork.vinetrack.data.SafeSyncDiagnosticHistory.record("RETRY_REQUESTED")
         retryPendingSync()
         return true
     }
@@ -5715,6 +5719,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             // Definitive rejection is never a voluntary clean exit or a field-store cleanup.
             session.clear()
             performanceCapture.revoke()
+            com.rork.vinetrack.data.SafeSyncDiagnosticHistory.clear()
             vineyardInsightsDebouncer.cancelAll()
             return
         }
@@ -5727,6 +5732,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         // Admission succeeded. A refusal leaves these working-session generations intact.
                         performanceAuthorizationEpoch += 1
                         performanceCapture.revoke()
+                        com.rork.vinetrack.data.SafeSyncDiagnosticHistory.clear()
                         vineyardSelectionEpoch += 1
                         vineyardDataLoadGeneration += 1
                         // Login remains closed during global identity cleanup, even after owner disposal.
@@ -7301,6 +7307,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refresh() {
         val id = _ui.value.selectedVineyardId ?: return
+        com.rork.vinetrack.data.SafeSyncDiagnosticHistory.record("MANUAL_REFRESH")
         refreshSelectedVineyardLogo()
         refreshGrowthStageImages()
         refreshSeasonSettings(id)
@@ -18373,6 +18380,61 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setPerformanceCaptureEnabled(enabled: Boolean, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             onResult(verifyPerformanceAdmin() && performanceCapture.setEnabled(enabled))
+        }
+    }
+
+    /** Freshly verified system-admin report, restricted to selected vineyard,
+     * non-sensitive queue metadata, sync-cache timestamps and fixed-code events.
+     * No payload JSON, raw exceptions, server requests or recovery operations. */
+    fun exportFullSyncDiagnostics(onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            if (!verifyPerformanceAdmin()) { onResult(null); return@launch }
+            val owner = session.userId ?: run { onResult(null); return@launch }
+            val state = _ui.value
+            val vineyard = state.selectedVineyardId ?: run { onResult(null); return@launch }
+            if (!state.isSystemAdmin || state.currentUserId != owner ||
+                state.members.none { it.vineyardId == vineyard && it.userId == owner }) {
+                onResult(null); return@launch
+            }
+            val info = supportDiagnostics()
+            val items = state.pendingSyncItems.filter { it.clientId.isNotBlank() }
+            val summary = items.groupBy { it.entityType }.toSortedMap().map { (domain, values) ->
+                mapOf("domain" to domain, "pending_count" to values.size.toString(),
+                    "failed_count" to values.count { it.status == "failed" }.toString(),
+                    "blocked_count" to values.count { it.status == "blocked" }.toString())
+            }
+            val times = domainSyncTimes().toSortedMap().map { (domain, time) ->
+                mapOf("domain" to domain,
+                    "last_read_utc" to (time?.let { java.time.Instant.ofEpochMilli(it).toString() } ?: "unknown"))
+            }
+            val report = kotlinx.serialization.json.buildJsonObject {
+                put("format", "vinetrack.sync.support.v1")
+                put("platform", "android")
+                put("generated_at", java.time.Instant.now().toString())
+                put("app_version", info.appVersion)
+                put("app_build", info.appBuild)
+                put("account_scope", "verified_current_session")
+                put("vineyard_scope", "verified_selected_vineyard")
+                put("outbox_operation_count", state.pendingSyncCount)
+                put("source_revision", "unknown_no_verified_build_receipt")
+                put("last_full_sync", "unknown_no_durable_full_sweep_receipt")
+                put("acknowledgements", "unknown_requires_server_readback")
+                put("pending_by_domain", kotlinx.serialization.json.Json.encodeToJsonElement(summary))
+                put("last_read_by_domain", kotlinx.serialization.json.Json.encodeToJsonElement(times))
+                put("events", kotlinx.serialization.json.Json.encodeToJsonElement(
+                    com.rork.vinetrack.data.SafeSyncDiagnosticHistory.snapshot()))
+                put("limitations", kotlinx.serialization.json.Json.encodeToJsonElement(listOf(
+                    "This is a read-only snapshot; no retries or network reads were triggered.",
+                    "Events begin with this build and are memory-only; process restarts lose history.",
+                    "Pending counters may omit inaccessible retained legacy journals.",
+                    "HTTP request bodies, auth material, raw exceptions, identifiers and GPS are excluded.",
+                    "The report is not a proof of upload acknowledgement or older client compatibility."
+                )))
+            }
+            if (session.userId != owner || _ui.value.selectedVineyardId != vineyard || !_ui.value.isSystemAdmin) {
+                onResult(null); return@launch
+            }
+            onResult(report.toString())
         }
     }
 
