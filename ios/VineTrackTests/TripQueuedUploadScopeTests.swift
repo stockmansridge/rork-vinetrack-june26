@@ -192,6 +192,55 @@ final class TripQueuedUploadScopeTests: XCTestCase {
             local: original, remote: reopenedRemote), "TRIP_ORIGINAL_END_TIME_MISMATCH")
     }
 
+    func testArchivedSecondsRequireSameSecondAndMatchingTankEvidence() {
+        let end = Date(timeIntervalSince1970: 1_792_000_000)
+        let start = end.addingTimeInterval(-3600)
+        let tank = TankSession(tankNumber: 1, startTime: start, endTime: end, pathsCovered: [12.5])
+        let local = Trip(vineyardId: UUID(), endTime: end, isActive: false,
+                         tankSessions: [tank], tripFunction: "spraying")
+        var server = local
+        server.tankSessions[0].startTime = start.addingTimeInterval(0.659)
+        server.tankSessions[0].endTime = end.addingTimeInterval(0.776)
+        XCTAssertFalse(TankSessionReceiptMatch.equivalent(local: tank, remote: server.tankSessions[0]))
+        XCTAssertTrue(TankSessionReceiptMatch.terminalLegacyEquivalent(local: tank, remote: server.tankSessions[0]))
+        XCTAssertNil(CompletedTripReceiptAdmission.holdReason(local: local, remote: server))
+        var wrongPath = server
+        wrongPath.tankSessions[0].pathsCovered = [13.5]
+        XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(local: local, remote: wrongPath), "TRIP_LOCAL_TANK_PATHS_DIFFER")
+        var wrongSecond = server
+        wrongSecond.tankSessions[0].startTime = start.addingTimeInterval(1.05)
+        XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(local: local, remote: wrongSecond), "TRIP_LOCAL_TANK_START_TIME_DIFFERS_SECONDS")
+        var preciseLocal = local
+        preciseLocal.tankSessions[0].startTime = start.addingTimeInterval(0.1)
+        XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(local: preciseLocal, remote: server), "TRIP_LOCAL_TANK_START_TIME_DIFFERS_SUBSECOND")
+    }
+
+    func testLocalTankArchiveRetainsFractionalSeconds() throws {
+        let start = Date(timeIntervalSince1970: 1_792_000_000.659)
+        let tank = TankSession(tankNumber: 1, startTime: start, endTime: start.addingTimeInterval(9.117))
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let bytes = try encoder.encode(tank)
+        let text = try XCTUnwrap(String(data: bytes, encoding: .utf8))
+        XCTAssertTrue(text.contains(".659"))
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let recovered = try decoder.decode(TankSession.self, from: bytes)
+        XCTAssertEqual(recovered.startTime.timeIntervalSince1970, start.timeIntervalSince1970, accuracy: 0.001)
+    }
+
+    func testLocallyEndedTripCannotBeReopenedByActiveServerSnapshot() {
+        let local = Trip(vineyardId: UUID(), endTime: Date(timeIntervalSince1970: 1_792_000_000), isActive: false)
+        var remote = local
+        remote.endTime = nil
+        remote.isActive = true
+        XCTAssertTrue(TripPendingEndRemotePolicy.mustPreserve(local: local, remote: remote))
+        XCTAssertFalse(TripPendingEndRemotePolicy.mustPreserve(local: nil, remote: remote))
+        remote.endTime = local.endTime
+        remote.isActive = false
+        XCTAssertFalse(TripPendingEndRemotePolicy.mustPreserve(local: local, remote: remote))
+    }
+
     @MainActor func testVerifiedCompletedTripReceiptRequiresDurableQueueAcknowledgement() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             "TripVerifiedReceipt-\(UUID().uuidString)")
