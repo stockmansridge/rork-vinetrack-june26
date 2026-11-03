@@ -1801,6 +1801,9 @@ final class MigratedDataStore {
     /// trigger `onTripChanged` (avoids re-marking the trip dirty).
     func applyRemoteTripUpsert(_ trip: Trip) {
         guard (try? tripDeletionJournal.isCancelled(trip.id)) == false else { return }
+        // Skip redundant GPS-heavy disk writes and observable publications.
+        if selectedVineyardId == trip.vineyardId, deviceActiveTripId != trip.id,
+           trips.contains(where: { $0.id == trip.id && $0 == trip }) { return }
         // Parent activation may arrive before orphan-link acceptance. Keep the
         // original queued projection/time for retry, even across a restart.
         let preserved = sprayRecords + sprayRepo.loadRecords(for: trip.vineyardId)
