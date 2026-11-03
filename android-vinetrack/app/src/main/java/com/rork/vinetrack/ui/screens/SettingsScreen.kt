@@ -943,11 +943,11 @@ private fun PreferenceRow(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Box(
-            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp))
+            modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp))
                 .background(Brush.linearGradient(listOf(tint, tint.copy(alpha = 0.72f)))),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
@@ -984,11 +984,11 @@ private fun PreferenceToggleRow(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Box(
-            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp))
+            modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp))
                 .background(Brush.linearGradient(listOf(tint, tint.copy(alpha = 0.72f)))),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)

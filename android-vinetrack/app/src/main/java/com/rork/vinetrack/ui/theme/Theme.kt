@@ -80,7 +80,7 @@ private val VineTypography = Typography().run {
         bodyLarge = bodyLarge.copy(fontFamily = InterFontFamily),
         bodyMedium = bodyMedium.copy(fontFamily = InterFontFamily),
         bodySmall = bodySmall.copy(fontFamily = InterFontFamily),
-        labelLarge = labelLarge.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp),
+        labelLarge = labelLarge.copy(fontFamily = InterFontFamily, fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),
         labelMedium = labelMedium.copy(fontFamily = InterFontFamily),
         labelSmall = labelSmall.copy(fontFamily = InterFontFamily),
     )
