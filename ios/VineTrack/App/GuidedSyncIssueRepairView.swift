@@ -6,7 +6,7 @@ import UIKit
 /// All mutations are delegated to existing, authenticated, receipt-gated paths.
 nonisolated struct GuidedSyncRepairIssue: Identifiable, Hashable, Sendable {
     nonisolated enum Kind: String, Sendable, Hashable {
-        case tripUpload, tripDeletion, tankActual, sprayRecord, protectedQueue, other
+        case tripUpload, tripDeletion, tankActual, sprayRecord, trackedSprayCompletion, initialMixDraft, protectedQueue, other
     }
     let id: String
     let recordId: UUID
@@ -23,11 +23,13 @@ nonisolated enum GuidedSyncRecordState: String, Sendable {
 }
 
 nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Sendable {
-    case recoverRecordedTank, verifyCompleted, verifyCancellation, retryExisting, privateReview
+    case recoverRecordedTank, manualVerifiedTank, amendActualUse, verifyCompleted, verifyCancellation, retryExisting, privateReview
     var id: Self { self }
     var label: String {
         switch self {
         case .recoverRecordedTank: "Recover tank start from confirmed Actual Use"
+        case .manualVerifiedTank: "Enter verified original tank start"
+        case .amendActualUse: "Correct water and chemical Actual Use"
         case .verifyCompleted: "Verify original Trip completion"
         case .verifyCancellation: "Verify original deletion"
         case .retryExisting: "Retry existing operations for this vineyard"
@@ -38,6 +40,10 @@ nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Senda
         switch self {
         case .recoverRecordedTank:
             "Uses only the original confirmed tank ID, number and timestamp. Chemical amounts, paths and unknown end times are not changed. A successful local repair is NOT a server sync acknowledgement."
+        case .manualVerifiedTank:
+            "Select the retained original tank ID, enter the genuinely verified start time and record where that evidence came from. Never invent an ID or alter confirmed chemical amounts."
+        case .amendActualUse:
+            "Correct recorded water or chemical quantities through the existing audited backend RPC. A confirmed original server Actual and tank-session receipt are mandatory; missing uploads must sync first."
         case .verifyCompleted:
             "Reads back the exact original ended Trip and checks its linked evidence before acknowledging the existing upload."
         case .verifyCancellation:
@@ -53,7 +59,8 @@ nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Senda
 /// Pure action-admission policy: server state and original scope must be known
 /// before the UI can offer a write. Actual handlers reverify scope/server state.
 nonisolated enum GuidedSyncCorrectionPolicy {
-    static func available(for issue: GuidedSyncRepairIssue, server: GuidedSyncRecordState) -> [GuidedSyncCorrection] {
+    static func available(for issue: GuidedSyncRepairIssue, server: GuidedSyncRecordState,
+                          actualAccepted: Bool = false) -> [GuidedSyncCorrection] {
         guard issue.verifiedCurrentScope else { return [.privateReview] }
         switch server {
         case .notChecked, .notVisible:
@@ -69,15 +76,24 @@ nonisolated enum GuidedSyncCorrectionPolicy {
                 return server == .active ? [.verifyCancellation, .privateReview] : [.privateReview]
             case .tripUpload:
                 var choices: [GuidedSyncCorrection] = []
-                if server == .active && issue.originalActualAvailable { choices.append(.recoverRecordedTank) }
+                if server == .active && issue.originalActualAvailable {
+                    choices.append(.recoverRecordedTank)
+                    choices.append(.manualVerifiedTank)
+                }
                 if server == .ended { choices.append(.verifyCompleted) }
                 choices.append(.retryExisting)
                 choices.append(.privateReview)
                 return choices
-            case .tankActual, .sprayRecord:
+            case .tankActual:
+                return actualAccepted
+                    ? [.amendActualUse, .retryExisting, .privateReview]
+                    : [.retryExisting, .privateReview]
+            case .sprayRecord, .trackedSprayCompletion, .initialMixDraft:
                 return [.retryExisting, .privateReview]
-            case .protectedQueue, .other:
+            case .protectedQueue:
                 return [.privateReview]
+            case .other:
+                return [.retryExisting, .privateReview]
             }
         }
     }
