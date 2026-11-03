@@ -165,7 +165,7 @@ final class TripQueuedUploadScopeTests: XCTestCase {
 
         var changedSubsecond = original
         changedSubsecond.tankSessions[0].startTime =
-            session.startTime.addingTimeInterval(0.05)
+            session.startTime.addingTimeInterval(-0.05)
         XCTAssertEqual(CompletedTripReceiptAdmission.holdReason(
             local: original, remote: changedSubsecond), "TRIP_LOCAL_TANK_START_TIME_DIFFERS_SUBSECOND")
 
