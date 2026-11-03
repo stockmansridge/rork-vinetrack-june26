@@ -1,0 +1,90 @@
+{
+  "issue": "https://github.com/stockmansridge/rork-vinetrack-june26/issues/56",
+  "issue_revision_checked": "2026-11-03T13:23:30Z",
+  "authorization": "Revised internal-only sequencing exception; preserve existing managed configuration; no external/public promotion",
+  "approved_application_sha": "2b5a08d3ef5d1d3776397aa9bf5f5dbe74cb4ef2",
+  "current_public_main_at_preflight": "9daf718e256d9f3e9216c656a3cac4df13310140",
+  "public_main_delta": ["docs/reviews/evidence/ios-issue56-20261103/release-gate-receipt.json"],
+  "workspace_head_at_preflight": "49fe61efe737efd40742e3b336db83d82efd6268",
+  "source_parity": {
+    "direct_github_approved_archive_sha256": "234facc5dcb83105a352dab4607c84ac498894260f9ac1df71fbb3900abe76cf",
+    "non_generated_ios_files": 1306,
+    "pre_upload_differences": [],
+    "pre_upload_extra_nonignored_files": [],
+    "post_upload_differences": [],
+    "excluded": "Managed virtual Config.swift; actual values injected at build time",
+    "signed_revision_attestation": "Not exposed. Publisher uses supplied-snapshot, not an asserted exact Git checkout. Verified application source parity is not embedded signed-SHA proof."
+  },
+  "configuration": {
+    "both_required_variables_configured": true,
+    "variables_changed_or_reentered": false,
+    "known_configuration_change_since_213": false,
+    "intentionally_switched_environment_or_project": false,
+    "clientEnvsHash": "77512c8744941d43de74978b0c1291c3bb06d8da",
+    "matches_build_213_clientEnvsHash": true,
+    "source_production_url": "https://tbafuqwruefgkbyxrxyb.supabase.co",
+    "injected_url_independently_verified": false,
+    "client_key_type": "not independently attested",
+    "privileged_key_evidence_detected": false,
+    "new_signed_build_auth_tested": false,
+    "limits": "Presence and unchanged publisher input hash do not attest injected bytes, approved-value equality or key type. No key values retained. Revised issue explicitly defers direct validation to existing trusted internal testers."
+  },
+  "preflight": {
+    "asc_inventory_count": 413,
+    "asc_maximum": 213,
+    "setupAsc": "ready",
+    "certificate_id": "P6K283KAMH",
+    "ensureApp": "reused 6761143377",
+    "syncCapabilities": "ok; unchanged"
+  },
+  "upload": {
+    "status": "ok",
+    "submission_id": "01152dfe-579d-4366-9eaa-9b2a12dde697",
+    "version": "3.1.9",
+    "build_number": 214,
+    "app_id": "6761143377",
+    "bundle_id": "app.rork.nt0v48tayl7v8noxcfe74",
+    "app_path": "ios",
+    "created_at": "2026-11-03T13:26:44.913Z",
+    "build_complete_at": "2026-11-03T13:34:12.926Z",
+    "builder": "limrun",
+    "xcode": "27.1",
+    "archive_source": "supplied-snapshot",
+    "error": null
+  },
+  "apple_processing": {
+    "build_id": "7172991f-a48d-4261-ac77-8d060094b693",
+    "processingState": "VALID",
+    "persisted_publisher_processing_state": "COMPLETE",
+    "expired": false,
+    "uploaded_at": "2026-11-03T05:35:25-08:00",
+    "wait_elapsed": "2m21s"
+  },
+  "tester_availability": {
+    "internalBuildState": "READY_FOR_BETA_TESTING",
+    "autoNotifyEnabled": true,
+    "membership_lookup_complete": true,
+    "group_count": 1,
+    "group_id": "1a8d95a6-44ec-47ac-8754-47a0a283582e",
+    "group_name": "Internal Testing",
+    "group_type": "internal",
+    "membership": "all-builds",
+    "existing_tester_count": 2,
+    "existing_tester_states": {"INSTALLED": 2},
+    "tester_state_note": "Existing tester enrolment states, not proof they installed build214",
+    "external_group_membership": false,
+    "externalBuildState": "READY_FOR_BETA_SUBMISSION",
+    "external_review_or_app_store_submission_requested": false,
+    "new_testers_or_groups_created": false,
+    "confirmed": "Available to existing Internal Testing group; actual install/notification receipt not observed"
+  },
+  "post_upload_required": [
+    "Update original affected iPhone in place without deleting app data",
+    "Verify intended vineyard/backend, configured status and auth/session refresh",
+    "Verify new Spray Trip start, tank actuals, End, authoritative server receipts and restart",
+    "Reconcile retained original issues by exact IDs and preserve unexplained holds",
+    "Stop promotion for wrong backend, auth failure or privileged-key evidence"
+  ],
+  "safety": "No application changes, Android, production database writes, archive or queue mutations. Incident OPEN. No new runtime/device testing performed; standard compile/sign/upload and read-only Apple availability checks succeeded.",
+  "github_issue_linkback": "Receipt saved in project; not posted to issue because no authenticated GitHub issue writer was used"
+}
