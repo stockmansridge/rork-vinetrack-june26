@@ -3,7 +3,20 @@ name: Issue 47 manual spray UI state native tests (isolated)
 on:
   push:
     branches:
+      - main
       - fix/issue47-customer-spray-workflow-20261102
+    paths:
+      - 'ios/VineTrack/LegacyImported/Views/Spray/ManualSprayEntryView.swift'
+      - 'ios/VineTrack/App/SprayEngine/ManualSprayReviewStatus.swift'
+      - 'ios/VineTrackTests/ManualSprayReviewStatusTests.swift'
+      - 'ios/VineTrackTests/ManualSprayEntryWorkflowTests.swift'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/ui/screens/ManualSprayEntrySheet.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/spray/ManualSprayReviewStatus.kt'
+      - 'android-vinetrack/app/src/main/java/com/rork/vinetrack/data/auth/AccountTransitionEvidence.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/spray/ManualSprayReviewStatusTest.kt'
+      - 'android-vinetrack/app/src/test/java/com/rork/vinetrack/data/ManualSprayEntryWorkflowTest.kt'
+      - '.github/workflows/issue47-manual-spray-native-tests.yml'
+  workflow_dispatch:
   pull_request:
     branches: [main]
     paths:
@@ -21,9 +34,10 @@ on:
 permissions:
   contents: read
 
+# Never cancel a source-pinned native result when main advances during #43 recovery.
 concurrency:
-  group: issue47-manual-spray-${{ github.event.pull_request.number || github.ref_name }}
-  cancel-in-progress: true
+  group: issue47-manual-spray-${{ github.sha }}
+  cancel-in-progress: false
 
 jobs:
   android:
