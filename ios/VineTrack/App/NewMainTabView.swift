@@ -911,17 +911,29 @@ struct NewMainTabView: View {
 
     private var trackedCompletionPendingCount: Int {
         _ = TrackedSprayCompletionSync.shared.revision
-        // Global outstanding work remains visible even outside the selected slice.
-        return (try? TrackedSprayCompletionSync.shared.intents().count) ?? 1
+        // Aggregate sync is scoped to the selected vineyard. Original End
+        // intents for another vineyard remain durable and visible in their
+        // individual diagnostics, but must not prevent THIS vineyard from
+        // reporting its independently verified progress.
+        guard let vineyard = store.selectedVineyardId, let owner = auth.userId else {
+            return (try? TrackedSprayCompletionSync.shared.intents().count) ?? 1
+        }
+        return (try? TrackedSprayCompletionSync.shared.intents().filter {
+            $0.vineyardId == vineyard && $0.ownerId == owner
+        }.count) ?? 1
     }
 
     private var aggregateSyncError: String? {
         let messages = [
-            trackedCompletionPendingCount > 0 ? "Linked Spray completion remains unverified. Original End intents are retained." : nil,
+            // Show the actual blocking dependency before the generic Spray
+            // completion consequence. Retained work is never counted as done.
+            !tripSync.tankDependencyHolds.isEmpty ?
+                "Original Trip tank session has not been verified. The saved Actual Use and End remain pending." : nil,
+            tripSync.errorMessage,
             tripSync.retainedState.inspectionError,
+            trackedCompletionPendingCount > 0 ? "Linked Spray completion remains unverified. Original End intents are retained." : nil,
             pinSync.errorMessage,
             paddockSync.errorMessage,
-            tripSync.errorMessage,
             sprayRecordSync.errorMessage,
             savedChemicalSync.errorMessage,
             workTaskSync.errorMessage,
