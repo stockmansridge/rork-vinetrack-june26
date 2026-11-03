@@ -1,0 +1,30 @@
+{
+  "date": "2026-11-03",
+  "requested_main_sha": "833836f4098e775a5ce4a565e9ccd81c3b5f70f8",
+  "source_before_fix": {"ios_files_compared": 1306, "mismatches": 0, "managed_config_excluded": true},
+  "github_runs": [
+    {"id": 41615871652, "sha": "833836f4098e775a5ce4a565e9ccd81c3b5f70f8", "conclusion": "failure", "artifact_id": 13221028248, "verified_archive_sha256": "3b746e22292c3bb45a583bfd161394b8446d474c9dce1824b70d66aead9d5a40"},
+    {"id": 41615871641, "sha": "833836f4098e775a5ce4a565e9ccd81c3b5f70f8", "conclusion": "failure", "artifact_id": 13221288160, "verified_archive_sha256": "8714594ac6a91222e3bcb6e510b6af19b7595b9d6eacb2750f4311176978d12a"},
+    {"id": 41615871952, "sha": "833836f4098e775a5ce4a565e9ccd81c3b5f70f8", "conclusion": "failure", "artifact_id": 13222000787, "verified_archive_sha256": "ccf1b59cccf14d4dccbe5a6d257ff49d2aa45ac327dbf99f3ccaf3fd3f51c0af"}
+  ],
+  "failure": "All three artifact logs show compile failure in GuidedSyncIssueRepairView.swift:247/274 (Auth currentUser/id), 266-271 (PostgREST query APIs), missing defining-module imports. Testing cancelled because build failed; no assertion failure claimed.",
+  "correction": {"file": "ios/VineTrack/App/GuidedSyncIssueRepairView.swift", "change": "Add import Supabase only", "behavior_changed": false},
+  "managed_validation_after_fix": {
+    "runChecks": "PASS, simulator only; device Release not verified",
+    "guided_seven_suite_selection": {"result": "PASS", "passed": 85, "seconds": 168},
+    "additional_recovery_selection": {"result": "PASS", "passed": 66, "seconds": 19, "selectors": ["VineTrackTests/TripQueuedUploadScopeTests", "VineTrackTests/TripOccurrenceJournalTests/testBackendUpgradeRetriesUppercaseOriginalHeldCreateWithoutChangingFrozenIDs", "VineTrackTests/TripOccurrenceJournalTests/testBackendUpgradeRefusesChangedLocalCoverageAndKeepsHold", "VineTrackTests/SprayOccurrenceRecoveryHotfixTests/testOverlappingUnconfirmedStartRequiresDistinctWorkConsentWithoutDiscardingOriginal", "VineTrackTests/SprayOccurrenceRecoveryHotfixTests/testOccurrenceStartAdmissionDecisions", "VineTrackTests/RetainedRecoveryDiagnosticExportTests", "VineTrackTests/TripEndGateTests", "VineTrackTests/SprayProgramRound2Tests"]},
+    "evidence_limit": "Managed terminal aggregate tool responses; no final passing named XML/xcresult exposed. Not final corrected-public-SHA GitHub validation or physical device acceptance."
+  },
+  "testflight": {
+    "apple_setup": "ready",
+    "fresh_maximum_build": 212,
+    "next_candidate": 213,
+    "version": "3.1.9",
+    "upload_attempted": false,
+    "signed_revision_verified": false,
+    "processing_status": "No new build uploaded",
+    "blockers": ["Corrected source needs managed publication then all three GitHub workflows on actual corrected main SHA", "Managed production Supabase environment has no local materialized values or .env; previous restore form not confirmed in this session; do not edit generated Config.swift", "No authenticated GitHub write/dispatch connector available"]
+  },
+  "preservation": {"new_branch": false, "android_changed": false, "customer_records_mutated": false, "queues_reset": false, "original_evidence_removed": false},
+  "incident": "OPEN until original iPhone reconciles each original record with authoritative server receipt; upgrade in place without uninstall/reset, verify original identities/quantities and retained unresolved evidence"
+}

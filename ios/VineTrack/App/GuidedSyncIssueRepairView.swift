@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Supabase
 
 /// Operator-led, per-record review. This UI never writes raw queue metadata,
 /// invents data, changes a completed Trip or suppresses a reported failure.
