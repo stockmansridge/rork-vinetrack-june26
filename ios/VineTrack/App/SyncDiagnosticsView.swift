@@ -93,6 +93,7 @@ struct SyncDiagnosticsView: View {
         Form {
             contextSection
             entitiesSection
+            guidedIssueRepairSection
             pruningEnvironmentSection
             actionsSection
             paddockForceRefreshSection
@@ -169,6 +170,24 @@ struct SyncDiagnosticsView: View {
             Text("Entities")
         } footer: {
             Text("Local = rows currently loaded for the selected vineyard. Pending = local changes not yet pushed.")
+        }
+    }
+
+    /// The existing diagnostic counters remain read-only. This opt-in,
+    /// per-record workflow offers only independently verified corrections.
+    private var guidedIssueRepairSection: some View {
+        Section {
+            NavigationLink {
+                GuidedSyncIssueRepairView()
+            } label: {
+                Label("Review & repair sync issues", systemImage: "wrench.adjustable")
+                    .font(.headline)
+            }
+            .disabled(!auth.isSignedIn || store.selectedVineyardId == nil)
+            Text("Inspect each queued Trip, tank actual or Spray Record; select the supported correction and verify the server result. Deleted records and unknown ownership stay protected.")
+                .font(.caption).foregroundStyle(.secondary)
+        } header: {
+            Text("Guided Sync Repair")
         }
     }
 
