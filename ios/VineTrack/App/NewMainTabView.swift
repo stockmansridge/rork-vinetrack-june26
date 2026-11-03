@@ -1318,6 +1318,7 @@ struct NewHomeTabView: View {
                                 subtitle: tool.subtitle,
                                 icon: tool.icon,
                                 tint: tool.tint,
+                                gradient: operationalGradient(for: tool.id, tint: tool.tint),
                                 halfHeight: toolLayout.halfHeight
                             )
                         }
@@ -1366,6 +1367,27 @@ struct NewHomeTabView: View {
         }
     }
 
+    // Presentation-only palette: matches Android's stable operational tool IDs.
+    private func operationalGradient(for id: String, tint: Color) -> [Color] {
+        switch id {
+        case "work_tasks": return [.indigo, .purple]
+        case "equipment_maintenance": return [VineyardTheme.earthBrown, .orange]
+        case "fuel_log": return [.red, .orange]
+        case "irrigation_advisor": return [.blue, .cyan]
+        case "disease_risk": return [.green, .cyan]
+        case "yield_records": return [.orange, .red]
+        case "growth_stages": return [VineyardTheme.leafGreen, .cyan]
+        case "optimal_ripeness": return [.pink, .orange]
+        case "cost_reports": return [.green, .cyan]
+        case "fertiliser_calculator": return [.cyan, VineyardTheme.leafGreen]
+        case "pruning_tracker": return [.cyan, .indigo]
+        case "irrigation_records": return [.cyan, .blue]
+        case "resistance_planner": return [.purple, .pink]
+        case "vineyard_insights": return [.purple, .indigo]
+        default: return [tint, tint.opacity(0.75)]
+        }
+    }
+
     private func iconTile(title: String, icon: String, tint: Color) -> some View {
         operationalTile(title: title, subtitle: subtitleFor(title), icon: icon, tint: tint)
     }
@@ -1395,14 +1417,18 @@ struct NewHomeTabView: View {
     }
 
     @ViewBuilder
-    private func operationalTile(title: String, subtitle: String, icon: String, tint: Color, halfHeight: Bool = false) -> some View {
+    private func operationalTile(title: String, subtitle: String, icon: String, tint: Color, gradient: [Color]? = nil, halfHeight: Bool = false) -> some View {
+        let colors = gradient ?? [tint, tint.opacity(0.75)]
         if halfHeight {
             HStack(spacing: 10) {
                 Image(systemName: icon)
                     .font(.title3.weight(.semibold))
-                    .foregroundStyle(tint)
+                    .foregroundStyle(.white)
                     .frame(width: 34, height: 34)
-                    .background(tint.opacity(0.15), in: .rect(cornerRadius: 10))
+                    .background(
+                        LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing),
+                        in: .rect(cornerRadius: 10)
+                    )
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.primary)
@@ -1417,11 +1443,11 @@ struct NewHomeTabView: View {
         VStack(alignment: .leading, spacing: 10) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(tint.opacity(0.15))
+                    .fill(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
                     .frame(width: 44, height: 44)
                 Image(systemName: icon)
                     .font(.title3.weight(.semibold))
-                    .foregroundStyle(tint)
+                    .foregroundStyle(.white)
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)

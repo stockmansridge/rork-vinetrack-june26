@@ -1051,8 +1051,29 @@ private data class ToolItem(
     val icon: ImageVector,
     val tint: Color,
     val comingSoon: Boolean = false,
+    val gradient: List<Color>? = null,
     val onClick: (() -> Unit)? = null,
 )
+
+// Presentation-only gradient palette shared with the iOS Operational Tools tiles.
+// Stable tool IDs, permissions, routes and ordering remain unchanged.
+private fun operationalGradient(id: String): List<Color> = when (id) {
+    "work_tasks" -> listOf(VineColors.Indigo, VineColors.Purple)
+    "equipment_maintenance" -> listOf(VineColors.EarthBrown, VineColors.Orange)
+    "fuel_log" -> listOf(VineColors.Destructive, VineColors.Orange)
+    "irrigation_advisor" -> listOf(VineColors.Primary, VineColors.Cyan)
+    "disease_risk" -> listOf(VineColors.LeafGreen, VineColors.Cyan)
+    "yield_records" -> listOf(VineColors.Orange, VineColors.Destructive)
+    "growth_stages" -> listOf(VineColors.LeafGreen, VineColors.Cyan)
+    "optimal_ripeness" -> listOf(VineColors.Pink, VineColors.Orange)
+    "cost_reports" -> listOf(VineColors.LeafGreen, VineColors.Cyan)
+    "fertiliser_calculator" -> listOf(VineColors.Cyan, VineColors.LeafGreen)
+    "pruning_tracker" -> listOf(VineColors.Cyan, VineColors.Indigo)
+    "irrigation_records" -> listOf(VineColors.Cyan, VineColors.Primary)
+    "resistance_planner" -> listOf(VineColors.Purple, VineColors.Pink)
+    "vineyard_insights" -> listOf(VineColors.Purple, VineColors.Indigo)
+    else -> listOf(VineColors.Primary, VineColors.Indigo)
+}
 
 /**
  * Operational Tools grid, rendered from the shared [OperationalToolCatalog]
@@ -1124,7 +1145,7 @@ private fun OperationalToolsSection(
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                     rowItems.forEach { def ->
                         ToolCard(
-                            ToolItem(def.title, def.subtitle, def.icon, def.tint) { onOpenTool(def.route) },
+                            ToolItem(def.title, def.subtitle, def.icon, def.tint, gradient = operationalGradient(def.id)) { onOpenTool(def.route) },
                             modifier = Modifier.weight(1f),
                             halfHeight = halfHeight,
                         )
@@ -1153,10 +1174,10 @@ private fun ToolCard(item: ToolItem, modifier: Modifier = Modifier, halfHeight: 
         ) {
             Box(
                 modifier = Modifier.size(34.dp).clip(RoundedCornerShape(10.dp))
-                    .background(item.tint.copy(alpha = 0.15f * alpha)),
+                    .background(Brush.linearGradient(item.gradient ?: listOf(item.tint, item.tint.copy(alpha = 0.75f)))),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(item.icon, contentDescription = null, tint = item.tint.copy(alpha = alpha), modifier = Modifier.size(20.dp))
+                Icon(item.icon, contentDescription = null, tint = Color.White.copy(alpha = alpha), modifier = Modifier.size(20.dp))
             }
             Text(
                 item.title,
@@ -1179,10 +1200,10 @@ private fun ToolCard(item: ToolItem, modifier: Modifier = Modifier, halfHeight: 
     ) {
         Box(
             modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
-                .background(item.tint.copy(alpha = 0.15f * alpha)),
+                .background(Brush.linearGradient(item.gradient ?: listOf(item.tint, item.tint.copy(alpha = 0.75f)))),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(item.icon, contentDescription = null, tint = item.tint.copy(alpha = alpha), modifier = Modifier.size(22.dp))
+            Icon(item.icon, contentDescription = null, tint = Color.White.copy(alpha = alpha), modifier = Modifier.size(22.dp))
         }
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
