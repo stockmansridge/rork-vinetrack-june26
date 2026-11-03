@@ -20,8 +20,8 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ios-guided-sync-repair-${{ github.sha }}
-  cancel-in-progress: false
+  group: ios-guided-sync-repair-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   simulator:
