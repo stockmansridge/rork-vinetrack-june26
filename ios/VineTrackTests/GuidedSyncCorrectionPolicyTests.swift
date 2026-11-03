@@ -92,6 +92,12 @@ final class GuidedSyncCorrectionPolicyTests: XCTestCase {
         let actual = item(kind: .tankActual)
         XCTAssertFalse(GuidedSyncCorrectionPolicy.available(
             for: actual, server: .active, actualAccepted: false).contains(.amendActualUse))
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(
+            for: actual, server: .active, actualAccepted: false).contains(.correctPendingActualUse))
+        XCTAssertTrue(GuidedSyncCorrectionPolicy.available(
+            for: actual, server: .active, actualPending: true).contains(.correctPendingActualUse))
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(
+            for: actual, server: .deleted, actualPending: true).contains(.correctPendingActualUse))
         XCTAssertTrue(GuidedSyncCorrectionPolicy.available(
             for: actual, server: .active, actualAccepted: true).contains(.amendActualUse))
         XCTAssertFalse(GuidedSyncCorrectionPolicy.available(
