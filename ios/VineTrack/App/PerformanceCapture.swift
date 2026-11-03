@@ -22,6 +22,39 @@ final class PerformanceCapture {
     private var active: [Int: String] = [:]
     private var operationCounts: [String: Int] = [:]
 
+    // Numeric, allowlisted dataset summaries only. Recording them never
+    // reads or writes the user's local sync/persistence data.
+    private struct PersistenceTotals {
+        var count: Int = 0
+        var failureCount: Int = 0
+        var offMainCount: Int = 0
+        var longMainCount: Int = 0
+        var totalBytes: Int64 = 0
+        var maxBytes: Int = 0
+        var totalReadMs: Double = 0
+        var totalCodecMs: Double = 0
+        var totalWriteMs: Double = 0
+        var totalMainMs: Double = 0
+        var maxMainMs: Double = 0
+        var maxCodecMs: Double = 0
+
+        mutating func add(_ item: PersistenceMeasurement) {
+            count += 1
+            if !item.succeeded { failureCount += 1 }
+            if item.offMain { offMainCount += 1 }
+            if item.mainMilliseconds >= 100 { longMainCount += 1 }
+            totalBytes += Int64(item.bytes)
+            maxBytes = max(maxBytes, item.bytes)
+            totalReadMs += item.readMilliseconds
+            totalCodecMs += item.codecMilliseconds
+            totalWriteMs += item.writeMilliseconds
+            totalMainMs += item.mainMilliseconds
+            maxMainMs = max(maxMainMs, item.mainMilliseconds)
+            maxCodecMs = max(maxCodecMs, item.codecMilliseconds)
+        }
+    }
+    private var persistenceTotals: [String: PersistenceTotals] = [:]
+
     struct Span {
         let id: Int
         let generation: UUID
@@ -129,21 +162,36 @@ final class PerformanceCapture {
         append(String(describing: label))
     }
 
-    /// Categories and numeric statistics only; the caller cannot supply record contents or keys.
+    /// Preserve total timings while avoiding two formatted log rows for every
+    /// repeated routine read. Never suppress slow operations or failures.
     func persistence(_ measurement: PersistenceMeasurement) {
         guard shouldCapture else { return }
-        let count = measurement.records.map(String.init) ?? "unknown"
-        let changed = measurement.changed.map { $0 ? "yes" : "no" } ?? "unknown"
         let operation = measurement.dataset.rawValue + "." + measurement.operation.rawValue
         let occurrence = (operationCounts[operation] ?? 0) + 1
         operationCounts[operation] = occurrence
-        append(String(format: "persistence dataset=%@ operation=%@ records=%@ bytes=%d read=%.1fms codec=%.1fms write=%.1fms changed=%@ decodeReused=%@ encodeReused=%@ success=%@ offMain=%@",
-            measurement.dataset.rawValue, measurement.operation.rawValue, count, measurement.bytes,
+        var totals = persistenceTotals[operation] ?? PersistenceTotals()
+        totals.add(measurement)
+        persistenceTotals[operation] = totals
+
+        let exceptional = !measurement.succeeded ||
+            measurement.mainMilliseconds >= 100 ||
+            measurement.readMilliseconds >= 100 ||
+            measurement.codecMilliseconds >= 100 ||
+            measurement.writeMilliseconds >= 100
+        // Retain the first three and every 32nd normal occurrence for a
+        // representative timeline, plus ALL exceptional observations.
+        guard exceptional || occurrence <= 3 || occurrence % 32 == 0 else { return }
+
+        let records = measurement.records.map(String.init) ?? "unknown"
+        let changed = measurement.changed.map { $0 ? "yes" : "no" } ?? "unknown"
+        append(String(format: "persistence dataset=%@ operation=%@ occurrence=%d records=%@ bytes=%d read=%.1fms codec=%.1fms write=%.1fms changed=%@ decodeReused=%@ encodeReused=%@ success=%@ offMain=%@",
+            measurement.dataset.rawValue, measurement.operation.rawValue, occurrence, records, measurement.bytes,
             measurement.readMilliseconds, measurement.codecMilliseconds, measurement.writeMilliseconds, changed,
             measurement.reusedDecode ? "yes" : "no", measurement.reusedEncode ? "yes" : "no",
             measurement.succeeded ? "yes" : "no", measurement.offMain ? "yes" : "no"))
-        append(String(format: "occupancy operation=%@ occurrence=%d main=%.1fms longMain=%@", operation, occurrence,
-            measurement.mainMilliseconds, measurement.mainMilliseconds >= 100 ? "yes" : "no"))
+        append(String(format: "occupancy operation=%@ occurrence=%d main=%.1fms longMain=%@",
+            operation, occurrence, measurement.mainMilliseconds,
+            measurement.mainMilliseconds >= 100 ? "yes" : "no"))
     }
 
     /// Aggregate pure view preparation only. This is not SwiftUI/CoreText layout or a usable-frame marker.
@@ -175,6 +223,7 @@ final class PerformanceCapture {
         dropped = 0
         sequence = 0
         operationCounts.removeAll(keepingCapacity: true)
+        persistenceTotals.removeAll(keepingCapacity: true)
         origin = ProcessInfo.processInfo.systemUptime
         lastTick = nil
     }
@@ -188,6 +237,14 @@ final class PerformanceCapture {
         let thermal = ProcessInfo.processInfo.thermalState.rawValue
         let freeBytes = (try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory())[.systemFreeSize] as? NSNumber)?.int64Value
         let pending = active.sorted { $0.key < $1.key }.map { "#\($0.key) \($0.value)" }.joined(separator: ", ")
+        let summary = persistenceTotals.keys.sorted().compactMap { key -> String? in
+            guard let value = persistenceTotals[key] else { return nil }
+            return String(format: "  %@ count=%d failures=%d offMain=%d longMain=%d totalBytes=%lld maxBytes=%d readTotal=%.1fms codecTotal=%.1fms codecMax=%.1fms writeTotal=%.1fms mainTotal=%.1fms mainMax=%.1fms",
+                key, value.count, value.failureCount, value.offMainCount,
+                value.longMainCount, value.totalBytes, value.maxBytes,
+                value.totalReadMs, value.totalCodecMs, value.maxCodecMs,
+                value.totalWriteMs, value.totalMainMs, value.maxMainMs)
+        }.joined(separator: "\n")
         return """
         VineTrack iOS performance timing report
         Version: \(version) (\(build))
@@ -205,6 +262,9 @@ final class PerformanceCapture {
         No vineyard records, persistence keys, account IDs, credentials or raw errors are collected.
         main occupancy is synchronous wall time, not CPU. prepare offMain refers to worker codec/IO, not report delivery. Occurrences count operations, not identical-payload fingerprints. View preparation is not text layout. Export power/storage describe export time, not every earlier event.
         Persistence categories are allowlisted; counts and bytes describe whole payloads. changed=unknown means no comparison was made. Durable saves are never skipped.
+        Routine persistence log events are sampled (first 3, every 32nd); all failures and operations >=100ms are logged. Aggregate totals include every measured operation.
+        Persistence aggregate summary:
+        \(summary)
 
         \(rows.joined(separator: "\n"))
         """

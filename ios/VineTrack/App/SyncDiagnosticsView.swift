@@ -108,6 +108,11 @@ struct SyncDiagnosticsView: View {
         }
         .navigationTitle("Sync Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
+        // Disable implicit Form relayout animation only during sync. Error,
+        // hold, button-state and completion values still render immediately.
+        .transaction { transaction in
+            if syncStatusCenter.isSyncing { transaction.disablesAnimations = true }
+        }
         .task(id: displayRefreshID) {
             await Task.yield()
             guard !Task.isCancelled else { return }
@@ -164,7 +169,7 @@ struct SyncDiagnosticsView: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(rows) { row in
-                EntityDiagnosticRow(row: row)
+                EntityDiagnosticRow(row: row).equatable()
             }
         } header: {
             Text("Entities")
@@ -199,13 +204,28 @@ struct SyncDiagnosticsView: View {
     private var sprayTripInputs: [SprayFinalisationDiagnostics.TripInput] {
         let vineyardId = store.selectedVineyardId
         let actuals = SprayTankActualStore.shared
+
+        // Read-only indexes. Preserve the FIRST linked spray and include all
+        // queued actuals and retained initial-mix handoffs as before.
+        var firstSprayByTrip: [UUID: UUID] = [:]
+        for record in store.sprayRecords where firstSprayByTrip[record.tripId] == nil {
+            firstSprayByTrip[record.tripId] = record.id
+        }
+        var pendingActualsByTrip: [UUID: Int] = [:]
+        for actual in actuals.records where actuals.pendingIds.contains(actual.id) {
+            pendingActualsByTrip[actual.tripId, default: 0] += 1
+        }
+        for draft in actuals.initialMixDrafts {
+            pendingActualsByTrip[draft.tripId, default: 0] += 1
+        }
+
         return store.trips
             .filter { vineyardId == nil || $0.vineyardId == vineyardId }
             .map { trip in
-                let sprayRecordId = store.sprayRecords.first { $0.tripId == trip.id }?.id
+                let sprayRecordId = firstSprayByTrip[trip.id]
                 let diagnostic = tripSync.finalisationDiagnostic(
                     for: trip.id,
-                    pendingActualCount: actuals.pendingCount(tripId: trip.id)
+                    pendingActualCount: pendingActualsByTrip[trip.id, default: 0]
                 )
                 return SprayFinalisationDiagnostics.TripInput(
                     tripId: trip.id,
@@ -259,10 +279,13 @@ struct SyncDiagnosticsView: View {
             }
     }
 
-    private func sprayFinalisationSummary(useLiveCounts: Bool = false) -> SprayFinalisationDiagnostics.Summary {
+    private func sprayFinalisationSummary(
+        trips: [SprayFinalisationDiagnostics.TripInput],
+        useLiveCounts: Bool = false
+    ) -> SprayFinalisationDiagnostics.Summary {
         let issues = SyncIssueCenter.shared.issues.values
         return SprayFinalisationDiagnostics.summary(
-            trips: sprayTripInputs,
+            trips: trips,
             actuals: sprayTankActualInputs,
             carriers: sprayCarrierInputs,
             // Only explicit exports request a fresh authoritative queue count.
@@ -276,8 +299,9 @@ struct SyncDiagnosticsView: View {
 
     @ViewBuilder
     private var sprayFinalisationSection: some View {
-        let trips = SprayFinalisationDiagnostics.relevantTrips(sprayTripInputs)
-        let summary = sprayFinalisationSummary()
+        let tripInputs = sprayTripInputs
+        let trips = SprayFinalisationDiagnostics.relevantTrips(tripInputs)
+        let summary = sprayFinalisationSummary(trips: tripInputs)
         Section {
             LabeledContent("Trips pending", value: "\(summary.tripsPending)")
             LabeledContent("Phase 5 held", value: "\(summary.tripsPhase5Held)")
@@ -292,7 +316,7 @@ struct SyncDiagnosticsView: View {
                     .foregroundStyle(.orange)
             }
             ForEach(trips, id: \SprayFinalisationDiagnostics.TripInput.tripId) { trip in
-                SprayFinalisationTripRow(trip: trip)
+                SprayFinalisationTripRow(trip: trip).equatable()
             }
             if trips.isEmpty {
                 Text("No spray trips awaiting finalisation.")
@@ -1160,7 +1184,7 @@ struct SyncDiagnosticsView: View {
 
     // MARK: - Rows
 
-    fileprivate struct DiagnosticRow: Identifiable {
+    fileprivate struct DiagnosticRow: Identifiable, Equatable {
         let id: String
         let title: String
         let icon: String
@@ -1606,11 +1630,13 @@ struct SyncDiagnosticsView: View {
             lines.append(contentsOf: auditService.diagnosticsSnippet())
         }
         lines.append("")
+        // Export still uses fresh counts, with one common Trip projection.
+        let reportTrips = sprayTripInputs
         lines.append(contentsOf: SprayFinalisationDiagnostics.report(
-            trips: sprayTripInputs,
+            trips: reportTrips,
             actuals: sprayTankActualInputs,
             carriers: sprayCarrierInputs,
-            summary: sprayFinalisationSummary(useLiveCounts: true)
+            summary: sprayFinalisationSummary(trips: reportTrips, useLiveCounts: true)
         ))
         lines.append("\nTrip deletion recovery (uploads listed independently):")
         lines.append(tripSync.deletionRecoveryDiagnostics)
@@ -1622,7 +1648,7 @@ struct SyncDiagnosticsView: View {
 // MARK: - Row
 
 /// One spray trip's finalisation state. Identifiers, counts and states only.
-private struct SprayFinalisationTripRow: View {
+private struct SprayFinalisationTripRow: View, Equatable {
     let trip: SprayFinalisationDiagnostics.TripInput
 
     var body: some View {
@@ -1639,7 +1665,7 @@ private struct SprayFinalisationTripRow: View {
     }
 }
 
-private struct EntityDiagnosticRow: View {
+private struct EntityDiagnosticRow: View, Equatable {
     let row: SyncDiagnosticsView.DiagnosticRow
 
     var body: some View {

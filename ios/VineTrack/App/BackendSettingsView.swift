@@ -1378,6 +1378,11 @@ struct SyncSettingsView: View {
         }
         .navigationTitle("Sync")
         .navigationBarTitleDisplayMode(.inline)
+        // Suppress implicit Form relayout animations while a full sweep is
+        // active. This never throttles error updates, enabled state, or sync.
+        .transaction { transaction in
+            if syncCenter.isSyncing { transaction.disablesAnimations = true }
+        }
         .task(id: displayRefreshID) {
             // Let the screen appear before doing any protected local inspection.
             await Task.yield()
