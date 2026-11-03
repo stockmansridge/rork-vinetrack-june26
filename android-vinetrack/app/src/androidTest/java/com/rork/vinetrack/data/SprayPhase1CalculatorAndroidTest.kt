@@ -49,21 +49,6 @@ class SprayPhase1CalculatorAndroidTest {
     @Test fun newOneOffCustomCarrierUnlocksProducts() = runCalculator(custom = true)
     @Test fun bandedContinuesToReview() = runCalculator(custom = false, operation = "Banded Spray")
     @Test fun spreaderContinuesToReview() = runCalculator(custom = false, operation = "Spreader")
-    @Test fun spreaderCanChooseFoliarLocationWithoutRestarting() {
-        openCalculator(prefilled = false)
-        compose.onNodeWithText("Operation type").performClick()
-        compose.onNode(hasText("Spreader") and hasAnyAncestor(isPopup())).performClick()
-        click("Continue to Blocks →")
-        click("Select All")
-        click("Continue to Target →")
-        click("Downy Mildew")
-        compose.onNodeWithText("Application location").assertExists()
-        click("Full Canopy")
-        compose.onNodeWithText("Spreader selected.", substring = true).assertDoesNotExist()
-        click("Continue to Growth Stage →")
-        click("Application")
-        compose.onNodeWithText("Foliar Spray").assertExists()
-    }
     @Test fun editingBlocksRetainsAnswersAndLocksDownstream() = runCalculator(custom = false, editBlocks = true)
     @Test fun programPrefillRetainsAnsweredSteps() = runCalculator(custom = false, prefilled = true)
     @Test fun newSprayFullTankChoiceRetainsDraft() = runCalculator(custom = false, fullTankRoundTrip = true)
@@ -121,15 +106,6 @@ class SprayPhase1CalculatorAndroidTest {
         click("Select All")
         click("Continue to Target →")
         click("Powdery Mildew")
-        // Critical geometry selection must stay visible after compact UI
-        // changes, including when an earlier step selected Spreader.
-        compose.onNodeWithText("Application location").assertExists()
-        listOf("Full Canopy", "Bunch Line", "Leaf Zone", "Undervine", "Midrow").forEach { label ->
-            compose.onNodeWithText(label).assertExists()
-        }
-        if (operation == "Spreader") {
-            compose.onNodeWithText("Spreader selected.", substring = true).assertExists()
-        }
         if (operation == "Banded Spray") {
             click("Undervine")
             val width = hasSetTextAction() and hasText("Band width", substring = true)

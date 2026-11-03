@@ -1672,52 +1672,43 @@ fun SprayCalculatorScreen(
                         }
                     }
 
-                    // Location is always visible. A previously selected Spreader
-                    // must not conceal the operator's Foliar/Banded choice; the
-                    // existing chip action switches the method and recalculates.
-                    Text("Application location", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                    if (operationType == SprayOperationType.SPREADER.raw) {
-                        Text(
-                            "Spreader selected. A location is optional for spreading; selecting one switches to a Foliar or Banded Spray calculation.",
-                            fontSize = 11.sp,
-                            color = vine.textSecondary,
-                        )
-                    }
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        (SprayHeadTarget.entries.map { it to null } + SprayGroundTarget.entries.map { null to it })
-                            .chunked(2).forEach { pair ->
-                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    pair.forEach { (head, ground) ->
-                                        GuidedChip(
-                                            label = head?.label ?: ground?.label.orEmpty(),
-                                            isSelected = head?.let { sprayHeadTarget == it && groundTarget == null }
-                                                ?: (groundTarget == ground && sprayHeadTarget == null),
-                                            accent = VineColors.Primary,
-                                            modifier = Modifier.weight(1f),
-                                            compact = true,
-                                            onClick = {
-                                                if (head != null) {
-                                                    operationType = SprayOperationType.FOLIAR_SPRAY.raw
-                                                    sprayHeadTarget = head
-                                                    groundTarget = null
-                                                    bandWidthText = ""
-                                                } else if (ground != null) {
-                                                    operationType = SprayOperationType.BANDED_SPRAY.raw
-                                                    groundTarget = ground
-                                                    sprayHeadTarget = null
-                                                    carrierBasisChoice = SprayCarrierBasis.LITRES_PER_HECTARE
-                                                    carrierAreaBasis = SprayCarrierAreaBasis.TREATED_AREA
-                                                }
-                                                result = null
-                                            },
-                                        )
+                    if (operationType != SprayOperationType.SPREADER.raw) {
+                        Text("Application location", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            (SprayHeadTarget.entries.map { it to null } + SprayGroundTarget.entries.map { null to it })
+                                .chunked(2).forEach { pair ->
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        pair.forEach { (head, ground) ->
+                                            GuidedChip(
+                                                label = head?.label ?: ground?.label.orEmpty(),
+                                                isSelected = head?.let { sprayHeadTarget == it && groundTarget == null }
+                                                    ?: (groundTarget == ground && sprayHeadTarget == null),
+                                                accent = VineColors.Primary,
+                                                modifier = Modifier.weight(1f),
+                                                compact = true,
+                                                onClick = {
+                                                    if (head != null) {
+                                                        operationType = SprayOperationType.FOLIAR_SPRAY.raw
+                                                        sprayHeadTarget = head
+                                                        groundTarget = null
+                                                        bandWidthText = ""
+                                                    } else if (ground != null) {
+                                                        operationType = SprayOperationType.BANDED_SPRAY.raw
+                                                        groundTarget = ground
+                                                        sprayHeadTarget = null
+                                                        carrierBasisChoice = SprayCarrierBasis.LITRES_PER_HECTARE
+                                                        carrierAreaBasis = SprayCarrierAreaBasis.TREATED_AREA
+                                                    }
+                                                    result = null
+                                                },
+                                            )
+                                        }
+                                        if (pair.size == 1) Spacer(Modifier.weight(1f))
                                     }
-                                    if (pair.size == 1) Spacer(Modifier.weight(1f))
                                 }
-                            }
+                        }
+                        sprayHeadTarget?.let { head -> Text(head.detail, fontSize = 11.sp, color = vine.textSecondary) }
                     }
-                    sprayHeadTarget?.let { head -> Text(head.detail, fontSize = 11.sp, color = vine.textSecondary) }
-
 
                     if (guidedFlow.requiresBandWidth) {
                         Text(
