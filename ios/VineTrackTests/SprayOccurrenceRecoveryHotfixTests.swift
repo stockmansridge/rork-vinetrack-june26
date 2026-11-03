@@ -153,7 +153,10 @@ final class SprayOccurrenceRecoveryHotfixTests: XCTestCase {
     }
 
     // P0 3.1.9: an unrelated planned start is no longer blocked globally.
-    @MainActor func testOverlappingUnconfirmedStartRequiresDistinctWorkConsentWithoutDiscardingOriginal() throws {
+    // Xcode 26.3's synchronous main-actor XCTest bridge can abort before the
+    // retained-start assertions run. Preserve the exact original journal,
+    // identity, and consent assertions via the asynchronous XCTest entry point.
+    @MainActor func testOverlappingUnconfirmedStartRequiresDistinctWorkConsentWithoutDiscardingOriginal() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }

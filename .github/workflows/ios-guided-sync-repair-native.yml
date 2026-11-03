@@ -17,6 +17,7 @@ on:
       - 'ios/VineTrackTests/GuidedSyncCorrectionPolicyTests.swift'
       - 'ios/VineTrackTests/TripOccurrenceJournalTests.swift'
       - 'ios/VineTrackTests/TripQueuedUploadScopeTests.swift'
+      - 'ios/VineTrackTests/SprayOccurrenceRecoveryHotfixTests.swift'
       - 'ios/VineTrackTests/TrackedSprayCompletionSyncTests.swift'
       - 'ios/VineTrackTests/TankDependencyVerificationTests.swift'
       - 'sql/284_guided_repair_archived_actual_tombstone_contract.sql'

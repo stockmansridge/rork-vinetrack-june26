@@ -10,6 +10,7 @@ on:
       - 'ios/VineTrack/App/SyncDiagnosticsView.swift'
       - 'ios/VineTrackTests/TripQueuedUploadScopeTests.swift'
       - 'ios/VineTrackTests/TripOccurrenceJournalTests.swift'
+      - 'ios/VineTrackTests/SprayOccurrenceRecoveryHotfixTests.swift'
       - '.github/workflows/ios-trip-sync-recovery-v3.yml'
       - 'ios/VineTrack/App/GuidedSyncIssueRepairView.swift'
       - 'ios/VineTrackTests/GuidedSyncCorrectionPolicyTests.swift'
