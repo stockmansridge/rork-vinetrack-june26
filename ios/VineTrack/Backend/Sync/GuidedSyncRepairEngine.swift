@@ -98,14 +98,24 @@ final class GuidedRepairAuditLedger {
 
     @discardableResult
     func begin(account: UUID, vineyard: UUID, record: UUID,
-               correction: String, inputHash: String, reason: String) throws -> UUID {
+               correction: String, inputHash: String, reason: String,
+               preferredOperationId: UUID? = nil) throws -> UUID {
         var snapshot = try load()
         if let existing = snapshot.entries.last(where: {
             $0.account == account && $0.vineyard == vineyard && $0.record == record &&
             $0.correction == correction && $0.inputHash == inputHash &&
             !$0.stages.contains(where: { $0.code == "VERIFIED" })
-        }) { return existing.id } // Preserve the same server operation after an unknown response.
-        let id = UUID()
+        }) {
+            if let preferredOperationId, existing.id != preferredOperationId {
+                throw Unreadable()
+            }
+            return existing.id
+        } // Preserve the same server operation after an unknown response.
+        if let preferredOperationId,
+           snapshot.entries.contains(where: { $0.id == preferredOperationId }) {
+            throw Unreadable() // Same server ID must never be reused for a different correction.
+        }
+        let id = preferredOperationId ?? UUID()
         snapshot.entries.append(Entry(
             id: id, account: account, vineyard: vineyard, record: record,
             correction: correction, inputHash: inputHash, reason: reason,
