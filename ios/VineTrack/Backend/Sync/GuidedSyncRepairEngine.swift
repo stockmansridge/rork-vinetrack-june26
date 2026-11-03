@@ -147,6 +147,31 @@ enum GuidedActualUseCorrection {
         let p_expected_version: Int
         let p_water_volume_l: Double?
         let p_chemicals: [SprayTankActualChemical]
+
+        enum CodingKeys: String, CodingKey {
+            case p_operation_id, p_actual_id, p_trip_id, p_spray_record_id,
+                 p_tank_session_id, p_tank_number, p_expected_version,
+                 p_water_volume_l, p_chemicals
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(p_operation_id, forKey: .p_operation_id)
+            try c.encode(p_actual_id, forKey: .p_actual_id)
+            try c.encode(p_trip_id, forKey: .p_trip_id)
+            try c.encode(p_spray_record_id, forKey: .p_spray_record_id)
+            try c.encode(p_tank_session_id, forKey: .p_tank_session_id)
+            try c.encode(p_tank_number, forKey: .p_tank_number)
+            try c.encode(p_expected_version, forKey: .p_expected_version)
+            if let water = p_water_volume_l {
+                try c.encode(water, forKey: .p_water_volume_l)
+            } else {
+                // This RPC has a required nullable argument. Encoding omission
+                // is not equivalent to explicit "not recorded" NULL.
+                try c.encodeNil(forKey: .p_water_volume_l)
+            }
+            try c.encode(p_chemicals, forKey: .p_chemicals)
+        }
     }
 
     /// Preserve all immutable chemical IDs, units, additions and substitutions.
