@@ -1,0 +1,452 @@
+Building with Xcode 27.1 (27A9275)
+Command line invocation:
+Build settings from command line:
+Resolving Package Graph
+Resolved source packages
+swift-concurrency-extras - https://github.com/pointfreeco/swift-concurrency-extras @ 1.4.3
+swift-asn1 - https://github.com/apple/swift-asn1.git @ 1.7.3
+swift-http-types - https://github.com/apple/swift-http-types.git @ 1.8.0
+swift-crypto - https://github.com/apple/swift-crypto.git @ 4.5.2
+swift-issue-reporting - https://github.com/pointfreeco/swift-issue-reporting @ 2.1.2
+xctest-dynamic-overlay - https://github.com/pointfreeco/xctest-dynamic-overlay @ 1.13.1
+Supabase - https://github.com/supabase/supabase-swift.git @ 2.55.5
+swift-clocks - https://github.com/pointfreeco/swift-clocks @ 1.1.1
+RevenueCat - https://github.com/RevenueCat/purchases-ios.git @ 5.99.0
+Writing result bundle at path:
+	/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/result-bundles/build-1793665555790289000/build.xcresult
+Build Preparation
+Build task concurrency set to 14 via user default IDEBuildOperationMaxNumberOfConcurrentCompileTasks
+note: Using codesigning identity override: -
+ComputePackagePrebuildTargetDependencyGraph
+Prepare packages
+CreateBuildRequest
+SendProjectDescription
+CreateBuildOperation
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+note: Target dependency graph (34 targets)
+GatherProvisioningInputs
+CreateBuildDescription
+ExecuteExternalTool /Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc --version
+ExecuteExternalTool /Applications/Xcode-27.1.app/Contents/Developer/usr/bin/actool --version --output-format xml1
+ExecuteExternalTool /Applications/Xcode-27.1.app/Contents/Developer/usr/bin/actool --print-asset-tag-combinations --output-format xml1 /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Assets.xcassets
+ExecuteExternalTool /Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld -version_details
+ReadFileContents /Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/share/docc/features.json
+Build description signature: e6145fbc110e35495254d42c667a5072
+Build description path: /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/XCBuildData/e6145fbc110e35495254d42c667a5072.xcbuilddata
+[RevenueCat_RevenueCat] Processing empty-RevenueCat_RevenueCat.plist
+ClangStatCache /Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/SDKStatCaches.noindex/iphonesimulator27.1-24A94232-e829b21a6f8c9b70876ba0858053c04421d52c5dee28f89a436238487c04ba4c.sdkstatcache
+Signing RevenueCat_RevenueCat.bundle (in target 'RevenueCat_RevenueCat' from project 'RevenueCat')
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/RevenueCat_RevenueCat.bundle: replacing existing signature
+[RevenueCat] Linking RevenueCat.o
+[RevenueCat] Extract App Intents Metadata
+2026-11-02 17:26:07.405 appintentsmetadataprocessor[14369:1124919] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:07.506 appintentsmetadataprocessor[14369:1124919] Extracted no relevant App Intents symbols, skipping writing output
+[IssueReporting] Linking IssueReporting.o
+[HTTPTypes] Linking HTTPTypes.o
+[ConcurrencyExtras] Linking ConcurrencyExtras.o
+[swift-crypto_Crypto] Processing empty-swift-crypto_Crypto.plist
+Signing RevenueCat.o (in target 'RevenueCat' from project 'RevenueCat')
+[VineTrackTests] Write Auxiliary File VineTrackTests.SwiftFileList
+[VineTrackTests] Write Auxiliary File VineTrackTests-OutputFileMap.json
+[VineTrackTests] Write Auxiliary File VineTrackTests.SwiftConstValuesFileList
+[VineTrackTests] Write Auxiliary File VineTrackTests.LinkFileList
+[RevenueCat_RevenueCatUI] Processing empty-RevenueCat_RevenueCatUI.plist
+[IssueReporting] Extract App Intents Metadata
+2026-11-02 17:26:07.709 appintentsmetadataprocessor[14379:1124985] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:07.755 appintentsmetadataprocessor[14379:1124985] Extracted no relevant App Intents symbols, skipping writing output
+[HTTPTypes] Extract App Intents Metadata
+2026-11-02 17:26:07.709 appintentsmetadataprocessor[14380:1124986] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:07.755 appintentsmetadataprocessor[14380:1124986] Extracted no relevant App Intents symbols, skipping writing output
+[ConcurrencyExtras] Extract App Intents Metadata
+2026-11-02 17:26:07.709 appintentsmetadataprocessor[14381:1124987] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:07.755 appintentsmetadataprocessor[14381:1124987] Extracted no relevant App Intents symbols, skipping writing output
+Signing swift-crypto_Crypto.bundle (in target 'swift-crypto_Crypto' from project 'swift-crypto')
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/swift-crypto_Crypto.bundle: replacing existing signature
+Signing RevenueCat_RevenueCatUI.bundle (in target 'RevenueCat_RevenueCatUI' from project 'RevenueCat')
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/RevenueCat_RevenueCatUI.bundle: replacing existing signature
+[Crypto] Linking Crypto.o
+[Crypto] Extract App Intents Metadata
+2026-11-02 17:26:07.745 appintentsmetadataprocessor[14386:1125028] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:07.806 appintentsmetadataprocessor[14386:1125028] Extracted no relevant App Intents symbols, skipping writing output
+[RevenueCatUI] Linking RevenueCatUI.o
+Signing HTTPTypes.o (in target 'HTTPTypes' from project 'swift-http-types')
+Signing IssueReporting.o (in target 'IssueReporting' from project 'swift-issue-reporting')
+Signing ConcurrencyExtras.o (in target 'ConcurrencyExtras' from project 'swift-concurrency-extras')
+[Clocks] Linking Clocks.o
+[_IssueReporting] Linking _IssueReporting.o
+[_IssueReporting] Extract App Intents Metadata
+2026-11-02 17:26:07.806 appintentsmetadataprocessor[14397:1125092] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:07.847 appintentsmetadataprocessor[14397:1125092] Extracted no relevant App Intents symbols, skipping writing output
+[Clocks] Extract App Intents Metadata
+2026-11-02 17:26:07.806 appintentsmetadataprocessor[14398:1125093] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:07.848 appintentsmetadataprocessor[14398:1125093] Extracted no relevant App Intents symbols, skipping writing output
+Signing Crypto.o (in target 'Crypto' from project 'swift-crypto')
+[RevenueCatUI] Extract App Intents Metadata
+2026-11-02 17:26:07.860 appintentsmetadataprocessor[14401:1125108] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:07.944 appintentsmetadataprocessor[14401:1125108] Extracted no relevant App Intents symbols, skipping writing output
+Signing _IssueReporting.o (in target '_IssueReporting' from project 'xctest-dynamic-overlay')
+Signing Clocks.o (in target 'Clocks' from project 'swift-clocks')
+[XCTestDynamicOverlay] Linking XCTestDynamicOverlay.o
+[XCTestDynamicOverlay] Extract App Intents Metadata
+2026-11-02 17:26:07.890 appintentsmetadataprocessor[14406:1125135] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:07.929 appintentsmetadataprocessor[14406:1125135] Extracted no relevant App Intents symbols, skipping writing output
+Signing XCTestDynamicOverlay.o (in target 'XCTestDynamicOverlay' from project 'xctest-dynamic-overlay')
+[Helpers] Linking Helpers.o
+Signing RevenueCatUI.o (in target 'RevenueCatUI' from project 'RevenueCat')
+[Helpers] Extract App Intents Metadata
+2026-11-02 17:26:07.970 appintentsmetadataprocessor[14411:1125167] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:08.011 appintentsmetadataprocessor[14411:1125167] Extracted no relevant App Intents symbols, skipping writing output
+Signing Helpers.o (in target 'Helpers' from project 'Supabase')
+[PostgREST] Linking PostgREST.o
+[Storage] Linking Storage.o
+[RealtimeV2] Linking RealtimeV2.o
+[Functions] Linking Functions.o
+[Auth] Linking Auth.o
+[Functions] Extract App Intents Metadata
+2026-11-02 17:26:08.060 appintentsmetadataprocessor[14423:1125253] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:08.097 appintentsmetadataprocessor[14423:1125253] Extracted no relevant App Intents symbols, skipping writing output
+[PostgREST] Extract App Intents Metadata
+2026-11-02 17:26:08.060 appintentsmetadataprocessor[14424:1125254] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:08.103 appintentsmetadataprocessor[14424:1125254] Extracted no relevant App Intents symbols, skipping writing output
+[Storage] Extract App Intents Metadata
+2026-11-02 17:26:08.066 appintentsmetadataprocessor[14425:1125255] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:08.105 appintentsmetadataprocessor[14425:1125255] Extracted no relevant App Intents symbols, skipping writing output
+[RealtimeV2] Extract App Intents Metadata
+2026-11-02 17:26:08.066 appintentsmetadataprocessor[14426:1125256] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:08.107 appintentsmetadataprocessor[14426:1125256] Extracted no relevant App Intents symbols, skipping writing output
+[Auth] Extract App Intents Metadata
+2026-11-02 17:26:08.076 appintentsmetadataprocessor[14427:1125261] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:08.118 appintentsmetadataprocessor[14427:1125261] Extracted no relevant App Intents symbols, skipping writing output
+Signing RealtimeV2.o (in target 'RealtimeV2' from project 'Supabase')
+Signing Auth.o (in target 'Auth' from project 'Supabase')
+[Realtime] Linking Realtime.o
+Signing Functions.o (in target 'Functions' from project 'Supabase')
+[Realtime] Extract App Intents Metadata
+2026-11-02 17:26:08.152 appintentsmetadataprocessor[14433:1125297] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:08.190 appintentsmetadataprocessor[14433:1125297] Extracted no relevant App Intents symbols, skipping writing output
+Signing PostgREST.o (in target 'PostgREST' from project 'Supabase')
+Signing Realtime.o (in target 'Realtime' from project 'Supabase')
+Signing Storage.o (in target 'Storage' from project 'Supabase')
+[Supabase] Linking Supabase.o
+[Supabase] Extract App Intents Metadata
+2026-11-02 17:26:08.245 appintentsmetadataprocessor[14439:1125327] Starting appintentsmetadataprocessor export
+2026-11-02 17:26:08.283 appintentsmetadataprocessor[14439:1125327] Extracted no relevant App Intents symbols, skipping writing output
+Signing Supabase.o (in target 'Supabase' from project 'Supabase')
+[VineTrack] Copy RevenueCat_RevenueCat.bundle -> RevenueCat_RevenueCat.bundle
+[VineTrack] Copy RevenueCat_RevenueCatUI.bundle -> RevenueCat_RevenueCatUI.bundle
+[VineTrack] Copy swift-crypto_Crypto.bundle -> swift-crypto_Crypto.bundle
+[VineTrack] Processing VineTrackV2-Info.plist
+[VineTrack] Compiling SprayCalculatorView.swift
+[VineTrack] Compiling SyncDiagnosticsView.swift
+[VineTrack] Compiling TripQueuedUploadScope.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift:37:55: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 35 | 
+ 36 |     init(provider: SupabaseClientProvider = .shared,
+ 37 |          deletionAuthority: VineyardWriteAuthority = .shared,
+    |                                                       `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 38 |          deletionSession: (() async throws -> DeletionSession)? = nil,
+ 39 |          deletionTransport: @escaping (URLRequest) async throws -> (Data, URLResponse) = { try await URLSession.shared.data(for: $0) }) {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift:53:84: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 51 |     private let authority: VineyardWriteAuthority
+ 52 | 
+ 53 |     init(scope: Scope, directory: URL? = nil, authority: VineyardWriteAuthority = .shared,
+    |                                                                                    `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 54 |          createDirectoryIfMissing: Bool = true) throws {
+ 55 |         self.authority = authority
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[VineTrack] Compiling SupabaseTripSyncRepository.swift
+[VineTrack] Compiling OccurrenceStartAdmission.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift:53:84: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 51 |     private let authority: VineyardWriteAuthority
+ 52 | 
+ 53 |     init(scope: Scope, directory: URL? = nil, authority: VineyardWriteAuthority = .shared,
+    |                                                                                    `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 54 |          createDirectoryIfMissing: Bool = true) throws {
+ 55 |         self.authority = authority
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[VineTrack] Compiling LegacySpraySaveRecovery.swift
+[VineTrack] Compiling MigratedDataStore.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Services/MigratedDataStore.swift:420:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 418 |     // MARK: - Init
+ 419 | 
+ 420 |     init(persistence: PersistenceStore = .shared) {
+     |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 421 |         self.persistence = persistence
+ 422 |         self.vineyardRepo = VineyardRepository(persistence: persistence)
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/SprayRecordSyncService.swift:412:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+410 |     }
+411 | 
+412 |     init(persistence: PersistenceStore = .shared) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+413 |         self.persistence = persistence
+414 |         self.state = persistence.load(key: key) ?? State()
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift:37:55: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 35 | 
+ 36 |     init(provider: SupabaseClientProvider = .shared,
+ 37 |          deletionAuthority: VineyardWriteAuthority = .shared,
+    |                                                       `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 38 |          deletionSession: (() async throws -> DeletionSession)? = nil,
+ 39 |          deletionTransport: @escaping (URLRequest) async throws -> (Data, URLResponse) = { try await URLSession.shared.data(for: $0) }) {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[VineTrack] Compiling SprayRecordSyncService.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift:53:84: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 51 |     private let authority: VineyardWriteAuthority
+ 52 | 
+ 53 |     init(scope: Scope, directory: URL? = nil, authority: VineyardWriteAuthority = .shared,
+    |                                                                                    `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 54 |          createDirectoryIfMissing: Bool = true) throws {
+ 55 |         self.authority = authority
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[VineTrack] Compiling TripOccurrenceJournal.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripSyncService.swift:1648:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+1646 |     }
+1647 | 
+1648 |     init(persistence: PersistenceStore = .shared) {
+     |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+1649 |         self.persistence = persistence
+1650 |         self.state = persistence.load(key: key) ?? State()
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Repositories/SupabaseTripSyncRepository.swift:37:55: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 35 | 
+ 36 |     init(provider: SupabaseClientProvider = .shared,
+ 37 |          deletionAuthority: VineyardWriteAuthority = .shared,
+    |                                                       `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 38 |          deletionSession: (() async throws -> DeletionSession)? = nil,
+ 39 |          deletionTransport: @escaping (URLRequest) async throws -> (Data, URLResponse) = { try await URLSession.shared.data(for: $0) }) {
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripOccurrenceJournal.swift:53:84: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 51 |     private let authority: VineyardWriteAuthority
+ 52 | 
+ 53 |     init(scope: Scope, directory: URL? = nil, authority: VineyardWriteAuthority = .shared,
+    |                                                                                    `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 54 |          createDirectoryIfMissing: Bool = true) throws {
+ 55 |         self.authority = authority
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Subscription/VineyardWriteAuthority.swift:7:16: note: static property declared here
+ 5 | @MainActor
+ 6 | final class VineyardWriteAuthority {
+ 7 |     static let shared = VineyardWriteAuthority()
+   |                `- note: static property declared here
+ 8 |     static let holdReason = "READ_ONLY_TRIAL_EXPIRED"
+ 9 |     struct Restricted: LocalizedError {
+[x] /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripSyncService.swift:1841:72: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+1839 | 
+1840 |     static func discrepancy(local: TankSession, remote: TankSession, legacyArchiveSeconds: Bool = false) -> String? {
+1841 |         let timeMatches: (Date?, Date?) -> Bool = legacyArchiveSeconds ? archivedSecondMatches : sameTime
+     |                                                                        `- error: failed to produce diagnostic for expression; please submit a bug report (https://swift.org/contributing/#reporting-bugs)
+1842 |         guard local.id == remote.id else { return "TRIP_LOCAL_TANK_SESSION_ID_DIFFERS" }
+1843 |         guard local.tankNumber == remote.tankNumber else { return "TRIP_LOCAL_TANK_NUMBER_DIFFERS" }
+Failed frontend command:
+/Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swift-frontend -frontend -c -filelist /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/Objects-normal/arm64/sources-1 -primary-file /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripSyncService.swift -emit-dependencies-path /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/Objects-normal/arm64/TripSyncService.d -emit-const-values-path /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/Objects-normal/arm64/TripSyncService.swiftconstvalues -emit-reference-dependencies-path /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/Objects-normal/arm64/TripSyncService.swiftdeps -serialize-diagnostics-path /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/Objects-normal/arm64/TripSyncService.dia -emit-localized-strings -emit-localized-strings-path /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/Objects-normal/arm64 -target arm64-apple-ios18.0-simulator -module-can-import-version DeveloperToolsSupport 24.0.24 24.0.24 -module-can-import-version SwiftUI 8.0.85.29 8.0.85 -module-can-import-version UIKit 9127.0.85.32 9127.0.85 -disable-cross-import-overlay-search -swift-module-cross-import AuthenticationServices /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Cryptexes/OS/System/Library/Frameworks/AuthenticationServices.framework/Modules/AuthenticationServices.swiftcrossimport/SwiftUI.swiftoverlay -swift-module-cross-import AuthenticationServices /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk/System/Library/Frameworks/AuthenticationServices.framework/Modules/AuthenticationServices.swiftcrossimport/SwiftUI.swiftoverlay -swift-module-cross-import MapKit /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/Frameworks/MapKit.framework/Modules/MapKit.swiftcrossimport/SwiftUI.swiftoverlay -swift-module-cross-import MapKit /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk/System/Library/Frameworks/MapKit.framework/Modules/MapKit.swiftcrossimport/SwiftUI.swiftoverlay -swift-module-cross-import PhotosUI /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/Frameworks/PhotosUI.framework/Modules/PhotosUI.swiftcrossimport/SwiftUI.swiftoverlay -swift-module-cross-import PhotosUI /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator.sdk/System/Library/Frameworks/PhotosUI.framework/Modules/PhotosUI.swiftcrossimport/WidgetKit.swiftoverlay -swift-module-cross-import PhotosUI /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk/System/Library/Frameworks/PhotosUI.framework/Modules/PhotosUI.swiftcrossimport/SwiftUI.swiftoverlay -swift-module-cross-import PhotosUI /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk/System/Library/Frameworks/PhotosUI.framework/Modules/PhotosUI.swiftcrossimport/WidgetKit.swiftoverlay -swift-module-cross-import SwiftData /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk/System/Library/Frameworks/SwiftData.framework/Modules/SwiftData.swiftcrossimport/CoreData.swiftoverlay -swift-module-cross-import SwiftData /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk/System/Library/Frameworks/SwiftData.framework/Modules/SwiftData.swiftcrossimport/SwiftUI.swiftoverlay -load-resolved-plugin /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libFoundationMacros.dylib\#/Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#FoundationMacros -load-resolved-plugin /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libObservationMacros.dylib\#/Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#ObservationMacros -load-resolved-plugin /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libPreviewsMacros.dylib\#/Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#PreviewsMacros -load-resolved-plugin /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libSwiftDataMacros.dylib\#/Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#SwiftDataMacros -load-resolved-plugin /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libSwiftMacros.dylib\#/Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#SwiftMacros -load-resolved-plugin /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib\#/Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer/usr/bin/swift-plugin-server\#SwiftUIMacros -disable-implicit-swift-modules -Xcc -fno-implicit-modules -Xcc -fno-implicit-module-maps -explicit-swift-module-map-file /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/Objects-normal/arm64/VineTrack-dependencies-1.json -Xllvm -aarch64-use-tbi -enable-objc-interop -sdk /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk -I /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator -F /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/PackageFrameworks -F /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator -module-cache-path /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules -no-color-diagnostics -Xcc -fno-color-diagnostics -enable-testing -g -debug-info-format\=dwarf -dwarf-version\=5 -swift-version 5 -Onone -D DEBUG -serialize-debugging-options -enable-upcoming-feature DisableOutwardActorInference -enable-upcoming-feature InferSendableFromCaptures -enable-upcoming-feature GlobalActorIsolatedTypesUsability -enable-upcoming-feature MemberImportVisibility -enable-upcoming-feature InferIsolatedConformances -enable-upcoming-feature NonisolatedNonsendingByDefault -enable-experimental-feature DebugDescriptionMacro -enable-bare-slash-regex -default-isolation\=MainActor -empty-abi-descriptor -validate-clang-modules-once -clang-build-session-file /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/ModuleCache.noindex/Session.modulevalidation -disable-sandbox -Xcc -working-directory -Xcc /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios -enable-anonymous-context-mangled-names -file-compilation-dir /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios -Xcc -D_LIBCPP_HARDENING_MODE\=_LIBCPP_HARDENING_MODE_DEBUG -Xcc -ivfsstatcache -Xcc /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/SDKStatCaches.noindex/iphonesimulator27.1-24A94232-e829b21a6f8c9b70876ba0858053c04421d52c5dee28f89a436238487c04ba4c.sdkstatcache -Xcc -fmodules-prune-interval\=86400 -Xcc -fmodules-prune-after\=345600 -Xcc -iquote -Xcc /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/VineTrack-generated-files.hmap -Xcc -I/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/VineTrack-own-target-headers.hmap -Xcc -I/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/VineTrack-all-non-framework-target-headers.hmap -Xcc -ivfsoverlay -Xcc /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack-acaee5f9e64d962710cd65f7b28957f4-VFS-iphonesimulator/all-product-headers.yaml -Xcc -iquote -Xcc /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/VineTrack-project-headers.hmap -Xcc -I/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/include -Xcc -I/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/DerivedSources-normal/arm64 -Xcc -I/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/DerivedSources/arm64 -Xcc -I/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/DerivedSources -Xcc -DDEBUG\=1 -no-auto-bridging-header-chaining -module-name VineTrack -const-gather-protocols-file /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/Objects-normal/arm64/VineTrack_const_extract_protocols.json -disable-clang-spi -clang-target arm64-apple-ios27.1-simulator -target-sdk-version 27.1 -target-sdk-name iphonesimulator27.1 -in-process-plugin-server-path /Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/libSwiftInProcPluginServer.dylib -o /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/Objects-normal/arm64/TripSyncService.o -debug-module-path /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/VineTrack.build/Debug-iphonesimulator/VineTrack.build/Objects-normal/arm64/VineTrack.swiftmodule -index-unit-output-path /VineTrack.build/Debug-iphonesimulator/VineTrack.build/Objects-normal/arm64/TripSyncService.o
+[VineTrack] Compiling TripSyncService.swift
+[VineTrack] Compiling YieldEstimationView.swift
+[VineTrack] Compiling TripClosureSection.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Views/SprayManagement/ChemicalDeleteActions.swift:26:50: call to main actor-isolated initializer 'init(repository:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 24 |     fileprivate let service: SavedChemicalDeletionService
+ 25 | 
+ 26 |     init(service: SavedChemicalDeletionService = SavedChemicalDeletionService()) {
+    |                                                  `- warning: call to main actor-isolated initializer 'init(repository:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+ 27 |         self.service = service
+ 28 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Services/SavedChemicalDeletionService.swift:32:5: note: calls to initializer 'init(repository:)' from outside of its actor context are implicitly asynchronous
+30 |     private let repository: any SavedChemicalSyncRepositoryProtocol
+31 | 
+32 |     init(repository: (any SavedChemicalSyncRepositoryProtocol)? = nil) {
+   |     `- note: calls to initializer 'init(repository:)' from outside of its actor context are implicitly asynchronous
+33 |         self.repository = repository ?? SupabaseSavedChemicalSyncRepository()
+34 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/App/ChemicalIntelligence/CatalogueSearchModel.swift:20:43: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 18 |     private var pollTask: Task<Void, Never>?
+ 19 |     private var requestId: UUID = UUID()
+ 20 |     init(persistence: PersistenceStore = .shared, repository: (any CatalogueBackendProtocol)? = nil) {
+    |                                           `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 21 |         self.persistence = persistence; self.repository = repository ?? CatalogueRepository()
+ 22 |     }
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+SwiftCompile normal arm64 (in target 'VineTrack' from project 'VineTrack')
+[VineTrack] Compiling TripDetailView.swift
+[VineTrack] Compiling Trip.swift
+[VineTrack] Compiling TripView.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Services/StartTankCommitCoordinator.swift:26:42: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 24 | 
+ 25 |     init(
+ 26 |         persistence: PersistenceStore = .shared,
+    |                                          `- warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context; this is an error in the Swift 6 language mode
+ 27 |         actualStore: SprayTankActualStore = .shared,
+ 28 |         failurePoint: FailurePoint? = nil
+/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/LegacyImported/Repositories/LegacyStorage.swift:15:16: note: static property declared here
+ 13 | @MainActor
+ 14 | final class PersistenceStore {
+ 15 |     static let shared = PersistenceStore()
+    |                `- note: static property declared here
+ 16 | 
+ 17 |     /// Outcome of loading a persisted JSON payload. Distinguishes "no file"
+[VineTrack] Compiling TripTrackingService.swift
+[VineTrack] Compiling BlocksHubView.swift
+[VineTrack] Compiling CurrentWeatherSettingsSection.swift
+[VineTrack] Compiling CustomiseOperationalToolsView.swift
+[VineTrack] Compiling DiseaseRiskAdvisorView.swift
+[VineTrack] Compiling FertigationApplicationHistoryView.swift
+[VineTrack] Compiling FertigationSessionEditView.swift
+[VineTrack] Compiling GrowthObservationActionView.swift
+[VineTrack] Compiling IrrigationHistoryView.swift
+[VineTrack] Compiling IrrigationRecordEntryView.swift
+[VineTrack] Compiling IrrigationRecordsView.swift
+[VineTrack] Compiling IrrigationReportsCentreView.swift
+[VineTrack] Compiling IrrigationSetupView.swift
+[VineTrack] Compiling ManualIssueComposerView.swift
+[VineTrack] Compiling ManualIssueDetailView.swift
+[VineTrack] Compiling MaintenanceLogListView.swift
+[VineTrack] Compiling GrowthStageBlockDetailView.swift
+[VineTrack] Compiling GrowthStageHistoryView.swift
+[VineTrack] Compiling GrowthStageRecordsListView.swift
+[VineTrack] Compiling RipenessSurfacesViews.swift
+[VineTrack] Compiling SetBudburstDatesSheet.swift
+[VineTrack] Compiling VarietyGDDDetailView.swift
+[VineTrack] Compiling PinDropView.swift
+[VineTrack] Compiling PinsView.swift
+[VineTrack] Compiling PruningActivityEditorView.swift
+[VineTrack] Compiling PruningActivityReportView.swift
+[VineTrack] Compiling PruningBlockDetailView.swift
+[VineTrack] Compiling PruningTrackerView.swift
+[VineTrack] Compiling BackendVineyardListView.swift
+[VineTrack] Compiling EditVineyardSheet.swift
+[VineTrack] Compiling CurrentYieldEstimateSummary.swift
+[VineTrack] Compiling DamageRecordsListView.swift
+[VineTrack] Compiling GrapeAllocationView.swift
+[VineTrack] Compiling GrapePurchaserFormView.swift
+[VineTrack] Compiling RecordActualYieldSheet.swift
+[VineTrack] Compiling YieldHubView.swift
+[VineTrack] Compiling YieldReportsListView.swift
+[VineTrack] Compiling YieldReportView.swift
+[VineTrack] Compiling YieldSamplingNavigationView.swift
+[VineTrack] Compiling YieldSettingsView.swift
+[VineTrack] Compiling VineTrackApp.swift
+[VineTrack] Compiling WorkTaskLogView.swift
+[VineTrack] Compiling WorkTaskMaterialsViews.swift
+[VineTrack] Compiling WorkTasksHubView.swift
+[VineTrack] Compiling ActiveTripView.swift
+[VineTrack] Compiling AddBlocksToTripSheet.swift
+[VineTrack] Compiling ChangeTripRouteSheet.swift
+[VineTrack] Compiling ConfirmActualTankMixView.swift
+[VineTrack] Compiling EndTripReviewSheet.swift
+[VineTrack] Compiling StartTripSheet.swift
+[VineTrack] Compiling TankMixDetailsView.swift
+[VineTrack] Compiling TripCancellationSection.swift
+[VineTrack] Compiling TripCostingLinksEditSheet.swift
+[VineTrack] Compiling BackendVineyardDetailSheet.swift
+[VineTrack] Compiling CatalogueChemicalEditorView.swift
+[VineTrack] Compiling CatalogueSearchView.swift
+[VineTrack] Compiling ChemicalInventoryActionsView.swift
+[VineTrack] Compiling ChemicalInventoryView.swift
+[VineTrack] Compiling ChemicalProductSearchSheet.swift
+[VineTrack] Compiling ChemicalSearchV2View.swift
+[VineTrack] Compiling VineyardPreferredRateSection.swift
+[VineTrack] Compiling ScoutReportView.swift
+[VineTrack] Compiling VineyardInsightsView.swift
+[VineTrack] Compiling VintageReportWorkspaceView.swift
+[VineTrack] Compiling LegacySprayRecoveryValidationView.swift
+[VineTrack] Compiling SprayCalculatorKeyboardValidationView.swift
+[VineTrack] Compiling SprayReportPayloadV1.swift
+[VineTrack] Compiling SprayReportRepository.swift
+[VineTrack] Compiling SprayTankActualStore.swift
+[VineTrack] Compiling TankDependencyVerification.swift
+[VineTrack] Compiling TrackedSprayCompletionSync.swift
+[VineTrack] Compiling TripActivityCancellationService.swift
+[VineTrack] Compiling TripAuditService.swift
+[VineTrack] Compiling TripLabourSnapshotJournal.swift
+[VineTrack] Compiling BackendDiagnosticView.swift
+[VineTrack] Compiling MigratedDataStoreDiagnosticView.swift
+[VineTrack] Compiling SprayProgramCSVService.swift
+[VineTrack] Compiling SprayProgramExportService.swift
+[VineTrack] Compiling SprayRecordPDFService.swift
+[VineTrack] Compiling TripCSVService.swift
+[VineTrack] Compiling TripPDFService.swift
+[VineTrack] Compiling HomeSyncStatusChip.swift
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/SDKExplicitPrecompiledModules
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/ExplicitPrecompiledModules
+Build Timing Summary
+SwiftCompile (7 tasks) | 10.182 seconds
+SwiftDriver (1 task) | 2.764 seconds
+ExtractAppIntentsMetadata (17 tasks) | 1.086 seconds
+Ld (17 tasks) | 0.501 seconds
+Signing (20 tasks) | 0.349 seconds
+Copy (3 tasks) | 0.104 seconds
+ProcessInfoPlistFile (4 tasks) | 0.022 seconds
+WriteAuxiliaryFile (4 tasks) | 0.004 seconds
+** TEST BUILD FAILED **
+
+
+The following build commands failed:
+	SwiftCompile normal arm64 Compiling\ TripSyncService.swift /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripSyncService.swift (in target 'VineTrack' from project 'VineTrack')
+	SwiftCompile normal arm64 /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Backend/Sync/TripSyncService.swift (in target 'VineTrack' from project 'VineTrack')
+	Building project VineTrack for testing with scheme VineTrack
+(3 failures)
+Result bundle written to path:
+	/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/result-bundles/build-1793665555790289000/build.xcresult
+Build completed in 17.232532s
+exit status 65

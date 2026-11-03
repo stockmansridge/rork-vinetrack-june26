@@ -31,6 +31,7 @@ struct TripView: View {
     @Environment(MigratedDataStore.self) private var store
     @Environment(BackendAccessControl.self) private var accessControl
     @Environment(TripTrackingService.self) private var tracking
+    @Environment(TripSyncService.self) private var tripSync
     @Environment(LocationService.self) private var locationService
     @State private var tripSortOption: TripSortOption = .date
     @State private var tripTypeFilter: TripTypeFilter = .all
@@ -354,6 +355,9 @@ struct TripView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .transaction { transaction in
+                if tripSync.isSyncing { transaction.animation = nil }
+            }
             .listSectionSpacing(0)
             .navigationDestination(for: UUID.self) { tripId in
                 if let trip = store.trips.first(where: { $0.id == tripId }),

@@ -1362,6 +1362,57 @@ final class TripSyncService {
                 let recovery = try await repository.fetchOccurrenceRecovery(tripId: backendTrip.id, operationIds: saved?.pending.map(\.id) ?? [])
                 guard store.currentUserIdProvider?() == account else { throw TripOccurrenceCoverage.Failure.scopeConflict }
                 try journal.recover(recovery)
+                // P0 build 208: a server-active pull is NOT permission to reopen
+                // an End already saved on this installation. The original
+                // occurrence finalisation stays in its durable, scoped journal.
+                let localBeforePull = store.trips.first {
+                    $0.id == mapped.id && $0.vineyardId == mapped.vineyardId
+                }
+                let retainedAfterRecovery = try journal.load()
+                var localEndEvidence = localBeforePull
+                if mapped.endTime == nil, let local = localBeforePull,
+                   local.isActive, local.endTime == nil,
+                   let retained = retainedAfterRecovery,
+                   let finalise = retained.pending.first(where: { $0.rpc == "finalize_trip_occurrences_v1" }),
+                   let recorded = finalise.action[occurrence: "metadata"]?[occurrence: "endTime"]?.occurrenceString,
+                   let endedAt = TankSessionDateParser.parse(recorded),
+                   let claim = try TripLocalEndClaimStore.shared.find(tripId: mapped.id.uuidString.lowercased()),
+                   claim.ownerId == account.uuidString.lowercased(),
+                   claim.vineyardId == mapped.vineyardId.uuidString.lowercased(),
+                   claim.tripId == mapped.id.uuidString.lowercased(),
+                   TankSessionReceiptMatch.sameTime(claim.endedAt, endedAt) {
+                    // Build 208 could replace the ended local cache with an
+                    // earlier active server snapshot. Restore ONLY the exact
+                    // original local end using independently retained claim +
+                    // finalise operation; never fabricate route/tank contents.
+                    var repaired = local
+                    repaired.isActive = false
+                    repaired.isPaused = false
+                    repaired.endTime = endedAt
+                    store.applyRemoteTripUpsert(repaired)
+                    localEndEvidence = repaired
+                }
+                if TripPendingEndRemotePolicy.mustPreserve(local: localEndEvidence, remote: mapped) {
+                    if retainedAfterRecovery?.pending.contains(where: {
+                        $0.rpc == "finalize_trip_occurrences_v1"
+                    }) == true && metadata.pendingUpserts[backendTrip.id] == nil {
+                        // Re-admit only the exact retained journal, not a new
+                        // Trip/operation or reconstructed record.
+                        metadata.markDirty(backendTrip.id, at: Date())
+                    }
+                    if metadata.pendingUpserts[backendTrip.id] != nil {
+                        metadata.markUpsertsFailed([backendTrip.id])
+                    }
+                    receiptReconciliationHolds[backendTrip.id] = "TRIP_LOCAL_END_AWAITING_ORIGINAL_FINALISE"
+                    syncStatus = .failure("This Trip ended on the original device; its server finalisation is pending. The local record and operation IDs remain retained.")
+                    return
+                }
+                // The server now carries the End (or the local Trip is no longer
+                // ended-pending): retire ONLY this display hold. Any other hold
+                // reason belongs to a different reconciliation path.
+                if receiptReconciliationHolds[backendTrip.id] == "TRIP_LOCAL_END_AWAITING_ORIGINAL_FINALISE" {
+                    receiptReconciliationHolds.removeValue(forKey: backendTrip.id)
+                }
                 if saved != nil {
                     if backendTrip.endTime != nil, try journal.load()?.pending.isEmpty == false {
                         try journal.hold("OCCURRENCE_TRIP_CLOSED")
@@ -1411,9 +1462,11 @@ final class TripSyncService {
             }
             for session in local.tankSessions {
                 if let index = reconciled.tankSessions.firstIndex(where: { $0.id == session.id }) {
-                    if !TankSessionReceiptMatch.equivalent(local: session, remote: reconciled.tankSessions[index]) {
-                        retainedUnacknowledgedEvidence = true
-                    }
+                    let serverSession = reconciled.tankSessions[index]
+                    let matches = local.coverageBasis == .legacy && mapped.coverageBasis == .legacy
+                        ? TankSessionReceiptMatch.terminalLegacyEquivalent(local: session, remote: serverSession)
+                        : TankSessionReceiptMatch.equivalent(local: session, remote: serverSession)
+                    if !matches { retainedUnacknowledgedEvidence = true }
                     // Preserve the original device evidence even if the wire
                     // representation rounded a time by less than a millisecond.
                     // This is local-only; no terminal server Trip is rewritten.
@@ -1773,24 +1826,57 @@ nonisolated enum TankSessionReceiptMatch {
         return "HOURS"
     }
 
-    static func discrepancy(local: TankSession, remote: TankSession) -> String? {
+    /// The old iOS PersistenceStore encoded Dates using JSONEncoder.iso8601,
+    /// which writes whole seconds. Its locally retained tank timestamp can
+    /// therefore be .000 while the independently read server JSON preserves
+    /// the original fractional second. This is NOT a general time tolerance.
+    /// It is only usable for the complete, linked, legacy terminal receipt.
+    private static func archivedSecondMatches(_ local: Date?, _ remote: Date?) -> Bool {
+        if sameTime(local, remote) { return true }
+        guard let local, let remote else { return false }
+        let original = local.timeIntervalSince1970
+        let server = remote.timeIntervalSince1970
+        return original == floor(original) && floor(server) == original
+    }
+
+    static func terminalLegacyEquivalent(local: TankSession, remote: TankSession) -> Bool {
+        discrepancy(local: local, remote: remote, legacyArchiveSeconds: true) == nil
+    }
+
+    static func discrepancy(local: TankSession, remote: TankSession, legacyArchiveSeconds: Bool = false) -> String? {
+        // Explicit closure: a ternary over two static function references crashes
+        // the Swift compiler's diagnostic pass (PR #50 head 39bdc353 did not compile).
+        let timeMatches: (Date?, Date?) -> Bool = { local, remote in
+            legacyArchiveSeconds ? archivedSecondMatches(local, remote) : sameTime(local, remote)
+        }
         guard local.id == remote.id else { return "TRIP_LOCAL_TANK_SESSION_ID_DIFFERS" }
         guard local.tankNumber == remote.tankNumber else { return "TRIP_LOCAL_TANK_NUMBER_DIFFERS" }
-        if !sameTime(local.startTime, remote.startTime) {
+        if !timeMatches(local.startTime, remote.startTime) {
             return "TRIP_LOCAL_TANK_START_TIME_DIFFERS_\(differenceBucket(local.startTime, remote.startTime))"
         }
-        if !sameTime(local.endTime, remote.endTime) {
+        if !timeMatches(local.endTime, remote.endTime) {
             return "TRIP_LOCAL_TANK_END_TIME_DIFFERS_\(differenceBucket(local.endTime, remote.endTime))"
         }
         guard local.pathsCovered == remote.pathsCovered, local.startRow == remote.startRow,
               local.endRow == remote.endRow else { return "TRIP_LOCAL_TANK_PATHS_DIFFER" }
-        if !sameTime(local.fillStartTime, remote.fillStartTime) {
+        if !timeMatches(local.fillStartTime, remote.fillStartTime) {
             return "TRIP_LOCAL_TANK_FILL_START_DIFFERS_\(differenceBucket(local.fillStartTime, remote.fillStartTime))"
         }
-        if !sameTime(local.fillEndTime, remote.fillEndTime) {
+        if !timeMatches(local.fillEndTime, remote.fillEndTime) {
             return "TRIP_LOCAL_TANK_FILL_END_DIFFERS_\(differenceBucket(local.fillEndTime, remote.fillEndTime))"
         }
         return nil
+    }
+}
+
+/// Preserve a locally ended occurrence Trip when a delayed active server pull
+/// arrives. The server still needs the original finalise RPC; the UI must not
+/// silently revive the trip or give it an invented foreign-device claim.
+nonisolated enum TripPendingEndRemotePolicy {
+    static func mustPreserve(local: Trip?, remote: Trip) -> Bool {
+        guard let local, local.id == remote.id, local.vineyardId == remote.vineyardId,
+              !local.isActive, local.endTime != nil, remote.endTime == nil else { return false }
+        return true
     }
 }
 
@@ -1820,7 +1906,10 @@ nonisolated enum CompletedTripReceiptAdmission {
             guard let remoteSession = remote.tankSessions.first(where: { $0.id == localSession.id }) else {
                 return "TRIP_LOCAL_TANK_SESSION_NOT_ON_SERVER"
             }
-            if let reason = TankSessionReceiptMatch.discrepancy(local: localSession, remote: remoteSession) {
+            let legacyArchive = local.coverageBasis == .legacy && remote.coverageBasis == .legacy
+            if let reason = TankSessionReceiptMatch.discrepancy(
+                local: localSession, remote: remoteSession, legacyArchiveSeconds: legacyArchive
+            ) {
                 return reason
             }
         }

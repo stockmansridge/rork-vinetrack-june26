@@ -1,0 +1,841 @@
+Building with Xcode 27.1 (27A9275)
+Command line invocation:
+Build settings from command line:
+Resolving Package Graph
+Resolved source packages
+swift-issue-reporting - https://github.com/pointfreeco/swift-issue-reporting @ 2.1.2
+RevenueCat - https://github.com/RevenueCat/purchases-ios.git @ 5.99.0
+swift-concurrency-extras - https://github.com/pointfreeco/swift-concurrency-extras @ 1.4.3
+swift-http-types - https://github.com/apple/swift-http-types.git @ 1.8.0
+Supabase - https://github.com/supabase/supabase-swift.git @ 2.55.5
+xctest-dynamic-overlay - https://github.com/pointfreeco/xctest-dynamic-overlay @ 1.13.1
+swift-crypto - https://github.com/apple/swift-crypto.git @ 4.5.2
+swift-asn1 - https://github.com/apple/swift-asn1.git @ 1.7.3
+swift-clocks - https://github.com/pointfreeco/swift-clocks @ 1.1.1
+Writing result bundle at path:
+	/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/result-bundles/build-1793665676715992000/build.xcresult
+Build Preparation
+Build task concurrency set to 14 via user default IDEBuildOperationMaxNumberOfConcurrentCompileTasks
+note: Using codesigning identity override: -
+ComputePackagePrebuildTargetDependencyGraph
+Prepare packages
+CreateBuildRequest
+SendProjectDescription
+CreateBuildOperation
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+note: Target dependency graph (34 targets)
+GatherProvisioningInputs
+CreateBuildDescription
+ClangStatCache /Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/SDKStatCaches.noindex/iphonesimulator27.1-24A94232-e829b21a6f8c9b70876ba0858053c04421d52c5dee28f89a436238487c04ba4c.sdkstatcache
+Failed to create FS event stream. Considering the cache up-to-date.
+CopySwiftLibs /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrack.app (in target 'VineTrack' from project 'VineTrack')
+[VineTrack] Extract App Intents Metadata
+2026-11-02 17:28:01.237 appintentsmetadataprocessor[15140:1129460] Starting appintentsmetadataprocessor export
+2026-11-02 17:28:01.238 appintentsmetadataprocessor[15140:1129460] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+AppIntentsSSUTraining (in target 'VineTrack' from project 'VineTrack')
+2026-11-02 17:28:01.259 appintentsnltrainingprocessor[15141:1129464] Parsing options for appintentsnltrainingprocessor
+2026-11-02 17:28:01.259 appintentsnltrainingprocessor[15141:1129464] Starting AppIntents SSU YAML Generation
+2026-11-02 17:28:01.259 appintentsnltrainingprocessor[15141:1129464] No AppShortcuts found - Skipping.
+[VineTrackTripTests] Copy swift-crypto_Crypto.bundle -> swift-crypto_Crypto.bundle
+[VineTrackTripTests] Linking VineTrackTripTests
+[VineTrackTripTests] Copy RevenueCat_RevenueCatUI.bundle -> RevenueCat_RevenueCatUI.bundle
+[VineTrackTripTests] Copy RevenueCat_RevenueCat.bundle -> RevenueCat_RevenueCat.bundle
+[VineTrackTests] Copy RevenueCat_RevenueCatUI.bundle -> RevenueCat_RevenueCatUI.bundle
+[VineTrackTests] Copy swift-crypto_Crypto.bundle -> swift-crypto_Crypto.bundle
+[VineTrackTests] Copy RevenueCat_RevenueCat.bundle -> RevenueCat_RevenueCat.bundle
+[VineTrackTripTests] Processing empty-VineTrackTripTests.plist
+[VineTrackTests] Processing empty-VineTrackTests.plist
+[VineTrackTripTests] Extract App Intents Metadata
+2026-11-02 17:28:01.525 appintentsmetadataprocessor[15149:1129516] Starting appintentsmetadataprocessor export
+2026-11-02 17:28:01.526 appintentsmetadataprocessor[15149:1129516] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+CopySwiftLibs /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrack.app/PlugIns/VineTrackTripTests.xctest (in target 'VineTrackTripTests' from project 'VineTrack')
+AppIntentsSSUTraining (in target 'VineTrackTripTests' from project 'VineTrack')
+2026-11-02 17:28:01.544 appintentsnltrainingprocessor[15152:1129526] Parsing options for appintentsnltrainingprocessor
+2026-11-02 17:28:01.544 appintentsnltrainingprocessor[15152:1129526] Starting AppIntents SSU YAML Generation
+2026-11-02 17:28:01.544 appintentsnltrainingprocessor[15152:1129526] No AppShortcuts found - Skipping.
+Signing VineTrackTripTests.xctest (in target 'VineTrackTripTests' from project 'VineTrack')
+[VineTrackTests] Compiling ChemicalLegacyRateProjectionTests.swift
+[VineTrackTests] Compiling ChemicalLookupCoordinatorTests.swift
+[VineTrackTests] Compiling ChemicalLookupDiagnosticsTests.swift
+[VineTrackTests] Compiling ChemicalManualEntryTests.swift
+[VineTrackTests] Compiling ChemicalManualMinimumSaveContractTests.swift
+[VineTrackTests] Compiling ChemicalManualRateContractTests.swift
+[VineTrackTests] Compiling ChemicalManualRateProductionPathTests.swift
+[VineTrackTests] Compiling ChemicalMatchPipelineTests.swift
+[VineTrackTests] Compiling ChemicalMultiRateTests.swift
+[VineTrackTests] Compiling ChemicalProvenancePersistenceTests.swift
+[VineTrackTests] Compiling ChemicalRateConfirmationGateTests.swift
+[VineTrackTests] Compiling ChemicalReverificationTests.swift
+[VineTrackTests] Compiling ChemicalReverifyFlowTests.swift
+[VineTrackTests] Compiling ChemicalReverifyTargetWordingTests.swift
+[VineTrackTests] Compiling ChemicalReviewHydrationTests.swift
+[VineTrackTests] Compiling ChemicalReviewMergeTests.swift
+[VineTrackTests] Compiling ChemicalReviewUIConsolidationTests.swift
+[VineTrackTests] Compiling ChemicalSaveContractTests.swift
+[VineTrackTests] Compiling ChemicalSearchMVPTests.swift
+[VineTrackTests] Compiling ChemicalSearchRelevanceTests.swift
+[VineTrackTests] Compiling ChemicalSearchV2Tests.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/PerformanceValidationTests.swift:73:18: weak variable 'successfulReference' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
+ 71 |     @Test func completedAndFailedCatalogueFlightsReleaseCoordinator() async throws {
+ 72 |         var successful: CatalogReadSingleFlight<Int>? = CatalogReadSingleFlight<Int>()
+ 73 |         weak var successfulReference = successful
+    |                  `- warning: weak variable 'successfulReference' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
+ 74 |         let value = try await successful?.read(account: UUID()) { 42 }
+ 75 |         #expect(value == 42)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/PerformanceValidationTests.swift:80:18: weak variable 'failedReference' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
+ 78 | 
+ 79 |         var failed: CatalogReadSingleFlight<Int>? = CatalogReadSingleFlight<Int>()
+ 80 |         weak var failedReference = failed
+    |                  `- warning: weak variable 'failedReference' was never mutated; consider changing to 'let' constant [#VariableNeverMutated::WeakMutability]
+ 81 |         do {
+ 82 |             _ = try await failed?.read(account: UUID()) { throw URLError(.timedOut) }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/PinPhotoWorkflowTests.swift:13:30: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 11 | 
+ 12 |         XCTAssertFalse(fixture.service.hasPendingPhoto(pinId: fixture.pin.id))
+ 13 |         let referencedPath = await fixture.pinRepository.lastPhotoPath()
+    |                              `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 14 |         let uploadedPath = await fixture.storage.lastPath()
+ 15 |         XCTAssertEqual(referencedPath, uploadedPath)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/PinPhotoWorkflowTests.swift:14:28: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 12 |         XCTAssertFalse(fixture.service.hasPendingPhoto(pinId: fixture.pin.id))
+ 13 |         let referencedPath = await fixture.pinRepository.lastPhotoPath()
+ 14 |         let uploadedPath = await fixture.storage.lastPath()
+    |                            `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 15 |         XCTAssertEqual(referencedPath, uploadedPath)
+ 16 |         XCTAssertTrue(uploadedPath?.contains("photo-") == true)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/PinPhotoWorkflowTests.swift:36:27: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 34 |         )
+ 35 |         XCTAssertTrue(relaunched.hasPendingPhoto(pinId: fixture.pin.id))
+ 36 |         let upsertCount = await fixture.pinRepository.upsertCount()
+    |                           `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 37 |         XCTAssertEqual(upsertCount, 1)
+ 38 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/PinPhotoWorkflowTests.swift:48:27: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 46 |         try await fixture.service.pushLocalPins(vineyardId: fixture.vineyardId)
+ 47 | 
+ 48 |         let uploadCount = await fixture.storage.uploadCount()
+    |                           `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 49 |         XCTAssertEqual(uploadCount, 1)
+ 50 |         XCTAssertFalse(fixture.service.hasPendingPhoto(pinId: fixture.pin.id))
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[#VariableNeverMutated]: <https://docs.swift.org/compiler/documentation/diagnostics/variable-never-mutated>
+[#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
+[VineTrackTests] Compiling PaddockCacheRecoveryTests.swift
+[VineTrackTests] Compiling PaddockSyncSafetyTests.swift
+[VineTrackTests] Compiling PerformanceValidationTests.swift
+[VineTrackTests] Compiling PersistencePerformanceTests.swift
+[VineTrackTests] Compiling PickingRecordEditTests.swift
+[VineTrackTests] Compiling PieceRateCostingTests.swift
+[VineTrackTests] Compiling PinAisleAttachmentTests.swift
+[VineTrackTests] Compiling PinAisleObservationLockTests.swift
+[VineTrackTests] Compiling PinCategoryCatalogTests.swift
+[VineTrackTests] Compiling PinDuplicateCheckerTests.swift
+[VineTrackTests] Compiling PinDuplicateCreateAttemptTests.swift
+[VineTrackTests] Compiling PinManualPlacementTests.swift
+[VineTrackTests] Compiling PinOfflineCaptureDisplayTests.swift
+[VineTrackTests] Compiling PinPhotoWorkflowTests.swift
+[VineTrackTests] Compiling PinPlacementContractTests.swift
+[VineTrackTests] Compiling PinPresentationTargetTests.swift
+[VineTrackTests] Compiling PinQueryPolicyTests.swift
+[VineTrackTests] Compiling PinRemoteMergeBatchTests.swift
+[VineTrackTests] Compiling PinsMapFollowMeContractTests.swift
+[VineTrackTests] Compiling PlanJobProvenanceIntegrityTests.swift
+[VineTrackTests] Compiling SavedChemicalBatchReconciliationTests.swift
+[VineTrackTests] Compiling SavedChemicalParityTests.swift
+[VineTrackTests] Compiling SavedChemicalReconciliationTests.swift
+[VineTrackTests] Compiling ScoutPhotoDurabilityTests.swift
+[VineTrackTests] Compiling ScoutReportRegionTests.swift
+[VineTrackTests] Compiling SeasonScopeOptionsTests.swift
+[VineTrackTests] Compiling SeasonYieldDamageParityTests.swift
+[VineTrackTests] Compiling SettingsScrollingPerformanceTests.swift
+[VineTrackTests] Compiling SprayApplicationGeometryTests.swift
+[VineTrackTests] Compiling SprayApplicationSnapshotTests.swift
+[VineTrackTests] Compiling SprayBandedGroundCarrierTests.swift
+[VineTrackTests] Compiling SprayBlockAttributionTests.swift
+[VineTrackTests] Compiling SprayCalculationContractTests.swift
+[VineTrackTests] Compiling SprayCalculationParityTests.swift
+[VineTrackTests] Compiling SprayCalculatorSectionTimingTests.swift
+[VineTrackTests] Compiling SprayCalculatorTimingTests.swift
+[VineTrackTests] Compiling SprayCalculatorUXPassTests.swift
+[VineTrackTests] Compiling SprayCanopyAndRatePresetTests.swift
+[VineTrackTests] Compiling SprayCanopyCarrierRoutingTests.swift
+[VineTrackTests] Compiling SprayCarrierBasisSyncContractTests.swift
+[VineTrackTests] Compiling PreparedVineyardSelectionTests.swift
+[VineTrackTests] Compiling ProductionChemicalStructureTests.swift
+[VineTrackTests] Compiling ProgramGroupedPDFTests.swift
+[VineTrackTests] Compiling PruningActivityAllocationTests.swift
+[VineTrackTests] Compiling PruningActivityCacheTests.swift
+[VineTrackTests] Compiling PruningActivityEditorFlowTests.swift
+[VineTrackTests] Compiling PruningActivityExportTests.swift
+[VineTrackTests] Compiling PruningActivityLabourLineTests.swift
+[VineTrackTests] Compiling PruningActivityReportTests.swift
+[VineTrackTests] Compiling PruningActivityTimingPreflightTests.swift
+[VineTrackTests] Compiling PruningActivityWorkTaskLinkTests.swift
+[VineTrackTests] Compiling PruningBlockPresentationTests.swift
+[VineTrackTests] Compiling PruningCalculatorFixtureTests.swift
+[VineTrackTests] Compiling PruningResourceCASTests.swift
+[VineTrackTests] Compiling PruningResourceRecoveryAcceptanceTests.swift
+[VineTrackTests] Compiling PruningSeasonAssignmentTests.swift
+[VineTrackTests] Compiling PruningSeasonRevisionSyncTests.swift
+[VineTrackTests] Compiling PruningSkippedSectionsTests.swift
+[VineTrackTests] Compiling PruningVineyardForecastTests.swift
+[VineTrackTests] Compiling PruningWorkTaskCostingCreateTests.swift
+[!]  macro expansion #expect:2:7: result of call to 'contains' is unused [#NoUsage]
+`- /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ProgramGroupedPDFTests.swift:158:71: note: expanded code originates here
+156 |         let pdf = try #require(PDFDocument(url: url))
+157 |         #expect(pdf.pageCount >= 3)
+158 |         #expect((pdf.page(at: 1)?.string ?? "").contains("continued"))
+    |         `- note: in expansion of macro 'expect' here
+    +--- macro expansion #expect ---------------------------------------
+    |1 | Testing.__checkFunctionCall((pdf.page(at: 1)?.string ?? "").self,calling: {
+    |2 |   $0?.contains($1)
+    |  |       `- warning: result of call to 'contains' is unused [#NoUsage]
+    |3 | },"continued",expression: .__fromFunctionCall(.__fromSyntaxNode(#"(pdf.page(at: 1)?.string ?? "")"#),"contains",(nil,.__fromStringLiteral(#""continued""#, "continued"))),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+    +-------------------------------------------------------------------
+159 |         for index in 0..<100 { #expect((pdf.string ?? "").contains("UniqueProduct\(index)")) }
+160 |     }
+[!]  macro expansion #expect:1:54: left side of nil coalescing operator '??' has non-optional type 'String?', so the right side is never used
+`- /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ProgramGroupedPDFTests.swift:158:71: note: expanded code originates here
+156 |         let pdf = try #require(PDFDocument(url: url))
+157 |         #expect(pdf.pageCount >= 3)
+158 |         #expect((pdf.page(at: 1)?.string ?? "").contains("continued"))
+    |         `- note: in expansion of macro 'expect' here
+    +--- macro expansion #expect ---------------------------------------
+    |1 | Testing.__checkFunctionCall((pdf.page(at: 1)?.string ?? "").self,calling: {
+    |  |                                                      `- warning: left side of nil coalescing operator '??' has non-optional type 'String?', so the right side is never used
+    |2 |   $0?.contains($1)
+    |3 | },"continued",expression: .__fromFunctionCall(.__fromSyntaxNode(#"(pdf.page(at: 1)?.string ?? "")"#),"contains",(nil,.__fromStringLiteral(#""continued""#, "continued"))),comments: [],isRequired: false,sourceLocation: Testing.SourceLocation.__here()).__expected()
+    +-------------------------------------------------------------------
+159 |         for index in 0..<100 { #expect((pdf.string ?? "").contains("UniqueProduct\(index)")) }
+160 |     }
+[#NoUsage]: <https://docs.swift.org/compiler/documentation/diagnostics/no-usage>
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/LinkedPinGrowthDeletionWorkflowTests.swift:28:26: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 26 |         try await service.deletePersistedTarget(target)
+ 27 | 
+ 28 |         let pinDeletes = await pinRepository.deleteCount()
+    |                          `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 29 |         let growthDeletes = await growthRepository.deleteCount()
+ 30 |         XCTAssertEqual(pinDeletes, 1)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/LinkedPinGrowthDeletionWorkflowTests.swift:29:29: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 27 | 
+ 28 |         let pinDeletes = await pinRepository.deleteCount()
+ 29 |         let growthDeletes = await growthRepository.deleteCount()
+    |                             `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 30 |         XCTAssertEqual(pinDeletes, 1)
+ 31 |         XCTAssertEqual(growthDeletes, 1)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/LinkedPinGrowthDeletionWorkflowTests.swift:55:26: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 53 |         try await service.deletePersistedTarget(target)
+ 54 | 
+ 55 |         let pinDeletes = await pinRepository.deleteCount()
+    |                          `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 56 |         let growthDeletes = await growthRepository.deleteCount()
+ 57 |         XCTAssertEqual(pinDeletes, 1)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/LinkedPinGrowthDeletionWorkflowTests.swift:56:29: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 54 | 
+ 55 |         let pinDeletes = await pinRepository.deleteCount()
+ 56 |         let growthDeletes = await growthRepository.deleteCount()
+    |                             `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 57 |         XCTAssertEqual(pinDeletes, 1)
+ 58 |         XCTAssertEqual(growthDeletes, 0)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/LinkedPinGrowthDeletionWorkflowTests.swift:70:28: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 68 |                 growthRecordId: UUID(), queuedAt: Date(), growthSnapshot: nil, pinSnapshot: nil)
+ 69 |             try await service.deletePersistedTarget(target)
+ 70 |             let pinCount = await pins.deleteCount()
+    |                            `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 71 |             let growthCount = await growth.deleteCount()
+ 72 |             XCTAssertEqual(pinCount, 1)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/LinkedPinGrowthDeletionWorkflowTests.swift:71:31: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 69 |             try await service.deletePersistedTarget(target)
+ 70 |             let pinCount = await pins.deleteCount()
+ 71 |             let growthCount = await growth.deleteCount()
+    |                               `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 72 |             XCTAssertEqual(pinCount, 1)
+ 73 |             XCTAssertEqual(growthCount, 1)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/LinkedPinGrowthDeletionWorkflowTests.swift:104:28: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+102 |                 }
+103 |             }
+104 |             let pinCount = await pins.deleteCount()
+    |                            `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+105 |             let growthCount = await growth.deleteCount()
+106 |             XCTAssertEqual(pinCount, 1)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/LinkedPinGrowthDeletionWorkflowTests.swift:105:31: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+103 |             }
+104 |             let pinCount = await pins.deleteCount()
+105 |             let growthCount = await growth.deleteCount()
+    |                               `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+106 |             XCTAssertEqual(pinCount, 1)
+107 |             XCTAssertEqual(growthCount, 0)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/LinkedPinGrowthDeletionWorkflowTests.swift:124:24: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+122 |             XCTAssertEqual((error as? DeletionFixtureError)?.message, "permission denied")
+123 |         }
+124 |         let pinCount = await pins.deleteCount()
+    |                        `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+125 |         let growthCount = await growth.deleteCount()
+126 |         XCTAssertEqual(pinCount, 1)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/LinkedPinGrowthDeletionWorkflowTests.swift:125:27: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+123 |         }
+124 |         let pinCount = await pins.deleteCount()
+125 |         let growthCount = await growth.deleteCount()
+    |                           `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+126 |         XCTAssertEqual(pinCount, 1)
+127 |         XCTAssertEqual(growthCount, 1)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ManualSprayEntryWorkflowTests.swift:42:25: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 40 |         } catch {}
+ 41 |         XCTAssertTrue(coordinator.pendingPayloads.isEmpty)
+ 42 |         let saveCount = await repository.saveCalls.count
+    |                         `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 43 |         XCTAssertEqual(saveCount, 0)
+ 44 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ManualSprayEntryWorkflowTests.swift:64:25: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 62 |         _ = try await coordinator.save(payload: payload, expectedVersion: 0)
+ 63 |         await coordinator.replay(currentVineyardId: UUID(), currentRole: .owner)
+ 64 |         let saveCount = await repository.saveCalls.count
+    |                         `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 65 |         XCTAssertEqual(saveCount, 1)
+ 66 |         XCTAssertEqual(coordinator.pendingPayloads, [payload])
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ManualSprayEntryWorkflowTests.swift:80:21: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 78 |         XCTAssertTrue(retryResponse?.serverConfirmed == true)
+ 79 |         XCTAssertTrue(coordinator.pendingPayloads.isEmpty)
+ 80 |         let calls = await repository.saveCalls
+    |                     `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 81 |         XCTAssertEqual(Set(calls.map(\.operationId)).count, 1)
+ 82 |         XCTAssertEqual(Set(calls.map(\.payload.manualEntryId)), [payload.manualEntryId])
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ManualSprayEntryWorkflowTests.swift:110:25: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+108 |         XCTAssertTrue(coordinator.pendingPayloads.isEmpty)
+109 |         await coordinator.replay(currentVineyardId: payload.vineyardId, currentRole: .operator)
+110 |         let saveCount = await repository.saveCalls.count
+    |                         `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+111 |         XCTAssertEqual(saveCount, 1)
+112 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/MobileRequestSyncSafeguardTests.swift:67:29: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 65 |             if !retained {
+ 66 |                 try await service.replayWorkerTypeDeletes(vineyardId: UUID())
+ 67 |                 let calls = await repo.deleteCalls
+    |                             `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 68 |                 #expect(calls == 1)
+ 69 |             }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/MobileRequestSyncSafeguardTests.swift:83:22: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 81 |         let waiting = GrowthStageRecordSyncService(repository: repo, metadata: metadata, persistence: disk, acknowledgedPinIds: { _ in [] })
+ 82 |         try await waiting.pushQueuedGrowthRecords(vineyardId: vineyardId)
+ 83 |         let before = await repo.uploaded
+    |                      `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 84 |         #expect(before.isEmpty)
+ 85 |         #expect(metadata.pendingUpserts[record.id] != nil)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/MobileRequestSyncSafeguardTests.swift:90:21: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 88 |         let acknowledged = GrowthStageRecordSyncService(repository: repo, metadata: restartedMetadata, persistence: disk, acknowledgedPinIds: { _ in [pinId] })
+ 89 |         try await acknowledged.pushQueuedGrowthRecords(vineyardId: vineyardId)
+ 90 |         let after = await repo.uploaded
+    |                     `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+ 91 |         #expect(after.count == 1)
+ 92 |         #expect(after.first?.pinId == pinId)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/MobileRequestSyncSafeguardTests.swift:106:24: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+104 |         let service = GrowthStageRecordSyncService(repository: repo, persistence: disk, acknowledgedPinIds: { _ in [] })
+105 |         try await service.pullRemote(vineyardId: vineyardId)
+106 |         let uploaded = await repo.uploaded
+    |                        `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+107 |         #expect(uploaded.map(\.id) == [legacy.id])
+108 |         #expect(service.pendingUpsertCount == 1)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/MobileRequestSyncSafeguardTests.swift:122:24: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+120 |         let service = GrowthStageRecordSyncService(repository: repo, metadata: metadata, persistence: disk, acknowledgedPinIds: { _ in throw SafeguardResponseError(message: "offline") })
+121 |         try await service.pushQueuedGrowthRecords(vineyardId: vineyardId)
+122 |         let uploaded = await repo.uploaded
+    |                        `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+123 |         #expect(uploaded.isEmpty)
+124 |         #expect(service.pendingUpsertCount == 1)
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[VineTrackTests] Compiling HomeSyncPerformanceTests.swift
+[VineTrackTests] Compiling InTripPinDuplicateTests.swift
+[VineTrackTests] Compiling IrrigationCalculatorFixtureTests.swift
+[VineTrackTests] Compiling KeyboardSceneCoordinatorTests.swift
+[VineTrackTests] Compiling LegacyReplayIsolationTests.swift
+[VineTrackTests] Compiling LegacySprayPairReceiptTests.swift
+[VineTrackTests] Compiling LinkedPinGrowthDeletionWorkflowTests.swift
+[VineTrackTests] Compiling MaintenanceDurableRecoveryTests.swift
+[VineTrackTests] Compiling MaintenanceForegroundAdmissionTests.swift
+[VineTrackTests] Compiling MaintenancePhotoAdmissionTests.swift
+[VineTrackTests] Compiling MAITCurrentObservationTests.swift
+[VineTrackTests] Compiling MAITSupplementarySensorTests.swift
+[VineTrackTests] Compiling ManualIssueContractTests.swift
+[VineTrackTests] Compiling ManualSprayEntryWorkflowTests.swift
+[VineTrackTests] Compiling MobileCostingParityTests.swift
+[VineTrackTests] Compiling MobileRequestSyncSafeguardTests.swift
+[VineTrackTests] Compiling OccurrenceCreateBlockUUIDTests.swift
+[VineTrackTests] Compiling OfflineQuickActionsTests.swift
+[VineTrackTests] Compiling OperationalToolLayoutTests.swift
+[VineTrackTests] Compiling OptimalRipenessParityTests.swift
+[VineTrackTests] Compiling ChemicalSeasonPricingTests.swift
+[VineTrackTests] Compiling ChemicalSelectionPolicyTests.swift
+[VineTrackTests] Compiling ChemicalServerOptionHandoffTests.swift
+[VineTrackTests] Compiling ChemicalServerRankingTests.swift
+[VineTrackTests] Compiling ChemicalSnapshotCaptureTests.swift
+[VineTrackTests] Compiling ChemicalStoreAssessmentTests.swift
+[VineTrackTests] Compiling ChemicalStoreConsolidationTests.swift
+[VineTrackTests] Compiling ChemicalStorePresentationTests.swift
+[VineTrackTests] Compiling ChemicalTargetSuggestionPolicyTests.swift
+[VineTrackTests] Compiling ChemicalV3SprayRateOptionsTests.swift
+[VineTrackTests] Compiling ChemicalWithholdingDisplayTests.swift
+[VineTrackTests] Compiling ClientTelemetryContractTests.swift
+[VineTrackTests] Compiling CloneRootstockBrowseTests.swift
+[VineTrackTests] Compiling CloneRootstockCatalogTests.swift
+[VineTrackTests] Compiling CropSilRateRegressionTests.swift
+[VineTrackTests] Compiling CurrentObservationProviderTests.swift
+[VineTrackTests] Compiling CurrentYieldMasterParityTests.swift
+[VineTrackTests] Compiling DeviceTripOwnershipTests.swift
+[VineTrackTests] Compiling EffectiveLabourCostTests.swift
+[VineTrackTests] Compiling ELRipenessContractFixtures.swift
+[VineTrackTests] Compiling ELRipenessHeatmapContractTests.swift
+[VineTrackTests] Compiling PruningWorkTaskRepairTests.swift
+[VineTrackTests] Compiling PruningYieldSettingsRevisionSyncTests.swift
+[VineTrackTests] Compiling PruningYieldSettingsTests.swift
+[VineTrackTests] Compiling QuadrantCountNativeTests.swift
+[VineTrackTests] Compiling ReadOnlyEntitlementContractTests.swift
+[VineTrackTests] Compiling RecordedSyncFixtureTests.swift
+[VineTrackTests] Compiling RecoveredSprayApplicationSafetyTests.swift
+[VineTrackTests] Compiling RegionalInputTests.swift
+[VineTrackTests] Compiling RegionFormatterWeatherParityTests.swift
+[VineTrackTests] Compiling RegionResidualBoundaryTests.swift
+[VineTrackTests] Compiling ResistanceEngineTests.swift
+[VineTrackTests] Compiling ResistanceParityTests.swift
+[VineTrackTests] Compiling ResistancePlanListManagementTests.swift
+[VineTrackTests] Compiling ResistancePlannerTests.swift
+[VineTrackTests] Compiling ResistancePlanRepositoryTests.swift
+[VineTrackTests] Compiling ResistancePlanRevisionSyncTests.swift
+[VineTrackTests] Compiling ResistanceRulesetTests.swift
+[VineTrackTests] Compiling RestrictedVineyardMessagingTests.swift
+[VineTrackTests] Compiling RetainedRecoveryDiagnosticExportTests.swift
+[VineTrackTests] Compiling RowVineCountTests.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ResistancePlanRepositoryTests.swift:167:51: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+165 |     func makeRepo(
+166 |         server: (any ResistancePlanRemote)?,
+167 |         store: InMemoryResistancePlanLocalStore = InMemoryResistancePlanLocalStore(),
+    |                                                   `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+168 |         clock: Clock = Clock(),
+169 |         userId: String? = "user-1"
+VineTrack.InMemoryResistancePlanLocalStore.init:2:21: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+1 | class InMemoryResistancePlanLocalStore {
+2 | @MainActor internal init()}
+  |                     `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+3 | 
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ResistancePlanRevisionSyncTests.swift:147:51: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+145 |     func makeRepo(
+146 |         server: (any ResistancePlanRemote)?,
+147 |         store: InMemoryResistancePlanLocalStore = InMemoryResistancePlanLocalStore(),
+    |                                                   `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+148 |         clock: Clock
+149 |     ) -> ResistancePlanRepository {
+VineTrack.InMemoryResistancePlanLocalStore.init:2:21: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+1 | class InMemoryResistancePlanLocalStore {
+2 | @MainActor internal init()}
+  |                     `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+3 | 
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[VineTrackTests] Compiling ELRipenessHeatmapFeatureTests.swift
+[VineTrackTests] Compiling ELRipenessSnapshotHarnessTests.swift
+[VineTrackTests] Compiling EntitlementAccessRegressionTests.swift
+[VineTrackTests] Compiling EntitlementDecisionTests.swift
+[VineTrackTests] Compiling EquipmentTaxonomyBoundaryTests.swift
+[VineTrackTests] Compiling EquipmentVineyardIsolationTests.swift
+[VineTrackTests] Compiling FertigationDomainTests.swift
+[VineTrackTests] Compiling FertigationHistoryTests.swift
+[VineTrackTests] Compiling FertigationMobileWorkflowTests.swift
+[VineTrackTests] Compiling FertigationOfflineCacheTests.swift
+[VineTrackTests] Compiling FertiliserRegionParityTests.swift
+[VineTrackTests] Compiling ForecastParityContractTests.swift
+[VineTrackTests] Compiling ForecastSupplementationFocusedTests.swift
+[VineTrackTests] Compiling GrapeAllocationHierarchyTests.swift
+[VineTrackTests] Compiling GrapeAllocationLogicTests.swift
+[VineTrackTests] Compiling GrapePurchaserLogicTests.swift
+[VineTrackTests] Compiling GrowthStageLiveDecodingTests.swift
+[VineTrackTests] Compiling GrowthStageMirrorReplayTests.swift
+[VineTrackTests] Compiling GrowthStageSummaryPresentationTests.swift
+[VineTrackTests] Compiling GrowthStageVarietyParityTests.swift
+[VineTrackTests] Compiling HistoricalSnapshotReportParityTests.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayCarrierProductBasisTests.swift:163:36: '#require(_:_:)' is redundant because 'SprayGuidedFormat.productBlockerPrompt(result)' never equals 'nil' (from macro 'require')
+161 |         #expect(result.unresolvedReason == .rateUnavailable)
+162 |         #expect(SprayGuidedFormat.productRequirement(result) == "Product rate required")
+163 |         let prompt = try? #require(SprayGuidedFormat.productBlockerPrompt(result))
+    |                                    `- warning: '#require(_:_:)' is redundant because 'SprayGuidedFormat.productBlockerPrompt(result)' never equals 'nil' (from macro 'require')
+164 |         #expect(prompt?.contains("range") == true)
+165 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayCarrierProductBasisTests.swift:180:36: '#require(_:_:)' is redundant because 'SprayGuidedFormat.productBlockerPrompt(result)' never equals 'nil' (from macro 'require')
+178 |         #expect(result.unresolvedReason == .carrierUnavailable)
+179 |         #expect(SprayGuidedFormat.productRequirement(result) == "Carrier volume required")
+180 |         let prompt = try? #require(SprayGuidedFormat.productBlockerPrompt(result))
+    |                                    `- warning: '#require(_:_:)' is redundant because 'SprayGuidedFormat.productBlockerPrompt(result)' never equals 'nil' (from macro 'require')
+181 |         #expect(prompt?.contains("canopy") == true)
+182 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayJobPlanProvenanceTests.swift:186:38: main actor-isolated conformance of 'ResistancePlanJobService.PendingJobCreate' to 'Encodable' cannot be used in nonisolated context; this is an error in the Swift 6 language mode [#IsolatedConformances]
+184 |             paddockIds: [Self.vineyard]
+185 |         )
+186 |         let data = try JSONEncoder().encode(pending)
+    |                                      `- warning: main actor-isolated conformance of 'ResistancePlanJobService.PendingJobCreate' to 'Encodable' cannot be used in nonisolated context; this is an error in the Swift 6 language mode [#IsolatedConformances]
+187 |         let decoded = try JSONDecoder().decode(ResistancePlanJobService.PendingJobCreate.self, from: data)
+188 |         #expect(decoded.payload.resistancePlanId == Self.planId)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayJobPlanProvenanceTests.swift:187:41: main actor-isolated conformance of 'ResistancePlanJobService.PendingJobCreate' to 'Decodable' cannot be used in nonisolated context; this is an error in the Swift 6 language mode [#IsolatedConformances]
+185 |         )
+186 |         let data = try JSONEncoder().encode(pending)
+187 |         let decoded = try JSONDecoder().decode(ResistancePlanJobService.PendingJobCreate.self, from: data)
+    |                                         `- warning: main actor-isolated conformance of 'ResistancePlanJobService.PendingJobCreate' to 'Decodable' cannot be used in nonisolated context; this is an error in the Swift 6 language mode [#IsolatedConformances]
+188 |         #expect(decoded.payload.resistancePlanId == Self.planId)
+189 |         #expect(decoded.payload.resistancePositionId == "pos-1")
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayManualVolumeTests.swift:72:37: '#require(_:_:)' is redundant because 'flow.carrier' never equals 'nil' (from macro 'require')
+ 70 | 
+ 71 |         #expect(flow.isCarrierResolved)
+ 72 |         let carrier = try? #require(flow.carrier)
+    |                                     `- warning: '#require(_:_:)' is redundant because 'flow.carrier' never equals 'nil' (from macro 'require')
+ 73 |         #expect(flow.effectiveCarrierBasis == .manualTotalVolume)
+ 74 |         // Manual remains the entry method; the existing wire contract normalizes
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayManualVolumeTests.swift:98:37: '#require(_:_:)' is redundant because 'flow.carrier' never equals 'nil' (from macro 'require')
+ 96 |     func manualDerivesReferenceFiguresOnly() {
+ 97 |         let flow = SprayGuidedFlow(inputs: inputs(totalLitres: 400, blocks: [block()]))
+ 98 |         let carrier = try? #require(flow.carrier)
+    |                                     `- warning: '#require(_:_:)' is redundant because 'flow.carrier' never equals 'nil' (from macro 'require')
+ 99 | 
+100 |         #expect(abs((carrier?.totalLitres ?? 0) - 400) < tolerance)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayManualVolumeTests.swift:143:37: '#require(_:_:)' is redundant because 'SprayGuidedFlow(inputs: inputs(totalLitres: 400)).carrier' never equals 'nil' (from macro 'require')
+141 |     @Test("Manual carries CF 1.0 and reports it as no canopy comparison")
+142 |     func manualHasNoCanopyConcentration() {
+143 |         let carrier = try? #require(SprayGuidedFlow(inputs: inputs(totalLitres: 400)).carrier)
+    |                                     `- warning: '#require(_:_:)' is redundant because 'SprayGuidedFlow(inputs: inputs(totalLitres: 400)).carrier' never equals 'nil' (from macro 'require')
+144 | 
+145 |         #expect(abs((carrier?.concentrationFactor ?? 0) - 1.0) < tolerance)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayManualVolumeTests.swift:204:35: '#require(_:_:)' is redundant because 'reference.water.first { $0.id == "totalWater" }' never equals 'nil' (from macro 'require')
+202 |         let reference = SprayCalculationReferenceBuilder.make(flow: flow)
+203 | 
+204 |         let total = try? #require(reference.water.first { $0.id == "totalWater" })
+    |                                   `- warning: '#require(_:_:)' is redundant because 'reference.water.first { $0.id == "totalWater" }' never equals 'nil' (from macro 'require')
+205 |         #expect(total?.value == "400.0 L")
+206 |         #expect(total?.workings?.contains("Entered directly") == true)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayManualVolumeTests.swift:211:37: '#require(_:_:)' is redundant because 'reference.water.first { $0.id == "impliedPerHa" }' never equals 'nil' (from macro 'require')
+209 |         // The implied rate appears, but labelled as reference and derived FROM
+210 |         // the total rather than the other way round.
+211 |         let implied = try? #require(reference.water.first { $0.id == "impliedPerHa" })
+    |                                     `- warning: '#require(_:_:)' is redundant because 'reference.water.first { $0.id == "impliedPerHa" }' never equals 'nil' (from macro 'require')
+212 |         #expect(implied?.value == "40.00 L/ha")
+213 |         #expect(implied?.workings?.contains("400.0 L ÷") == true)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayManualVolumeTests.swift:244:46: '#require(_:_:)' is redundant because 'reference.products.first' never equals 'nil' (from macro 'require')
+242 |         )
+243 |         let reference = SprayCalculationReferenceBuilder.make(flow: flow)
+244 |         let productReference = try? #require(reference.products.first)
+    |                                              `- warning: '#require(_:_:)' is redundant because 'reference.products.first' never equals 'nil' (from macro 'require')
+245 | 
+246 |         let cf = try? #require(productReference?.lines.first { $0.id == "cf" })
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayPlanningIntentTests.swift:471:21: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+469 |             #expect(error.message == (scenario == 2 ? "Planning evidence is incomplete. Recalculate this draft before starting." : LegacySpraySetup.fullTankMessage))
+470 |         }
+471 |         let calls = await repository.writeCalls
+    |                     `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+472 |         #expect(calls == 0)
+473 |         #expect(service.isPendingUpsert(record.id))
+[#IsolatedConformances]: <https://docs.swift.org/compiler/documentation/diagnostics/isolated-conformances>
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[VineTrackTests] Compiling SprayCarrierProductBasisTests.swift
+[VineTrackTests] Compiling SprayCarrierProvenanceTests.swift
+[VineTrackTests] Compiling SprayCustomSprayerBasisHotfixTests.swift
+[VineTrackTests] Compiling SprayEditChemicalRegisteredRateDisplayTests.swift
+[VineTrackTests] Compiling SprayEquipmentAndCarrierHandoffTests.swift
+[VineTrackTests] Compiling SprayFinalisationDiagnosticsTests.swift
+[VineTrackTests] Compiling SprayGrowthStageDecisionTests.swift
+[VineTrackTests] Compiling SprayGuidedFlowTests.swift
+[VineTrackTests] Compiling SprayGuidedWorkflowParityTests.swift
+[VineTrackTests] Compiling SprayInitialTankAmountsTests.swift
+[VineTrackTests] Compiling SprayJobPlanProvenanceTests.swift
+[VineTrackTests] Compiling SprayLegacyRateUnitBoundaryTests.swift
+[VineTrackTests] Compiling SprayManualVolumeTests.swift
+[VineTrackTests] Compiling SprayMultiBlockTripTests.swift
+[VineTrackTests] Compiling SprayMVPDefectTests.swift
+[VineTrackTests] Compiling SprayOccurrenceRecoveryHotfixTests.swift
+[VineTrackTests] Compiling SprayOperationalBundleTests.swift
+[VineTrackTests] Compiling SprayPlanningAttemptTests.swift
+[VineTrackTests] Compiling SprayPlanningDraftTransitionTests.swift
+[VineTrackTests] Compiling SprayPlanningIntentTests.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ChemicalIntelligenceTests.swift:377:38: '#require(_:_:)' is redundant because 'outcome.conflict' never equals 'nil' (from macro 'require')
+375 |         )
+376 | 
+377 |         let conflict = try? #require(outcome.conflict)
+    |                                      `- warning: '#require(_:_:)' is redundant because 'outcome.conflict' never equals 'nil' (from macro 'require')
+378 |         #expect(conflict?.field == "activity_group")
+379 |         #expect(conflict?.activeIngredientName == "Tebuconazole")
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ChemicalInventorySummaryTests.swift:87:14: 'fail' mutated after capture by sendable closure
+72 |     @Test func offlineFailureRetainsUnchangedRowsAndPermissionChangeClearsCache() async {
+73 |         let chemical = SavedChemical(name: "One")
+74 |         var fail = false
+   |             `- note: variable defined here
+75 |         let state = ChemicalInventorySummaryState { _ in
+   |                                                   `- note: variable captured by sendable closure
+76 |             if fail { throw URLError(.notConnectedToInternet) }
+   |                `- note: capturing use
+77 |             return CatalogueWire(fields: ["tracked": .bool(true)])
+78 |         }
+   :
+85 |         await state.waitForRefresh()
+86 |         #expect(state.summaries.isEmpty && state.error != nil)
+87 |         fail = false; state.retry(); await state.waitForRefresh()
+   |              `- warning: 'fail' mutated after capture by sendable closure
+88 |         #expect(state.summaries.count == 1 && state.error == nil)
+89 |     }
+[VineTrackTests] Compiling AccessPerformanceTests.swift
+[VineTrackTests] Compiling ActiveTripRouteRecoveryTests.swift
+[VineTrackTests] Compiling AuthoritativeActivityGroupsV2Tests.swift
+[VineTrackTests] Compiling BiometricBackgroundGraceTests.swift
+[VineTrackTests] Compiling CanopyReferenceImageRepositoryTests.swift
+[VineTrackTests] Compiling CatalogueCutoverTests.swift
+[VineTrackTests] Compiling CatalogueFrontLabelTests.swift
+[VineTrackTests] Compiling ChemicalCustodiaParityTests.swift
+[VineTrackTests] Compiling ChemicalCustomerFlowTests.swift
+[VineTrackTests] Compiling ChemicalDefaultRateStorageTests.swift
+[VineTrackTests] Compiling ChemicalDefaultRateTests.swift
+[VineTrackTests] Compiling ChemicalDisplayNameTests.swift
+[VineTrackTests] Compiling ChemicalEditorRoundTripTests.swift
+[VineTrackTests] Compiling ChemicalEditReconcilerTests.swift
+[VineTrackTests] Compiling ChemicalFormAndDirectionHonestyTests.swift
+[VineTrackTests] Compiling ChemicalGrapevineCropTests.swift
+[VineTrackTests] Compiling ChemicalIntelligenceTests.swift
+[VineTrackTests] Compiling ChemicalInventorySummaryTests.swift
+[VineTrackTests] Compiling ChemicalInventoryTraceabilityTests.swift
+[VineTrackTests] Compiling ChemicalLabelRateNormalizerTests.swift
+[VineTrackTests] Compiling ChemicalLabelReferenceTests.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayTripSetupTests.swift:110:33: '#require(_:_:)' is redundant because 'stages.firstIndex(of: 7)' never equals 'nil' (from macro 'require')
+108 |         // The failure this guards: alphabetically, "EL12" < "EL7".
+109 |         let stages = sections.compactMap(\.stage)
+110 |         let el7 = try? #require(stages.firstIndex(of: 7))
+    |                                 `- warning: '#require(_:_:)' is redundant because 'stages.firstIndex(of: 7)' never equals 'nil' (from macro 'require')
+111 |         let el12 = try? #require(stages.firstIndex(of: 12))
+112 |         #expect((el7 ?? 0) < (el12 ?? 0))
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayTripSetupTests.swift:111:34: '#require(_:_:)' is redundant because 'stages.firstIndex(of: 12)' never equals 'nil' (from macro 'require')
+109 |         let stages = sections.compactMap(\.stage)
+110 |         let el7 = try? #require(stages.firstIndex(of: 7))
+111 |         let el12 = try? #require(stages.firstIndex(of: 12))
+    |                                  `- warning: '#require(_:_:)' is redundant because 'stages.firstIndex(of: 12)' never equals 'nil' (from macro 'require')
+112 |         #expect((el7 ?? 0) < (el12 ?? 0))
+113 |     }
+[VineTrackTests] Compiling SprayTripSetupTests.swift
+[VineTrackTests] Compiling SprayTripStartAdmissionTests.swift
+[VineTrackTests] Compiling SprayVineyardRateScopingTests.swift
+[VineTrackTests] Compiling SprayVolumeDecisionTests.swift
+[VineTrackTests] Compiling StartTankCommitCoordinatorTests.swift
+[VineTrackTests] Compiling StorePurchaseSyncTests.swift
+[VineTrackTests] Compiling SubscriptionInitialVerificationTests.swift
+[VineTrackTests] Compiling SyncCompatibilityTests.swift
+[VineTrackTests] Compiling SyncQueueRegressionTests.swift
+[VineTrackTests] Compiling SyncRevisionParityTests.swift
+[VineTrackTests] Compiling TankDependencyVerificationTests.swift
+[VineTrackTests] Compiling TankMixPresentationTests.swift
+[VineTrackTests] Compiling TankSessionLegacyUTCDecodeTests.swift
+[VineTrackTests] Compiling TankSessionLifecycleTests.swift
+[VineTrackTests] Compiling TargetNutrientTests.swift
+[VineTrackTests] Compiling TrackedSprayCompletionSyncTests.swift
+[VineTrackTests] Compiling TrailDisplayProcessorTests.swift
+[VineTrackTests] Compiling TripActivityCancellationTests.swift
+[VineTrackTests] Compiling TripClosureStatusTests.swift
+[VineTrackTests] Compiling TripDeletionPersistenceIdentityTests.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ResistancePlanRepositoryTests.swift:167:51: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+165 |     func makeRepo(
+166 |         server: (any ResistancePlanRemote)?,
+167 |         store: InMemoryResistancePlanLocalStore = InMemoryResistancePlanLocalStore(),
+    |                                                   `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+168 |         clock: Clock = Clock(),
+169 |         userId: String? = "user-1"
+VineTrack.InMemoryResistancePlanLocalStore.init:2:21: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+1 | class InMemoryResistancePlanLocalStore {
+2 | @MainActor internal init()}
+  |                     `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+3 | 
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ResistancePlanRevisionSyncTests.swift:147:51: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+145 |     func makeRepo(
+146 |         server: (any ResistancePlanRemote)?,
+147 |         store: InMemoryResistancePlanLocalStore = InMemoryResistancePlanLocalStore(),
+    |                                                   `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+148 |         clock: Clock
+149 |     ) -> ResistancePlanRepository {
+VineTrack.InMemoryResistancePlanLocalStore.init:2:21: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+1 | class InMemoryResistancePlanLocalStore {
+2 | @MainActor internal init()}
+  |                     `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+3 | 
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+SwiftCompile normal arm64 (in target 'VineTrackTests' from project 'VineTrack')
+[VineTrackTests] Compiling TripDeletionRecoveryTests.swift
+[VineTrackTests] Compiling TripEndGateTests.swift
+[VineTrackTests] Compiling TripEngineHourCaptureTests.swift
+[VineTrackTests] Compiling TripJournalAbsenceIntegrationTests.swift
+[VineTrackTests] Compiling TripLocalEndAntiResurrectionTests.swift
+[VineTrackTests] Compiling TripOccurrenceJournalTests.swift
+[VineTrackTests] Compiling TripPullResponsivenessTests.swift
+[VineTrackTests] Compiling TripQueuedUploadScopeTests.swift
+[VineTrackTests] Compiling TripRegionPDFTests.swift
+[VineTrackTests] Compiling TripRowSequencePlannerTests.swift
+[VineTrackTests] Compiling UnifiedPinComposerContractTests.swift
+[VineTrackTests] Compiling VineTrackTests.swift
+[VineTrackTests] Compiling VineyardCountryContractTests.swift
+[VineTrackTests] Compiling VineyardHomeLogoRefreshTests.swift
+[VineTrackTests] Compiling VineyardInsightsContractCorrectionTests.swift
+[VineTrackTests] Compiling VineyardInsightsTests.swift
+[VineTrackTests] Compiling VineyardMutationAdmissionTests.swift
+[VineTrackTests] Compiling VineyardPreferredRateTests.swift
+[VineTrackTests] Compiling VineyardSelectionDiagnosticsTests.swift
+[VineTrackTests] Compiling VineyardSwitchPerformanceTests.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayProgramRound2Tests.swift:168:23: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+166 |         do { try await service.pushLocalSprayRecords(vineyardId: local.vineyardId) }
+167 |         catch { #expect(fails) }
+168 |         let payload = await repository.pushed.first
+    |                       `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+169 |         #expect(payload?.notes == local.notes)
+170 |         #expect(payload?.endTime == server.endTime)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayTripPhase5FinalisationTests.swift:133:22: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+131 |         XCTAssertNotNil(decision.skipReason)
+132 |         // No child-before-parent upload occurred.
+133 |         let pushed = await harness.repository.pushed
+    |                      `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+134 |         XCTAssertTrue(pushed.isEmpty)
+135 |     }
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayTripPhase5FinalisationTests.swift:180:22: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+178 |         try await harness.service.pushLocalTrips(vineyardId: vineyardId)
+179 | 
+180 |         let pushed = await harness.repository.pushed
+    |                      `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+181 |         let payload = try XCTUnwrap(pushed.first { $0.id == tripId })
+182 |         // The old hold sent is_active = true and omitted the nil end_time,
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayTripPhase5FinalisationTests.swift:218:22: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+216 |         try await harness.service.pushLocalTrips(vineyardId: vineyardId)
+217 |         XCTAssertNil(harness.metadata.pendingUpserts[tripId], "queue clears once actuals are gone")
+218 |         let pushed = await harness.repository.pushed
+    |                      `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+219 |         let final = try XCTUnwrap(pushed.last { $0.id == tripId })
+220 |         XCTAssertFalse(final.isActive)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayTripPhase5FinalisationTests.swift:235:9: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+233 |         harness.metadata.markDirty(tripId, at: Date())
+234 | 
+235 |         await harness.repository.setFailUpserts(true)
+    |         `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+236 |         _ = try? await harness.service.pushLocalTrips(vineyardId: vineyardId)
+237 | 
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayTripPhase5FinalisationTests.swift:289:22: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+287 | 
+288 |         // True ended state written; nothing recreated; queue cleared.
+289 |         let pushed = await harness.repository.pushed
+    |                      `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+290 |         let payload = try XCTUnwrap(pushed.last { $0.id == tripId })
+291 |         XCTAssertFalse(payload.isActive)
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/SprayTripPhase5FinalisationTests.swift:379:24: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+377 |         try await harness.service.pushLocalTrips(vineyardId: vineyardId)
+378 |         XCTAssertNil(harness.metadata.pendingUpserts[tripId])
+379 |         let payloads = await harness.repository.pushed.filter { $0.id == tripId }
+    |                        `- warning: no 'async' operations occur within 'await' expression [#UnnecessaryEffectMarker]
+380 |         XCTAssertEqual(payloads.count, 2, "parent establish, then finalisation")
+381 |         XCTAssertTrue(payloads.allSatisfy { !$0.isActive && $0.endTime == endTime })
+[#UnnecessaryEffectMarker]: <https://docs.swift.org/compiler/documentation/diagnostics/unnecessary-effect-marker>
+[VineTrackTests] Compiling SprayPowerUnitSelectionTests.swift
+[VineTrackTests] Compiling SprayProductRecursionExpressionTests.swift
+[VineTrackTests] Compiling SprayProgramRestructureTests.swift
+[VineTrackTests] Compiling SprayProgramResumeRouteTests.swift
+[VineTrackTests] Compiling SprayProgramRound2Tests.swift
+[VineTrackTests] Compiling SprayProgramStepCreationTests.swift
+[VineTrackTests] Compiling SprayProgramStepEditingTests.swift
+[VineTrackTests] Compiling SprayProgramTankFollowupTests.swift
+[VineTrackTests] Compiling SprayProgramTerminologyTests.swift
+[VineTrackTests] Compiling SprayRateBasisPreferenceTests.swift
+[VineTrackTests] Compiling SprayRegionClosureTests.swift
+[VineTrackTests] Compiling SprayRegisteredUseRateTests.swift
+[VineTrackTests] Compiling SprayReportPayloadV1Tests.swift
+[VineTrackTests] Compiling SprayReportRegressionXCTests.swift
+[VineTrackTests] Compiling SpraySaveForLaterTests.swift
+[VineTrackTests] Compiling SprayStartPresentationTests.swift
+[VineTrackTests] Compiling SprayTankActualTests.swift
+[VineTrackTests] Compiling SprayTankMixChemistryParityTests.swift
+[VineTrackTests] Compiling SprayTargetTaggingTests.swift
+[VineTrackTests] Compiling SprayTripPhase5FinalisationTests.swift
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/YieldMasterWeightCacheTests.swift:43:17: 'account' mutated after capture by sendable closure
+34 |     @Test func accountVineyardBlockAndVarietyScopesCannotLeak() async throws {
+35 |         let name = "yield-cache-test-\(UUID())"; let defaults = try #require(UserDefaults(suiteName: name)); defer { defaults.removePersistentDomain(forName: name) }
+36 |         var account: String? = "a"
+   |             `- note: variable defined here
+37 |         let cache = YieldMasterWeightCache(defaults: defaults, accountBinding: { account }, generation: { 1 }, resolve: { _, _, key in YieldMasterWeight(bunchWeightGrams: 120, source: "block_override", recordId: self.block, varietyKey: key) })
+   |                                                                                | `- note: capturing use
+   |                                                                                `- note: variable captured by sendable closure
+38 |         await cache.refresh(vineyardId: vineyard, paddocks: [paddock()])
+39 |         #expect(cache.weights(vineyardId: UUID()).isEmpty)
+   :
+41 |         #expect(cache.weights(vineyardId: vineyard)[CurrentYieldEstimate.key(blockId: block, varietyKey: "merlot")] == nil)
+42 |         account = "b"; #expect(cache.weights(vineyardId: vineyard).isEmpty)
+43 |         account = nil; #expect(cache.weights(vineyardId: vineyard).isEmpty)
+   |                 `- warning: 'account' mutated after capture by sendable closure
+44 |     }
+45 |     @Test func sameAccountNewIncarnationCannotCommitOldResponse() async throws {
+[VineTrackTests] Compiling VineyardWriteAuthorityTests.swift
+[VineTrackTests] Compiling WithholdingRestrictionsParityTests.swift
+[VineTrackTests] Compiling WorkerTypeDecodingTests.swift
+[VineTrackTests] Compiling WorkTaskAssignmentNamesTests.swift
+[VineTrackTests] Compiling WorkTaskBatchReconciliationTests.swift
+[VineTrackTests] Compiling WorkTaskCompletionTests.swift
+[VineTrackTests] Compiling WorkTaskHeaderFullPullTests.swift
+[VineTrackTests] Compiling WorkTaskLabourCostingTests.swift
+[VineTrackTests] Compiling WorkTaskLogPresentationTests.swift
+[VineTrackTests] Compiling WorkTaskMachineCostingTests.swift
+[VineTrackTests] Compiling WorkTaskMaterialCostsTests.swift
+[VineTrackTests] Compiling WorkTaskPlanningParityTests.swift
+[VineTrackTests] Compiling WorkTaskWriteParityTests.swift
+[VineTrackTests] Compiling YieldAuthoritativeVineCountTests.swift
+[VineTrackTests] Compiling YieldBunchWeightsManagementTests.swift
+[VineTrackTests] Compiling YieldCompletionPersistenceTests.swift
+[VineTrackTests] Compiling YieldMasterFullSyncTests.swift
+[VineTrackTests] Compiling YieldMasterWeightCacheTests.swift
+[VineTrackTests] Compiling YieldPullResponsivenessTests.swift
+[VineTrackTests] Compiling YieldVintageReportTests.swift
+[VineTrackTests] Copy arm64-apple-ios-simulator.abi.json -> VineTrackTests.abi.json
+[VineTrackTests] Copy arm64-apple-ios-simulator.swiftdoc -> VineTrackTests.swiftdoc
+[VineTrackTests] Copy arm64-apple-ios-simulator.swiftmodule -> VineTrackTests.swiftmodule
+[VineTrackTests] Copy arm64-apple-ios-simulator.swiftsourceinfo -> VineTrackTests.swiftsourceinfo
+[VineTrackTests] Linking VineTrackTests
+CopySwiftLibs /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrack.app/PlugIns/VineTrackTests.xctest (in target 'VineTrackTests' from project 'VineTrack')
+[VineTrackTests] Extract App Intents Metadata
+2026-11-02 17:28:24.035 appintentsmetadataprocessor[15319:1131114] Starting appintentsmetadataprocessor export
+2026-11-02 17:28:24.036 appintentsmetadataprocessor[15319:1131114] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+AppIntentsSSUTraining (in target 'VineTrackTests' from project 'VineTrack')
+2026-11-02 17:28:24.056 appintentsnltrainingprocessor[15320:1131118] Parsing options for appintentsnltrainingprocessor
+2026-11-02 17:28:24.056 appintentsnltrainingprocessor[15320:1131118] Starting AppIntents SSU YAML Generation
+2026-11-02 17:28:24.057 appintentsnltrainingprocessor[15320:1131118] No AppShortcuts found - Skipping.
+Signing VineTrackTests.xctest (in target 'VineTrackTests' from project 'VineTrack')
+Signing VineTrack.app (in target 'VineTrack' from project 'VineTrack')
+[VineTrack] Validate VineTrack.app
+[VineTrackUITests] Linking VineTrackUITests
+[VineTrackUITests] Processing empty-VineTrackUITests.plist
+CopySwiftLibs /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrackUITests-Runner.app/PlugIns/VineTrackUITests.xctest (in target 'VineTrackUITests' from project 'VineTrack')
+[VineTrackUITests] Extract App Intents Metadata
+2026-11-02 17:28:24.708 appintentsmetadataprocessor[15327:1131168] Starting appintentsmetadataprocessor export
+2026-11-02 17:28:24.709 appintentsmetadataprocessor[15327:1131168] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+AppIntentsSSUTraining (in target 'VineTrackUITests' from project 'VineTrack')
+2026-11-02 17:28:24.726 appintentsnltrainingprocessor[15328:1131172] Parsing options for appintentsnltrainingprocessor
+2026-11-02 17:28:24.726 appintentsnltrainingprocessor[15328:1131172] Starting AppIntents SSU YAML Generation
+2026-11-02 17:28:24.727 appintentsnltrainingprocessor[15328:1131172] No AppShortcuts found - Skipping.
+[VineTrackUITests] Copying Info.plist
+Signing VineTrackUITests.xctest (in target 'VineTrackUITests' from project 'VineTrack')
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/SDKExplicitPrecompiledModules
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/ExplicitPrecompiledModules
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+Build Timing Summary
+SwiftCompile (14 tasks) | 197.786 seconds
+SwiftEmitModule (1 task) | 15.123 seconds
+SwiftDriver (1 task) | 1.267 seconds
+Ld (3 tasks) | 0.694 seconds
+Signing (4 tasks) | 0.547 seconds
+Copy (10 tasks) | 0.314 seconds
+CopySwiftLibs (4 tasks) | 0.135 seconds
+ExtractAppIntentsMetadata (4 tasks) | 0.092 seconds
+AppIntentsSSUTraining (4 tasks) | 0.050 seconds
+ProcessInfoPlistFile (3 tasks) | 0.027 seconds
+CopyPlistFile (1 task) | 0.003 seconds
+Validate (1 task) | 0.001 seconds
+SwiftDriver Compilation Requirements (1 task) | 0.001 seconds
+SwiftDriver Compilation (1 task) | 0.001 seconds
+Result bundle written to path:
+	/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/result-bundles/build-1793665676715992000/build.xcresult
+Test Build Succeeded
+Build completed in 28.152436s
+Syncing test products to simulator...
+Synced test products in 2.462579666s, running tests...
+1 of 19 tests failed
+
+TripLocalEndAntiResurrectionTests/staleActivePullRestoresOriginalEndAcrossRestartAndClearsHoldAfterOriginalFinaliseReceipt(): Expectation failed: reopenedService.receiptReconciliationHolds[fixture.trip] == nil
+reopenedService.receiptReconciliationHolds[fixture.trip] → "TRIP_LOCAL_END_AWAITING_ORIGINAL_FINALISE": A stale awaiting-finalise hold must not survive the verified original receipt

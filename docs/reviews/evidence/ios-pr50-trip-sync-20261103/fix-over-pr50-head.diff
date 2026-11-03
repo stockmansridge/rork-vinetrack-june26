@@ -1,0 +1,28 @@
+--- /tmp/pr50/ios/VineTrack/Backend/Sync/TripSyncService.swift	2026-11-03 00:14:20.000000000 +0000
++++ ios/VineTrack/Backend/Sync/TripSyncService.swift	2026-11-03 00:28:44.529044340 +0000
+@@ -1407,6 +1407,12 @@
+                     syncStatus = .failure("This Trip ended on the original device; its server finalisation is pending. The local record and operation IDs remain retained.")
+                     return
+                 }
++                // The server now carries the End (or the local Trip is no longer
++                // ended-pending): retire ONLY this display hold. Any other hold
++                // reason belongs to a different reconciliation path.
++                if receiptReconciliationHolds[backendTrip.id] == "TRIP_LOCAL_END_AWAITING_ORIGINAL_FINALISE" {
++                    receiptReconciliationHolds.removeValue(forKey: backendTrip.id)
++                }
+                 if saved != nil {
+                     if backendTrip.endTime != nil, try journal.load()?.pending.isEmpty == false {
+                         try journal.hold("OCCURRENCE_TRIP_CLOSED")
+@@ -1838,7 +1844,11 @@
+     }
+ 
+     static func discrepancy(local: TankSession, remote: TankSession, legacyArchiveSeconds: Bool = false) -> String? {
+-        let timeMatches: (Date?, Date?) -> Bool = legacyArchiveSeconds ? archivedSecondMatches : sameTime
++        // Explicit closure: a ternary over two static function references crashes
++        // the Swift compiler's diagnostic pass (PR #50 head 39bdc353 did not compile).
++        let timeMatches: (Date?, Date?) -> Bool = { local, remote in
++            legacyArchiveSeconds ? archivedSecondMatches(local, remote) : sameTime(local, remote)
++        }
+         guard local.id == remote.id else { return "TRIP_LOCAL_TANK_SESSION_ID_DIFFERS" }
+         guard local.tankNumber == remote.tankNumber else { return "TRIP_LOCAL_TANK_NUMBER_DIFFERS" }
+         if !timeMatches(local.startTime, remote.startTime) {
