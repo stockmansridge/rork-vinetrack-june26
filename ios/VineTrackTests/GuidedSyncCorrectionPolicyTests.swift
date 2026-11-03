@@ -1,0 +1,76 @@
+import Foundation
+import XCTest
+@testable import VineTrack
+
+/// Settings -> Sync Diagnostics -> Review & repair sync issues.
+/// Pure policy tests must not touch persisted queues or production data.
+final class GuidedSyncCorrectionPolicyTests: XCTestCase {
+    private func item(
+        kind: GuidedSyncRepairIssue.Kind, scoped: Bool = true,
+        actual: Bool = false
+    ) -> GuidedSyncRepairIssue {
+        let id = UUID()
+        return GuidedSyncRepairIssue(
+            id: kind.rawValue + ":" + id.uuidString,
+            recordId: id,
+            relatedTripId: scoped ? id : nil,
+            kind: kind,
+            title: "Test",
+            detail: "Retained original",
+            verifiedCurrentScope: scoped,
+            originalActualAvailable: actual)
+    }
+
+    func testUnknownOwnershipAllowsOnlyPrivateReview() {
+        for kind: GuidedSyncRepairIssue.Kind in [.tripUpload, .tripDeletion, .tankActual, .sprayRecord, .protectedQueue] {
+            let record = item(kind: kind, scoped: false, actual: true)
+            for state: GuidedSyncRecordState in [.notChecked, .active, .ended, .deleted, .notVisible] {
+                XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: record, server: state), [.privateReview])
+            }
+        }
+    }
+
+    func testNoMutationBeforeReadbackOrWhenRowNotVisible() {
+        let original = item(kind: .tripUpload, actual: true)
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: original, server: .notChecked), [.privateReview])
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: original, server: .notVisible), [.privateReview])
+    }
+
+    func testDeletedTripNeverOffersRestartTankRepairOrFinalisation() {
+        let original = item(kind: .tripUpload, actual: true)
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: original, server: .deleted), [.privateReview])
+
+        let cancellation = item(kind: .tripDeletion)
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: cancellation, server: .deleted),
+                       [.verifyCancellation, .privateReview])
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: cancellation, server: .active), [.privateReview])
+    }
+
+    func testRecordedTankRepairOnlyOfferedForActiveOriginalWithActualEvidence() {
+        let withProof = item(kind: .tripUpload, actual: true)
+        let withoutProof = item(kind: .tripUpload, actual: false)
+        XCTAssertTrue(GuidedSyncCorrectionPolicy.available(for: withProof, server: .active)
+            .contains(.recoverRecordedTank))
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(for: withoutProof, server: .active)
+            .contains(.recoverRecordedTank))
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(for: withProof, server: .ended)
+            .contains(.recoverRecordedTank))
+    }
+
+    func testCompletedTripOnlyOffersReadbackReconciliationNotTankReconstruction() {
+        let trip = item(kind: .tripUpload, actual: true)
+        let options = GuidedSyncCorrectionPolicy.available(for: trip, server: .ended)
+        XCTAssertTrue(options.contains(.verifyCompleted))
+        XCTAssertFalse(options.contains(.recoverRecordedTank))
+    }
+
+    func testActualAndSprayRetryOnlyAfterExactParentScopeReadback() {
+        for kind: GuidedSyncRepairIssue.Kind in [.tankActual, .sprayRecord] {
+            let record = item(kind: kind)
+            XCTAssertFalse(GuidedSyncCorrectionPolicy.available(for: record, server: .deleted)
+                .contains(.retryExisting))
+            XCTAssertTrue(GuidedSyncCorrectionPolicy.available(for: record, server: .active)
+                .contains(.retryExisting))
+        }
+    }
+}
