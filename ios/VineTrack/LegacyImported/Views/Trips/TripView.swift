@@ -255,7 +255,7 @@ struct TripView: View {
         // publication created O(trips x pins) main-thread work while scrolling.
         let pinCounts = Dictionary(
             store.pins.compactMap { $0.tripId }.map { ($0, 1) },
-            uniquingKeysWith: +
+            uniquingKeysWith: { existing, incoming in existing + incoming }
         )
         let sprayByTrip = Dictionary(
             store.sprayRecords.compactMap { record in
