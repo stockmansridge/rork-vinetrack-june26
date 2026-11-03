@@ -110,6 +110,121 @@ final class TripSyncService {
         if workTaskClear { metadata.clearWorkTaskClears([id]) } else { metadata.clearDirty([id]) }
     }
 
+    /// Read-only, account/vineyard-scoped issue discovery for Settings.
+    /// Legacy metadata is global; an ID with no original scoped evidence must
+    /// be displayed for private review, never offered a destructive repair.
+    nonisolated struct GuidedQueueItem: Identifiable, Sendable {
+        let id: UUID
+        let pendingUpload: Bool
+        let pendingDeletion: Bool
+        let failed: Bool
+        let belongsToCurrentVineyard: Bool
+        let originalTripPresent: Bool
+    }
+
+    func guidedQueueItems(vineyardId: UUID) -> [GuidedQueueItem] {
+        guard let store, let auth, auth.isSignedIn,
+              auth.userId == store.currentUserIdProvider?(),
+              store.selectedVineyardId == vineyardId else { return [] }
+        let currentTrips = Dictionary(
+            store.trips.filter { $0.vineyardId == vineyardId }.map { ($0.id, $0) },
+            uniquingKeysWith: { current, _ in current })
+        let originals = (try? store.tripDeletionJournal.load().intents) ?? [:]
+        let allIds = Set(metadata.pendingUpserts.keys)
+            .union(metadata.pendingDeletes.keys)
+            .union(originals.values.filter {
+                $0.acknowledgement == nil && $0.scope?.account == auth.userId &&
+                    $0.scope?.vineyard == vineyardId
+            }.map(\.trip))
+        return allIds.sorted { $0.uuidString < $1.uuidString }.map { id in
+            let scopedDeletion = originals[id].map {
+                $0.scope?.account == auth.userId && $0.scope?.vineyard == vineyardId &&
+                    $0.scope?.trip == id
+            } ?? false
+            return GuidedQueueItem(
+                id: id,
+                pendingUpload: metadata.pendingUpserts[id] != nil,
+                pendingDeletion: metadata.pendingDeletes[id] != nil || scopedDeletion,
+                failed: metadata.isUpsertFailed(id) || metadata.isDeleteFailed(id),
+                belongsToCurrentVineyard: currentTrips[id] != nil || scopedDeletion,
+                originalTripPresent: currentTrips[id] != nil)
+        }
+    }
+
+    /// Selected, operator-confirmed repair option: recover ONLY the original
+    /// tank start recorded in the same durable confirmed Actual Use. No guessed
+    /// chemical amounts, GPS, rows or tank-end events. It never acknowledges a
+    /// network operation; the normal ordered sync must prove receipt later.
+    func guidedRestoreConfirmedTankStart(tripId: UUID, vineyardId: UUID) async throws -> String {
+        struct NotAdmitted: LocalizedError {
+            let explanation: String
+            var errorDescription: String? { explanation }
+        }
+        guard !isSyncing, let store, let auth, auth.isSignedIn,
+              let owner = auth.userId, store.currentUserIdProvider?() == owner,
+              store.selectedVineyardId == vineyardId,
+              SupabaseClientProvider.shared.client.auth.currentUser?.id == owner,
+              let local = store.trips.first(where: { $0.id == tripId && $0.vineyardId == vineyardId }),
+              !local.isActive, local.endTime != nil, local.coverageBasis == .occurrence,
+              metadata.pendingUpserts[tripId] != nil,
+              metadata.pendingDeletes[tripId] == nil,
+              (try? store.tripDeletionJournal.isCancelled(tripId)) == false,
+              !TripCancellationIntentStore.shared.blocksReplay(tripId: tripId)
+        else {
+            throw NotAdmitted(explanation: "This original Trip is not eligible for a local evidence repair. Its retained work was not changed.")
+        }
+        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyardId.uuidString)
+        let scope = TripOccurrenceJournal.Scope(ownerId: owner.uuidString.lowercased(),
+            vineyardId: vineyardId.uuidString.lowercased(), tripId: tripId.uuidString.lowercased())
+        let journal = try TripOccurrenceJournal(scope: scope)
+        guard let retained = try journal.load(), retained.heldReason == nil,
+              retained.pending.contains(where: { $0.rpc == "finalize_trip_occurrences_v1" })
+        else {
+            throw NotAdmitted(explanation: "The original finalisation journal is unavailable or held. No tank evidence was changed.")
+        }
+        // A server tombstone is a deliberate cancellation, never a reason to
+        // resurrect or overwrite the Trip. NULL/ambiguous visibility is not proof.
+        let remote = try await SupabaseTripSyncRepository()
+            .fetchTripForOccurrenceStart(tripId: tripId, vineyardId: vineyardId)
+        guard let remote, remote.id == tripId, remote.vineyardId == vineyardId,
+              remote.deletedAt == nil, remote.endTime == nil, remote.isActive,
+              store.selectedVineyardId == vineyardId, store.currentUserIdProvider?() == owner,
+              SupabaseClientProvider.shared.client.auth.currentUser?.id == owner,
+              (try? store.tripDeletionJournal.isCancelled(tripId)) == false
+        else {
+            throw NotAdmitted(explanation: "The server Trip is deleted, completed, or cannot be verified. Original data was retained; nothing was recreated.")
+        }
+        let required = requiredTankSessions(tripId)
+        let missing = TankDependencyVerification.missing(
+            required: required, in: TankDependencyVerification.ids(local.tankSessions))
+        guard !missing.isEmpty else {
+            throw NotAdmitted(explanation: "No missing original tank session with a matching confirmed actual was found.")
+        }
+        let linked = Set(store.sprayRecords.filter {
+            $0.canonicalTripId == tripId && $0.vineyardId == vineyardId && !$0.isTemplate
+        }.map(\.id))
+        let actuals = confirmedTankActuals(tripId).filter {
+            $0.tripId == tripId && $0.vineyardId == vineyardId
+        }
+        guard let corrected = ConfirmedTankStartRecovery.restore(
+            trip: local, missingSessionIds: missing,
+            confirmedActuals: actuals, linkedSprayIds: linked, ownerId: owner)
+        else {
+            throw NotAdmitted(explanation: "The retained Actual Use does not uniquely prove the original tank identity and time. Owner review is required; no fields were invented.")
+        }
+        // A same-account deletion or selection change after the remote read
+        // invalidates this repair before the first persistent write.
+        guard store.selectedVineyardId == vineyardId,
+              store.currentUserIdProvider?() == owner,
+              (try? store.tripDeletionJournal.isCancelled(tripId)) == false,
+              metadata.pendingDeletes[tripId] == nil
+        else {
+            throw NotAdmitted(explanation: "The original Trip scope changed. No changes were written.")
+        }
+        try store.updateTripOrThrow(corrected)
+        return "The original tank start has been saved locally with an audit entry. Its End, Actual Use and Spray still require independent server acknowledgement. Run the normal sync next."
+    }
+
     /// True while a full sweep is actively pushing/pulling trips.
     var isSyncing: Bool { syncStatus == .syncing }
 
