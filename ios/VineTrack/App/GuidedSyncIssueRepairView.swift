@@ -23,13 +23,14 @@ nonisolated enum GuidedSyncRecordState: String, Sendable {
 }
 
 nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Sendable {
-    case recoverRecordedTank, manualVerifiedTank, amendActualUse, verifyCompleted, verifyCancellation, reviewLegacyDeleted, retryExisting, privateReview
+    case recoverRecordedTank, manualVerifiedTank, amendActualUse, correctPendingActualUse, verifyCompleted, verifyCancellation, reviewLegacyDeleted, retryExisting, privateReview
     var id: Self { self }
     var label: String {
         switch self {
         case .recoverRecordedTank: "Recover tank start from confirmed Actual Use"
         case .manualVerifiedTank: "Enter verified original tank start"
-        case .amendActualUse: "Correct water and chemical Actual Use"
+        case .amendActualUse: "Amend verified server Actual Use"
+        case .correctPendingActualUse: "Correct pending original Actual Use"
         case .verifyCompleted: "Verify original Trip completion"
         case .verifyCancellation: "Verify original deletion"
         case .reviewLegacyDeleted: "Reconcile deleted Trip and linked records"
@@ -44,7 +45,9 @@ nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Senda
         case .manualVerifiedTank:
             "Select the retained original tank ID, enter the genuinely verified start time and record where that evidence came from. Never invent an ID or alter confirmed chemical amounts."
         case .amendActualUse:
-            "Correct recorded water or chemical quantities through the existing audited backend RPC. A confirmed original server Actual and tank-session receipt are mandatory; missing uploads must sync first."
+            "Correct recorded water or chemical quantities through the existing audited backend RPC. A confirmed original server Actual and tank-session receipt are mandatory."
+        case .correctPendingActualUse:
+            "For an Actual Use that has never reached the server: archive the original operator confirmation locally, correct water or chemical amounts while preserving every original ID and tank session, then upload through the normal dependency-ordered sync."
         case .verifyCompleted:
             "Reads back the exact original ended Trip and checks its linked evidence before acknowledging the existing upload."
         case .verifyCancellation:
@@ -63,7 +66,8 @@ nonisolated enum GuidedSyncCorrection: String, Identifiable, CaseIterable, Senda
 /// before the UI can offer a write. Actual handlers reverify scope/server state.
 nonisolated enum GuidedSyncCorrectionPolicy {
     static func available(for issue: GuidedSyncRepairIssue, server: GuidedSyncRecordState,
-                          actualAccepted: Bool = false) -> [GuidedSyncCorrection] {
+                          actualAccepted: Bool = false,
+                          actualPending: Bool = false) -> [GuidedSyncCorrection] {
         guard issue.verifiedCurrentScope else {
             return issue.kind == .protectedQueue && server == .deleted
                 ? [.reviewLegacyDeleted, .privateReview] : [.privateReview]
@@ -94,9 +98,9 @@ nonisolated enum GuidedSyncCorrectionPolicy {
                 choices.append(.privateReview)
                 return choices
             case .tankActual:
-                return actualAccepted
-                    ? [.amendActualUse, .retryExisting, .privateReview]
-                    : [.retryExisting, .privateReview]
+                if actualAccepted { return [.amendActualUse, .retryExisting, .privateReview] }
+                if actualPending { return [.correctPendingActualUse, .retryExisting, .privateReview] }
+                return [.retryExisting, .privateReview]
             case .sprayRecord, .trackedSprayCompletion, .initialMixDraft:
                 return [.retryExisting, .privateReview]
             case .protectedQueue:
@@ -394,11 +398,12 @@ private struct GuidedSyncIssueDetailView: View {
     }
     private var options: [GuidedSyncCorrection] {
         GuidedSyncCorrectionPolicy.available(
-            for: issue, server: server, actualAccepted: actualAccepted)
+            for: issue, server: server, actualAccepted: actualAccepted,
+            actualPending: SprayTankActualStore.shared.pendingIds.contains(issue.recordId))
     }
     private var reasonRequired: Bool {
         selected == .manualVerifiedTank || selected == .amendActualUse ||
-            selected == .reviewLegacyDeleted
+            selected == .correctPendingActualUse || selected == .reviewLegacyDeleted
     }
 
     var body: some View {
@@ -477,7 +482,8 @@ private struct GuidedSyncIssueDetailView: View {
                     }
                 }
 
-                if selected == .amendActualUse, let actual = originalActual {
+                if (selected == .amendActualUse || selected == .correctPendingActualUse),
+                   let actual = originalActual {
                     LabeledContent("Recorded Actual Use ID", value: actual.id.uuidString.lowercased())
                         .font(.caption.monospaced())
                     TextField("Actual tank water (litres), blank = not recorded", text: $waterText)
@@ -790,6 +796,22 @@ private struct GuidedSyncIssueDetailView: View {
                     tripId: id, vineyardId: vineyard, manual: manual)
                 stage("OPERATOR_TANK_TIME_SAVED",
                       "Owner-reviewed original session and entered time saved with provenance; original quantities unchanged.")
+                requestFullSync(auditId: operation, owner: owner, vineyard: vineyard)
+            case .correctPendingActualUse:
+                guard issue.kind == .tankActual,
+                      SprayTankActualStore.shared.pendingIds.contains(issue.recordId),
+                      server == .active || server == .ended else {
+                    outcome = "Only the original, pending and independently unaccepted Actual Use can be corrected locally."
+                    return
+                }
+                let corrected = try await GuidedActualUseCorrection.correctPendingOriginal(
+                    actualId: issue.recordId, owner: owner, vineyard: vineyard,
+                    reason: evidenceNote, waterText: waterText,
+                    chemicalDisplayAmounts: chemicalTexts, operationId: operation,
+                    store: store)
+                stage("ORIGINAL_PENDING_ACTUAL_ARCHIVED_AND_CORRECTED",
+                    "Original confirmed quantities were durably archived; corrected water and chemicals remain queued under original Actual ID (corrected.id.uuidString.lowercased()).")
+                outcome = "Original pending Actual Use was corrected and retained under its exact ID. Independent server acceptance is still required."
                 requestFullSync(auditId: operation, owner: owner, vineyard: vineyard)
             case .amendActualUse:
                 guard actualAccepted, issue.kind == .tankActual else {
