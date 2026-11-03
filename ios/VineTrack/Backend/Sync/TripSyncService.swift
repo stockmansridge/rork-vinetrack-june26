@@ -1419,6 +1419,21 @@ final class TripSyncService {
                     }
                     guard let retained = try journal.load() else { throw TripOccurrenceCoverage.Failure.missing }
                     mapped = try mapped.withOccurrenceProjection(retained.projected)
+                    // A server snapshot can lag the original iPhone's recorded
+                    // tank starts and GPS. Never erase durable local tank evidence.
+                    if store.deviceActiveTripId == mapped.id, store.isDeviceTripOwner,
+                       let original = localBeforePull, original.isActive, mapped.isActive,
+                       mapped.endTime == nil {
+                        guard let protected = OccurrenceActiveTripEvidence.merge(
+                            local: original, remote: mapped
+                        ) else {
+                            receiptReconciliationHolds[backendTrip.id] = "TRIP_ACTIVE_EVIDENCE_CONFLICT_HELD"
+                            metadata.markUpsertsFailed([backendTrip.id])
+                            syncStatus = .failure("Original active Trip tank or GPS evidence conflicts with the server. Original data is retained.")
+                            return
+                        }
+                        mapped = protected
+                    }
                     store.applyRemoteTripUpsert(mapped)
                     if retained.pending.isEmpty, retained.heldReason == nil { metadata.clearDirty([backendTrip.id]) }
                     else { syncStatus = .failure("Occurrence reconciliation pending. Saved actions are retained.") }
@@ -1866,6 +1881,35 @@ nonisolated enum TankSessionReceiptMatch {
             return "TRIP_LOCAL_TANK_FILL_END_DIFFERS_\(differenceBucket(local.fillEndTime, remote.fillEndTime))"
         }
         return nil
+    }
+}
+
+/// Protect an original-device active occurrence Trip against an older server
+/// snapshot. Recorded tank sessions and GPS are never inferred from Actual Use.
+nonisolated enum OccurrenceActiveTripEvidence {
+    static func merge(local: Trip, remote: Trip) -> Trip? {
+        guard local.id == remote.id, local.vineyardId == remote.vineyardId,
+              local.coverageBasis == .occurrence, remote.coverageBasis == .occurrence,
+              local.isActive, remote.isActive, local.endTime == nil, remote.endTime == nil,
+              Set(local.tankSessions.map(\.id)).count == local.tankSessions.count,
+              Set(remote.tankSessions.map(\.id)).count == remote.tankSessions.count,
+              ActiveTripPathReconciler.containsRoute(remote.pathPoints, in: local.pathPoints)
+                 || ActiveTripPathReconciler.containsRoute(local.pathPoints, in: remote.pathPoints),
+              let combined = TankPathAttribution.mergingRecordedPaths(local: local, remote: remote)
+        else { return nil }
+        var result = remote
+        result.tankSessions = combined.tankSessions
+        result.totalTanks = max(local.totalTanks, remote.totalTanks, combined.tankSessions.count)
+        if ActiveTripPathReconciler.containsRoute(remote.pathPoints, in: local.pathPoints) {
+            result.pathPoints = local.pathPoints
+            result.totalDistance = local.totalDistance
+            result.currentPathDistance = local.currentPathDistance
+        }
+        // Only the original active-device owner calls this merge.
+        result.activeTankNumber = local.activeTankNumber
+        result.isFillingTank = local.isFillingTank
+        result.fillingTankNumber = local.fillingTankNumber
+        return result
     }
 }
 
