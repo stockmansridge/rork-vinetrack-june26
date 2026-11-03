@@ -1,0 +1,58 @@
+{
+  "date": "2026-11-03",
+  "destination": "TestFlight internal only; no external testing or App Store review requested",
+  "approved_main_sha": "28f2d8bbe7aa082130af4af8173506d410622aea",
+  "github_runs": [
+    {"id": 41626274564, "status": "completed", "conclusion": "success"},
+    {"id": 41626274609, "status": "completed", "conclusion": "success"},
+    {"id": 41626274590, "status": "completed", "conclusion": "success"}
+  ],
+  "github_run_head_sha_independently_verified": true,
+  "remote_main_sha_independently_verified": true,
+  "source_parity": {
+    "non_generated_ios_files": 1306,
+    "pre_upload_differences": [],
+    "pre_upload_extra_nonignored_files": [],
+    "post_upload_differences": [],
+    "excluded": "ios/VineTrack/Config.swift: managed virtual build-time configuration",
+    "github_source_archive_sha256": "9e8c782f12632c475df96f122a17b5f0457b804dec0590a912262aea7ee9666b",
+    "signed_binary_sha_attestation": "Not exposed; source parity is not embedded signed-revision proof"
+  },
+  "configuration": {
+    "requestEnvs_result": "Both Supabase variables already configured; no replacement requested",
+    "approved_reference_config_sha256_verified": true,
+    "approved_reference_auth_settings_http": 200,
+    "managed_values_independently_compared_with_reference": false,
+    "signed_app_authentication_tested": false,
+    "clientEnvsHash_from_publishing_receipt": "77512c8744941d43de74978b0c1291c3bb06d8da",
+    "note": "Hash identifies the managed configuration input, not independently inspected signed Config bytes. No key values retained here."
+  },
+  "apple": {
+    "team_id": "8Y879855VK",
+    "asc_app_id": "6761143377",
+    "bundle_id": "app.rork.nt0v48tayl7v8noxcfe74",
+    "fresh_prior_inventory_count": 412,
+    "fresh_prior_max_build": 212,
+    "certificate_id": "P6K283KAMH",
+    "capability_sync": "ok; unchanged"
+  },
+  "submission": {
+    "id": "5bebf036-676c-427e-8547-cd195ebadef8",
+    "version": "3.1.9",
+    "build_number": 213,
+    "submitBuild_status": "ok",
+    "message": "Build succeeded and uploaded to App Store Connect; processing",
+    "persisted_currentBuildStep": "complete",
+    "persisted_buildProcessingState": null,
+    "persisted_errorMessage": null,
+    "created_at": "2026-11-03T11:45:53.423Z",
+    "completed_step_at": "2026-11-03T11:51:25.611Z",
+    "builder": "limrun",
+    "xcode": "27.1",
+    "archive_source": "supplied-snapshot",
+    "immediate_asc_build_213_query": "No indexed record returned",
+    "internal_availability_confirmed": false
+  },
+  "validation": "Existing exact-SHA GitHub results independently verified; no unnecessary test rerun. Standard publishing compile/sign/upload succeeded. No device UI or login testing performed.",
+  "incident": "OPEN: original iPhone record-by-record authoritative receipts and new Trip creation/completion acceptance outstanding. No original-device queues, customer records, Android or deployed SQL modified."
+}
