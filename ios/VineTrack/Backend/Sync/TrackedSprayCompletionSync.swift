@@ -54,6 +54,23 @@ final class TrackedSprayCompletionSync {
 
     func intents() throws -> [Intent] { try load().pending }
 
+    /// Read-only exact original completion receipt. A reviewed cancellation is
+    /// deliberately stored separately and must never satisfy Spray completion.
+    func hasAcknowledgedCompletion(tripId: UUID, sprayRecordId: UUID,
+                                   ownerId: UUID, vineyardId: UUID) throws -> Bool {
+        let state = try load()
+        let pending = state.pending.contains {
+            $0.tripId == tripId && $0.sprayRecordId == sprayRecordId
+        }
+        guard !pending else { return false }
+        return state.acknowledged.contains { receipt in
+            receipt.intent.tripId == tripId &&
+            receipt.intent.sprayRecordId == sprayRecordId &&
+            receipt.intent.ownerId == ownerId &&
+            receipt.intent.vineyardId == vineyardId
+        }
+    }
+
     /// A deliberately cancelled Trip can never receive a Spray "completed"
     /// acknowledgement. Move its original End intent into a separate durable
     /// cancellation history ONLY after an exact reviewed server cancellation
