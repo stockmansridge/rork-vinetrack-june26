@@ -501,73 +501,90 @@ fun SettingsScreen(
                 }
             }
 
-            // App preferences (placeholders for upcoming settings)
+
+            // Shared destinations are in the exact same order as iOS.
+            // Android-specific device defaults remain at the end of the group.
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SettingsSectionHeader("Preferences & Data", Icons.Filled.Tune, VineColors.Indigo)
                 VineyardCard {
                     PreferenceRow(
-                        Icons.Filled.CreditCard,
-                        VineColors.Pink,
-                        "Subscription",
-                        "Manage your plan",
+                        Icons.Filled.CreditCard, VineColors.Pink,
+                        "Subscription", "Manage your plan",
                         onClick = { showSubscription = true },
                     )
-                    RowDivider(vine.cardBorder)
                     if (onOpenTool != null) {
+                        RowDivider(vine.cardBorder)
                         PreferenceRow(
-                            Icons.Filled.Tune,
-                            VineColors.Indigo,
-                            "Preferences",
-                            "Appearance, tracking, photos & AI",
+                            Icons.Filled.Tune, VineColors.Indigo,
+                            "Preferences", "Appearance, tracking, photos & AI",
                             onClick = { onOpenTool(ToolRoute.AppPreferences) },
                         )
                         RowDivider(vine.cardBorder)
                         PreferenceRow(
-                            Icons.Filled.NotificationsActive,
-                            VineColors.Destructive,
-                            "Alerts & Notifications",
-                            "Irrigation, pins, weather & spray reminders",
+                            Icons.Filled.NotificationsActive, VineColors.Destructive,
+                            "Alerts & Notifications", "Irrigation, pins, weather & spray reminders",
                             onClick = { onOpenTool(ToolRoute.Alerts) },
                         )
                         RowDivider(vine.cardBorder)
                         PreferenceRow(
-                            Icons.Filled.CloudQueue,
-                            VineColors.Orange,
-                            "Weather Data & Forecasting",
-                            "Forecast source, station & sensors",
+                            Icons.Filled.CloudQueue, VineColors.Orange,
+                            "Weather Data & Forecasting", "Forecast source, station & sensors",
                             onClick = { onOpenTool(ToolRoute.WeatherData) },
                         )
                         RowDivider(vine.cardBorder)
+                        PreferenceRow(
+                            Icons.Filled.CloudUpload, VineColors.Info,
+                            "Sync", "Cloud sync for pins, paddocks & trips",
+                            onClick = { onOpenTool(ToolRoute.SyncStatus) },
+                        )
+                        RowDivider(vine.cardBorder)
+                        PreferenceRow(
+                            Icons.Filled.WifiOff, VineColors.Success,
+                            "Offline Readiness", "Check this device is ready for no-service areas",
+                            onClick = { onOpenTool(ToolRoute.OfflineReadiness) },
+                        )
                     }
+                    RowDivider(vine.cardBorder)
+                    PreferenceRow(
+                        Icons.Filled.MedicalServices, VineColors.Cyan,
+                        "Sync Diagnostics", "Pending uploads, last sync & status",
+                        onClick = { showSyncDiagnostics = true },
+                    )
+                    RowDivider(vine.cardBorder)
+                    PreferenceRow(
+                        Icons.Filled.Devices, VineColors.LeafGreen,
+                        "VineTrack Web Portal", "Manage setup, reports and team access from desktop",
+                        onClick = { openUrl("https://portal.vinetrack.com.au") },
+                    )
+                    RowDivider(vine.cardBorder)
+                    Text(
+                        "Device & regional defaults",
+                        color = vine.textSecondary, fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(vertical = 8.dp),
+                    )
                     if (onOpenTool != null) {
                         PreferenceRow(
-                            Icons.Filled.Straighten,
-                            VineColors.Indigo,
-                            "Region & Units",
-                            "Country, currency & units",
+                            Icons.Filled.Straighten, VineColors.Indigo,
+                            "Region & Units", "Country, currency & units",
                             onClick = { onOpenTool(ToolRoute.RegionUnits) },
                         )
                         RowDivider(vine.cardBorder)
                     }
                     PreferenceRow(
-                        Icons.Filled.WaterDrop,
-                        VineColors.Cyan,
-                        "Irrigation defaults",
-                        irrigationSummary(irrigationDefaults),
+                        Icons.Filled.WaterDrop, VineColors.Cyan,
+                        "Irrigation defaults", irrigationSummary(irrigationDefaults),
                         onClick = { showIrrigationEditor = true },
                     )
                     RowDivider(vine.cardBorder)
                     PreferenceRow(
-                        Icons.Filled.Map,
-                        VineColors.LeafGreen,
-                        "Map defaults",
-                        mapSummary(mapDefaults),
+                        Icons.Filled.Map, VineColors.LeafGreen,
+                        "Map defaults", mapSummary(mapDefaults),
                         onClick = { showMapEditor = true },
                     )
                     RowDivider(vine.cardBorder)
                     PreferenceToggleRow(
-                        Icons.Filled.Timer,
-                        VineColors.Cyan,
+                        Icons.Filled.Timer, VineColors.Cyan,
                         "Tank fill timer",
                         "Show Start/Stop Fill timing on spray trips. Saved on this device only.",
                         value = fillTimerEnabled,
@@ -576,54 +593,22 @@ fun SettingsScreen(
                             operationPrefsStore.setFillTimerEnabled(it)
                         },
                     )
-                    // Shared sync entries are grouped with Preferences as on iOS.
                     RowDivider(vine.cardBorder)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         Box(
-                            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(VineColors.Success.copy(alpha = 0.15f)),
+                            modifier = Modifier.size(34.dp).clip(RoundedCornerShape(9.dp))
+                                .background(VineColors.Success.copy(alpha = 0.15f)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Icon(Icons.Filled.CloudDone, contentDescription = null, tint = VineColors.Success, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Filled.CloudDone, contentDescription = null,
+                                tint = VineColors.Success, modifier = Modifier.size(18.dp))
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Online-first", fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                            Text("Your data syncs live with the server while connected.", fontSize = 12.sp, color = vine.textSecondary)
+                            Text("Your data syncs live with the server while connected.",
+                                fontSize = 12.sp, color = vine.textSecondary)
                         }
                     }
-                    if (onOpenTool != null) {
-                        RowDivider(vine.cardBorder)
-                        PreferenceRow(
-                            Icons.Filled.CloudUpload,
-                            VineColors.Info,
-                            "Sync",
-                            "Cloud sync for pins, paddocks & trips",
-                            onClick = { onOpenTool(ToolRoute.SyncStatus) },
-                        )
-                        RowDivider(vine.cardBorder)
-                        PreferenceRow(
-                            Icons.Filled.WifiOff,
-                            VineColors.Success,
-                            "Offline Readiness",
-                            "Check this device is ready for no-service areas",
-                            onClick = { onOpenTool(ToolRoute.OfflineReadiness) },
-                        )
-                        RowDivider(vine.cardBorder)
-                        PreferenceRow(
-                            Icons.Filled.MedicalServices,
-                            VineColors.Cyan,
-                            "Sync Diagnostics",
-                            "Pending uploads, last sync & status",
-                            onClick = { showSyncDiagnostics = true },
-                        )
-                    }
-                    RowDivider(vine.cardBorder)
-                    PreferenceRow(
-                        Icons.Filled.Devices,
-                        VineColors.LeafGreen,
-                        "VineTrack Web Portal",
-                        "Manage setup, reports and team access from desktop",
-                        onClick = { openUrl("https://portal.vinetrack.com.au") },
-                    )
                 }
             }
 
