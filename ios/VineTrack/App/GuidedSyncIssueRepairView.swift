@@ -142,6 +142,21 @@ nonisolated enum GuidedSyncRepairSuggestion {
     }
 }
 
+nonisolated enum GuidedSyncIssueOrder {
+    static func priority(_ kind: GuidedSyncRepairIssue.Kind) -> Int {
+        switch kind {
+        case .tripUpload: return 0
+        case .tankActual: return 1
+        case .sprayRecord: return 2
+        case .trackedSprayCompletion: return 3
+        case .tripDeletion: return 4
+        case .initialMixDraft: return 5
+        case .protectedQueue: return 9
+        default: return 7
+        }
+    }
+}
+
 @MainActor
 struct GuidedSyncIssueRepairView: View {
     @Environment(NewBackendAuthService.self) private var auth
@@ -210,6 +225,15 @@ struct GuidedSyncIssueRepairView: View {
                                 Image(systemName: item.kind == .protectedQueue ? "lock.shield" : "exclamationmark.circle")
                                     .foregroundStyle(item.verifiedCurrentScope ? Color.orange : Color.secondary)
                                 Text(item.title).font(.headline)
+                            }
+                            if let tripId = item.relatedTripId,
+                               let trip = store.trips.first(where: {
+                                   $0.id == tripId && $0.vineyardId == store.selectedVineyardId
+                               }) {
+                                Text(trip.tripTitle ?? trip.tripFunction ?? "Trip")
+                                    .font(.subheadline.weight(.medium))
+                                Text(trip.startTime.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption2).foregroundStyle(.secondary)
                             }
                             Text(item.recordId.uuidString.lowercased())
                                 .font(.caption2.monospaced())
@@ -430,9 +454,9 @@ struct GuidedSyncIssueRepairView: View {
                 verifiedCurrentScope: visible.contains(issue.id), originalActualAvailable: false))
         }
         items = list.sorted {
-            if $0.kind == .protectedQueue && $1.kind != .protectedQueue { return false }
-            if $1.kind == .protectedQueue && $0.kind != .protectedQueue { return true }
-            return $0.id < $1.id
+            let first = GuidedSyncIssueOrder.priority($0.kind)
+            let second = GuidedSyncIssueOrder.priority($1.kind)
+            return first == second ? $0.id < $1.id : first < second
         }
     }
 }
@@ -479,7 +503,10 @@ private struct GuidedSyncIssueDetailView: View {
         SprayTankActualStore.shared.records.first { $0.id == issue.recordId }
     }
     private var originalTrip: Trip? {
-        guard let tripId = issue.relatedTripId else { return nil }
+        let tripId = issue.relatedTripId ?? (
+            [.protectedQueue, .tripDeletion, .tripUpload].contains(issue.kind)
+                ? issue.recordId : nil)
+        guard let tripId else { return nil }
         return store.trips.first { $0.id == tripId && $0.vineyardId == store.selectedVineyardId }
     }
     private var missingOriginalSessions: [SprayTankActual] {
@@ -538,6 +565,19 @@ private struct GuidedSyncIssueDetailView: View {
                         .font(.caption2.monospaced())
                 }
                 Text(issue.detail).font(.subheadline)
+                if let trip = originalTrip {
+                    NavigationLink {
+                        TripDetailView(trip: trip)
+                    } label: {
+                        Label("Open original Trip", systemImage: "arrow.up.right.square")
+                    }
+                    Text("Open the exact locally saved Trip to inspect tank sessions and Sync status. No queue entry is cleared by opening it.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else if issue.relatedTripId != nil || issue.kind == .protectedQueue {
+                    Label("This Trip is not present in the selected vineyard's local history. No substitute Trip will be created from its ID.",
+                          systemImage: "lock.shield")
+                        .font(.caption).foregroundStyle(.orange)
+                }
                 if !issue.verifiedCurrentScope {
                     Label("Original ownership is not established. No mutation is permitted.", systemImage: "lock.shield")
                         .font(.footnote).foregroundStyle(.orange)

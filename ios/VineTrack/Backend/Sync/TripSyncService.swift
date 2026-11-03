@@ -1380,6 +1380,10 @@ final class TripSyncService {
                                 try await repository.establishOccurrenceTankSessions(
                                     BackendTrip.upsert(from: trip, createdBy: createdBy, clientUpdatedAt: ts),
                                     required: required)
+                                // The server has independently confirmed the original parent
+                                // with its required tank sessions. Actual Use can now upload,
+                                // but original Trip finalisation is still unacknowledged.
+                                metadata.markParentsEstablished([tripId])
                                 tankDependencyHolds.removeValue(forKey: tripId)
                                 // Clearing an obsolete error is NOT a Trip completion
                                 // receipt: the original finalise journal stays queued.

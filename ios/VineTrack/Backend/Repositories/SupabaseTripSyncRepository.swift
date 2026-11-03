@@ -22,6 +22,19 @@ nonisolated enum OccurrenceCreateBlockUUID {
     }
 }
 
+nonisolated enum OccurrenceParentBootstrapPolicy {
+    static func mayReplay(_ rpc: String, parentOnly: Bool) -> Bool {
+        !parentOnly || rpc == "create_trip_with_occurrences_v1" ||
+            rpc == "activate_trip_occurrences_v1"
+    }
+    static func parentOperationsAcknowledged(_ pendingRPCs: [String]) -> Bool {
+        !pendingRPCs.contains {
+            $0 == "create_trip_with_occurrences_v1" ||
+            $0 == "activate_trip_occurrences_v1"
+        }
+    }
+}
+
 final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     private let provider: SupabaseClientProvider
     private let deletionAuthority: VineyardWriteAuthority
@@ -122,6 +135,9 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
               let account = provider.client.auth.currentUser?.id
         else { throw TripOccurrenceCoverage.Failure.reconciliation }
         try VineyardWriteAuthority.shared.requireWrite(vineyardId: trip.vineyardId.uuidString)
+        // End is retained in the original WAL. Create and activate the exact
+        // original server parent first, without replaying the queued finalise.
+        try await replayOccurrenceTrip(trip, parentOnly: true)
         // Keep the raw server timestamp from the SAME read as the tank array.
         // sync_version alone is not advanced by every existing Trip writer.
         // Re-encoding a Date would truncate PostgreSQL microseconds and make
@@ -274,9 +290,9 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
     }
 
     /// Serial durable action replay. Never converts an occurrence trip into a numeric full-snapshot write.
-    private func replayOccurrenceTrip(_ trip: BackendTripUpsert) async throws {
+    private func replayOccurrenceTrip(_ trip: BackendTripUpsert, parentOnly: Bool = false) async throws {
         guard let raw = trip.occurrenceCoverage else { throw TripOccurrenceCoverage.Failure.updateRequired }
-        _ = try TripOccurrenceCoverage.requireDocument(raw)
+        let originalDocument = try TripOccurrenceCoverage.requireDocument(raw)
         let session = try await provider.client.auth.session
         let account = session.user.id
         let deletion = TripDeletionJournal()
@@ -323,6 +339,8 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
         for _ in 0..<128 {
             guard let state = try journal.load(), state.heldReason == nil else { throw TripOccurrenceCoverage.Failure.reconciliation }
             guard let op = state.pending.first else { break }
+            // Do not replay path edits or End before Actual Use has receipts.
+            if !OccurrenceParentBootstrapPolicy.mayReplay(op.rpc, parentOnly: parentOnly) { break }
             try deletion.requireNotCancelled(trip.id)
             do {
                 let beforeRequest = try await provider.client.auth.session
@@ -349,8 +367,27 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
                 throw error
             }
         }
-        guard let state = try journal.load(), state.pending.isEmpty, state.heldReason == nil else { throw TripOccurrenceCoverage.Failure.reconciliation }
+        guard let state = try journal.load(), state.heldReason == nil else {
+            throw TripOccurrenceCoverage.Failure.reconciliation
+        }
         try deletion.requireNotCancelled(trip.id)
+        if parentOnly {
+            guard OccurrenceParentBootstrapPolicy.parentOperationsAcknowledged(
+                state.pending.map(\.rpc)) else { throw TripOccurrenceCoverage.Failure.reconciliation }
+            // The exact original parent must exist independently on the server.
+            let remote = try await fetchTripForOccurrenceStart(
+                tripId: trip.id, vineyardId: trip.vineyardId)
+            let checkedSession = try await provider.client.auth.session
+            guard checkedSession.user.id == account,
+                  checkedSession.refreshToken == session.refreshToken,
+                  let remote, remote.deletedAt == nil, remote.isActive,
+                  remote.endTime == nil,
+                  TripOccurrenceCoverage.read(remote.occurrenceCoverage)?.planId == originalDocument.planId
+            else { throw TripOccurrenceCoverage.Failure.reconciliation }
+            sendEstablished = true
+            return
+        }
+        guard state.pending.isEmpty else { throw TripOccurrenceCoverage.Failure.reconciliation }
         try await updateOccurrenceNonAuthorityFields(trip, accessToken: session.accessToken)
         sendEstablished = true
     }

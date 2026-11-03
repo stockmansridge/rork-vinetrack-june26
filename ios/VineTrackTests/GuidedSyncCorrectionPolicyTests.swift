@@ -21,6 +21,15 @@ final class GuidedSyncCorrectionPolicyTests: XCTestCase {
             originalActualAvailable: actual)
     }
 
+    func testSelectedTripIssuesAppearBeforeProtectedOriginalQueue() {
+        XCTAssertLessThan(GuidedSyncIssueOrder.priority(.tripUpload),
+                          GuidedSyncIssueOrder.priority(.protectedQueue))
+        XCTAssertLessThan(GuidedSyncIssueOrder.priority(.tankActual),
+                          GuidedSyncIssueOrder.priority(.protectedQueue))
+        XCTAssertLessThan(GuidedSyncIssueOrder.priority(.tripDeletion),
+                          GuidedSyncIssueOrder.priority(.protectedQueue))
+    }
+
     func testUnknownOwnershipAllowsOnlyPrivateReview() {
         let kinds: [GuidedSyncRepairIssue.Kind] = [.tripUpload, .tripDeletion, .tankActual, .sprayRecord, .protectedQueue]
         for kind in kinds {

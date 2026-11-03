@@ -103,6 +103,48 @@ final class TankDependencyVerificationTests: XCTestCase {
         XCTAssertFalse(TankDependencyVerification.actualMatches(local: local, server: try actual(tripId: UUID())))
     }
 
+    func testParentBootstrapDoesNotReplayOriginalEndOrOtherOperations() async throws {
+        XCTAssertTrue(OccurrenceParentBootstrapPolicy.mayReplay(
+            "create_trip_with_occurrences_v1", parentOnly: true))
+        XCTAssertTrue(OccurrenceParentBootstrapPolicy.mayReplay(
+            "activate_trip_occurrences_v1", parentOnly: true))
+        XCTAssertFalse(OccurrenceParentBootstrapPolicy.mayReplay(
+            "apply_trip_occurrence_action_v1", parentOnly: true))
+        XCTAssertFalse(OccurrenceParentBootstrapPolicy.mayReplay(
+            "finalize_trip_occurrences_v1", parentOnly: true))
+        XCTAssertTrue(OccurrenceParentBootstrapPolicy.mayReplay(
+            "finalize_trip_occurrences_v1", parentOnly: false))
+        XCTAssertFalse(OccurrenceParentBootstrapPolicy.parentOperationsAcknowledged(
+            ["activate_trip_occurrences_v1", "finalize_trip_occurrences_v1"]))
+        XCTAssertTrue(OccurrenceParentBootstrapPolicy.parentOperationsAcknowledged(
+            ["apply_trip_occurrence_action_v1", "finalize_trip_occurrences_v1"]))
+    }
+
+    func testVerifiedParentMarkerAllowsActualWithoutAcknowledgingOriginalEnd() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("parent-bootstrap-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let persistence = PersistenceStore(directory: directory)
+        let metadata = TripSyncMetadata(persistence: persistence)
+        let originalTrip = UUID()
+        metadata.markDirty(originalTrip, at: Date())
+        XCTAssertFalse(metadata.isParentEstablished(originalTrip))
+        XCTAssertNotNil(metadata.pendingUpserts[originalTrip])
+        metadata.markParentsEstablished([originalTrip])
+        XCTAssertTrue(metadata.isParentEstablished(originalTrip))
+        XCTAssertNotNil(metadata.pendingUpserts[originalTrip],
+                        "Original End remains pending; no false terminal ACK")
+        let gate = SprayTankActualUploadGate.decide(
+            parentTripBlocked: metadata.pendingUpserts[originalTrip] != nil &&
+                !metadata.isParentEstablished(originalTrip),
+            sprayRecordPending: false)
+        XCTAssertEqual(gate, .upload)
+        let recovered = TripSyncMetadata(persistence: PersistenceStore(directory: directory))
+        XCTAssertTrue(recovered.isParentEstablished(originalTrip))
+        XCTAssertNotNil(recovered.pendingUpserts[originalTrip])
+    }
+
     // MARK: Trip upload acknowledgement
 
     func testTripWithoutRequiredSessionIsNotUploadedOrAcknowledged() async throws {
