@@ -27,7 +27,10 @@ final class GuidedSyncCorrectionPolicyTests: XCTestCase {
             let record = item(kind: kind, scoped: false, actual: true)
             let states: [GuidedSyncRecordState] = [.notChecked, .active, .ended, .deleted, .notVisible]
             for state in states {
-                XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: record, server: state), [.privateReview])
+                let expected: [GuidedSyncCorrection] =
+                    kind == .protectedQueue && state == .deleted
+                    ? [.reviewLegacyDeleted, .privateReview] : [.privateReview]
+                XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: record, server: state), expected)
             }
         }
     }
@@ -66,6 +69,41 @@ final class GuidedSyncCorrectionPolicyTests: XCTestCase {
         let options = GuidedSyncCorrectionPolicy.available(for: trip, server: .ended)
         XCTAssertTrue(options.contains(.verifyCompleted))
         XCTAssertFalse(options.contains(.recoverRecordedTank))
+    }
+
+    func testReviewedLegacyDeletedRequiresExactServerTombstoneAndOwnerConfirmationPath() {
+        let original = item(kind: .protectedQueue, scoped: false)
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: original, server: .active),
+                       [.privateReview])
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: original, server: .notVisible),
+                       [.privateReview])
+        XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: original, server: .deleted),
+                       [.reviewLegacyDeleted, .privateReview])
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(for: original, server: .deleted)
+            .contains(.retryExisting))
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(for: original, server: .deleted)
+            .contains(.recoverRecordedTank))
+    }
+
+    func testAcceptedActualAllowsAuditedCorrectionButPendingActualCannotAmend() {
+        let actual = item(kind: .tankActual)
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(
+            for: actual, server: .active, actualAccepted: false).contains(.amendActualUse))
+        XCTAssertTrue(GuidedSyncCorrectionPolicy.available(
+            for: actual, server: .active, actualAccepted: true).contains(.amendActualUse))
+        XCTAssertFalse(GuidedSyncCorrectionPolicy.available(
+            for: actual, server: .deleted, actualAccepted: true).contains(.amendActualUse))
+    }
+
+    func testSavedInitialMixAndTrackedCompletionCannotInventHistory() {
+        let kinds: [GuidedSyncRepairIssue.Kind] = [.initialMixDraft, .trackedSprayCompletion]
+        for kind in kinds {
+            let row = item(kind: kind)
+            XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: row, server: .active),
+                           [.retryExisting, .privateReview])
+            XCTAssertEqual(GuidedSyncCorrectionPolicy.available(for: row, server: .deleted),
+                           [.privateReview])
+        }
     }
 
     func testActualAndSprayRetryOnlyAfterExactParentScopeReadback() {
