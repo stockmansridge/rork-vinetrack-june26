@@ -147,7 +147,12 @@ final class SupabaseTripSyncRepository: TripSyncRepositoryProtocol {
             else { throw TripOccurrenceCoverage.Failure.reconciliation }
         }
         let serverIds = TankDependencyVerification.ids(serverSessions)
-        if required.isSubset(of: serverIds) { return }
+        if required.isSubset(of: serverIds),
+           trip.tankSessions.allSatisfy({ local in
+               serverSessions.contains(where: { server in
+                   TankSessionReceiptMatch.equivalent(local: local, remote: server)
+               })
+           }) { return }
         // Optimistic concurrency is necessary: a new server revision between
         // the read and PATCH must leave the original local journal untouched.
         guard let revision = existing.syncVersion else { throw TripOccurrenceCoverage.Failure.reconciliation }
