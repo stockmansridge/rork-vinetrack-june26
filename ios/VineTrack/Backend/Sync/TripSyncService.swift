@@ -1469,9 +1469,11 @@ final class TripSyncService {
                     mapped = try mapped.withOccurrenceProjection(retained.projected)
                     // A server snapshot can lag the original iPhone's recorded
                     // tank starts and GPS. Never erase durable local tank evidence.
-                    if store.deviceActiveTripId == mapped.id, store.isDeviceTripOwner,
-                       let original = localBeforePull, original.isActive, mapped.isActive,
-                       mapped.endTime == nil {
+                    if let original = localBeforePull, original.isActive, mapped.isActive,
+                       mapped.endTime == nil, retainedAfterRecovery != nil {
+                        // The on-device owner-scoped journal is durable original
+                        // evidence even when a process restart temporarily
+                        // loses the in-memory active-device tracking claim.
                         guard let protected = OccurrenceActiveTripEvidence.merge(
                             local: original, remote: mapped
                         ) else {
