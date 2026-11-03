@@ -485,7 +485,11 @@ struct ScoutWorkspaceView: View {
                 preparingNewTrip = true
             } label: {
                 Label("New Scout Trip", systemImage: "plus.circle.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 48)
             }
+            .buttonStyle(.borderedProminent)
+            .tint(.blue)
         } footer: {
             Text(
                 "Everything is saved on this device first, so a Scout started out "

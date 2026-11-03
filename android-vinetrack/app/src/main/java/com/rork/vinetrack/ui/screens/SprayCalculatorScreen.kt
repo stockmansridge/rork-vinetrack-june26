@@ -1648,7 +1648,7 @@ fun SprayCalculatorScreen(
                     // Group rows into ONE child of GuidedStepCard's 12.dp
                     // outer spacing; only the option-to-option gap shrinks.
                     // Keep equal-width columns and 40.dp minimum hit surfaces.
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         SprayTarget.presentationOrder.chunked(2).forEach { pair ->
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 pair.forEach { target ->
@@ -1674,7 +1674,7 @@ fun SprayCalculatorScreen(
 
                     if (operationType != SprayOperationType.SPREADER.raw) {
                         Text("Application location", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             (SprayHeadTarget.entries.map { it to null } + SprayGroundTarget.entries.map { null to it })
                                 .chunked(2).forEach { pair ->
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {

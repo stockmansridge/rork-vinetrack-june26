@@ -383,6 +383,8 @@ private fun YieldHubView(
                 }
             }
 
+            // Use the same compact 12.dp option-to-option spacing as the iOS Yields hub.
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             YieldHubOptionRow(
                 icon = Icons.Filled.Assessment,
                 gradient = listOf(VineColors.LeafGreen, VineColors.Indigo),
@@ -467,6 +469,7 @@ private fun YieldHubView(
                     ?.let { "$it allocation${if (it == 1) "" else "s"}" },
                 onClick = onAllocation,
             )
+            }
 
             Row(
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))

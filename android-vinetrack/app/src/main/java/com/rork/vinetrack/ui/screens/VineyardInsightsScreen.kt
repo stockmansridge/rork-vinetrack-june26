@@ -604,7 +604,8 @@ private fun ScoutWorkspace(
                                         vm.ui.value.currentUserId == authorId) stopFix = fix
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.LeafGreen),
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = VineColors.Primary, contentColor = Color.White),
                         ) {
                             Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.size(6.dp))
