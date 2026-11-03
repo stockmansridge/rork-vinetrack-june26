@@ -92,6 +92,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import android.content.Intent
@@ -343,13 +344,21 @@ fun SettingsScreen(
                             "Members, roles & invitations",
                             onClick = { onOpenTool(ToolRoute.TeamAccess) },
                         )
+                        RowDivider(vine.cardBorder)
+                        PreferenceRow(
+                            Icons.Filled.GppGood,
+                            VineColors.Purple,
+                            "Roles & Permissions",
+                            "How access works for your team",
+                            onClick = { onOpenTool(ToolRoute.RolesPermissions) },
+                        )
                     }
                 }
             }
 
             // App preferences (placeholders for upcoming settings)
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Preferences", onLight = true)
+                SectionHeader("Preferences & Data", onLight = true)
                 VineyardCard {
                     if (onOpenTool != null) {
                         PreferenceRow(
@@ -414,13 +423,8 @@ fun SettingsScreen(
                             operationPrefsStore.setFillTimerEnabled(it)
                         },
                     )
-                }
-            }
-
-            // Data & sync
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                SectionHeader("Data & Sync", onLight = true)
-                VineyardCard {
+                    // Shared sync entries are grouped with Preferences as on iOS.
+                    RowDivider(vine.cardBorder)
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         Box(
                             modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(VineColors.Success.copy(alpha = 0.15f)),
@@ -939,10 +943,11 @@ private fun PreferenceRow(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Box(
-            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(tint.copy(alpha = 0.15f)),
+            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp))
+                .background(Brush.linearGradient(listOf(tint, tint.copy(alpha = 0.72f)))),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
@@ -979,10 +984,11 @@ private fun PreferenceToggleRow(
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Box(
-            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp)).background(tint.copy(alpha = 0.15f)),
+            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(11.dp))
+                .background(Brush.linearGradient(listOf(tint, tint.copy(alpha = 0.72f)))),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(title, fontWeight = FontWeight.SemiBold, color = vine.textPrimary)
