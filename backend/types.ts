@@ -5102,10 +5102,13 @@ export type Database = {
       }
       mait_intelliweb_sync_state: {
         Row: {
+          auto_commit_approved_at: string | null
           auto_commit_enabled: boolean
+          auto_enabled_by: string | null
           auto_sync_enabled: boolean
           id: string
           incomplete_range: boolean
+          last_auto_dispatched_at: string | null
           last_error_code: string | null
           last_error_message: string | null
           last_source_event_at: string | null
@@ -5123,10 +5126,13 @@ export type Database = {
           vineyard_id: string
         }
         Insert: {
+          auto_commit_approved_at?: string | null
           auto_commit_enabled?: boolean
+          auto_enabled_by?: string | null
           auto_sync_enabled?: boolean
           id?: string
           incomplete_range?: boolean
+          last_auto_dispatched_at?: string | null
           last_error_code?: string | null
           last_error_message?: string | null
           last_source_event_at?: string | null
@@ -5144,10 +5150,13 @@ export type Database = {
           vineyard_id: string
         }
         Update: {
+          auto_commit_approved_at?: string | null
           auto_commit_enabled?: boolean
+          auto_enabled_by?: string | null
           auto_sync_enabled?: boolean
           id?: string
           incomplete_range?: boolean
+          last_auto_dispatched_at?: string | null
           last_error_code?: string | null
           last_error_message?: string | null
           last_source_event_at?: string | null
@@ -5277,6 +5286,38 @@ export type Database = {
           {
             foreignKeyName: "mait_intelliweb_usage_events_vineyard_id_fkey"
             columns: ["vineyard_id"]
+            isOneToOne: false
+            referencedRelation: "vineyards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      mait_irrigation_automation_control: {
+        Row: {
+          pilot_vineyard_id: string | null
+          scheduler_enabled: boolean
+          singleton: boolean
+          system_admin_only: boolean
+          updated_at: string
+        }
+        Insert: {
+          pilot_vineyard_id?: string | null
+          scheduler_enabled?: boolean
+          singleton?: boolean
+          system_admin_only?: boolean
+          updated_at?: string
+        }
+        Update: {
+          pilot_vineyard_id?: string | null
+          scheduler_enabled?: boolean
+          singleton?: boolean
+          system_admin_only?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mait_irrigation_automation_control_pilot_vineyard_id_fkey"
+            columns: ["pilot_vineyard_id"]
             isOneToOne: false
             referencedRelation: "vineyards"
             referencedColumns: ["id"]
@@ -17176,6 +17217,10 @@ export type Database = {
         Args: { p_vineyard_id: string }
         Returns: boolean
       }
+      can_write_scout_customer_pilot: {
+        Args: { p_vineyard_id: string }
+        Returns: boolean
+      }
       cancel_invitation: {
         Args: { p_invitation_id: string }
         Returns: {
@@ -18574,6 +18619,10 @@ export type Database = {
         Args: { p_module_id: string; p_vineyard_id: string }
         Returns: Json
       }
+      get_mait_irrigation_automation_status: {
+        Args: { p_vineyard_id: string }
+        Returns: Json
+      }
       get_manual_issue: { Args: { p_id: string }; Returns: Json }
       get_my_billing_vineyards: {
         Args: never
@@ -19720,6 +19769,41 @@ export type Database = {
         Args: { p_include_inactive?: boolean; p_vineyard_id: string }
         Returns: Json[]
       }
+      mait_auto_can_commit_event: {
+        Args: {
+          p_event_started_at: string
+          p_mapping_id: string
+          p_module_id: string
+          p_vineyard_id: string
+        }
+        Returns: boolean
+      }
+      mait_auto_claim_jobs: { Args: { p_limit?: number }; Returns: Json }
+      mait_auto_job_context: {
+        Args: { p_module_id: string; p_vineyard_id: string }
+        Returns: Json
+      }
+      mait_auto_record_empty_success: {
+        Args: { p_module_id: string; p_vineyard_id: string }
+        Returns: undefined
+      }
+      mait_auto_record_worker_error: {
+        Args: {
+          p_error_code: string
+          p_error_message: string
+          p_module_id: string
+          p_vineyard_id: string
+        }
+        Returns: undefined
+      }
+      mait_auto_validate_worker_token: {
+        Args: { p_token: string }
+        Returns: boolean
+      }
+      mait_auto_vineyard_has_active_writes: {
+        Args: { p_vineyard_id: string }
+        Returns: boolean
+      }
       manual_issue_json: {
         Args: { p_pin: Database["public"]["Tables"]["pins"]["Row"] }
         Returns: Json
@@ -19960,6 +20044,17 @@ export type Database = {
       pruning_activity_work_tasks_labour_hours: {
         Args: { p_activity_id: string }
         Returns: number
+      }
+      reconcile_deleted_trip_activity_v1: {
+        Args: {
+          p_application: string
+          p_attestation: string
+          p_client_evidence?: Json
+          p_operation_id: string
+          p_trip_id: string
+          p_vineyard_id: string
+        }
+        Returns: Json
       }
       record_irrigation_session: {
         Args: {
@@ -20773,6 +20868,16 @@ export type Database = {
         Args: {
           p_module_id: string
           p_module_name?: string
+          p_vineyard_id: string
+        }
+        Returns: Json
+      }
+      set_mait_irrigation_automation_options: {
+        Args: {
+          p_auto_commit_enabled?: boolean
+          p_auto_sync_enabled?: boolean
+          p_module_id: string
+          p_overlap_days?: number
           p_vineyard_id: string
         }
         Returns: Json

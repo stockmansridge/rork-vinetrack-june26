@@ -1,0 +1,1500 @@
+[
+  {
+    "inspection": {
+      "role": "postgres",
+      "tables": [
+        {
+          "rls": true,
+          "name": "spray_tank_actual_amendments",
+          "policies": [
+            {
+              "name": "spray_actual_amendments_no_direct_write",
+              "check": "false",
+              "using": "false"
+            },
+            {
+              "name": "spray_actual_amendments_select_members",
+              "check": null,
+              "using": "is_vineyard_member(vineyard_id)"
+            },
+            {
+              "name": "system_admin_support_select",
+              "check": null,
+              "using": "is_system_admin()"
+            }
+          ],
+          "triggers": null,
+          "authenticated_select": true
+        },
+        {
+          "rls": true,
+          "name": "spray_tank_actuals",
+          "policies": [
+            {
+              "name": "spray_tank_actuals_insert_operational",
+              "check": "has_vineyard_role(vineyard_id, ARRAY['owner'::text, 'manager'::text, 'supervisor'::text, 'operator'::text])",
+              "using": null
+            },
+            {
+              "name": "spray_tank_actuals_no_hard_delete",
+              "check": null,
+              "using": "false"
+            },
+            {
+              "name": "spray_tank_actuals_select_members",
+              "check": null,
+              "using": "is_vineyard_member(vineyard_id)"
+            },
+            {
+              "name": "spray_tank_actuals_update_operational",
+              "check": "has_vineyard_role(vineyard_id, ARRAY['owner'::text, 'manager'::text, 'supervisor'::text, 'operator'::text])",
+              "using": "has_vineyard_role(vineyard_id, ARRAY['owner'::text, 'manager'::text, 'supervisor'::text, 'operator'::text])"
+            },
+            {
+              "name": "system_admin_support_select",
+              "check": null,
+              "using": "is_system_admin()"
+            }
+          ],
+          "triggers": [
+            "CREATE TRIGGER spray_tank_actuals_before_write BEFORE INSERT OR UPDATE ON public.spray_tank_actuals FOR EACH ROW EXECUTE FUNCTION spray_tank_actuals_before_write()",
+            "CREATE TRIGGER spray_tank_actuals_set_updated_at BEFORE UPDATE ON public.spray_tank_actuals FOR EACH ROW EXECUTE FUNCTION set_updated_at()",
+            "CREATE TRIGGER aa0_trip_cancellation_tombstone_guard BEFORE INSERT OR UPDATE ON public.spray_tank_actuals FOR EACH ROW EXECUTE FUNCTION guard_cancelled_trip_v1()"
+          ],
+          "authenticated_select": true
+        },
+        {
+          "rls": true,
+          "name": "trip_activity_cancellation_receipts",
+          "policies": [
+            {
+              "name": "trip_cancel_receipts_member_read",
+              "check": null,
+              "using": "is_vineyard_member(vineyard_id)"
+            }
+          ],
+          "triggers": [
+            "CREATE TRIGGER trip_cancel_receipts_immutable BEFORE DELETE OR UPDATE ON public.trip_activity_cancellation_receipts FOR EACH ROW EXECUTE FUNCTION trip_cancellation_immutable_v1()"
+          ],
+          "authenticated_select": true
+        },
+        {
+          "rls": true,
+          "name": "trip_compliance_archive",
+          "policies": [
+            {
+              "name": "trip_compliance_archive_manager_read",
+              "check": null,
+              "using": "has_vineyard_role(vineyard_id, ARRAY['owner'::text, 'manager'::text, 'supervisor'::text])"
+            }
+          ],
+          "triggers": [
+            "CREATE TRIGGER trip_compliance_archive_immutable BEFORE DELETE OR UPDATE ON public.trip_compliance_archive FOR EACH ROW EXECUTE FUNCTION trip_cancellation_immutable_v1()"
+          ],
+          "authenticated_select": true
+        }
+      ],
+      "columns": [
+        {
+          "name": "id",
+          "type": "uuid",
+          "table": "spray_records",
+          "default": "gen_random_uuid()",
+          "nullable": "NO"
+        },
+        {
+          "name": "vineyard_id",
+          "type": "uuid",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "trip_id",
+          "type": "uuid",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "date",
+          "type": "timestamp with time zone",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "start_time",
+          "type": "timestamp with time zone",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "end_time",
+          "type": "timestamp with time zone",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "temperature",
+          "type": "double precision",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "wind_speed",
+          "type": "double precision",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "wind_direction",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "humidity",
+          "type": "double precision",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "spray_reference",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "notes",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "number_of_fans_jets",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "average_speed",
+          "type": "double precision",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "equipment_type",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "tractor",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "tractor_gear",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "is_template",
+          "type": "boolean",
+          "table": "spray_records",
+          "default": "false",
+          "nullable": "NO"
+        },
+        {
+          "name": "operation_type",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "tanks",
+          "type": "jsonb",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "created_by",
+          "type": "uuid",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "updated_by",
+          "type": "uuid",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "table": "spray_records",
+          "default": "now()",
+          "nullable": "NO"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "table": "spray_records",
+          "default": "now()",
+          "nullable": "NO"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "client_updated_at",
+          "type": "timestamp with time zone",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "sync_version",
+          "type": "integer",
+          "table": "spray_records",
+          "default": "1",
+          "nullable": "NO"
+        },
+        {
+          "name": "spray_job_id",
+          "type": "uuid",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "machine_id",
+          "type": "uuid",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "tractor_id",
+          "type": "uuid",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "spray_equipment_id",
+          "type": "uuid",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "gross_area_ha",
+          "type": "numeric",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "treated_area_ha",
+          "type": "numeric",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "application_mode",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "treated_area_method",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "band_width_total_metres",
+          "type": "numeric",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "band_width_left_metres",
+          "type": "numeric",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "band_width_right_metres",
+          "type": "numeric",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "canonical_row_length_metres",
+          "type": "numeric",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "row_spacing_metres",
+          "type": "numeric",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "geometry_source",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "geometry_quality",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "carrier_volume_basis",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "total_carrier_litres",
+          "type": "numeric",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "carrier_litres_per_hectare",
+          "type": "numeric",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "dilute_litres_per_100m",
+          "type": "numeric",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "applied_litres_per_100m",
+          "type": "numeric",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "concentration_factor",
+          "type": "numeric",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "targets",
+          "type": "ARRAY",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "spray_head_target",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "application_blocks",
+          "type": "jsonb",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "block_ids",
+          "type": "ARRAY",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "entry_source",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "manual_entry_id",
+          "type": "uuid",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "ground_application_target",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "carrier_area_basis",
+          "type": "text",
+          "table": "spray_records",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "id",
+          "type": "uuid",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "vineyard_id",
+          "type": "uuid",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "spray_record_id",
+          "type": "uuid",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "trip_id",
+          "type": "uuid",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "tank_session_id",
+          "type": "text",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "tank_number",
+          "type": "integer",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "water_volume_l",
+          "type": "double precision",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "chemicals",
+          "type": "jsonb",
+          "table": "spray_tank_actuals",
+          "default": "'[]'::jsonb",
+          "nullable": "NO"
+        },
+        {
+          "name": "confirmed_at",
+          "type": "timestamp with time zone",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "confirmed_by",
+          "type": "uuid",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "created_by",
+          "type": "uuid",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "updated_by",
+          "type": "uuid",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "table": "spray_tank_actuals",
+          "default": "now()",
+          "nullable": "NO"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "table": "spray_tank_actuals",
+          "default": "now()",
+          "nullable": "NO"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "client_updated_at",
+          "type": "timestamp with time zone",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "sync_version",
+          "type": "integer",
+          "table": "spray_tank_actuals",
+          "default": "1",
+          "nullable": "NO"
+        },
+        {
+          "name": "correction_version",
+          "type": "bigint",
+          "table": "spray_tank_actuals",
+          "default": "0",
+          "nullable": "NO"
+        },
+        {
+          "name": "last_corrected_at",
+          "type": "timestamp with time zone",
+          "table": "spray_tank_actuals",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "operation_id",
+          "type": "uuid",
+          "table": "trip_activity_cancellation_receipts",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "trip_id",
+          "type": "uuid",
+          "table": "trip_activity_cancellation_receipts",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "vineyard_id",
+          "type": "uuid",
+          "table": "trip_activity_cancellation_receipts",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "actor_user_id",
+          "type": "uuid",
+          "table": "trip_activity_cancellation_receipts",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "actor_role",
+          "type": "text",
+          "table": "trip_activity_cancellation_receipts",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "application_classification",
+          "type": "text",
+          "table": "trip_activity_cancellation_receipts",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "compliance_archive_id",
+          "type": "uuid",
+          "table": "trip_activity_cancellation_receipts",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "spray_record_ids",
+          "type": "ARRAY",
+          "table": "trip_activity_cancellation_receipts",
+          "default": "'{}'::uuid[]",
+          "nullable": "NO"
+        },
+        {
+          "name": "removed_counts",
+          "type": "jsonb",
+          "table": "trip_activity_cancellation_receipts",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "client_baseline",
+          "type": "jsonb",
+          "table": "trip_activity_cancellation_receipts",
+          "default": "'{}'::jsonb",
+          "nullable": "NO"
+        },
+        {
+          "name": "status",
+          "type": "text",
+          "table": "trip_activity_cancellation_receipts",
+          "default": "'CANCELLED_ACKED'::text",
+          "nullable": "NO"
+        },
+        {
+          "name": "server_revision",
+          "type": "bigint",
+          "table": "trip_activity_cancellation_receipts",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "cancelled_at",
+          "type": "timestamp with time zone",
+          "table": "trip_activity_cancellation_receipts",
+          "default": "now()",
+          "nullable": "NO"
+        },
+        {
+          "name": "id",
+          "type": "uuid",
+          "table": "trip_compliance_archive",
+          "default": "gen_random_uuid()",
+          "nullable": "NO"
+        },
+        {
+          "name": "operation_id",
+          "type": "uuid",
+          "table": "trip_compliance_archive",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "trip_id",
+          "type": "uuid",
+          "table": "trip_compliance_archive",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "vineyard_id",
+          "type": "uuid",
+          "table": "trip_compliance_archive",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "source",
+          "type": "text",
+          "table": "trip_compliance_archive",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "facts",
+          "type": "jsonb",
+          "table": "trip_compliance_archive",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "retain_until",
+          "type": "date",
+          "table": "trip_compliance_archive",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "created_by",
+          "type": "uuid",
+          "table": "trip_compliance_archive",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "table": "trip_compliance_archive",
+          "default": "now()",
+          "nullable": "NO"
+        },
+        {
+          "name": "id",
+          "type": "uuid",
+          "table": "trip_cost_allocations",
+          "default": "gen_random_uuid()",
+          "nullable": "NO"
+        },
+        {
+          "name": "vineyard_id",
+          "type": "uuid",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "trip_id",
+          "type": "uuid",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "season_year",
+          "type": "integer",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "trip_function",
+          "type": "text",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "paddock_id",
+          "type": "uuid",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "paddock_name",
+          "type": "text",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "variety",
+          "type": "text",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "variety_id",
+          "type": "uuid",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "variety_percentage",
+          "type": "numeric",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "allocation_area_ha",
+          "type": "numeric",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "labour_cost",
+          "type": "numeric",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "fuel_cost",
+          "type": "numeric",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "chemical_cost",
+          "type": "numeric",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "input_cost",
+          "type": "numeric",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "total_cost",
+          "type": "numeric",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "cost_per_ha",
+          "type": "numeric",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "yield_tonnes",
+          "type": "numeric",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "cost_per_tonne",
+          "type": "numeric",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "allocation_basis",
+          "type": "text",
+          "table": "trip_cost_allocations",
+          "default": "'area'::text",
+          "nullable": "NO"
+        },
+        {
+          "name": "costing_status",
+          "type": "text",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "warnings",
+          "type": "ARRAY",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "calculated_at",
+          "type": "timestamp with time zone",
+          "table": "trip_cost_allocations",
+          "default": "now()",
+          "nullable": "NO"
+        },
+        {
+          "name": "source_trip_updated_at",
+          "type": "timestamp with time zone",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "created_by",
+          "type": "uuid",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "updated_by",
+          "type": "uuid",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "table": "trip_cost_allocations",
+          "default": "now()",
+          "nullable": "NO"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "table": "trip_cost_allocations",
+          "default": "now()",
+          "nullable": "NO"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "client_updated_at",
+          "type": "timestamp with time zone",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "sync_version",
+          "type": "integer",
+          "table": "trip_cost_allocations",
+          "default": "1",
+          "nullable": "NO"
+        },
+        {
+          "name": "worker_user_id",
+          "type": "uuid",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "worker_type_id",
+          "type": "uuid",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "worker_type_name_snapshot",
+          "type": "text",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "hourly_rate_snapshot",
+          "type": "numeric",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "labour_hours",
+          "type": "numeric",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "rate_captured_at",
+          "type": "timestamp with time zone",
+          "table": "trip_cost_allocations",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "id",
+          "type": "uuid",
+          "table": "trips",
+          "default": "gen_random_uuid()",
+          "nullable": "NO"
+        },
+        {
+          "name": "vineyard_id",
+          "type": "uuid",
+          "table": "trips",
+          "default": null,
+          "nullable": "NO"
+        },
+        {
+          "name": "paddock_id",
+          "type": "uuid",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "paddock_ids",
+          "type": "jsonb",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "paddock_name",
+          "type": "text",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "tracking_pattern",
+          "type": "text",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "start_time",
+          "type": "timestamp with time zone",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "end_time",
+          "type": "timestamp with time zone",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "is_active",
+          "type": "boolean",
+          "table": "trips",
+          "default": "false",
+          "nullable": "NO"
+        },
+        {
+          "name": "is_paused",
+          "type": "boolean",
+          "table": "trips",
+          "default": "false",
+          "nullable": "NO"
+        },
+        {
+          "name": "total_distance",
+          "type": "double precision",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "current_path_distance",
+          "type": "double precision",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "current_row_number",
+          "type": "double precision",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "next_row_number",
+          "type": "double precision",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "sequence_index",
+          "type": "integer",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "row_sequence",
+          "type": "jsonb",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "path_points",
+          "type": "jsonb",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "completed_paths",
+          "type": "jsonb",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "skipped_paths",
+          "type": "jsonb",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "pin_ids",
+          "type": "jsonb",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "tank_sessions",
+          "type": "jsonb",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "active_tank_number",
+          "type": "integer",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "total_tanks",
+          "type": "integer",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "pause_timestamps",
+          "type": "jsonb",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "resume_timestamps",
+          "type": "jsonb",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "is_filling_tank",
+          "type": "boolean",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "filling_tank_number",
+          "type": "integer",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "person_name",
+          "type": "text",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "created_by",
+          "type": "uuid",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "updated_by",
+          "type": "uuid",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "table": "trips",
+          "default": "now()",
+          "nullable": "NO"
+        },
+        {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "table": "trips",
+          "default": "now()",
+          "nullable": "NO"
+        },
+        {
+          "name": "deleted_at",
+          "type": "timestamp with time zone",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "client_updated_at",
+          "type": "timestamp with time zone",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "sync_version",
+          "type": "integer",
+          "table": "trips",
+          "default": "1",
+          "nullable": "NO"
+        },
+        {
+          "name": "trip_function",
+          "type": "text",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "trip_title",
+          "type": "text",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "seeding_details",
+          "type": "jsonb",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "manual_correction_events",
+          "type": "jsonb",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "completion_notes",
+          "type": "text",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "tractor_id",
+          "type": "uuid",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "operator_user_id",
+          "type": "uuid",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "worker_type_id",
+          "type": "uuid",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "start_engine_hours",
+          "type": "double precision",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "end_engine_hours",
+          "type": "double precision",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "machine_id",
+          "type": "uuid",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "work_task_id",
+          "type": "uuid",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "entry_source",
+          "type": "text",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "manual_entry_id",
+          "type": "uuid",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        },
+        {
+          "name": "occurrence_coverage",
+          "type": "jsonb",
+          "table": "trips",
+          "default": null,
+          "nullable": "YES"
+        }
+      ],
+      "functions": [
+        {
+          "name": "cancel_trip_activity_v1",
+          "identity": "cancel_trip_activity_v1(uuid,uuid,uuid,text,jsonb,jsonb)",
+          "definition": "CREATE OR REPLACE FUNCTION public.cancel_trip_activity_v1(p_operation_id uuid, p_trip_id uuid, p_vineyard_id uuid, p_application text, p_client_baseline jsonb DEFAULT '{}'::jsonb, p_compliance_facts jsonb DEFAULT NULL::jsonb)\n RETURNS jsonb\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'public'\nAS $function$\ndeclare\n  v_uid uuid := auth.uid(); v_role text; v_trip public.trips;\n  v_existing public.trip_activity_cancellation_receipts; v_receipt public.trip_activity_cancellation_receipts;\n  v_spray uuid[]; v_archive uuid; n_actuals integer := 0; n_spray integer := 0; n_cost integer := 0;\nbegin\n  if v_uid is null then raise exception 'TRIP_CANCEL_AUTH_REQUIRED' using errcode = '42501'; end if;\n  if p_operation_id is null or p_trip_id is null or p_vineyard_id is null then raise exception 'TRIP_CANCEL_INVALID_IDENTITY' using errcode = '22023'; end if;\n  if p_application is null or p_application not in ('not_applied', 'applied') then raise exception 'TRIP_CANCEL_CLASSIFICATION_REQUIRED' using errcode = '22023'; end if;\n  if p_client_baseline is null or jsonb_typeof(p_client_baseline) <> 'object' then raise exception 'TRIP_CANCEL_INVALID_BASELINE' using errcode = '22023'; end if;\n  v_role := public.vineyard_role(p_vineyard_id);\n  if v_role is null or v_role not in ('owner', 'manager', 'supervisor') then raise exception 'TRIP_CANCEL_FORBIDDEN' using errcode = '42501'; end if;\n  select * into v_existing from public.trip_activity_cancellation_receipts where operation_id = p_operation_id;\n  if found then\n    if v_existing.trip_id <> p_trip_id or v_existing.vineyard_id <> p_vineyard_id or v_existing.application_classification <> p_application then raise exception 'TRIP_CANCEL_OPERATION_CONFLICT' using errcode = '23505'; end if;\n    return public.trip_cancellation_receipt_json_v1(v_existing) || jsonb_build_object('replayed', true);\n  end if;\n  if exists (select 1 from public.trip_activity_cancellation_receipts where trip_id = p_trip_id) then raise exception 'TRIP_CANCEL_ALREADY_CANCELLED_OTHER_OPERATION' using errcode = '23505'; end if;\n  select * into v_trip from public.trips where id = p_trip_id for update;\n  if not found or v_trip.vineyard_id <> p_vineyard_id then raise exception 'TRIP_CANCEL_TRIP_NOT_FOUND' using errcode = 'P0002'; end if;\n  if v_trip.deleted_at is not null then raise exception 'TRIP_CANCEL_TRIP_ALREADY_DELETED' using errcode = '55000'; end if;\n  if v_trip.end_time is not null then raise exception 'TRIP_CANCEL_TRIP_COMPLETED' using errcode = '55000'; end if;\n  if coalesce(v_trip.entry_source, '') = 'manual' then raise exception 'TRIP_CANCEL_MANUAL_ENTRY_UNSUPPORTED' using errcode = '0A000'; end if;\n  select coalesce(array_agg(id order by id), '{}') into v_spray from public.spray_records where trip_id = p_trip_id and vineyard_id = p_vineyard_id and deleted_at is null;\n  if exists (select 1 from public.spray_records where id = any (v_spray) and coalesce(entry_source, '') = 'manual') then raise exception 'TRIP_CANCEL_MANUAL_ENTRY_UNSUPPORTED' using errcode = '0A000'; end if;\n  if p_application = 'not_applied' then\n    if exists (select 1 from public.spray_tank_actuals where trip_id = p_trip_id and deleted_at is null) then raise exception 'TRIP_CANCEL_SERVER_ACTUALS_REQUIRE_APPLIED_REVIEW' using errcode = '55000'; end if;\n  else\n    if p_compliance_facts is null or jsonb_typeof(p_compliance_facts) <> 'object' or p_compliance_facts = '{}'::jsonb then raise exception 'TRIP_CANCEL_COMPLIANCE_FACTS_REQUIRED' using errcode = '22023'; end if;\n    insert into public.trip_compliance_archive (operation_id, trip_id, vineyard_id, source, facts, retain_until, created_by)\n    values (p_operation_id, p_trip_id, p_vineyard_id, 'applied_trip_cancellation', jsonb_build_object('client_application_facts', p_compliance_facts, 'server_trip', to_jsonb(v_trip), 'server_spray_records', coalesce((select jsonb_agg(to_jsonb(s)) from public.spray_records s where s.id = any (v_spray)), '[]'::jsonb), 'server_tank_actuals', coalesce((select jsonb_agg(to_jsonb(a)) from public.spray_tank_actuals a where a.trip_id = p_trip_id and a.deleted_at is null), '[]'::jsonb), 'actor_user_id', v_uid, 'actor_role', v_role, 'archived_at', now()), (now() + interval '3 years')::date, v_uid)\n    returning id into v_archive;\n  end if;\n  update public.spray_tank_actuals set deleted_at = now() where trip_id = p_trip_id and deleted_at is null;\n  get diagnostics n_actuals = row_count;\n  update public.trip_cost_allocations set deleted_at = now(), updated_by = v_uid where trip_id = p_trip_id and deleted_at is null;\n  get diagnostics n_cost = row_count;\n  update public.spray_records set deleted_at = now(), updated_by = v_uid where id = any (v_spray) and deleted_at is null;\n  get diagnostics n_spray = row_count;\n  update public.trips set deleted_at = now(), updated_by = v_uid where id = p_trip_id;\n  insert into public.trip_activity_cancellation_receipts (operation_id, trip_id, vineyard_id, actor_user_id, actor_role, application_classification, compliance_archive_id, spray_record_ids, removed_counts, client_baseline)\n  values (p_operation_id, p_trip_id, p_vineyard_id, v_uid, v_role, p_application, v_archive, v_spray, jsonb_build_object('trip', 1, 'spray_records', n_spray, 'spray_tank_actuals', n_actuals, 'trip_cost_allocations', n_cost), p_client_baseline)\n  returning * into v_receipt;\n  return public.trip_cancellation_receipt_json_v1(v_receipt) || jsonb_build_object('replayed', false);\nend $function$\n",
+          "search_path": [
+            "search_path=pg_catalog, public"
+          ],
+          "anon_execute": false,
+          "security_definer": true,
+          "authenticated_execute": true
+        },
+        {
+          "name": "complete_spray_record",
+          "identity": "complete_spray_record(uuid,boolean)",
+          "definition": "CREATE OR REPLACE FUNCTION public.complete_spray_record(p_spray_record_id uuid, p_allow_unlinked boolean DEFAULT false)\n RETURNS jsonb\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\r\ndeclare\r\n  v_actor uuid := auth.uid();\r\n  v_spray public.spray_records%rowtype;\r\n  v_trip public.trips%rowtype;\r\n  v_end_time timestamptz;\r\n  v_source text;\r\nbegin\r\n  if v_actor is null then\r\n    raise exception 'AUTH_REQUIRED' using errcode = '42501',\r\n      detail = 'Authentication required.';\r\n  end if;\r\n\r\n  -- Lock order is always Spray, then its current linked Trip (if present).\r\n  -- Do not filter away deleted rows: distinguish unavailable canonical states.\r\n  select r.* into v_spray\r\n  from public.spray_records r where r.id = p_spray_record_id for update;\r\n  if not found then\r\n    raise exception 'SPRAY_NOT_FOUND' using errcode = 'P0002';\r\n  end if;\r\n  -- Role check precedes state disclosure, including an idempotent result.\r\n  if not public.has_vineyard_role(\r\n    v_spray.vineyard_id, array['owner', 'manager', 'supervisor', 'operator']\r\n  ) then\r\n    raise exception 'SPRAY_EDIT_FORBIDDEN' using errcode = '42501';\r\n  end if;\r\n  if v_spray.deleted_at is not null then\r\n    raise exception 'SPRAY_DELETED' using errcode = '55000';\r\n  end if;\r\n  if v_spray.is_template is distinct from false then\r\n    raise exception 'SPRAY_TEMPLATE' using errcode = '55000',\r\n      detail = 'Program Steps cannot be completed as operational sprays.';\r\n  end if;\r\n  if v_spray.entry_source = 'manual' or v_spray.manual_entry_id is not null then\r\n    raise exception 'MANUAL_SPRAY_WORKFLOW_REQUIRED' using errcode = '42501',\r\n      detail = 'Manual spray records must be managed through the manual spray workflow.';\r\n  end if;\r\n\r\n  if v_spray.trip_id is not null then\r\n    select t.* into v_trip\r\n    from public.trips t where t.id = v_spray.trip_id for update;\r\n  end if;\r\n\r\n  -- Explicit completion wins. No UPDATE, audit bump or trigger on a retry.\r\n  -- An already-completed valid Spray remains idempotent even if its historical\r\n  -- Trip is later unavailable/active; no new completion is being authorised.\r\n  if v_spray.end_time is not null then\r\n    v_source := 'existing';\r\n  else\r\n    if v_spray.trip_id is not null then\r\n      if v_trip.id is null or v_trip.deleted_at is not null then\r\n        raise exception 'LINKED_TRIP_UNAVAILABLE' using errcode = '55000';\r\n      end if;\r\n      if v_trip.vineyard_id is distinct from v_spray.vineyard_id then\r\n        raise exception 'LINKED_TRIP_VINEYARD_MISMATCH' using errcode = '55000';\r\n      end if;\r\n      if v_trip.is_active is true then\r\n        raise exception 'ACTIVE_TRIP' using errcode = '55000',\r\n          detail = 'This spray still has an active Trip. End the Trip to complete the spray.';\r\n      end if;\r\n      if v_trip.is_active is distinct from false or v_trip.end_time is null then\r\n        raise exception 'LINKED_TRIP_NOT_ENDED' using errcode = '55000';\r\n      end if;\r\n      -- Reject contradictory ended states, without repairing historical data.\r\n      -- A missing historical start is not itself grounds to invent a start.\r\n      if v_trip.entry_source = 'manual' or v_trip.manual_entry_id is not null\r\n         or not isfinite(v_trip.end_time)\r\n         or (v_trip.start_time is not null and v_trip.end_time < v_trip.start_time) then\r\n        raise exception 'LINKED_TRIP_INCONSISTENT' using errcode = '55000';\r\n      end if;\r\n      v_end_time := v_trip.end_time;\r\n      v_source := 'trip_end';\r\n    else\r\n      -- NULL is not affirmative confirmation. A broken trip_id never reaches here.\r\n      if p_allow_unlinked is distinct from true then\r\n        raise exception 'UNLINKED_CONFIRMATION_REQUIRED' using errcode = '55000',\r\n          detail = 'No linked Trip is available. Confirm marking this spray complete now.';\r\n      end if;\r\n      v_end_time := now();\r\n      v_source := 'server_now';\r\n    end if;\r\n\r\n    -- Same explicit audit/version convention as the existing Spray RPCs (232).\r\n    -- updated_at is owned by spray_records_set_updated_at (007 / set_updated_at).\r\n    -- Keep all provenance, planning/application fields and Trips untouched.\r\n    update public.spray_records r\r\n    set end_time = v_end_time,\r\n        updated_by = v_actor,\r\n        client_updated_at = now(),\r\n        sync_version = r.sync_version + 1\r\n    where r.id = v_spray.id\r\n    returning r.* into v_spray;\r\n    if not found or v_spray.end_time is distinct from v_end_time then\r\n      raise exception 'SPRAY_COMPLETION_NOT_APPLIED' using errcode = '55000';\r\n    end if;\r\n  end if;\r\n\r\n  return jsonb_build_object(\r\n    'sprayRecordId', v_spray.id,\r\n    'endTime', v_spray.end_time,\r\n    'completionSource', v_source,\r\n    'serverConfirmed', true,\r\n    'updatedAt', v_spray.updated_at,\r\n    'updatedBy', v_spray.updated_by,\r\n    'clientUpdatedAt', v_spray.client_updated_at,\r\n    'syncVersion', v_spray.sync_version\r\n  );\r\nend;\r\n$function$\n",
+          "search_path": [
+            "search_path=public"
+          ],
+          "anon_execute": false,
+          "security_definer": true,
+          "authenticated_execute": true
+        },
+        {
+          "name": "correct_spray_tank_actual_v1",
+          "identity": "correct_spray_tank_actual_v1(uuid,uuid,uuid,uuid,text,integer,bigint,double precision,jsonb)",
+          "definition": "CREATE OR REPLACE FUNCTION public.correct_spray_tank_actual_v1(p_operation_id uuid, p_actual_id uuid, p_trip_id uuid, p_spray_record_id uuid, p_tank_session_id text, p_tank_number integer, p_expected_version bigint, p_water_volume_l double precision, p_chemicals jsonb)\n RETURNS jsonb\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\r\ndeclare t public.trips; r public.spray_records; a public.spray_tank_actuals; v_tank jsonb;\r\n  old_water double precision; old_chems jsonb; new_version bigint; actor_name text; now_at timestamptz := clock_timestamp();\r\n  old_c jsonb; new_c jsonb; chem_id uuid; kind text;\r\nbegin\r\n  if auth.uid() is null then raise exception 'Authentication required' using errcode='42501'; end if;\r\n  if p_operation_id is null or p_actual_id is null or p_expected_version is null or p_expected_version < 0 then raise exception 'Invalid correction request' using errcode='22023'; end if;\r\n  select * into t from public.trips where id=p_trip_id and deleted_at is null for update;\r\n  if t.id is null then raise exception 'Trip not found' using errcode='P0002'; end if;\r\n  if not public.has_vineyard_role(t.vineyard_id,array['owner','manager','supervisor']) then raise exception 'Correction access required' using errcode='42501'; end if;\r\n  select * into r from public.spray_records where id=p_spray_record_id and trip_id=t.id and vineyard_id=t.vineyard_id and not is_template and deleted_at is null;\r\n  if r.id is null then raise exception 'Spray record does not match trip' using errcode='22023'; end if;\r\n  select value into v_tank from jsonb_array_elements(coalesce(r.tanks,'[]'::jsonb))\r\n    where coalesce((value->>'tankNumber')::integer,(value->>'tank_number')::integer)=p_tank_number limit 1;\r\n  if v_tank is null then raise exception 'Tank is not in frozen spray plan' using errcode='22023'; end if;\r\n  if not exists(select 1 from jsonb_array_elements(coalesce(t.tank_sessions,'[]'::jsonb)) s\r\n    where coalesce(s->>'id',s->>'tank_session_id')=btrim(p_tank_session_id)\r\n      and coalesce((s->>'tankNumber')::integer,(s->>'tank_number')::integer)=p_tank_number)\r\n  then raise exception 'Tank session does not match trip tank' using errcode='22023'; end if;\r\n  if p_water_volume_l is not null and (p_water_volume_l < 0 or p_water_volume_l<>p_water_volume_l or p_water_volume_l in ('Infinity'::double precision,'-Infinity'::double precision)) then raise exception 'Invalid actual water' using errcode='22023'; end if;\r\n  if not public.validate_spray_tank_actual_chemicals_v1(p_chemicals,v_tank,t.vineyard_id) then raise exception 'Invalid actual chemicals' using errcode='22023'; end if;\r\n  select coalesce(nullif(btrim(p.full_name),''),nullif(btrim(p.email),''),'VineTrack user') into actor_name from public.profiles p where p.id=auth.uid();\r\n  actor_name := coalesce(actor_name,'VineTrack user');\r\n\r\n  select * into a from public.spray_tank_actuals where trip_id=t.id and tank_session_id=btrim(p_tank_session_id) for update;\r\n  if exists(select 1 from public.spray_tank_actual_amendments where operation_id=p_operation_id and trip_id=t.id and spray_tank_actual_id=p_actual_id) then\r\n    return jsonb_build_object('actual',to_jsonb(a),'amendments',public.spray_actual_amendments_v1(t.id));\r\n  elsif exists(select 1 from public.spray_tank_actual_amendments where operation_id=p_operation_id) then\r\n    raise exception 'Operation ID already belongs to another correction' using errcode='22023';\r\n  end if;\r\n  if a.id is null then\r\n    if p_expected_version<>0 then raise exception 'Actual usage version conflict' using errcode='40001'; end if;\r\n    old_water:=null; old_chems:='[]'::jsonb; new_version:=1;\r\n    insert into public.spray_tank_actuals(id,vineyard_id,spray_record_id,trip_id,tank_session_id,tank_number,water_volume_l,chemicals,confirmed_at,confirmed_by,created_by,updated_by,client_updated_at,correction_version,last_corrected_at)\r\n    values(p_actual_id,t.vineyard_id,r.id,t.id,btrim(p_tank_session_id),p_tank_number,p_water_volume_l,p_chemicals,now_at,auth.uid(),auth.uid(),auth.uid(),now_at,new_version,now_at) returning * into a;\r\n  else\r\n    if a.id<>p_actual_id or a.spray_record_id<>r.id or a.tank_number<>p_tank_number then raise exception 'Actual usage identity mismatch' using errcode='22023'; end if;\r\n    if a.correction_version<>p_expected_version then raise exception 'Actual usage version conflict' using errcode='40001'; end if;\r\n    old_water:=a.water_volume_l; old_chems:=a.chemicals;\r\n    if old_water is not distinct from p_water_volume_l and old_chems=p_chemicals then\r\n      return jsonb_build_object('actual',to_jsonb(a),'amendments',public.spray_actual_amendments_v1(t.id));\r\n    end if;\r\n    new_version:=a.correction_version+1;\r\n    update public.spray_tank_actuals set water_volume_l=p_water_volume_l,chemicals=p_chemicals,\r\n      updated_by=auth.uid(),client_updated_at=now_at,correction_version=new_version,last_corrected_at=now_at\r\n      where id=a.id returning * into a;\r\n  end if;\r\n\r\n  if old_water is distinct from p_water_volume_l then\r\n    insert into public.spray_tank_actual_amendments(operation_id,vineyard_id,trip_id,spray_record_id,spray_tank_actual_id,tank_number,field_name,change_kind,previous_value,new_value,previous_unit,new_unit,revision,edited_by,editor_name,edited_at)\r\n    values(p_operation_id,t.vineyard_id,t.id,r.id,a.id,p_tank_number,'actualWaterLitres',\r\n      case when old_water is null and p_water_volume_l is not null then 'initialEntry' when p_water_volume_l is null then 'cleared' when p_water_volume_l=0 then 'explicitZero' else 'correction' end,\r\n      case when old_water is null then null else to_jsonb(old_water) end,case when p_water_volume_l is null then null else to_jsonb(p_water_volume_l) end,'L','L',new_version,auth.uid(),actor_name,now_at);\r\n  end if;\r\n  for chem_id in select distinct id from (\r\n    select (x->>'id')::uuid id from jsonb_array_elements(old_chems) x union\r\n    select (x->>'id')::uuid id from jsonb_array_elements(p_chemicals) x\r\n  ) q loop\r\n    select value into old_c from jsonb_array_elements(old_chems) where (value->>'id')::uuid=chem_id;\r\n    select value into new_c from jsonb_array_elements(p_chemicals) where (value->>'id')::uuid=chem_id;\r\n    if old_c is distinct from new_c then\r\n      kind:=case when new_c is null then 'removed' when old_c is null and coalesce(new_c->>'usageKind','additional')='substitution' then 'substitution'\r\n        when old_c is null then 'addition' when (new_c->>'actualAmountBase')::double precision=0 then 'explicitZero' else 'correction' end;\r\n      insert into public.spray_tank_actual_amendments(operation_id,vineyard_id,trip_id,spray_record_id,spray_tank_actual_id,tank_number,chemical_actual_id,planned_chemical_id,saved_chemical_id,field_name,change_kind,previous_value,new_value,previous_unit,new_unit,revision,edited_by,editor_name,edited_at)\r\n      values(p_operation_id,t.vineyard_id,t.id,r.id,a.id,p_tank_number,chem_id,\r\n        coalesce(nullif(new_c->>'plannedChemicalId',''),nullif(old_c->>'plannedChemicalId',''))::uuid,\r\n        coalesce(nullif(new_c->>'savedChemicalId',''),nullif(old_c->>'savedChemicalId',''))::uuid,\r\n        'actualChemical',kind,old_c,new_c,old_c->>'unit',new_c->>'unit',new_version,auth.uid(),actor_name,now_at);\r\n    end if;\r\n    old_c:=null; new_c:=null;\r\n  end loop;\r\n  return jsonb_build_object('actual',to_jsonb(a),'amendments',public.spray_actual_amendments_v1(t.id));\r\nend $function$\n",
+          "search_path": [
+            "search_path=public"
+          ],
+          "anon_execute": false,
+          "security_definer": true,
+          "authenticated_execute": true
+        },
+        {
+          "name": "guard_cancelled_trip_v1",
+          "identity": "guard_cancelled_trip_v1()",
+          "definition": "CREATE OR REPLACE FUNCTION public.guard_cancelled_trip_v1()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'public'\nAS $function$\ndeclare v_trip uuid;\nbegin\n  if tg_table_name = 'trips' then v_trip := new.id; else v_trip := new.trip_id; end if;\n  if (v_trip is not null and exists (select 1 from public.trip_activity_cancellation_receipts r where r.trip_id = v_trip))\n     or (tg_table_name = 'spray_records' and exists (select 1 from public.trip_activity_cancellation_receipts r where r.spray_record_ids @> array[new.id])) then\n    raise exception 'TRIP_CANCELLED_TOMBSTONE' using errcode = 'P0001', detail = 'This Trip was cancelled with a durable receipt. It cannot be recreated or changed.';\n  end if;\n  return new;\nend $function$\n",
+          "search_path": [
+            "search_path=pg_catalog, public"
+          ],
+          "anon_execute": false,
+          "security_definer": true,
+          "authenticated_execute": false
+        },
+        {
+          "name": "reconcile_deleted_trip_activity_v1",
+          "identity": "reconcile_deleted_trip_activity_v1(uuid,uuid,uuid,text,text,jsonb)",
+          "definition": "CREATE OR REPLACE FUNCTION public.reconcile_deleted_trip_activity_v1(p_operation_id uuid, p_trip_id uuid, p_vineyard_id uuid, p_application text, p_attestation text, p_client_evidence jsonb DEFAULT '{}'::jsonb)\n RETURNS jsonb\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'public'\nAS $function$\ndeclare\n    v_uid uuid := auth.uid();\n    v_role text;\n    v_trip public.trips;\n    v_existing public.trip_activity_cancellation_receipts;\n    v_receipt public.trip_activity_cancellation_receipts;\n    v_sprays uuid[];\n    v_archive uuid;\n    n_actuals integer := 0;\n    n_spray integer := 0;\n    n_cost integer := 0;\n    v_facts jsonb;\nbegin\n    if v_uid is null then\n        raise exception 'TRIP_REVIEW_AUTH_REQUIRED' using errcode='42501';\n    end if;\n    if p_operation_id is null or p_trip_id is null or p_vineyard_id is null then\n        raise exception 'TRIP_REVIEW_INVALID_IDENTITY' using errcode='22023';\n    end if;\n    if p_application is null or p_application not in ('not_applied','applied') then\n        raise exception 'TRIP_REVIEW_APPLICATION_REQUIRED' using errcode='22023';\n    end if;\n    if p_attestation is null or length(btrim(p_attestation)) < 12\n       or length(btrim(p_attestation)) > 500 then\n        raise exception 'TRIP_REVIEW_EVIDENCE_NOTE_REQUIRED' using errcode='22023';\n    end if;\n    if p_client_evidence is null or jsonb_typeof(p_client_evidence) <> 'object'\n       or octet_length(p_client_evidence::text) > 1048576 then\n        raise exception 'TRIP_REVIEW_INVALID_CLIENT_EVIDENCE' using errcode='22023';\n    end if;\n    v_role := public.vineyard_role(p_vineyard_id);\n    if v_role is null or v_role not in ('owner','manager') then\n        raise exception 'TRIP_REVIEW_FORBIDDEN' using errcode='42501';\n    end if;\n\n    -- Serialize review with any other cancellation of the exact Trip.\n    select * into v_trip from public.trips\n      where id=p_trip_id and vineyard_id=p_vineyard_id for update;\n    if not found then\n        raise exception 'TRIP_REVIEW_ORIGINAL_NOT_FOUND' using errcode='P0002';\n    end if;\n    if v_trip.deleted_at is null then\n        raise exception 'TRIP_REVIEW_NOT_DELETED' using errcode='55000';\n    end if;\n\n    select * into v_existing from public.trip_activity_cancellation_receipts\n      where trip_id=p_trip_id for update;\n    if found then\n        if v_existing.operation_id <> p_operation_id\n           or v_existing.vineyard_id <> p_vineyard_id\n           or v_existing.application_classification <> p_application then\n            raise exception 'TRIP_REVIEW_RECEIPT_OPERATION_CONFLICT' using errcode='23505';\n        end if;\n        return public.trip_cancellation_receipt_json_v1(v_existing)\n            || jsonb_build_object('replayed',true,'reviewed_legacy_tombstone',true);\n    end if;\n    if exists (\n        select 1 from public.trip_activity_cancellation_receipts\n        where operation_id=p_operation_id and trip_id<>p_trip_id\n    ) then\n        raise exception 'TRIP_REVIEW_OPERATION_ID_CONFLICT' using errcode='23505';\n    end if;\n\n    if p_application='not_applied' and (\n       exists (select 1 from public.spray_tank_actuals\n               where trip_id=p_trip_id and deleted_at is null)\n       or jsonb_array_length(\n            case when jsonb_typeof(p_client_evidence->'tanks')='array'\n                 then p_client_evidence->'tanks' else '[]'::jsonb end\n          ) > 0\n    ) and coalesce(\n        p_client_evidence->>'confirmed_recorded_actuals_not_applied',\n        'false') <> 'true' then\n        raise exception 'TRIP_REVIEW_RECORDED_ACTUALS_NEED_APPLIED_REVIEW' using errcode='55000';\n    end if;\n\n    select coalesce(array_agg(id order by id),'{}') into v_sprays\n      from public.spray_records where trip_id=p_trip_id and vineyard_id=p_vineyard_id\n        and deleted_at is null;\n\n    -- Compliance: retain every server-side original even if the handset never\n    -- uploaded its final Actual Use. The reviewed device evidence is included\n    -- verbatim, with provenance, without guessing missing fields.\n    v_facts := jsonb_build_object(\n        'contract','vinetrack.guided-deleted-trip-reconciliation-v1',\n        'original_trip',to_jsonb(v_trip),\n        'original_sprays',coalesce(\n          (select jsonb_agg(to_jsonb(s)) from public.spray_records s\n           where s.trip_id=p_trip_id and s.vineyard_id=p_vineyard_id), '[]'::jsonb),\n        'original_tank_actuals',coalesce(\n          (select jsonb_agg(to_jsonb(a)) from public.spray_tank_actuals a\n           where a.trip_id=p_trip_id), '[]'::jsonb),\n        'original_cost_allocations',coalesce(\n          (select jsonb_agg(to_jsonb(c)) from public.trip_cost_allocations c\n           where c.trip_id=p_trip_id), '[]'::jsonb),\n        'operator_attestation',btrim(p_attestation),\n        'application_classification',p_application,\n        'client_original_evidence',p_client_evidence,\n        'actor_user_id',v_uid,\n        'actor_role',v_role,\n        'legacy_server_deleted_at',v_trip.deleted_at,\n        'reviewed_at',clock_timestamp()\n    );\n    insert into public.trip_compliance_archive (\n        operation_id, trip_id, vineyard_id, source, facts, retain_until, created_by\n    ) values (\n        p_operation_id,p_trip_id,p_vineyard_id,'reviewed_legacy_trip_deletion',\n        v_facts,(current_date + interval '3 years')::date,v_uid\n    ) returning id into v_archive;\n\n    update public.spray_tank_actuals set deleted_at=clock_timestamp(),\n        updated_by=v_uid where trip_id=p_trip_id and deleted_at is null;\n    get diagnostics n_actuals=row_count;\n\n    update public.trip_cost_allocations set deleted_at=clock_timestamp(),\n        updated_by=v_uid where trip_id=p_trip_id and deleted_at is null;\n    get diagnostics n_cost=row_count;\n\n    update public.spray_records set deleted_at=clock_timestamp(),\n        updated_by=v_uid where id=any(v_sprays) and deleted_at is null;\n    get diagnostics n_spray=row_count;\n\n    insert into public.trip_activity_cancellation_receipts (\n        operation_id,trip_id,vineyard_id,actor_user_id,actor_role,\n        application_classification,compliance_archive_id,spray_record_ids,\n        removed_counts,client_baseline\n    ) values (\n        p_operation_id,p_trip_id,p_vineyard_id,v_uid,v_role,p_application,\n        v_archive,v_sprays,\n        jsonb_build_object('trip',0,'spray_records',n_spray,\n                           'spray_tank_actuals',n_actuals,\n                           'trip_cost_allocations',n_cost),\n        jsonb_build_object('legacy_tombstone_reviewed',true,\n                           'original_deleted_at',v_trip.deleted_at,\n                           'client_evidence_present',p_client_evidence<>'{}'::jsonb)\n    ) returning * into v_receipt;\n\n    return public.trip_cancellation_receipt_json_v1(v_receipt)\n        || jsonb_build_object('replayed',false,'reviewed_legacy_tombstone',true);\nend\n$function$\n",
+          "search_path": [
+            "search_path=pg_catalog, public"
+          ],
+          "anon_execute": false,
+          "security_definer": true,
+          "authenticated_execute": true
+        },
+        {
+          "name": "set_updated_at",
+          "identity": "set_updated_at()",
+          "definition": "CREATE OR REPLACE FUNCTION public.set_updated_at()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\r\nbegin\r\n  new.updated_at = now();\r\n  return new;\r\nend;\r\n$function$\n",
+          "search_path": null,
+          "anon_execute": true,
+          "security_definer": false,
+          "authenticated_execute": true
+        },
+        {
+          "name": "spray_tank_actuals_before_write",
+          "identity": "spray_tank_actuals_before_write()",
+          "definition": "CREATE OR REPLACE FUNCTION public.spray_tank_actuals_before_write()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\r\ndeclare v_trip public.trips; v_record public.spray_records;\r\nbegin\r\n  select * into v_trip from public.trips where id=new.trip_id and deleted_at is null;\r\n  select * into v_record from public.spray_records where id=new.spray_record_id and deleted_at is null and is_template=false;\r\n  if v_trip.id is null then raise exception 'Trip not found'; end if;\r\n  if v_record.id is null then raise exception 'Spray record not found'; end if;\r\n  if new.vineyard_id<>v_trip.vineyard_id or new.vineyard_id<>v_record.vineyard_id or v_record.trip_id is distinct from new.trip_id then\r\n    raise exception 'Vineyard, trip and spray record do not match';\r\n  end if;\r\n  if v_record.entry_source='manual' then\r\n    if v_trip.entry_source<>'manual' or v_trip.manual_entry_id is distinct from v_record.manual_entry_id then\r\n      raise exception 'Manual application provenance does not match' using errcode='23514';\r\n    end if;\r\n    if coalesce(current_setting('vinetrack.manual_spray_rpc',true),'')<>'on' or not public.has_vineyard_role(new.vineyard_id,array['owner','manager','supervisor']) then\r\n      raise exception 'Manual spray coordinated access required' using errcode='42501';\r\n    end if;\r\n    if not (tg_op='UPDATE' and old.deleted_at is null and new.deleted_at is not null) and not exists (\r\n      select 1 from jsonb_array_elements(coalesce(v_record.tanks,'[]'::jsonb)) tank\r\n      where coalesce(tank->>'id',tank->>'tankSessionId')=new.tank_session_id\r\n        and coalesce((tank->>'tankNumber')::integer,(tank->>'tank_number')::integer)=new.tank_number\r\n    ) then raise exception 'Manual tank identity does not belong to spray'; end if;\r\n  elsif not exists (\r\n    select 1 from jsonb_array_elements(coalesce(v_trip.tank_sessions,'[]'::jsonb)) session\r\n    where coalesce(session->>'id',session->>'tank_session_id')=new.tank_session_id\r\n      and coalesce((session->>'tank_number')::integer,(session->>'tankNumber')::integer)=new.tank_number\r\n  ) then raise exception 'Tank session does not belong to trip'; end if;\r\n  new.updated_by:=auth.uid();\r\n  if tg_op='INSERT' then\r\n    new.created_by:=coalesce(new.created_by,auth.uid()); new.confirmed_by:=auth.uid();\r\n  else\r\n    new.id:=old.id; new.created_at:=old.created_at; new.created_by:=old.created_by;\r\n    new.confirmed_by:=old.confirmed_by; new.sync_version:=old.sync_version+1;\r\n  end if;\r\n  return new;\r\nend $function$\n",
+          "search_path": [
+            "search_path=public"
+          ],
+          "anon_execute": true,
+          "security_definer": true,
+          "authenticated_execute": true
+        },
+        {
+          "name": "trip_cancellation_immutable_v1",
+          "identity": "trip_cancellation_immutable_v1()",
+          "definition": "CREATE OR REPLACE FUNCTION public.trip_cancellation_immutable_v1()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'pg_catalog', 'public'\nAS $function$\nbegin\n  raise exception 'TRIP_CANCELLATION_RECORD_IMMUTABLE' using errcode = '55000';\nend $function$\n",
+          "search_path": [
+            "search_path=pg_catalog, public"
+          ],
+          "anon_execute": false,
+          "security_definer": false,
+          "authenticated_execute": false
+        },
+        {
+          "name": "trip_cancellation_receipt_json_v1",
+          "identity": "trip_cancellation_receipt_json_v1(trip_activity_cancellation_receipts)",
+          "definition": "CREATE OR REPLACE FUNCTION public.trip_cancellation_receipt_json_v1(r trip_activity_cancellation_receipts)\n RETURNS jsonb\n LANGUAGE sql\n IMMUTABLE\n SET search_path TO 'pg_catalog', 'public'\nAS $function$\n  select jsonb_build_object('contract', 'vinetrack.trip-activity-cancellation', 'schemaVersion', 1, 'status', r.status, 'operation_id', r.operation_id, 'trip_id', r.trip_id, 'vineyard_id', r.vineyard_id, 'application_classification', r.application_classification, 'compliance_archive_id', r.compliance_archive_id, 'spray_record_ids', to_jsonb(r.spray_record_ids), 'removed_counts', r.removed_counts, 'server_revision', r.server_revision, 'cancelled_at', r.cancelled_at);\n$function$\n",
+          "search_path": [
+            "search_path=pg_catalog, public"
+          ],
+          "anon_execute": false,
+          "security_definer": false,
+          "authenticated_execute": true
+        },
+        {
+          "name": "vineyard_role",
+          "identity": "vineyard_role(uuid)",
+          "definition": "CREATE OR REPLACE FUNCTION public.vineyard_role(p_vineyard_id uuid)\n RETURNS text\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'public'\nAS $function$\r\n  select vm.role\r\n  from public.vineyard_members vm\r\n  where vm.vineyard_id = p_vineyard_id\r\n    and vm.user_id = auth.uid()\r\n  limit 1;\r\n$function$\n",
+          "search_path": [
+            "search_path=public"
+          ],
+          "anon_execute": true,
+          "security_definer": true,
+          "authenticated_execute": true
+        }
+      ],
+      "captured_at": "2026-11-03T07:10:45.471554+00:00"
+    }
+  }
+]

@@ -14,6 +14,11 @@ on:
       - 'ios/VineTrack/Backend/Sync/TrackedSprayCompletionSync.swift'
       - 'ios/VineTrackTests/GuidedSyncRepairEngineTests.swift'
       - 'ios/VineTrackTests/GuidedSyncCorrectionPolicyTests.swift'
+      - 'ios/VineTrackTests/TrackedSprayCompletionSyncTests.swift'
+      - 'ios/VineTrackTests/TankDependencyVerificationTests.swift'
+      - 'sql/284_guided_repair_archived_actual_tombstone_contract.sql'
+      - 'sql/tests/284_guided_repair_contract_tests.sql'
+      - 'scripts/test-pr52-postgres-contract.py'
       - '.github/workflows/ios-guided-sync-repair-native.yml'
   workflow_dispatch:
 
@@ -53,7 +58,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          xcodebuild test             -project ios/VineTrack.xcodeproj -scheme VineTrack             -configuration Debug             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.id }}"             -resultBundlePath "$RUNNER_TEMP/GuidedSyncRepair.xcresult"             -parallel-testing-enabled NO             -only-testing:VineTrackTests/GuidedSyncCorrectionPolicyTests             -only-testing:VineTrackTests/GuidedSyncRepairEngineTests             -only-testing:VineTrackTests/TripActivityCancellationTests             -only-testing:VineTrackTests/TrackedSprayCompletionSyncTests -only-testing:VineTrackTests/TripClosureStatusTests             -only-testing:VineTrackTests/SprayTankActualTests             INFOPLIST_KEY_VineTrackSourceRevision="${{ github.sha }}"             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/GuidedSyncRepair.log"
+          xcodebuild test             -project ios/VineTrack.xcodeproj -scheme VineTrack             -configuration Debug             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.id }}"             -resultBundlePath "$RUNNER_TEMP/GuidedSyncRepair.xcresult"             -parallel-testing-enabled NO             -only-testing:VineTrackTests/GuidedSyncCorrectionPolicyTests             -only-testing:VineTrackTests/GuidedSyncRepairEngineTests             -only-testing:VineTrackTests/TripActivityCancellationTests             -only-testing:VineTrackTests/TrackedSprayCompletionSyncTests -only-testing:VineTrackTests/TripClosureStatusTests             -only-testing:VineTrackTests/SprayTankActualTests -only-testing:VineTrackTests/TankDependencyVerificationTests             INFOPLIST_KEY_VineTrackSourceRevision="${{ github.sha }}"             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/GuidedSyncRepair.log"
       - name: Keep immutable source, failure and test evidence
         if: always()
         uses: actions/upload-artifact@v4

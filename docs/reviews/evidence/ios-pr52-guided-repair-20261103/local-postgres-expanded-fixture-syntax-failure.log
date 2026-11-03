@@ -1,0 +1,39 @@
+BEGIN
+ set_config 
+------------
+ baseline
+(1 row)
+
+              set_config              
+--------------------------------------
+ 00000000-0000-0000-0000-000000000001
+(1 row)
+
+CREATE FUNCTION
+CREATE FUNCTION
+INSERT 0 2
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+UPDATE 1
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:46: NOTICE:  PASS: unarchived deleted-parent tombstone held
+ expect_error 
+--------------
+ 
+(1 row)
+
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: ERROR:  syntax error at or near "update"
+LINE 37:       $$update spray_tank_actuals set deleted_at=now(),updat...
+                 ^
+Traceback (most recent call last):
+  File "/home/user/rork-app/scripts/test-pr52-postgres-contract.py", line 84, in <module>
+    main()
+    ~~~~^^
+  File "/home/user/rork-app/scripts/test-pr52-postgres-contract.py", line 70, in main
+    subprocess.run(command + ['-v', 'phase=baseline', '-f', str(tests)], env=env, check=True)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/subprocess.py", line 577, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/usr/lib/postgresql/17/bin/psql', '-X', '-v', 'ON_ERROR_STOP=1', '-v', 'phase=baseline', '-f', '/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql']' returned non-zero exit status 3.

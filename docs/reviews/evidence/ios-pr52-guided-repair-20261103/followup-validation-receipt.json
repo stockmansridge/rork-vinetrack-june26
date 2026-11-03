@@ -1,0 +1,116 @@
+{
+  "recorded_at": "2026-11-03T07:23:11.805622+00:00",
+  "decision": "HOLD: no merge or TestFlight; not original-iPhone acceptance",
+  "managed_head_before_automatic_sync": "5cb3dc712923269401e5d2f96023e1724478dbaa",
+  "source_manifest": "docs/reviews/evidence/ios-pr52-guided-repair-20261103/followup-source-manifest.json",
+  "source_manifest_sha256": "6f17033be923b4adf98a18dccf0bcd7fe32f48055591e26775c4c947aed52ada",
+  "source_file_count": 1312,
+  "source_identity": "Corrected workspace, not published PR head or merge",
+  "public_pr": {
+    "number": 52,
+    "state": "open",
+    "merged": false,
+    "head": "cbe1795ad5d678a25d594e61eb607ef2656be4a0",
+    "base": "977868e9f480c46fb74c5f7352769dd8101ed0d8"
+  },
+  "native_results": [
+    {
+      "selection": "legacy audit regression before correction",
+      "passed": 0,
+      "failed": 1
+    },
+    {
+      "selection": "previous two-suite checkpoint",
+      "passed": 26,
+      "seconds": 82,
+      "raw_log": "Not retained before next run overwrote the temporary path; terminal tool response only"
+    },
+    {
+      "selection": "reentrant amendment regression before guard",
+      "passed": 0,
+      "failed": 1,
+      "raw_log": "amendment-reentrancy-pre-fix-failure.log"
+    },
+    {
+      "selection": [
+        "VineTrackTests/GuidedSyncCorrectionPolicyTests",
+        "VineTrackTests/GuidedSyncRepairEngineTests",
+        "VineTrackTests/TripActivityCancellationTests",
+        "VineTrackTests/TrackedSprayCompletionSyncTests",
+        "VineTrackTests/TripClosureStatusTests",
+        "VineTrackTests/SprayTankActualTests",
+        "VineTrackTests/TankDependencyVerificationTests"
+      ],
+      "passed": 82,
+      "seconds": 78,
+      "result": "PASS from terminal swiftTest response",
+      "raw_log": "Runner temporary path still contains prior failing run; not relabelled or copied as passing"
+    }
+  ],
+  "native_limitations": "Separate runs, not additive. No passing named XML/xcresult exposed. Simulator tests are not live HTTP, original device, physical process death or Portal acceptance.",
+  "normal_build": {
+    "result": "PASS",
+    "tool": "runChecks",
+    "appPath": "ios",
+    "device_release_verified": false,
+    "existing_asset_url_notices": 2
+  },
+  "backend_migration": {
+    "tool": "runMigration",
+    "name": "284-guided-repair-archived-actual-tombstone-contract",
+    "tool_response": "Migration applied successfully. TypeScript types updated.",
+    "sql_sha256": "e9bdd57616315f0ccfda9969bae93c4e6aaa655dee8e9e146effa4a397c90c9f",
+    "live_post_deployment_catalog_at": "2026-11-03T07:18:43.651783+00:00",
+    "verified_final_function_md5": {
+      "reconcile_deleted_trip_activity_v1": "b0800f82f1e869cb68b0dc01cfc43b92",
+      "spray_tank_actuals_before_write": "2c361a16b999b3b05fb769d9c5558ec5"
+    },
+    "only_expected_definitions_changed": true,
+    "inspected_rls_grants_trigger_declarations_and_columns_unchanged": true,
+    "repair_rpcs_invoked": false,
+    "customer_rows_read_or_mutated": false,
+    "local_contract": "PASS: exact deployed-function baseline failure reproduced, rollback retains originals; corrected/idempotent migration and expanded negatives pass",
+    "local_fixture_failure": "First expanded run failed SQL fixture compilation due nested dollar quoting; corrected delimiter, rerun passed. Not an application/backend regression.",
+    "limitations": "Disposable local reduced schema, not production FK/RLS/concurrency/HTTP or original-device acceptance"
+  },
+  "corrections": [
+    "Hold older unresolved audits without frozen inputs; preserve original operation.",
+    "Durably freeze accepted-Actual amendment payload/version before dispatch and reconcile entire original receipt ledger before old-quantity comparison.",
+    "Verify exact receipt actor, scope, version and all before/after water/chemical rows; reject missing/duplicate/conflicting evidence.",
+    "Guard in-flight operation and Actual across MainActor awaits; release guard after failures without deleting frozen inputs.",
+    "Preserve failed requests through repository reopen and post-send scope changes; encode nullable RPC water explicitly.",
+    "Use documented async XCTest workaround in affected persistence/completion cases; Xcode26.3 crash cause not proven.",
+    "Narrow archived-OLD tombstone exception and exact reviewed replay checks deployed with exact-definition guards.",
+    "Required workflow now selects all seven suites and triggers for corrected completion tests and SQL contract files."
+  ],
+  "open_gates": [
+    "Authenticated managed publication to existing PR branch unavailable; public SHA unchanged.",
+    "Required Xcode26.3 workflow must pass on final published SHA; original run41581305846 remains FAILURE.",
+    "Direct retained-first-tank archive/changed-evidence/cleanup integration coverage incomplete.",
+    "Valid managed iOS service configuration and authenticated disposable-record offline/retry/account/vineyard/HTTP acceptance incomplete.",
+    "Real merge SHA, fresh ASC maximum, source-bound signed internal TestFlight >=211 not produced.",
+    "Affected original iPhone must repair in place with authoritative server receipt."
+  ],
+  "configuration": {
+    "managed_config_preserved": true,
+    "supabase_url_literal_empty": true
+  },
+  "preservation": {
+    "android_changed": false,
+    "customer_original_replay": false,
+    "data_clear_uninstall_or_queue_reset": false,
+    "manual_git_mutation": false,
+    "public_external_release": false
+  },
+  "historical_receipt_note": "validation-receipt.json and corrected-ios-source-manifest.json remain historical checkpoints, not current-source receipts. live-backend-catalog.json was refreshed before no-overwrite protection; original managed bytes retained separately here.",
+  "evidence_sha256": {
+    "legacy-audit-pre-fix-failure.log": "1f0f8a092569f6eb7911e0288a99cbd8094ef3b8e500731e472f19bf66b4677c",
+    "amendment-reentrancy-pre-fix-failure.log": "170dc8b8f53741a9e0a9a33c882054454ec1f194bc6dc69ca6220557f8f02085",
+    "local-postgres-contract-first-pass.log": "efa586721964e89db561ce8d4834ab9653e95bbbad38f148220dbb00097f89b2",
+    "local-postgres-expanded-fixture-syntax-failure.log": "d5b9e3dc9d3ee3bdadada076ba161a7f3cf3dc1e8387052dedbf20d9c3128aa7",
+    "local-postgres-expanded-contract-pass.log": "7df802253989306e3a2577b9a700069f3191c237a6733eeab44c3a8088f57274",
+    "live-backend-expanded-catalog.json": "faca815c276fabfd2d0cc9b20a8ecd3d66bbfbd062d02e17f542a794254a7890",
+    "live-backend-after-sql284.json": "9b5ee2bd3f5c957996ff0507fe1b1a68876e99e91237ca536363b2d5dbf96044",
+    "historical-managed-checkpoint-catalog.json": "3890451d5832e6a7a6c7c34b57c990dfbd06f0ba8b893011ddc86b0c4d53e9ff"
+  }
+}

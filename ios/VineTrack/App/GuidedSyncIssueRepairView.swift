@@ -609,7 +609,7 @@ private struct GuidedSyncIssueDetailView: View {
             if issue.verifiedCurrentScope { await inspect() }
         }
         .onChange(of: server) { _, _ in
-            if !options.contains(selected) {
+            if activeAuditOperation == nil && !options.contains(selected) {
                 selected = options.first ?? .privateReview
             }
         }
@@ -645,9 +645,14 @@ private struct GuidedSyncIssueDetailView: View {
 
     private func restoreUnresolvedInputs() {
         guard let entry = auditHistory.first(where: {
-            !$0.stages.contains(where: { $0.code == "VERIFIED" }) && $0.reviewInput != nil
-        }), let input = entry.reviewInput,
-              let correction = GuidedSyncCorrection(rawValue: entry.correction) else { return }
+            !$0.stages.contains(where: { $0.code == "VERIFIED" })
+        }) else { return }
+        guard let input = entry.reviewInput,
+              let correction = GuidedSyncCorrection(rawValue: entry.correction) else {
+            activeAuditOperation = entry.id
+            outcome = GuidedRepairAuditLedger.LegacyInputsUnavailable().localizedDescription
+            return
+        }
         selected = correction
         activeAuditOperation = entry.id
         evidenceNote = input.reason
@@ -658,6 +663,14 @@ private struct GuidedSyncIssueDetailView: View {
         if let value = input.applied { legacyApplied = value }
         if let value = input.recordedNotApplied { recordedActualsNotAppliedConfirmed = value }
         outcome = "Resumed the original unresolved correction inputs. Its operation ID is retained; inspect again before retrying."
+    }
+
+    private var hasFrozenAcceptedAmendment: Bool {
+        guard let operation = activeAuditOperation,
+              let saved = try? GuidedActualUseCorrection.savedAmendment(operation, persistence: .shared),
+              saved.owner == auth.userId, saved.vineyard == store.selectedVineyardId,
+              saved.original.id == issue.recordId else { return false }
+        return true
     }
 
     private func refreshHistory() {
@@ -736,7 +749,7 @@ private struct GuidedSyncIssueDetailView: View {
                row.deletedAt == nil {
                 if let verified = try await SprayTankActualStore.shared.actualReader(actual),
                    GuidedRepairFieldValidation.immutableIdentityMatches(actual, verified),
-                   TankDependencyVerification.actualMatches(local: actual, server: verified),
+                   (TankDependencyVerification.actualMatches(local: actual, server: verified) || hasFrozenAcceptedAmendment),
                    TankDependencyVerification.ids(row.tankSessions ?? []).contains(
                       TankDependencyVerification.normalized(actual.tankSessionId)) {
                     guard !Task.isCancelled, originatingContext == contextKey,
@@ -799,7 +812,8 @@ private struct GuidedSyncIssueDetailView: View {
                 guard blankWater || water != nil else {
                     outcome = "Enter valid non-negative water, or leave blank for Not recorded."; return
                 }
-                guard water != actual.waterVolumeL || reviewed != actual.chemicals else {
+                guard water != actual.waterVolumeL || reviewed != actual.chemicals ||
+                      (chosen == .amendActualUse && hasFrozenAcceptedAmendment) else {
                     outcome = "The quantities are unchanged. No new correction was started."; return
                 }
             }
@@ -902,7 +916,7 @@ private struct GuidedSyncIssueDetailView: View {
                 let corrected = try await GuidedActualUseCorrection.amend(
                     actualId: issue.recordId, owner: owner, vineyard: vineyard,
                     reason: evidenceNote, waterText: waterText,
-                    chemicalDisplayAmounts: chemicalTexts, operationId: operation)
+                    chemicalDisplayAmounts: chemicalTexts, operationId: operation, store: store)
                 stage("SERVER_AMENDMENT_VERIFIED",
                     "Original Actual Use \(corrected.id.uuidString.lowercased()) returned identical amounts and authoritative amendment receipt.")
                 outcome = "Actual Use correction saved with its original ID and verified on the server. Linked Trip/Spray still need closure verification."

@@ -1,0 +1,90 @@
+BEGIN
+ set_config 
+------------
+ baseline
+(1 row)
+
+              set_config              
+--------------------------------------
+ 00000000-0000-0000-0000-000000000001
+(1 row)
+
+CREATE FUNCTION
+CREATE FUNCTION
+INSERT 0 2
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+UPDATE 1
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:46: NOTICE:  PASS: unarchived deleted-parent tombstone held
+ expect_error 
+--------------
+ 
+(1 row)
+
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: baseline real reconciliation abort reproduced with live Actual
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: baseline abort rolls archive/receipt back
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: baseline original Actual bytes retained
+DO
+ROLLBACK
+BEGIN
+SET
+SET
+DO
+DO
+COMMIT
+BEGIN
+SET
+SET
+DO
+DO
+COMMIT
+BEGIN
+ set_config 
+------------
+ corrected
+(1 row)
+
+              set_config              
+--------------------------------------
+ 00000000-0000-0000-0000-000000000001
+(1 row)
+
+CREATE FUNCTION
+CREATE FUNCTION
+INSERT 0 2
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+INSERT 0 1
+UPDATE 1
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:46: NOTICE:  PASS: unarchived deleted-parent tombstone held
+ expect_error 
+--------------
+ 
+(1 row)
+
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: archived transition cannot change quantities
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: archived transition cannot change session identity
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: archived transition cannot change confirmation time
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: archived transition cannot change correction version
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: another manager cannot use original actor archive
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: negative fixtures retain original Actual and leave no archive
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: authoritative cancellation receipt created
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: original Actual archived byte-for-byte before deletion
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: deleted Trip never resurrected or changed
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: all linked rows tombstoned
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: Actual quantities, confirmation, identity retained
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: same frozen request replays same receipt
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: replay creates no duplicate archive or receipt
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: changed attestation replay held
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: changed evidence replay held
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: changed classification replay held
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: different authorized manager cannot claim original actor receipt
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: nonmember review held
+psql:/home/user/rork-app/sql/tests/284_guided_repair_contract_tests.sql:140: NOTICE:  PASS: receipt-backed Actual cannot be changed afterwards
+DO
+ROLLBACK
+LOCAL CONTRACT PASS: baseline reproduced; corrected checks and migration idempotence passed.
+NOT production RLS/FK/HTTP/concurrency or original-iPhone acceptance.

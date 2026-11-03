@@ -120,6 +120,10 @@ final class GuidedRepairAuditLedger {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    struct LegacyInputsUnavailable: LocalizedError {
+        var errorDescription: String? { "This unresolved older operation has no frozen reviewed inputs. Retain its original ID and evidence for assisted reconciliation; no retry or replacement operation is permitted." }
+    }
+
     struct PendingConflict: LocalizedError {
         var errorDescription: String? { "An unresolved correction already exists. Resume its frozen original inputs and operation ID; do not create a competing correction." }
     }
@@ -135,6 +139,7 @@ final class GuidedRepairAuditLedger {
             $0.correction == correction &&
             !$0.stages.contains(where: { $0.code == "VERIFIED" })
         }) {
+            guard existing.reviewInput != nil else { throw LegacyInputsUnavailable() }
             guard existing.inputHash == inputHash,
                   preferredOperationId == nil || existing.id == preferredOperationId else {
                 throw PendingConflict()
@@ -178,7 +183,7 @@ enum GuidedActualUseCorrection {
         var errorDescription: String? { message }
     }
 
-    struct Requested: Encodable, Sendable {
+    struct Requested: Codable, Equatable, Sendable {
         let p_operation_id: UUID
         let p_actual_id: UUID
         let p_trip_id: UUID
@@ -240,16 +245,21 @@ enum GuidedActualUseCorrection {
     static func amend(
         actualId: UUID, owner: UUID, vineyard: UUID, reason: String,
         waterText: String, chemicalDisplayAmounts: [UUID: String],
-        operationId: UUID
+        operationId: UUID, store: MigratedDataStore
     ) async throws -> SprayTankActual {
         guard GuidedRepairFieldValidation.note(reason) != nil else {
             throw Rejected(message: "Enter a reason and evidence source (12–500 characters) before correcting a compliance record.")
         }
         let provider = SupabaseClientProvider.shared
-        guard provider.isConfigured, provider.client.auth.currentUser?.id == owner else {
-            throw Rejected(message: "The original signed-in account is not verified.")
+        func requireContext() throws {
+            try Task.checkCancellation()
+            guard provider.isConfigured, provider.client.auth.currentUser?.id == owner,
+                  store.currentUserIdProvider?() == owner, store.selectedVineyardId == vineyard else {
+                throw Rejected(message: "The original signed-in account/vineyard changed. The frozen amendment is retained.")
+            }
+            try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyard.uuidString)
         }
-        try VineyardWriteAuthority.shared.requireWrite(vineyardId: vineyard.uuidString)
+        try requireContext()
         let localStore = SprayTankActualStore.shared
         guard let original = localStore.records.first(where: {
             $0.id == actualId && $0.vineyardId == vineyard
@@ -263,11 +273,7 @@ enum GuidedActualUseCorrection {
                 .contains(TankDependencyVerification.normalized(original.tankSessionId)) else {
             throw Rejected(message: "The original Trip or its tank session is absent/deleted on the server. No correction was sent.")
         }
-        guard let onServer = try await localStore.actualReader(original),
-              GuidedRepairFieldValidation.immutableIdentityMatches(original, onServer),
-              TankDependencyVerification.actualMatches(local: original, server: onServer) else {
-            throw Rejected(message: "The server Actual Use is missing or conflicts with the saved original. Refresh and inspect before editing.")
-        }
+        try requireContext()
 
         let waterValue: Double?
         if waterText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -279,57 +285,191 @@ enum GuidedActualUseCorrection {
         }
         let chemicals = try reviewedChemicals(
             original: original.chemicals, amounts: chemicalDisplayAmounts)
-        guard waterValue != original.waterVolumeL || chemicals != original.chemicals else {
-            throw Rejected(message: "The entered water and chemical amounts already match the original confirmed record. No amendment is needed.")
-        }
-        guard provider.client.auth.currentUser?.id == owner else {
-            throw Rejected(message: "The signed-in account changed; no correction was sent.")
-        }
-
-        let request = Requested(
-            p_operation_id: operationId,
-            p_actual_id: original.id,
-            p_trip_id: original.tripId,
-            p_spray_record_id: original.sprayRecordId,
-            p_tank_session_id: original.tankSessionId,
-            p_tank_number: original.tankNumber,
-            p_expected_version: onServer.correctionVersion ?? 0,
-            p_water_volume_l: waterValue,
-            p_chemicals: chemicals)
-        try await provider.client.rpc("correct_spray_tank_actual_v1", params: request).execute()
-        // Do NOT accept HTTP 200 as a correction receipt; exact independent
-        // authenticated readback (including identity and actual amounts) is
-        // required before showing success.
-        guard provider.client.auth.currentUser?.id == owner,
-              let verified = try await localStore.actualReader(original),
-              GuidedRepairFieldValidation.immutableIdentityMatches(original, verified),
-              verified.waterVolumeL == waterValue,
-              verified.chemicals == chemicals,
-              (verified.correctionVersion ?? 0) >= (onServer.correctionVersion ?? 0)
-        else {
-            throw Rejected(message: "The correction response was not independently verified. Retain the same operation ID for reconciliation.")
-        }
-        // An amount readback is necessary but not sufficient to prove who
-        // amended a compliance record. Confirm the exact operation UUID in
-        // the immutable server amendment ledger before reporting success.
-        struct AmendmentRow: Decodable {
-            let operationId: UUID
-            enum CodingKeys: String, CodingKey { case operationId = "operation_id" }
-        }
-        let amendmentRows: [AmendmentRow] = try await provider.client
-            .from("spray_tank_actual_amendments")
-            .select("operation_id")
-            .eq("operation_id", value: operationId.uuidString)
-            .eq("spray_tank_actual_id", value: original.id.uuidString)
-            .eq("vineyard_id", value: vineyard.uuidString)
-            .limit(1).execute().value
-        guard amendmentRows.count == 1,
-              amendmentRows[0].operationId == operationId,
-              provider.client.auth.currentUser?.id == owner else {
-            throw Rejected(message: "Exact original Actual Use amounts were read back, but the audited amendment operation receipt is not visible. It remains unverified.")
-        }
+        let verified = try await reconcileAmendment(
+            original: original, owner: owner, vineyard: vineyard, reason: reason,
+            water: waterValue, chemicals: chemicals, operationId: operationId,
+            persistence: .shared, requireContext: requireContext,
+            readActual: { try await localStore.actualReader(original) },
+            readAmendments: {
+                // Read the entire original operation, not just the first row.
+                try await provider.client.from("spray_tank_actual_amendments")
+                    .select("*").eq("operation_id", value: operationId.uuidString)
+                    .execute().value
+            }, send: { request in
+                try await provider.client.rpc("correct_spray_tank_actual_v1", params: request).execute()
+            })
+        try requireContext()
         await localStore.pull(vineyardId: vineyard)
+        try requireContext()
         return verified
+    }
+
+    struct AmendmentAttempt: Codable, Equatable {
+        let owner: UUID
+        let vineyard: UUID
+        let reason: String
+        let original: SprayTankActual
+        let request: Requested
+    }
+
+    struct AmendmentRow: Codable {
+        let operation_id: UUID
+        let vineyard_id: UUID
+        let trip_id: UUID
+        let spray_record_id: UUID
+        let spray_tank_actual_id: UUID
+        let tank_number: Int
+        let chemical_actual_id: UUID?
+        let field_name: String
+        let previous_value: TripActivityCancellation.JSON?
+        let new_value: TripActivityCancellation.JSON?
+        let revision: Int
+        let edited_by: UUID
+    }
+
+    static func amendmentKey(_ operation: UUID) -> String {
+        "vinetrack_guided_accepted_actual_request_v1_" + operation.uuidString.lowercased()
+    }
+
+    /// A Data envelope preserves exact Date/Double values rather than allowing
+    /// the shared ISO-8601 cache encoder to truncate original confirmation times.
+    static func savedAmendment(_ operation: UUID, persistence: PersistenceStore) throws -> AmendmentAttempt? {
+        let outcome: PersistenceStore.LoadOutcome<Data> = persistence.loadOutcome(key: amendmentKey(operation))
+        switch outcome {
+        case .missing: return nil
+        case .decoded(let bytes): return try JSONDecoder().decode(AmendmentAttempt.self, from: bytes)
+        case .failed: throw Rejected(message: "The original amendment request is unreadable. No replacement or replay is permitted.")
+        }
+    }
+
+    // MainActor reentrancy across transport awaits must not allow two callers
+    // to freeze/overwrite the same operation or amend the same Actual at once.
+    private static var inFlightOperations: Set<UUID> = []
+    private static var inFlightActuals: Set<UUID> = []
+
+    /// Shared by the real authenticated transport and bounded transport-failure
+    /// tests. No local Actual/queue is edited here. An accepted-but-lost response
+    /// is reconciled by its original receipt BEFORE comparing old quantities.
+    static func reconcileAmendment(
+        original: SprayTankActual, owner: UUID, vineyard: UUID, reason: String,
+        water: Double?, chemicals: [SprayTankActualChemical], operationId: UUID,
+        persistence: PersistenceStore, requireContext: () throws -> Void,
+        readActual: () async throws -> SprayTankActual?,
+        readAmendments: () async throws -> [AmendmentRow],
+        send: (Requested) async throws -> Void
+    ) async throws -> SprayTankActual {
+        try requireContext()
+        guard !inFlightOperations.contains(operationId), !inFlightActuals.contains(original.id) else {
+            throw Rejected(message: "The original amendment is already being checked or sent. Wait for it; no competing request was saved.")
+        }
+        inFlightOperations.insert(operationId)
+        inFlightActuals.insert(original.id)
+        defer {
+            inFlightOperations.remove(operationId)
+            inFlightActuals.remove(original.id)
+        }
+        guard original.vineyardId == vineyard, GuidedRepairFieldValidation.note(reason) != nil else {
+            throw Rejected(message: "The original vineyard and reviewed evidence note are required.")
+        }
+        var attempt = try savedAmendment(operationId, persistence: persistence)
+        if let saved = attempt {
+            guard saved.owner == owner, saved.vineyard == vineyard,
+                  saved.reason == reason, saved.request.p_operation_id == operationId,
+                  GuidedRepairFieldValidation.immutableIdentityMatches(saved.original, original),
+                  saved.request.p_water_volume_l == water, saved.request.p_chemicals == chemicals else {
+                throw Rejected(message: "This operation's frozen original inputs or scope differ. Its request cannot be replaced.")
+            }
+        }
+        let rows = try await readAmendments()
+        try requireContext()
+        guard let remote = try await readActual() else {
+            throw Rejected(message: "The original server Actual Use is absent. No amendment was sent.")
+        }
+        try requireContext()
+        if let saved = attempt, !rows.isEmpty {
+            try verifyAmendment(saved, remote: remote, rows: rows)
+            return remote // Do not resend an already accepted original operation.
+        }
+        guard rows.isEmpty,
+              GuidedRepairFieldValidation.immutableIdentityMatches(attempt?.original ?? original, remote),
+              remote.waterVolumeL == (attempt?.original ?? original).waterVolumeL,
+              remote.chemicals == (attempt?.original ?? original).chemicals else {
+            throw Rejected(message: "The server differs from the frozen original without a matching amendment receipt. Retain it for reconciliation.")
+        }
+        if let saved = attempt {
+            guard remote.correctionVersion ?? 0 == saved.request.p_expected_version else {
+                throw Rejected(message: "The original expected version changed. Do not substitute a new version or operation.")
+            }
+        } else {
+            guard water != original.waterVolumeL || chemicals != original.chemicals else {
+                throw Rejected(message: "Quantities are unchanged; no amendment is required.")
+            }
+            let request = Requested(p_operation_id: operationId, p_actual_id: original.id,
+                p_trip_id: original.tripId, p_spray_record_id: original.sprayRecordId,
+                p_tank_session_id: original.tankSessionId, p_tank_number: original.tankNumber,
+                p_expected_version: remote.correctionVersion ?? 0,
+                p_water_volume_l: water, p_chemicals: chemicals)
+            let saved = AmendmentAttempt(owner: owner, vineyard: vineyard, reason: reason,
+                original: remote, request: request)
+            try persistence.saveOrThrow(try JSONEncoder().encode(saved), key: amendmentKey(operationId))
+            guard try savedAmendment(operationId, persistence: persistence) == saved else {
+                throw Rejected(message: "The exact original request did not survive durable readback. No correction was sent.")
+            }
+            attempt = saved
+        }
+        guard let saved = attempt else { throw Rejected(message: "Original amendment request unavailable.") }
+        try requireContext()
+        // If dispatch throws (including a lost response), the immutable request
+        // remains on disk. Explicit retry reads receipt first; never mint an ID.
+        try await send(saved.request)
+        try requireContext()
+        let acceptedRows = try await readAmendments()
+        try requireContext()
+        guard let accepted = try await readActual() else {
+            throw Rejected(message: "Amendment readback is absent; retain the original request.")
+        }
+        try requireContext()
+        try verifyAmendment(saved, remote: accepted, rows: acceptedRows)
+        return accepted
+    }
+
+    static func verifyAmendment(_ saved: AmendmentAttempt, remote: SprayTankActual,
+                                rows: [AmendmentRow]) throws {
+        let request = saved.request, before = saved.original
+        let version = request.p_expected_version + 1
+        guard GuidedRepairFieldValidation.immutableIdentityMatches(before, remote),
+              remote.correctionVersion == version,
+              remote.waterVolumeL == request.p_water_volume_l,
+              remote.chemicals == request.p_chemicals,
+              rows.allSatisfy({ $0.operation_id == request.p_operation_id &&
+                  $0.vineyard_id == saved.vineyard && $0.trip_id == before.tripId &&
+                  $0.spray_record_id == before.sprayRecordId && $0.spray_tank_actual_id == before.id &&
+                  $0.tank_number == before.tankNumber && $0.edited_by == saved.owner && $0.revision == version }) else {
+            throw Rejected(message: "Independent amendment identity, actor, version or reviewed amounts do not match. Nothing was acknowledged.")
+        }
+        let waterRows = rows.filter { $0.field_name == "actualWaterLitres" }
+        let changedWater = before.waterVolumeL != request.p_water_volume_l
+        func number(_ value: Double?) -> TripActivityCancellation.JSON { value.map { .number($0) } ?? .null }
+        guard waterRows.count == (changedWater ? 1 : 0), waterRows.allSatisfy({
+            $0.chemical_actual_id == nil && ($0.previous_value ?? .null) == number(before.waterVolumeL) &&
+                ($0.new_value ?? .null) == number(request.p_water_volume_l)
+        }) else { throw Rejected(message: "The original water amendment receipt is incomplete or different.") }
+        let changed = request.p_chemicals.filter { item in before.chemicals.first(where: { $0.id == item.id }) != item }
+        let chemicalRows = rows.filter { $0.field_name == "actualChemical" }
+        guard rows.count == waterRows.count + chemicalRows.count,
+              !rows.isEmpty, chemicalRows.count == changed.count else {
+            throw Rejected(message: "The original chemical amendment receipt is incomplete or ambiguous.")
+        }
+        for chemical in changed {
+            let matches = chemicalRows.filter { $0.chemical_actual_id == chemical.id }
+            guard matches.count == 1, let row = matches.first,
+                  let previous = row.previous_value, let next = row.new_value,
+                  try JSONDecoder().decode(SprayTankActualChemical.self, from: JSONEncoder().encode(previous)) ==
+                    before.chemicals.first(where: { $0.id == chemical.id }),
+                  try JSONDecoder().decode(SprayTankActualChemical.self, from: JSONEncoder().encode(next)) == chemical else {
+                throw Rejected(message: "Exact original chemical identities and before/after amounts were not independently receipted.")
+            }
+        }
     }
 
     private struct LocalOriginalCorrectionArchive: Codable {

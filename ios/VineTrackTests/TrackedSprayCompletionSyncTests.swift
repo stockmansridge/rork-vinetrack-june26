@@ -3,7 +3,9 @@ import XCTest
 @testable import VineTrack
 
 final class TrackedSprayCompletionSyncTests: XCTestCase {
-    @MainActor func testFirstEndAndIdentitySurviveReloadAndLaterRetry() throws {
+    // Keep MainActor-owned persistence teardown inside XCTest's async task context.
+    // Swift 6.2.4: https://github.com/swiftlang/swift/issues/87316
+    @MainActor func testFirstEndAndIdentitySurviveReloadAndLaterRetry() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -21,7 +23,7 @@ final class TrackedSprayCompletionSyncTests: XCTestCase {
         XCTAssertEqual(try reopened.intents().count, 1)
     }
 
-    @MainActor func testFailedPrepareDoesNotPublishQueuedSuccess() throws {
+    @MainActor func testFailedPrepareDoesNotPublishQueuedSuccess() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -36,7 +38,7 @@ final class TrackedSprayCompletionSyncTests: XCTestCase {
         XCTAssertTrue(try TrackedSprayCompletionSync(persistence: PersistenceStore(directory: directory)).intents().isEmpty)
     }
 
-    @MainActor func testUnreadableOutboxNeverBecomesEmptyAndOriginalBytesRemain() throws {
+    @MainActor func testUnreadableOutboxNeverBecomesEmptyAndOriginalBytesRemain() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -51,7 +53,7 @@ final class TrackedSprayCompletionSyncTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: file), original)
     }
 
-    @MainActor func testMissingAmbiguousManualTemplateAndWrongVineyardAreHeld() throws {
+    @MainActor func testMissingAmbiguousManualTemplateAndWrongVineyardAreHeld() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -71,7 +73,7 @@ final class TrackedSprayCompletionSyncTests: XCTestCase {
         XCTAssertTrue(try queue.intents().isEmpty)
     }
 
-    @MainActor func testNonSprayAndHistoricalEndDoNotCreateCompletionIntent() throws {
+    @MainActor func testNonSprayAndHistoricalEndDoNotCreateCompletionIntent() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }

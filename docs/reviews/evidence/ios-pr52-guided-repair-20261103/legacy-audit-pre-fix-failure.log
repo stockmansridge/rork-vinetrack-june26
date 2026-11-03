@@ -1,0 +1,210 @@
+Building with Xcode 27.1 (27A9275)
+Command line invocation:
+Build settings from command line:
+Resolving Package Graph
+Resolved source packages
+swift-asn1 - https://github.com/apple/swift-asn1.git @ 1.7.3
+xctest-dynamic-overlay - https://github.com/pointfreeco/xctest-dynamic-overlay @ 1.13.1
+swift-concurrency-extras - https://github.com/pointfreeco/swift-concurrency-extras @ 1.4.3
+swift-clocks - https://github.com/pointfreeco/swift-clocks @ 1.1.1
+Supabase - https://github.com/supabase/supabase-swift.git @ 2.55.5
+swift-issue-reporting - https://github.com/pointfreeco/swift-issue-reporting @ 2.1.2
+RevenueCat - https://github.com/RevenueCat/purchases-ios.git @ 5.99.0
+swift-http-types - https://github.com/apple/swift-http-types.git @ 1.8.0
+swift-crypto - https://github.com/apple/swift-crypto.git @ 4.5.2
+Writing result bundle at path:
+	/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/result-bundles/build-1793689580329331000/build.xcresult
+Build Preparation
+Build task concurrency set to 14 via user default IDEBuildOperationMaxNumberOfConcurrentCompileTasks
+note: Using codesigning identity override: -
+ComputePackagePrebuildTargetDependencyGraph
+Prepare packages
+CreateBuildRequest
+SendProjectDescription
+CreateBuildOperation
+ComputeTargetDependencyGraph
+note: Building targets in dependency order
+note: Target dependency graph (34 targets)
+GatherProvisioningInputs
+CreateBuildDescription
+ExecuteExternalTool /Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc --version
+ExecuteExternalTool /Applications/Xcode-27.1.app/Contents/Developer/usr/bin/actool --version --output-format xml1
+ExecuteExternalTool /Applications/Xcode-27.1.app/Contents/Developer/usr/bin/actool --print-asset-tag-combinations --output-format xml1 /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrack/Assets.xcassets
+ExecuteExternalTool /Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld -version_details
+ReadFileContents /Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/share/docc/features.json
+Build description signature: c1d6c62635c7d6ef07f225cebccf6604
+Build description path: /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/XCBuildData/c1d6c62635c7d6ef07f225cebccf6604.xcbuilddata
+[RevenueCat_RevenueCat] Processing empty-RevenueCat_RevenueCat.plist
+ClangStatCache /Applications/Xcode-27.1.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode-27.1.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator27.1.sdk /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/SDKStatCaches.noindex/iphonesimulator27.1-24A94232-e829b21a6f8c9b70876ba0858053c04421d52c5dee28f89a436238487c04ba4c.sdkstatcache
+[RevenueCat] Linking RevenueCat.o
+[RevenueCat] Extract App Intents Metadata
+2026-11-03 00:06:32.219 appintentsmetadataprocessor[89019:1926035] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.326 appintentsmetadataprocessor[89019:1926035] Extracted no relevant App Intents symbols, skipping writing output
+[IssueReporting] Linking IssueReporting.o
+[HTTPTypes] Linking HTTPTypes.o
+[ConcurrencyExtras] Linking ConcurrencyExtras.o
+[swift-crypto_Crypto] Processing empty-swift-crypto_Crypto.plist
+Signing RevenueCat.o (in target 'RevenueCat' from project 'RevenueCat')
+[HTTPTypes] Extract App Intents Metadata
+2026-11-03 00:06:32.512 appintentsmetadataprocessor[89027:1926087] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.560 appintentsmetadataprocessor[89027:1926087] Extracted no relevant App Intents symbols, skipping writing output
+[IssueReporting] Extract App Intents Metadata
+2026-11-03 00:06:32.513 appintentsmetadataprocessor[89028:1926088] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.561 appintentsmetadataprocessor[89028:1926088] Extracted no relevant App Intents symbols, skipping writing output
+[ConcurrencyExtras] Extract App Intents Metadata
+2026-11-03 00:06:32.512 appintentsmetadataprocessor[89029:1926089] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.558 appintentsmetadataprocessor[89029:1926089] Extracted no relevant App Intents symbols, skipping writing output
+[RevenueCat_RevenueCatUI] Processing empty-RevenueCat_RevenueCatUI.plist
+[Crypto] Linking Crypto.o
+[Crypto] Extract App Intents Metadata
+2026-11-03 00:06:32.537 appintentsmetadataprocessor[89032:1926116] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.582 appintentsmetadataprocessor[89032:1926116] Extracted no relevant App Intents symbols, skipping writing output
+[RevenueCatUI] Linking RevenueCatUI.o
+Signing ConcurrencyExtras.o (in target 'ConcurrencyExtras' from project 'swift-concurrency-extras')
+Signing HTTPTypes.o (in target 'HTTPTypes' from project 'swift-http-types')
+Signing IssueReporting.o (in target 'IssueReporting' from project 'swift-issue-reporting')
+[_IssueReporting] Linking _IssueReporting.o
+[Clocks] Linking Clocks.o
+Signing Crypto.o (in target 'Crypto' from project 'swift-crypto')
+[_IssueReporting] Extract App Intents Metadata
+2026-11-03 00:06:32.613 appintentsmetadataprocessor[89043:1926187] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.655 appintentsmetadataprocessor[89043:1926187] Extracted no relevant App Intents symbols, skipping writing output
+[Clocks] Extract App Intents Metadata
+2026-11-03 00:06:32.613 appintentsmetadataprocessor[89044:1926188] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.655 appintentsmetadataprocessor[89044:1926188] Extracted no relevant App Intents symbols, skipping writing output
+[RevenueCatUI] Extract App Intents Metadata
+2026-11-03 00:06:32.668 appintentsmetadataprocessor[89046:1926208] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.741 appintentsmetadataprocessor[89046:1926208] Extracted no relevant App Intents symbols, skipping writing output
+Signing _IssueReporting.o (in target '_IssueReporting' from project 'xctest-dynamic-overlay')
+Signing Clocks.o (in target 'Clocks' from project 'swift-clocks')
+[XCTestDynamicOverlay] Linking XCTestDynamicOverlay.o
+[XCTestDynamicOverlay] Extract App Intents Metadata
+2026-11-03 00:06:32.697 appintentsmetadataprocessor[89053:1926239] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.737 appintentsmetadataprocessor[89053:1926239] Extracted no relevant App Intents symbols, skipping writing output
+Signing XCTestDynamicOverlay.o (in target 'XCTestDynamicOverlay' from project 'xctest-dynamic-overlay')
+Signing RevenueCatUI.o (in target 'RevenueCatUI' from project 'RevenueCat')
+[Helpers] Linking Helpers.o
+[Helpers] Extract App Intents Metadata
+2026-11-03 00:06:32.779 appintentsmetadataprocessor[89059:1926268] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.821 appintentsmetadataprocessor[89059:1926268] Extracted no relevant App Intents symbols, skipping writing output
+Signing Helpers.o (in target 'Helpers' from project 'Supabase')
+[Functions] Linking Functions.o
+[RealtimeV2] Linking RealtimeV2.o
+[PostgREST] Linking PostgREST.o
+[Storage] Linking Storage.o
+[Auth] Linking Auth.o
+[PostgREST] Extract App Intents Metadata
+2026-11-03 00:06:32.868 appintentsmetadataprocessor[89071:1926354] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.911 appintentsmetadataprocessor[89071:1926354] Extracted no relevant App Intents symbols, skipping writing output
+[Functions] Extract App Intents Metadata
+2026-11-03 00:06:32.868 appintentsmetadataprocessor[89072:1926355] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.911 appintentsmetadataprocessor[89072:1926355] Extracted no relevant App Intents symbols, skipping writing output
+[RealtimeV2] Extract App Intents Metadata
+2026-11-03 00:06:32.871 appintentsmetadataprocessor[89073:1926356] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.913 appintentsmetadataprocessor[89073:1926356] Extracted no relevant App Intents symbols, skipping writing output
+[Storage] Extract App Intents Metadata
+2026-11-03 00:06:32.872 appintentsmetadataprocessor[89074:1926357] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.913 appintentsmetadataprocessor[89074:1926357] Extracted no relevant App Intents symbols, skipping writing output
+[Auth] Extract App Intents Metadata
+2026-11-03 00:06:32.885 appintentsmetadataprocessor[89075:1926369] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.926 appintentsmetadataprocessor[89075:1926369] Extracted no relevant App Intents symbols, skipping writing output
+Signing RealtimeV2.o (in target 'RealtimeV2' from project 'Supabase')
+Signing Auth.o (in target 'Auth' from project 'Supabase')
+[Realtime] Linking Realtime.o
+Signing Functions.o (in target 'Functions' from project 'Supabase')
+[Realtime] Extract App Intents Metadata
+2026-11-03 00:06:32.956 appintentsmetadataprocessor[89081:1926401] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:32.995 appintentsmetadataprocessor[89081:1926401] Extracted no relevant App Intents symbols, skipping writing output
+Signing PostgREST.o (in target 'PostgREST' from project 'Supabase')
+Signing Realtime.o (in target 'Realtime' from project 'Supabase')
+Signing Storage.o (in target 'Storage' from project 'Supabase')
+[Supabase] Linking Supabase.o
+[Supabase] Extract App Intents Metadata
+2026-11-03 00:06:33.049 appintentsmetadataprocessor[89088:1926445] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:33.088 appintentsmetadataprocessor[89088:1926445] Extracted no relevant App Intents symbols, skipping writing output
+Signing Supabase.o (in target 'Supabase' from project 'Supabase')
+[VineTrack] Processing VineTrackV2-Info.plist
+[VineTrack] Linking VineTrack
+CopySwiftLibs /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrack.app (in target 'VineTrack' from project 'VineTrack')
+[VineTrack] Extract App Intents Metadata
+2026-11-03 00:06:33.821 appintentsmetadataprocessor[89098:1926522] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:33.822 appintentsmetadataprocessor[89098:1926522] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+[VineTrackTests] Processing empty-VineTrackTests.plist
+[VineTrackTripTests] Linking VineTrackTripTests
+[VineTrackTripTests] Processing empty-VineTrackTripTests.plist
+[VineTrackTests] Compiling TrackedSprayCompletionSyncTests.swift
+SwiftCompile normal arm64 (in target 'VineTrackTests' from project 'VineTrack')
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ResistancePlanRepositoryTests.swift:167:51: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+165 |     func makeRepo(
+166 |         server: (any ResistancePlanRemote)?,
+167 |         store: InMemoryResistancePlanLocalStore = InMemoryResistancePlanLocalStore(),
+    |                                                   `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+168 |         clock: Clock = Clock(),
+169 |         userId: String? = "user-1"
+VineTrack.InMemoryResistancePlanLocalStore.init:2:21: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+1 | class InMemoryResistancePlanLocalStore {
+2 | @MainActor internal init()}
+  |                     `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+3 | 
+[!]  /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/VineTrackTests/ResistancePlanRevisionSyncTests.swift:147:51: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+145 |     func makeRepo(
+146 |         server: (any ResistancePlanRemote)?,
+147 |         store: InMemoryResistancePlanLocalStore = InMemoryResistancePlanLocalStore(),
+    |                                                   `- warning: call to main actor-isolated initializer 'init()' in a synchronous nonisolated context [#ActorIsolatedCall]
+148 |         clock: Clock
+149 |     ) -> ResistancePlanRepository {
+VineTrack.InMemoryResistancePlanLocalStore.init:2:21: note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+1 | class InMemoryResistancePlanLocalStore {
+2 | @MainActor internal init()}
+  |                     `- note: calls to initializer 'init()' from outside of its actor context are implicitly asynchronous
+3 | 
+[#ActorIsolatedCall]: <https://docs.swift.org/compiler/documentation/diagnostics/actor-isolated-call>
+[VineTrackTests] Compiling GuidedSyncRepairEngineTests.swift
+CopySwiftLibs /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrack.app/PlugIns/VineTrackTripTests.xctest (in target 'VineTrackTripTests' from project 'VineTrack')
+[VineTrackTripTests] Extract App Intents Metadata
+2026-11-03 00:06:34.104 appintentsmetadataprocessor[89105:1926555] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:34.105 appintentsmetadataprocessor[89105:1926555] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+Signing VineTrackTripTests.xctest (in target 'VineTrackTripTests' from project 'VineTrack')
+[VineTrackTests] Copy arm64-apple-ios-simulator.swiftsourceinfo -> VineTrackTests.swiftsourceinfo
+[VineTrackTests] Copy arm64-apple-ios-simulator.abi.json -> VineTrackTests.abi.json
+[VineTrackTests] Copy arm64-apple-ios-simulator.swiftmodule -> VineTrackTests.swiftmodule
+[VineTrackTests] Linking VineTrackTests
+CopySwiftLibs /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrack.app/PlugIns/VineTrackTests.xctest (in target 'VineTrackTests' from project 'VineTrack')
+[VineTrackTests] Extract App Intents Metadata
+2026-11-03 00:06:44.051 appintentsmetadataprocessor[89167:1926928] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:44.053 appintentsmetadataprocessor[89167:1926928] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+Signing VineTrackTests.xctest (in target 'VineTrackTests' from project 'VineTrack')
+Signing VineTrack.app (in target 'VineTrack' from project 'VineTrack')
+[VineTrack] Validate VineTrack.app
+[VineTrackUITests] Processing empty-VineTrackUITests.plist
+[VineTrackUITests] Linking VineTrackUITests
+CopySwiftLibs /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Products/Debug-iphonesimulator/VineTrackUITests-Runner.app/PlugIns/VineTrackUITests.xctest (in target 'VineTrackUITests' from project 'VineTrack')
+[VineTrackUITests] Extract App Intents Metadata
+2026-11-03 00:06:44.686 appintentsmetadataprocessor[89175:1926986] Starting appintentsmetadataprocessor export
+2026-11-03 00:06:44.687 appintentsmetadataprocessor[89175:1926986] warning: Metadata extraction skipped, no AppIntents.framework dependency found
+Signing VineTrackUITests.xctest (in target 'VineTrackUITests' from project 'VineTrack')
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/ExplicitPrecompiledModules
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/Build/Intermediates.noindex/SwiftExplicitPrecompiledModules
+PruneExplicitPrecompiledModules /Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/derived-data/SDKExplicitPrecompiledModules
+Build Timing Summary
+SwiftEmitModule (1 task) | 9.555 seconds
+Ld (21 tasks) | 1.869 seconds
+SwiftDriver (1 task) | 1.489 seconds
+ExtractAppIntentsMetadata (21 tasks) | 1.172 seconds
+SwiftCompile (2 tasks) | 1.069 seconds
+Signing (21 tasks) | 0.810 seconds
+CopySwiftLibs (4 tasks) | 0.125 seconds
+SwiftDriver Compilation (1 task) | 0.094 seconds
+ProcessInfoPlistFile (7 tasks) | 0.045 seconds
+Copy (3 tasks) | 0.008 seconds
+Validate (1 task) | 0.001 seconds
+SwiftDriver Compilation Requirements (1 task) | 0.001 seconds
+Result bundle written to path:
+	/Users/limrun/work/_cache/org_01k3v8mbfbfysbr86r3sbt065s/cache-trj17st25xbnyku26ox9/ios/.limbuild-sandbox/result-bundles/build-1793689580329331000/build.xcresult
+Test Build Succeeded
+Build completed in 24.454941s
+Syncing test products to simulator...
+Synced test products in 2.476477083s, running tests...
+1 of 1 tests failed
+
+VineTrackTests.GuidedSyncRepairEngineTests/testLegacyAuditWithoutFrozenInputsCannotBeResumedOrReplaced: XCTAssertThrowsError failed: did not throw an error
