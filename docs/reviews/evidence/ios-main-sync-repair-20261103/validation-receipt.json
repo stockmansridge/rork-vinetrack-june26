@@ -1,0 +1,83 @@
+{
+  "date": "2026-11-03",
+  "delivery_branch": "main",
+  "repository": "stockmansridge/rork-vinetrack-june26",
+  "observed_public_main_sha": "0ced28e2e02bff9da2262fe2beebe5ec8edff34a",
+  "managed_head_at_start": "14f86c0922acac47e8321685cbc8ced3f5c51c4b",
+  "publication": {
+    "implementation_already_present_on_public_main": true,
+    "manually_committed_or_pushed_by_this_turn": false,
+    "authenticated_github_write_access_available": false,
+    "new_branch_created": false,
+    "patch_application_needed": false
+  },
+  "source_verification": {
+    "export_patch_zip_handoff_checksums": "PASS, all three match pinned SHA256SUMS",
+    "exported_files_matching_public_main": 30,
+    "exported_files_conflicting_with_public_main": 0,
+    "validated_workspace_manifest_files_matching": 1312,
+    "validated_workspace_manifest_mismatches": 0,
+    "all_public_main_ios_files_compared_to_workspace_excluding_ignored_config": 1306,
+    "public_main_ios_byte_mismatches": 0,
+    "validation_manifest_sha256": "6f17033be923b4adf98a18dccf0bcd7fe32f48055591e26775c4c947aed52ada",
+    "ignored_managed_config_in_source_parity_claim": false
+  },
+  "compilation": {
+    "tool": "runChecks",
+    "appPath": "ios",
+    "result": "PASS",
+    "scope": "iOS simulator build on workspace with verified public-main iOS source byte parity",
+    "device_release_signing_verified": false,
+    "existing_asset_url_notices": 2
+  },
+  "native_tests": {
+    "tool": "swiftTest",
+    "appPath": "ios",
+    "result": "PASS",
+    "passed": 82,
+    "duration_seconds": 83,
+    "selection": [
+      "VineTrackTests/GuidedSyncCorrectionPolicyTests",
+      "VineTrackTests/GuidedSyncRepairEngineTests",
+      "VineTrackTests/TripActivityCancellationTests",
+      "VineTrackTests/TrackedSprayCompletionSyncTests",
+      "VineTrackTests/TripClosureStatusTests",
+      "VineTrackTests/SprayTankActualTests",
+      "VineTrackTests/TankDependencyVerificationTests"
+    ],
+    "evidence": "Observed terminal managed-runner aggregate response; no passing-case XML or xcresult returned",
+    "counts_additive_with_earlier_runs": false,
+    "physical_device_or_live_backend_acceptance": false
+  },
+  "github_xcode_26_3": {
+    "main_branch_workflow_runs_returned": 0,
+    "workflow": "ios-guided-sync-repair-native.yml",
+    "final_main_sha_pass": "BLOCKED, authenticated external workflow dispatch required",
+    "historical_failure_waived": false
+  },
+  "testflight_preparation": {
+    "apple_session_reauthenticated": true,
+    "asc_app_id": "6761143377",
+    "fresh_ios_build_inventory_count": 411,
+    "maximum_numeric_build": 211,
+    "maximum_build_processing_state": "VALID",
+    "candidate_version": "3.1.9",
+    "candidate_build_number": 212,
+    "number_reserved_or_upload_requested": false,
+    "distribution": "internal only",
+    "blockers": [
+      "Required exact-main Xcode26.3 workflow result remains absent; no authenticated GitHub workflow connector, gh CLI or token in session",
+      "Ignored managed iOS Config.swift Supabase URL and anonymous key are empty; approved configuration must be restored without exporting credentials"
+    ],
+    "requery_maximum_before_upload": true
+  },
+  "preservation": {
+    "application_source_changed_this_turn": false,
+    "android_changed": false,
+    "production_customer_records_mutated": false,
+    "queues_reset_or_evidence_removed": false,
+    "managed_git_manually_mutated": false,
+    "sql_redeployed": false
+  },
+  "original_iphone_acceptance": "NOT RUN; in-place repair and authoritative original-operation server receipts remain required before claiming resolution"
+}
