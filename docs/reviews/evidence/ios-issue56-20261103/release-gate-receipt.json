@@ -1,0 +1,57 @@
+{
+  "issue": "https://github.com/stockmansridge/rork-vinetrack-june26/issues/56",
+  "date": "2026-11-03",
+  "status": "BLOCKED_BEFORE_BUILD",
+  "approved_sha": "2b5a08d3ef5d1d3776397aa9bf5f5dbe74cb4ef2",
+  "fresh_main_matches_approved_sha": true,
+  "ci": {
+    "independently_verified_successful_main_runs": [41638970018, 41638970024, 41638969940],
+    "all_heads_equal_approved_sha": true,
+    "tests_rerun": false
+  },
+  "source": {
+    "downloaded_directly_from_github": true,
+    "archive_sha256": "234facc5dcb83105a352dab4607c84ac498894260f9ac1df71fbb3900abe76cf",
+    "non_generated_ios_files_compared": 1306,
+    "differences": [],
+    "extra_nonignored_ios_files": [],
+    "excluded": "ios/VineTrack/Config.swift: generated virtual managed configuration; not inspected as injected values",
+    "signed_source_attestation": "Not available; no new signed build requested"
+  },
+  "configuration": {
+    "requestEnvs_result": "All requested environment variables already configured",
+    "existing_values_replaced": false,
+    "managed_production_url_equality_verified": false,
+    "managed_client_key_equality_verified": false,
+    "managed_client_key_nonprivileged_type_verified": false,
+    "managed_auth_or_sign_in_compatibility_verified": false,
+    "reason": "Supported presence check does not reveal configured values or attest equality/key type/auth behaviour. Neither required value is available in the agent environment or local .env files. Empty virtual Config literals are not evidence of missing injection. No supported secure value-comparison or managed authentication-test surface is available in this session. Prior reference-key HTTP200 is not current managed-input proof."
+  },
+  "apple": {
+    "setupAsc_status": "ready",
+    "app_id": "6761143377",
+    "bundle_id": "app.rork.nt0v48tayl7v8noxcfe74",
+    "inventory_count": 413,
+    "highest_build": 213,
+    "next_candidate": 214,
+    "candidate_reserved": false,
+    "prior_build_213_id": "341a0d79-b351-4fba-81cb-19361ba0ca8a",
+    "prior_build_213_processing_state": "VALID",
+    "prior_build_213_upload_receipt": "5bebf036-676c-427e-8547-cd195ebadef8",
+    "prior_build_213_persisted_processing_state": "COMPLETE",
+    "prior_build_213_is_not_issue56_source_delivery": true
+  },
+  "new_delivery": {
+    "build_requested": false,
+    "upload_receipt": null,
+    "processing_receipt": null,
+    "internal_tester_availability_confirmed": false
+  },
+  "remaining": [
+    "Obtain secure managed attestation of exact approved URL, approved nonprivileged client key and auth compatibility before signing",
+    "Recheck main, workspace parity and fresh ASC maximum before internal-only submission",
+    "Obtain signed-source/configuration proof where exposed, upload receipt, Apple processing result and internal tester availability",
+    "Link delivery receipt to Issue 56 using an authenticated GitHub writer; no authenticated issue-write surface used here"
+  ],
+  "safety": "No application code, Android, deployed SQL, customer records, historical archives, retained device queues or journals changed. No external review/public release. Original-device incident remains OPEN."
+}
