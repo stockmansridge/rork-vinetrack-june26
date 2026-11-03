@@ -166,7 +166,7 @@ import Testing
         let fixture = try EndFixture()
         defer { fixture.cleanUp() }
         _ = try fixture.prepareJournalWithPendingFinalise()
-        ended.occurrenceCoverage = try #require(fixture.journal.load()?.acknowledged)
+        ended.occurrenceCoverage = try #require(try fixture.journal.load()?.acknowledged)
         #expect(ConfirmedTankStartRecovery.restore(
             trip: ended, missingSessionIds: required,
             confirmedActuals: [actual], linkedSprayIds: linked,
