@@ -1,0 +1,67 @@
+name: iOS Guided Sync Repair native validation
+
+on:
+  push:
+    branches:
+      - feat/ios-full-sync-repair-workflow
+    paths:
+      - 'ios/VineTrack/App/GuidedSyncIssueRepairView.swift'
+      - 'ios/VineTrack/Backend/Sync/GuidedSyncRepairEngine.swift'
+      - 'ios/VineTrack/Backend/Sync/GuidedSyncRepairVerification.swift'
+      - 'ios/VineTrack/Backend/Sync/GuidedLegacyDeletedTripRepair.swift'
+      - 'ios/VineTrack/Backend/Sync/TripSyncService.swift'
+      - 'ios/VineTrack/Backend/Sync/TripDeletionJournal.swift'
+      - 'ios/VineTrack/Backend/Sync/TrackedSprayCompletionSync.swift'
+      - 'ios/VineTrackTests/GuidedSyncRepairEngineTests.swift'
+      - 'ios/VineTrackTests/GuidedSyncCorrectionPolicyTests.swift'
+      - '.github/workflows/ios-guided-sync-repair-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: ios-guided-sync-repair-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Pin native iOS sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          XCODE_ROOT="/Applications/Xcode_26.3.app/Contents/Developer"
+          test -x "$XCODE_ROOT/usr/bin/xcodebuild"
+          echo "DEVELOPER_DIR=$XCODE_ROOT" >> "$GITHUB_ENV"
+          echo "${{ github.sha }}" > "$RUNNER_TEMP/revision.txt"
+      - name: Find iOS simulator
+        id: sim
+        shell: bash
+        run: |
+          set -euo pipefail
+          SIM=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; data=json.load(sys.stdin)["devices"]; ids=[x["udid"] for k,v in data.items() if "iOS" in k for x in v if x.get("isAvailable",False) and "iPhone" in x.get("name","")]; print(ids[0] if ids else "")')
+          test -n "$SIM"
+          echo "id=$SIM" >> "$GITHUB_OUTPUT"
+      - name: Compile iOS and run guided correction, cancellation and dependency regressions
+        shell: bash
+        run: |
+          set -o pipefail
+          xcodebuild test             -project ios/VineTrack.xcodeproj -scheme VineTrack             -configuration Debug             -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.id }}"             -resultBundlePath "$RUNNER_TEMP/GuidedSyncRepair.xcresult"             -parallel-testing-enabled NO             -only-testing:VineTrackTests/GuidedSyncCorrectionPolicyTests             -only-testing:VineTrackTests/GuidedSyncRepairEngineTests             -only-testing:VineTrackTests/TripActivityCancellationTests             -only-testing:VineTrackTests/TripDeletionRecoveryTests             -only-testing:VineTrackTests/SprayTankActualTests             INFOPLIST_KEY_VineTrackSourceRevision="${{ github.sha }}"             CODE_SIGNING_ALLOWED=NO 2>&1 | tee "$RUNNER_TEMP/GuidedSyncRepair.log"
+      - name: Keep immutable source, failure and test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: guided-sync-repair-native-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/GuidedSyncRepair.xcresult
+            ${{ runner.temp }}/GuidedSyncRepair.log
+            ${{ runner.temp }}/revision.txt
+          if-no-files-found: warn
+          retention-days: 14
