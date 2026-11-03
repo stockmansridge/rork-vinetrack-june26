@@ -125,6 +125,22 @@ nonisolated struct TankSession: Codable, Identifiable, Sendable, Hashable {
         fillEndTime = try date(.fillEndTime, .fillEndTime)
     }
 
+    /// Preserve milliseconds in local archives and tank session JSON.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        try c.encode(id, forKey: .id)
+        try c.encode(tankNumber, forKey: .tankNumber)
+        try c.encode(iso.string(from: startTime), forKey: .startTime)
+        if let endTime { try c.encode(iso.string(from: endTime), forKey: .endTime) }
+        try c.encode(pathsCovered, forKey: .pathsCovered)
+        try c.encodeIfPresent(startRow, forKey: .startRow)
+        try c.encodeIfPresent(endRow, forKey: .endRow)
+        if let fillStartTime { try c.encode(iso.string(from: fillStartTime), forKey: .fillStartTime) }
+        if let fillEndTime { try c.encode(iso.string(from: fillEndTime), forKey: .fillEndTime) }
+    }
+
     var rowRange: String {
         guard let start = startRow, let end = endRow else { return "" }
         if start == end { return "Row \(formatRow(start))" }
